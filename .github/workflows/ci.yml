@@ -247,7 +247,7 @@ jobs:
 
       - name: Upload the smoke baseline JSON
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-baseline-smoke
           path: /tmp/perf-baseline.json
@@ -1019,7 +1019,7 @@ jobs:
 
       - name: Upload the drill JSON
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dr-drill-ci
           path: /tmp/dr-drill.json
@@ -1217,7 +1217,7 @@ jobs:
 
       - name: Upload the drill summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: failover-drill
           path: /tmp/failover.json
