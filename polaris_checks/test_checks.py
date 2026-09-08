@@ -5635,3 +5635,59 @@ def test_attacks_run_check_discriminates(tmp_path):
     # 4. an attack module is missing
     write({"attacks/attack_db.py": None})
     assert checks.check_attacks_run(tmp_path)[0].level == "FAIL", "must FAIL when an attack module is missing"
+
+
+def test_federation_real_check_discriminates(tmp_path):
+    # PE.3 (v9.276): federation must be cryptographic — the drill mints distinct
+    # roots, decides trust via the detached verifier's anchor (issuer_trusted),
+    # tests REJECTION not only acceptance, is fail-closed, and runs in CI; the
+    # boundary also lives in attacks/. Each perturbation removes one leg.
+    DRILL = (
+        "import pqc_signing\n"
+        "def _mk(): return pqc_signing.generate_keypair()\n"
+        "def main():\n"
+        "    a = _mk(); b = _mk()\n"
+        "    pack_a = {'public_key_hex': a['public_key_hex']}\n"
+        "    expect = [(pack_a, [a['public_key_hex']], True), (pack_a, [b['public_key_hex']], False)]\n"
+        "    for pack, anchor_keys, want in expect:\n"
+        "        v = verify_pack(pack, anchor_keys=anchor_keys)\n"
+        "        if (v.get('issuer_trusted') is True) != want:\n"
+        "            print('FAIL'); return 1\n"
+        "    return 0\n"
+    )
+    CI = ("jobs:\n  pqc-real:\n    steps:\n"
+          "      - run: python scripts/polaris-federation-drill.py\n")
+    CRYPTO = ("def available(): return (True, 'x')\n"
+              "def _forge(): return (False, 'held')\n"
+              "def _tamper(): return (False, 'held')\n"
+              "def _outsider(): return (False, 'federation set rejected the outsider')\n"
+              "ATTACKS = [('forge', _forge), ('tamper', _tamper), ('outsider', _outsider)]\n")
+    good = {
+        "scripts/polaris-federation-drill.py": DRILL,
+        ".github/workflows/ci.yml": CI,
+        "attacks/attack_crypto.py": CRYPTO,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            if body is None:
+                if f.exists(): f.unlink()
+            else:
+                f.write_text(body)
+
+    write()
+    assert checks.check_federation_real(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the drill no longer tests a cross-issuer REJECT (only acceptance)
+    write({"scripts/polaris-federation-drill.py": DRILL.replace(", False)", ", True)")})
+    assert checks.check_federation_real(tmp_path)[0].level == "FAIL", "must FAIL when no rejection is tested"
+    # 2. trust is no longer decided via the detached verifier's anchor
+    write({"scripts/polaris-federation-drill.py": DRILL.replace("anchor_keys", "agency_id")})
+    assert checks.check_federation_real(tmp_path)[0].level == "FAIL", "must FAIL without the detached issuer anchor"
+    # 3. CI does not run the drill
+    write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
+    assert checks.check_federation_real(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+    # 4. the federation adversary is gone from attacks/
+    write({"attacks/attack_crypto.py": CRYPTO.replace("federation", "noop")})
+    assert checks.check_federation_real(tmp_path)[0].level == "FAIL", "must FAIL without a federation adversary"

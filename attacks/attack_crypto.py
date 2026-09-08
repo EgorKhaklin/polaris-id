@@ -112,6 +112,25 @@ def attack_empty_signature():
     return v["signature_valid"] is True, "empty signature; signature_valid=%s" % v["signature_valid"]
 
 
+def attack_outsider_accepted_by_federation_set():
+    """Federation boundary (PE.3): an issuer OUTSIDE the federation signs a valid
+    token and presents it to a relying party that trusts a set of OTHER issuers
+    {issuer, attacker-as-second-issuer}. It is internally valid, but the outsider's
+    key is not in the set, so it MUST be rejected — the multi-key anchor path must
+    not accept a non-member."""
+    st = _setup()
+    import oqs
+    with oqs.Signature(_ALG) as outsider:
+        outsider_pk = bytes(outsider.generate_keypair())
+        outsider_sig = bytes(outsider.sign(_digest(st["token"])))
+    federation = [st["issuer_pk"].hex(), st["attacker_pk"].hex()]  # a 2-issuer trust set
+    v = st["V"].verify_pack(_pack(st["token"], outsider_sig, outsider_pk),
+                            anchor_keys=federation)
+    succeeded = v.get("issuer_trusted") is True
+    return succeeded, ("an outsider was %s by a 2-issuer federation set (issuer_trusted=%s)"
+                       % ("ACCEPTED" if succeeded else "rejected", v.get("issuer_trusted")))
+
+
 def attack_app_two_witness_verify_rejects_tamper():
     """Attack the APP's own verify (not just the standalone): pqc_signing's two-witness
     verify_stored_signature must reject a tampered signature. MUST fail."""
@@ -132,5 +151,6 @@ ATTACKS = [
     ("wrong_key", attack_wrong_key),
     ("placeholder_relabeled_as_real", attack_placeholder_relabeled_as_real),
     ("empty_signature", attack_empty_signature),
+    ("outsider_accepted_by_federation_set", attack_outsider_accepted_by_federation_set),
     ("app_two_witness_verify_rejects_tamper", attack_app_two_witness_verify_rejects_tamper),
 ]

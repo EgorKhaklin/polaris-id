@@ -6376,9 +6376,69 @@ def check_attacks_run(root: pathlib.Path) -> list[Finding]:
                f"its contract ({detail})")
 
 
+# ---------------------------------------------------------------------------
+# Federation is cryptographic, not a diagram (roadmap PE.3). The app carries an
+# administrative trust graph (AgencyTrustAttestation / _federation_trust_holds),
+# but on its own that is DB rows on top of a SINGLE signing key: every token
+# shares one cryptographic root, so "issuer A trusts issuer B" is not something a
+# relying party can check without trusting Polaris's database. PE.3 adds the root
+# underneath: two issuers on one box with DISTINCT ML-DSA-65 keys, and a relying
+# party that accepts its own issuer, rejects a foreign issuer, and rejects an
+# outsider — decided against published KEYS via the detached verifier. This check
+# pins that the drill is cryptographic (distinct roots + the detached issuer
+# anchor), tests REJECTION and not only acceptance, is fail-closed, runs in CI,
+# and that the cross-issuer boundary also lives in attacks/. The enforcement is CI
+# RUNNING the drill under real ML-DSA-65.
+# Detection: test_checks removes the reject test, the detached anchor, the CI
+# invocation, and the federation adversary.
+# ---------------------------------------------------------------------------
+def check_federation_real(root: pathlib.Path) -> list[Finding]:
+    drill = _read(root, "scripts/polaris-federation-drill.py")
+    if not drill:
+        return _fail("federation_real", "scripts/polaris-federation-drill.py is missing")
+    # Cryptographic: distinct real roots, decided via the detached verifier's anchor.
+    if "generate_keypair" not in drill:
+        return _fail("federation_real",
+                     "the federation drill must mint distinct real roots (generate_keypair), not reuse one key")
+    if "verify_pack" not in drill or "anchor_keys" not in drill:
+        return _fail("federation_real",
+                     "the federation drill must decide trust via the detached verifier's issuer anchor "
+                     "(verify_pack(..., anchor_keys=...)), not a database lookup")
+    if "issuer_trusted" not in drill:
+        return _fail("federation_real",
+                     "the federation drill must key its verdict on issuer_trusted (the signing key), "
+                     "not on an agency_id row")
+    # It must test REJECTION, not only acceptance — an expected-reject outcome.
+    if ", False)" not in drill:
+        return _fail("federation_real",
+                     "the federation drill must assert a CROSS-ISSUER REJECT (a relying party rejecting a "
+                     "foreign issuer), not only that its own issuer is accepted")
+    # Fail-closed: a broken boundary turns the drill red.
+    if "return 1" not in drill:
+        return _fail("federation_real",
+                     "the federation drill must exit non-zero when the federation boundary does not hold")
+    # CI runs it every release (the actual enforcement).
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-federation-drill.py" not in ci:
+        return _fail("federation_real",
+                     "ci.yml must run scripts/polaris-federation-drill.py so the cross-issuer boundary is "
+                     "exercised under real ML-DSA-65 every release")
+    # The cross-issuer boundary also lives in the attack suite.
+    crypto_attacks = _read(root, "attacks/attack_crypto.py")
+    if "federation" not in crypto_attacks:
+        return _fail("federation_real",
+                     "attacks/attack_crypto.py must include a federation adversary (an outsider must not be "
+                     "accepted by a trust set), so the boundary is attacked, not only drilled")
+    return _ok("federation_real",
+               "federation is cryptographic: the drill stands up two issuers on one box with distinct roots and "
+               "proves cross-issuer accept/reject via the detached anchor, CI runs it under real ML-DSA-65, and "
+               "the boundary is also an attack")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_detached_verifier,
     check_attacks_run,
+    check_federation_real,
     check_public_claims_honest,
     check_verify_witness_sampling,
     check_constitution_layered,

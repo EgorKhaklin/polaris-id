@@ -5,6 +5,43 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.276 — 2026-09-08 (Two issuers on one box: federation with distinct roots, proven cryptographically)
+
+Phase E, PE.3. Polaris already carried a federation trust graph
+(`AgencyTrustAttestation`, `_federation_trust_holds`), but on its own that is
+administrative: DB rows saying agency A trusts agency B, on top of a SINGLE signing
+key. Every token shared one cryptographic root, so "issuer" was not something a
+relying party could check without trusting Polaris's database — a diagram. This
+ship puts the root underneath it.
+
+- **`scripts/polaris-federation-drill.py`** — two issuers on one box, each a
+  DISTINCT ML-DSA-65 root, plus a third issuer outside the federation. It issues a
+  genuine token under each through the real signing path and proves, with the
+  detached verifier, the full trust matrix: a relying party accepts its own issuer,
+  REJECTS a foreign issuer, and rejects the outsider — decided on the signing KEY
+  (`issuer_trusted` against a published anchor set), not an `agency_id` row. A
+  relying party trusting the set `{A, B}` accepts both and still rejects the
+  outsider. The drill exits non-zero if any accept/reject is wrong, so a broken
+  federation boundary turns CI red. It runs in the `pqc-real` job under real
+  ML-DSA-65.
+- **The boundary is also an attack.** `attacks/attack_crypto.py` gains
+  `outsider_accepted_by_federation_set`: an issuer outside a two-issuer trust set
+  is internally valid but must be rejected (the multi-key anchor path must not
+  accept a non-member). Eight crypto adversaries now, all held.
+- **`check_federation_real` (#144)** pins that the drill is cryptographic (distinct
+  roots, the detached issuer anchor, a verdict keyed on `issuer_trusted`), that it
+  tests REJECTION and not only acceptance, that it is fail-closed, that CI runs it,
+  and that the cross-issuer adversary lives in attacks/. Detection-tested.
+- **Honest scope.** This makes the federation boundary real and running at the
+  cryptographic layer. Binding each Agency to its own key INSIDE the app, so
+  `/uc1/issue` and `/verify` are federation-aware end to end above the existing
+  administrative trust graph, is noted as PE.3b (not blocking).
+
+Constitutional note: no change to C1-C10 or the vocation. The drill is self-contained
+crypto (its own temporary keys); it touches no database and no personal data.
+
+---
+
 ## v9.275 — 2026-09-08 (Attacks that must fail: an adversary suite run every release, not greps)
 
 Phase E, PE.5. The engine is only as strong as what it rejects, so this ship adds

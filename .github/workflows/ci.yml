@@ -1495,6 +1495,15 @@ jobs:
       - name: Attacks that must fail — crypto suite
         run: python attacks/run_attacks.py --suite crypto
 
+      # v9.276 (roadmap PE.3) — two issuers on one box with DISTINCT roots. The
+      # drill issues a real token under each of two ML-DSA-65 roots plus a third
+      # issuer outside the federation, and proves with the detached verifier that
+      # each relying party accepts its own issuer, REJECTS a foreign issuer, and
+      # rejects the outsider — cryptographically, against published keys, not a
+      # database lookup. Exits non-zero if the federation boundary does not hold.
+      - name: Federation — two issuers on one box, cross-issuer accept/reject
+        run: python scripts/polaris-federation-drill.py
+
       # v9.139 — the signing-key GENERATION must emit clean JSON. liboqs prints a
       # banner to stdout at import; polaris-generate-secrets.sh captures a python
       # one-liner's stdout to mint the key, so a naive capture corrupts the file
