@@ -66,6 +66,10 @@ services:
       POLARIS_DB_PASSWORD: polaris_dev_password
       POLARIS_PORT:        '5000'
       POLARIS_STATE_DIR:   '/tmp/polaris-state'
+      # v9.280 (PE.1): the dev stack signs with the SHA3-256 placeholder (no
+      # liboqs). Name that dev profile explicitly so the boot is quiet and honest;
+      # production sets POLARIS_USE_REAL_PQC=1 and fails closed without it.
+      POLARIS_PQC_PROFILE: placeholder
       # The dev stack is the one the macOS launcher watches: the browser beacon
       # and its two control routes exist only under this flag (never in prod).
       POLARIS_LAUNCHER_WATCH: ${POLARIS_LAUNCHER_WATCH:-1}

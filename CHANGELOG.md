@@ -5,6 +5,44 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.280 — 2026-09-08 (The default boot is the real motor — Phase E complete)
+
+Phase E, PE.1 — and with it the whole engine phase. The one place the engine could
+still quietly be a placeholder was the boot: `POLARIS_USE_REAL_PQC` defaulted off,
+so a misconfigured deployment could sign with the SHA3-256 development placeholder,
+whose bytes verify against no key. This ship closes that.
+
+- **Production fails closed at boot.** When `POLARIS_ENV=production` and real
+  ML-DSA-65 signing is not actually available (`pqc_signing.is_enabled()` — the flag
+  set AND liboqs importable), the app refuses to start (exit 2) rather than issue
+  tokens that authenticate against nothing. The prod compose and Helm already set
+  the flag and bake in liboqs; this guard catches a hand-rolled deploy that missed
+  it or shipped a broken liboqs, at boot instead of at first issuance.
+- **The placeholder is now a named dev profile, not a silent default.** The boot
+  announces which signing profile is active (`boot.pqc_profile`), and running the
+  placeholder without naming it warns loudly that these are not real signatures. The
+  canonical dev/CI paths — the CI test job, `scripts/polaris-test.sh`, and the dev
+  `docker-compose.yml` — declare `POLARIS_PQC_PROFILE=placeholder` explicitly.
+- **Scoped to production fail-closed** rather than flipping the global default, so
+  the many CI jobs that boot the app in placeholder mode keep running. Every
+  production context (prod compose, Helm, the prod-image CI jobs) already has real
+  PQC, so the guard breaks nothing. `check_real_pqc_default_boot` (#148) pins the
+  guard, the named profile and its warning, and the canonical naming;
+  `RealPqcDefaultBootTests` exercises the boot refusal.
+
+**Phase E is complete.** All eight engine items shipped: a detached verifier a
+relying party runs offline (PE.2), an offline authenticity pack (PE.6), federation
+with distinct cryptographic roots (PE.3), the HSM as the sole signer with in-token
+rotation (PE.4), attacks that must fail every release (PE.5), a holder wallet that
+proves membership in zero knowledge (PE.7), published dyno numbers from a real box
+(PE.8), and now a fail-closed real-motor boot (PE.1). The engine runs, detached and
+under attack, and every path is exercised — not documented.
+
+Constitutional note: no change to C1-C10 or the vocation. This hardens how the
+issuer signs; no identity data path changes.
+
+---
+
 ## v9.279 — 2026-09-08 (Real numbers from the box: the engine on a dyno, measured not extrapolated)
 
 Phase E, PE.8. "Ten times faster" is not a number. `scripts/polaris-dyno.py`

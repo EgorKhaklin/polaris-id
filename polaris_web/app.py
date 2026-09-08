@@ -457,6 +457,44 @@ if _env_flag('POLARIS_REQUIRE_HSM_SOLE_SIGNER', False):
         sys.exit(2)
 
 
+# v9.280 (roadmap PE.1) — the default boot is the real motor. The SHA3-256
+# development placeholder is not a signature (its bytes verify against no key), so
+# a production deployment that silently signed with it would issue tokens that
+# authenticate against nothing. Production therefore FAILS CLOSED at boot unless
+# real ML-DSA-65 signing is actually available (POLARIS_USE_REAL_PQC=1 AND liboqs
+# importable — pqc_signing.is_enabled()), rather than discovering it at first
+# issuance. The prod compose and Helm set the flag; this guard catches a
+# hand-rolled deploy that missed it or shipped a broken liboqs.
+#
+# Outside production the placeholder is the intentional dev/CI signer — but it is
+# NAMED, not silent. The boot announces which signing profile is active, and
+# running the placeholder without explicitly naming the dev profile
+# (POLARIS_PQC_PROFILE=placeholder) prints a loud warning, so no one mistakes a dev
+# stack's SHA3 bindings for real signatures.
+_pqc_real = pqc_signing.is_enabled()
+_pqc_profile = os.environ.get('POLARIS_PQC_PROFILE', '').strip().lower()
+if _PRODUCTION and not _pqc_real:
+    sys.stderr.write(
+        "\n  FATAL: POLARIS_ENV=production but real ML-DSA-65 signing is not available\n"
+        "         (need POLARIS_USE_REAL_PQC=1 AND liboqs importable; is_enabled() is False).\n"
+        "         Refusing to start so a production deployment cannot silently issue tokens\n"
+        "         signed with the SHA3-256 development placeholder. See docs/operator/KEY-CEREMONY.md.\n\n"
+    )
+    sys.exit(2)
+if not _pqc_real and _pqc_profile != 'placeholder':
+    # Not production (the guard above would have exited); the placeholder is in use
+    # without being named. Boot, but loudly — this is a dev/CI convenience only.
+    sys.stderr.write(
+        "\n  WARNING: signing with the DEVELOPMENT PLACEHOLDER (SHA3-256), not real ML-DSA-65.\n"
+        "           This is for dev/CI only; its 'signatures' verify against no key. For real\n"
+        "           signing set POLARIS_USE_REAL_PQC=1 with liboqs. To name this dev profile and\n"
+        "           silence this warning, set POLARIS_PQC_PROFILE=placeholder.\n\n"
+    )
+observability.structured_log("boot.pqc_profile",
+                             profile=('real' if _pqc_real else 'placeholder'),
+                             real_ml_dsa=_pqc_real)
+
+
 # ----------------------------------------------------------------------------
 # Database connection
 # ----------------------------------------------------------------------------

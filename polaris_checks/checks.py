@@ -6620,7 +6620,67 @@ def check_dyno_published(root: pathlib.Path) -> list[Finding]:
                "publishes a measured (not extrapolated) run, and CI re-measures every release")
 
 
+# ---------------------------------------------------------------------------
+# The default boot is the real motor (roadmap PE.1). The SHA3-256 development
+# placeholder is not a signature — its bytes verify against no key — so a
+# production deployment that silently signed with it would issue tokens that
+# authenticate against nothing. Production must therefore FAIL CLOSED at boot when
+# real ML-DSA-65 signing is not actually available (pqc_signing.is_enabled()),
+# rather than discovering it at first issuance; and outside production the
+# placeholder must be a NAMED dev profile (POLARIS_PQC_PROFILE=placeholder) that the
+# canonical test/dev paths declare and that warns loudly when used unnamed, so no
+# one mistakes a dev stack's SHA3 bindings for real signatures. This check pins the
+# production boot guard, the named profile and its warning, and that the canonical
+# paths name it; the boot refusal itself is exercised by RealPqcDefaultBootTests.
+# Detection: test_checks removes the prod guard, the named-profile warning, and the
+# CI naming.
+# ---------------------------------------------------------------------------
+def check_real_pqc_default_boot(root: pathlib.Path) -> list[Finding]:
+    app = _read(root, "polaris_web/app.py")
+    if not app:
+        return _fail("real_pqc_default_boot", "polaris_web/app.py is missing")
+    # Production fails closed when real PQC is not available (is_enabled at boot).
+    if "pqc_signing.is_enabled()" not in app:
+        return _fail("real_pqc_default_boot",
+                     "app.py must check pqc_signing.is_enabled() at boot (real PQC actually available), "
+                     "not merely trust the flag")
+    if not re.search(r"if _PRODUCTION and not _pqc_real:.{0,500}sys\.exit", app, re.S):
+        return _fail("real_pqc_default_boot",
+                     "app.py must FAIL CLOSED in production when real ML-DSA-65 signing is unavailable, so a "
+                     "deployment cannot silently issue placeholder-signed tokens (a sys.exit guard)")
+    # The placeholder is a NAMED dev profile that warns when used unnamed, and the
+    # boot announces which signing profile is active.
+    if "POLARIS_PQC_PROFILE" not in app or "DEVELOPMENT PLACEHOLDER" not in app:
+        return _fail("real_pqc_default_boot",
+                     "outside production the placeholder must be a NAMED profile "
+                     "(POLARIS_PQC_PROFILE=placeholder) that warns loudly when used unnamed")
+    if "boot.pqc_profile" not in app:
+        return _fail("real_pqc_default_boot",
+                     "app.py must announce the active signing profile at boot (boot.pqc_profile)")
+    # The canonical test/dev paths NAME the placeholder profile (so it is explicit,
+    # not the silent default the ship replaced).
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "POLARIS_PQC_PROFILE: placeholder" not in ci:
+        return _fail("real_pqc_default_boot",
+                     "the CI test job must name the placeholder profile (POLARIS_PQC_PROFILE: placeholder), "
+                     "not rely on the silent default")
+    runner = _read(root, "scripts/polaris-test.sh")
+    if "POLARIS_PQC_PROFILE=placeholder" not in runner:
+        return _fail("real_pqc_default_boot",
+                     "scripts/polaris-test.sh must name the placeholder profile so a local run is explicit too")
+    # The boot refusal is exercised.
+    test = _read(root, "polaris_web/test_app.py")
+    if "test_production_refuses_boot_without_real_pqc" not in test:
+        return _fail("real_pqc_default_boot",
+                     "test_app.py must exercise the production boot refusal (RealPqcDefaultBootTests)")
+    return _ok("real_pqc_default_boot",
+               "the default boot is the real motor: production fails closed at boot when real ML-DSA-65 signing "
+               "is unavailable, and the placeholder is a named dev profile the canonical paths declare, warning "
+               "loudly when used unnamed")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_real_pqc_default_boot,
     check_detached_verifier,
     check_dyno_published,
     check_attacks_run,

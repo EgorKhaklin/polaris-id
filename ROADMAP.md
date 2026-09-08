@@ -54,8 +54,8 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 147 invariant
-checks (v9.279) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
+release; CVE gates on dependencies and images; a coverage floor; 148 invariant
+checks (v9.280) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 **Do not have:** hardware tokens (the physical artifact is modeled, not built);
@@ -86,7 +86,7 @@ OpenSSL 3.5 reaching the pgbouncer and postgres images.
 
 | Phase | Objective | Scale target | Exit gate |
 |---|---|---|---|
-| **E** | **The engine: real, detached, adversarial** (ACTIVE) | n/a | A relying party verifies offline with no Polaris code; two issuers interoperate; the HSM is the only prod signer; attacks run every release and fail; a person holds a credential; numbers are published |
+| **E** | **The engine: real, detached, adversarial** (COMPLETE, v9.280) | n/a | A relying party verifies offline with no Polaris code; two issuers interoperate; the HSM is the only prod signer; attacks run every release and fail; a person holds a credential; numbers are published |
 | P0 | Foundation closure | n/a | Every claim reproducible by command; supply chain signed; zero known debts |
 | P1 | Single-authority production | 10k-100k persons, one org | A non-author operator runs it from docs alone; pen test closed; SLOs met |
 | P2 | Scale architecture | 1-10M persons (state) | 10M load profile green on HA topology through a rolling deploy and a failover |
@@ -96,14 +96,15 @@ OpenSSL 3.5 reaching the pgbouncer and postgres images.
 | P6 | Certification and assurance | Authorization-ready | Validated crypto option, 800-63 mapping, audit and red team published |
 | P7 | National rollout | 350M persons | First state live; a national program office assumes ownership |
 
-Phase E is the active phase and precedes P0-P7: the engine is built before more
-deployment machinery is wrapped around it. P4 runs in parallel from P1 onward.
+Phase E is COMPLETE (v9.280): all of PE.1-PE.8 shipped. The engine was built before
+more deployment machinery was wrapped around it; the numbered phases below resume as
+the active work. P4 runs in parallel from P1 onward.
 P5-P7 are gated on external actors; the buildable machinery for each is listed so
 no external gate is ever waiting on us.
 
 ---
 
-## PE - The engine: real, detached, adversarial  [ACTIVE]
+## PE - The engine: real, detached, adversarial  [COMPLETE at v9.280]
 
 Objective: the cryptographic core is not a thing the app does behind a login; it
 is a set of primitives that run **detached, for real, and under attack**. Each
@@ -113,7 +114,7 @@ deployment phases below.
 
 | ID | Item | Size | Risk | Blocked by | Definition of done |
 |---|---|---|---|---|---|
-| [>] PE.1 | The default boot is the real motor | M | med | - | `POLARIS_USE_REAL_PQC` is on wherever the app is not explicitly in a dev profile named `placeholder`; issuance FAILS CLOSED at boot when it cannot sign for real, rather than falling to a silent placeholder in production; a check pins the boot guard and the named dev profile. The prod compose and Helm already set the flag (v9.116); this row adds the fail-closed *boot* guard and the explicit `placeholder` profile |
+| [x] PE.1 | The default boot is the real motor (v9.280) | M | med | - | Production FAILS CLOSED at boot unless real ML-DSA-65 signing is actually available (`pqc_signing.is_enabled()` — POLARIS_USE_REAL_PQC=1 AND liboqs), so a deployment can never silently issue tokens signed with the SHA3-256 placeholder; the placeholder becomes a NAMED dev profile (`POLARIS_PQC_PROFILE=placeholder`) that the canonical test/dev paths (CI test job, polaris-test.sh, dev compose) declare and that WARNS loudly when used unnamed, with the active profile announced at boot (`boot.pqc_profile`). Pinned by `check_real_pqc_default_boot`; the boot refusal is exercised by `RealPqcDefaultBootTests`. Scoped to production fail-closed rather than a global default flip so the many app-booting CI jobs keep running |
 | [x] PE.2 | A detached verifier a relying party runs with no Polaris code (v9.274) | M | med | - | `scripts/polaris-verify.py` verifies an ML-DSA-65 authenticity pack OFFLINE with only a standard ML-DSA library, no Polaris code and no database; `GET /api/tokens/<id>/authenticity-pack` exports the pack; the published `vectors/` are re-verified in CI under liboqs AND cryptography/OpenSSL (three independent implementations agree). Pinned by `check_detached_verifier`; the pack round-trip is a DB test; CI's `pqc-real` job runs `--selftest` and `--verify-dir` |
 | [x] PE.3 | Two issuers on one machine — real federation (v9.276) | L | med | PE.2 | `scripts/polaris-federation-drill.py` stands up two issuers on one box with DISTINCT ML-DSA-65 roots plus a third outsider, issues a genuine token under each through the real signing path, and proves with the detached verifier that each relying party accepts its own issuer, REJECTS a foreign issuer, and rejects the outsider — decided against published KEYS via `issuer_trusted`, not the DB trust graph. CI runs it under real ML-DSA-65; `check_federation_real` pins it; a `federation` adversary is in attacks/. Follow-up (PE.3b, not blocking): bind each Agency to its own key IN the app so /uc1/issue and /verify are federation-aware end to end, above the existing administrative `AgencyTrustAttestation` graph |
 | [x] PE.4 | The HSM is the only production signing path (one profile) + rotation (v9.277) | L | med | - | `POLARIS_REQUIRE_HSM_SOLE_SIGNER=1` makes the app FAIL CLOSED at boot unless the PKCS#11/HSM driver is the sole signer, no file key is in the environment, and real PQC is on (guard pinned by `check_prod_fail_closed`, boot refusal tested by `HsmSoleSignerBootTests`). Key rotation is drilled IN-TOKEN against a real PKCS#11 token: a second key is minted inside the token under a new label, a token signed under the old in-token key STILL verifies after the switch while the new key signs, and dropping the old anchor completes retirement (`test_in_token_rotation_...`, run by the `custody-pkcs11` job; pinned by `check_key_rotation_drilled`). Software token: Kryoptic (the ML-DSA-capable PKCS#11 v3.2 module; SoftHSMv2 lacks ML-DSA). Unblocked from PE.1: the profile enforces real PQC itself |
@@ -127,7 +128,7 @@ code (met at PE.2); two issuers interoperate with correct accept and reject; the
 HSM is the only signer in one profile with a drilled rotation; the attack suite
 runs every release and is green (every attack fails); a person holds and presents
 a credential; and the published numbers come from a reproducible bench on a named
-box. Until this gate is met, the work below yields to it.
+box. **Met at v9.280: all of PE.1-PE.8 are done — Phase E is COMPLETE.** The vinyl frozen behind it (further Atlas/Athena/ontology/constitution-tiers, file-only invariants, SLH-DSA-before-HSM, 'national' scope) can now be reconsidered with the owner.
 
 **Frozen behind the engine.** These add surface, not displacement, and are frozen
 until PE's exit gate is met: further Atlas ships (Investigate, Alerts) and any
@@ -385,9 +386,8 @@ before the P5 consent framework exists. These do not expire with any phase.
 
 ## Execution protocol for the next session
 
-1. Read [CLAUDE.md](CLAUDE.md), then this file. The active phase is Phase E (the
-   engine); after its exit gate is met, the active phase is the lowest numbered
-   phase with pending rows.
+1. Read [CLAUDE.md](CLAUDE.md), then this file. Phase E (the engine) is COMPLETE
+   (v9.280); the active phase is now the lowest numbered phase with pending rows.
 2. Pick the first row whose Blocked-by column is satisfied; prefer S and M
    rows when resuming cold.
 3. One row is one ship (S rows may batch). Mark `[>]` on start; mark `[x]`

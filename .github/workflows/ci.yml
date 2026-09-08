@@ -60,6 +60,10 @@ jobs:
       POLARIS_DB_USER: postgres
       POLARIS_DB_PASSWORD: ci_password
       POLARIS_SECRET_KEY: ci-only-test-secret-key-32-bytes-long
+      # v9.280 (PE.1) — this suite runs the SHA3-256 placeholder signer (no liboqs
+      # here). Name the dev profile explicitly so the boot is quiet and honest,
+      # rather than relying on the silent default.
+      POLARIS_PQC_PROFILE: placeholder
       POLARIS_STATE_DIR: /tmp/polaris-state
       PGPASSWORD: ci_password
       # v9.190: test_app's RedisRateLimiterTests + the multiprocess test run

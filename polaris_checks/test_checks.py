@@ -5849,3 +5849,49 @@ def test_dyno_published_check_discriminates(tmp_path):
     # 4. CI does not re-measure
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_dyno_published(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the dyno"
+
+
+def test_real_pqc_default_boot_check_discriminates(tmp_path):
+    # PE.1 (v9.280): the default boot is the real motor — production fails closed at
+    # boot when real PQC is unavailable, and the placeholder is a NAMED dev profile
+    # the canonical paths declare and that warns when unnamed. Each perturbation
+    # removes one leg.
+    APP = (
+        "_pqc_real = pqc_signing.is_enabled()\n"
+        "if _PRODUCTION and not _pqc_real:\n"
+        "    sys.stderr.write('real ML-DSA-65 signing is not available')\n"
+        "    sys.exit(2)\n"
+        "if not _pqc_real and os.environ.get('POLARIS_PQC_PROFILE') != 'placeholder':\n"
+        "    sys.stderr.write('WARNING: DEVELOPMENT PLACEHOLDER')\n"
+        "observability.structured_log('boot.pqc_profile', profile='real')\n"
+    )
+    CI = "jobs:\n  test:\n    env:\n      POLARIS_PQC_PROFILE: placeholder\n"
+    RUNNER = "#!/usr/bin/env bash\nPOLARIS_PQC_PROFILE=placeholder \"$PYVENV\" -m unittest\n"
+    TEST = "def test_production_refuses_boot_without_real_pqc(self):\n    pass\n"
+    good = {
+        "polaris_web/app.py": APP,
+        ".github/workflows/ci.yml": CI,
+        "scripts/polaris-test.sh": RUNNER,
+        "polaris_web/test_app.py": TEST,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. production no longer fails closed (the sys.exit guard is gone)
+    write({"polaris_web/app.py": APP.replace("    sys.exit(2)\n", "")})
+    assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", "must FAIL without the prod boot guard"
+    # 2. the placeholder is no longer a named profile that warns
+    write({"polaris_web/app.py": APP.replace("DEVELOPMENT PLACEHOLDER", "quiet")})
+    assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", "must FAIL without the named-profile warning"
+    # 3. the CI test job does not name the placeholder profile
+    write({".github/workflows/ci.yml": "jobs:\n  test:\n    env:\n      POLARIS_OTHER: x\n"})
+    assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", "must FAIL when CI does not name the profile"
+    # 4. the production boot refusal is not exercised
+    write({"polaris_web/test_app.py": TEST.replace("test_production_refuses_boot_without_real_pqc", "test_noop")})
+    assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", "must FAIL without the boot-refusal test"

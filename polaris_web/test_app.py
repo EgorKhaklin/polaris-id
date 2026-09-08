@@ -8035,6 +8035,44 @@ class HsmSoleSignerBootTests(unittest.TestCase):
         self.assertIn("POLARIS_USE_REAL_PQC", r.stderr)
 
 
+class RealPqcDefaultBootTests(unittest.TestCase):
+    """PE.1: the default boot is the real motor. Production FAILS CLOSED at boot
+    when real ML-DSA-65 signing is unavailable — it must never silently sign with
+    the SHA3-256 placeholder. Outside production the placeholder is allowed but is a
+    NAMED dev profile (POLARIS_PQC_PROFILE=placeholder); running it unnamed warns.
+    A subprocess imports app so the guard is observable; POLARIS_DB_SSLMODE=require
+    lets execution past the earlier SSL guard to reach this one."""
+
+    def _boot(self, extra_env):
+        import subprocess as _sp
+        import sys as _sys
+        import os as _os
+        env = _os.environ.copy()
+        for k in ("POLARIS_ENV", "POLARIS_USE_REAL_PQC", "POLARIS_PQC_PROFILE"):
+            env.pop(k, None)
+        env["POLARIS_SECRET_KEY"] = "x" * 64
+        env["POLARIS_DB_SSLMODE"] = "require"  # pass the production SSL guard to reach the PQC guard
+        env.update(extra_env)
+        cwd = _os.path.dirname(_os.path.abspath(flask_app.__file__))
+        return _sp.run([_sys.executable, "-c", "import app"], cwd=cwd,
+                       capture_output=True, text=True, env=env)
+
+    def test_production_refuses_boot_without_real_pqc(self):
+        r = self._boot({"POLARIS_ENV": "production"})
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("real ML-DSA-65 signing is not available", r.stderr)
+
+    def test_unnamed_placeholder_warns(self):
+        # Non-production, placeholder in use, dev profile not named: boot, but loudly.
+        r = self._boot({})
+        self.assertIn("DEVELOPMENT PLACEHOLDER", r.stderr)
+
+    def test_named_placeholder_profile_is_quiet(self):
+        # The dev profile is named explicitly: no warning.
+        r = self._boot({"POLARIS_PQC_PROFILE": "placeholder"})
+        self.assertNotIn("DEVELOPMENT PLACEHOLDER", r.stderr)
+
+
 class TokenVerifyTests(PolarisTestCase):
     """GET /api/tokens/<id>/verify cryptographically verifies a token's active
     signature AT USE, single-witness (v9.258, the throughput path). It must
