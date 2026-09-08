@@ -556,11 +556,6 @@ else:
 REPLICA_MAX_LAG_S = float(os.environ.get('POLARIS_REPLICA_MAX_LAG_S', '10'))
 
 
-def replica_configured():
-    """True when a read replica is configured (routing is otherwise a no-op)."""
-    return DB_CONFIG_REPLICA is not None
-
-
 def _replica_reads_requested():
     """True inside a @replica_reads route (its reads are replica-eligible)."""
     try:

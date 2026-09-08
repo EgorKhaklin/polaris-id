@@ -5323,7 +5323,7 @@ def check_css_animations_resolve(root: pathlib.Path) -> list[Finding]:
 # top-level path the map omits, and a map entry that names nothing.
 # ---------------------------------------------------------------------------
 _MAP_IGNORED_TOP = {".gitignore", ".dockerignore", ".coveragerc", ".trivyignore",
-                    ".pre-commit-config.yaml", ".github", ".claude"}
+                    ".pre-commit-config.yaml", "ruff.toml", ".github", ".claude"}
 
 
 def _tracked_top_level(root: pathlib.Path) -> set[str]:
@@ -7338,16 +7338,16 @@ def check_federation_topology(root: pathlib.Path) -> list[Finding]:
     schema = _read(root, "polaris_sql/01_schema.sql")
     app = _read(root, "polaris_web/app.py")
     bindings = [
-        ("AgencyTrustAttestation", "AgencyTrustAttestation" in adr and "AgencyTrustAttestation" in schema,
+        ("AgencyTrustAttestation" in adr and "AgencyTrustAttestation" in schema,
          "explicit attestation (AgencyTrustAttestation) cited by the ADR and present in the schema"),
-        ("_federation_trust_holds", "_federation_trust_holds" in adr and "_federation_trust_holds" in app,
+        ("_federation_trust_holds" in adr and "_federation_trust_holds" in app,
          "the non-transitive resolver (_federation_trust_holds) cited by the ADR and present in app.py"),
-        ("signing_public_key_hex", "signing_public_key_hex" in adr and "signing_public_key_hex" in schema,
+        ("signing_public_key_hex" in adr and "signing_public_key_hex" in schema,
          "per-authority roots (Agency.signing_public_key_hex) cited by the ADR and present in the schema"),
-        ("detached verifier", "verify_pack" in adr and bool(_read(root, "scripts/polaris-verify.py")),
+        ("verify_pack" in adr and bool(_read(root, "scripts/polaris-verify.py")),
          "verification against published keys (the detached verifier verify_pack) cited by the ADR and present"),
     ]
-    for name, ok, desc in bindings:
+    for ok, desc in bindings:
         if not ok:
             return _fail("federation_topology",
                          "the ADR's federated model is not grounded in the code: %s is missing" % desc)

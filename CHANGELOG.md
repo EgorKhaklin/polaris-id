@@ -5,6 +5,27 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.307 — 2026-09-08 (Dead-code sweep)
+
+v9.306 made unused imports and dead locals fail fast in CI. This sweep clears the dead code
+that predates that enforcement and that the pyflakes rules do not reach: unreferenced
+functions and unused unpacked bindings.
+
+- **A dead function, removed.** `replica_configured()` in `app.py` returned whether a read
+  replica was configured (`DB_CONFIG_REPLICA is not None`). Nothing in the tree referenced it.
+  Removed.
+- **An unused binding, removed.** The federation-topology check unpacked a short name it never
+  read from each grounding tuple; the tuples now carry only the `(condition, description)` pair
+  they actually use.
+- **The sweep, recorded.** vulture at 70% confidence reports no dead code. At 60% the remaining
+  candidates are all live through indirection: gunicorn lifecycle hooks, `BaseHTTPRequestHandler`
+  and `urllib` overrides, the module run entrypoint, a CI-called smoke test, Jinja `finalize`, the
+  detached verifier's reference-API proof generators, and `__init__`-time config attributes. These
+  are kept deliberately, not dead.
+- **`ruff.toml`, placed with its siblings.** v9.306 added `ruff.toml`; it is a linter config like
+  `.pre-commit-config.yaml` and `.coveragerc`, so it joins them in the system map's ignored-config
+  set rather than taking its own tree line.
+
 ## v9.306 — 2026-09-08 (Enforce import + dead-code hygiene: ruff)
 
 The v9.305 cleanup removed the unused imports it found by hand; this makes that hygiene
