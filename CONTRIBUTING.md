@@ -120,4 +120,4 @@ system is encouraged, provided the constitutional constraints are not weakened
 in the derivative; documenting a derivative to the same audit-of-record
 standard is asked for, not required by the license.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-09-07 (v9.267).*
+*Maintainer: Egor Khaklin. Last updated: 2026-09-08 (v9.288).*

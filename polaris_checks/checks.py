@@ -6872,6 +6872,67 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_relying_party_api(root: pathlib.Path) -> list[Finding]:
+    """P3.4: the relying-party verification API. A third-party organization
+    authenticates AS ITSELF (OAuth2 client-credentials) and calls the versioned
+    /api/v1/verify to confirm a presented credential is authentic and currently
+    authoritative -- API-access auth ONLY (scope is CHECK-constrained to 'verify',
+    so identity never becomes a login product), a verdict that never carries
+    personal data, and a credential that reaches nothing but verification. The
+    bound and the no-PII rule are RUNNING adversaries, not comments."""
+    # 1. The scope is constrained to 'verify' at the SCHEMA -- the vocation guard is
+    #    a database CHECK, not a policy the app could relax.
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if "CREATE TABLE RelyingParty" not in schema:
+        return _fail("relying_party_api", "polaris_sql/01_schema.sql has no RelyingParty table")
+    if not re.search(r"scope\s+VARCHAR[^\n]*\n[^\n]*CHECK\s*\(scope IN \('verify'\)\)", schema) \
+       and "CHECK (scope IN ('verify'))" not in schema:
+        return _fail("relying_party_api",
+                     "RelyingParty.scope must be CHECK-constrained to 'verify' -- the schema-level guard that the "
+                     "relying-party API can never become a login product (the vocation)")
+    if "client_secret_hash" not in schema:
+        return _fail("relying_party_api", "RelyingParty must store client_secret_hash (scrypt), never the secret")
+    # 2. Stateless, scope-bounded bearer, salted distinctly from the session cookie.
+    rpa = _read(root, "polaris_web/rp_auth.py")
+    for sym in ("def issue_access_token", "def validate_access_token", "def parse_bearer", "polaris-rp-access-token"):
+        if sym not in rpa:
+            return _fail("relying_party_api",
+                         "polaris_web/rp_auth.py must sign/validate a verify-scoped bearer with a salt distinct from "
+                         "the session cookie (%s missing)" % sym)
+    # 3. The two versioned routes, client-credentials, and the anti-enumeration core.
+    app = _read(root, "polaris_web/app.py")
+    if "/api/v1/oauth/token" not in app or "/api/v1/verify" not in app:
+        return _fail("relying_party_api", "app.py must expose POST /api/v1/oauth/token and POST /api/v1/verify")
+    if "client_credentials" not in app or "invalid_client" not in app:
+        return _fail("relying_party_api", "the token endpoint must be OAuth2 client-credentials (invalid_client on bad creds)")
+    if "compare_digest" not in app or "not a verifiable presentation" not in app:
+        return _fail("relying_party_api",
+                     "/api/v1/verify must require a POSSESSION proof (the presented signature matches the stored one, "
+                     "constant-time) and return a UNIFORM 'not a verifiable presentation' verdict on a not-found value "
+                     "or a mismatch -- so a relying party cannot enumerate tokens or probe existence")
+    # 4. Registration, the RP tool authenticating as an org, and the tests.
+    if "def cmd_rp_register" not in _read(root, "polaris_cli/polaris.py"):
+        return _fail("relying_party_api", "polaris_cli must offer rp-register to register a relying party")
+    if "_oauth_status_checker" not in _read(root, "scripts/polaris-relying-party.py"):
+        return _fail("relying_party_api",
+                     "scripts/polaris-relying-party.py must be able to authenticate as an org (OAuth2) and use /api/v1/verify")
+    if "RelyingPartyApiTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("relying_party_api", "test_app.py must carry RelyingPartyApiTests")
+    # 5. The bound and the no-PII rule RUN as adversaries every release.
+    controls = _read(root, "attacks/attack_controls.py")
+    for adversary in ("ac6_rp_credential_reaches_operator_surface", "ac6_rp_verdict_leaks_personal_data"):
+        if adversary not in controls:
+            return _fail("relying_party_api",
+                         "attacks/attack_controls.py must run %s as a fail-closed adversary (the least-privilege "
+                         "bound and the no-personal-data verdict are RUNNING attacks, not comments)" % adversary)
+    return _ok("relying_party_api",
+               "the relying-party API is a bounded verification oracle: an organization authenticates as itself "
+               "(OAuth2 client-credentials, scope CHECK-constrained to 'verify'), presents a held credential to "
+               "/api/v1/verify and gets an authentic/authoritative verdict with no personal data, cannot enumerate "
+               "(possession proof + uniform not-verifiable), and reaches nothing else -- the bound and the no-PII rule "
+               "run as adversaries every release, with the RP tool authenticating as an org end to end")
+
+
 def check_holder_verifier_flow(root: pathlib.Path) -> list[Finding]:
     """The end-to-end holder<->verifier flow: a relying party decides ACCEPT/REJECT
     from a holder's presentation by combining OFFLINE authenticity (the detached
@@ -6966,6 +7027,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_relying_party_api,
     check_holder_verifier_flow,
     check_federation_in_app,
     check_controls_as_attacks,

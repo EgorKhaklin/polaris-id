@@ -205,6 +205,101 @@ def attack_sc23_csrf_protected_write_without_token():
     return succeeded, ("a CSRF-less state-changing POST returned HTTP %d (expected 403)" % r.status_code)
 
 
+
+import base64 as _rp_b64
+
+
+def _rp_conn(ta):
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    return psycopg2.connect(cursor_factory=RealDictCursor, **ta.DB_CONFIG)
+
+
+def _register_rp_and_bearer(ta, client_id, secret):
+    conn = _rp_conn(ta)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM RelyingParty WHERE client_id = %s", (client_id,))
+            cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name) "
+                        "VALUES (%s, %s, %s)",
+                        (client_id, ta.flask_app.security.hash_password(secret), "Attack RP"))
+            conn.commit()
+    finally:
+        conn.close()
+    c = _fresh_client(ta)
+    basic = {"Authorization": "Basic " + _rp_b64.b64encode(("%s:%s" % (client_id, secret)).encode()).decode()}
+    tok = c.post("/api/v1/oauth/token", headers=basic, data={"grant_type": "client_credentials"}).get_json()
+    return c, {"Authorization": "Bearer " + tok["access_token"]}
+
+
+def _delete_rp(ta, client_id):
+    conn = _rp_conn(ta)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM RelyingParty WHERE client_id = %s", (client_id,))
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def attack_ac6_rp_credential_reaches_operator_surface():
+    """AC-6 least privilege (P3.4): a relying-party credential must reach ONLY the
+    verification endpoint. Get a real RP bearer and present it to operator surfaces;
+    the attack SUCCEEDS if any returns HTTP 200 (the verify-only scope leaked into
+    operator authority)."""
+    ta = _setup()
+    cid, sec = "rp_attack_ac6_leastprivilege", "attack-secret-ac6-xyz"
+    anon, bearer = _register_rp_and_bearer(ta, cid, sec)
+    breaches = []
+    try:
+        for route in ("/api/atlas/subject?individual_id=1", "/api/tokens/1/export",
+                      "/api/tokens/1/verify", "/dashboard", "/individuals", "/api/atlas/records"):
+            if anon.get(route, headers=bearer).status_code == 200:
+                breaches.append(route)
+    finally:
+        _delete_rp(ta, cid)
+    return bool(breaches), ("an RP bearer reached operator surfaces %s (scope bound broken)" % breaches
+                            if breaches else
+                            "an RP bearer reached only verification; every operator surface denied it")
+
+
+def attack_ac6_rp_verdict_leaks_personal_data():
+    """The vocation guard (P3.4): the /api/v1/verify verdict is authenticity plus
+    authorization ONLY. Issue a token, verify it as a relying party, and the attack
+    SUCCEEDS if the verdict carries any personal-data field."""
+    import attack_db
+    ta = _setup()
+    cid, sec = "rp_attack_ac6_noplaintextpii", "attack-secret-pii-xyz"
+    anon, bearer = _register_rp_and_bearer(ta, cid, sec)
+    tc = attack_db._harness()  # a logged-in operator, to issue and fetch the pack
+    tv = "RP-ATTACK-PII-0001"
+    leaked = set()
+    try:
+        tc._post("/uc1/issue", data={
+            "legal_name": "Attack Subject", "date_of_birth": "1990-01-15", "jurisdiction": "US-OH",
+            "issuing_agency_id": "1", "algorithm_id": "1", "biometric_binding_type": "IRIS",
+            "witness_agency_id": "2", "liveness_check_type": "MULTI_MODAL", "token_value": tv,
+            "physical_serial": "SN-" + tv, "hardware_model": "TitanQ-3", "contexts": ["1"],
+        }, follow_redirects=True)
+        conn = _rp_conn(ta)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT token_id FROM IdentityToken WHERE token_value = %s", (tv,))
+                tid = cur.fetchone()["token_id"]
+        finally:
+            conn.close()
+        pack = tc.client.get("/api/tokens/%d/authenticity-pack" % tid).get_json()
+        v = anon.post("/api/v1/verify", headers=bearer,
+                      json={"token_value": pack["token_value"], "signature_hex": pack["signature_hex"]}).get_json() or {}
+        pii = {"legal_name", "name", "date_of_birth", "dob", "jurisdiction",
+               "individual_id", "biometric", "biometric_binding_type", "physical_serial"}
+        leaked = pii & set(k.lower() for k in v.keys())
+    finally:
+        _delete_rp(ta, cid)
+    return bool(leaked), ("the RP verdict leaked personal data: %s" % leaked if leaked else
+                          "the RP verdict carried no personal data (a verdict, never a person)")
+
+
 ATTACKS = [
     ("ac3_unauthenticated_reaches_protected_data", attack_ac3_unauthenticated_reaches_protected_data),
     ("ac3_operator_reaches_admin_auditor_route", attack_ac3_operator_reaches_admin_auditor_route),
@@ -215,4 +310,6 @@ ATTACKS = [
     ("ia2_forged_session_grants_access", attack_ia2_forged_session_grants_access),
     ("sc5_login_rate_limit_bypassed", attack_sc5_login_rate_limit_bypassed),
     ("sc23_csrf_protected_write_without_token", attack_sc23_csrf_protected_write_without_token),
+    ("ac6_rp_credential_reaches_operator_surface", attack_ac6_rp_credential_reaches_operator_surface),
+    ("ac6_rp_verdict_leaks_personal_data", attack_ac6_rp_verdict_leaks_personal_data),
 ]

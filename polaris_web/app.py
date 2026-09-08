@@ -54,6 +54,7 @@ Test: python3 test_app.py
 """
 
 import os
+import hmac
 import functools
 import sys
 import time
@@ -77,6 +78,7 @@ import zk
 import webauthn_auth
 import observability  # v9.31 freeze condition 6 — operator-readable metrics surface
 import pqc_signing    # v9.58 — issuance signature comes from the signing module
+import rp_auth        # v9.288 (P3.4) — relying-party API auth (OAuth2 client-credentials)
 import tracing        # v9.187 (P1.6) — opt-in OpenTelemetry distributed tracing
 
 # v8.93 — Prometheus-compatible /metrics endpoint. The dependency is
@@ -5107,6 +5109,170 @@ def token_authenticity_pack(tok_id):
         pack['note'] = ('this token was signed with the development placeholder, not a '
                         'real ML-DSA-65 key; it cannot be authenticated offline')
     return jsonify(pack)
+
+
+# ============================================================================
+# Relying-party API v1 (P3.4, v9.288) — a stable, versioned verification API a
+# third-party organization calls AS ITSELF, authenticating with OAuth2 client-
+# credentials, to confirm a credential presented to it is authentic and currently
+# authoritative. It is API-ACCESS AUTH ONLY: the token's scope is 'verify' (the
+# only scope the RelyingParty schema allows), so identity never becomes a login
+# product (the vocation). The response carries a verdict and NEVER any personal
+# data, and no who-verified-whom record is kept (that would be a surveillance
+# store); bounding is rate limit + aggregate metrics + a coarse last_used_at.
+# ============================================================================
+
+# A fixed scrypt hash used to reject an unknown client_id in constant time, so the
+# token endpoint is not a client-id oracle (mirrors security.authenticate).
+_RP_DUMMY_HASH = None
+
+
+def _rp_dummy_hash():
+    global _RP_DUMMY_HASH
+    if _RP_DUMMY_HASH is None:
+        import secrets as _secrets
+        _RP_DUMMY_HASH = security.hash_password(_secrets.token_hex(32))
+    return _RP_DUMMY_HASH
+
+
+def _rp_client_credentials(req):
+    """Read client_id/client_secret from HTTP Basic (preferred, RFC 6749 2.3.1)
+    or the form body. Returns (client_id, client_secret), each possibly None."""
+    auth = req.authorization
+    if auth and auth.type and auth.type.lower() == 'basic':
+        return auth.username, auth.password
+    return req.form.get('client_id'), req.form.get('client_secret')
+
+
+@app.route('/api/v1/oauth/token', methods=['POST'])
+def api_v1_oauth_token():
+    """OAuth2 client-credentials grant (RFC 6749 section 4.4) for a registered
+    relying party. Exchange client_id + client_secret for a short-lived, signed,
+    verify-scoped bearer token. No cookie, no session; the token is stateless and
+    grants verification only."""
+    grant = request.form.get('grant_type', 'client_credentials')
+    if grant != 'client_credentials':
+        return jsonify(error='unsupported_grant_type'), 400
+    client_id, client_secret = _rp_client_credentials(request)
+    if not client_id or not client_secret:
+        return jsonify(error='invalid_request',
+                       error_description='client_id and client_secret are required'), 400
+    # Slow credential stuffing per client_id (the per-IP write limiter in
+    # _security_before_request already applies to this POST).
+    if not security.rate_limiter.allow('rptoken:%s' % client_id,
+                                       security.RATE_LIMIT_LOGIN_MAX,
+                                       security.RATE_LIMIT_LOGIN_WINDOW):
+        return jsonify(error='rate_limited'), 429
+    row = query("SELECT rp_id, client_secret_hash, enabled, scope "
+                "FROM RelyingParty WHERE client_id = %s",
+                (client_id,), fetch='one', primary=True)
+    # Constant time whether or not the client_id exists: always run one scrypt
+    # verify (against a dummy hash for an unknown id) before deciding.
+    stored_hash = row['client_secret_hash'] if row else _rp_dummy_hash()
+    secret_ok = security.verify_password(stored_hash, client_secret)
+    if not row or not secret_ok or not row['enabled']:
+        return jsonify(error='invalid_client'), 401
+    token = rp_auth.issue_access_token(app.secret_key, row['rp_id'], client_id, row['scope'])
+    # Coarse liveness only — NOT a log of what was verified.
+    query("UPDATE RelyingParty SET last_used_at = now() WHERE rp_id = %s",
+          (row['rp_id'],), fetch='none')
+    return jsonify(access_token=token, token_type='Bearer',
+                   expires_in=rp_auth.TOKEN_TTL, scope=row['scope'])
+
+
+def _rp_require_token():
+    """Validate the Bearer access token on an /api/v1 request. Returns the token
+    payload, or (None, error_response) so the caller can `return` it."""
+    token = rp_auth.parse_bearer(request.headers.get('Authorization'))
+    payload = rp_auth.validate_access_token(app.secret_key, token)
+    if payload is None:
+        return None, (jsonify(error='invalid_token',
+                              error_description='a valid, unexpired, verify-scoped bearer token is required'), 401)
+    return payload, None
+
+
+@app.route('/api/v1/verify', methods=['POST'])
+def api_v1_verify():
+    """Stable v1 verification: a relying party submits the credential a holder
+    PRESENTED to it (token_value + the issued signature) and gets back whether it
+    is authentic and currently authoritative. Never any personal data.
+
+    Anti-enumeration / no existence oracle: the caller must present the GENUINE
+    issued signature, and a not-found token_value or a signature that does not
+    match the stored one returns the SAME uniform 'not verifiable' verdict — status
+    is revealed only to a caller that actually holds the presented credential, so a
+    relying party cannot walk token ids/values to survey the population. token_id is
+    a sequential serial and is never accepted here for exactly that reason."""
+    payload, err = _rp_require_token()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    token_value = body.get('token_value')
+    presented_sig_hex = body.get('signature_hex')
+    if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
+        return jsonify(error='invalid_request',
+                       error_description='token_value and signature_hex (the presented pack) are required'), 400
+    # Per-RP rate limit (the coarse velocity bound; no per-verification record).
+    rp_id = payload.get('rp')
+    limit_row = query("SELECT rate_limit_per_min FROM RelyingParty WHERE rp_id = %s AND enabled = TRUE",
+                      (rp_id,), fetch='one', primary=True)
+    if not limit_row:
+        return jsonify(error='invalid_token', error_description='the relying party is no longer enabled'), 401
+    if not security.rate_limiter.allow('rpverify:%s' % rp_id, int(limit_row['rate_limit_per_min']), 60):
+        return jsonify(error='rate_limited'), 429
+
+    # The uniform 'not verifiable' verdict — returned for a not-found token_value,
+    # a signature that does not match the stored one, or an invalid stored
+    # signature, so none of those cases is distinguishable from another.
+    def _not_verifiable():
+        return jsonify(api_version='v1', authentic=False, currently_authoritative=False,
+                       usable=False, issuer_authentic=None, status=None, as_of=None,
+                       decision='reject', reason='not a verifiable presentation')
+
+    row = query("""
+        SELECT it.token_value, it.status,
+               ts.signature_bytes, ts.signing_public_key_hex,
+               ag.signing_public_key_hex AS agency_key,
+               now() AS as_of
+        FROM   IdentityToken it
+        JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
+        JOIN   Agency ag ON ag.agency_id = it.issuing_agency_id
+        WHERE  it.token_value = %s
+        ORDER BY ts.signed_at DESC
+    """, (token_value,), fetch='one', primary=True)
+    if not row:
+        return _not_verifiable()
+
+    stored_raw = row['signature_bytes']
+    stored_sig = bytes(stored_raw) if stored_raw is not None else b''
+    try:
+        presented_sig = bytes.fromhex(presented_sig_hex)
+    except (ValueError, TypeError):
+        return _not_verifiable()
+    # Possession proof: the caller holds the GENUINE issued signature (constant
+    # time), and that signature is cryptographically valid over SHA3-256(value).
+    if not stored_sig or not hmac.compare_digest(presented_sig, stored_sig):
+        return _not_verifiable()
+    if not pqc_signing.verify_stored_signature(
+            token_value, stored_sig, row['signing_public_key_hex'], witnesses='single'):
+        return _not_verifiable()
+
+    status = row['status']
+    currently_authoritative = (status == 'ACTIVE')
+    tkey, akey = row['signing_public_key_hex'], row['agency_key']
+    issuer_authentic = (tkey == akey) if (tkey and akey) else None
+    return jsonify(
+        api_version='v1',
+        authentic=True,
+        issuer_authentic=issuer_authentic,
+        currently_authoritative=currently_authoritative,
+        status=status,
+        status_source='primary',
+        as_of=row['as_of'].isoformat() if row.get('as_of') else None,
+        usable=currently_authoritative,
+        decision=('accept' if currently_authoritative else 'reject'),
+        reason=(None if currently_authoritative else 'authentic but not currently authoritative'),
+    )
 
 
 # ============================================================================

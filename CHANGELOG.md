@@ -5,6 +5,57 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.288 — 2026-09-08 (Relying-party API v1: a bounded verification oracle)
+
+P3.4. The holder can present a credential (v9.287); this gives the other side a way
+to check it as a real organization, over a stable versioned API, without ever
+becoming a login product. It is the first PROGRAMMATIC (non-operator) authentication
+path in Polaris, and it is deliberately narrow.
+
+- **A relying party authenticates as itself.** `polaris rp-register "<org>"` mints a
+  `client_id` and `client_secret` (only the scrypt hash is stored, the secret shown
+  once). `POST /api/v1/oauth/token` is OAuth2 client-credentials (RFC 6749 §4.4):
+  present the credential by HTTP Basic and receive a short-lived, signed, verify-scoped
+  bearer token. The token is stateless and salted distinctly from the operator session
+  cookie, verified in constant time so the endpoint is not a client-id oracle.
+
+- **API-access auth ONLY, enforced at the schema.** `RelyingParty.scope` is
+  CHECK-constrained to `'verify'` — there is no other scope the table can hold. A
+  relying party can confirm a credential and nothing else; identity never becomes a
+  login-as-a-person product (the vocation), and that is a database constraint, not a
+  policy the app could relax.
+
+- **`POST /api/v1/verify`: a verdict, never a person.** The relying party submits the
+  credential the holder presented (the `token_value` and the issued `signature_hex`)
+  and gets back `authentic`, `currently_authoritative`, `usable`, and a `decision` —
+  with no personal data in any branch. Authenticity is the immutable signature;
+  authorization is read fresh from the primary; a revoked credential stays authentic
+  but is not authoritative.
+
+- **No enumeration, no existence oracle.** The caller must present the GENUINE issued
+  signature (a constant-time possession proof against the stored signature), so it can
+  only verify credentials actually presented to it — it cannot forge a signature to
+  walk the population. A not-found value or a mismatched signature returns the same
+  uniform "not a verifiable presentation" verdict, so existence never leaks, and the
+  sequential `token_id` is never accepted here. No who-verified-whom record is kept: a
+  per-verification log would itself be a surveillance store, so bounding is rate limit
+  plus aggregate metrics, never a trail.
+
+- **The bound is a running adversary.** An RP bearer establishes no operator session,
+  so it reaches nothing but `/api/v1/verify`; two new controls-as-attacks adversaries
+  run every release and turn CI red if an RP credential ever reaches an operator surface
+  or if a verdict ever carries personal data (`attack_controls.py`, AC-6). The v9.287
+  relying-party tool gains an `--oauth` mode and now authenticates as an org end to end.
+
+Tested at every level: `RelyingPartyApiTests` (auth, the scope boundary, the uniform
+not-verifiable verdict, the no-PII verdict, accept/revoke) and the two AC-6 adversaries,
+pinned by `check_relying_party_api` (#1 of 154), detection-tested.
+
+154 machine-checked invariants; the holder now has someone to present to, and that
+someone can only ever verify.
+
+---
+
 ## v9.287 — 2026-09-08 (The holder-to-verifier flow, run end to end)
 
 The pieces existed in isolation: the wallet holds and presents a credential (PE.7),

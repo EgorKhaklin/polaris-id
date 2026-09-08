@@ -6054,6 +6054,44 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"
 
 
+def test_relying_party_api_check_discriminates(tmp_path):
+    # v9.288 (P3.4): the relying-party verification API -- OAuth2 client-credentials,
+    # scope CHECK-constrained to 'verify', a possession-proof + uniform 'not
+    # verifiable' verdict (no enumeration), no personal data, and the bound run as
+    # adversaries. Each perturbation removes one leg.
+    good = {'polaris_sql/01_schema.sql': "CREATE TABLE RelyingParty (\n    rp_id SERIAL PRIMARY KEY,\n    client_id VARCHAR(64) NOT NULL UNIQUE,\n    client_secret_hash VARCHAR(255) NOT NULL,\n    scope VARCHAR(40) NOT NULL DEFAULT 'verify'\n        CONSTRAINT chk_rp_scope CHECK (scope IN ('verify'))\n);\n", 'polaris_web/rp_auth.py': "_SALT = 'polaris-rp-access-token-v1'\ndef issue_access_token(secret_key, rp_id, client_id, scope='verify'): return 't'\ndef validate_access_token(secret_key, token, max_age=300): return {}\ndef parse_bearer(h): return None\n", 'polaris_web/app.py': "import hmac\n@app.route('/api/v1/oauth/token', methods=['POST'])\ndef api_v1_oauth_token():\n    grant = 'client_credentials'\n    return jsonify(error='invalid_client'), 401\n@app.route('/api/v1/verify', methods=['POST'])\ndef api_v1_verify():\n    if not hmac.compare_digest(a, b): return _not\n    return jsonify(reason='not a verifiable presentation')\n", 'polaris_cli/polaris.py': 'def cmd_rp_register(args):\n    pass\n', 'scripts/polaris-relying-party.py': 'def _oauth_status_checker(u, i, s, c):\n    pass\n', 'polaris_web/test_app.py': 'class RelyingPartyApiTests:\n    def t(self): pass\n', 'attacks/attack_controls.py': 'def attack_ac6_rp_credential_reaches_operator_surface(): pass\ndef attack_ac6_rp_verdict_leaks_personal_data(): pass\n'}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_relying_party_api(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. scope is no longer CHECK-constrained to 'verify' (could become a login product)
+    write({"polaris_sql/01_schema.sql": good["polaris_sql/01_schema.sql"].replace("CHECK (scope IN ('verify'))", "CHECK (scope IN ('verify','login'))")})
+    assert checks.check_relying_party_api(tmp_path)[0].level == "FAIL", "must FAIL if scope is not constrained to verify"
+    # 2. the bearer is no longer salted distinctly from the session cookie
+    write({"polaris_web/rp_auth.py": good["polaris_web/rp_auth.py"].replace("polaris-rp-access-token-v1", "polaris-session")})
+    assert checks.check_relying_party_api(tmp_path)[0].level == "FAIL", "must FAIL without the distinct bearer salt"
+    # 3. the verify endpoint drops the uniform not-verifiable verdict (existence oracle)
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("not a verifiable presentation", "no such token")})
+    assert checks.check_relying_party_api(tmp_path)[0].level == "FAIL", "must FAIL without the uniform not-verifiable verdict"
+    # 4. the verify endpoint drops the possession proof (constant-time signature match)
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("compare_digest", "equals")})
+    assert checks.check_relying_party_api(tmp_path)[0].level == "FAIL", "must FAIL without the possession proof"
+    # 5. the least-privilege bound is no longer a running adversary
+    write({"attacks/attack_controls.py": good["attacks/attack_controls.py"].replace("ac6_rp_credential_reaches_operator_surface", "noop")})
+    assert checks.check_relying_party_api(tmp_path)[0].level == "FAIL", "must FAIL without the bounded-authority adversary"
+    # 6. the no-personal-data verdict is no longer a running adversary
+    write({"attacks/attack_controls.py": good["attacks/attack_controls.py"].replace("ac6_rp_verdict_leaks_personal_data", "noop")})
+    assert checks.check_relying_party_api(tmp_path)[0].level == "FAIL", "must FAIL without the no-PII adversary"
+    # 7. the CLI can no longer register a relying party
+    write({"polaris_cli/polaris.py": "def cmd_other(args):\n    pass\n"})
+    assert checks.check_relying_party_api(tmp_path)[0].level == "FAIL", "must FAIL without rp-register"
+
+
 def test_holder_verifier_flow_check_discriminates(tmp_path):
     # v9.287: the end-to-end holder<->verifier flow — a standalone relying party
     # decides ACCEPT/REJECT by combining offline authenticity (verify_pack) with

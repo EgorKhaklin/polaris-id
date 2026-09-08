@@ -9828,3 +9828,181 @@ class EndToEndFlowTests(PolarisTestCase):
         self.assertEqual(normal['decision'], 'accept')
         self.assertEqual(sorted(normal), sorted(duress),
                          "the relying party's verdict has the same shape — it cannot tell duress from normal")
+
+
+# --- Relying-party verification API v1 (P3.4, v9.288) ------------------------
+# A registered relying-party ORGANIZATION authenticates with OAuth2 client-
+# credentials and calls POST /api/v1/verify to confirm a presented credential is
+# authentic and currently authoritative — never any personal data, and its
+# credential reaches nothing but the verification endpoint. The placeholder path
+# exercises auth, the scope boundary, the no-PII response, and the uniform
+# not-verifiable verdict (no crypto needed — a placeholder signature verifies);
+# the real-ML-DSA accept/reject is additionally gated below.
+import base64 as _rp_b64
+
+
+class RelyingPartyApiTests(PolarisTestCase):
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def setUp(self):
+        super().setUp()
+        self._rp_client_ids = []
+
+    def tearDown(self):
+        if getattr(self, '_rp_client_ids', None):
+            with self._new_conn() as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM RelyingParty WHERE client_id = ANY(%s)", (self._rp_client_ids,))
+                conn.commit()
+        super().tearDown()
+
+    def _register_rp(self, secret, enabled=True, rate=120, suffix='0001'):
+        client_id = 'rp_test_%s_%s' % (suffix, 'x' * 8)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM RelyingParty WHERE client_id = %s", (client_id,))
+            cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (client_id, flask_app.security.hash_password(secret), 'Test RP ' + suffix, enabled, rate))
+            conn.commit()
+        self._rp_client_ids.append(client_id)
+        return client_id
+
+    @staticmethod
+    def _basic(client_id, secret):
+        raw = _rp_b64.b64encode(('%s:%s' % (client_id, secret)).encode()).decode()
+        return {'Authorization': 'Basic ' + raw}
+
+    def _bearer(self, client_id, secret):
+        r = self.client.post('/api/v1/oauth/token', headers=self._basic(client_id, secret),
+                             data={'grant_type': 'client_credentials'})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        return {'Authorization': 'Bearer ' + r.get_json()['access_token']}
+
+    def _issue_and_pack(self, token_value):
+        r = self._post('/uc1/issue', data={
+            'legal_name': 'RP Holder', 'date_of_birth': '1990-01-15', 'jurisdiction': 'US-OH',
+            'issuing_agency_id': '1', 'algorithm_id': '1', 'biometric_binding_type': 'IRIS',
+            'witness_agency_id': '2', 'liveness_check_type': 'MULTI_MODAL', 'token_value': token_value,
+            'physical_serial': 'SN-' + token_value, 'hardware_model': 'TitanQ-3', 'contexts': ['1'],
+        }, follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (token_value,))
+            tid = cur.fetchone()['token_id']
+        return self.client.get('/api/tokens/%d/authenticity-pack' % tid).get_json()
+
+    # --- OAuth2 client-credentials ------------------------------------------
+    def test_token_endpoint_issues_a_verify_scoped_bearer(self):
+        cid = self._register_rp('right-secret-aaa')
+        r = self.client.post('/api/v1/oauth/token', headers=self._basic(cid, 'right-secret-aaa'),
+                             data={'grant_type': 'client_credentials'})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body['token_type'], 'Bearer')
+        self.assertEqual(body['scope'], 'verify')
+        self.assertEqual(body['expires_in'], 300)
+        self.assertTrue(body['access_token'])
+
+    def test_wrong_secret_is_invalid_client(self):
+        cid = self._register_rp('right-secret-bbb', suffix='0002')
+        r = self.client.post('/api/v1/oauth/token', headers=self._basic(cid, 'WRONG'),
+                             data={'grant_type': 'client_credentials'})
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.get_json()['error'], 'invalid_client')
+
+    def test_unknown_client_is_invalid_client(self):
+        r = self.client.post('/api/v1/oauth/token', headers=self._basic('rp_nope_nope_nope_x', 'x'),
+                             data={'grant_type': 'client_credentials'})
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.get_json()['error'], 'invalid_client')
+
+    def test_disabled_rp_cannot_get_a_token(self):
+        cid = self._register_rp('secret-ccc', enabled=False, suffix='0003')
+        r = self.client.post('/api/v1/oauth/token', headers=self._basic(cid, 'secret-ccc'),
+                             data={'grant_type': 'client_credentials'})
+        self.assertEqual(r.status_code, 401)
+
+    def test_unsupported_grant_type_is_400(self):
+        cid = self._register_rp('secret-ddd', suffix='0004')
+        r = self.client.post('/api/v1/oauth/token', headers=self._basic(cid, 'secret-ddd'),
+                             data={'grant_type': 'password'})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()['error'], 'unsupported_grant_type')
+
+    # --- Verification --------------------------------------------------------
+    def test_verify_requires_a_valid_bearer(self):
+        self.assertEqual(self.client.post('/api/v1/verify', json={'token_value': 'x', 'signature_hex': '00'}).status_code, 401)
+        forged = {'Authorization': 'Bearer not-a-real-token'}
+        self.assertEqual(self.client.post('/api/v1/verify', headers=forged,
+                                          json={'token_value': 'x', 'signature_hex': '00'}).status_code, 401)
+
+    def test_verify_accepts_a_genuine_presentation_and_carries_no_pii(self):
+        cid = self._register_rp('secret-eee', suffix='0005')
+        bearer = self._bearer(cid, 'secret-eee')
+        pack = self._issue_and_pack('RP-API-ACCEPT-0001')
+        r = self.client.post('/api/v1/verify', headers=bearer,
+                             json={'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']})
+        self.assertEqual(r.status_code, 200)
+        v = r.get_json()
+        self.assertTrue(v['authentic'])
+        self.assertTrue(v['currently_authoritative'])
+        self.assertTrue(v['usable'])
+        self.assertEqual(v['decision'], 'accept')
+        # The vocation guard: a verdict, never a person. No PII field may appear.
+        forbidden = {'legal_name', 'name', 'date_of_birth', 'dob', 'jurisdiction',
+                     'individual_id', 'biometric', 'biometric_binding_type', 'physical_serial'}
+        self.assertEqual(forbidden & set(k.lower() for k in v.keys()), set(),
+                         "the relying-party verdict must never carry personal data")
+
+    def test_verify_rejects_a_revoked_token_but_stays_authentic(self):
+        cid = self._register_rp('secret-fff', suffix='0006')
+        bearer = self._bearer(cid, 'secret-fff')
+        pack = self._issue_and_pack('RP-API-REVOKE-0001')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.assertEqual(self.client.post('/api/v1/verify', headers=bearer, json=body).get_json()['decision'], 'accept')
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO IssuerDiscretionPolicy (agency_id,max_revoke_percent,window_days,set_by_admin,justification) "
+                        "VALUES (1,90,30,'test','relying-party api revoke fixture') "
+                        "ON CONFLICT (agency_id) DO UPDATE SET max_revoke_percent=90")
+            with self._new_conn() as c2, c2.cursor() as cur2:
+                cur2.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (pack['token_value'],))
+                tid = cur2.fetchone()['token_id']
+            cur.execute("CALL uc8_revoke_token(%s,1,'ADMINISTRATIVE','https://crl/rp.crl',NULL)", (tid,))
+            conn.commit()
+        v = self.client.post('/api/v1/verify', headers=bearer, json=body).get_json()
+        self.assertTrue(v['authentic'], "the signature stays genuine after revocation")
+        self.assertFalse(v['currently_authoritative'])
+        self.assertEqual(v['decision'], 'reject')
+
+    def test_unknown_value_and_tampered_signature_are_uniformly_not_verifiable(self):
+        cid = self._register_rp('secret-ggg', suffix='0007')
+        bearer = self._bearer(cid, 'secret-ggg')
+        pack = self._issue_and_pack('RP-API-UNIFORM-0001')
+        unknown = self.client.post('/api/v1/verify', headers=bearer,
+                                   json={'token_value': 'NO-SUCH-VALUE', 'signature_hex': pack['signature_hex']}).get_json()
+        bad = ('00' if pack['signature_hex'][:2] != '00' else '11') + pack['signature_hex'][2:]
+        tampered = self.client.post('/api/v1/verify', headers=bearer,
+                                    json={'token_value': pack['token_value'], 'signature_hex': bad}).get_json()
+        # No existence oracle: both look identical, and neither is authentic.
+        self.assertFalse(unknown['authentic'])
+        self.assertFalse(tampered['authentic'])
+        self.assertEqual(unknown, tampered)
+        self.assertEqual(unknown['reason'], 'not a verifiable presentation')
+
+    def test_rp_credential_grants_nothing_but_verification(self):
+        """The bounded-authority core: an RP bearer reaches ONLY /api/v1/verify. It
+        establishes no operator session, so every operator surface denies it."""
+        cid = self._register_rp('secret-hhh', suffix='0008')
+        # A FRESH client with no operator session — only the RP bearer.
+        anon = flask_app.app.test_client()
+        tok = anon.post('/api/v1/oauth/token', headers=self._basic(cid, 'secret-hhh'),
+                        data={'grant_type': 'client_credentials'}).get_json()
+        bearer = {'Authorization': 'Bearer ' + tok['access_token']}
+        for route in ('/api/atlas/subject?individual_id=1', '/api/tokens/1/export',
+                      '/api/tokens/1/verify', '/dashboard', '/individuals', '/api/atlas/records'):
+            code = anon.get(route, headers=bearer).status_code
+            self.assertIn(code, (301, 302, 401, 403),
+                          "an RP bearer must not reach operator route %s (got %s)" % (route, code))
+        # It cannot POST-issue either.
+        self.assertIn(anon.post('/uc1/issue', headers=bearer, data={'token_value': 'X'}).status_code,
+                      (301, 302, 400, 401, 403))

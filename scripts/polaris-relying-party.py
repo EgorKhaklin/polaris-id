@@ -109,6 +109,38 @@ def _http_status_checker(issuer_url):
     return check
 
 
+def _oauth_status_checker(issuer_url, client_id, client_secret, credential):
+    """Authenticate as a relying-party ORGANIZATION (OAuth2 client-credentials,
+    P3.4) and read the token's status from the versioned /api/v1/verify endpoint by
+    presenting the credential the holder handed over. This is how a real relying
+    party — a bank, a kiosk — reaches the status check: as itself, with its own
+    credential, not by borrowing an operator login. It presents the genuine issued
+    signature (a possession proof), and the issuer returns the verdict with no
+    personal data. Returns the status shape verify_presentation reads."""
+    import base64
+    base = issuer_url.rstrip("/")
+    creds = base64.b64encode(("%s:%s" % (client_id, client_secret)).encode()).decode()
+    token_req = urllib.request.Request(
+        "%s/api/v1/oauth/token" % base, data=b"grant_type=client_credentials",
+        headers={"Authorization": "Basic " + creds,
+                 "Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(token_req, timeout=30) as r:
+        bearer = json.loads(r.read())["access_token"]
+    body = json.dumps({"token_value": credential.get("token_value"),
+                       "signature_hex": credential.get("signature_hex")}).encode()
+
+    def check(_token_id):
+        req = urllib.request.Request(
+            "%s/api/v1/verify" % base, data=body,
+            headers={"Authorization": "Bearer " + bearer, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            v = json.loads(r.read())
+        # Map the v1 verdict onto the status shape verify_presentation consumes.
+        return {"currently_authoritative": v.get("currently_authoritative"),
+                "status": v.get("status")}
+    return check
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Polaris relying-party verifier (holder<->verifier flow).")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -116,6 +148,9 @@ def main(argv=None):
     p.add_argument("--presentation", required=True, help="the wallet's presentation JSON (default: stdin)")
     p.add_argument("--issuer-anchor", help="the issuer's published verification key(s)")
     p.add_argument("--issuer-url", help="the issuer base URL for the online status check")
+    p.add_argument("--oauth-client-id",
+                   help="authenticate to the issuer's /api/v1 as this relying-party org (P3.4)")
+    p.add_argument("--oauth-client-secret", help="the relying-party client secret (with --oauth-client-id)")
     p.add_argument("--offline", action="store_true", help="skip the online status check (provisional at best)")
     p.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -132,7 +167,14 @@ def main(argv=None):
         anchor = V._load_anchor(args.issuer_anchor)
     status_checker = None
     if args.issuer_url and not args.offline:
-        status_checker = _http_status_checker(args.issuer_url)
+        if args.oauth_client_id and args.oauth_client_secret:
+            # P3.4: authenticate as a relying-party org and use the versioned
+            # /api/v1/verify contract, presenting this credential.
+            cred = presentation.get("credential") or {}
+            status_checker = _oauth_status_checker(
+                args.issuer_url, args.oauth_client_id, args.oauth_client_secret, cred)
+        else:
+            status_checker = _http_status_checker(args.issuer_url)
 
     verdict = verify_presentation(presentation, anchor_keys=anchor, status_checker=status_checker)
     if args.json:

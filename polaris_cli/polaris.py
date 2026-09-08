@@ -34,6 +34,7 @@ drift from what the program accepts):
     retention-show     What retention is in force, and the cutoff it resolves to
     retention-set      Record a retention decision, or adopt a named template
     audit-log          Tail the authentication audit log
+    rp-register        Register a relying-party org for the /api/v1 verification API
 
 The database connection uses the same environment variables as the web
 application: POLARIS_DB_HOST, POLARIS_DB_NAME, POLARIS_DB_USER,
@@ -1675,6 +1676,13 @@ def build_parser():
     p_qsh = sub.add_parser('quota-show', help='Show per-agency caps (all agencies, or one)')
     p_qsh.add_argument('agency_id', type=int, nargs='?', default=None)
 
+    # rp-register (roadmap P3.4 — relying-party API v1)
+    p_rp = sub.add_parser('rp-register',
+                          help='Register a relying-party org for the /api/v1 verification API')
+    p_rp.add_argument('org_name', help='The relying-party organization name')
+    p_rp.add_argument('--rate-limit-per-min', type=int, default=120,
+                      help='Max verifications per minute for this relying party (default 120)')
+
     # retention (roadmap P1.11)
     p_rsh = sub.add_parser('retention-show',
                            help='What retention is in force, and the cutoff it resolves to')
@@ -1723,6 +1731,44 @@ def build_parser():
     return p
 
 
+def cmd_rp_register(args):
+    """Register a relying-party organization for the /api/v1 verification API
+    (roadmap P3.4). Generates a client_id and a client_secret, stores only the
+    scrypt hash of the secret, and prints the secret ONCE. The credential's scope
+    is 'verify' (schema-enforced): it can call POST /api/v1/verify and nothing
+    else -- identity never becomes a login product."""
+    generate_password_hash = _require_werkzeug()
+    import secrets as _secrets
+    client_id = "rp_" + _secrets.token_hex(12)          # matches ^rp_[A-Za-z0-9_-]{16,}$
+    client_secret = _secrets.token_urlsafe(32)
+    secret_hash = generate_password_hash(client_secret, method='scrypt')
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, rate_limit_per_min)
+                VALUES (%s, %s, %s, %s)
+                RETURNING rp_id
+            """, (client_id, secret_hash, args.org_name, args.rate_limit_per_min))
+            rp_id = cur.fetchone()['rp_id']
+            conn.commit()
+        print(green(f"\u2713 Registered relying party #{rp_id}: {args.org_name}"))
+        print(f"  client_id:     {client_id}")
+        print(f"  client_secret: {client_secret}")
+        print(red("  Store the client_secret now: it is shown ONCE and kept only as a scrypt hash."))
+        print("  Scope: verify -- this credential may call POST /api/v1/verify and nothing else.")
+    except psycopg2.errors.CheckViolation as e:
+        conn.rollback()
+        sys.stderr.write(red(f"Constraint violation: {str(e).split(chr(10))[0]}\n"))
+        sys.exit(3)
+    except psycopg2.Error as e:
+        conn.rollback()
+        sys.stderr.write(red(f"Database error: {db_error_message(e)}\n"))
+        sys.exit(2)
+    finally:
+        conn.close()
+
+
 HANDLERS = {
     'health':           cmd_health,
     'list':             cmd_list,
@@ -1747,6 +1793,7 @@ HANDLERS = {
     'retention-show':   cmd_retention_show,
     'retention-set':    cmd_retention_set,
     'audit-log':        cmd_audit_log,
+    'rp-register':      cmd_rp_register,
 }
 
 

@@ -39,8 +39,8 @@ XL (multi-arc). Risk is delivery risk, not security risk.
 
 ## Where we are (inventory at v9.236)
 
-**Have, working, CI-proven:** a 30-table constraint-enforced schema (37 tables
-in a migrated deployment) with append-only audit; an 88-route application with
+**Have, working, CI-proven:** a 31-table constraint-enforced schema (38 tables
+in a migrated deployment) with append-only audit; a 90-route application with
 WebAuthn operator MFA, a server-side session registry, per-role network policy,
 per-agency quotas and the Atlas; an operator CLI; Plonky2 ZK Merkle inclusion
 with an independent Python second witness and a parameterized tree depth; real
@@ -54,7 +54,7 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 153 invariant
+release; CVE gates on dependencies and images; a coverage floor; 154 invariant
 checks (v9.286) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
@@ -244,7 +244,7 @@ parties verify against Polaris without talking to us.
 | [ ] P3.1 | Topology decision record | M | low | - | An ADR choosing federated per-authority instances (the schema's explicit-attestation model) over a central instance; the threat-model delta documented |
 | [ ] P3.2 | Inter-authority protocol v1 | L | high | P3.1 | A versioned spec: attestation exchange, anchor cross-publication, epoch alignment, revocation propagation; conformance vectors included |
 | [ ] P3.3 | Transparency service | L | med | P3.2 | A public append-only anchor log, mirrored; `ct-monitor` productized as an independent daemon anyone can run; a tampering drill proves detection |
-| [ ] P3.4 | Relying-party API v1 | M | med | P2.6 | A stable versioned verification API; RP organizations authenticate via mTLS or OAuth2 client credentials. This is API access auth only: identity never becomes a login product, per the vocation. Deliberately reopens the retired "OIDC" scope in that narrow form |
+| [x] P3.4 | Relying-party API v1 (v9.288) | M | med | P2.6 | SHIPPED. `RelyingParty` (scope CHECK-constrained to `'verify'` at the schema, scrypt `client_secret_hash`) + `POST /api/v1/oauth/token` (OAuth2 client-credentials, RFC 6749 §4.4, stateless bearer salted distinctly from the session, constant-time so it is not a client-id oracle) + `POST /api/v1/verify` (a relying party presents the held credential and gets an authentic/authoritative verdict with NO personal data). API-access auth ONLY: the schema CHECK makes "identity never becomes a login product" a database constraint. No enumeration / no existence oracle: a constant-time possession proof against the stored signature, a uniform "not a verifiable presentation" verdict on not-found/mismatch, and the sequential `token_id` is never accepted; no who-verified-whom record is kept. The verify-only bound and the no-PII verdict RUN as fail-closed adversaries every release (`attack_controls.py`, AC-6). Registration via `polaris rp-register`; `scripts/polaris-relying-party.py` gains an `--oauth` mode and authenticates as an org end to end. `check_relying_party_api`; `RelyingPartyApiTests`. **mTLS (the other option) is deferred to a P3.4b at the Caddy edge; OAuth2 client-credentials is the CI-testable first cut.** |
 | [ ] P3.5 | RP SDKs and conformance suite | L | med | P3.4 | Server-side verify SDKs (Python, TypeScript) with a public conformance suite; passing it is the integration contract |
 | [ ] P3.6 | Offline verification protocol v1 | L | high | P2.6 | A short-lived signed presentation plus status bundle verifiable with no connectivity; replay and freshness bounds specified; a reference verifier CLI ships |
 | [ ] P3.7 | mDL / ISO 18013-5 bridge | L | med | P3.4 | Read-only derived mdoc presentment from a Polaris token for mDL-reader interop; no new trust semantics |

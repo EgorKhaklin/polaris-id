@@ -599,6 +599,70 @@ under [`vectors/`](../../vectors/) are re-verified under the app's real witnesse
 
 ---
 
+## Relying-party API (v1)
+
+The stable, versioned surface a third-party organization (a bank, a border
+kiosk, an online service) calls to confirm a credential a holder presented to it
+is authentic and currently authoritative. It is the online counterpart to the
+holder wallet and the detached verifier, and the online status source for
+[`scripts/polaris-relying-party.py`](../../scripts/polaris-relying-party.py).
+
+It is **API-access authentication only**. A relying party authenticates *as
+itself* with an OAuth2 client-credential; the identity system never becomes a
+login product, and no endpoint here returns a person's attributes. The verdict
+is authenticity plus authorization, never identity. Register a relying party with
+`polaris rp-register "<org name>"`, which prints a `client_id` and a
+`client_secret` once (only the scrypt hash is stored).
+
+### `POST /api/v1/oauth/token`
+
+OAuth2 client-credentials grant ([RFC 6749 §4.4](https://www.rfc-editor.org/rfc/rfc6749#section-4.4)).
+Present `client_id` and `client_secret` by HTTP Basic (preferred) or form body,
+with `grant_type=client_credentials`. Returns a short-lived, signed, verify-scoped
+bearer token:
+
+```json
+{ "access_token": "…", "token_type": "Bearer", "expires_in": 300, "scope": "verify" }
+```
+
+`400 unsupported_grant_type` for any other grant; `401 invalid_client` on an
+unknown `client_id`, a wrong secret, or a disabled relying party (verified in
+constant time, so the endpoint is not a client-id oracle). The token is stateless
+and signed with a salt distinct from the operator session cookie; it grants
+verification and nothing else (an operator surface presented this bearer denies
+it — it establishes no session).
+
+### `POST /api/v1/verify`
+
+**Bearer required (verify scope).** The relying party submits the credential the
+holder presented to it — the `token_value` and the issued `signature_hex` from the
+authenticity pack — and receives the verdict. Never any personal data.
+
+```json
+{ "token_value": "…", "signature_hex": "…" }
+```
+
+| field | type | notes |
+|---|---|---|
+| `api_version` | string | `v1` |
+| `authentic` | bool | the presented signature is the genuine issued signature over `SHA3-256(token_value)` |
+| `issuer_authentic` | bool \| null | signed by the issuing agency's own registered key; `null` when undecidable |
+| `currently_authoritative` | bool | the token is `ACTIVE`, read fresh from the primary |
+| `status` | string \| null | the lifecycle status; `null` when not verifiable |
+| `as_of` | string \| null | ISO-8601 primary-clock time of the authorization read |
+| `usable` | bool | `authentic` AND `currently_authoritative` |
+| `decision` | string | `accept` or `reject` |
+| `reason` | string \| null | why, on a reject |
+
+**No enumeration, no existence oracle.** The caller must present the genuine
+issued signature: a not-found `token_value` or a signature that does not match the
+stored one returns the same uniform `{ "authentic": false, "decision": "reject",
+"reason": "not a verifiable presentation" }`, so a relying party cannot walk token
+ids or values to survey the population. `token_id` (a sequential serial) is never
+accepted here for exactly that reason. Per-relying-party rate limited; no
+per-verification record is kept (a who-verified-whom log would be a surveillance
+store).
+
 ## Verification API (use cases UC-1 through UC-8)
 
 Each use case is reachable through the operator UI (HTML form) AND

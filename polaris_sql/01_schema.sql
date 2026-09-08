@@ -85,6 +85,7 @@ DROP TABLE IF EXISTS VerificationEvent      CASCADE;
 DROP TABLE IF EXISTS TokenLifecycleEvent    CASCADE;
 DROP TABLE IF EXISTS IdentityToken          CASCADE;
 DROP TABLE IF EXISTS AuthAuditLog           CASCADE;
+DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS AppUser                CASCADE;
 DROP TABLE IF EXISTS VerificationContext    CASCADE;
 DROP TABLE IF EXISTS CryptographicAlgorithm CASCADE;
@@ -218,6 +219,38 @@ COMMENT ON TABLE AppUser IS
   'Application user accounts. Distinct from PostgreSQL roles — the app '
   'connects as polaris_app regardless of which AppUser is logged in. '
   'Passwords are hashed by Werkzeug''s scrypt before storage.';
+
+-- P3.4 (v9.288): a registered relying-party organization that calls the
+-- versioned verification API (/api/v1) as itself, via OAuth2 client-credentials.
+-- API-access auth ONLY: scope is constrained to 'verify' at the schema level, so
+-- the identity system never becomes a login product (the vocation). A relying
+-- party can confirm a credential is authentic and currently authoritative, and
+-- nothing else. No per-verification row is kept anywhere (who-verified-whom would
+-- be a surveillance store); bounding is rate limit + aggregate metrics + a coarse
+-- last_used_at.
+CREATE TABLE RelyingParty (
+    rp_id              SERIAL       PRIMARY KEY,
+    client_id          VARCHAR(64)  NOT NULL UNIQUE
+        CONSTRAINT chk_rp_client_id_format CHECK (client_id ~ '^rp_[A-Za-z0-9_-]{16,}$'),
+    client_secret_hash VARCHAR(255) NOT NULL,
+    org_name           VARCHAR(200) NOT NULL
+        CONSTRAINT chk_rp_org_name CHECK (char_length(trim(org_name)) >= 1),
+    scope              VARCHAR(40)  NOT NULL DEFAULT 'verify'
+        CONSTRAINT chk_rp_scope CHECK (scope IN ('verify')),
+    enabled            BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at       TIMESTAMP,
+    rate_limit_per_min INTEGER      NOT NULL DEFAULT 120
+        CONSTRAINT chk_rp_rate_limit CHECK (rate_limit_per_min > 0)
+);
+
+COMMENT ON TABLE RelyingParty IS
+  'P3.4 relying-party organization for the /api/v1 verification API. API-access '
+  'auth only: scope is CHECK-constrained to ''verify'' so identity never becomes '
+  'a login product (the vocation). client_secret_hash is scrypt (never the '
+  'secret). No who-verified-whom log is kept; bounding is rate limit + metrics.';
+
+CREATE INDEX idx_relyingparty_client_id ON RelyingParty(client_id);
 
 -- coverage:exempt — C1 AoR enforced by tg_authauditlog_append_only; schema_watcher verifies the trigger exists
 CREATE TABLE AuthAuditLog (
