@@ -55,7 +55,7 @@ from collections import deque, OrderedDict
 from urllib.parse import urlsplit
 
 from flask import (
-    request, session, redirect, url_for, render_template, flash, abort, g, current_app
+    request, session, redirect, url_for, abort, current_app
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 

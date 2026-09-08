@@ -5,6 +5,30 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.305 — 2026-09-08 (Repo hygiene: unused imports, CODEOWNERS)
+
+A cleanup pass against golden-standard repository organization. The audit found the codebase
+already meets it -- all standard top-level files (README, LICENSE, CONTRIBUTING,
+CODE_OF_CONDUCT, SECURITY, CHANGELOG, CITATION, NOTICE, .gitignore), full .github community
+health (FUNDING, dependabot, issue and PR templates), no orphaned scripts (every script in
+scripts/ is referenced), zero dangling TODO/FIXME markers in source, and intentional-only
+duplication (the standalone detached verifier and the two-witness design) -- so the changes
+are deliberately small rather than a restructure of a working, heavily pinned tree.
+
+- Removed four genuinely unused imports found by pyflakes: a redundant `prometheus_client`
+  and an unused `CustodyError` in app.py, three unused flask names (`render_template`,
+  `flash`, `g`) in security.py, and an unused `os` in scripts/polaris_authz_audit.py. The two
+  remaining flagged imports are intentional side-effect imports marked `# noqa: F401` (an oqs
+  preload in the dyno, a psycopg2 availability guard in a drill) and are kept.
+- Added .github/CODEOWNERS, the one missing golden-standard community-health file, naming the
+  security- and constitution-critical paths explicitly (the schema, the crypto core, the
+  detached verifier, the invariant layer, MISSION.md, and CI).
+- Removed local .DS_Store cruft (already gitignored, never tracked).
+
+No behavior change: only unused names removed and one review-routing file added. 165 checks.
+
+---
+
 ## v9.304 — 2026-09-08 (Front-door honesty pass, and a flaky-benchmark fix)
 
 An audit of the outward surfaces against three internal points, plus a CI-reliability fix.

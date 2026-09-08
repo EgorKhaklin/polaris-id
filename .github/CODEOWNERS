@@ -1,0 +1,25 @@
+# Code ownership for polaris-id.
+#
+# GitHub uses this file to route a review request automatically when a pull
+# request touches a path. The maintainer owns everything by default; the
+# security- and constitution-critical paths are named explicitly so a change to
+# them can never merge without the owner on the review, even if broader rules
+# change later.
+
+# Default owner for everything in the repository.
+*                       @EgorKhaklin
+
+# The constitution and the machine-checked invariant layer that enforces it.
+/MISSION.md             @EgorKhaklin
+/polaris_checks/        @EgorKhaklin
+
+# The security boundary: the schema (triggers, CHECKs, unique indexes), the
+# cryptographic core, and the detached verifier a third party runs.
+/polaris_sql/           @EgorKhaklin
+/polaris_web/security.py        @EgorKhaklin
+/polaris_web/pqc_signing.py     @EgorKhaklin
+/polaris_web/custody.py         @EgorKhaklin
+/scripts/polaris-verify.py      @EgorKhaklin
+
+# The supply chain and CI that gate every change.
+/.github/               @EgorKhaklin

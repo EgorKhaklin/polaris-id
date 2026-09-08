@@ -88,7 +88,6 @@ import tracing        # v9.187 (P1.6) — opt-in OpenTelemetry distributed traci
 # The production Dockerfile installs it; ad-hoc dev environments may
 # not. Graceful failure preserved.
 try:
-    import prometheus_client
     from prometheus_client import (
         Counter as _PromCounter,
         Histogram as _PromHistogram,
@@ -3420,7 +3419,7 @@ def _health_check_custody():
     """
     real = os.environ.get('POLARIS_USE_REAL_PQC', '0') == '1'
     try:
-        from custody import get_custody, CustodyError  # type: ignore
+        from custody import get_custody  # type: ignore
         cust = get_custody()
     except Exception as exc:  # CustodyError or an import problem
         if not real:
