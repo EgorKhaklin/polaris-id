@@ -5756,3 +5756,52 @@ def test_key_rotation_drilled_check_discriminates(tmp_path):
     # 4. CI does not run the custody drill
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+
+
+def test_holder_wallet_check_discriminates(tmp_path):
+    # PE.7 (v9.278): the holder wallet must be standalone (no server/DB), offer the
+    # four holder commands, derive the epoch leaf with the issuer's recipe, verify
+    # offline via the detached verifier, and have its deniability + ZK round-trip
+    # exercised by a test the coverage suite runs. Each perturbation removes one leg.
+    WALLET = (
+        "import argparse, hashlib, json\n"
+        "def _seed(tid, tv, ctx):\n"
+        "    return hashlib.sha3_256(('%s|%s|%s' % (tid, tv, ctx)).encode()).hexdigest()\n"
+        "def use_verifier():\n"
+        "    return verify_pack  # offline verification via the detached verifier\n"
+        "COMMANDS = ['enroll', 'show', 'verify', 'present', 'prove-membership']\n"
+        "# derives the leaf from token_id\n"
+    )
+    TEST = (
+        "def test_present_and_duress_are_indistinguishable(self):\n    pass\n"
+        "def test_prove_membership_roundtrips_through_polaris_zk(self):\n"
+        "    assert bundle['verified']\n"
+    )
+    COV = "run scripts unittest test_verify_load test_wallet\n"
+    good = {
+        "scripts/polaris-wallet.py": WALLET,
+        "scripts/test_wallet.py": TEST,
+        "scripts/polaris-coverage.sh": COV,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_holder_wallet(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. not holder-side — imports server code
+    write({"scripts/polaris-wallet.py": WALLET.replace("import argparse, hashlib, json\n",
+                                                       "import argparse, hashlib, json\nimport pqc_signing\n")})
+    assert checks.check_holder_wallet(tmp_path)[0].level == "FAIL", "must FAIL when the wallet imports server code"
+    # 2. a holder command is missing
+    write({"scripts/polaris-wallet.py": WALLET.replace("'prove-membership'", "'noop'")})
+    assert checks.check_holder_wallet(tmp_path)[0].level == "FAIL", "must FAIL when a holder command is missing"
+    # 3. the deniability property is no longer tested
+    write({"scripts/test_wallet.py": TEST.replace("test_present_and_duress_are_indistinguishable", "test_noop")})
+    assert checks.check_holder_wallet(tmp_path)[0].level == "FAIL", "must FAIL without the deniability test"
+    # 4. the coverage suite does not run the wallet test
+    write({"scripts/polaris-coverage.sh": COV.replace("test_wallet", "test_other")})
+    assert checks.check_holder_wallet(tmp_path)[0].level == "FAIL", "must FAIL when coverage does not run test_wallet"

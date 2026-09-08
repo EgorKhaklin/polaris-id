@@ -58,6 +58,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-verify.py` | The detached verifier: an ML-DSA-65 authenticity pack verifies offline with only a standard ML-DSA library, no Polaris code and no database; `--selftest` (a live round-trip) and `--verify-dir vectors` run in the pqc-real job | `ci.yml`, and any relying party with no Polaris installed |
 | `polaris-make-vectors.py` | Generates the published authenticity vectors (`vectors/`), preferring liboqs and falling back to an independent FIPS-204 implementation | A contributor regenerating `vectors/` |
 | `polaris-federation-drill.py` | Two issuers on one box with distinct ML-DSA-65 roots plus a third outsider; proves via the detached verifier that each relying party accepts its own issuer and rejects a foreign one (PE.3), red if the boundary breaks | `ci.yml`'s pqc-real job |
+| `polaris-wallet.py` | The holder's wallet (PE.7), the first non-operator surface: hold a credential as a file, verify it offline, present it (a duress presentation is indistinguishable from a normal one), and prove membership in zero knowledge. Standalone — no server code, no database | A holder; `test_wallet.py` in CI |
 
 ## Contributor: run before a commit
 

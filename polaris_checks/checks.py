@@ -6500,11 +6500,76 @@ def check_key_rotation_drilled(root: pathlib.Path) -> list[Finding]:
                "token still verifies after rotation while the new key signs, run against a real Kryoptic token in CI")
 
 
+# ---------------------------------------------------------------------------
+# The holder has a surface (roadmap PE.7). Everything else in Polaris is
+# operator-facing; scripts/polaris-wallet.py is the first tool a PERSON runs — to
+# hold their credential as a file, verify it offline, present it, and prove
+# membership in zero knowledge. It must be genuinely holder-side (no server code,
+# no database) or it is just another operator tool, and its duress presentation
+# must be indistinguishable from a normal one (the anti-coercion vocation, on the
+# holder's side). This check pins that the wallet is standalone, offers the four
+# holder capabilities, derives the epoch leaf with the SAME recipe the issuer uses
+# (so membership proofs are for the real leaf), and that its behaviour — the
+# deniability property and a ZK proof that round-trips — is EXERCISED by a test the
+# coverage suite runs.
+# Detection: test_checks adds a server import, drops a command, and removes the
+# deniability test / the coverage wiring.
+# ---------------------------------------------------------------------------
+_WALLET_FORBIDDEN_IMPORTS = ("psycopg2", "flask", "app", "pqc_signing", "custody",
+                             "security", "observability", "zk", "anchoring", "webauthn_auth")
+_WALLET_COMMANDS = ("enroll", "show", "verify", "present", "prove-membership")
+
+
+def check_holder_wallet(root: pathlib.Path) -> list[Finding]:
+    wallet = _read(root, "scripts/polaris-wallet.py")
+    if not wallet:
+        return _fail("holder_wallet", "scripts/polaris-wallet.py is missing")
+    # Holder-side: no server code, no database.
+    for mod in _WALLET_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", wallet, re.M):
+            return _fail("holder_wallet",
+                         f"scripts/polaris-wallet.py imports {mod!r}; the holder wallet must be standalone "
+                         "(no Polaris server code, no database) — a person runs it on their own machine")
+    # The four holder capabilities.
+    for cmd in _WALLET_COMMANDS:
+        if f'"{cmd}"' not in wallet and f"'{cmd}'" not in wallet:
+            return _fail("holder_wallet", f"the wallet is missing the {cmd!r} command")
+    # Membership proofs must derive the epoch leaf with the issuer's recipe, or they
+    # prove the wrong leaf: SHA3-256("{token_id}|{token_value}|{context_id}").
+    if "sha3_256" not in wallet or "token_id" not in wallet or "|" not in wallet:
+        return _fail("holder_wallet",
+                     "the wallet must derive the epoch leaf seed with the issuer's recipe "
+                     "(SHA3-256 of token_id|token_value|context_id) or its membership proof is for the wrong leaf")
+    # Offline verification goes through the detached verifier (a holder tool), not a server call.
+    if "verify_pack" not in wallet:
+        return _fail("holder_wallet",
+                     "the wallet must verify offline through the detached verifier (verify_pack), not a server call")
+    # Its behaviour is exercised: the deniability property and a ZK proof that round-trips.
+    test = _read(root, "scripts/test_wallet.py")
+    if not test:
+        return _fail("holder_wallet", "scripts/test_wallet.py is missing")
+    if "test_present_and_duress_are_indistinguishable" not in test:
+        return _fail("holder_wallet",
+                     "test_wallet.py must prove the deniability property (present and present --duress are "
+                     "structurally identical), the holder-side of the anti-coercion vocation")
+    if "test_prove_membership_roundtrips" not in test or "verified" not in test:
+        return _fail("holder_wallet",
+                     "test_wallet.py must prove a ZK membership proof that round-trips through polaris-zk verify")
+    cov = _read(root, "scripts/polaris-coverage.sh")
+    if "test_wallet" not in cov:
+        return _fail("holder_wallet",
+                     "scripts/polaris-coverage.sh must run test_wallet so the holder surface is exercised in CI")
+    return _ok("holder_wallet",
+               "the holder wallet is standalone (no server/DB), offers enroll/show/verify/present/prove-membership, "
+               "derives the epoch leaf with the issuer's recipe, and its deniability + ZK round-trip are tested in CI")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_detached_verifier,
     check_attacks_run,
     check_federation_real,
     check_key_rotation_drilled,
+    check_holder_wallet,
     check_public_claims_honest,
     check_verify_witness_sampling,
     check_constitution_layered,

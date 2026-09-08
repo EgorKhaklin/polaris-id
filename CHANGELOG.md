@@ -5,6 +5,42 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.278 — 2026-09-08 (The holder gets a surface: a wallet that holds, presents, and proves in zero knowledge)
+
+Phase E, PE.7. Everything in Polaris until now was operator-facing — an agency
+issues, an operator verifies. `scripts/polaris-wallet.py` is the first tool a
+PERSON runs. It is deliberately plain (stdlib plus the detached verifier and the
+polaris-zk binary), and it is genuinely holder-side: no server code, no database.
+
+- **Hold a credential as a file.** `enroll --pack` stores an authenticity pack in
+  the wallet (`~/.polaris-wallet`, `0700`); `show` displays it offline.
+- **Verify it offline.** `verify` runs the detached verifier (PE.2) on the held
+  credential — the holder confirms their own credential is authentic with no server.
+- **Present it, deniably.** `present` emits a presentation for a relying party.
+  `present --duress` produces a presentation that is byte-identical in structure to
+  a normal one — same keys, same credential — so an observer cannot tell which was
+  used; only the opaque code value differs, and the server matches it out of sight.
+  This is the holder's side of the anti-coercion vocation. The vocation-preserving
+  default is not to store the duress code on the device; `test_wallet.py` proves the
+  indistinguishability.
+- **Prove membership in zero knowledge.** `prove-membership --epoch` derives the
+  holder's epoch leaf with the issuer's exact recipe
+  (`SHA3-256("{token_id}|{token_value}|{context_id}")`), finds its index in the
+  published anonymity set, and produces a real Plonky2 proof via the polaris-zk
+  binary — a proof that its token is in the set WITHOUT revealing which member. The
+  proof round-trips through `polaris-zk verify` (`{"verified":true}`); a non-member
+  is refused with nothing to prove.
+- **Pinned and exercised.** `check_holder_wallet` (#146) pins the wallet is
+  standalone, offers the four capabilities, derives the leaf correctly, and verifies
+  through the detached verifier; `test_wallet.py` (in the coverage suite) proves the
+  deniability property and the ZK round-trip, both detection-tested.
+
+Constitutional note: no change to C1-C10 or the vocation — this extends it to the
+holder. The wallet holds only the holder's own credential and secrets, on the
+holder's own machine, and reaches no Polaris server or database.
+
+---
+
 ## v9.277 — 2026-09-08 (The HSM is the sole signer: a fail-closed profile and in-token key rotation)
 
 Phase E, PE.4. Polaris already signs inside a PKCS#11 token (ML-DSA-65, in-token,

@@ -59,7 +59,7 @@ polaris/
 │   └── paper/          ← the academic report (TeX and PDF)
 ├── DEVNOTES/           ← the contributor's working notes: gotchas, house style, the project record
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
-├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py and its vector generator live here too
+├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── vectors/            ← published authenticity packs a relying party re-verifies offline with scripts/polaris-verify.py (README.md explains the format)
 ├── attacks/            ← adversaries that MUST fail (forge, tamper, revoked-token); run_attacks.py runs every release and goes red if any SUCCEEDS
 ├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
