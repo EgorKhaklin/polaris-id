@@ -6934,6 +6934,44 @@ def _signed_statement_keys(src: str, fn: str):
     return re.findall(r"""['"]([a-z_]+)['"]\s*:""", body)
 
 
+def check_transparency_publication(root: pathlib.Path) -> list[Finding]:
+    """P3.3c: external-ledger publication. A log publishes each head into an independent
+    append-only ledger and gets a receipt -- the ledger's own signed head plus an inclusion
+    proof -- so the log cannot use a head it has not publicly committed, and the ledger
+    cannot later drop it. The detached verifier confirms a receipt; a file-backed ledger
+    driver records heads (real chain drivers declared); a drill proves the pipeline and
+    rejects forgery under real ML-DSA."""
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_publication", "_publication_entry", "polaris-transparency-publication/1"):
+        if sym not in v:
+            return _fail("transparency_publication",
+                         "scripts/polaris-verify.py must verify a publication receipt (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("transparency_publication",
+                         f"the offline verifier imports {mod!r}; it must stay standalone")
+    ledger = _read(root, "scripts/polaris-transparency-ledger.py")
+    if (not ledger or "log_tree_head" not in ledger or "log_inclusion_proof" not in ledger
+            or "POLARIS_LEDGER_BACKEND" not in ledger):
+        return _fail("transparency_publication",
+                     "scripts/polaris-transparency-ledger.py must be an append-only ledger with a backend "
+                     "driver (file default, chain drivers declared)")
+    drill = _read(root, "scripts/polaris-transparency-publication-drill.py")
+    if not drill or "verify_publication" not in drill or "polaris-transparency-ledger.py" not in drill:
+        return _fail("transparency_publication",
+                     "scripts/polaris-transparency-publication-drill.py must run the ledger and prove the "
+                     "receipt / forgery / append-only matrix")
+    if "polaris-transparency-publication-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("transparency_publication",
+                     "the publication drill must run in CI (a publication proof that never runs is displacement)")
+    return _ok("transparency_publication",
+               "a log's heads are published into an independent append-only ledger with a verifiable inclusion "
+               "receipt (the ledger's signed head plus an inclusion proof), so the log cannot use a head it has "
+               "not publicly committed and the ledger cannot drop one it recorded -- the standalone verifier "
+               "confirms it, a file-backed ledger driver records heads (chain drivers declared), and the "
+               "publication drill proves the pipeline and rejects forgery under real ML-DSA")
+
+
 def check_transparency_gossip(root: pathlib.Path) -> list[Finding]:
     """P3.3b: the split-view defence. A lone monitor cannot catch a log that shows different
     heads to different observers; witnesses and gossip can. The detached verifier gains
@@ -7608,6 +7646,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_transparency_publication,
     check_transparency_gossip,
     check_transparency_log,
     check_canonical_equivalence,

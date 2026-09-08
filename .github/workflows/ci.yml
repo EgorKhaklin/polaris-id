@@ -1578,6 +1578,14 @@ jobs:
       - name: Transparency log — witnesses catch a split view
         run: python scripts/polaris-transparency-gossip-drill.py
 
+      # v9.303 (roadmap P3.3c) — external-ledger publication. A log publishes each head
+      # into an independent append-only ledger and gets an inclusion receipt. The actual
+      # ledger records the heads and the detached verifier confirms each; a forged, wrong-key,
+      # or unrecorded-head receipt is rejected; and the ledger cannot drop a head it recorded
+      # without the inconsistency being caught. Red on any wrong decision. No database.
+      - name: Transparency log — external-ledger publication receipts
+        run: python scripts/polaris-transparency-publication-drill.py
+
       # v9.289 (roadmap P3.5) — the verification conformance suite is the integration
       # contract: it drives a verifier over the published authenticity cases and
       # checks every verdict. Run the bundled Python reference SDK against it (real

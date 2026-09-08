@@ -5,6 +5,37 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.303 — 2026-09-08 (Transparency external-ledger publication, P3.3c)
+
+Witnesses (P3.3b) attest the heads they were shown; an external ledger is the complete,
+ordered, public record. P3.3c publishes each of the log's heads into an independent
+append-only ledger, so the log cannot use a head it has not publicly committed and the full
+set of published heads is publicly enumerable.
+
+- **The publication receipt.** A log publishes a head into an independent append-only ledger
+  and gets a `polaris-transparency-publication/1` receipt: the ledger's own signed tree head
+  plus an inclusion proof that the head's entry is a leaf in it. The detached verifier's
+  `verify_publication` confirms both, standalone. A ledger is itself an append-only log, so
+  this reuses the RFC-6962 machinery, and the ledger's own append-only-ness is monitored the
+  same way (a ledger that drops a recorded head fails its consistency proof).
+
+- **A backend driver.** `scripts/polaris-transparency-ledger.py` is a file-backed append-only
+  ledger; `POLARIS_LEDGER_BACKEND` selects it (`file`, implemented and CI-tested) or a
+  declared chain driver (`algorand-pq`, `hyperledger-indy`) that waits on its API -- the same
+  honest shape as key custody and the audit anchor's external chain. The receipt does not
+  change with the backend.
+
+- **Proven under attack.** `scripts/polaris-transparency-publication-drill.py` runs the actual
+  ledger under real ML-DSA-65 every release: it records a log's heads and the verifier
+  confirms each; a forged, wrong-key, or unrecorded-head receipt is rejected; and the ledger
+  dropping a head it recorded is caught. `check_transparency_publication` pins it; the receipt
+  is exempt from the canonical oracle (its only signed part is the ledger's STH, itself a
+  covered type), with agreement proven by the drill.
+
+165 machine-checked invariants.
+
+---
+
 ## v9.302 — 2026-09-08 (Transparency witnesses and the split-view defence, P3.3b)
 
 The transparency log's monitor (P3.3) catches a log that rewrites its own history. It

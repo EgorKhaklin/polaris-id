@@ -234,12 +234,13 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
         with open(os.path.join(_ROOT, "scripts", "polaris-verify.py")) as f:
             verify_src = f.read()
         # Every `polaris-*/1` format literal the verifier knows must have an oracle case,
-        # except two with no app-side statement builder to differentially test here: the
-        # authenticity pack (SHA3-256(token_value), no canonical-JSON builder; covered by
-        # the vectors and every drill) and the witness cosignature (signed by an independent
-        # witness, not the app; its witness-vs-verifier byte agreement is proven by the
-        # gossip drill, where a cosignature the witness signs must verify under the
-        # verifier's canonical builder).
+        # except formats with no app-side statement builder to differentially test here:
+        # the authenticity pack (SHA3-256(token_value), no canonical-JSON builder; covered by
+        # the vectors and every drill), the witness cosignature (signed by an independent
+        # witness, not the app; agreement proven by the gossip drill), and the publication
+        # receipt (a bundle whose only signed part is the LEDGER's own STH -- itself the
+        # transparency-sth type, already covered -- with the rest an inclusion proof;
+        # agreement proven by the publication drill).
         import re
         formats = set(re.findall(r'"(polaris-[a-z-]+/1)"', verify_src))
         covered = {
@@ -247,7 +248,8 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-revocation-feed/1", "polaris-status-assertion/1",
             "polaris-transparency-sth/1",
         }
-        not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1"}
+        not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
+                          "polaris-transparency-publication/1", "polaris-published-head/1"}
         missing = formats - covered - not_app_signed
         self.assertFalse(missing, "signed formats with no canonical-equivalence oracle case: %s" % missing)
 

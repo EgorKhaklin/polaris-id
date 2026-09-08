@@ -6398,6 +6398,53 @@ def test_transparency_gossip_check_discriminates(tmp_path):
     assert checks.check_transparency_gossip(tmp_path)[0].level == "FAIL", "must FAIL if the gossip drill does not run in CI"
 
 
+def test_transparency_publication_check_discriminates(tmp_path):
+    # v9.303 (P3.3c): external-ledger publication -- a verifiable inclusion receipt, a
+    # file-backed append-only ledger driver, and a drill, run in CI. Each perturbation
+    # removes one leg.
+    good = {
+        "scripts/polaris-verify.py": (
+            "import json, hashlib\n"
+            "# polaris-transparency-publication/1\n"
+            "def _publication_entry(a, b, c): return ''\n"
+            "def verify_publication(log_sth, receipt, ledger_key): return {'published': False}\n"
+        ),
+        "scripts/polaris-transparency-ledger.py": (
+            "import anchoring\n"
+            "# POLARIS_LEDGER_BACKEND selects the driver (file default)\n"
+            "anchoring.log_tree_head; anchoring.log_inclusion_proof\n"
+        ),
+        "scripts/polaris-transparency-publication-drill.py": (
+            "verify_publication\n# runs scripts/polaris-transparency-ledger.py\n"
+        ),
+        ".github/workflows/ci.yml": "      - run: python scripts/polaris-transparency-publication-drill.py\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_transparency_publication(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the receipt verifier is gone
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_publication", "def gone")})
+    assert checks.check_transparency_publication(tmp_path)[0].level == "FAIL", "must FAIL without verify_publication"
+    # 2. the verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_transparency_publication(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 3. the ledger has no backend driver
+    write({"scripts/polaris-transparency-ledger.py": "import anchoring\nanchoring.log_tree_head; anchoring.log_inclusion_proof\n"})
+    assert checks.check_transparency_publication(tmp_path)[0].level == "FAIL", "must FAIL without the backend driver"
+    # 4. the drill does not run the ledger
+    write({"scripts/polaris-transparency-publication-drill.py": "verify_publication\n"})
+    assert checks.check_transparency_publication(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run the ledger"
+    # 5. the drill does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_transparency_publication(tmp_path)[0].level == "FAIL", "must FAIL if the publication drill does not run in CI"
+
+
 def test_federation_topology_check_discriminates(tmp_path):
     # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
     # delta + the vocation grounding, and is kept honest against the code. Each

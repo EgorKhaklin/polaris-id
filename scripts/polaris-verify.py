@@ -1118,6 +1118,68 @@ def verify_equivocation(sth_a, sth_b, log_key):
                     "and equivocation there is a smaller head shown NOT to be a prefix of the larger"}
 
 
+# ---------------------------------------------------------------------------
+# P3.3c: external-ledger publication.
+#
+# Witnesses attest the heads they were shown; an external LEDGER is the complete, ordered,
+# public record. The log publishes each head into an independent append-only ledger -- a
+# ledger IS an append-only log, so this reuses the machinery above: publishing a head is
+# appending its entry to the ledger, and the receipt is the ledger's own signed head plus
+# an inclusion proof. A relying party that requires a publication receipt knows the head is
+# recorded in a place the log does not control and cannot later erase, and the full set of
+# published heads is publicly enumerable. Where the ledger lives -- a file bulletin, a
+# public chain -- is a driver choice; this verifies the receipt whatever the backend.
+# ---------------------------------------------------------------------------
+_PUBLICATION_FORMAT = "polaris-transparency-publication/1"
+
+
+def _publication_entry(log_id, tree_size, root_hash_hex):
+    """The stable string a ledger records to publish a log head. It binds the head's full
+    identity so a receipt cannot be transplanted onto a different head."""
+    return "polaris-published-head/1|%s|%s|%s" % (log_id, tree_size, (root_hash_hex or "").lower())
+
+
+def verify_publication(log_sth, receipt, ledger_key):
+    """Verify that a log head was published to an independent append-only ledger (P3.3c).
+    The receipt carries the LEDGER's own signed tree head and an inclusion proof; this
+    confirms the head's entry is a leaf in the ledger and the ledger head is signed by the
+    trusted ledger key. So the log cannot use a head it has not publicly committed, and the
+    ledger (being append-only) cannot later drop it. Returns {published, ledger_size, note}."""
+    v = {"published": False, "ledger_size": None, "note": None}
+    if receipt.get("format") != _PUBLICATION_FORMAT:
+        v["note"] = "not a %s" % _PUBLICATION_FORMAT
+        return v
+    if (receipt.get("log_id") != log_sth.get("log_id")
+            or receipt.get("tree_size") != log_sth.get("tree_size")
+            or (receipt.get("root_hash_hex") or "").lower() != (log_sth.get("root_hash_hex") or "").lower()):
+        v["note"] = "the receipt does not bind to this log head"
+        return v
+    ledger_sth = receipt.get("ledger_sth") or {}
+    lv = verify_sth(ledger_sth, issuer_key=ledger_key)
+    if not lv["sth_authentic"]:
+        v["note"] = "the ledger's signed head is not authentic (%s)" % lv["note"]
+        return v
+    if ledger_key is not None and lv["issuer_matches"] is False:
+        v["note"] = "the ledger head is not signed by the trusted ledger key"
+        return v
+    v["ledger_size"] = ledger_sth.get("tree_size")
+    entry = _publication_entry(log_sth.get("log_id"), log_sth.get("tree_size"), log_sth.get("root_hash_hex"))
+    try:
+        idx = int(receipt["leaf_index"])
+        root = bytes.fromhex(ledger_sth["root_hash_hex"])
+        proof = [bytes.fromhex(h) for h in (receipt.get("inclusion_proof_hex") or [])]
+    except (ValueError, TypeError, KeyError):
+        v["note"] = "the receipt's leaf_index, proof, or ledger root is malformed"
+        return v
+    if verify_inclusion(idx, ledger_sth.get("tree_size"), _lh(entry), root, proof):
+        v["published"] = True
+        v["note"] = ("the head is recorded at index %d in ledger %r (ledger size %s)"
+                     % (idx, ledger_sth.get("log_id"), ledger_sth.get("tree_size")))
+    else:
+        v["note"] = "the inclusion proof does not place this head in the ledger"
+    return v
+
+
 def _load_anchor(path):
     with open(path) as f:
         data = json.load(f)

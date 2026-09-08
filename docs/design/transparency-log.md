@@ -83,9 +83,26 @@ Two uses follow, both verified offline (`scripts/polaris-verify.py`):
   writes the proof.
 
 The append-only guarantee of the base log does not depend on any of this; witnessing adds
-the defence against the one attack a lone monitor cannot see. Publishing heads to an
-external ledger (a further, independent pin) remains a deployment integration on top of the
-existing anchor-to-external-chain mechanism ([anchoring.md](anchoring.md)).
+the defence against the one attack a lone monitor cannot see.
+
+## External-ledger publication (P3.3c)
+
+Witnesses attest the heads they were shown; an external **ledger** is the complete, ordered,
+public record. The log publishes each head into an independent, append-only ledger and gets
+a **receipt** (`polaris-transparency-publication/1`): the ledger's own signed head plus an
+inclusion proof that the head's entry is a leaf in it. `scripts/polaris-verify.py`
+(`verify_publication`) confirms both offline. A relying party that requires a receipt knows
+the head is recorded somewhere the log does not control and cannot later erase, and the full
+set of published heads is publicly enumerable.
+
+A ledger is itself an append-only log, so this reuses the machinery above: publishing is
+appending, and the ledger's own append-only-ness is monitored the same way (a ledger that
+drops a recorded head fails its own consistency proof). WHERE the ledger lives is a driver
+choice, the same shape as key custody and the audit anchor's external chain
+([anchoring.md](anchoring.md)): `POLARIS_LEDGER_BACKEND` selects `file` (the append-only
+bulletin implemented in `scripts/polaris-transparency-ledger.py`, and the CI default) or a
+declared chain driver (`algorand-pq`, `hyperledger-indy`) that waits on its API. The receipt
+shape does not change with the backend.
 
 ## How this is tested
 
@@ -105,3 +122,9 @@ is caught two ways -- a witness that already cosigned a head refuses a different
 same size, and a fresh witness catches the split view by gossip -- each writing a
 non-repudiable equivocation proof. It too runs every release in `pqc-real`, pinned by
 `check_transparency_gossip`.
+
+`scripts/polaris-transparency-publication-drill.py` proves the P3.3c external-ledger
+publication: the actual ledger records a log's heads and emits receipts, the verifier
+confirms each, a forged or wrong-key or unrecorded-head receipt is rejected, and the ledger
+itself cannot drop a head it recorded without the inconsistency being caught. It runs every
+release in `pqc-real`, pinned by `check_transparency_publication`.
