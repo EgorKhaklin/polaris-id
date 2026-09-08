@@ -4,7 +4,7 @@
 
 # POLARIS
 
-**A working reference implementation of a post-quantum, unlinkable-by-default,<br>compulsion-resistant national identity-token system.**
+**A working reference implementation of a post-quantum, unlinkable-by-default,<br>compulsion-resistant identity-token system.**
 
 Educational project; notional data only. CI builds and boots the production-profile container stack on every push, proves the post-quantum handshake and the backup round trip, and runs the disaster-recovery drill. It is a reference implementation, not a deployment.
 
