@@ -2,11 +2,10 @@
 
 This directory contains the complete SQL realization of the Polaris
 database design specified in `docs/paper/polaris_project_report.pdf`. The schema
-is in BCNF (proven in §6.5 of the report), implements **32 tables** (v9.234; a migrated deployment holds 39, with the
+is in BCNF (proven in §6.5 of the report), implements **30 tables** (v9.269; a migrated deployment holds 37, with the
 `schema_version` registry, the three migration-added tables, and the three
 Athena curated tables)
-(12 core entities + `GenomicAnchor` from M2-4 + `QuantumObserverBinding`
-scaffold from M2-5 + `IssuerDiscretionPolicy` from M2-11 +
+(12 core entities + `IssuerDiscretionPolicy` from M2-11 +
 `EnrollmentStatusEvent` from M2-9 + `RecoveryRequest` from M2-7 +
 `TokenSignature` from M2-6 + `AnchorBatch` from M2-2 / R10-2 +
 `AgencyTrustAttestation` from M2-8 / R11-3 + `TokenStateEpoch` and
@@ -46,10 +45,10 @@ psql -d polaris -f 00_load_all.sql
 
 That single command:
 
-1. Creates all 32 tables (`01_schema.sql`)
+1. Creates all 30 tables (`01_schema.sql`)
 2. Adds the partial unique index, the v6 spatial index on
-   `VerificationEvent(latitude, longitude)`, the genomic-anchor
-   indexes, the revocation-rate index (R11-6), the enrollment-event
+   `VerificationEvent(latitude, longitude)`, the revocation-rate
+   index (R11-6), the enrollment-event
    indexes (R11-4), the active-signature index (R11-1), the
    blockchain-anchor batch / pending indexes (R10-2), and several
    secondary indexes (`02_indexes.sql`)
@@ -95,8 +94,8 @@ labels valid` (plus all assertion-suite messages).
 | File | Purpose |
 |------|---------|
 | `00_load_all.sql` | Master driver that runs every file in order |
-| `01_schema.sql` | DDL: 32 tables (incl. GenomicAnchor, QuantumObserverBinding, IssuerDiscretionPolicy, EnrollmentStatusEvent, RecoveryRequest, TokenSignature, AnchorBatch, AgencyTrustAttestation, TokenStateEpoch, TokenStateEpochLeaf, DuressEvent, LifecycleArchiveCheckpoint, AppUser, AuthAuditLog, RetentionPolicy) |
-| `02_indexes.sql` | Partial unique indexes + spatial + genomic + revocation-rate + enrollment-event + recovery-queue + active-signature indexes + secondary indexes |
+| `01_schema.sql` | DDL: 30 tables (incl. IssuerDiscretionPolicy, EnrollmentStatusEvent, RecoveryRequest, TokenSignature, AnchorBatch, AgencyTrustAttestation, TokenStateEpoch, TokenStateEpochLeaf, DuressEvent, LifecycleArchiveCheckpoint, AppUser, AuthAuditLog, RetentionPolicy) |
+| `02_indexes.sql` | Partial unique indexes + spatial + revocation-rate + enrollment-event + recovery-queue + active-signature indexes + secondary indexes |
 | `03_view.sql` | `ActiveTokens` + `IndividualCurrentEnrollment` views |
 | `04_data.sql` | Coherent sample data with 8 individuals across all five enrollment states + TokenSignature backfill |
 | `05_procedures.sql` | 19 stored procedures and functions: UC-1 / UC-4 / UC-5 / UC-6 / UC-7 / UC-8 / UC-9 (initiate + complete) / `close_anchor_batch` (R10-2) / `uc10_attest_trust` + `uc10_revoke_attestation` (R11-3) / `uc11_close_epoch` (R10-1) / `uc12_record_duress` (R11-5) / `uc_archive_purge` (audit-log archive+purge framework, v8.87) / `uc_pseudonymize_individual` (right-to-erasure pseudonymization, v9.125) / `uc_apply_retention_template` + `retention_days_for` + `retention_cutoff` (the retention engine, v9.234) |
@@ -163,8 +162,7 @@ All transitions OUT of terminal states are rejected. The trigger also enforces t
 
 ## Sample data composition
 
-77 rows total, matching the report's §7.5 plus M2-4's GenomicAnchor
-additions:
+73 rows total, matching the report's §7.5:
 
 | Table | Rows | Notes |
 |-------|------|-------|
@@ -180,8 +178,6 @@ additions:
 | RevocationList | 1 | T5 administrative revocation |
 | AgencyAlgorithmAuth | 9 | Issuers carry BOTH/ISSUE; verifiers carry VERIFY |
 | TokenPermission | 11 | T2: 4 contexts; T3: 4 contexts; T4: 3 contexts |
-| GenomicAnchor | 4 | One per active token (M2-4); each with a different hash algorithm |
-| QuantumObserverBinding | 0 | Scaffold table (M2-5); empty until quantum-observer hardware exists |
 
 The data is constructed so that:
 

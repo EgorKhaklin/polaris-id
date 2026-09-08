@@ -60,11 +60,10 @@ metadata (the device identifiers `IdentityToken.physical_serial` and
 The strongest at-rest control is the data that never lands on disk. Polaris is
 built on data minimization ([PRIVACY.md](PRIVACY.md)):
 
-- **Biometric and genomic plaintext never enters the database.** The schema
-  stores only binding metadata (`IdentityToken.biometric_binding_type`,
+- **Biometric plaintext never enters the database.** The schema stores only
+  binding metadata (`IdentityToken.biometric_binding_type`,
   `biometric_enrolled_date`, `liveness_check_type`; `RecoveryRequest.biometric_verified`
-  is a recovery-channel flag), never the template or sample itself (`polaris_sql/01_schema.sql`: "the
-  biometric / genomic plaintext never enters the database").
+  is a recovery-channel flag), never the template or sample itself.
 - **Verification is zero-knowledge.** A verifier learns a yes/no membership
   answer, not the underlying attributes, so the verification path does not
   accumulate a plaintext attribute store.

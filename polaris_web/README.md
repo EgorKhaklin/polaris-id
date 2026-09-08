@@ -231,7 +231,7 @@ and means the server can enforce correctness without trusting the client.
 
 ### CRUD scope
 
-The schema has 32 tables (v9.234; see [DATA-MODEL.md](../docs/reference/DATA-MODEL.md)).
+The schema has 30 tables (v9.269; see [DATA-MODEL.md](../docs/reference/DATA-MODEL.md)).
 Building separate CRUD
 UIs for all of them would create sprawl with little marginal value.
 The high-value entities (where users need direct CRUD) are:
@@ -357,9 +357,6 @@ optional backends, measured at v9.194) covers:
 - Rate limiter (R8-2): `RateLimiterContractMixin` runs the same suite
   against `InMemoryRateLimiter` and `RedisRateLimiter` (latter via the
   test-local redis on :6399)
-- GenomicAnchor (M2-4): 11 tests covering all three CHECK constraints
-- QuantumObserverBinding (M2-5): 9 tests covering the SCAFFOLD ↔
-  OPERATIONAL state machine
 - Issuer-discretion bounds (R11-6 / M2-11): `IssuerDiscretionBoundsTests`
 - Tiered enrollment (R11-4 / M2-9): `TieredEnrollmentTests`
 - Catastrophic-loss recovery (R11-2 / M2-7): `CatastrophicLossRecoveryTests`

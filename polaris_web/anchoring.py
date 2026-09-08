@@ -7,7 +7,7 @@ roots and per-leaf inclusion proofs over BlockchainAnchor rows, so the
 SQL procedure close_anchor_batch can pass pre-computed values in without
 requiring plpython3u.
 
-Hash algorithm: SHA3-256 by default (matches GenomicAnchor; post-quantum).
+Hash algorithm: SHA3-256 by default (post-quantum).
 Per the proposal, the algorithm choice is operator policy; the hash
 function is passed in by name.
 
@@ -24,10 +24,8 @@ upward, where position is 'L' or 'R' indicating which side of the pairing
 the sibling sat on. Verification: start with the leaf hash, pair-and-hash
 up the proof, compare final hash to the claimed root.
 
-This module is the FIFTH layer of cryptographic primitives in Polaris:
+This module is one of the cryptographic-primitive layers in Polaris:
 
-  - GenomicAnchor (R10-4)            — hash-only commitment per token
-  - QuantumObserverBinding (R10-5)   — substrate scaffold (M2-5)
   - TokenSignature (R11-1)           — M:N signatures per token
   - Constitutional limits (R11-6)    — issuer-discretion bounds via advisory-lock
   - AnchorBatch (R10-2, this file)   — per-batch Merkle commitment

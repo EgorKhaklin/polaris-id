@@ -5993,7 +5993,39 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
                "the boundary (unlinkable verification records + a Merkle-membership proof, not anonymous credentials)")
 
 
+# ---------------------------------------------------------------------------
+# P1.18 item 2 (v9.269) — the science-fiction scaffold tables stay removed.
+# ---------------------------------------------------------------------------
+def check_no_scifi_schema(root: pathlib.Path) -> list[Finding]:
+    """v9.269 removed two science-fiction scaffold tables that served no current
+    guarantee or milestone: GenomicAnchor (a per-token hash commitment framed as
+    DNA/genomic anchoring) and QuantumObserverBinding (a 'quantum-observer
+    measurement' scaffold documented as having no planned use). This guards the
+    v9.55 apparatus-removal discipline: a national-identity schema names real
+    mechanisms only, not DNA-alphabet or wavefunction-collapse vocabulary. To
+    reintroduce either, deprecate this check in a reviewed change. Detection:
+    test_checks re-adds a CREATE TABLE GenomicAnchor and the sci-fi vocabulary
+    to the live schema."""
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if not schema:
+        return _fail("no_scifi", "polaris_sql/01_schema.sql is missing")
+    for name in ("GenomicAnchor", "QuantumObserverBinding"):
+        if re.search(r"CREATE TABLE\s+(?:IF NOT EXISTS\s+)?" + name + r"\b", schema):
+            return _fail("no_scifi",
+                         f"the live schema recreates {name}, a science-fiction scaffold with no current "
+                         "guarantee; it was removed in v9.269 (deprecate via a migration, not the base schema)")
+    for term in ("wavefunction", "no-cloning theorem", "quantum-observer measurement", "genomic alphabet"):
+        if re.search(re.escape(term), schema, re.I):
+            return _fail("no_scifi",
+                         f"the live schema carries science-fiction vocabulary ('{term}'); a national-identity "
+                         "schema names real mechanisms only (v9.269, continuing the v9.55 discipline)")
+    return _ok("no_scifi",
+               "the live schema is free of the deprecated science-fiction scaffolds (GenomicAnchor, "
+               "QuantumObserverBinding) and their vocabulary")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_no_scifi_schema,
     check_zk_claim_precise,
     check_athena_console,
     check_athena_no_person,

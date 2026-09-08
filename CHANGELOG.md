@@ -5,6 +5,34 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.269 — 2026-09-07 (Schema quarantine: the science-fiction scaffolds are gone)
+
+P1.18 item 2: remove the two science-fiction scaffold tables that served no
+current guarantee or milestone, continuing the v9.55 apparatus-removal discipline.
+
+**GenomicAnchor** (a per-token hash commitment framed as DNA/genomic anchoring,
+with a `{A,C,G,T,U,N}` "genomic alphabet" CHECK) and **QuantumObserverBinding**
+(a "quantum-observer measurement" scaffold with a `wavefunction-collapse` hash,
+`BB84-WITNESS` protocol vocabulary, and — by its own documentation — no planned
+use) are removed from the live schema. Neither was read by any procedure,
+trigger, view, or application path; a national-identity schema should not carry
+DNA-alphabet or wavefunction vocabulary without an extraordinary reason.
+
+Removed from `01_schema.sql`, `02_indexes.sql`, `04_data.sql`, the substrate
+manifest (`13_substrate.sql`, where the reserved quantum-observer slot is
+replaced by the real hardware dependency it always had — PKCS#11 HSM / KMS key
+custody), the DB test suites, and the operator/reference docs;
+`docs/design/quantum-observer.md` is deleted. A reversible migration
+(`2026-09-07-002-drop-scifi-scaffold`) drops them from existing deployments.
+The academic report's Appendix F, which discusses genomic and quantum-observer
+binding as explicitly *speculative future work*, is untouched — it never claimed
+these were implemented.
+
+`check_no_scifi_schema` (with a detection test) fails the build if either table
+or its vocabulary returns to the live schema. **30 tables** (was 32); **37 in a
+migrated deployment** (was 39); **138 checks** (was 137). Full DB suites green.
+
+
 ## v9.268 — 2026-09-07 (Public claim pass: precise zero-knowledge, no "certification")
 
 P1.18 item 1, the claim-and-proof season's first step: fix the nouns before

@@ -17,7 +17,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [threat-model.md](threat-model.md) | Which adversaries, reaching which surfaces, and what is deliberately out of scope |
 | [audit-of-record.md](audit-of-record.md) | Why the audit tables are append-only at the database, and what that costs |
 | [concurrency.md](concurrency.md) | Every race-prone path, the lock that serialises it, and the test that proves it |
-| [substrate.md](substrate.md) | Every primitive Polaris depends on, and which slots are reserved rather than built |
+| [substrate.md](substrate.md) | Every primitive Polaris depends on, across its cryptographic, storage, network, runtime, hardware and human layers |
 | [two-witness-principle.md](two-witness-principle.md) | Why no cryptographic verdict is trusted from a single implementation |
 | [zk-soundness.md](zk-soundness.md) | What the words proof and zero-knowledge are allowed to mean here |
 | [observability.md](observability.md) | What a running deployment tells its operator, and through which surface |
@@ -45,7 +45,6 @@ and the posture documents see [reference/](../reference/README.md).
 | [tiered-enrollment.md](tiered-enrollment.md) | The evidence tiers behind an issued token |
 | [webauthn.md](webauthn.md) | Operator credentials, enforcement, and the grace period |
 | [abuse-controls.md](abuse-controls.md) | The per-agency quotas and what a refusal looks like |
-| [quantum-observer.md](quantum-observer.md) | A reserved schema scaffold, and why it stays unbuilt |
 
 The proof that the zero-knowledge redaction holds against an explicit
 adversary, rather than merely storing a NULL, is

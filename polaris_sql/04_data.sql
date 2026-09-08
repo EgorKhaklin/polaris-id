@@ -5,14 +5,14 @@
 -- Sample data spans every table in the schema. The original v1 baseline
 -- was 73 rows across 12 core tables (counted by SQL test A.2 to 76 after
 -- v8.16 / R11-4 added 3 demonstrating Individual rows). Newer tables
--- (GenomicAnchor v8, IssuerDiscretionPolicy v8.15, EnrollmentStatusEvent
+-- (IssuerDiscretionPolicy v8.15, EnrollmentStatusEvent
 -- v8.16) carry their own seed rows on top.
 --
 -- v1 baseline (counted by A.2): 8 individuals, 6 agencies, 5 algorithms
 -- (4 PQ + 1 deprecated classical), 7 contexts, 5 tokens, 9 lifecycle
 -- events, 8 verification events, 5 device bindings, 2 blockchain anchors,
 -- 1 revocation, 9 authorization grants, 11 permission grants = 76.
--- v8 additions: 3 GenomicAnchor rows (M2-4), 2 IssuerDiscretionPolicy
+-- v8 additions: 2 IssuerDiscretionPolicy
 -- overrides (R11-6), plus enrollment events seeded both by the trigger
 -- (one NOT_ENROLLED per Individual) and explicitly here (ENROLLED /
 -- LAPSED / EXEMPT transitions per R11-4).
@@ -30,7 +30,7 @@ TRUNCATE TABLE ZkVerificationNonce,
                TokenStateEpochLeaf, TokenStateEpoch,
                AgencyTrustAttestation,
                TokenPermission, AgencyAlgorithmAuth,
-               RevocationList, GenomicAnchor,
+               RevocationList,
                BlockchainAnchor, AnchorBatch, DeviceBinding,
                VerificationEvent, TokenLifecycleEvent,
                IdentityToken,
@@ -372,29 +372,6 @@ INSERT INTO TokenPermission (token_id, context_id, permission_level, granted_dat
     (4, 2, 'VERIFY', '2026-02-10 11:35:00'),  -- EMPLOYMENT
     (4, 7, 'FULL',   '2026-02-10 11:35:00');  -- GOVERNMENT_BENEFITS
 
--- ============================================================================
--- GENOMIC ANCHORS (3 rows — Appendix F.1, M2-4)
--- One anchor per ACTIVE token (T2, T3, T4). RESERVE / REVOKED tokens have no
--- genomic enrollment in the sample because the binding ceremony happens at
--- ACTIVE transition. The anchor_hash values pass all three CHECK constraints
--- (hex-only, algorithm-specific length, contains non-genomic-alphabet chars).
--- ============================================================================
-
-INSERT INTO GenomicAnchor (token_id, hash_algorithm, anchor_hash,
-                            enrollment_date, witness_agency_id) VALUES
-    -- Maria (T2) — SHA3-256, 64 hex chars, witnessed by California Identity Office
-    (2, 'SHA3-256',
-     '8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b',
-     '2026-01-22', 3),
-    -- James (T3) — SHA3-512, 128 hex chars, witnessed by federal SSA
-    (3, 'SHA3-512',
-     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-     || 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
-     '2026-02-03', 1),
-    -- Priya (T4) — BLAKE3-256, 64 hex chars, witnessed by federal SSA
-    (4, 'BLAKE3-256',
-     'a1b2c3d4e5f607182930a1b2c3d4e5f607182930a1b2c3d4e5f607182930ffee',
-     '2026-02-10', 1);
 
 -- ============================================================================
 -- ISSUER DISCRETION POLICY OVERRIDES (2 rows — R11-6 / M2-11)

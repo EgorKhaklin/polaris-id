@@ -5366,3 +5366,20 @@ def test_zk_claim_precise_check_discriminates(tmp_path):
     (tmp_path / "README.md").write_text(
         "# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\nNo boundary stated.\n")
     assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", "must FAIL without the boundary sentence"
+
+
+def test_no_scifi_schema_check_discriminates(tmp_path):
+    # The deprecated science-fiction scaffold tables must stay out of the live schema.
+    (tmp_path / "polaris_sql").mkdir()
+    good = "CREATE TABLE IdentityToken (token_id SERIAL PRIMARY KEY);\nCREATE TABLE Agency (agency_id SERIAL);\n"
+    (tmp_path / "polaris_sql" / "01_schema.sql").write_text(good)
+    assert checks.check_no_scifi_schema(tmp_path)[0].level == "OK", "must PASS a clean schema"
+    (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
+        good + "CREATE TABLE GenomicAnchor (anchor_id SERIAL, anchor_hash VARCHAR(128));\n")
+    assert checks.check_no_scifi_schema(tmp_path)[0].level == "FAIL", "must FAIL if GenomicAnchor returns"
+    (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
+        good + "CREATE TABLE QuantumObserverBinding (binding_id SERIAL);\n")
+    assert checks.check_no_scifi_schema(tmp_path)[0].level == "FAIL", "must FAIL if QuantumObserverBinding returns"
+    (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
+        good + "-- a wavefunction collapse record and the no-cloning theorem\n")
+    assert checks.check_no_scifi_schema(tmp_path)[0].level == "FAIL", "must FAIL on sci-fi vocabulary"

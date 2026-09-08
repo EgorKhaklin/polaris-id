@@ -55,9 +55,9 @@ FROM (VALUES
      'CryptographicAlgorithm.quantum_resistant = FALSE flags every classical row'),
 
     ('SHA-3 / BLAKE3 / BLAKE2b', 'crypto', 'NIST FIPS 202; IETF',
-     'Hash functions for GenomicAnchor.anchor_hash, AnchorBatch.merkle_root (R10-2), future ZK-SNARK Fiat-Shamir, CSRF HMAC, scrypt internals',
-     'Genomic-anchor collisions; password hash collision resistance lost; CSRF forgeable; Merkle root forgeable',
-     'GenomicAnchor.hash_algorithm enum allows replacement; werkzeug method= parameter; anchoring.py SUPPORTED_HASHES extensible',
+     'Hash functions for AnchorBatch.merkle_root (R10-2), the ZK-SNARK Fiat-Shamir transform, CSRF HMAC, scrypt internals',
+     'Password hash collision resistance lost; CSRF forgeable; Merkle root forgeable',
+     'werkzeug method= parameter; anchoring.py SUPPORTED_HASHES extensible',
      'Cryptanalysis publication'),
 
     ('Merkle commitment (in-tree)', 'crypto', 'Polaris polaris_web/anchoring.py',
@@ -185,8 +185,8 @@ FROM (VALUES
     -- ------------------------------------------------------------------------
     ('Token hardware enclave', 'hardware', 'Token vendor',
      'Biometric template storage; signing operation; local-match-required-for-sign',
-     'Enclave compromise → biometric template extractable → genomic anchor analog defeated',
-     'Hardware refresh; quantum-observer binding (M2-5) in the very long run',
+     'Enclave compromise → biometric template extractable → the token''s hardware binding defeated',
+     'Hardware refresh; hardware-backed key custody (PKCS#11 / KMS)',
      'Vendor disclosure; cryptographic side-channel research'),
 
     ('Server hardware (TPM)', 'hardware', 'Server vendor; TCG',
@@ -211,13 +211,13 @@ FROM (VALUES
      'UC-7 audit trail review'),
 
     -- ------------------------------------------------------------------------
-    -- Reserved future primitives (scaffold state)
+    -- Hardware substrate
     -- ------------------------------------------------------------------------
-    ('Quantum-observer measurement primitive', 'hardware', 'Quantum-info research; NIST PQC follow-on',
-     'M2-5 / R10-5 — QuantumObserverBinding table reserves the substrate slot; functional fields DEFERRED until hardware deploys',
-     'No current failure mode (scaffold state). When operational, a compromised observer would break the no-cloning theorem the binding rests on',
-     'No-cloning theorem itself; today, the scaffold-state CHECK constraint prevents premature population',
-     'binding_status field; first OPERATIONAL row triggers external review')
+    ('Hardware key custody (PKCS#11 HSM / KMS)', 'hardware', 'PKCS#11; cloud KMS',
+     'M2-6 signing keys held in hardware where deployed; the custody interface drives file, PKCS#11 and KMS backends (polaris_web/custody.py)',
+     'Key extraction if a custody backend is compromised or misconfigured',
+     'The custody interface abstracts the backend; a signature that cannot be produced by the custodied key never degrades to an ephemeral one',
+     'Custody driver configuration; public-key fingerprint pinning')
 
 ) AS d (primitive, layer, authority, role, fail_mode, replacement, detection);
 

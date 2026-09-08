@@ -111,14 +111,6 @@ CREATE INDEX idx_verificationevent_time_id
     ON VerificationEvent (event_timestamp DESC, event_id DESC);
 
 -- ----------------------------------------------------------------------------
--- v8 / M2-4 — GenomicAnchor lookup by token. Audit replay walks token →
--- anchor; every audit query under UC-7 will hit this index.
--- ----------------------------------------------------------------------------
-DROP INDEX IF EXISTS idx_genomicanchor_token;
-CREATE INDEX idx_genomicanchor_token
-    ON GenomicAnchor (token_id);
-
--- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — Rolling-window REVOKED count by issuing agency.
 -- The uc8_revoke_token procedure joins TokenLifecycleEvent to IdentityToken
 -- to count REVOKED events per agency in the last W days. This partial index

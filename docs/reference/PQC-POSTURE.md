@@ -52,11 +52,8 @@ post-quantum or post-quantum-acceptable.
   attestation hashes the Merkle tree with SHA3-256 or SHA3-512 (`anchoring.py`).
   The `BLAKE3-256` label is accepted at the API but currently maps to SHA3-256 as
   a fallback, because no BLAKE3 dependency is installed; it is honest to call the
-  implemented anchor hash SHA3, not BLAKE3. Genomic-anchor binding stores an
-  externally-computed digest under one of four accepted algorithm labels
-  (SHA3-256, SHA3-512, BLAKE3-256, BLAKE2b-256); the schema CHECK enforces
-  hash-only storage and never keeps plaintext. All of these are post-quantum
-  acceptable hashes.
+  implemented anchor hash SHA3, not BLAKE3. Both are post-quantum acceptable
+  hashes.
 - **Zero-knowledge inclusion proof: Plonky2 over Goldilocks with Poseidon.** The
   proof system is a PLONK protocol with a FRI-based polynomial commitment, which
   is hash-based and transparent (no trusted setup). Its soundness reduces to
@@ -161,7 +158,6 @@ Status maps to the NIST IR 8547 timeline (deprecate classical public-key after
 | SLH-DSA-128s / SLH-DSA-256s (algorithm registry rows) | signing | REGISTERED_NOT_WIRED | FIPS 205 hash-based parameter sets are rows in `CryptographicAlgorithm`, so a rotation away from lattices is a row update (C7). No SLH-DSA signer is wired: `pqc_signing.py` signs ML-DSA-65 only, so the seed token filed under SLH-DSA-128s cannot be re-signed (every seed signature row is a placeholder; real signatures appear at issuance). Wiring one is not yet scheduled; it would sit behind the same custody interface as ML-DSA-65. |
 | SHA3-256 (token binding digest) | hashing | PQ_SECURE | FIPS 202; ~128-bit quantum preimage resistance. No deadline. |
 | SHA3-256/512 (blockchain anchor Merkle) | hashing | PQ_SECURE | Server-computed Merkle hashing; the BLAKE3-256 label falls back to SHA3-256. Grover quadratic only. No migration. |
-| SHA3/BLAKE labels (genomic anchor) | hashing | PQ_SECURE | Stores an externally-computed digest; plaintext never stored (schema CHECK). All accepted labels are PQ-acceptable hashes. No migration. |
 | Plonky2 + Poseidon (ZK proof) | zk | PQ_SECURE | Plausibly PQ: PLONK with a FRI (hash-based) commitment; soundness reduces to hash collision-resistance, no number-theoretic assumption. NOT NIST-certified; the claim is the reduction, not a certification. |
 | scrypt (operator password) | password | PQ_SECURE | Memory-hard KDF; unaffected in practice. No deadline. |
 | secrets.token_* (session/CSRF/nonce RNG) | session | PQ_SECURE | CSPRNG, 256/64-bit entropy. Symmetric; acceptable. |

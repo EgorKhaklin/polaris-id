@@ -96,15 +96,14 @@ Each row records:
 - **Layer:** crypto
 - **Authority:** NIST (FIPS 202 for SHA-3); IETF / academic for the
   BLAKE family
-- **Role:** Hash functions for `GenomicAnchor.anchor_hash`, the future ZK-SNARK Fiat-Shamir transform,
+- **Role:** Hash functions for `AnchorBatch.merkle_root`, the ZK-SNARK Fiat-Shamir transform,
   CSRF-token integrity (HMAC-SHA256 in `security.py`), and password
   scrypt's internal hash (Werkzeug default).
-- **Fail mode:** Genomic anchor collisions become possible (two distinct
-  genomes hash to the same value, breaking the audit-replay invariant).
-  Password hashes lose collision resistance. CSRF-token signatures
-  forgeable.
-- **Replacement:** Migrate `GenomicAnchor.hash_algorithm` to a stronger
-  primitive (the column is already enumerated to allow this).
+- **Fail mode:** Merkle roots become forgeable, breaking the anchor-
+  inclusion invariant. Password hashes lose collision resistance.
+  CSRF-token signatures forgeable.
+- **Replacement:** Migrate the hash choice to a stronger primitive
+  (`anchoring.py` SUPPORTED_HASHES is extensible).
   `werkzeug.security.generate_password_hash(method=...)` accepts the
   replacement; CSRF token construction is a single function in
   `security.py`.
@@ -144,8 +143,8 @@ Each row records:
 #### `secrets` module / OS PRNG
 - **Layer:** crypto
 - **Authority:** Python stdlib; OS kernel
-- **Role:** Session token generation, CSRF salt, GenomicAnchor sample
-  data nonces, future ZK proof-commitment randomness, Redis
+- **Role:** Session token generation, CSRF salt, ZK proof-commitment
+  randomness, Redis
   rate-limiter Lua-script nonces.
 - **Fail mode:** If the OS PRNG is predictable (compromised entropy
   source), every secret produced post-boot is predictable. The
@@ -394,10 +393,9 @@ Each row records:
   Polaris records `IdentityToken.biometric_binding_type`: the
   enclave is the substrate that makes that field meaningful.
 - **Fail mode:** Enclave compromise → biometric template extractable
-  → biometric anchor reversible → genomic-anchor analog
-  partially defeated.
-- **Replacement:** Hardware refresh; quantum-observer binding
-  in the very long run.
+  → the token's hardware binding partially defeated.
+- **Replacement:** Hardware refresh; hardware-backed key custody
+  (PKCS#11 / KMS).
 - **Detection:** Vendor disclosure; cryptographic side-channel
   research publication.
 
@@ -441,29 +439,22 @@ Each row records:
   witness).
 - **Detection:** UC-7 audit trail review.
 
-### Reserved future primitives (scaffold state)
+### Hardware key custody
 
-#### Quantum-observer measurement primitive
+#### Hardware key custody (PKCS#11 HSM / KMS)
 - **Layer:** hardware
-- **Authority:** Quantum-information research community; NIST PQC
-  follow-on program
-- **Role:**, `QuantumObserverBinding` table reserves the
-  substrate slot for an eventual quantum-measurement attestation
-  primitive (Appendix F.2). Every current row is `binding_status =
-  'SCAFFOLD'` with functional fields NULL. When quantum-observer
-  hardware deploys and the protocol vocabulary stabilizes, rows
-  transition to `OPERATIONAL`: no breaking schema migration.
-- **Fail mode:** None today (scaffold state). When operational, a
-  compromised observer would break the no-cloning-theorem invariant
-  the binding rests on, which would invalidate quantum-attested
-  bindings retroactively.
-- **Replacement:** The no-cloning theorem itself is the floor. Today,
-  the `qob_scaffold_defers_functional` CHECK constraint prevents
-  premature population: any "early adopter" insert with populated
-  functional fields fires the constraint.
-- **Detection:** `binding_status` field surfaces the SCAFFOLD →
-  OPERATIONAL transition; the first OPERATIONAL row should trigger an
-  external architectural review.
+- **Authority:** PKCS#11 (OASIS); cloud KMS providers
+- **Role:** M2-6 signing keys held in hardware where deployed. The
+  custody interface (`polaris_web/custody.py`) drives file, PKCS#11 and
+  KMS backends behind one signing API, so a key can live in an HSM or a
+  managed KMS without changing the issuance path.
+- **Fail mode:** Key extraction if a custody backend is compromised or
+  misconfigured; a backend that cannot produce a signature at all.
+- **Replacement:** The custody interface abstracts the backend; a
+  signature that cannot be produced by the custodied key never degrades
+  to an ephemeral one (the signing path fails closed).
+- **Detection:** Custody driver configuration; public-key fingerprint
+  pinning surfaces an unexpected key.
 
 ## Re-evaluation triggers
 

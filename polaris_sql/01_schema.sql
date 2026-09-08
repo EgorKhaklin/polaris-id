@@ -79,8 +79,6 @@ DROP TABLE IF EXISTS IssuerDiscretionPolicy CASCADE;
 DROP TABLE IF EXISTS TokenPermission        CASCADE;
 DROP TABLE IF EXISTS AgencyAlgorithmAuth    CASCADE;
 DROP TABLE IF EXISTS RevocationList         CASCADE;
-DROP TABLE IF EXISTS QuantumObserverBinding CASCADE;
-DROP TABLE IF EXISTS GenomicAnchor          CASCADE;
 DROP TABLE IF EXISTS BlockchainAnchor       CASCADE;
 DROP TABLE IF EXISTS DeviceBinding          CASCADE;
 DROP TABLE IF EXISTS VerificationEvent      CASCADE;
@@ -415,7 +413,7 @@ COMMENT ON TABLE VerificationEvent IS
   'column is the schema''s architectural protection against the verification '
   'log functioning as a surveillance database.';
 
--- coverage:exempt — M2-5 device-binding via webauthn_auth.py + uc_bind_device; drift via QuantumObserverBinding scaffold tests
+-- coverage:exempt — M2-5 device-binding via webauthn_auth.py + uc_bind_device
 CREATE TABLE DeviceBinding (
     binding_id         SERIAL      PRIMARY KEY,
     token_id           INTEGER     NOT NULL REFERENCES IdentityToken(token_id),
@@ -442,9 +440,7 @@ CREATE TABLE BlockchainAnchor (
     token_id         INTEGER     NOT NULL REFERENCES IdentityToken(token_id),
     did              VARCHAR(200) NOT NULL UNIQUE,                   -- W3C Decentralized Identifier
     commitment_hash  VARCHAR(128) NOT NULL
-        -- v8.46: hex CHECK (optionally `0x`-prefixed; mirrors the
-        -- pattern established by GenomicAnchor.anchor_hash, but
-        -- permissive of the `0x` prefix the seed values carry).
+        -- v8.46: hex CHECK, optionally `0x`-prefixed as the seed values carry.
         CHECK (commitment_hash ~ '^(0x)?[0-9a-fA-F]+$'),
     ledger_network   VARCHAR(40) NOT NULL
         CHECK (ledger_network IN ('ALGORAND_PQ','HYPERLEDGER_INDY','CUSTOM_LATTICE')),
@@ -495,175 +491,6 @@ COMMENT ON TABLE RevocationList IS
   'Verifier-facing historical revocation registry. Separates revocation '
   'publication from the token''s own status field, supporting audit-accurate '
   'historical freshness checks.';
-
--- ----------------------------------------------------------------------------
--- GENOMIC ANCHOR (Appendix F.1, M2-4 / R10-4 — schema-enforced privacy)
---
--- Genomic identifier binding for the token, stored as a HASH only. The
--- biometric / genomic plaintext never enters the database; this table
--- records a cryptographic commitment that audit can verify against an
--- out-of-band re-presentation but cannot reverse.
---
--- The privacy invariant (Appendix F.1: "no plaintext genomic data is
--- storable") is enforced at the schema level by three CHECK constraints
--- working together:
---
---   (1) genomic_hash_is_hex
---       The anchor_hash column accepts only hexadecimal characters.
---       Plaintext genomic data using {G, T, U, N} (or lowercase) fails
---       this check immediately because those letters are not hex digits.
---
---   (2) genomic_hash_length_matches_algorithm
---       The hash length must match the named algorithm's output size.
---       SHA3-256 / BLAKE3-256 / BLAKE2b-256 → 64 hex chars (32 bytes);
---       SHA3-512 → 128 hex chars (64 bytes). Plaintext sequences have
---       no reason to land on these specific lengths.
---
---   (3) genomic_anchor_refuses_plaintext
---       Belt-and-suspenders for the residual case where someone tries
---       to store plaintext using only the {A, C} subset (which IS
---       hex-valid): the constraint requires the hash to contain at
---       least one character outside the genomic alphabet
---       {A,C,G,T,U,N} (case-insensitive). A real hex hash, by
---       uniformity, will contain digits or {b,d,e,f} with probability
---       essentially 1; a pure-genomic plaintext over the alphabet
---       above will not.
---
--- The combination of the three is the schema-level statement of the
--- privacy claim. A future operator with INSERT privilege but no
--- application-layer context cannot accidentally store plaintext.
--- ----------------------------------------------------------------------------
-
--- coverage:exempt — M2-4 scaffold; no live writes yet; drift via migrations framework when activated
-CREATE TABLE GenomicAnchor (
-    anchor_id         SERIAL       PRIMARY KEY,
-    token_id          INTEGER      NOT NULL REFERENCES IdentityToken(token_id),
-    hash_algorithm    VARCHAR(20)  NOT NULL
-        CHECK (hash_algorithm IN ('SHA3-256','SHA3-512','BLAKE3-256','BLAKE2b-256')),
-    anchor_hash       VARCHAR(128) NOT NULL,
-    enrollment_date   DATE         NOT NULL,
-    witness_agency_id INTEGER      NOT NULL REFERENCES Agency(agency_id),
-    enrolled_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT genomic_hash_is_hex CHECK (
-        anchor_hash ~ '^[0-9a-fA-F]+$'
-    ),
-    CONSTRAINT genomic_hash_length_matches_algorithm CHECK (
-        (hash_algorithm = 'SHA3-256'    AND length(anchor_hash) = 64)  OR
-        (hash_algorithm = 'SHA3-512'    AND length(anchor_hash) = 128) OR
-        (hash_algorithm = 'BLAKE3-256'  AND length(anchor_hash) = 64)  OR
-        (hash_algorithm = 'BLAKE2b-256' AND length(anchor_hash) = 64)
-    ),
-    -- The genomic alphabet here is {A,C,G,T,U,N} (DNA + RNA + unknown
-    -- placeholder), case-insensitive. Anything outside this set in the hash
-    -- proves the input is not plaintext genomic data.
-    CONSTRAINT genomic_anchor_refuses_plaintext CHECK (
-        anchor_hash ~ '[^ACGTUNacgtun]'
-    )
-);
-
-COMMENT ON TABLE GenomicAnchor IS
-  'Genomic-binding anchor (Appendix F.1). Stores hash of genomic identifier '
-  'only — three CHECK constraints (hex format, algorithm-specific length, '
-  'no-pure-genomic-alphabet) refuse plaintext genomic data at the schema '
-  'level. The biometric / genomic plaintext never enters the database; this '
-  'row is a non-reversible commitment retained for audit-trail purposes when '
-  'a token is reissued or its biometric binding is challenged. See M2-4 in '
-  'MISSION.md.';
-
-COMMENT ON COLUMN GenomicAnchor.anchor_hash IS
-  'Hex-encoded hash output. Must be all-hex, length must match '
-  'hash_algorithm, and must not consist solely of {A,C,G,T,U,N} characters. '
-  'The triple of CHECK constraints is the privacy invariant.';
-
--- ============================================================================
--- QUANTUM-OBSERVER BINDING (Appendix F.2) — M2-5 / R10-5 scaffold
--- ============================================================================
--- Reserves the substrate-level slot for a quantum-measurement attestation
--- primitive. Until quantum-observer hardware exists, every row in this
--- table is binding_status='SCAFFOLD' and the functional fields are NULL.
--- When the hardware ecosystem matures, rows transition to 'OPERATIONAL'
--- and populate the deferred fields — without a breaking schema migration.
---
--- The scaffold-state and operational-state invariants are enforced by
--- CHECK constraints so the deferred fields can't be partially populated.
--- See docs/design/quantum-observer.md for the architectural rationale.
--- ============================================================================
-
--- coverage:exempt — M2-5 scaffold; no live writes; drift via migrations framework when M2-5 activates
-CREATE TABLE QuantumObserverBinding (
-    binding_id          SERIAL       PRIMARY KEY,
-    token_id            INTEGER      NOT NULL REFERENCES IdentityToken(token_id),
-
-    -- Scaffold marker. 'SCAFFOLD' is the only legal state until quantum-
-    -- observer hardware exists. 'OPERATIONAL' is reserved for the future.
-    -- 'DEPRECATED' is for rows whose protocol has been retired post-migration.
-    binding_status      VARCHAR(20)  NOT NULL DEFAULT 'SCAFFOLD'
-        CHECK (binding_status IN ('SCAFFOLD', 'OPERATIONAL', 'DEPRECATED')),
-
-    -- DEFERRED: which quantum-measurement protocol bound the token. NULL
-    -- while SCAFFOLD. Anticipated values from Appendix F.2: 'BB84-WITNESS',
-    -- 'E91-ENTANGLEMENT-WITNESS', 'MEASUREMENT-INDEPENDENT-QKD',
-    -- 'CONTINUOUS-VARIABLE-QKD'. The enum is intentionally NOT a CHECK
-    -- constraint yet — protocol vocabulary is unsettled.
-    observer_protocol   VARCHAR(40),
-
-    -- DEFERRED: hash of the wavefunction-collapse record. NULL while
-    -- SCAFFOLD. Length follows collapse_hash_algorithm when populated.
-    collapse_witness_hash VARCHAR(128),
-
-    -- DEFERRED: hash algorithm. NULL while SCAFFOLD. Expected to align
-    -- with the CryptographicAlgorithm table or its post-quantum analog
-    -- when this becomes operational.
-    collapse_hash_algorithm VARCHAR(20),
-
-    -- DEFERRED: coherence window in milliseconds. NULL while SCAFFOLD.
-    -- Semantics depend on the protocol; tighter is harder to spoof.
-    coherence_window_ms INTEGER,
-
-    -- Always-populated bookkeeping (real even in SCAFFOLD state):
-    registered_agency_id INTEGER     NOT NULL REFERENCES Agency(agency_id),
-    registered_at        TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    -- Scaffold invariant: SCAFFOLD rows must NOT populate deferred fields.
-    -- Catches premature population of fields whose semantics aren't stable.
-    CONSTRAINT qob_scaffold_defers_functional CHECK (
-        binding_status != 'SCAFFOLD' OR (
-            observer_protocol     IS NULL AND
-            collapse_witness_hash IS NULL AND
-            collapse_hash_algorithm IS NULL AND
-            coherence_window_ms   IS NULL
-        )
-    ),
-
-    -- Operational invariant: OPERATIONAL rows must populate the deferred
-    -- fields. Can't claim functional binding without the data.
-    CONSTRAINT qob_operational_requires_functional CHECK (
-        binding_status != 'OPERATIONAL' OR (
-            observer_protocol     IS NOT NULL AND
-            collapse_witness_hash IS NOT NULL AND
-            collapse_hash_algorithm IS NOT NULL
-        )
-    )
-);
-
-COMMENT ON TABLE QuantumObserverBinding IS
-  'Substrate-level quantum-measurement attestation scaffold (Appendix F.2). '
-  'Until quantum-observer hardware exists, every row is binding_status=SCAFFOLD '
-  'and the functional fields are NULL. Two CHECK constraints enforce the '
-  'scaffold vs operational state transition. M2-5 / R10-5 — see '
-  'docs/design/quantum-observer.md for the architectural rationale.';
-
-COMMENT ON COLUMN QuantumObserverBinding.binding_status IS
-  'SCAFFOLD = placeholder (current state until hardware exists). '
-  'OPERATIONAL = real binding with all deferred fields populated. '
-  'DEPRECATED = retired protocol, kept for audit. The transition '
-  'SCAFFOLD → OPERATIONAL requires populating observer_protocol, '
-  'collapse_witness_hash, and collapse_hash_algorithm — enforced by CHECK.';
-
-COMMENT ON COLUMN QuantumObserverBinding.observer_protocol IS
-  'DEFERRED. Which quantum-measurement protocol bound the token. NULL '
-  'while binding_status=SCAFFOLD. Expected vocabulary in Appendix F.2.';
 
 -- ============================================================================
 -- JUNCTION TABLES
@@ -1287,8 +1114,7 @@ COMMENT ON TABLE DuressEvent IS
 -- END OF 01_schema.sql
 -- Twenty-three tables: 4 principals + 1 central artifact + 14 records + 3 junctions
 --                      + 1 policy.
--- (GenomicAnchor was added in v8 / M2-4; QuantumObserverBinding in v8.11 /
--- M2-5; IssuerDiscretionPolicy in v8.15 / R11-6 / M2-11;
+-- (IssuerDiscretionPolicy was added in v8.15 / R11-6 / M2-11;
 -- EnrollmentStatusEvent in v8.16 / R11-4 / M2-9;
 -- RecoveryRequest in v8.17 / R11-2 / M2-7;
 -- TokenSignature in v8.18 / R11-1 / M2-6;
@@ -1298,15 +1124,13 @@ COMMENT ON TABLE DuressEvent IS
 -- DuressEvent in v8.24 / R11-5 / M2-10 — the v2 mission-closer.)
 -- Twenty-eight foreign keys: 5 on IdentityToken (incl. self-referential), 2 on
 -- TokenLifecycleEvent, 3 on VerificationEvent, 1 on DeviceBinding, 1 on
--- BlockchainAnchor, 2 on RevocationList, 2 on GenomicAnchor, 2 on each
+-- BlockchainAnchor, 2 on RevocationList, 2 on each
 -- junction table, 1 on IssuerDiscretionPolicy, 2 on EnrollmentStatusEvent,
 -- 5 on RecoveryRequest (individual + 2 agencies + 3 AppUser refs +
 -- resulting_token; counted with self).
 -- Twenty CHECK constraints across enumerated fields, plus two structural
 -- CHECK constraints on VerificationEvent (chk_token_time_order,
--- chk_disclosure_token_consistency), three on GenomicAnchor
--- (genomic_hash_is_hex, genomic_hash_length_matches_algorithm,
--- genomic_anchor_refuses_plaintext), three on IssuerDiscretionPolicy
+-- chk_disclosure_token_consistency), three on IssuerDiscretionPolicy
 -- (max_revoke_percent range, window_days range, justification length floor),
 -- one on EnrollmentStatusEvent (status enum), and four on RecoveryRequest
 -- (cooldown_window_minimum, approved_requires_three_channels,

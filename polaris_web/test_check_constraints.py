@@ -353,60 +353,6 @@ class TestEnrollmentStatusEventChecks(_CheckBase):
         )
 
 
-# ============================================================================
-# GenomicAnchor (R10-4 / M2-4)
-# ============================================================================
-
-class TestGenomicAnchorChecks(_CheckBase):
-
-    # NOTE: GenomicAnchor.anchor_hash has multiple stacked constraints:
-    #   genomic_anchor_refuses_plaintext: must contain at least one
-    #     non-ACGT char (so it can't be a raw genomic sequence)
-    #   genomic_hash_is_hex: must match /^[0-9a-fA-F]+$/
-    #   genomic_hash_length_matches_algorithm: length must match algorithm
-    # To exercise each in isolation we use 'f' as the fill character —
-    # 'f' is hex but NOT in ACGT, so the plaintext-refusal CHECK is
-    # already satisfied; subsequent CHECKs fire deterministically.
-
-    def test_hash_must_be_hex(self):
-        self._expect_check_violation(
-            "INSERT INTO GenomicAnchor "
-            "(token_id, hash_algorithm, anchor_hash, enrollment_date, witness_agency_id) "
-            "VALUES (1, 'SHA3-256', 'fnot-hex!fnot-hex!fnot-hex!fnot-hex!fnot-hex!fnot-hex!fnot-hex!', CURRENT_DATE, 1)",
-            constraint_name='genomic_hash_is_hex',
-        )
-
-    def test_hash_length_must_match_algorithm(self):
-        """SHA3-256 → 64 hex chars. 60-char hex is rejected."""
-        self._expect_check_violation(
-            "INSERT INTO GenomicAnchor "
-            "(token_id, hash_algorithm, anchor_hash, enrollment_date, witness_agency_id) "
-            "VALUES (1, 'SHA3-256', '" + 'f' * 60 + "', CURRENT_DATE, 1)",
-            constraint_name='genomic_hash_length_matches_algorithm',
-        )
-
-    def test_hash_algorithm_enum(self):
-        """hash_algorithm must be in the enum.
-
-        MD5 triggers both `genomicanchor_hash_algorithm_check` AND
-        `genomic_hash_length_matches_algorithm` (the latter because
-        no WHEN branch matches MD5). Either constraint firing means
-        the bad value was rejected — accept either.
-        """
-        with self.assertRaises(pg_errors.CheckViolation):
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO GenomicAnchor "
-                    "(token_id, hash_algorithm, anchor_hash, enrollment_date, "
-                    "witness_agency_id) "
-                    "VALUES (1, 'MD5', '" + 'f' * 32 + "', CURRENT_DATE, 1)"
-                )
-
-
-# ============================================================================
-# IdentityToken
-# ============================================================================
-
 class TestIdentityTokenChecks(_CheckBase):
 
     def test_status_enum(self):
@@ -804,43 +750,6 @@ class TestDuressEventChecks(_CheckBase):
             constraint_name='oob_channel_check',
         )
 
-
-# ============================================================================
-# QuantumObserverBinding (M2-5 — scaffold)
-# ============================================================================
-
-class TestQuantumObserverBindingChecks(_CheckBase):
-
-    def test_binding_status_enum(self):
-        self._expect_check_violation(
-            "INSERT INTO QuantumObserverBinding "
-            "(token_id, registered_agency_id, binding_status) "
-            "VALUES (1, 1, 'QUANTUM_LOL')",
-            constraint_name='binding_status_check',
-        )
-
-    def test_scaffold_must_defer_functional_fields(self):
-        """SCAFFOLD rows MUST have observer_protocol IS NULL."""
-        self._expect_check_violation(
-            "INSERT INTO QuantumObserverBinding "
-            "(token_id, registered_agency_id, binding_status, observer_protocol) "
-            "VALUES (1, 1, 'SCAFFOLD', 'BB84')",
-            constraint_name='qob_scaffold_defers_functional',
-        )
-
-    def test_operational_requires_functional_fields(self):
-        """OPERATIONAL rows MUST have observer_protocol IS NOT NULL."""
-        self._expect_check_violation(
-            "INSERT INTO QuantumObserverBinding "
-            "(token_id, registered_agency_id, binding_status) "
-            "VALUES (1, 1, 'OPERATIONAL')",
-            constraint_name='qob_operational_requires_functional',
-        )
-
-
-# ============================================================================
-# uc4_activate_reserve x velocity-bound trigger (procedure regression)
-# ============================================================================
 
 class TestUC4ReserveActivation(_CheckBase):
     """uc4_activate_reserve must succeed for every reason code it offers.

@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **32 tables** in `01_schema.sql` (v9.247), organized
-into six functional groups. A migrated deployment holds **39 tables**: those,
+The Polaris schema is **30 tables** in `01_schema.sql` (v9.269), organized
+into six functional groups. A migrated deployment holds **37 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -31,9 +31,8 @@ add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
   TokenStateEpoch, TokenStateEpochLeaf, ZkVerificationNonce): Merkle
   commitments over token state, the epoch roots the ZK prover proves
   membership in, and the single-use nonces that stop proof replay.
-- **Bindings and substrate** (DeviceBinding, GenomicAnchor,
-  QuantumObserverBinding): commitments recorded alongside a token.
-  QuantumObserverBinding is a scaffold with no planned use.
+- **Bindings** (DeviceBinding): a device commitment recorded
+  alongside a token.
 - **Policy, federation and operations** (AgencyAlgorithmAuth,
   IssuerDiscretionPolicy, AgencyQuota, AgencyTrustAttestation,
   RecoveryRequest, LifecycleArchiveCheckpoint, BulkEnrollmentBatch,
@@ -45,9 +44,7 @@ add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
 
 Schema is in `polaris_sql/01_schema.sql`. Indexes in
 `polaris_sql/02_indexes.sql`. Triggers (state machine, append-only,
-audit) in `polaris_sql/06_triggers.sql`. The reserved future
-primitive (`QuantumObserverBinding`) is in scaffold state: see
-`docs/design/quantum-observer.md`.
+audit) in `polaris_sql/06_triggers.sql`.
 
 ---
 
@@ -406,22 +403,6 @@ and the audit trail accumulates. v1 ships with operator-logged
 attestations (`signed_by AppUser`); v2 path is cryptographic
 agency-signed attestations (left out of v8.22 by design: see
 `docs/design/federation.md`'s "v1 vs v2 split").
-
-### `GenomicAnchor`
-
-Hash-only commitment to a genomic identifier per token. Three CHECK
-constraints enforce the privacy invariant: (1) hash must be hex,
-(2) hash length must match the algorithm, (3) hash cannot consist
-solely of {A,C,G,T,U,N} characters (i.e., cannot be plaintext
-genomic data). See `docs/design/substrate.md`.
-
-### `QuantumObserverBinding` (scaffold)
-
-Substrate-level reservation for a quantum-measurement attestation
-primitive (Appendix F.2). Every current row has `binding_status =
-'SCAFFOLD'` with functional fields NULL. Two CHECK constraints
-enforce the SCAFFOLD ↔ OPERATIONAL state transition structurally.
-See `docs/design/quantum-observer.md`.
 
 ### `IssuerDiscretionPolicy`
 
