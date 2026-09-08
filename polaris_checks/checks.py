@@ -6913,6 +6913,80 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def _fn_block(src: str, fn: str):
+    """The source text of function `fn`, from its `def` to the next top-level `def` (or
+    end of file). None if the function is absent."""
+    m = re.search(r"\ndef %s\(.*?(?=\ndef |\Z)" % re.escape(fn), src, re.S)
+    return m.group(0) if m else None
+
+
+def _signed_statement_keys(src: str, fn: str):
+    """The ordered signed keys a canonical-statement builder projects, extracted from its
+    source. Handles both shapes: a `for k in (...)` projection and an inline dict literal
+    whose `"key":` entries name the signed fields. Returns None if the function is absent."""
+    body = _fn_block(src, fn)
+    if body is None:
+        return None
+    proj = re.search(r"for k in \(([^)]*)\)", body, re.S)
+    if proj:
+        return re.findall(r"""['"]([^'"]+)['"]""", proj.group(1))
+    # Inline dict: keys are the quoted tokens immediately followed by a colon.
+    return re.findall(r"""['"]([a-z_]+)['"]\s*:""", body)
+
+
+def check_canonical_equivalence(root: pathlib.Path) -> list[Finding]:
+    """Every signed statement type is signed by the app over a canonical byte string and
+    reconstructed INDEPENDENTLY by scripts/polaris-verify.py. If the two sides ever
+    disagree on a byte -- a key added on one side, a separator changed, a sort dropped --
+    the app keeps signing while every offline verification fails, silently. This check is
+    the static guard: for each type, the app statement builder and the verify canonical
+    builder must project the SAME ordered key list with the same compact, sorted-key JSON.
+    The runtime oracle (polaris_web/test_canonical_equivalence.py, Hypothesis) proves byte
+    equality over generated inputs; this check pins the key lists and the CI wiring so the
+    two can never drift unnoticed."""
+    app = _read(root, "polaris_web/app.py")
+    v = _read(root, "scripts/polaris-verify.py")
+    if not app or not v:
+        return _fail("canonical_equivalence", "app.py or scripts/polaris-verify.py is missing")
+    pairs = [
+        ("federation-manifest", "_manifest_statement", "_manifest_canonical"),
+        ("epoch-checkpoint", "_epoch_checkpoint_statement", "_epoch_checkpoint_canonical"),
+        ("revocation-feed", "_revocation_feed_statement", "_revocation_feed_canonical"),
+        ("status-assertion", "_status_assertion_statement", "_status_assertion_canonical"),
+    ]
+    for name, app_fn, ver_fn in pairs:
+        a_keys = _signed_statement_keys(app, app_fn)
+        v_keys = _signed_statement_keys(v, ver_fn)
+        if a_keys is None:
+            return _fail("canonical_equivalence", f"app.py is missing the {name} builder {app_fn}")
+        if v_keys is None:
+            return _fail("canonical_equivalence", f"polaris-verify.py is missing the {name} builder {ver_fn}")
+        if a_keys != v_keys:
+            return _fail("canonical_equivalence",
+                         f"the {name} signed key list differs between the app and the verifier: "
+                         f"app {app_fn}={a_keys} vs verify {ver_fn}={v_keys} -- an app signature would "
+                         "fail every offline verification")
+        # Both sides must produce the compact, sorted-key form.
+        for label, src, fn in (("app", app, app_fn), ("verify", v, ver_fn)):
+            block = _fn_block(src, fn) or ""
+            if "sort_keys=True" not in block or re.search(r"separators=\(['\"],['\"],\s*['\"]:['\"]\)", block) is None:
+                return _fail("canonical_equivalence",
+                             f"the {label} {name} builder must serialize with sort_keys=True and "
+                             "separators=(',', ':') (the canonical compact form)")
+    # The runtime oracle must exist and run in CI.
+    oracle = _read(root, "polaris_web/test_canonical_equivalence.py")
+    if not oracle or "SIGNED_TYPES" not in oracle or "cross_impl_equivalence" not in oracle:
+        return _fail("canonical_equivalence",
+                     "polaris_web/test_canonical_equivalence.py (the Hypothesis oracle) is missing or incomplete")
+    if "test_canonical_equivalence" not in _read(root, "scripts/polaris-coverage.sh"):
+        return _fail("canonical_equivalence",
+                     "the canonical-equivalence oracle must run in CI (add it to scripts/polaris-coverage.sh)")
+    return _ok("canonical_equivalence",
+               f"all {len(pairs)} signed statement types project identical ordered key lists across the app "
+               "signer and the offline verifier, in the compact sorted-key form, and the Hypothesis oracle "
+               "(test_canonical_equivalence) proves byte equivalence over generated inputs every release")
+
+
 def check_federation_two_instances(root: pathlib.Path) -> list[Finding]:
     """P3.10: federation proven across the DEPLOYMENT boundary. Two independent instances,
     each its own database and its own real ML-DSA-65 root, talk only over HTTP: a relying
@@ -7437,6 +7511,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_canonical_equivalence,
     check_federation_two_instances,
     check_epoch_revocation_propagation,
     check_inter_authority_protocol,

@@ -6230,6 +6230,62 @@ def test_federation_two_instances_check_discriminates(tmp_path):
     assert checks.check_federation_two_instances(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
 
 
+def test_canonical_equivalence_check_discriminates(tmp_path):
+    # v9.300: the app statement builder and the verify canonical builder for each signed
+    # type must project the same ordered key list in the compact sorted-key form, with a
+    # Hypothesis oracle wired into CI. Each perturbation breaks one leg.
+    def _proj(keys, getter, q):
+        inner = ", ".join("%s%s%s" % (q, k, q) for k in keys)
+        return ("    return json.dumps({k: %s.get(k) for k in (%s)}, sort_keys=True, "
+                "separators=(%s,%s, %s:%s)).encode()\n" % (getter, inner, q, q, q, q))
+
+    app = (
+        "import json\n"
+        "def _manifest_statement(body):\n" + _proj(["format", "authority"], "body", "'") +
+        "def _epoch_checkpoint_statement(body):\n" + _proj(["format", "epoch"], "body", "'") +
+        "def _revocation_feed_statement(body):\n" + _proj(["format", "revoked_root_hex"], "body", "'") +
+        "def _status_assertion_statement(token_value, status, issued_at, expires_at):\n"
+        "    return json.dumps({'format': 'F', 'token_value': token_value, 'status': status}, "
+        "sort_keys=True, separators=(',', ':')).encode()\n"
+    )
+    verify = (
+        "import json\n"
+        "def _manifest_canonical(m):\n" + _proj(["format", "authority"], "m", '"') +
+        "def _epoch_checkpoint_canonical(cp):\n" + _proj(["format", "epoch"], "cp", '"') +
+        "def _revocation_feed_canonical(f):\n" + _proj(["format", "revoked_root_hex"], "f", '"') +
+        "def _status_assertion_canonical(a):\n"
+        '    return json.dumps({"format": a.get("format"), "token_value": a.get("token_value"), '
+        '"status": a.get("status")}, sort_keys=True, separators=(",", ":")).encode()\n'
+    )
+    good = {
+        "polaris_web/app.py": app,
+        "scripts/polaris-verify.py": verify,
+        "polaris_web/test_canonical_equivalence.py": "SIGNED_TYPES = {}\ndef cross_impl_equivalence(): pass\n",
+        "scripts/polaris-coverage.sh": "run polaris_web unittest test_canonical_equivalence\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. a key list drifts between the two sides
+    write({"scripts/polaris-verify.py": verify.replace('"authority"', '"AUTHORITY_RENAMED"')})
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL if a signed key list differs"
+    # 2. one side drops the sorted-key canonical form
+    write({"polaris_web/app.py": app.replace("sort_keys=True", "sort_keys=False", 1)})
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL without sort_keys=True"
+    # 3. the Hypothesis oracle is missing
+    write({"polaris_web/test_canonical_equivalence.py": "# empty\n"})
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL without the oracle"
+    # 4. the oracle is not wired into CI
+    write({"scripts/polaris-coverage.sh": "run polaris_web unittest test_app\n"})
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL if the oracle does not run in CI"
+
+
 def test_federation_topology_check_discriminates(tmp_path):
     # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
     # delta + the vocation grounding, and is kept honest against the code. Each

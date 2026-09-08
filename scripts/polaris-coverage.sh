@@ -78,7 +78,7 @@ run() {  # run <cwd> <module...>
 echo "== running suites under coverage =="
 run "$ROOT"            pytest polaris_checks/test_checks.py -q
 run "$ROOT/polaris_web" unittest test_app test_check_constraints test_pqc_signing test_custody test_secretstore
-run "$ROOT/polaris_web" unittest test_invariants_property test_redaction_property
+run "$ROOT/polaris_web" unittest test_invariants_property test_redaction_property test_canonical_equivalence
 run "$ROOT/polaris_cli" unittest test_cli
 run "$ROOT/scripts"     unittest test_verify_load test_wallet test_relying_party
 # polaris_sim's tests import the package (from polaris_sim import ...), so they

@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.300 — 2026-09-08 (The canonical-signing equivalence oracle)
+
+Every signed statement in Polaris is signed by the application over a canonical byte
+string and reconstructed independently by the offline verifier. If the two sides ever
+disagree on a single byte, the application keeps signing while every offline verification
+fails, silently. It is the subtlest, highest-impact failure mode in the system, and until
+now it was caught only by hand and by the per-format drills. This ship makes introducing
+it unnoticed impossible.
+
+- **A differential + metamorphic oracle.** `polaris_web/test_canonical_equivalence.py`
+  treats the app-side statement builder and the verify-side canonical builder for each of
+  the four canonical-JSON signed types (federation manifest, epoch checkpoint, revocation
+  feed, status assertion) as two implementations of one spec, and asserts over
+  Hypothesis-generated inputs (unicode that forces escaping, key reorderings, nested
+  structures, integer boundaries, stray keys) the properties that must hold:
+  cross-implementation byte equality, determinism, key-order invariance, signature-envelope
+  exclusion (the signature can never sign itself), JSON round-trip stability, and canonical
+  form. It is crypto-free and runs in the ordinary product-test job; the real ML-DSA-65
+  round-trip is proven per type by the pqc-real drills. Writing it, Hypothesis at once found
+  a flawed assumption in the test itself, that a value merely containing ", " is not a
+  separator, which the oracle now handles by re-canonicalization rather than a substring check.
+
+- **A static guard and a coverage guard.** `check_canonical_equivalence` extracts and
+  compares the ordered key list on both sides for all four types, requires the compact
+  sorted-key form on each, and requires the oracle to exist and run in CI. A coverage
+  property in the oracle fails if a fifth canonical-JSON signed type is ever added without an
+  oracle case, so the invariant cannot be outgrown silently.
+
+162 machine-checked invariants.
+
+---
+
 ## v9.299 — 2026-09-08 (Federation proven across two instances, P3.10)
 
 The federation protocol was proven in one process by the crypto drills. P3.10 proves it
