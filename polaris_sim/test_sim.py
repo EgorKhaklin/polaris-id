@@ -294,9 +294,16 @@ class SubstrateLoadTests(unittest.TestCase):
         # single-witness latency is a p50/p95/p99 distribution, like the write path
         self.assertIn("p95", cv["single_witness_latency_ms"])
         self.assertGreaterEqual(cv["cores"], 1)
-        # single-witness is the throughput path: it is at least as fast as the
-        # two-witness check (it drops the redundant second implementation).
-        self.assertGreaterEqual(cv["single_witness_per_sec"], cv["two_witness_per_sec"])
+        # single-witness is the throughput path: it should be at least as fast as the
+        # two-witness check (it drops the redundant second implementation). This is a
+        # tiny micro-benchmark (a few dozen samples), so on a shared CI runner the two
+        # measured rates can invert by a few percent under scheduling and cache noise.
+        # Allow a 20% tolerance so that noise does not redden the build, while a real
+        # regression (single-witness accidentally doing two-witness work, roughly
+        # halving its rate) still trips it.
+        self.assertGreaterEqual(cv["single_witness_per_sec"], cv["two_witness_per_sec"] * 0.8,
+                                "single-witness verify should be no slower than ~80% of the "
+                                "two-witness rate; a larger gap is a real throughput regression")
         # the fleet projection is single-witness scaled by the core count.
         self.assertAlmostEqual(
             cv["projected_fleet_single_witness_per_sec"],

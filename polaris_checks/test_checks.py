@@ -5495,6 +5495,8 @@ def test_verify_witness_sampling_check_discriminates(tmp_path):
 def test_public_claims_honest_check_discriminates(tmp_path):
     # The outward surfaces must not overstate what exists now: understate to reality.
     README = ("# POLARIS\n\nA reference implementation on notional data.\n\n"
+              "**Relying-party linkability, stated positively.** A full-credential presentation carries a stable "
+              "token_value that colluding verifiers can correlate.\n\n"
               "| System | Deployed to a real population | National-scope issuance | PQ |\n"
               "| **Polaris** | **✗** | **✗** | ✓ |\n")
     SITE = ('<title>Polaris: a reference implementation of an identity-token system</title>\n'
@@ -5522,6 +5524,12 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     # the comparison awards Polaris a deployment/national-scope tick
     write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| **Polaris** | **✗** | ✓ | ✓ |"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL if Polaris is awarded national-scope issuance"
+    # the relying-party linkability statement is missing
+    write(readme=README.replace("**Relying-party linkability, stated positively.**", "**A different note.**"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL without the linkability statement"
+    # the two-witness overclaim returns
+    write(readme=README + "Two independent witnesses for every cryptographic verdict.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on the two-witness overclaim"
 
 
 def test_detached_verifier_check_discriminates(tmp_path):

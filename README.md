@@ -25,11 +25,15 @@ Educational project; notional data only. CI builds and boots the production-prof
 
 Polaris is a **post-quantum credential verification engine**, on a schema backbone. An authority issues a credential signed with ML-DSA-65 (FIPS 204); a holder holds it and presents it; and anyone can check it two ways. **Authenticity** is offline: a standalone detached verifier confirms the signature against published keys, with no Polaris code, no database, and no network. **Authorization** ("is it authoritative right now?") is answered online by a versioned relying-party API a third party calls as itself, or offline by a short-lived signed status assertion the holder staples, so a relying party never has to contact the issuer to accept a credential. Python and TypeScript verify SDKs and a language-agnostic conformance suite make "correctly verifying a Polaris credential" a contract anyone can hold their own code to, and cross-agency trust is explicit and non-transitive.
 
-The backbone is a 31-table PostgreSQL schema whose constraints are the security boundary: **the guarantees live in the database, not in application code**. A rule enforced by a trigger, a CHECK constraint, or a unique index binds every client, survives every restore from backup, and cannot be bypassed by the next caller. Around that sit a Rust ZK-SNARK prover with an independent second witness, a Flask application and an operator CLI, a hardened container stack (the production profile) behind a post-quantum TLS edge, and a flat layer of 158 machine-checked invariants (v9.294) that gates every change in CI. It runs on notional data; it has never held real identity data, and the physical token it models is not manufactured.
+The backbone is a 31-table PostgreSQL schema whose constraints are the security boundary: **the guarantees live in the database, not in application code**. A rule enforced by a trigger, a CHECK constraint, or a unique index binds every client, survives every restore from backup, and cannot be bypassed by the next caller. Around that sit a Rust ZK-SNARK prover with an independent second witness, a Flask application and an operator CLI, a hardened container stack (the production profile) behind a post-quantum TLS edge, and a flat layer of 158 machine-checked invariants (v9.295) that gates every change in CI. It runs on notional data; it has never held real identity data, and the physical token it models is not manufactured.
 
 **The problem it models.** Americans carry six to eight credentials that do not talk to each other: driver's license, passport, Social Security card, Real ID, voter registration, insurance card. Each is a separate artifact, signed by a separate authority, secured to a separate standard, with no shared revocation path and no shared audit trail. Polaris models consolidating them into **one active credential record per person**, verified through **context-scoped events** (banking, voting, and healthcare are different events with different disclosure rules) at three disclosure levels. The default level is **zero-knowledge**: the typical verification stores no token identifier at all, so the zero-knowledge verification graph cannot be reconstructed even by someone holding the whole database (SELECTIVE and FULL events do carry a token id).
 
 Two things here use zero knowledge, and a third deliberately does not exist. *Unlinkable verification records*: a default (zero-knowledge-mode) verification stores no token identifier, so the verification graph cannot be rebuilt from the database. A *Merkle-membership proof* (a Plonky2 SNARK) proves a token was in a published ledger and nothing else. Polaris is **not** a general selective-disclosure or anonymous-credential system, and does not claim to be.
+
+**Relying-party linkability, stated positively.** The unlinkability above is issuer-side and scoped to zero-knowledge mode: a ZK-mode verification stores no token identifier, so the issuer's database cannot reconstruct that graph. It does **not** cover the holder-to-verifier hop. A full-credential presentation carries a stable `token_value`, so two relying parties who both see a credential can join their logs by that value, with no name required, and C2 does nothing to stop them. Even without `token_value` in the payload, any stable handle shown to every verifier (a reused ML-DSA public key, a reused membership proof) is the same correlator. Polaris does not implement pairwise or per-verifier identifiers, blinded or derived presentations, one-time presentation tokens, or anonymous credentials, and **this is a permanent, documented property, not a pending feature**: Polaris is a full-credential presentation system, so a credential is correlatable across the verifiers it is shown to, by design. Linkability-resistant presentation is a different system and is out of scope. "Unlinkable by default" means the issuer's ZK-mode records, not cross-verifier presentation.
+
+**Offline authorization is a tradeoff, stated plainly.** The short-lived signed status assertion lets a relying party accept a credential with no issuer contact, so the issuer never learns the verification happened. The cost is revocation latency: a revoked credential's last signed ACTIVE assertion stays valid until it expires, so there is a revoked-but-assertion-still-valid window bounded by the assertion's TTL (one hour by default, a policy number, not a law). A verifier tightens that window by imposing its own shorter `max_age`. The three cannot all be maximized at once: issuer non-observation, offline availability, and revocation freshness, pick two.
 
 ---
 
@@ -43,7 +47,21 @@ python3 scripts/polaris-verify.py --verify-dir vectors  # re-verify the publishe
 python3 conformance/run_conformance.py --self           # the reference verify SDK against the published conformance cases
 ```
 
-These are the detached verifier and the verification conformance suite: the same code a third party integrates, and the same code CI runs on every push. The full production stack (issuance, the operator flows, the Atlas) is under [Run it](#run-it) below.
+These are the detached verifier and the verification conformance suite: the same code a third party integrates, and the same code CI runs on every push.
+
+A verdict makes the split concrete. A signature stays genuine forever; the authorization under it can change. The same credential, after it is revoked:
+
+```jsonc
+POST /api/v1/verify  ->  {
+  "authentic": true,                 // the ML-DSA-65 signature is genuine
+  "currently_authoritative": false,  // but this token has been revoked
+  "status": "REVOKED",
+  "usable": false,                   // authentic AND authoritative -> false
+  "decision": "reject"
+}
+```
+
+That is the whole product in one object: authenticity is permanent and cacheable; authorization is fresh and revocable; a relying party needs both. The full production stack (issuance, the operator flows, the Atlas) is under [Run it](#run-it) below.
 
 ---
 
@@ -64,7 +82,7 @@ Above the ten sits the project's vocation: **no person can be compelled to renou
 | **C9** | Concurrency claims are tested with real threads, not mocks. | Engineering | Threaded test suites against a live database |
 | **C10** | Identity is not money. The schema carries no monetary claim. | Constitutional | Structural absence, pinned by a check |
 
-Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 158 plain `check_*` functions (v9.294), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. The reasoning for why these ten, and why they interlock, is in [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
+Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 158 plain `check_*` functions (v9.295), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. The reasoning for why these ten, and why they interlock, is in [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
 
 ---
 
@@ -124,19 +142,11 @@ Four layers. The schema is the core; everything else is a client of it.
 | [`polaris_web/`](polaris_web/) | Flask application: dashboard, the Atlas, per-use-case flows, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 Merkle-inclusion prover (Rust), plus [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation that must agree with it. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI: issuance, revocation, recovery, audit queries, without a browser. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer. 158 checks (v9.294), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer. 158 checks (v9.295), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
 | [`sdk/`](sdk/), [`conformance/`](conformance/) | The verify SDKs a relying party installs (Python and TypeScript, offline authenticity plus the online status check) and the language-agnostic conformance suite that certifies any verifier against the published cases. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | The holder wallet, the standalone detached verifier, and the relying-party verifier live here (`polaris-wallet.py`, `polaris-verify.py`, `polaris-relying-party.py`), alongside operator tooling (backup, restore, archive, purge, migrate, recover-admin) and observability config (Prometheus alerts, Grafana dashboards-as-code, opt-in OTel tracing). |
 
-The production topology is five services: a self-built Caddy TLS edge, gunicorn, PgBouncer, PostgreSQL with pgBackRest WAL archiving, and Redis. Every service runs as non-root with all Linux capabilities dropped.
-
-<div align="center">
-
-<img src="site/atlas-globe.png" alt="The Polaris Atlas: a dark operational map of North America with verification clusters, the event feed, and the post-quantum and zero-knowledge coverage figures" width="820">
-
-<sub>**The Atlas**, the operator's surface over that stack: a map that zooms from the continent to the street, plotting every verification and lifecycle event where it happened (notional data; captured at v9.214 against a two-million-event synthetic log). Zero-knowledge verifications are never plotted: the map's own queries exclude them, and a zero-knowledge event carries no token id to attribute it by.</sub>
-
-</div>
+The production topology is five services: a self-built Caddy TLS edge, gunicorn, PgBouncer, PostgreSQL with pgBackRest WAL archiving, and Redis. Every service runs as non-root with all Linux capabilities dropped. An operator surface (the Atlas) plots verification and lifecycle events over that stack; zero-knowledge verifications are never plotted, because a zero-knowledge event carries no token id to attribute it by.
 
 ---
 
@@ -154,7 +164,7 @@ SLH-DSA-256s     SLH-DSA     ✓    FIPS 205     256         64 B     29,792 B  
 ECDSA-P256       ECDSA            FIPS 186-4   128         64 B         72 B   legacy, sunset 2027
 ```
 
-- **Two independent witnesses for every cryptographic verdict.** Real ML-DSA-65 signatures verified through liboqs are cross-checked by a second implementation (OpenSSL via `cryptography`); the ZK epoch root computed by the Rust prover is recomputed bit-for-bit by a Python second witness. No single crypto library is trusted alone. A verdict that cannot be double-checked abstains rather than pretending.
+- **Two ML-DSA implementations at issuance; sampled at use.** Issuance requires two independent ML-DSA-65 implementations (liboqs and OpenSSL via `cryptography`) and fails closed if they disagree, so no stored production signature is trusted from a single library. Verify-at-use is single-witness (liboqs) with continuous mandatory second-witness sampling; a disagreement pages a SEV. These are not the same guarantee, and the difference is deliberate: issuance is rare and must be certain, verify-at-use is hot and must be fast. The ZK epoch root computed by the Rust prover is recomputed bit-for-bit by a Python second witness.
 - **SLH-DSA is a registered hedge, not a shipped signer.** ML-DSA rests on lattice assumptions, SLH-DSA on hash functions alone, so both SLH-DSA parameter sets sit in the algorithm registry and a rotation toward them is a row update. The only signer wired today is ML-DSA-65, so the seed token filed under SLH-DSA-128s can never be re-signed; the seed data's signature rows are placeholders for every algorithm, and real signatures appear at issuance. The gap is on the ledger in [PQC-POSTURE.md](docs/reference/PQC-POSTURE.md).
 - **The TLS edge negotiates post-quantum key exchange.** The public edge speaks X25519MLKEM768 hybrid KEX with capable clients, and CI proves the handshake on every push. What remains classical (internal TLS hops, certificates, WebAuthn credentials on today's authenticators; the relying party already offers ML-DSA-65 first) is mapped honestly in [PQC-POSTURE.md](docs/reference/PQC-POSTURE.md).
 - **The ZK proof is transparent.** Plonky2 is FRI-based: no trusted setup. The proof answers "was this token in the ledger at epoch N" and nothing else. Source: [`polaris_zk/src/lib.rs`](polaris_zk/src/lib.rs).

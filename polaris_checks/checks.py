@@ -6162,6 +6162,9 @@ def check_verify_witness_sampling(root: pathlib.Path) -> list[Finding]:
 _OVERCLAIM_PHRASES = (
     "one physical token per person",   # the hardware token is modeled, not manufactured
     "the complete working system",     # it is a reference implementation, not a deployment
+    # Issuance is two-witness fail-closed; verify-at-use is single-witness plus
+    # sampling. "every cryptographic verdict" flattens the two into one guarantee.
+    "Two independent witnesses for every cryptographic verdict",
 )
 
 
@@ -6200,6 +6203,15 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
         return _fail("public_claims",
                      "the 'Where Polaris sits' comparison must keep the 'Deployed to a real population' column so "
                      "Polaris's design ticks are not read as a deployment")
+    # Unlinkability is issuer-side and ZK-mode-scoped; a full-credential presentation
+    # carries a stable token_value that colluding relying parties can correlate. The
+    # README must say so, or "unlinkable by default" is read as covering the
+    # holder-to-verifier hop, which it does not.
+    if "Relying-party linkability" not in readme:
+        return _fail("public_claims",
+                     "the README must state relying-party linkability positively: a full-credential presentation "
+                     "carries a stable token_value that colluding verifiers can join their logs by, so 'unlinkable "
+                     "by default' is the issuer's ZK-mode records, not cross-verifier presentation")
     # The comparison must not award Polaris a deployment property it does not have:
     # its first two columns (deployed to a real population, national-scope issuance)
     # must both be a clear negative, so a skimmer is not told Polaris issues nationally.

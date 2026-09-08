@@ -5,6 +5,55 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.295 — 2026-09-08 (Say what unlinkability does NOT cover, and split the witness claim)
+
+A technical-honesty review of the claims the front door makes. Three were imprecise;
+each is now stated to reality and, where it can regress, pinned.
+
+- **Relying-party linkability, stated positively.** "Unlinkable by default" is
+  issuer-side and scoped to zero-knowledge mode: a ZK-mode verification stores no token
+  identifier, so the issuer's database cannot reconstruct that graph. It does NOT cover
+  the holder-to-verifier hop. A full-credential presentation carries a stable
+  `token_value`, so two relying parties who both see a credential can join their logs by
+  it, with no name required; and even without `token_value`, any stable handle shown to
+  every verifier (a reused public key, a reused membership proof) is the same correlator.
+  The README now says this and names the linkability-resistant systems Polaris does NOT
+  implement (pairwise identifiers, blinded/derived presentations, one-time tokens,
+  anonymous credentials). This is a **permanent, documented property, not a pending
+  feature**: Polaris is a full-credential presentation system, so a credential is
+  correlatable across the verifiers it is shown to, by design; linkability-resistant
+  presentation is out of scope. `check_public_claims_honest` requires the statement.
+
+- **Offline authorization is a tradeoff.** The signed status assertion buys issuer
+  non-observation at the cost of revocation latency: a revoked credential's last ACTIVE
+  assertion stays valid until it expires (one hour by default, a policy number, not a
+  law), and a verifier tightens that window with its own shorter `max_age`. Stated as a
+  pick-two: issuer non-observation, offline availability, revocation freshness.
+
+- **The two-witness claim is split to reality.** It read "two independent witnesses for
+  every cryptographic verdict", which flattened two different guarantees. Now: issuance
+  requires two independent ML-DSA-65 implementations and fails closed on disagreement;
+  verify-at-use is single-witness with continuous mandatory second-witness sampling and a
+  SEV page on disagreement. The old absolute is an overclaim phrase the check now forbids.
+
+- **The Atlas globe is gone from the README.** It taught a movie, not the system. The
+  logo stays; the one visual is now a verify verdict showing `authentic: true` with
+  `currently_authoritative: false` on a revoked credential, which teaches the
+  authenticity/authorization split the front door leads with.
+
+- **Also stabilized a flaky test.** The national simulation's throughput benchmark
+  asserted single-witness verify is at least as fast as the two-witness check; on a
+  shared CI runner the two micro-benchmark rates can invert by a few percent under
+  scheduling noise (it reddened v9.293's run). The assertion now allows a 20% tolerance,
+  still tripping on a real throughput regression.
+
+Presentation, two check extensions, and one flaky-test stabilization; no schema or
+CI-job change.
+
+158 machine-checked invariants; the claims match what the code guarantees.
+
+---
+
 ## v9.294 — 2026-09-08 (Front door opens on the engine, with proof-of-life)
 
 A second surface review: the v9.293 fixes landed (the site title dropped "national";
