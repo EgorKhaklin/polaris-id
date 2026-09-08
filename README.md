@@ -35,7 +35,7 @@ Polaris models consolidating them into **one active credential record per person
 
 Two things here use zero knowledge, and a third deliberately does not exist. *Unlinkable verification records*: a default (zero-knowledge-mode) verification stores no token identifier, so the verification graph cannot be rebuilt from the database. A *Merkle-membership proof* (a Plonky2 SNARK) proves a token was in a published ledger and nothing else. Polaris is **not** a general selective-disclosure or anonymous-credential system, and does not claim to be.
 
-This repository is a complete, working reference implementation: a 31-table PostgreSQL schema whose constraints are the security boundary, a Flask application covering every use case, a Rust ZK-SNARK prover with an independent second witness, an operator CLI, a hardened container stack (the production profile) behind a post-quantum TLS edge, and a flat layer of 158 machine-checked invariants (v9.292) that gates every change in CI. It runs on notional data; it has never held real identity data, and the physical token it models is not manufactured.
+This repository is a working reference implementation, on notional data. Its engine is post-quantum credential verification: real ML-DSA-65 issuance and signing, a credential a holder holds and presents, and two ways to check it. **Authenticity** is offline: a standalone detached verifier confirms the signature against published keys, with no Polaris code and no database. **Authorization** ("is it authoritative now?") is answered online by a versioned relying-party API a third party calls as itself, or offline by a short-lived signed status assertion the holder staples, so a relying party never has to contact the issuer to accept a credential. Python and TypeScript verify SDKs and a language-agnostic conformance suite make "correctly verifying a Polaris credential" a contract anyone can hold their own code to; cross-agency trust is explicit and non-transitive. Around that engine sit a 31-table PostgreSQL schema whose constraints are the security boundary, a Rust ZK-SNARK prover with an independent second witness, a Flask application and an operator CLI, a hardened container stack (the production profile) behind a post-quantum TLS edge, and a flat layer of 158 machine-checked invariants (v9.293) that gates every change in CI. It has never held real identity data, and the physical token it models is not manufactured.
 
 What holds it together is one design rule: **the guarantees live in the database, not in application code**. A rule enforced by a trigger, a CHECK constraint, or a unique index binds every client, survives every restore from backup, and cannot be bypassed by the next caller. Application-level policy can be skipped; schema-level structure cannot.
 
@@ -58,7 +58,7 @@ Above the ten sits the project's vocation: **no person can be compelled to renou
 | **C9** | Concurrency claims are tested with real threads, not mocks. | Engineering | Threaded test suites against a live database |
 | **C10** | Identity is not money. The schema carries no monetary claim. | Constitutional | Structural absence, pinned by a check |
 
-Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 158 plain `check_*` functions (v9.292), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. The reasoning for why these ten, and why they interlock, is in [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
+Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 158 plain `check_*` functions (v9.293), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. The reasoning for why these ten, and why they interlock, is in [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
 
 ---
 
@@ -118,8 +118,9 @@ Four layers. The schema is the core; everything else is a client of it.
 | [`polaris_web/`](polaris_web/) | Flask application: dashboard, the Atlas, per-use-case flows, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 Merkle-inclusion prover (Rust), plus [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation that must agree with it. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI: issuance, revocation, recovery, audit queries, without a browser. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer. 158 checks (v9.292), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
-| [`scripts/`](scripts/), [`deploy/`](deploy/) | Operator tooling (backup, restore, archive, purge, migrate, recover-admin) and observability config (Prometheus alerts, Grafana dashboards-as-code, opt-in OTel tracing). |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer. 158 checks (v9.293), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
+| [`sdk/`](sdk/), [`conformance/`](conformance/) | The verify SDKs a relying party installs (Python and TypeScript, offline authenticity plus the online status check) and the language-agnostic conformance suite that certifies any verifier against the published cases. |
+| [`scripts/`](scripts/), [`deploy/`](deploy/) | The holder wallet, the standalone detached verifier, and the relying-party verifier live here (`polaris-wallet.py`, `polaris-verify.py`, `polaris-relying-party.py`), alongside operator tooling (backup, restore, archive, purge, migrate, recover-admin) and observability config (Prometheus alerts, Grafana dashboards-as-code, opt-in OTel tracing). |
 
 The production topology is five services: a self-built Caddy TLS edge, gunicorn, PgBouncer, PostgreSQL with pgBackRest WAL archiving, and Redis. Every service runs as non-root with all Linux capabilities dropped.
 
@@ -209,9 +210,9 @@ On a fresh Debian, Ubuntu, or RHEL-family server, one script does all of the abo
 | Aadhaar (India) | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
 | e-Estonia | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
 | W3C DIDs / VCs | partial | ✗ | method-dependent | method-dependent | ✗ | n/a |
-| **Polaris** | **✗** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Polaris** | **✗** | **✗** | ✓ | ✓ | ✓ | ✓ |
 
-The first column is the honest one: every other row is deployed to real people, and Polaris is not — its remaining checks mark design properties present in the codebase, not a deployment. This compares designs, then, not deployments; Polaris runs on notional data. No single row is novel; the point is the assembly — all five properties in one working codebase, every one enforced at the schema level and machine-checked rather than asserted in prose. The closest deployed system is mDL, which has selective disclosure and real signatures but no post-quantum default, no duress primitive, and no constitutional layer governing the issuer itself.
+The first two columns are the honest ones: every other row is deployed to real people at national scale, and Polaris is neither deployed nor issuing at that scale. Its remaining ticks mark design properties genuinely present in the codebase (post-quantum by default, unlinkable verification, a compulsion-resistant primitive, append-only audit at the schema), not a deployment. This compares designs, then, not deployments; Polaris runs on notional data. No single row is novel; the point is the assembly — all five properties in one working codebase, every one enforced at the schema level and machine-checked rather than asserted in prose. The closest deployed system is mDL, which has selective disclosure and real signatures but no post-quantum default, no duress primitive, and no constitutional layer governing the issuer itself.
 
 ---
 
@@ -233,7 +234,7 @@ The first column is the honest one: every other row is deployed to real people, 
 ## Scope, honestly
 
 - **Educational reference implementation.** Built as a portfolio project for Seton Hill University, Spring 2026. Notional data only; not a deployed identity system, and the seeded credentials above are deliberately public.
-- **Not production-ready, and says so.** The remaining gaps are operator decisions (HSM key custody, offsite backup target, alerting backend, legal review, external penetration test), not missing code. The honest ledger is [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
+- **Not production-ready, and says so.** The remaining gaps are operator decisions (the production key-custody choice: HSM, KMS, or software module, since no production HSM is chosen here; offsite backup target; alerting backend; legal review; external penetration test), not missing code. The honest ledger is [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 - **Security disclosures** go through [SECURITY.md](SECURITY.md); `/.well-known/security.txt` ships with the stack.
 
 ---

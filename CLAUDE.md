@@ -124,3 +124,26 @@ Read [`DEVNOTES/style.md`](DEVNOTES/style.md). No em-dashes in prose; declarativ
 "holy shit, that's done": no workarounds, no tabling. When drifting toward
 cosmic-significance framing ("larping"), name it and back off: the v9.55 apparatus
 removal was the structural enforcement of that discipline.
+
+## Engine over wrapper (VANTA, 2026-09-08)
+
+Prioritize the ENGINE over the WRAPPER. The engine is the cryptographic core as
+paths that RUN: ML-DSA-65 issuance and signing, the credential a holder holds and
+presents, offline authenticity (the detached verifier) and authorization (the
+relying-party API online, the signed status assertion offline), the verify SDKs and
+the conformance suite, and explicit non-transitive federation. The wrapper is the
+presentation around it: the Atlas and operator consoles, ontology, dashboards. The
+test of engine work is displacement, a path that runs unwatched, not a document that
+says the path exists. When choosing what to build next, build the engine; do not
+pour effort into the wrapper while the engine has unbuilt paths.
+
+## The front door states reality (VANTA, 2026-09-08)
+
+The outward surfaces (the site title and social card, the README, the readiness
+ledger) must not overstate what exists. State reality, or understate. The honest
+category is a reference implementation on notional data, not a national deployment:
+the site title and `og:title` say "reference implementation" and never "national";
+the comparison table marks Polaris the one system that is neither deployed nor
+issuing at national scale, so its design ticks are not read as a deployment; and the
+readiness ledger's cover version tracks the tree. `check_public_claims_honest` and
+`check_presentation_surface` pin these, so a regression fails CI rather than shipping.

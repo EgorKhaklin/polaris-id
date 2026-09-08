@@ -2512,7 +2512,19 @@ def check_presentation_surface(root: pathlib.Path) -> list[Finding]:
             return _fail("presentation_surface",
                          f"{rel} is stamped v{smajor}.{sminor} but the tree is v{major}.{minor}; "
                          "re-read and restamp it within twenty minors")
-    return _ok("presentation_surface", "community files present, security routing set, policies stamped current")
+    # The readiness ledger's own cover must not drift from the code (its status line
+    # read v9.237 while the tree was v9.291, so its version undersold the record).
+    rm = re.search(r"\*\*Status \(v(\d+)\.(\d+)\):", _read(root, "docs/PRODUCTION-READINESS.md"))
+    if not rm:
+        return _fail("presentation_surface",
+                     "docs/PRODUCTION-READINESS.md carries no '**Status (vX.Y):' stamp on its cover")
+    rmajor, rminor = int(rm.group(1)), int(rm.group(2))
+    if rmajor != major or minor - rminor > 20:
+        return _fail("presentation_surface",
+                     f"docs/PRODUCTION-READINESS.md is stamped v{rmajor}.{rminor} but the tree is v{major}.{minor}; "
+                     "restamp the readiness ledger's cover within twenty minors")
+    return _ok("presentation_surface",
+               "community files present, security routing set, policies and the readiness ledger stamped current")
 
 
 # ---------------------------------------------------------------------------
@@ -6172,6 +6184,13 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
             return _fail("public_claims",
                          f"the site {label} must name Polaris a reference implementation, not present it AS a "
                          "national identity system in a browser tab or a shared social card")
+        # The category must match the honest GitHub one (identity-token reference
+        # implementation): the shareable surface must not call Polaris a "national"
+        # system, which reads as a deployment. Understate, do not overstate.
+        if "national" in m.group(1).lower():
+            return _fail("public_claims",
+                         f"the site {label} calls Polaris a 'national' system; that category overstates a reference "
+                         "implementation on notional data. Drop 'national' from the title and social card.")
     for bad in _OVERCLAIM_PHRASES:
         if bad in readme:
             return _fail("public_claims",
@@ -6181,9 +6200,19 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
         return _fail("public_claims",
                      "the 'Where Polaris sits' comparison must keep the 'Deployed to a real population' column so "
                      "Polaris's design ticks are not read as a deployment")
+    # The comparison must not award Polaris a deployment property it does not have:
+    # its first two columns (deployed to a real population, national-scope issuance)
+    # must both be a clear negative, so a skimmer is not told Polaris issues nationally.
+    prow = re.search(r"\|\s*\*\*Polaris\*\*\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme)
+    if prow and ("✓" in prow.group(1) or "✓" in prow.group(2)):
+        return _fail("public_claims",
+                     "the comparison awards Polaris a deployment/national-scope tick; Polaris is not deployed and "
+                     "does not issue at national scale, so both leading columns must be a negative (the paragraph "
+                     "and the table must not argue)")
     return _ok("public_claims",
-               "the outward surfaces name Polaris a reference implementation (title + social card), carry no "
-               "retired overclaim, and the comparison marks Polaris the one system not deployed")
+               "the outward surfaces name Polaris a reference implementation and drop the 'national' category "
+               "(title + social card), carry no retired overclaim, and the comparison marks Polaris neither deployed "
+               "nor issuing at national scale so its design ticks are not read as a deployment")
 
 
 # ---------------------------------------------------------------------------

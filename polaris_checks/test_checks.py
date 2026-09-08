@@ -4775,9 +4775,14 @@ def test_presentation_surface_check_fails_on_a_missing_file_or_stale_policy(tmp_
         ".github/ISSUE_TEMPLATE/config.yml": "blank_issues_enabled: false\ncontact_links:\n  - url: https://github.com/x/y/security/advisories/new\n",
         ".github/PULL_REQUEST_TEMPLATE.md": "## Motivation\n", "scripts/polaris-release-notes.sh": "#!/bin/bash\n",
         "polaris_web/__version__.py": "__version__ = \"9.205\"\n",
+        "docs/PRODUCTION-READINESS.md": "**Status (v9.205): not production-ready for real identity data.**\n",
     }
     write(good)
     assert checks.check_presentation_surface(tmp_path)[0].level == "OK", "must PASS on the complete surface"
+    # the readiness ledger's own cover drifts from the tree
+    write({"docs/PRODUCTION-READINESS.md": "**Status (v9.56): not production-ready.**\n"})
+    assert checks.check_presentation_surface(tmp_path)[0].level == "FAIL", "must FAIL when the readiness ledger stamp is stale"
+    write({"docs/PRODUCTION-READINESS.md": good["docs/PRODUCTION-READINESS.md"]})
     (tmp_path / "CODE_OF_CONDUCT.md").unlink()
     assert checks.check_presentation_surface(tmp_path)[0].level == "FAIL", "must FAIL when a community file is missing"
     write({"CODE_OF_CONDUCT.md": "x\n", "CONTRIBUTING.md": "*Last updated: 2026-06-03 (v9.56)*\n"})
@@ -5488,11 +5493,11 @@ def test_verify_witness_sampling_check_discriminates(tmp_path):
 
 
 def test_public_claims_honest_check_discriminates(tmp_path):
-    # The outward surfaces must not overstate what exists now.
+    # The outward surfaces must not overstate what exists now: understate to reality.
     README = ("# POLARIS\n\nA reference implementation on notional data.\n\n"
-              "| System | Deployed to a real population | ... |\n"
-              "| **Polaris** | **X** | ... |\n")
-    SITE = ('<title>Polaris: a reference implementation of a national identity-token system</title>\n'
+              "| System | Deployed to a real population | National-scope issuance | PQ |\n"
+              "| **Polaris** | **✗** | **✗** | ✓ |\n")
+    SITE = ('<title>Polaris: a reference implementation of an identity-token system</title>\n'
             '<meta property="og:title" content="Polaris: a reference implementation of a system">\n')
     def write(readme=README, site=SITE):
         (tmp_path / "README.md").write_text(readme)
@@ -5500,16 +5505,23 @@ def test_public_claims_honest_check_discriminates(tmp_path):
         (tmp_path / "site" / "index.html").write_text(site)
     write()
     assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the honest surfaces"
-    # bare title (Polaris presented AS a national system)
-    write(site=SITE.replace("a reference implementation of a national identity-token system",
-                            "a national identity-token system"))
+    # bare title (Polaris presented AS a system, not a reference implementation)
+    write(site=SITE.replace("a reference implementation of an identity-token system",
+                            "an identity-token system"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a bare title"
+    # the 'national' category leaks back into the shareable title
+    write(site=SITE.replace("a reference implementation of an identity-token system",
+                            "a reference implementation of a national identity-token system"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL if the title calls it 'national'"
     # an overclaim returns to the README
     write(readme=README + "Polaris consolidates them into one physical token per person.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a retired overclaim"
     # the comparison loses its 'not deployed' column
-    write(readme=README.replace("Deployed to a real population", "National-scope issuance"))
+    write(readme=README.replace("Deployed to a real population", "Some other column"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL without the not-deployed column"
+    # the comparison awards Polaris a deployment/national-scope tick
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| **Polaris** | **✗** | ✓ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL if Polaris is awarded national-scope issuance"
 
 
 def test_detached_verifier_check_discriminates(tmp_path):

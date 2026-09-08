@@ -5,7 +5,7 @@ type: software
 authors:
   - family-names: Khaklin
     given-names: Egor
-version: "9.292"
+version: "9.293"
 date-released: "2026-09-08"
 repository-code: "https://github.com/EgorKhaklin/polaris-id"
 url: "https://egorkhaklin.github.io/polaris-id/"

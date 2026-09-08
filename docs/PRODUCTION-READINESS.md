@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v9.237): not production-ready for real identity data.** Every
+**Status (v9.293): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). What remains is not buildable here: nine decisions that
 belong to the deploying organization, two engineering limits carried openly,

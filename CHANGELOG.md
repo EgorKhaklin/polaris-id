@@ -5,6 +5,50 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.293 — 2026-09-08 (Front door: state reality, and pin it)
+
+A review of the live surfaces found them drifting from the code and, in a few places,
+overstating what exists. Fixed toward reality, and pinned so the surfaces cannot drift
+again.
+
+- **The site drops the "national" category.** The `<title>`, social card, and headline
+  called Polaris a "national identity-token system", which reads as a deployment; the
+  repository calls it an identity-token reference implementation. The site now matches:
+  a reference implementation, no "national". `check_public_claims_honest` forbids
+  "national" in the title and social card.
+
+- **The comparison stops awarding Polaris national-scope issuance.** The "Where Polaris
+  sits" table marked Polaris with national-scope issuance while the prose said its ticks
+  are design properties, not a deployment. The table and the paragraph no longer argue:
+  Polaris is now marked neither deployed nor issuing at national scale, and the check
+  fails if either leading column awards it a tick.
+
+- **The README describes the system it is the README for.** It led with schema, Flask,
+  Atlas, and CLI and named the verification product only in passing. The opening now
+  foregrounds the engine: ML-DSA-65 issuance and signing, offline authenticity (the
+  detached verifier) and authorization online (the relying-party API) or offline (the
+  signed status assertion), the Python and TypeScript verify SDKs and the conformance
+  suite, and explicit non-transitive federation. `sdk/`, `conformance/`, and the
+  holder/verifier tools are in the component table.
+
+- **The readiness ledger's cover is current, and stays current.** PRODUCTION-READINESS.md
+  presented as v9.237 while the tree was far ahead. Restamped, and
+  `check_presentation_surface` now stamps the ledger's cover like the other policies, so
+  it fails CI when it drifts more than twenty minors.
+
+- **One key-custody line, not two.** The README's Scope listed "HSM key custody" as a gap
+  while Cryptography described the Kryoptic software module, reading as both having and
+  lacking an HSM. It now reads once: the production key-custody choice (HSM, KMS, or
+  software module), since no production HSM is chosen here.
+
+- **CLAUDE.md records two standing directives** (VANTA): build the ENGINE over the
+  WRAPPER (the cryptographic paths that run, not the presentation around them), and keep
+  the front door stating reality or understating, never overstating.
+
+158 machine-checked invariants; the presented artifact matches the code.
+
+---
+
 ## v9.292 — 2026-09-08 (Federation topology decision record, P3.1)
 
 The federation track needs a topology before an inter-authority protocol can be
