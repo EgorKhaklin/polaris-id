@@ -7255,6 +7255,78 @@ def check_epoch_revocation_propagation(root: pathlib.Path) -> list[Finding]:
                "two-authority drill under real ML-DSA and tested")
 
 
+def check_federation_status_bundle(root: pathlib.Path) -> list[Finding]:
+    """P3.2c: the aggregate mirrored status feed. A publisher mirrors many authorities' signed
+    revocation feeds and epoch checkpoints into ONE short-lived, signed STATUS BUNDLE, so a
+    relying party fetches it once and checks any member's credential OFFLINE. The publisher is
+    UNTRUSTED for correctness: each member feed is embedded verbatim under the member's own
+    signature, the member set is committed so it cannot be tampered, and an omitted authority
+    is fail-closed (not verifiable). The aggregator adds availability, not trust -- it cannot
+    forge a member's status."""
+    app = _read(root, "polaris_web/app.py")
+    for sym in ("/api/v1/federation-status-bundle", "_status_bundle_statement",
+                "_bundle_members_root", "_STATUS_BUNDLE_FORMAT"):
+        if sym not in app:
+            return _fail("status_bundle", "app.py must publish the signed status bundle (%s missing)" % sym)
+    if "signature_over_message" not in app:
+        return _fail("status_bundle", "the bundle envelope must be publisher-SIGNED (signature_over_message)")
+    # The bundle is a VIEW assembled from the per-authority feeds, not a new mutable store: it
+    # reuses the same feed/checkpoint builders, which derive from the append-only tables.
+    for sym in ("_revocation_feed_body", "_epoch_checkpoint_body"):
+        if sym not in app:
+            return _fail("status_bundle",
+                         "the bundle must mirror each member's OWN signed feed via %s (no new mutation path)" % sym)
+    # The detached verifier consumes it OFFLINE and stays standalone.
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_status_bundle", "def verify_cross_authority_via_bundle",
+                "def bundle_members_root", "_status_bundle_canonical",
+                "polaris-federation-status-bundle/1"):
+        if sym not in v:
+            return _fail("status_bundle",
+                         "scripts/polaris-verify.py must verify the status bundle offline (%s missing)" % sym)
+    # Aggregator-untrusted: the decision DELEGATES to the P3.2 cross-authority decision using the
+    # MEMBER's own feed (so a forged member feed rejects there), an omitted issuer is fail-closed,
+    # and the member set is committed so it cannot be tampered after signing.
+    if "verify_cross_authority(" not in v:
+        return _fail("status_bundle",
+                     "verify_cross_authority_via_bundle must delegate the trust+revocation decision to "
+                     "verify_cross_authority using the member's OWN feed (the aggregator is untrusted)")
+    if "in_bundle" not in v or "not present in the status bundle" not in v:
+        return _fail("status_bundle",
+                     "an omitted authority must be fail-closed (not verifiable), not silently trusted")
+    if "commitment_ok" not in v or "members_root" not in v:
+        return _fail("status_bundle",
+                     "the member set must be committed (members_root) so it cannot be tampered after signing")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("status_bundle",
+                         f"the offline verifier imports {mod!r}; it must stay standalone")
+    # The app builder and the verifier agree on the signed bytes, pinned by the oracle.
+    if "polaris-federation-status-bundle/1" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("status_bundle",
+                     "the bundle must be in the canonical-equivalence oracle (app and verifier signed bytes must match)")
+    # It RUNS every release, proves the headline property, and is tested.
+    drill = _read(root, "scripts/polaris-federation-status-bundle-drill.py")
+    if not drill or "verify_cross_authority_via_bundle" not in drill:
+        return _fail("status_bundle",
+                     "scripts/polaris-federation-status-bundle-drill.py must run the mirror accept/reject matrix")
+    if "forge" not in drill.lower():
+        return _fail("status_bundle",
+                     "the drill must prove the headline property: an aggregator cannot forge a member's status")
+    if "polaris-federation-status-bundle-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("status_bundle",
+                     "the status-bundle drill must run in CI (a protocol that never runs is displacement)")
+    if "StatusBundleTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("status_bundle", "test_app.py must carry StatusBundleTests for the published endpoint")
+    return _ok("status_bundle",
+               "the aggregate status bundle mirrors many authorities in one short-lived signed artifact: a relying "
+               "party fetches GET /api/v1/federation-status-bundle once and checks any member's credential OFFLINE, "
+               "the publisher is untrusted for correctness (each member feed is embedded under the member's own "
+               "signature, the set is committed, an omitted authority is fail-closed), and the standalone verifier "
+               "returns the same decision the issuer's own feed would -- proven every release by the two-authority "
+               "drill under real ML-DSA and tested")
+
+
 def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
     """P3.2: the inter-authority protocol. An authority publishes a SIGNED federation
     manifest (its anchors, plus the attestations it has made); another party decides
@@ -7678,6 +7750,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_federation_status_bundle,
     check_lint_enforced,
     check_transparency_publication,
     check_transparency_gossip,

@@ -1567,6 +1567,17 @@ jobs:
       - name: Inter-authority — epoch alignment and revocation propagation
         run: python scripts/polaris-epoch-revocation-drill.py
 
+      # v9.308 (roadmap P3.2c) — the aggregate mirrored status feed. A publisher mirrors
+      # many authorities' signed revocation feeds and epoch checkpoints into ONE short-lived
+      # status bundle. The publisher is UNTRUSTED for correctness: the detached verifier
+      # accepts an active foreign credential and rejects a revoked one through the mirror,
+      # fail-closes on an omitted authority and a stale bundle, and -- the headline -- rejects
+      # a revoked credential even when an aggregator in FULL control of the bundle drops the
+      # revocation and re-signs, because the member feed carries the member's own signature.
+      # Red on any wrong decision. No database.
+      - name: Inter-authority — aggregate status bundle, aggregator cannot forge
+        run: python scripts/polaris-federation-status-bundle-drill.py
+
       # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
       # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
       # head and consistency proofs; the detached verifier accepts an append-only extension

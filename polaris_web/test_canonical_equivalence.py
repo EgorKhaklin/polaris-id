@@ -94,6 +94,13 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._sth_statement(b),
         "verify": lambda b: _V._sth_canonical(b),
     },
+    "federation-status-bundle": {
+        "keys": ["format", "publisher", "members_root_hex", "member_count",
+                 "issued_at", "expires_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._status_bundle_statement(b),
+        "verify": lambda b: _V._status_bundle_canonical(b),
+    },
 }
 
 
@@ -246,7 +253,7 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
         covered = {
             "polaris-federation-manifest/1", "polaris-epoch-checkpoint/1",
             "polaris-revocation-feed/1", "polaris-status-assertion/1",
-            "polaris-transparency-sth/1",
+            "polaris-transparency-sth/1", "polaris-federation-status-bundle/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1"}

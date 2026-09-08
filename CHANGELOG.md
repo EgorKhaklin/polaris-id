@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.308 — 2026-09-08 (Aggregate mirrored status feed, P3.2c)
+
+P3.2b let a relying party check a foreign credential's non-revocation against the issuer's own
+signed feed, offline. That is one fetch per authority. P3.2c aggregates them: a publisher mirrors
+many authorities' signed revocation feeds and epoch checkpoints into ONE short-lived, signed
+status bundle, so a relying party fetches it once and checks any member's credential offline. The
+point of the design is that the publisher is untrusted for correctness.
+
+- **The mirror.** `polaris-federation-status-bundle/1` at `GET /api/v1/federation-status-bundle/<id>`
+  carries, per member authority, that authority's own revocation feed and epoch checkpoint
+  **verbatim**, each still under the member's own ML-DSA-65 signature. The member set is committed by
+  `members_root_hex` (SHA3-256 over the sorted per-member digests), so it cannot be tampered after
+  signing. The publisher's own signature is only a freshness and set-integrity envelope.
+- **The aggregator cannot lie.** The detached verifier decides a foreign credential offline
+  (`verify_status_bundle` + `verify_cross_authority_via_bundle`): the envelope must be authentic and
+  fresh, the issuer must be **present** (an omitted authority is fail-closed, not verifiable), and the
+  trust and revocation decision **delegates** to the P3.2b `verify_cross_authority` against the
+  member's own feed. The headline, proven in the drill: an aggregator in **full control** of the
+  bundle, recomputing the commitment and re-signing the envelope, **still** cannot forge a member's
+  status, because it cannot re-sign as the member. The bundle adds availability, not trust.
+- **No new mutation path, byte-identical builders.** A bundle is a view assembled from the
+  per-authority feeds over the append-only tables; the endpoint reuses the same
+  `_revocation_feed_body` / `_epoch_checkpoint_body` builders (the two P3.2b endpoints were refactored
+  onto them). The app statement builder and the standalone verifier produce identical signed bytes,
+  pinned as the sixth type in the canonical-equivalence oracle.
+- **It runs and is tested.** `scripts/polaris-federation-status-bundle-drill.py` drives the two-
+  authority accept / revoked / omission / stale / tampered-set / forge-resistance matrix under real
+  ML-DSA every release (pqc-real). `check_federation_status_bundle` (#167) pins the whole path with a
+  detection test; `StatusBundleTests` validates the published shape, the commitment, and the canonical
+  byte equality against a real server-built bundle. Spec in
+  [federation-status-bundle.md](docs/design/federation-status-bundle.md). 167 checks, 99 routes.
+
 ## v9.307 — 2026-09-08 (Dead-code sweep)
 
 v9.306 made unused imports and dead locals fail fast in CI. This sweep clears the dead code

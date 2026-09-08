@@ -6191,6 +6191,86 @@ def test_epoch_revocation_propagation_check_discriminates(tmp_path):
     assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without EpochRevocationTests"
 
 
+def test_status_bundle_check_discriminates(tmp_path):
+    # v9.308 (P3.2c): an aggregate mirrored status feed. A publisher mirrors many
+    # authorities' signed feeds into one short-lived bundle; the publisher is untrusted for
+    # correctness (each member feed embedded under the member's own signature, the set
+    # committed, an omitted authority fail-closed), verified offline (standalone), pinned by
+    # the oracle, run in CI, and tested. Each perturbation removes one leg.
+    good = {
+        'polaris_web/app.py': (
+            "_STATUS_BUNDLE_FORMAT = 'polaris-federation-status-bundle/1'\n"
+            "def _revocation_feed_body(ag, now): return {}\n"
+            "def _epoch_checkpoint_body(ag, now): return {}\n"
+            "def _status_bundle_statement(body): return b''\n"
+            "def _bundle_members_root(members): return ''\n"
+            "@app.route('/api/v1/federation-status-bundle/<int:agency_id>')\n"
+            "def api_v1_federation_status_bundle(agency_id):\n"
+            "    _revocation_feed_body(ag, now); _epoch_checkpoint_body(ag, now)\n"
+            "    _status_bundle_statement(body); _bundle_members_root(members)\n"
+            "    pqc_signing.signature_over_message(stmt)\n"
+        ),
+        'scripts/polaris-verify.py': (
+            "import json, hashlib\n"
+            "# polaris-federation-status-bundle/1\n"
+            "def _status_bundle_canonical(b): return b''\n"
+            "def bundle_members_root(members): return ''\n"
+            "def verify_status_bundle(b, now=None, max_window_seconds=None, publisher_key=None):\n"
+            "    commitment_ok = True  # members_root recomputed and checked\n"
+            "    return {'commitment_ok': commitment_ok, 'members': []}\n"
+            "def verify_cross_authority(pack, ctx, tm, revocation_feed=None): return {'decision': 'accept'}\n"
+            "def verify_cross_authority_via_bundle(pack, ctx, tm, bundle, **kw):\n"
+            "    in_bundle = False  # 'not present in the status bundle' is fail-closed\n"
+            "    return verify_cross_authority(pack, ctx, tm, revocation_feed=None)\n"
+        ),
+        'polaris_web/test_canonical_equivalence.py': "# polaris-federation-status-bundle/1\n",
+        'scripts/polaris-federation-status-bundle-drill.py': (
+            "def main():\n    verify_cross_authority_via_bundle(p, 1, [m], b)  # aggregator cannot forge\n"
+        ),
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-federation-status-bundle-drill.py\n',
+        'polaris_web/test_app.py': 'class StatusBundleTests:\n    def t(self): pass\n',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the endpoint is missing
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("/api/v1/federation-status-bundle", "/api/v1/nope")})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without the bundle endpoint"
+    # 2. the bundle is not a view over the per-authority feeds (no member-feed builder)
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("_revocation_feed_body", "_something_else")})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL if it does not mirror each member's own feed"
+    # 3. the trust+revocation decision does not delegate to verify_cross_authority
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("verify_cross_authority(", "nope(")})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without delegation to the member's own feed"
+    # 4. an omitted authority is not fail-closed
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("not present in the status bundle", "whatever")})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without fail-closed omission"
+    # 5. the member set is not committed
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("commitment_ok", "unused")})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without the set commitment"
+    # 6. the verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 7. the bundle is not in the canonical-equivalence oracle
+    write({"polaris_web/test_canonical_equivalence.py": "# nothing here\n"})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL if not pinned by the oracle"
+    # 8. the drill does not prove the aggregator-cannot-forge property
+    write({"scripts/polaris-federation-status-bundle-drill.py": "def main():\n    verify_cross_authority_via_bundle(p, 1, [m], b)\n"})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without the forge-resistance case"
+    # 9. the drill does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
+    # 10. the endpoint test is gone
+    write({"polaris_web/test_app.py": "class Other:\n    pass\n"})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without StatusBundleTests"
+
+
 def test_federation_two_instances_check_discriminates(tmp_path):
     # v9.299 (P3.10): a drill that boots two real instances and drives the federation
     # endpoints over HTTP under real ML-DSA, run in its own CI job. Each perturbation

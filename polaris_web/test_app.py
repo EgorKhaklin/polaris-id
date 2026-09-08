@@ -10182,3 +10182,62 @@ class EpochRevocationTests(PolarisTestCase):
         blob = json.dumps(feed).lower()
         for pii in ('legal_name', 'date_of_birth', 'individual_id', 'biometric', 'physical_serial', 'token_value'):
             self.assertNotIn(pii, blob, "a revocation feed must carry no personal data")
+
+
+class StatusBundleTests(PolarisTestCase):
+    """P3.2c: the aggregate STATUS BUNDLE an authority publishes to mirror many authorities'
+    revocation feeds and epoch checkpoints in one short-lived, signed artifact. Placeholder-
+    safe: this validates the SQL, the published shape, the members_root commitment, the
+    no-personal-data rule, and that the app's canonical statement bytes match the standalone
+    verifier's byte-for-byte. The real ML-DSA round-trip and the aggregator-cannot-forge
+    decisions are the pqc-real drill, scripts/polaris-federation-status-bundle-drill.py."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _register_key(self, agency_id, key_hex):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE Agency SET signing_public_key_hex=%s WHERE agency_id=%s", (key_hex, agency_id))
+            conn.commit()
+
+    def test_not_federated_agency_is_404(self):
+        self._register_key(1, None)
+        self.assertEqual(self.client.get('/api/v1/federation-status-bundle/1').status_code, 404)
+        self.assertEqual(self.client.get('/api/v1/federation-status-bundle/999999').status_code, 404)
+
+    def test_bundle_shape_commitment_and_canonical_match(self):
+        self._register_key(1, 'a1' * 32)
+        r = self.client.get('/api/v1/federation-status-bundle/1')
+        self.assertEqual(r.status_code, 200)
+        bundle = r.get_json()
+        self.assertEqual(bundle['format'], 'polaris-federation-status-bundle/1')
+        self.assertEqual(bundle['publisher']['agency_id'], 1)
+        for f in ('members', 'members_root_hex', 'member_count', 'issued_at', 'expires_at',
+                  'signature_hex', 'public_key_hex', 'algorithm', 'max_window_seconds'):
+            self.assertIn(f, bundle)
+        self.assertGreater(bundle['expires_at'], bundle['issued_at'])
+        # the publisher mirrors at least itself
+        self.assertGreaterEqual(bundle['member_count'], 1)
+        self.assertEqual(bundle['member_count'], len(bundle['members']))
+        self.assertIn(1, [m['authority_id'] for m in bundle['members']],
+                      "the publisher must mirror its own feed")
+        # each member carries its OWN signed revocation feed (trust roots in the member, not
+        # the aggregator); the epoch checkpoint may be present or null.
+        for m in bundle['members']:
+            self.assertIn('authority_id', m)
+            self.assertEqual(m['revocation_feed']['format'], 'polaris-revocation-feed/1')
+            self.assertIn('signature_hex', m['revocation_feed'])
+            self.assertIn('epoch_checkpoint', m)
+        # the members_root commits to exactly the embedded members, and the app's signed
+        # statement bytes MUST equal the standalone verifier's canonical bytes.
+        verifier = _e2e_load('polaris_verify_statusbundle', 'polaris-verify.py')
+        self.assertEqual(bundle['members_root_hex'], verifier.bundle_members_root(bundle['members']),
+                         "the published members_root must commit to the embedded members")
+        self.assertEqual(flask_app._status_bundle_statement(bundle),
+                         verifier._status_bundle_canonical(bundle),
+                         "app and verifier disagree on the bundle canonical bytes")
+        # no personal data: a bundle is published trust data, and each member feed carries
+        # only leaves (hashes), never a token_value.
+        blob = json.dumps(bundle).lower()
+        for pii in ('legal_name', 'date_of_birth', 'individual_id', 'biometric', 'physical_serial', 'token_value'):
+            self.assertNotIn(pii, blob, "a status bundle must carry no personal data")

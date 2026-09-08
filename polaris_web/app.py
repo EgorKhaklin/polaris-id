@@ -5445,6 +5445,11 @@ _EPOCH_CHECKPOINT_FORMAT = 'polaris-epoch-checkpoint/1'
 _REVOCATION_FEED_FORMAT = 'polaris-revocation-feed/1'
 _EPOCH_CHECKPOINT_TTL = int(os.environ.get('POLARIS_EPOCH_CHECKPOINT_TTL', '86400'))
 _REVOCATION_FEED_TTL = int(os.environ.get('POLARIS_REVOCATION_FEED_TTL', '86400'))
+# P3.2c: the aggregate status bundle mirrors many authorities' feeds in one short-lived,
+# CDN-distributable artifact. Its window is intentionally shorter than a feed's: the bundle
+# is a freshness envelope over a member's ABSENCE, not a new source of status truth.
+_STATUS_BUNDLE_FORMAT = 'polaris-federation-status-bundle/1'
+_STATUS_BUNDLE_TTL = int(os.environ.get('POLARIS_STATUS_BUNDLE_TTL', '3600'))
 
 
 def _epoch_checkpoint_statement(body):
@@ -5472,28 +5477,19 @@ def _revoked_root(leaves):
     return hashlib.sha3_256('\n'.join(uniq).encode('utf-8')).hexdigest()
 
 
-@app.route('/api/v1/epoch-checkpoint/<int:agency_id>')
-def api_v1_epoch_checkpoint(agency_id):
-    """P3.2b: publish a signed EPOCH CHECKPOINT -- the authority's commitment to the latest
-    point on its append-only TokenStateEpoch chain (the epoch number, its Merkle root, and
-    the prior epoch it extends). A consumer verifies it OFFLINE (verify_epoch_checkpoint /
-    check_epoch_chain) and, holding two checkpoints, proves monotonicity and catches a fork
-    -- two different roots signed at one epoch number is equivocation. Public trust data,
-    no personal content, signed with the agency's own key, short-lived."""
-    ag = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
-               (agency_id,), fetch='one', primary=True)
-    if not ag:
-        return jsonify(error='no such agency'), 404
-    if not ag['signing_public_key_hex']:
-        return jsonify(error='agency is not federated (no registered signing key)'), 404
+def _epoch_checkpoint_body(ag, now):
+    """Build and sign one agency's epoch checkpoint (P3.2b), or None if no epoch has been
+    closed yet. Shared by the /epoch-checkpoint endpoint and the status-bundle mirror; `now`
+    is passed in so a bundle can stamp every member at one instant. Signs with the agency's
+    own key, so a bundle that embeds it carries an authority-signed object, not the
+    aggregator's word."""
+    from datetime import timedelta
     rows = query("""SELECT epoch_id, merkle_root, committed_count, valid_until
                     FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 2""", primary=True)
     if not rows:
-        return jsonify(error='no epoch has been closed yet'), 404
+        return None
     latest = rows[0]
     prev = rows[1] if len(rows) > 1 else None
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone.utc).replace(microsecond=0)
     issued_at = now.isoformat().replace('+00:00', 'Z')
     expires_at = (now + timedelta(seconds=_EPOCH_CHECKPOINT_TTL)).isoformat().replace('+00:00', 'Z')
     body = {
@@ -5508,14 +5504,75 @@ def api_v1_epoch_checkpoint(agency_id):
         'expires_at': expires_at,
         'algorithm': 'ML-DSA-65',
     }
-    sig_bytes, alg, pub = pqc_signing.signature_over_message(_epoch_checkpoint_statement(body), agency_id=agency_id)
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_epoch_checkpoint_statement(body), agency_id=ag['agency_id'])
     body['algorithm'] = alg
     body['signature_hex'] = sig_bytes.hex()
     body['public_key_hex'] = pub
     body['max_window_seconds'] = _EPOCH_CHECKPOINT_TTL
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                    'checkpoint minus signature_hex and public_key_hex)')
+    return body
+
+
+@app.route('/api/v1/epoch-checkpoint/<int:agency_id>')
+def api_v1_epoch_checkpoint(agency_id):
+    """P3.2b: publish a signed EPOCH CHECKPOINT -- the authority's commitment to the latest
+    point on its append-only TokenStateEpoch chain (the epoch number, its Merkle root, and
+    the prior epoch it extends). A consumer verifies it OFFLINE (verify_epoch_checkpoint /
+    check_epoch_chain) and, holding two checkpoints, proves monotonicity and catches a fork
+    -- two different roots signed at one epoch number is equivocation. Public trust data,
+    no personal content, signed with the agency's own key, short-lived."""
+    ag = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
+               (agency_id,), fetch='one', primary=True)
+    if not ag:
+        return jsonify(error='no such agency'), 404
+    if not ag['signing_public_key_hex']:
+        return jsonify(error='agency is not federated (no registered signing key)'), 404
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    body = _epoch_checkpoint_body(ag, now)
+    if body is None:
+        return jsonify(error='no epoch has been closed yet'), 404
     return jsonify(body)
+
+
+def _revocation_feed_body(ag, now):
+    """Build and sign one agency's revocation feed (P3.2b). Shared by the /revocation-feed
+    endpoint and the status-bundle mirror; `now` is passed in so a bundle can stamp every
+    member at one instant. A CRL of revoked leaves (SHA3-256(token_value)), NOT the active
+    population -- a leaf is derivable only by a holder. Signed with the agency's own key."""
+    from datetime import timedelta
+    rows = query("""
+        SELECT it.token_value
+        FROM   RevocationList rl
+        JOIN   IdentityToken it ON it.token_id = rl.token_id
+        WHERE  it.issuing_agency_id = %s
+    """, (ag['agency_id'],), primary=True)
+    leaves = sorted({hashlib.sha3_256(r['token_value'].encode('utf-8')).hexdigest() for r in rows})
+    epoch = query("SELECT epoch_id FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
+                  fetch='one', primary=True)
+    issued_at = now.isoformat().replace('+00:00', 'Z')
+    expires_at = (now + timedelta(seconds=_REVOCATION_FEED_TTL)).isoformat().replace('+00:00', 'Z')
+    body = {
+        'format': _REVOCATION_FEED_FORMAT,
+        'authority': {'agency_id': ag['agency_id'], 'name': ag['name']},
+        'epoch_number': (epoch['epoch_id'] if epoch else None),
+        'as_of': issued_at,
+        'revoked_root_hex': _revoked_root(leaves),
+        'revoked_count': len(leaves),
+        'revoked_leaves': leaves,
+        'issued_at': issued_at,
+        'expires_at': expires_at,
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_revocation_feed_statement(body), agency_id=ag['agency_id'])
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['max_window_seconds'] = _REVOCATION_FEED_TTL
+    body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                   'feed minus signature_hex and public_key_hex)')
+    return body
 
 
 @app.route('/api/v1/revocation-feed/<int:agency_id>')
@@ -5534,38 +5591,109 @@ def api_v1_revocation_feed(agency_id):
         return jsonify(error='no such agency'), 404
     if not ag['signing_public_key_hex']:
         return jsonify(error='agency is not federated (no registered signing key)'), 404
-    rows = query("""
-        SELECT it.token_value
-        FROM   RevocationList rl
-        JOIN   IdentityToken it ON it.token_id = rl.token_id
-        WHERE  it.issuing_agency_id = %s
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    return jsonify(_revocation_feed_body(ag, now))
+
+
+# --- P3.2c: the aggregate mirrored status feed (a federation status bundle) -----
+#
+# One short-lived, signed artifact that MIRRORS the revocation feed and epoch checkpoint of
+# the publisher and every authority it federates with, so a relying party fetches ONE
+# artifact and checks any member's credential OFFLINE. The publisher is UNTRUSTED for
+# correctness: every member feed is embedded VERBATIM, signed by that member's own key, so
+# the bundle cannot forge a status; the publisher's own signature is only a freshness +
+# set-integrity envelope (a member's absence is made current and attributable), and the
+# member set is committed by members_root_hex so it cannot be tampered after signing. No new
+# mutation path: a bundle is a view assembled from the per-authority views over the
+# append-only tables. Consumed OFFLINE by scripts/polaris-verify.py
+# (verify_status_bundle / verify_cross_authority_via_bundle).
+def _status_bundle_statement(body):
+    """Canonical bytes the publisher signs. MUST match scripts/polaris-verify.py's
+    _status_bundle_canonical. The member set is committed by members_root_hex, so the signed
+    statement excludes the large, nested members list itself."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'publisher', 'members_root_hex', 'member_count',
+                  'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _bundle_members_root(members):
+    """SHA3-256 over the sorted, newline-joined per-member digests (each the SHA3-256 of the
+    member entry's canonical JSON). Order-independent; binds the bundle to the exact mirrored
+    feeds. MUST match scripts/polaris-verify.py's bundle_members_root."""
+    digs = sorted(hashlib.sha3_256(
+        json.dumps(m, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+        for m in members)
+    return hashlib.sha3_256('\n'.join(digs).encode('utf-8')).hexdigest()
+
+
+@app.route('/api/v1/federation-status-bundle/<int:agency_id>')
+def api_v1_federation_status_bundle(agency_id):
+    """P3.2c: publish an aggregate STATUS BUNDLE -- one short-lived, signed artifact that
+    MIRRORS the revocation feed and epoch checkpoint of the publisher and every authority it
+    federates with, so a relying party fetches ONE artifact and checks any member's
+    credential OFFLINE (scripts/polaris-verify.py verify_status_bundle /
+    verify_cross_authority_via_bundle). The publisher is UNTRUSTED for correctness: every
+    member feed is embedded VERBATIM, signed by that member's own key, so the bundle cannot
+    forge a status; its own signature is only a freshness + set-integrity envelope, and an
+    omitted authority is fail-closed (not verifiable) rather than silently trusted. Public
+    trust data, no personal content."""
+    publisher = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
+                      (agency_id,), fetch='one', primary=True)
+    if not publisher:
+        return jsonify(error='no such agency'), 404
+    if not publisher['signing_public_key_hex']:
+        return jsonify(error='agency is not federated (no registered signing key)'), 404
+    # The member set: the publisher, plus every authority it actively attests to that has a
+    # registered signing key. Each member's feed is signed by that member's own key.
+    partners = query("""
+        SELECT DISTINCT ag2.agency_id, ag2.name, ag2.signing_public_key_hex
+        FROM   AgencyTrustAttestation att
+        JOIN   Agency ag2 ON ag2.agency_id = att.attested_agency_id
+        WHERE  att.attesting_agency_id = %s
+          AND  att.revocation_date IS NULL
+          AND  att.valid_until >= CURRENT_DATE
+          AND  ag2.signing_public_key_hex IS NOT NULL
+        ORDER BY ag2.agency_id
     """, (agency_id,), primary=True)
-    leaves = sorted({hashlib.sha3_256(r['token_value'].encode('utf-8')).hexdigest() for r in rows})
-    epoch = query("SELECT epoch_id FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
-                  fetch='one', primary=True)
+    member_rows = [publisher] + [p for p in partners if p['agency_id'] != publisher['agency_id']]
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc).replace(microsecond=0)
+    members = []
+    for ag in member_rows:
+        try:
+            entry = {
+                'authority_id': ag['agency_id'],
+                'revocation_feed': _revocation_feed_body(ag, now),
+                'epoch_checkpoint': _epoch_checkpoint_body(ag, now),
+            }
+        except Exception:
+            # A member whose feed cannot be authentically signed (its key is not held by this
+            # instance) is left OUT rather than embedded unsigned: the bundle carries only
+            # authority-signed members, and an absence is fail-closed for a verifier.
+            continue
+        members.append(entry)
     issued_at = now.isoformat().replace('+00:00', 'Z')
-    expires_at = (now + timedelta(seconds=_REVOCATION_FEED_TTL)).isoformat().replace('+00:00', 'Z')
+    expires_at = (now + timedelta(seconds=_STATUS_BUNDLE_TTL)).isoformat().replace('+00:00', 'Z')
     body = {
-        'format': _REVOCATION_FEED_FORMAT,
-        'authority': {'agency_id': ag['agency_id'], 'name': ag['name']},
-        'epoch_number': (epoch['epoch_id'] if epoch else None),
-        'as_of': issued_at,
-        'revoked_root_hex': _revoked_root(leaves),
-        'revoked_count': len(leaves),
-        'revoked_leaves': leaves,
+        'format': _STATUS_BUNDLE_FORMAT,
+        'publisher': {'agency_id': publisher['agency_id'], 'name': publisher['name']},
+        'members': members,
+        'members_root_hex': _bundle_members_root(members),
+        'member_count': len(members),
         'issued_at': issued_at,
         'expires_at': expires_at,
         'algorithm': 'ML-DSA-65',
     }
-    sig_bytes, alg, pub = pqc_signing.signature_over_message(_revocation_feed_statement(body), agency_id=agency_id)
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_status_bundle_statement(body), agency_id=agency_id)
     body['algorithm'] = alg
     body['signature_hex'] = sig_bytes.hex()
     body['public_key_hex'] = pub
-    body['max_window_seconds'] = _REVOCATION_FEED_TTL
+    body['max_window_seconds'] = _STATUS_BUNDLE_TTL
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
-                                   'feed minus signature_hex and public_key_hex)')
+                                   'bundle minus members, signature_hex and public_key_hex; the member '
+                                   'set is committed by members_root_hex)')
     return jsonify(body)
 
 

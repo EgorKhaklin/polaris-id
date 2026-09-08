@@ -781,6 +781,154 @@ def check_revocation_progression(prev_feed, next_feed):
 
 
 # ---------------------------------------------------------------------------
+# P3.2c: the aggregate mirrored status feed (a federation status bundle).
+#
+# At federation scale a relying party that wants to check foreign credentials from
+# many authorities would fetch each authority's revocation feed and epoch checkpoint
+# separately -- N round-trips and N points of availability failure. The status bundle
+# is ONE short-lived, CDN-distributable artifact that MIRRORS many authorities' feeds:
+# the relying party fetches it once and verifies any member's credential OFFLINE.
+#
+# The publisher (the aggregator) is UNTRUSTED for correctness. The bundle carries each
+# member authority's OWN signed revocation feed and epoch checkpoint VERBATIM, so trust
+# in a credential's status still roots in the member authority's ML-DSA signature, never
+# the aggregator's. The aggregator's own signature is only a freshness + set-integrity
+# envelope: it bounds how old the aggregation is, and commits to exactly the member set.
+# What an aggregator CANNOT do is forge a member's status (it cannot re-sign as the
+# member) or silently omit a member (the verifier fail-closes on an absent issuer). So
+# the bundle adds AVAILABILITY, not trust: verify_cross_authority_via_bundle returns the
+# same decision the issuer's own feed would, and the aggregator cannot change it.
+# ---------------------------------------------------------------------------
+_STATUS_BUNDLE_FORMAT = "polaris-federation-status-bundle/1"
+
+
+def _status_bundle_canonical(bundle):
+    """Canonical bytes the publisher signs. MUST match app.py _status_bundle_statement.
+    The member set is committed by members_root_hex (recomputed and checked separately in
+    verify_status_bundle), so the signed statement stays small and fixed-shape rather than
+    canonicalizing a deep list of nested signed objects."""
+    statement = {k: bundle.get(k) for k in
+                 ("format", "publisher", "members_root_hex", "member_count",
+                  "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def bundle_members_root(members):
+    """A deterministic commitment over the member set: SHA3-256 over the sorted,
+    newline-joined per-member digests, each the SHA3-256 of the member entry's canonical
+    JSON. Order-independent, so anyone assembling the same members computes the same root;
+    binds the bundle to the EXACT feeds it mirrors, so adding, dropping, or swapping a
+    member changes the root. MUST match app.py's _bundle_members_root."""
+    digs = sorted(hashlib.sha3_256(
+        json.dumps(m, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        for m in (members or []))
+    return hashlib.sha3_256("\n".join(digs).encode("utf-8")).hexdigest()
+
+
+def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_key=None):
+    """Verify an aggregate federation STATUS BUNDLE (P3.2c) OFFLINE. This checks only the
+    ENVELOPE: the publisher's signature over SHA3-256(canonical) with two witnesses, that
+    the committed members_root matches the embedded members (so the set cannot be tampered),
+    freshness, and (with publisher_key) that the expected publisher signed it. It does NOT
+    establish any member's status -- each member feed is verified in its own right, bound to
+    its own authority key, inside verify_cross_authority_via_bundle. A tampered or swapped
+    member changes members_root and is rejected here; a forged or stale member feed is
+    rejected there. The publisher is untrusted for correctness; this envelope only makes a
+    member's ABSENCE current and attributable."""
+    v = {"bundle_authentic": False, "fresh": None, "commitment_ok": None,
+         "publisher_matches": None, "publisher": bundle.get("publisher"),
+         "member_count": bundle.get("member_count"),
+         "members": bundle.get("members") or [], "witnesses": [], "note": None}
+    if bundle.get("format") != _STATUS_BUNDLE_FORMAT:
+        v["note"] = "not a %s" % _STATUS_BUNDLE_FORMAT
+        return v
+    alg, pk_hex, sig_hex = bundle.get("algorithm"), bundle.get("public_key_hex"), bundle.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder bundle -- not authenticatable offline"
+        return v
+    members = bundle.get("members") or []
+    v["commitment_ok"] = (bundle_members_root(members) == (bundle.get("members_root_hex") or "").lower()
+                          and len(members) == (bundle.get("member_count") or 0))
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_status_bundle_canonical(bundle)).digest()
+    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    if not ok:
+        v["note"] = "bundle signature is invalid"
+        return v
+    if not v["commitment_ok"]:
+        v["note"] = "the members_root does not match the embedded members (the set was tampered)"
+        return v
+    v["bundle_authentic"] = True
+    _verify_window(bundle, v, now, max_window_seconds)
+    if publisher_key is not None:
+        v["publisher_matches"] = (pk_hex.lower() == publisher_key.lower())
+    return v
+
+
+def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundle,
+                                      now=None, max_window_seconds=None,
+                                      trusted_anchors=None, publisher_key=None):
+    """Decide a FOREIGN credential OFFLINE using an aggregate status bundle (P3.2c) as the
+    status transport, instead of the issuer's individually-fetched revocation feed. The
+    answer equals what the issuer's own feed would give; the aggregator cannot change it.
+
+    Fail-closed at every step:
+      - the bundle must be authentic and fresh (a stale bundle proves nothing about now,
+        and if publisher_key is pinned it must be the one that signed it);
+      - the credential's issuer must be PRESENT in the bundle, else reject -- an aggregator
+        that omits an authority cannot thereby make its credentials verifiable;
+      - the trust + revocation decision is the SAME verify_cross_authority decision, run
+        against the MEMBER's own signed feed, so a forged or tampered member feed rejects
+        exactly as it would if fetched directly.
+    On the accept path, `epoch_bound` reports whether the member's embedded epoch checkpoint
+    is authentic, fresh, and bound to the same issuer key -- the status tied to a committed
+    epoch rather than a bare point in time."""
+    bv = verify_status_bundle(bundle, now=now, max_window_seconds=max_window_seconds,
+                              publisher_key=publisher_key)
+    base = {"via": None, "revocation_checked": False, "revoked": None, "in_bundle": None,
+            "epoch_bound": None, "bundle_ok": bool(bv["bundle_authentic"] and bv["fresh"])}
+    if not (bv["bundle_authentic"] and bv["fresh"]):
+        return {**base, "decision": "reject", "authentic": None,
+                "reasons": ["the status bundle is not authentic or not fresh"]}
+    if publisher_key is not None and not bv["publisher_matches"]:
+        return {**base, "decision": "reject", "authentic": None,
+                "reasons": ["the status bundle is not signed by the pinned publisher key"]}
+    token_key = (pack.get("public_key_hex") or "").lower()
+    member = None
+    for m in bv["members"]:
+        feed = (m.get("revocation_feed") or {})
+        if (feed.get("public_key_hex") or "").lower() == token_key:
+            member = m
+            break
+    if member is None:
+        return {**base, "decision": "reject", "authentic": None, "in_bundle": False,
+                "reasons": ["the credential's issuer is not present in the status bundle "
+                            "(fail-closed: an omitted authority is not verifiable)"]}
+    decision = verify_cross_authority(pack, context_id, trusted_manifests, now=now,
+                                      max_window_seconds=max_window_seconds,
+                                      trusted_anchors=trusted_anchors,
+                                      revocation_feed=member.get("revocation_feed"))
+    decision["in_bundle"] = True
+    decision["bundle_ok"] = True
+    cp = member.get("epoch_checkpoint")
+    if cp is not None:
+        cv = verify_epoch_checkpoint(cp, now=now, max_window_seconds=max_window_seconds,
+                                     issuer_key=token_key)
+        decision["epoch_bound"] = bool(cv["checkpoint_authentic"] and cv["fresh"] and cv["issuer_matches"])
+    else:
+        decision["epoch_bound"] = None
+    return decision
+
+
+# ---------------------------------------------------------------------------
 # P3.3: the transparency log over the audit-anchor roots.
 #
 # The audit anchor log (AnchorBatch) is append-only at the database. This turns

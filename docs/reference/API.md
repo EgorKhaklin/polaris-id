@@ -778,6 +778,36 @@ contact. Because `RevocationList` is append-only the feed is monotone, so
 published revocation). The protocol is specified in
 [inter-authority-protocol.md](../design/inter-authority-protocol.md).
 
+### `GET /api/v1/federation-status-bundle/<agency_id>`
+
+**Public; no auth.** An aggregate **status bundle** (roadmap P3.2c): one short-lived,
+signed artifact that **mirrors** the revocation feed and epoch checkpoint of the publisher
+and every authority it federates with, so a relying party fetches it once and checks any
+member's credential offline instead of fetching each authority's feed separately. Signed
+with the publisher's own key over `SHA3-256(canonical)`, short-lived
+(`POLARIS_STATUS_BUNDLE_TTL`, default one hour). `404` if the agency does not exist or is
+not federated.
+
+```jsonc
+{ "format": "polaris-federation-status-bundle/1",
+  "publisher": { "agency_id": 1, "name": "..." },
+  "members": [ { "authority_id": 1,
+                 "revocation_feed": { "format": "polaris-revocation-feed/1", "...": "..." },
+                 "epoch_checkpoint": { "format": "polaris-epoch-checkpoint/1", "...": "..." } } ],
+  "members_root_hex": "<commitment over the member set>", "member_count": 1,
+  "issued_at": "...", "expires_at": "...", "algorithm": "ML-DSA-65",
+  "signature_hex": "...", "public_key_hex": "..." }
+```
+
+The publisher is **untrusted for correctness**: each member feed is embedded verbatim under
+that member's own signature, so the bundle cannot forge a status; its own signature is only
+a freshness and set-integrity envelope, and the member set is committed by
+`members_root_hex`. A relying party decides a foreign credential against it offline with
+`scripts/polaris-verify.py` (`verify_status_bundle`, `verify_cross_authority_via_bundle`):
+an omitted authority is **fail-closed** (not verifiable), a stale bundle proves nothing, and
+the decision equals what the issuer's own feed would give. Specified in
+[federation-status-bundle.md](../design/federation-status-bundle.md).
+
 ### `GET /api/v1/transparency/sth`
 
 **Public; no auth.** The transparency log's **Signed Tree Head** (roadmap P3.3): the log's
