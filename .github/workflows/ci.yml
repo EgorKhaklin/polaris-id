@@ -1552,6 +1552,15 @@ jobs:
       - name: Inter-authority — two authorities interoperate via signed manifests
         run: python scripts/polaris-federation-manifest-drill.py
 
+      # v9.298 (roadmap P3.2b) — epoch alignment + revocation propagation. Two
+      # authorities publish signed epoch checkpoints (commitments to their append-only
+      # TokenStateEpoch chain) and revocation feeds (their revoked-credential leaves).
+      # The detached verifier catches a FORK (two roots at one epoch number), catches a
+      # ROLLBACK (a feed that drops a revocation), and rejects a REVOKED foreign
+      # credential OFFLINE with no issuer contact. Red on any wrong decision. No database.
+      - name: Inter-authority — epoch alignment and revocation propagation
+        run: python scripts/polaris-epoch-revocation-drill.py
+
       # v9.289 (roadmap P3.5) — the verification conformance suite is the integration
       # contract: it drives a verifier over the published authenticity cases and
       # checks every verdict. Run the bundled Python reference SDK against it (real

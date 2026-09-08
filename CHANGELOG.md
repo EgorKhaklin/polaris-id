@@ -5,6 +5,49 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.298 — 2026-09-08 (Epoch alignment and revocation propagation across authorities, P3.2b)
+
+The inter-authority protocol (P3.2) let two authorities publish their anchors and
+attestations and a relying party accept a foreign credential offline. It carried the
+epoch and revocation state only as references. P3.2b makes those references consumable,
+as two more signed objects an authority publishes and the standalone verifier consumes
+offline, both views over the append-only TokenStateEpoch and RevocationList with no new
+mutation path.
+
+- **The epoch checkpoint.** `GET /api/v1/epoch-checkpoint/<agency_id>` publishes a signed
+  `polaris-epoch-checkpoint/1`: the authority's commitment to the latest point on its
+  append-only epoch chain, the epoch number and Merkle root and the prior epoch it
+  extends. The detached verifier gains `verify_epoch_checkpoint` (authenticity, two
+  witnesses, freshness, issuer binding), `check_epoch_chain` (monotonicity, and a FORK
+  when two different roots are signed at one epoch number, which is cryptographic proof
+  the authority equivocated about its own history), and `epoch_aligned` (a checkpoint
+  cross-checked against the epoch its authority's own manifest commits to).
+
+- **The revocation feed.** `GET /api/v1/revocation-feed/<agency_id>` publishes a signed
+  `polaris-revocation-feed/1`: the sorted revoked-credential leaves (SHA3-256(token_value))
+  for the credentials the authority issued that are now revoked, plus a commitment over
+  them. A relying party checks a foreign credential's non-revocation against it offline
+  with no issuer contact: `verify_cross_authority` folds in the feed fail-closed (genuine,
+  fresh, and bound to the issuer key, or reject), `verify_revocation_feed` and `is_revoked`
+  test membership, and `check_revocation_progression` catches a ROLLBACK (a newer feed that
+  drops a published revocation), monotone because RevocationList is append-only. It is a
+  CRL of revoked leaves, not the active population: a leaf is derivable only by a holder of
+  the credential, and no token_value is published.
+
+- **It runs, and it is specified and tested.** `scripts/polaris-epoch-revocation-drill.py`
+  stands up two authorities with distinct real ML-DSA-65 roots and drives the whole matrix
+  (a clean chain and an aligned checkpoint accept; a fork, a rollback, a stranger-signed or
+  tampered feed, and a revoked foreign credential all reject) under real ML-DSA every
+  release in the pqc-real CI job. The endpoints' shape, the commitment, the byte-match
+  between the app's signed statements and the verifier's canonical bytes, and the
+  no-personal-data rule are covered by `EpochRevocationTests`, and
+  `check_epoch_revocation_propagation` pins it. The protocol is specified in
+  [inter-authority-protocol.md](docs/design/inter-authority-protocol.md).
+
+160 machine-checked invariants; 94 routes.
+
+---
+
 ## v9.297 — 2026-09-08 (Retire the freeze line from the constitution)
 
 The v9.27 freeze line was a definition-of-done: it limited the work that followed the

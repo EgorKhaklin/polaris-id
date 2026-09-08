@@ -10119,3 +10119,74 @@ class FederationManifestTests(PolarisTestCase):
         blob = json.dumps(m).lower()
         for pii in ('legal_name', 'date_of_birth', 'individual_id', 'biometric', 'physical_serial'):
             self.assertNotIn(pii, blob, "a federation manifest must carry no personal data")
+
+
+class EpochRevocationTests(PolarisTestCase):
+    """P3.2b: the signed EPOCH CHECKPOINT and REVOCATION FEED an authority publishes for
+    epoch alignment and cross-authority revocation propagation. Placeholder-safe: this
+    validates the SQL, the published shape, the no-personal-data rule, and that the app's
+    canonical statement bytes match the standalone verifier's byte-for-byte. The real
+    ML-DSA round-trip and the fork/rollback/cross-revocation decisions are the pqc-real
+    drill, scripts/polaris-epoch-revocation-drill.py."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _register_key(self, agency_id, key_hex):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE Agency SET signing_public_key_hex=%s WHERE agency_id=%s", (key_hex, agency_id))
+            conn.commit()
+
+    def test_not_federated_agency_is_404(self):
+        self._register_key(1, None)
+        self.assertEqual(self.client.get('/api/v1/epoch-checkpoint/1').status_code, 404)
+        self.assertEqual(self.client.get('/api/v1/revocation-feed/1').status_code, 404)
+        self.assertEqual(self.client.get('/api/v1/epoch-checkpoint/999999').status_code, 404)
+        self.assertEqual(self.client.get('/api/v1/revocation-feed/999999').status_code, 404)
+
+    def test_epoch_checkpoint_shape_and_canonical_match(self):
+        self._register_key(1, 'a1' * 32)
+        r = self.client.get('/api/v1/epoch-checkpoint/1')
+        self.assertEqual(r.status_code, 200, "expected a closed TokenStateEpoch in the sample data")
+        cp = r.get_json()
+        self.assertEqual(cp['format'], 'polaris-epoch-checkpoint/1')
+        self.assertEqual(cp['authority']['agency_id'], 1)
+        self.assertIn('number', cp['epoch'])
+        self.assertIn('root_hex', cp['epoch'])
+        for f in ('prev', 'as_of', 'signature_hex', 'public_key_hex', 'algorithm', 'max_window_seconds'):
+            self.assertIn(f, cp)
+        self.assertGreater(cp['expires_at'], cp['issued_at'])
+        # the app's signed statement bytes MUST equal the standalone verifier's canonical bytes
+        verifier = _e2e_load('polaris_verify_epochrevoc_cp', 'polaris-verify.py')
+        self.assertEqual(flask_app._epoch_checkpoint_statement(cp),
+                         verifier._epoch_checkpoint_canonical(cp),
+                         "app and verifier disagree on the checkpoint canonical bytes")
+        # no personal data
+        blob = json.dumps(cp).lower()
+        for pii in ('legal_name', 'date_of_birth', 'individual_id', 'biometric', 'physical_serial', 'token_value'):
+            self.assertNotIn(pii, blob, "an epoch checkpoint must carry no personal data")
+
+    def test_revocation_feed_shape_commitment_and_no_pii(self):
+        self._register_key(1, 'a1' * 32)
+        r = self.client.get('/api/v1/revocation-feed/1')
+        self.assertEqual(r.status_code, 200)
+        feed = r.get_json()
+        self.assertEqual(feed['format'], 'polaris-revocation-feed/1')
+        self.assertEqual(feed['authority']['agency_id'], 1)
+        for f in ('epoch_number', 'as_of', 'revoked_root_hex', 'revoked_count', 'revoked_leaves',
+                  'signature_hex', 'public_key_hex', 'algorithm', 'max_window_seconds'):
+            self.assertIn(f, feed)
+        # the count matches, every leaf is a SHA3-256 hex digest, and the commitment matches
+        self.assertEqual(feed['revoked_count'], len(feed['revoked_leaves']))
+        for leaf in feed['revoked_leaves']:
+            self.assertRegex(leaf, r'^[0-9a-f]{64}$', "a revoked leaf must be a SHA3-256 hex digest")
+        verifier = _e2e_load('polaris_verify_epochrevoc_feed', 'polaris-verify.py')
+        self.assertEqual(feed['revoked_root_hex'], verifier.revoked_root(feed['revoked_leaves']),
+                         "the published commitment must match the listed leaves")
+        self.assertEqual(flask_app._revocation_feed_statement(feed),
+                         verifier._revocation_feed_canonical(feed),
+                         "app and verifier disagree on the feed canonical bytes")
+        # the feed publishes leaves (hashes), never the token_value itself
+        blob = json.dumps(feed).lower()
+        for pii in ('legal_name', 'date_of_birth', 'individual_id', 'biometric', 'physical_serial', 'token_value'):
+            self.assertNotIn(pii, blob, "a revocation feed must carry no personal data")

@@ -6913,6 +6913,68 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_epoch_revocation_propagation(root: pathlib.Path) -> list[Finding]:
+    """P3.2b: epoch alignment + revocation propagation across authorities. Two more signed
+    objects an authority publishes and a relying party consumes OFFLINE: an EPOCH CHECKPOINT
+    (its commitment to a point on the append-only TokenStateEpoch chain, so two checkpoints
+    prove monotonicity and catch a FORK) and a REVOCATION FEED (the revoked-credential
+    leaves it issued, monotone because RevocationList is append-only, so a ROLLBACK is
+    caught). A foreign credential is rejected offline when it is revoked in the issuer's
+    authentic feed -- revocation crosses the authority boundary with no issuer contact."""
+    app = _read(root, "polaris_web/app.py")
+    for sym in ("/api/v1/epoch-checkpoint", "/api/v1/revocation-feed",
+                "_epoch_checkpoint_statement", "_revocation_feed_statement"):
+        if sym not in app:
+            return _fail("epoch_revocation",
+                         "app.py must publish the signed epoch checkpoint and revocation feed (%s missing)" % sym)
+    if "signature_over_message" not in app:
+        return _fail("epoch_revocation", "the checkpoint and feed must be issuer-SIGNED (signature_over_message)")
+    # Built as views over the EXISTING append-only tables, not a new mutable store.
+    if "TokenStateEpoch" not in app or "RevocationList" not in app:
+        return _fail("epoch_revocation",
+                     "the checkpoint and feed must derive from the append-only TokenStateEpoch and RevocationList")
+    # The detached verifier consumes them OFFLINE and stays standalone.
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_epoch_checkpoint", "def check_epoch_chain", "def verify_revocation_feed",
+                "def check_revocation_progression", "def is_revoked",
+                "_epoch_checkpoint_canonical", "_revocation_feed_canonical",
+                "polaris-epoch-checkpoint/1", "polaris-revocation-feed/1"):
+        if sym not in v:
+            return _fail("epoch_revocation",
+                         "scripts/polaris-verify.py must verify checkpoints and feeds offline (%s missing)" % sym)
+    if '"fork"' not in v and "'fork'" not in v:
+        return _fail("epoch_revocation",
+                     "check_epoch_chain must detect a FORK: two different roots signed at one epoch number is equivocation")
+    if "rolled_back" not in v:
+        return _fail("epoch_revocation",
+                     "check_revocation_progression must detect a ROLLBACK: a newer feed that drops a published revocation")
+    # Revocation folds into the cross-authority decision, fail-closed and bound to the issuer key.
+    if "revocation_feed" not in v or "revocation_checked" not in v:
+        return _fail("epoch_revocation",
+                     "verify_cross_authority must fold in the issuer revocation feed (fail-closed, bound to the issuer key)")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("epoch_revocation",
+                         f"the offline verifier imports {mod!r}; it must stay standalone (a relying party checks "
+                         "non-revocation with no Polaris code, no database, no issuer contact)")
+    # It RUNS every release, and is tested.
+    drill = _read(root, "scripts/polaris-epoch-revocation-drill.py")
+    if not drill or "verify_cross_authority" not in drill or "check_epoch_chain" not in drill:
+        return _fail("epoch_revocation",
+                     "scripts/polaris-epoch-revocation-drill.py must run the two-authority fork/rollback/revocation matrix")
+    if "polaris-epoch-revocation-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("epoch_revocation",
+                     "the epoch/revocation drill must run in CI (a protocol that never runs is displacement)")
+    if "EpochRevocationTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("epoch_revocation", "test_app.py must carry EpochRevocationTests for the published endpoints")
+    return _ok("epoch_revocation",
+               "epoch alignment and revocation propagation run across authorities: an authority publishes a signed "
+               "epoch checkpoint (GET /api/v1/epoch-checkpoint) and revocation feed (GET /api/v1/revocation-feed) as "
+               "views over its append-only tables, and the standalone verifier catches a fork and a rollback and "
+               "rejects a revoked foreign credential OFFLINE with no issuer contact -- proven every release by the "
+               "two-authority drill under real ML-DSA and tested")
+
+
 def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
     """P3.2: the inter-authority protocol. An authority publishes a SIGNED federation
     manifest (its anchors, plus the attestations it has made); another party decides
@@ -7336,6 +7398,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_epoch_revocation_propagation,
     check_inter_authority_protocol,
     check_federation_topology,
     check_offline_verification,

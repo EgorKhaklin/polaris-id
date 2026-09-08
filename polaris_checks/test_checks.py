@@ -6114,6 +6114,75 @@ def test_inter_authority_protocol_check_discriminates(tmp_path):
     assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL without FederationManifestTests"
 
 
+def test_epoch_revocation_propagation_check_discriminates(tmp_path):
+    # v9.298 (P3.2b): a signed epoch checkpoint + revocation feed, verified offline
+    # (standalone), with FORK + ROLLBACK detection and fail-closed cross-authority
+    # revocation, run in CI and tested. Each perturbation removes one leg.
+    good = {
+        'polaris_web/app.py': (
+            "@app.route('/api/v1/epoch-checkpoint/<int:agency_id>')\n"
+            "def api_v1_epoch_checkpoint(agency_id):\n"
+            "    _epoch_checkpoint_statement(body)  # over TokenStateEpoch\n"
+            "    pqc_signing.signature_over_message(stmt)\n"
+            "@app.route('/api/v1/revocation-feed/<int:agency_id>')\n"
+            "def api_v1_revocation_feed(agency_id):\n"
+            "    _revocation_feed_statement(body)  # over RevocationList\n"
+        ),
+        'scripts/polaris-verify.py': (
+            "import json, hashlib\n"
+            "# polaris-epoch-checkpoint/1 polaris-revocation-feed/1\n"
+            "def _epoch_checkpoint_canonical(cp): return b''\n"
+            "def _revocation_feed_canonical(f): return b''\n"
+            "def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=None): return {}\n"
+            "def check_epoch_chain(a, b): return {'fork': False}\n"
+            "def verify_revocation_feed(f, now=None, max_window_seconds=None, issuer_key=None): return {}\n"
+            "def check_revocation_progression(a, b): return {'rolled_back': False}\n"
+            "def is_revoked(f, tv): return False\n"
+            "def verify_cross_authority(pack, ctx, tm, revocation_feed=None):\n"
+            "    revocation_checked = revocation_feed is not None\n"
+            "    return {'decision': 'accept', 'revocation_checked': revocation_checked}\n"
+        ),
+        'scripts/polaris-epoch-revocation-drill.py': (
+            "def main():\n    check_epoch_chain(a, b)\n    verify_cross_authority(p, 1, [m], revocation_feed=f)\n"
+        ),
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-epoch-revocation-drill.py\n',
+        'polaris_web/test_app.py': 'class EpochRevocationTests:\n    def t(self): pass\n',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. an endpoint is missing
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("/api/v1/revocation-feed", "/api/v1/nope")})
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without the revocation-feed endpoint"
+    # 2. not derived from the append-only tables
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("RevocationList", "SomeMutableCache")})
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL if not built over the append-only tables"
+    # 3. fork detection is gone
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("'fork'", "'nope'")})
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without fork detection"
+    # 4. rollback detection is gone
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("rolled_back", "whatever")})
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without rollback detection"
+    # 5. the cross-authority revocation fold-in is gone
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("revocation_checked", "unused")})
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without fail-closed revocation in cross-authority"
+    # 6. the verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 7. the drill does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
+    # 8. the endpoint test is gone
+    write({"polaris_web/test_app.py": "class Other:\n    pass\n"})
+    assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without EpochRevocationTests"
+
+
 def test_federation_topology_check_discriminates(tmp_path):
     # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
     # delta + the vocation grounding, and is kept honest against the code. Each

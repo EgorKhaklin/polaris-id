@@ -6,9 +6,10 @@ each its own trust root (see [federation-topology.md](federation-topology.md)),
 publish what another party needs to verify their credentials, with no central
 service.
 
-**Status:** v1, 2026-09-08. Roadmap P3.2. It carries anchor cross-publication and
-attestation exchange; epoch alignment and revocation propagation are named here and
-deferred to P3.2b.
+**Status:** v1 (P3.2, anchor cross-publication and attestation exchange) plus epoch
+alignment and revocation propagation (P3.2b), 2026-09-08. Two more signed objects, the
+epoch checkpoint and the revocation feed, are now published and consumed offline; they
+are described in [Epoch alignment and revocation propagation](#epoch-alignment-and-revocation-propagation-p32b).
 
 ## The artifact: a signed federation manifest
 
@@ -39,8 +40,8 @@ An authority publishes one signed object, `polaris-federation-manifest/1`:
   I's key so a verifier can bind the attestation to a foreign credential's signature.
   It is directional and per-context; it is never transitive.
 - **Epoch and revocation** are carried as references (the current token-state epoch
-  number and root, a revocation as-of marker). v1 publishes them; the alignment and
-  propagation protocols that consume them are P3.2b.
+  number and root, a revocation as-of marker). The manifest publishes them; the signed
+  epoch checkpoint and revocation feed that make them consumable are P3.2b, below.
 
 The manifest is served at `GET /api/v1/federation-manifest/<agency_id>`. It is public
 (published trust data, no personal data), signed with the authority's own key, and
@@ -80,14 +81,74 @@ freshness it requires. A rotated anchor is published with `status` other than
 `active` so an old key stops being a valid signer while its issued credentials still
 verify against it as a retired anchor (the rotation model of KEY-CEREMONY.md).
 
-## Deferred to P3.2b
+## Epoch alignment and revocation propagation (P3.2b)
 
-- **Epoch alignment:** the protocol by which authorities agree on and cross-check
-  each other's token-state epochs (the manifest carries the reference; the alignment
-  handshake is not built).
-- **Revocation propagation:** distributing revocation beyond the per-credential status
-  assertion (P3.6) and the manifest's as-of marker; this is the P2.6 status-distribution
-  backbone applied across authorities.
+The manifest carries the epoch and revocation references; P3.2b makes them consumable
+with two more signed objects an authority publishes, both signed by the SAME key that
+signs its manifest and its credentials, both verified offline by the same standalone
+`scripts/polaris-verify.py`, and both derived as views over existing append-only tables
+(`TokenStateEpoch`, `RevocationList`) with no new mutation path.
+
+### The epoch checkpoint
+
+`GET /api/v1/epoch-checkpoint/<agency_id>` publishes a signed `polaris-epoch-checkpoint/1`:
+the authority's commitment to the latest point on its append-only `TokenStateEpoch` chain,
+carrying the epoch number and Merkle root and the prior epoch it extends.
+
+```jsonc
+{ "format": "polaris-epoch-checkpoint/1",
+  "authority": { "agency_id": 1, "name": "..." },
+  "epoch": { "number": 12, "root_hex": "...", "committed_count": 3, "valid_until": "..." },
+  "prev": { "number": 11, "root_hex": "..." },
+  "as_of": "...", "issued_at": "...", "expires_at": "...",
+  "algorithm": "ML-DSA-65", "signature_hex": "...", "public_key_hex": "..." }
+```
+
+- **Monotonicity and fork detection.** `verify_epoch_checkpoint` authenticates one
+  checkpoint (two witnesses, freshness, and, with an expected issuer key, that it is
+  signed by that authority). `check_epoch_chain` compares two: an adjacent pair must
+  chain (`prev` references the earlier epoch exactly), and two DIFFERENT roots signed at
+  one epoch number is a **fork** — cryptographic proof the authority equivocated about
+  its own history.
+- **Alignment.** `epoch_aligned` cross-checks a checkpoint against the epoch its
+  authority's own (separately trusted) manifest commits to. An authority cannot serve a
+  checkpoint that disagrees with its signed manifest without being caught.
+
+### The revocation feed
+
+`GET /api/v1/revocation-feed/<agency_id>` publishes a signed `polaris-revocation-feed/1`:
+the sorted set of revoked-credential leaves (`SHA3-256(token_value)`) for the credentials
+the authority issued that are now revoked, plus a commitment over them.
+
+```jsonc
+{ "format": "polaris-revocation-feed/1",
+  "authority": { "agency_id": 1, "name": "..." },
+  "epoch_number": 12, "as_of": "...",
+  "revoked_root_hex": "...", "revoked_count": 2, "revoked_leaves": [ "<sha3-256 hex>", "..." ],
+  "issued_at": "...", "expires_at": "...", "algorithm": "ML-DSA-65", "signature_hex": "...", "public_key_hex": "..." }
+```
+
+- **Propagation with no issuer contact.** A relying party presented a FOREIGN credential
+  checks its non-revocation against the issuer's feed offline. `verify_cross_authority`
+  takes the feed and is fail-closed: a genuine, fresh feed BOUND to the issuer's key must
+  also show the credential is not revoked; a missing binding, a forged or stale feed, or
+  a listed (revoked) credential all reject. Revocation crosses the authority boundary
+  through published, signed data, not a callback the issuer could log.
+- **Monotonicity and rollback detection.** Because `RevocationList` is append-only a
+  genuine feed only grows and its `as_of` only advances. `check_revocation_progression`
+  compares two feeds from one issuer and flags a **rollback**: a newer feed that drops a
+  previously-published revocation, or moves `as_of` backward, is equivocation.
+- **Privacy.** The feed is a CRL of revoked leaves, not the active population: a leaf is
+  `SHA3-256(token_value)`, derivable only by a holder of the credential, and the feed
+  carries no `token_value` and no personal data.
+
+### Still deferred (P3.2c and beyond)
+
+- An **aggregate** cross-authority status distribution (a shared, mirrored feed rather
+  than per-authority endpoints) is the P2.6 backbone and is not built here.
+- **Epoch-bound ZK presentation** across authorities (checking a foreign membership
+  proof against a checkpoint's root) reuses these checkpoints but is scoped with the ZK
+  presentation work, not here.
 
 ## How this is tested
 

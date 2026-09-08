@@ -730,6 +730,54 @@ A relying party verifies it offline with `scripts/polaris-verify.py`
 trusted authority attests to its key in the presented context. The protocol is
 specified in [inter-authority-protocol.md](../design/inter-authority-protocol.md).
 
+### `GET /api/v1/epoch-checkpoint/<agency_id>`
+
+**Public; no auth.** An authority's signed **epoch checkpoint** (roadmap P3.2b): its
+commitment to the latest point on its append-only `TokenStateEpoch` chain, the epoch
+number and Merkle root, and the prior epoch it extends. Signed with the agency's own
+key over `SHA3-256(canonical)`, short-lived (`POLARIS_EPOCH_CHECKPOINT_TTL`, default one
+day). Carries no personal data. `404` if the agency does not exist, is not federated, or
+has no closed epoch.
+
+```jsonc
+{ "format": "polaris-epoch-checkpoint/1",
+  "authority": { "agency_id": 1, "name": "..." },
+  "epoch": { "number": 12, "root_hex": "...", "committed_count": 3, "valid_until": "..." },
+  "prev": { "number": 11, "root_hex": "..." },
+  "as_of": "...", "issued_at": "...", "expires_at": "...",
+  "algorithm": "ML-DSA-65", "signature_hex": "...", "public_key_hex": "..." }
+```
+
+Two checkpoints let a consumer prove **monotonicity** and catch a **fork**: two
+different roots signed at one epoch number is cryptographic proof the authority
+equivocated. Verified offline with `scripts/polaris-verify.py`
+(`verify_epoch_checkpoint`, `check_epoch_chain`, `epoch_aligned`).
+
+### `GET /api/v1/revocation-feed/<agency_id>`
+
+**Public; no auth.** An authority's signed **revocation feed** (roadmap P3.2b): the
+sorted set of revoked-credential leaves (`SHA3-256(token_value)`) for the credentials it
+issued that are now revoked, plus a commitment over them. Signed with the agency's own
+key over `SHA3-256(canonical)`, short-lived (`POLARIS_REVOCATION_FEED_TTL`, default one
+day). It is a CRL of revoked leaves, **not the active population**: a leaf is derivable
+only by a holder of the credential, and no `token_value` appears. `404` if the agency
+does not exist or is not federated.
+
+```jsonc
+{ "format": "polaris-revocation-feed/1",
+  "authority": { "agency_id": 1, "name": "..." },
+  "epoch_number": 12, "as_of": "...",
+  "revoked_root_hex": "...", "revoked_count": 2, "revoked_leaves": [ "<sha3-256 hex>", "..." ],
+  "issued_at": "...", "expires_at": "...", "algorithm": "ML-DSA-65", "signature_hex": "...", "public_key_hex": "..." }
+```
+
+A relying party checks a foreign credential's non-revocation against it offline with
+`scripts/polaris-verify.py` (`verify_revocation_feed`, `is_revoked`), with no issuer
+contact. Because `RevocationList` is append-only the feed is monotone, so
+`check_revocation_progression` catches a **rollback** (a newer feed that drops a
+published revocation). The protocol is specified in
+[inter-authority-protocol.md](../design/inter-authority-protocol.md).
+
 ## Verification API (use cases UC-1 through UC-8)
 
 Each use case is reachable through the operator UI (HTML form) AND

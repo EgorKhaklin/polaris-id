@@ -462,17 +462,25 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
 
 
 def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
-                           max_window_seconds=None, trusted_anchors=None):
+                           max_window_seconds=None, trusted_anchors=None,
+                           revocation_feed=None):
     """Decide whether to accept a credential from ANOTHER authority, OFFLINE, using
     published federation manifests (P3.2). Accept iff the credential's signature is
     genuine AND some manifest the relying party trusts attests to the credential's
     signing key in the presented context. `trusted_anchors` are the anchor keys of the
-    authorities the relying party already trusts (whose manifests it will honor)."""
+    authorities the relying party already trusts (whose manifests it will honor).
+
+    P3.2b: if the relying party supplies the issuer's `revocation_feed`, the decision is
+    fail-closed on revocation -- a genuine, fresh feed BOUND to the issuer's key must
+    also show the credential is not revoked. A missing binding, a forged or stale feed,
+    or a listed (revoked) credential all reject. When no feed is supplied the decision is
+    the P3.2 attestation decision and `revocation_checked` is False (non-revocation was
+    not confirmed offline)."""
     a = verify_pack(pack)
-    reasons = []
     if not a["signature_valid"]:
-        reasons.append("credential is not authentic")
-        return {"decision": "reject", "authentic": False, "reasons": reasons, "via": None}
+        return {"decision": "reject", "authentic": False,
+                "reasons": ["credential is not authentic"], "via": None,
+                "revocation_checked": False, "revoked": None}
     token_key = (pack.get("public_key_hex") or "").lower()
     via = None
     for manifest in trusted_manifests:
@@ -491,9 +499,285 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
         if via:
             break
     if not via:
-        reasons.append("no trusted authority attests to this credential's issuer in this context")
-    return {"decision": "accept" if via else "reject", "authentic": True,
-            "reasons": reasons, "via": via}
+        return {"decision": "reject", "authentic": True,
+                "reasons": ["no trusted authority attests to this credential's issuer in this context"],
+                "via": None, "revocation_checked": False, "revoked": None}
+    # P3.2b: fail-closed revocation propagation, if the relying party supplies the feed.
+    if revocation_feed is not None:
+        rv = verify_revocation_feed(revocation_feed, now=now,
+                                    max_window_seconds=max_window_seconds, issuer_key=token_key)
+        if not (rv["feed_authentic"] and rv["fresh"] and rv["issuer_matches"]):
+            return {"decision": "reject", "authentic": True,
+                    "reasons": ["the issuer's revocation feed is not authentic, fresh, and bound to "
+                                "the issuer key -- non-revocation cannot be confirmed"],
+                    "via": via, "revocation_checked": True, "revoked": None}
+        if is_revoked(revocation_feed, pack.get("token_value") or ""):
+            return {"decision": "reject", "authentic": True,
+                    "reasons": ["credential is revoked in the issuer's published revocation feed"],
+                    "via": via, "revocation_checked": True, "revoked": True}
+        return {"decision": "accept", "authentic": True, "reasons": [], "via": via,
+                "revocation_checked": True, "revoked": False}
+    return {"decision": "accept", "authentic": True, "reasons": [], "via": via,
+            "revocation_checked": False, "revoked": None}
+
+
+# ---------------------------------------------------------------------------
+# P3.2b: epoch alignment + revocation propagation across authorities.
+#
+# Two more signed objects an authority publishes, both consumed here OFFLINE and
+# both signed by the SAME authority key that signs its manifest and its credentials:
+#
+#   - polaris-epoch-checkpoint/1: the authority's commitment to a point on its
+#     append-only TokenStateEpoch chain -- an epoch number, its Merkle root, and the
+#     prior epoch it extends. Two checkpoints from one authority let a consumer prove
+#     MONOTONICITY and catch a FORK: two different roots signed at one epoch number is
+#     cryptographic proof the authority equivocated about its own history.
+#
+#   - polaris-revocation-feed/1: the authority's signed revocation state as of an
+#     epoch -- the sorted set of revoked-credential leaves (SHA3-256(token_value)) and
+#     a commitment over them. Because RevocationList is append-only, a genuine feed is
+#     MONOTONE: a newer feed that DROPS a previously-published revocation, or moves its
+#     as_of backward, is a ROLLBACK and is rejected. A relying party checks a foreign
+#     credential's non-revocation against the issuer's authentic feed with no issuer
+#     contact -- revocation propagates through published, signed data, not a callback.
+# ---------------------------------------------------------------------------
+_EPOCH_CHECKPOINT_FORMAT = "polaris-epoch-checkpoint/1"
+_REVOCATION_FEED_FORMAT = "polaris-revocation-feed/1"
+
+
+def _epoch_checkpoint_canonical(cp):
+    """Canonical bytes the authority signs. MUST match app.py _epoch_checkpoint_statement."""
+    statement = {k: cp.get(k) for k in
+                 ("format", "authority", "epoch", "prev", "as_of",
+                  "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _revocation_feed_canonical(feed):
+    """Canonical bytes the authority signs. MUST match app.py _revocation_feed_statement.
+    The revoked-leaf LIST is part of the signed statement, so the commitment can never be
+    separated from the members it commits to."""
+    statement = {k: feed.get(k) for k in
+                 ("format", "authority", "epoch_number", "as_of", "revoked_root_hex",
+                  "revoked_count", "revoked_leaves", "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def revoked_root(leaves):
+    """A deterministic commitment over the revoked-leaf set: SHA3-256 over the sorted,
+    de-duplicated, newline-joined lowercase hex leaves. Order-independent, so anyone who
+    holds the same set computes the same root. MUST match app.py's builder."""
+    uniq = sorted({str(x).lower() for x in leaves})
+    return hashlib.sha3_256("\n".join(uniq).encode("utf-8")).hexdigest()
+
+
+def revocation_leaf(token_value):
+    """The published identifier for a revoked credential: SHA3-256(token_value) hex. A
+    relying party derives it from the credential it is presented; it does NOT expose the
+    active population, because only a holder of a credential can compute its leaf."""
+    return hashlib.sha3_256(token_value.encode("utf-8")).hexdigest()
+
+
+def _two_witness_verify(digest, sig, pk):
+    """Shared ML-DSA-65 two-witness check (liboqs primary, cryptography second). Returns
+    (ok, ran, note): ok is True/False, or None when no verifier is available or the two
+    witnesses disagree -- in which case `note` says which."""
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    if primary is None and witness is None:
+        return None, ran, "no ML-DSA-65 verifier available"
+    if primary is not None and witness is not None and primary != witness:
+        return None, ran, "the two witnesses DISAGREE -- treat as invalid"
+    ok = primary if primary is not None else witness
+    return bool(ok), ran, None
+
+
+def _verify_window(obj, v, now, max_window_seconds):
+    """Shared freshness gate for a signed, window-bounded object. Sets v['fresh'] and
+    v['note']; returns nothing."""
+    from datetime import datetime, timezone
+    now = now or datetime.now(timezone.utc)
+    try:
+        ia, ea = _parse_iso(obj["issued_at"]), _parse_iso(obj["expires_at"])
+    except Exception as e:
+        v["fresh"] = False
+        v["note"] = "unparseable issued_at/expires_at (%s)" % e
+        return
+    window = (ea - ia).total_seconds()
+    within = ia <= now < ea
+    window_ok = True if max_window_seconds is None else (0 < window <= max_window_seconds)
+    v["fresh"] = bool(within and window_ok)
+    if not within:
+        v["note"] = "object is stale or not yet valid"
+    elif not window_ok:
+        v["note"] = "validity window %ds exceeds the accepted maximum %ds" % (int(window), max_window_seconds)
+
+
+def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=None):
+    """Verify a signed epoch checkpoint OFFLINE (P3.2b): the signature over
+    SHA3-256(canonical) with two witnesses, freshness, and (with issuer_key) that it is
+    signed by the expected issuing authority's key. Returns a verdict dict. Chaining and
+    fork detection between two checkpoints is check_epoch_chain."""
+    v = {"checkpoint_authentic": False, "fresh": None, "issuer_matches": None,
+         "authority": cp.get("authority"), "epoch": cp.get("epoch"), "prev": cp.get("prev"),
+         "witnesses": [], "note": None}
+    if cp.get("format") != _EPOCH_CHECKPOINT_FORMAT:
+        v["note"] = "not a %s" % _EPOCH_CHECKPOINT_FORMAT
+        return v
+    alg, pk_hex, sig_hex = cp.get("algorithm"), cp.get("public_key_hex"), cp.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder checkpoint -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_epoch_checkpoint_canonical(cp)).digest()
+    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["checkpoint_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "checkpoint signature is invalid"
+        return v
+    _verify_window(cp, v, now, max_window_seconds)
+    if issuer_key is not None:
+        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+    return v
+
+
+def check_epoch_chain(cp1, cp2):
+    """Given two epoch checkpoints from the SAME authority, decide whether they form a
+    consistent, monotonic chain, and detect a FORK. Pure structural check: establish each
+    checkpoint's authenticity with verify_epoch_checkpoint first.
+
+    Returns {"consistent": bool, "fork": bool, "note": str}. fork=True means the two
+    checkpoints assign DIFFERENT roots to the SAME epoch number, or the later one does not
+    extend the earlier one it should -- the equivocation the alignment protocol catches."""
+    e1, e2 = (cp1.get("epoch") or {}), (cp2.get("epoch") or {})
+    pk1, pk2 = (cp1.get("public_key_hex") or "").lower(), (cp2.get("public_key_hex") or "").lower()
+    if pk1 and pk2 and pk1 != pk2:
+        return {"consistent": False, "fork": False,
+                "note": "checkpoints are signed by different keys; not one authority's chain"}
+    n1, n2 = e1.get("number"), e2.get("number")
+    if n1 is None or n2 is None:
+        return {"consistent": False, "fork": False, "note": "a checkpoint is missing its epoch number"}
+    (_, elo), (hi, ehi) = ((cp1, e1), (cp2, e2)) if n1 <= n2 else ((cp2, e2), (cp1, e1))
+    nlo, nhi = elo["number"], ehi["number"]
+    if nlo == nhi:
+        if (elo.get("root_hex") or "").lower() != (ehi.get("root_hex") or "").lower():
+            return {"consistent": False, "fork": True,
+                    "note": "FORK: two different roots signed at epoch %s" % nlo}
+        return {"consistent": True, "fork": False, "note": "identical epoch checkpoint"}
+    hp = (hi.get("prev") or {})
+    if nhi == nlo + 1:
+        if hp.get("number") != nlo or (hp.get("root_hex") or "").lower() != (elo.get("root_hex") or "").lower():
+            return {"consistent": False, "fork": True,
+                    "note": "FORK: epoch %s does not extend the published epoch %s" % (nhi, nlo)}
+        return {"consistent": True, "fork": False, "note": "adjacent checkpoints chain cleanly"}
+    return {"consistent": True, "fork": False,
+            "note": "monotone but non-adjacent (%s..%s); intervening checkpoints not shown" % (nlo, nhi)}
+
+
+def epoch_aligned(manifest, checkpoint):
+    """The alignment cross-check (P3.2b): True iff a checkpoint's epoch matches the epoch
+    the authority's own (separately trusted) manifest commits to -- same number, same
+    root. An authority cannot serve a checkpoint that disagrees with the epoch its signed
+    manifest published without being caught. Returns None if either side omits the epoch."""
+    me, ce = (manifest.get("epoch") or {}), (checkpoint.get("epoch") or {})
+    if me.get("number") is None or ce.get("number") is None:
+        return None
+    return (me.get("number") == ce.get("number")
+            and (me.get("root_hex") or "").lower() == (ce.get("root_hex") or "").lower())
+
+
+def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=None):
+    """Verify a signed revocation feed OFFLINE (P3.2b): the signature over
+    SHA3-256(canonical) with two witnesses, freshness, that the published commitment
+    matches the listed leaves, and (with issuer_key) that it is signed by the expected
+    issuer. Returns a verdict dict. Membership is is_revoked; monotonicity between two
+    feeds is check_revocation_progression."""
+    v = {"feed_authentic": False, "fresh": None, "commitment_ok": None, "issuer_matches": None,
+         "authority": feed.get("authority"), "as_of": feed.get("as_of"),
+         "revoked_count": feed.get("revoked_count"), "witnesses": [], "note": None}
+    if feed.get("format") != _REVOCATION_FEED_FORMAT:
+        v["note"] = "not a %s" % _REVOCATION_FEED_FORMAT
+        return v
+    alg, pk_hex, sig_hex = feed.get("algorithm"), feed.get("public_key_hex"), feed.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder feed -- not authenticatable offline"
+        return v
+    # The commitment must match the listed leaves; a feed whose root does not commit to
+    # its own members is rejected before its signature is even considered meaningful.
+    leaves = feed.get("revoked_leaves") or []
+    uniq = {str(x).lower() for x in leaves}
+    v["commitment_ok"] = (revoked_root(leaves) == (feed.get("revoked_root_hex") or "").lower()
+                          and len(uniq) == (feed.get("revoked_count") or 0))
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_revocation_feed_canonical(feed)).digest()
+    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    if not ok:
+        v["note"] = "feed signature is invalid"
+        return v
+    if not v["commitment_ok"]:
+        v["note"] = "the revoked-set commitment does not match the listed leaves"
+        return v
+    v["feed_authentic"] = True
+    _verify_window(feed, v, now, max_window_seconds)
+    if issuer_key is not None:
+        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+    return v
+
+
+def is_revoked(feed, token_value):
+    """True iff the credential's leaf is listed in the feed. Call verify_revocation_feed
+    first -- this is a membership test, not an authenticity check."""
+    leaf = revocation_leaf(token_value or "").lower()
+    return leaf in {str(x).lower() for x in (feed.get("revoked_leaves") or [])}
+
+
+def check_revocation_progression(prev_feed, next_feed):
+    """Given two revocation feeds from the SAME issuer, decide whether next_feed is a
+    valid FORWARD progression of prev_feed. Revocation is append-only, so the newer feed
+    must not move as_of backward and must not DROP any leaf the older feed published. A
+    dropped leaf or a regressed as_of is a ROLLBACK (equivocation). Pure structural check.
+
+    Returns {"progresses": bool, "rolled_back": bool, "note": str}."""
+    pk1, pk2 = (prev_feed.get("public_key_hex") or "").lower(), (next_feed.get("public_key_hex") or "").lower()
+    if pk1 and pk2 and pk1 != pk2:
+        return {"progresses": False, "rolled_back": False,
+                "note": "feeds are signed by different keys; not one issuer's history"}
+    prev_leaves = {str(x).lower() for x in (prev_feed.get("revoked_leaves") or [])}
+    next_leaves = {str(x).lower() for x in (next_feed.get("revoked_leaves") or [])}
+    dropped = prev_leaves - next_leaves
+    if dropped:
+        return {"progresses": False, "rolled_back": True,
+                "note": "ROLLBACK: %d revocation(s) in the older feed are missing from the newer one"
+                        % len(dropped)}
+    try:
+        if _parse_iso(next_feed["as_of"]) < _parse_iso(prev_feed["as_of"]):
+            return {"progresses": False, "rolled_back": True,
+                    "note": "ROLLBACK: the newer feed's as_of precedes the older feed's"}
+    except Exception:
+        pass
+    return {"progresses": True, "rolled_back": False,
+            "note": "forward progression (%d new revocation(s))" % len(next_leaves - prev_leaves)}
 
 
 def _load_anchor(path):

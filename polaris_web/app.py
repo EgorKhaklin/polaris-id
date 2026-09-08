@@ -5437,6 +5437,144 @@ def api_v1_federation_manifest(agency_id):
     return jsonify(body)
 
 
+# --- P3.2b: epoch alignment + revocation propagation across authorities --------
+#
+# Two more signed objects an authority publishes, both signed with its own ML-DSA key
+# and both consumed OFFLINE by scripts/polaris-verify.py:
+#   - the epoch checkpoint commits the authority to the latest point on its append-only
+#     TokenStateEpoch chain, so two checkpoints prove monotonicity and catch a fork;
+#   - the revocation feed publishes the revoked-credential leaves it issued, so a relying
+#     party checks a foreign credential's non-revocation with no issuer contact.
+# Neither carries personal data. Both are views over existing append-only tables
+# (TokenStateEpoch, RevocationList); there is no new mutation path.
+_EPOCH_CHECKPOINT_FORMAT = 'polaris-epoch-checkpoint/1'
+_REVOCATION_FEED_FORMAT = 'polaris-revocation-feed/1'
+_EPOCH_CHECKPOINT_TTL = int(os.environ.get('POLARIS_EPOCH_CHECKPOINT_TTL', '86400'))
+_REVOCATION_FEED_TTL = int(os.environ.get('POLARIS_REVOCATION_FEED_TTL', '86400'))
+
+
+def _epoch_checkpoint_statement(body):
+    """Canonical bytes the authority signs. MUST match scripts/polaris-verify.py's
+    _epoch_checkpoint_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'authority', 'epoch', 'prev', 'as_of',
+                  'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _revocation_feed_statement(body):
+    """Canonical bytes the authority signs. MUST match scripts/polaris-verify.py's
+    _revocation_feed_canonical -- the revoked-leaf LIST is part of the signed statement."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'authority', 'epoch_number', 'as_of', 'revoked_root_hex',
+                  'revoked_count', 'revoked_leaves', 'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _revoked_root(leaves):
+    """SHA3-256 over the sorted, de-duplicated, newline-joined lowercase hex leaves. MUST
+    match scripts/polaris-verify.py's revoked_root."""
+    uniq = sorted({str(x).lower() for x in leaves})
+    return hashlib.sha3_256('\n'.join(uniq).encode('utf-8')).hexdigest()
+
+
+@app.route('/api/v1/epoch-checkpoint/<int:agency_id>')
+def api_v1_epoch_checkpoint(agency_id):
+    """P3.2b: publish a signed EPOCH CHECKPOINT -- the authority's commitment to the latest
+    point on its append-only TokenStateEpoch chain (the epoch number, its Merkle root, and
+    the prior epoch it extends). A consumer verifies it OFFLINE (verify_epoch_checkpoint /
+    check_epoch_chain) and, holding two checkpoints, proves monotonicity and catches a fork
+    -- two different roots signed at one epoch number is equivocation. Public trust data,
+    no personal content, signed with the agency's own key, short-lived."""
+    ag = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
+               (agency_id,), fetch='one', primary=True)
+    if not ag:
+        return jsonify(error='no such agency'), 404
+    if not ag['signing_public_key_hex']:
+        return jsonify(error='agency is not federated (no registered signing key)'), 404
+    rows = query("""SELECT epoch_id, merkle_root, committed_count, valid_until
+                    FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 2""", primary=True)
+    if not rows:
+        return jsonify(error='no epoch has been closed yet'), 404
+    latest = rows[0]
+    prev = rows[1] if len(rows) > 1 else None
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    issued_at = now.isoformat().replace('+00:00', 'Z')
+    expires_at = (now + timedelta(seconds=_EPOCH_CHECKPOINT_TTL)).isoformat().replace('+00:00', 'Z')
+    body = {
+        'format': _EPOCH_CHECKPOINT_FORMAT,
+        'authority': {'agency_id': ag['agency_id'], 'name': ag['name']},
+        'epoch': {'number': latest['epoch_id'], 'root_hex': latest['merkle_root'],
+                  'committed_count': latest['committed_count'],
+                  'valid_until': latest['valid_until'].isoformat() if latest['valid_until'] else None},
+        'prev': ({'number': prev['epoch_id'], 'root_hex': prev['merkle_root']} if prev else None),
+        'as_of': issued_at,
+        'issued_at': issued_at,
+        'expires_at': expires_at,
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_epoch_checkpoint_statement(body), agency_id=agency_id)
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['max_window_seconds'] = _EPOCH_CHECKPOINT_TTL
+    body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                   'checkpoint minus signature_hex and public_key_hex)')
+    return jsonify(body)
+
+
+@app.route('/api/v1/revocation-feed/<int:agency_id>')
+def api_v1_revocation_feed(agency_id):
+    """P3.2b: publish a signed REVOCATION FEED -- the sorted set of revoked-credential
+    leaves (SHA3-256(token_value)) for the credentials this authority issued that are now
+    revoked, plus a commitment over them. A relying party checks a foreign credential's
+    non-revocation against it OFFLINE, with no issuer contact (verify_revocation_feed /
+    is_revoked); because RevocationList is append-only the feed is monotone, so a consumer
+    that caches it detects a rollback. It is a CRL of revoked leaves, NOT the active
+    population -- a leaf is derivable only by a holder of the credential. Signed with the
+    agency's own key, short-lived."""
+    ag = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
+               (agency_id,), fetch='one', primary=True)
+    if not ag:
+        return jsonify(error='no such agency'), 404
+    if not ag['signing_public_key_hex']:
+        return jsonify(error='agency is not federated (no registered signing key)'), 404
+    rows = query("""
+        SELECT it.token_value
+        FROM   RevocationList rl
+        JOIN   IdentityToken it ON it.token_id = rl.token_id
+        WHERE  it.issuing_agency_id = %s
+    """, (agency_id,), primary=True)
+    leaves = sorted({hashlib.sha3_256(r['token_value'].encode('utf-8')).hexdigest() for r in rows})
+    epoch = query("SELECT epoch_id FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
+                  fetch='one', primary=True)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    issued_at = now.isoformat().replace('+00:00', 'Z')
+    expires_at = (now + timedelta(seconds=_REVOCATION_FEED_TTL)).isoformat().replace('+00:00', 'Z')
+    body = {
+        'format': _REVOCATION_FEED_FORMAT,
+        'authority': {'agency_id': ag['agency_id'], 'name': ag['name']},
+        'epoch_number': (epoch['epoch_id'] if epoch else None),
+        'as_of': issued_at,
+        'revoked_root_hex': _revoked_root(leaves),
+        'revoked_count': len(leaves),
+        'revoked_leaves': leaves,
+        'issued_at': issued_at,
+        'expires_at': expires_at,
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_revocation_feed_statement(body), agency_id=agency_id)
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['max_window_seconds'] = _REVOCATION_FEED_TTL
+    body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                   'feed minus signature_hex and public_key_hex)')
+    return jsonify(body)
+
+
 # ============================================================================
 # INVESTIGATE — Object Card UX (v9.19)
 # ============================================================================
