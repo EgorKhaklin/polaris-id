@@ -1,0 +1,25 @@
+# Ruff configuration for Polaris.
+#
+# Scope on purpose: the pyflakes correctness/hygiene rules (F), not style. The
+# codebase's formatting is deliberate and long-lined, and reflowing it would be
+# churn with no safety benefit; what earns its keep in CI is catching an unused
+# import, an unused local, an undefined name, or a placeholder-free f-string
+# before it lands. This matches the `# noqa: F401` markers already in the tree
+# for the intentional side-effect imports (the dyno's oqs preload, a drill's
+# psycopg2 availability guard, and the test-discovery imports in test_app.py).
+#
+# The linter only; the formatter is intentionally not used here.
+
+line-length = 200
+target-version = "py312"
+
+extend-exclude = [
+    "polaris_web/venv",
+    "polaris_zk/target",
+    "node_modules",
+    "sdk/typescript",
+    ".hypothesis",
+]
+
+[lint]
+select = ["F"]

@@ -6453,6 +6453,41 @@ def test_transparency_publication_check_discriminates(tmp_path):
     assert checks.check_transparency_publication(tmp_path)[0].level == "FAIL", "must FAIL if the publication drill does not run in CI"
 
 
+def test_lint_enforced_check_discriminates(tmp_path):
+    # v9.306: ruff (pyflakes F rules) must be configured and actually run in pre-commit and
+    # CI. Each perturbation removes one leg.
+    good = {
+        "ruff.toml": '[lint]\nselect = ["F"]\n',
+        "polaris_web/requirements-dev.txt": "coverage>=7.6\nruff==0.16.6\n",
+        ".pre-commit-config.yaml": "  - id: ruff\n    entry: ruff check\n",
+        ".github/workflows/ci.yml": "      - run: ruff check .\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_lint_enforced(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the config is missing
+    write({"ruff.toml": ""})
+    assert checks.check_lint_enforced(tmp_path)[0].level == "FAIL", "must FAIL without ruff.toml"
+    # 2. the config does not select the F rules
+    write({"ruff.toml": '[lint]\nselect = ["E"]\n'})
+    assert checks.check_lint_enforced(tmp_path)[0].level == "FAIL", "must FAIL if the F rules are not selected"
+    # 3. ruff is not a dev dependency
+    write({"polaris_web/requirements-dev.txt": "coverage>=7.6\n"})
+    assert checks.check_lint_enforced(tmp_path)[0].level == "FAIL", "must FAIL without ruff in the dev deps"
+    # 4. ruff is not wired into pre-commit
+    write({".pre-commit-config.yaml": "  - id: other\n    entry: echo\n"})
+    assert checks.check_lint_enforced(tmp_path)[0].level == "FAIL", "must FAIL without the pre-commit hook"
+    # 5. ruff does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_lint_enforced(tmp_path)[0].level == "FAIL", "must FAIL if ruff does not run in CI"
+
+
 def test_federation_topology_check_discriminates(tmp_path):
     # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
     # delta + the vocation grounding, and is kept honest against the code. Each

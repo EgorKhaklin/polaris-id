@@ -2935,8 +2935,6 @@ class ZKSnarkTests(PolarisTestCase):
                 "JOIN TokenPermission p ON p.token_id=t.token_id "
                 "WHERE t.status='ACTIVE' AND p.context_id=1 ORDER BY t.token_id")
             tokens = cur.fetchall()
-            cur.execute("SELECT merkle_root FROM TokenStateEpoch WHERE epoch_id = 1")
-            root = cur.fetchone()['merkle_root']
 
         leaves = [zk.derive_leaf_seed(t['token_id'], t['token_value'], 1) for t in tokens]
         bundle = zk.generate_proof(leaves[1], 1, leaves,
@@ -4093,12 +4091,7 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
     def test_dev_default_secret_rejected_in_production(self):
         """Setting POLARIS_ENV=production with the dev secret must exit."""
         import subprocess
-        env = {
-            **os.environ,
-            'POLARIS_ENV': 'production',
-            'POLARIS_SECRET_KEY': 'dev-key-change-in-production',
-        }
-        # Run app.py and expect it to exit with code 2
+        # Run app.py and expect it to exit with code 2 (the subprocess sets the env inline)
         proc = subprocess.run(
             [sys.executable, '-c',
              'import os, sys; sys.path.insert(0, "."); '
@@ -6228,7 +6221,6 @@ class HealthEndpointTests(PolarisTestCase):
 
     def test_health_returns_200_when_db_up(self):
         # No login required for health
-        from flask import Flask
         from app import app as polaris_app
         with polaris_app.test_client() as c:
             r = c.get('/api/health')
@@ -8548,10 +8540,10 @@ if __name__ == '__main__':
     # part of the main suite. The import is at the bottom so test_app.py
     # remains importable as a module without side effects from hypothesis.
     try:
-        from test_invariants_property import (
-            C1_AppendOnlyProperties,
-            C2_DisclosureTypingProperties,
-            C3_OneActivePerIndividualProperties,
+        from test_invariants_property import (  # noqa: F401  imported so unittest.main() discovers them
+            C1_AppendOnlyProperties,  # noqa: F401
+            C2_DisclosureTypingProperties,  # noqa: F401
+            C3_OneActivePerIndividualProperties,  # noqa: F401
         )
     except ImportError as e:
         print(f"Property tests skipped: {e}")
@@ -8559,7 +8551,7 @@ if __name__ == '__main__':
     # M2-12 / R11-7: redaction property tests instantiate the adversary
     # model from meta/redaction-proof.md.
     try:
-        from test_redaction_property import RedactionPropertyTests
+        from test_redaction_property import RedactionPropertyTests  # noqa: F401  imported for unittest discovery
     except ImportError as e:
         print(f"Redaction property tests skipped: {e}")
 
@@ -8849,7 +8841,7 @@ class WebAuthnCeremonyTests(PolarisTestCase):
         self.assertEqual(opts['authenticatorSelection']['userVerification'], 'required')
 
         no_uv = _SyntheticAuthenticator('es256', uv=False)
-        r = self._enroll(no_uv, expect=400)
+        self._enroll(no_uv, expect=400)
         self.assertIsNone(self._credential_row(no_uv))
         self.assertIn('WEBAUTHN_REGISTRATION_REFUSED', _audit_events('admin'))
 

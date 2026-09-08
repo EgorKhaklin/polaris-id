@@ -38,7 +38,6 @@ import pqc_signing
 
 try:
     from cryptography.hazmat.primitives.asymmetric import mldsa as _mldsa
-    from cryptography.hazmat.primitives import serialization as _ser
     _MLDSA_OK = hasattr(_mldsa, "MLDSA65PrivateKey")
 except Exception:
     _MLDSA_OK = False

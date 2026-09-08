@@ -78,7 +78,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(summary))
     else:
-        print(f"\nLoaded through the real bulk-enrollment pipeline:")
+        print("\nLoaded through the real bulk-enrollment pipeline:")
         print(f"  agencies      : {stats.agencies:,}")
         print(f"  tokens issued : {stats.tokens_issued:,}")
         print(f"  wall time     : {stats.seconds:.2f}s")
@@ -135,7 +135,7 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         e, v, lat, cv = rep.enrollment, rep.verification, rep.write_latency_ms, rep.crypto_verification
         print(f"Polaris benchmark  scale 1:{rep.scale_divisor}  seed {rep.seed}  {rep.host}  {rep.timestamp}")
         print(f"  enrollment (issue+sign) : {e['people']:,} people @ {e['per_sec']:,.0f}/s")
-        print(f"  verification EVENTS ingested (audit-row writes, NOT signature checks):")
+        print("  verification EVENTS ingested (audit-row writes, NOT signature checks):")
         print(f"      {v['events']:,} @ {v['per_sec']:,.0f}/s  (+{v['revocations']} revocations)")
         print(f"  CRYPTOGRAPHIC signature verification ({cv.get('algorithm','?')}), "
               f"{cv.get('verified',0):,}/{cv.get('samples',0):,} verified:")
@@ -152,7 +152,7 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
             print(f"  Atlas partition pruning (generic plan, {pp.get('month_partitions', 0)} monthly partitions):")
             print(f"      recent window scans {pp.get('recent_window_scanned', 0)} vs all-time "
                   f"{pp.get('all_time_scanned', 0)}  ->  {'PRUNES' if pp.get('prunes') else 'NO PRUNING'}")
-        print(f"  invariants under load:")
+        print("  invariants under load:")
         for name, ok in rep.invariants.items():
             print(f"      {name:<40}: {'HOLD' if ok else 'VIOLATED'}")
     if args.report:

@@ -957,7 +957,7 @@ def cmd_user_deactivate(args):
             conn.commit()
         print(green(f"✓ Deactivated {args.username} (#{row['user_id']}, role={row['role']})"))
         print(dim(f"  Revoked {revoked} live web session(s)."))
-        print(dim(f"  Audit history preserved. To reactivate:"))
+        print(dim("  Audit history preserved. To reactivate:"))
         print(dim(f"    polaris query \"UPDATE AppUser SET is_active=TRUE WHERE username='{args.username.lower()}'\""))
     except psycopg2.Error as e:
         conn.rollback()

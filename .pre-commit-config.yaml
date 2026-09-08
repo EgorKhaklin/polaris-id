@@ -22,6 +22,15 @@ repos:
         pass_filenames: false
         always_run: true
 
+      # ruff (pyflakes F rules, ruff.toml): unused imports, dead locals,
+      # undefined names, placeholder-free f-strings. A local hook to keep the
+      # config network-free; ruff is installed from requirements-dev.txt.
+      - id: ruff
+        name: ruff (unused imports + dead code hygiene)
+        entry: ruff check
+        language: system
+        types_or: [python, pyi]
+
       # Cross-reference integrity: every Markdown link + code path resolves.
       - id: polaris-link-check
         name: polaris-link-check (Markdown + cross-ref resolution)

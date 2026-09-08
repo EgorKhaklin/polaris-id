@@ -5,6 +5,30 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.306 — 2026-09-08 (Enforce import + dead-code hygiene: ruff)
+
+The v9.305 cleanup removed the unused imports it found by hand; this makes that hygiene
+continuous. Ruff runs the pyflakes correctness rules in CI and in pre-commit, so an unused
+import, a dead local, an undefined name, or a placeholder-free f-string fails fast rather
+than accumulating.
+
+- **Config, scoped on purpose.** `ruff.toml` selects `F` (the pyflakes family) only, not
+  style: the codebase's long-lined formatting is deliberate and reflowing it would be churn
+  with no safety benefit. The line length is set generously and the formatter is not used.
+- **It actually runs.** ruff is a dev dependency (`requirements-dev.txt`), a local (no-network)
+  pre-commit hook, and a CI step in the product-test job before the DB setup, so lint failures
+  are fast. `check_lint_enforced` (#166) pins the config, the dependency, the hook, and the CI
+  step together, so a lint that is configured but never runs cannot slip in.
+- **Cleaned to green.** Getting the tree to pass surfaced sixteen findings ruff catches that a
+  bare pyflakes pass did not: five placeholder-free f-strings, six unused imports (of which the
+  four test-discovery imports in test_app.py are kept with `# noqa: F401`, since they exist for
+  unittest.main() to discover the property suites), and five dead local assignments removed
+  (including a vestigial env dict and a superseded results collector).
+
+166 machine-checked invariants.
+
+---
+
 ## v9.305 — 2026-09-08 (Repo hygiene: unused imports, CODEOWNERS)
 
 A cleanup pass against golden-standard repository organization. The audit found the codebase

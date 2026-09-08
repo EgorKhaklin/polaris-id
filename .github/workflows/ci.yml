@@ -99,6 +99,12 @@ jobs:
           # test_custody's KMS stand-in and env-selection tests run here.
           pip install -r polaris_web/requirements-custody.txt
 
+      # v9.306 — ruff (pyflakes F rules, ruff.toml). Runs before the slow DB
+      # setup so an unused import or dead local fails fast. Formatting is not
+      # enforced; this is the import/dead-code hygiene gate.
+      - name: Ruff (unused imports, dead code, undefined names)
+        run: ruff check .
+
       - name: Wait for Postgres
         run: |
           for i in $(seq 1 30); do

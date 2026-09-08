@@ -134,8 +134,6 @@ def main():
     b[0] ^= 0x01
     tampered["signature_hex"] = b.hex()
 
-    cases = []
-
     def decide(tag, pack, *, online, duress=False):
         presentation = _present(tmp, pack, tag, duress=duress)
         v = rp.verify_presentation(

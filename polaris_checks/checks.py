@@ -6943,6 +6943,29 @@ def _signed_statement_keys(src: str, fn: str):
     return re.findall(r"""['"]([a-z_]+)['"]\s*:""", body)
 
 
+def check_lint_enforced(root: pathlib.Path) -> list[Finding]:
+    """Import and dead-code hygiene (unused imports, unused locals, undefined names,
+    placeholder-free f-strings) is not left to habit: ruff runs the pyflakes F rules in CI
+    and in pre-commit. A lint that is configured but never runs is displacement, so this pins
+    the config, the dev dependency, the pre-commit hook, and the CI step together."""
+    cfg = _read(root, "ruff.toml")
+    if not cfg:
+        return _fail("lint_enforced", "ruff.toml (the lint configuration) is missing")
+    if not re.search(r'select\s*=\s*\[[^\]]*"F"', cfg):
+        return _fail("lint_enforced",
+                     "ruff.toml must select the pyflakes F rules (unused imports, dead code, undefined names)")
+    if "ruff" not in _read(root, "polaris_web/requirements-dev.txt"):
+        return _fail("lint_enforced", "ruff must be a dev dependency (polaris_web/requirements-dev.txt)")
+    if "ruff check" not in _read(root, ".pre-commit-config.yaml"):
+        return _fail("lint_enforced", "ruff must run in pre-commit (.pre-commit-config.yaml)")
+    if "ruff check" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("lint_enforced", "ruff must run in CI (a lint that never runs is displacement)")
+    return _ok("lint_enforced",
+               "ruff enforces the pyflakes hygiene rules (unused imports, dead locals, undefined names) via "
+               "ruff.toml, and runs both in pre-commit and in the CI test job before the suites, so an unused "
+               "import or a dead assignment fails fast rather than accumulating")
+
+
 def check_transparency_publication(root: pathlib.Path) -> list[Finding]:
     """P3.3c: external-ledger publication. A log publishes each head into an independent
     append-only ledger and gets a receipt -- the ledger's own signed head plus an inclusion
@@ -7655,6 +7678,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_lint_enforced,
     check_transparency_publication,
     check_transparency_gossip,
     check_transparency_log,

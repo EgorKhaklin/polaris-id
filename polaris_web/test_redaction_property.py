@@ -291,7 +291,7 @@ class RedactionPropertyTests(unittest.TestCase):
         provides no other column linking the row to an Individual."""
         conn = _conn()
         try:
-            holders = _populate_synthetic(conn, n_holders=3)
+            _populate_synthetic(conn, n_holders=3)
             event_row = _insert_zk_event(conn)
             self.assertIsNone(
                 event_row['token_id'],

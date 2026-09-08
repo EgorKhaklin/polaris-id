@@ -3583,7 +3583,7 @@ def security_txt():
         f"Contact: {contact}",
         f"Expires: {expires}",
         f"Preferred-Languages: {preferred_lang}",
-        f"Canonical: /security.txt",
+        "Canonical: /security.txt",
         # Polaris-specific addenda
         "Policy: This is a reference implementation. Vulnerabilities should",
         "Policy: be reported privately to the contact above. The maintainers",

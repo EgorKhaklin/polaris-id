@@ -36,3 +36,9 @@ playwright>=1.62.0,<2.0
 # gates CI on a line-coverage floor. Subprocess coverage (test_cli shells into
 # polaris.py) relies on coverage.process_startup(), which this provides.
 coverage>=7.6,<8.0
+
+# ---- Lint: ruff (v9.306) ----
+# The pyflakes-family hygiene gate (unused imports, unused locals, undefined
+# names, placeholder-free f-strings), configured in ruff.toml with select = F.
+# Run by the pre-commit hook and the CI "Ruff" step; formatting is not enforced.
+ruff==0.16.6
