@@ -51,8 +51,14 @@ CREATE TABLE IF NOT EXISTS athena_constitutional_rule (
     statement   TEXT         NOT NULL,
     kind        VARCHAR(16)  NOT NULL
                 CHECK (kind IN ('CONSTRAINT','VOCATION')),
+    -- The tier beneath the vocation (v9.270): CONSTITUTIONAL rules are rights
+    -- guarantees; ENGINEERING invariants keep them honest; VOCATION is above
+    -- both. Mirrors MISSION.md's Tier column.
+    layer       VARCHAR(16),
     source_ref  VARCHAR(160) NOT NULL
 );
+-- Object-synced: add the column to an already-created table on re-sync.
+ALTER TABLE athena_constitutional_rule ADD COLUMN IF NOT EXISTS layer VARCHAR(16);
 COMMENT ON TABLE athena_constitutional_rule IS
   'Athena (v9.266): C1-C10 + the Vocation as first-class rows. DESCRIPTIVE '
   'only; it enforces nothing. The mechanisms in athena_rule_enforcement do. '
@@ -88,21 +94,21 @@ COMMENT ON TABLE athena_key_custody IS
 -- ----------------------------------------------------------------------------
 -- Seed the curated state (idempotent upserts; safe under object-sync re-runs).
 -- ----------------------------------------------------------------------------
-INSERT INTO athena_constitutional_rule (rule_code, title, statement, kind, source_ref) VALUES
-  ('C1','Audit of record','Every audit table is append-only; issuance, verification, and lifecycle events cannot be modified or deleted after the fact.','CONSTRAINT','MISSION.md C1'),
-  ('C2','Zero knowledge','A zero-knowledge verification proves a predicate without revealing the token; a ZERO_KNOWLEDGE event carries no token_id.','CONSTRAINT','MISSION.md C2'),
-  ('C3','One identity per person','At most one ACTIVE identity token exists per person at any time.','CONSTRAINT','MISSION.md C3'),
-  ('C4','Atomic failed-login counter','The failed-login counter is incremented atomically, closing the lockout-bypass race.','CONSTRAINT','MISSION.md C4'),
-  ('C5','No inline scripts','The Content-Security-Policy forbids inline scripts; all script is external and integrity-controlled.','CONSTRAINT','MISSION.md C5'),
-  ('C6','Server-side disclosure','Disclosure level is enforced by the server, not the client; redaction happens before a row leaves the database.','CONSTRAINT','MISSION.md C6'),
-  ('C7','No hardcoded cryptography','The cryptographic algorithm is data in CryptographicAlgorithm, not a hardcoded constant; algorithms are agile and deprecable.','CONSTRAINT','MISSION.md C7'),
-  ('C8','Bounded aggregation','Every /api/atlas/* result set is bounded; there is no unbounded population-aggregation surface.','CONSTRAINT','MISSION.md C8'),
-  ('C9','Concurrency is tested','Concurrency-sensitive invariants are tested with real threading, not simulated serial execution.','CONSTRAINT','MISSION.md C9'),
-  ('C10','Identity is not money','Identity tokens are not transferable value; there is no balance, transfer, or settlement surface.','CONSTRAINT','MISSION.md C10'),
-  ('VOCATION','Anti-coercion','Above C1-C10: changes toward surveillance, centralized aggregation, or unbounded retention are refused; duress is survivable and its evidence retained.','VOCATION','MISSION.md Vocation')
+INSERT INTO athena_constitutional_rule (rule_code, title, statement, kind, layer, source_ref) VALUES
+  ('C1','Audit of record','Every audit table is append-only; issuance, verification, and lifecycle events cannot be modified or deleted after the fact.','CONSTRAINT','CONSTITUTIONAL','MISSION.md C1'),
+  ('C2','Zero knowledge','A zero-knowledge verification proves a predicate without revealing the token; a ZERO_KNOWLEDGE event carries no token_id.','CONSTRAINT','CONSTITUTIONAL','MISSION.md C2'),
+  ('C3','One identity per person','At most one ACTIVE identity token exists per person at any time.','CONSTRAINT','CONSTITUTIONAL','MISSION.md C3'),
+  ('C4','Atomic failed-login counter','The failed-login counter is incremented atomically, closing the lockout-bypass race.','CONSTRAINT','ENGINEERING','MISSION.md C4'),
+  ('C5','No inline scripts','The Content-Security-Policy forbids inline scripts; all script is external and integrity-controlled.','CONSTRAINT','ENGINEERING','MISSION.md C5'),
+  ('C6','Server-side disclosure','Disclosure level is enforced by the server, not the client; redaction happens before a row leaves the database.','CONSTRAINT','CONSTITUTIONAL','MISSION.md C6'),
+  ('C7','No hardcoded cryptography','The cryptographic algorithm is data in CryptographicAlgorithm, not a hardcoded constant; algorithms are agile and deprecable.','CONSTRAINT','ENGINEERING','MISSION.md C7'),
+  ('C8','Bounded aggregation','Every /api/atlas/* result set is bounded; there is no unbounded population-aggregation surface.','CONSTRAINT','ENGINEERING','MISSION.md C8'),
+  ('C9','Concurrency is tested','Concurrency-sensitive invariants are tested with real threading, not simulated serial execution.','CONSTRAINT','ENGINEERING','MISSION.md C9'),
+  ('C10','Identity is not money','Identity tokens are not transferable value; there is no balance, transfer, or settlement surface.','CONSTRAINT','CONSTITUTIONAL','MISSION.md C10'),
+  ('VOCATION','Anti-coercion','Above C1-C10: changes toward surveillance, centralized aggregation, or unbounded retention are refused; duress is survivable and its evidence retained.','VOCATION','VOCATION','MISSION.md Vocation')
 ON CONFLICT (rule_code) DO UPDATE SET
   title = EXCLUDED.title, statement = EXCLUDED.statement,
-  kind = EXCLUDED.kind, source_ref = EXCLUDED.source_ref;
+  kind = EXCLUDED.kind, layer = EXCLUDED.layer, source_ref = EXCLUDED.source_ref;
 
 INSERT INTO athena_rule_enforcement (rule_code, mechanism_kind, mechanism_name, note) VALUES
   ('C1','TRIGGER','reject_audit_modification','AFTER trigger rejects UPDATE/DELETE on audit tables'),

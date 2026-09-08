@@ -5,6 +5,35 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.270 — 2026-09-07 (The constitution, layered: constitutional vs engineering)
+
+P1.18 item 3: split the ten constraints into two tiers beneath the vocation, so
+different classes of guarantee stop looking equivalent. This is a MISSION.md
+amendment, kept deliberately shallow — two levels, not a governance hierarchy.
+
+- **Constitutional (rights guarantees, C1, C2, C3, C6, C10):** append-only
+  accountability, anti-linkability, one identity per person, disclosure
+  sovereignty, and identity-is-not-money. Relaxing one changes what Polaris *is*;
+  they may not be moved without the amendment process.
+- **Engineering invariants (C4, C5, C7, C8, C9):** an atomic failed-login
+  counter, a no-inline-scripts CSP, cryptography named in a registry, bounded
+  aggregation, and concurrency proven with real threads. Load-bearing and
+  machine-checked, but best-practice controls, not rights guarantees.
+
+The only substantive reclassification is **C6 (server-side disclosure)**, promoted
+from the engineering discipline into the constitutional tier: a person controlling
+what a verifier learns is a rights guarantee, not a convenience.
+
+MISSION.md's hard-constraints table gains a **Tier** column; the README guarantees
+table mirrors it; and Athena's `athena_constitutional_rule` gains a `layer`
+column (surfaced in the `/athena` Constitution tab as a tier badge). The new
+`check_constitution_layered` (with a detection test) fails the build if MISSION.md
+and Athena disagree on any rule's tier, or if a rule is reclassified between tiers
+without it being a visible change. The hierarchy is one line deep — vocation, then
+constitutional, then engineering — with no deeper apparatus (see v9.55). 139
+checks (was 138).
+
+
 ## v9.269 — 2026-09-07 (Schema quarantine: the science-fiction scaffolds are gone)
 
 P1.18 item 2: remove the two science-fiction scaffold tables that served no

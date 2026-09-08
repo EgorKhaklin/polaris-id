@@ -5383,3 +5383,36 @@ def test_no_scifi_schema_check_discriminates(tmp_path):
     (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
         good + "-- a wavefunction collapse record and the no-cloning theorem\n")
     assert checks.check_no_scifi_schema(tmp_path)[0].level == "FAIL", "must FAIL on sci-fi vocabulary"
+
+
+def test_constitution_layered_check_discriminates(tmp_path):
+    # MISSION.md's Tier column and Athena's layer must agree, with the expected split.
+    tiers = {'C1':'Constitutional','C2':'Constitutional','C3':'Constitutional','C4':'Engineering',
+             'C5':'Engineering','C6':'Constitutional','C7':'Engineering','C8':'Engineering',
+             'C9':'Engineering','C10':'Constitutional'}
+    def mission(t):
+        rows = "".join(f"| {c} | desc | {t[c]} | where |\n" for c in
+                       ['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10'])
+        return "| # | Constraint | Tier | Where enforced |\n|---|---|---|---|\n" + rows
+    def athena(t):
+        rows = "".join(
+            f"  ('{c}','Title','stmt','CONSTRAINT','{t[c].upper()}','MISSION.md {c}'),\n"
+            for c in ['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10'])
+        return ("INSERT INTO athena_constitutional_rule (rule_code, title, statement, kind, layer, source_ref) VALUES\n"
+                + rows +
+                "  ('VOCATION','Anti','stmt','VOCATION','VOCATION','MISSION.md Vocation')\nON CONFLICT DO NOTHING;\n")
+    def write(mt, at):
+        (tmp_path / "MISSION.md").write_text(mission(mt))
+        (tmp_path / "polaris_sql").mkdir(exist_ok=True)
+        (tmp_path / "polaris_sql" / "16_athena.sql").write_text(athena(at))
+
+    write(tiers, tiers)
+    assert checks.check_constitution_layered(tmp_path)[0].level == "OK", "must PASS when both agree"
+    # MISSION flips C6 to Engineering, Athena keeps it Constitutional -> disagreement
+    m2 = dict(tiers); m2['C6'] = 'Engineering'
+    write(m2, tiers)
+    assert checks.check_constitution_layered(tmp_path)[0].level == "FAIL", "must FAIL on a MISSION/Athena mismatch"
+    # both reclassify C4 to Constitutional (agree, but wrong expected set)
+    both = dict(tiers); both['C4'] = 'Constitutional'
+    write(both, both)
+    assert checks.check_constitution_layered(tmp_path)[0].level == "FAIL", "must FAIL when the constitutional set changes"

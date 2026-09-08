@@ -245,18 +245,32 @@ Provenance and attribution are in [NOTICE](NOTICE).
 These are the lines that, if crossed, mean Polaris has been
 fundamentally broken regardless of what tests still pass.
 
-| # | Constraint | Where enforced |
-|---|------------|----------------|
-| C1 | `VerificationEvent` and `TokenLifecycleEvent` are append-only; UPDATE and DELETE are rejected by trigger | `06_triggers.sql::reject_audit_modification()` |
-| C2 | `ZERO_KNOWLEDGE` events have `token_id IS NULL` | `01_schema.sql::chk_disclosure_token_consistency` CHECK constraint + form-layer coercion |
-| C3 | At most one `ACTIVE` token per `Individual` | `01_schema.sql::uq_one_active_per_person` partial unique index |
-| C4 | Failed login increments are atomic (no TOCTOU) | `security.py::authenticate()` uses `UPDATE … SET col = col + 1 RETURNING …` |
-| C5 | CSP is `script-src 'self'`, with no `'unsafe-inline'` for production scripts | `security.py::apply_security_headers()` |
-| C6 | Disclosure level is enforced server-side; client cannot upgrade | `app.py::verifications_new()` coerces `token_id` to NULL for ZERO_KNOWLEDGE; the C2 CHECK constraint rejects anything else; the Atlas redacts ZK locations server-side (`polaris_checks::check_c6_atlas_redacts_zk_location`) |
-| C7 | Cryptographic algorithm metadata flows through `CryptographicAlgorithm`, never hardcoded in app code | `01_schema.sql::CryptographicAlgorithm` table |
-| C8 | All `/api/atlas/*` endpoints have hard caps preventing unbounded result sets | `app.py::_ATLAS_MAX_*` constants LIMIT the list endpoints (clusters, points, events); the timeline is capped at 240 buckets and search at 20 rows; the remaining Atlas endpoints return aggregates |
-| C9 | Tests for concurrency hazards use real threading, not mocks | `test_app.py::ConcurrencyTests` |
-| C10 | Identity attestation never carries spending authority | Structural absence: no `MonetaryClaim` table exists, pinned by `polaris_checks` |
+They sit at two tiers beneath the vocation. The **constitutional**
+constraints (C1, C2, C3, C6, C10) are rights guarantees: append-only
+accountability, anti-linkability, one identity per person, disclosure
+sovereignty, and identity-is-not-money. They may not be relaxed without
+the amendment process below; relaxing one changes what Polaris *is*. The
+**engineering invariants** (C4, C5, C7, C8, C9) are the disciplines that
+keep the constitutional tier honest under load and attack: an atomic
+failed-login counter, a no-inline-scripts CSP, cryptography named in a
+registry rather than in code, bounded aggregation, and concurrency proven
+with real threads. They are load-bearing and machine-checked, but they are
+best-practice controls, not rights guarantees. The hierarchy is one line
+deep: **vocation, then constitutional constraints, then engineering
+invariants** — no deeper apparatus governs them (see v9.55).
+
+| # | Constraint | Tier | Where enforced |
+|---|------------|------|----------------|
+| C1 | `VerificationEvent` and `TokenLifecycleEvent` are append-only; UPDATE and DELETE are rejected by trigger | Constitutional | `06_triggers.sql::reject_audit_modification()` |
+| C2 | `ZERO_KNOWLEDGE` events have `token_id IS NULL` | Constitutional | `01_schema.sql::chk_disclosure_token_consistency` CHECK constraint + form-layer coercion |
+| C3 | At most one `ACTIVE` token per `Individual` | Constitutional | `01_schema.sql::uq_one_active_per_person` partial unique index |
+| C4 | Failed login increments are atomic (no TOCTOU) | Engineering | `security.py::authenticate()` uses `UPDATE … SET col = col + 1 RETURNING …` |
+| C5 | CSP is `script-src 'self'`, with no `'unsafe-inline'` for production scripts | Engineering | `security.py::apply_security_headers()` |
+| C6 | Disclosure level is enforced server-side; client cannot upgrade | Constitutional | `app.py::verifications_new()` coerces `token_id` to NULL for ZERO_KNOWLEDGE; the C2 CHECK constraint rejects anything else; the Atlas redacts ZK locations server-side (`polaris_checks::check_c6_atlas_redacts_zk_location`) |
+| C7 | Cryptographic algorithm metadata flows through `CryptographicAlgorithm`, never hardcoded in app code | Engineering | `01_schema.sql::CryptographicAlgorithm` table |
+| C8 | All `/api/atlas/*` endpoints have hard caps preventing unbounded result sets | Engineering | `app.py::_ATLAS_MAX_*` constants LIMIT the list endpoints (clusters, points, events); the timeline is capped at 240 buckets and search at 20 rows; the remaining Atlas endpoints return aggregates |
+| C9 | Tests for concurrency hazards use real threading, not mocks | Engineering | `test_app.py::ConcurrencyTests` |
+| C10 | Identity attestation never carries spending authority | Constitutional | Structural absence: no `MonetaryClaim` table exists, pinned by `polaris_checks` |
 
 ---
 
@@ -311,6 +325,14 @@ resolves this in the deepest layer of the system. Two operators
 activating two reserve tokens for the same holder at the same moment
 find that exactly one of them gets a `UniqueViolation`.
 
+**Disclosure sovereignty (C6).** A person controls what a verifier
+learns, and the server decides it, not the client. A relying party cannot
+upgrade a zero-knowledge check into a full disclosure by asking differently:
+the disclosure level is enforced server-side and the C2 CHECK rejects a
+ZERO_KNOWLEDGE row that carries a token id. This is a rights guarantee, not a
+convenience, which is why it sits in the constitutional tier rather than
+among the engineering invariants.
+
 **Identity is not money (C10).** The single most consequential
 architectural decision. CBDCs that conflate identity and money inherit
 programmability gravity: constraints accrete onto the identity token
@@ -319,12 +341,12 @@ buy gasoline." Polaris separates the layers. If a value system is ever
 built on top, it lives in a separate database with foreign keys that
 prove the separation rather than claim it.
 
-**C4 through C9** are the engineering discipline that keeps the four
-above true under load and under attack: an atomic failed-login counter
-so lockout cannot be raced, a content security policy with no inline
-scripts, disclosure decided on the server, bounded Atlas result sets,
-concurrency proven with real threads, and cryptography named in the
-registry rather than in code.
+**C4, C5, C7, C8 and C9** are the engineering invariants that keep the
+five constitutional constraints above true under load and under attack:
+an atomic failed-login counter so lockout cannot be raced, a content
+security policy with no inline scripts, cryptography named in the registry
+rather than in code, bounded Atlas result sets, and concurrency proven
+with real threads.
 
 ---
 

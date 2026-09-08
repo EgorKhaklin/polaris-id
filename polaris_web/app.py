@@ -1795,8 +1795,9 @@ def athena_console():
     It reads only the person-free Athena layer (16_athena.sql) and the authority
     tables it sits over; no Individual, token, or event table is touched."""
     rules = query(
-        "SELECT rule_code, title, statement, kind FROM athena_constitutional_rule "
-        "ORDER BY " + _ATHENA_RULE_ORDER)
+        "SELECT rule_code, title, statement, kind, layer FROM athena_constitutional_rule "
+        "ORDER BY CASE layer WHEN 'CONSTITUTIONAL' THEN 1 WHEN 'ENGINEERING' THEN 2 ELSE 3 END, "
+        + _ATHENA_RULE_ORDER)
     enf = query(
         "SELECT rule_code, mechanism_kind, mechanism_name, note "
         "FROM athena_rule_enforcement ORDER BY rule_code, mechanism_kind, mechanism_name")

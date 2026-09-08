@@ -33,14 +33,14 @@
 
   {# ---- Constitution: C1-C10 + the Vocation, each with its live mechanisms ---- #}
   <section data-athena-panel="constitution" class="athena-panel" role="tabpanel">
-    <p class="athena-help">Each constitutional rule below is a queryable row, linked to the exact live mechanism that enforces it. If a named mechanism ever disappears from the tree, the build fails (<code>check_athena_rule_enforcement_resolves</code>).</p>
+    <p class="athena-help">Each rule below is a queryable row, linked to the exact live mechanism that enforces it. If a named mechanism ever disappears from the tree, the build fails (<code>check_athena_rule_enforcement_resolves</code>). Rules sit at two tiers beneath the vocation: <span class="athena-layer athena-layer-constitutional">constitutional</span> rights guarantees, and <span class="athena-layer athena-layer-engineering">engineering</span> invariants that keep them honest.</p>
     <div class="athena-rules">
       {% for r in rules %}
-      <article class="athena-rule athena-rule-{{ r.kind|lower }}">
+      <article class="athena-rule athena-rule-{{ r.layer|lower }}">
         <div class="athena-rule-head">
           <span class="athena-rule-code">{{ r.rule_code }}</span>
           <h3 class="athena-rule-title">{{ r.title }}</h3>
-          <span class="athena-rule-kind">{{ r.kind }}</span>
+          <span class="athena-layer athena-layer-{{ r.layer|lower }}">{{ r.layer|lower }}</span>
         </div>
         <p class="athena-rule-statement">{{ r.statement }}</p>
         <div class="athena-mechs">

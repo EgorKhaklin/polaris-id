@@ -3923,3 +3923,15 @@ textarea.sql {
 .athena-arrow { color: var(--ink-faint); font-family: var(--font-mono); font-size: 11px; }
 .athena-ctx { font-family: var(--font-mono); font-size: 12px; color: var(--cyan); }
 .athena-muted { color: var(--ink-faint); }
+
+/* Athena constitution tiers (v9.270): constitutional rights guarantees vs
+   engineering invariants, mirroring MISSION.md's Tier column. */
+.athena-layer {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  border-radius: 3px; padding: 1px 7px; border: 1px solid var(--line);
+}
+.athena-layer-constitutional { color: var(--gold-bright); border-color: var(--gold); background: var(--gold-tint); }
+.athena-layer-engineering { color: var(--cyan); border-color: var(--cyan-deep); background: var(--cyan-tint); }
+.athena-layer-vocation { color: var(--void); background: var(--gold); border-color: var(--gold); }
+.athena-rule-constitutional { border-left-color: var(--gold); }
+.athena-rule-engineering { border-left-color: var(--cyan-deep); }

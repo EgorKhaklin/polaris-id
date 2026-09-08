@@ -6024,7 +6024,55 @@ def check_no_scifi_schema(root: pathlib.Path) -> list[Finding]:
                "QuantumObserverBinding) and their vocabulary")
 
 
+# ---------------------------------------------------------------------------
+# P1.18 item 3 (v9.270) — the two-tier constitution stays consistent across
+# the prose (MISSION.md) and the queryable model (Athena).
+# ---------------------------------------------------------------------------
+_CONSTITUTIONAL_RULES = {"C1", "C2", "C3", "C6", "C10"}
+
+
+def check_constitution_layered(root: pathlib.Path) -> list[Finding]:
+    """The constitution sits at two tiers beneath the vocation: CONSTITUTIONAL
+    rights guarantees (C1, C2, C3, C6, C10) and ENGINEERING invariants that keep
+    them honest (C4, C5, C7, C8, C9). MISSION.md's Tier column and Athena's
+    athena_constitutional_rule.layer must agree, so the classification cannot
+    drift between the prose constitution and its queryable model, and moving a
+    rule between tiers is a visible constitutional change. Detection: test_checks
+    flips a tier in one surface only, and reclassifies a rule."""
+    mission = _read(root, "MISSION.md")
+    athena = _read(root, "polaris_sql/16_athena.sql")
+    if not mission or not athena:
+        return _fail("constitution_layered", "MISSION.md or 16_athena.sql is missing")
+    mission_tier = {}
+    for m in re.finditer(r"(?m)^\|\s*(C\d+)\s*\|[^|]*\|\s*(Constitutional|Engineering)\s*\|", mission):
+        mission_tier[m.group(1)] = m.group(2).upper()
+    athena_layer = {}
+    for m in re.finditer(r"\('(C\d+)',[^\n]*?'(CONSTITUTIONAL|ENGINEERING)','MISSION\.md C\d+'\)", athena):
+        athena_layer[m.group(1)] = m.group(2)
+    if len(mission_tier) != 10:
+        return _fail("constitution_layered",
+                     f"MISSION.md's constraint table classifies {len(mission_tier)}/10 rules by Tier "
+                     "(each C1-C10 row needs a Constitutional|Engineering Tier cell)")
+    if len(athena_layer) != 10:
+        return _fail("constitution_layered",
+                     f"athena_constitutional_rule seeds a layer for {len(athena_layer)}/10 C-rules")
+    for c in ("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10"):
+        if mission_tier.get(c) != athena_layer.get(c):
+            return _fail("constitution_layered",
+                         f"{c} is {mission_tier.get(c)} in MISSION.md but {athena_layer.get(c)} in Athena; the "
+                         "prose constitution and its queryable model must agree on the tier")
+    got = {c for c, t in mission_tier.items() if t == "CONSTITUTIONAL"}
+    if got != _CONSTITUTIONAL_RULES:
+        return _fail("constitution_layered",
+                     f"the constitutional tier is {sorted(got)}, expected {sorted(_CONSTITUTIONAL_RULES)}; "
+                     "reclassifying a rule between tiers is a constitutional change, not a silent edit")
+    return _ok("constitution_layered",
+               "the constitution is two tiers beneath the vocation — constitutional (C1, C2, C3, C6, C10) and "
+               "engineering (C4, C5, C7, C8, C9) — and MISSION.md agrees with Athena's queryable model")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_constitution_layered,
     check_no_scifi_schema,
     check_zk_claim_precise,
     check_athena_console,
