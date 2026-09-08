@@ -86,14 +86,18 @@ def _present(tmp, pack, tag, duress=False):
 
 
 def main():
+    # This drill IS the real-ML-DSA path, so it declares the profile itself rather
+    # than depend on the caller's environment (as the federation drill does). The
+    # guard then checks LIBRARY AVAILABILITY (liboqs + the cryptography second
+    # witness), not the runtime flag it just set.
+    os.environ["POLARIS_USE_REAL_PQC"] = "1"
     try:
         import pqc_signing
     except Exception as e:
         print("e2e drill needs the app's pqc_signing (and liboqs): %s" % e, file=sys.stderr)
         return 3
-    if not (pqc_signing.is_enabled() and pqc_signing.second_witness_available()):
-        print("e2e drill needs real ML-DSA (POLARIS_USE_REAL_PQC=1 + liboqs + cryptography); skipping",
-              file=sys.stderr)
+    if not (pqc_signing.is_available() and pqc_signing.second_witness_available()):
+        print("e2e drill needs real ML-DSA (liboqs + cryptography); skipping", file=sys.stderr)
         return 3
 
     verify = _load("polaris_verify", "polaris-verify.py")

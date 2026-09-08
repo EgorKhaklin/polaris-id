@@ -6872,6 +6872,53 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_typescript_sdk(root: pathlib.Path) -> list[Finding]:
+    """P3.5b: the TypeScript verify SDK, held to the SAME conformance contract as
+    the Python reference SDK. A second, independent implementation (ML-DSA-65 via
+    @noble/post-quantum, which agrees with liboqs and OpenSSL on the vectors) that
+    passes the language-agnostic runner in CI -- proof the contract certifies more
+    than one language."""
+    sdk = _read(root, "sdk/typescript/src/index.ts")
+    if not sdk:
+        return _fail("typescript_sdk", "sdk/typescript/src/index.ts is missing")
+    if "verifyAuthenticity" not in sdk or "class PolarisVerifier" not in sdk:
+        return _fail("typescript_sdk", "the TS SDK must expose verifyAuthenticity() and PolarisVerifier")
+    if "@noble/post-quantum/ml-dsa" not in sdk or "ml_dsa65.verify" not in sdk or "sha3_256" not in sdk:
+        return _fail("typescript_sdk",
+                     "the TS SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value) via "
+                     "@noble/post-quantum, not trust a flag")
+    if "/api/v1/oauth/token" not in sdk or "/api/v1/verify" not in sdk:
+        return _fail("typescript_sdk",
+                     "the TS SDK's online path must authenticate (OAuth2 client-credentials) and call /api/v1/verify")
+    # Standalone: an external org installs it; it must not reach into the Polaris tree.
+    for bad in ("polaris_web", "psycopg2", "../../polaris"):
+        if bad in sdk:
+            return _fail("typescript_sdk", f"the TS SDK must be standalone; it must not reference {bad!r}")
+    # The verifier CLI (stdin -> stdout) that the shared runner drives.
+    cli = _read(root, "sdk/typescript/src/conformance.ts")
+    if "verifyAuthenticity" not in cli or "issuer_trusted" not in cli:
+        return _fail("typescript_sdk", "sdk/typescript/src/conformance.ts must implement the stdin->stdout verifier CLI")
+    # Pinned, reproducible dependencies (npm ci needs the lockfile).
+    pkg = _read(root, "sdk/typescript/package.json")
+    if "@noble/post-quantum" not in pkg:
+        return _fail("typescript_sdk", "sdk/typescript/package.json must pin @noble/post-quantum")
+    if not (root / "sdk" / "typescript" / "package-lock.json").is_file():
+        return _fail("typescript_sdk", "sdk/typescript/package-lock.json must be committed so CI runs npm ci reproducibly")
+    # It RUNS in CI against the SAME conformance runner as the Python SDK.
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "setup-node" not in ci or 'run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"' not in ci:
+        return _fail("typescript_sdk",
+                     "CI must set up Node and drive the conformance runner against the TypeScript verifier "
+                     "(the contract must certify the second language, in CI)")
+    if not _read(root, "sdk/typescript/test/sdk.test.ts"):
+        return _fail("typescript_sdk", "sdk/typescript/test/sdk.test.ts (the SDK unit tests) is missing")
+    return _ok("typescript_sdk",
+               "the TypeScript verify SDK passes the same conformance contract as the Python reference SDK: real "
+               "ML-DSA-65 authenticity via @noble/post-quantum (a third implementation agreeing with liboqs and "
+               "OpenSSL) plus the OAuth2 /api/v1 online check, standalone, type-checked, unit-tested, and driven "
+               "through the language-agnostic conformance runner in CI -- P3.5 complete across both languages")
+
+
 def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
     """P3.5: the verification conformance suite is the integration contract, and the
     Python reference SDK passes it. A relying party (or an external SDK author)
@@ -7090,6 +7137,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_typescript_sdk,
     check_conformance_suite,
     check_relying_party_api,
     check_holder_verifier_flow,

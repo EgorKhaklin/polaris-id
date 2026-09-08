@@ -5,6 +5,46 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.290 — 2026-09-08 (TypeScript verify SDK: P3.5 complete across two languages)
+
+The other half of P3.5. The conformance suite (v9.289) is the contract; this adds a
+second implementation in a second language and proves it passes the SAME runner, so
+"conformant" is not a claim about one SDK but about the contract itself. It also
+fixes a CI failure the conformance work surfaced.
+
+- **A TypeScript SDK, held to the same contract.** `sdk/typescript/` (`@polaris/verify`)
+  is the counterpart of the Python reference SDK: offline ML-DSA-65 authenticity over
+  `SHA3-256(token_value)` via `@noble/post-quantum` — a third independent implementation
+  that agrees with liboqs and OpenSSL on the published vectors — plus the online status
+  check via OAuth2 client-credentials and `/api/v1/verify`. Standalone (only `@noble`
+  plus the platform's `fetch`/`btoa`; Node, Deno, Bun, browsers), erasable TypeScript
+  that Node >= 22.6 runs directly, type-checked with `tsc` and unit-tested.
+
+- **Proven across both languages by one runner.** `conformance/run_conformance.py
+  --verifier "node sdk/typescript/src/conformance.ts"` drives the TypeScript verifier
+  over the identical cases the Python SDK passes — genuine, tampered, placeholder, and
+  the genuine-but-untrusted-issuer verdict — in the repo's first Node CI job
+  (`sdk-typescript`: `npm ci`, `tsc --noEmit`, `node --test`, then the conformance
+  runner). `check_typescript_sdk` pins that the SDK is standalone, verifies real
+  ML-DSA (not a flag), ships a committed lockfile, and runs the shared runner in CI.
+
+- **Fixed: the end-to-end drill failed the pqc-real CI job (red since v9.287).** The
+  drill guarded on `POLARIS_USE_REAL_PQC=1` being set in its step's environment, but
+  that flag was set per-step elsewhere in the job, so the drill exited 3 (a skip that
+  fails the build) instead of running. It now declares the real-PQC profile itself —
+  as the federation drill already did — and guards on LIBRARY availability (liboqs +
+  the cryptography witness), so it runs wherever the real crypto is present. The
+  matrix (accept / reject-on-revoke / reject-tampered / reject-foreign / provisional /
+  duress-indistinguishable) runs green again.
+
+P3.5 is complete: a callable API, two reference SDKs, and a self-certification suite
+that certifies any verifier in any language — the docs-only integration path the P3
+exit gate asks for.
+
+156 machine-checked invariants; 17 CI jobs.
+
+---
+
 ## v9.289 — 2026-09-08 (Verification conformance suite + Python SDK: the integration contract, P3.5a)
 
 P3.4 gave a relying party an API to call; this makes "correctly verifying a Polaris

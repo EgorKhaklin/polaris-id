@@ -1,0 +1,24 @@
+{
+  "name": "@polaris/verify",
+  "version": "1.0.0",
+  "description": "Server-side SDK to verify Polaris identity credentials (offline authenticity + online status).",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test",
+    "conformance": "node src/conformance.ts"
+  },
+  "dependencies": {
+    "@noble/post-quantum": "^0.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "typescript": "^7.0.2"
+  }
+}

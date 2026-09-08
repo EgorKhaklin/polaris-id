@@ -6054,6 +6054,43 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"
 
 
+def test_typescript_sdk_check_discriminates(tmp_path):
+    # v9.290 (P3.5b): the TypeScript verify SDK, same conformance contract, second
+    # implementation, run in CI. Each perturbation removes one leg.
+    good = {'sdk/typescript/src/index.ts': "import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';\nimport { sha3_256 } from '@noble/hashes/sha3.js';\nexport function verifyAuthenticity(pack, anchors) {\n  const d = sha3_256(new TextEncoder().encode(pack.token_value));\n  return ml_dsa65.verify(pack.sig, d, pack.pk);\n}\nexport class PolarisVerifier {\n  async status() { await fetch('/api/v1/oauth/token'); await fetch('/api/v1/verify'); }\n}\n", 'sdk/typescript/src/conformance.ts': "import { verifyAuthenticity } from './index.ts';\nprocess.stdout.write(JSON.stringify({ authentic: true, issuer_trusted: null }));\n", 'sdk/typescript/package.json': '{"dependencies": {"@noble/post-quantum": "^0.7.1"}}\n', 'sdk/typescript/package-lock.json': '{"lockfileVersion": 3}\n', 'sdk/typescript/test/sdk.test.ts': "import { test } from 'node:test';\ntest('x', () => {});\n", '.github/workflows/ci.yml': 'jobs:\n  sdk-typescript:\n    steps:\n      - uses: actions/setup-node@v4\n      - run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"\n'}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the SDK no longer verifies real ML-DSA via @noble
+    write({"sdk/typescript/src/index.ts": good["sdk/typescript/src/index.ts"].replace("ml_dsa65.verify", "trustMe")})
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL without real ML-DSA verification"
+    # 2. the SDK reaches into the Polaris tree (not standalone)
+    write({"sdk/typescript/src/index.ts": good["sdk/typescript/src/index.ts"] + "\nimport '../../polaris_web/app';\n"})
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL if the SDK is not standalone"
+    # 3. the lockfile is missing (npm ci not reproducible)
+    (tmp_path / "sdk" / "typescript" / "package-lock.json").unlink()
+    write_index_only = dict(good); del write_index_only["sdk/typescript/package-lock.json"]
+    for rel, body in write_index_only.items():
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL without the committed lockfile"
+    write()  # restore
+    # 4. CI does not drive the conformance runner against the TS verifier
+    write({".github/workflows/ci.yml": "jobs:\n  sdk-typescript:\n    steps:\n      - run: echo hi\n"})
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL if CI does not run the conformance suite against the TS SDK"
+    # 5. the conformance CLI drops the issuer_trusted field
+    write({"sdk/typescript/src/conformance.ts": good["sdk/typescript/src/conformance.ts"].replace("issuer_trusted", "trusted")})
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL if the CLI output does not match the contract"
+    # 6. the SDK tests are gone
+    (tmp_path / "sdk" / "typescript" / "test" / "sdk.test.ts").unlink()
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL without the SDK unit tests"
+
+
 def test_conformance_suite_check_discriminates(tmp_path):
     # v9.289 (P3.5): the verification conformance suite + Python reference SDK.
     # Standalone SDK (real ML-DSA + OAuth online), a language-agnostic runner, cases

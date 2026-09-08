@@ -62,11 +62,11 @@ polaris/
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── vectors/            ← published authenticity packs a relying party re-verifies offline with scripts/polaris-verify.py (README.md explains the format)
 ├── attacks/            ← adversaries that MUST fail (forge, tamper, revoked-token); run_attacks.py runs every release and goes red if any SUCCEEDS
-├── sdk/                ← server-side verify SDKs a relying party installs; sdk/python is the reference polaris-verify SDK (offline authenticity + the OAuth2 /api/v1 online check) (P3.5)
+├── sdk/                ← server-side verify SDKs a relying party installs; sdk/python and sdk/typescript are the reference verify SDKs (offline authenticity + the OAuth2 /api/v1 online check), both held to conformance/ (P3.5)
 ├── conformance/        ← the verification conformance suite: the published cases + a language-agnostic runner (SPEC.md); passing it is the integration contract
 ├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
 │
-├── .github/workflows/  ← ci.yml (16 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)
+├── .github/workflows/  ← ci.yml (17 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore
 ```
 
@@ -84,6 +84,7 @@ polaris/
 - `ha-failover`: the HA profile (Patroni, etcd, HAProxy) under a leader loss, a lease partition, a switchover and an etcd crash, measured under a live write stream.
 - `helm-kind`: the Kubernetes reference profile boots to healthy on kind with Calico-enforced policies and restricted PSS.
 - `pqc-real`: real ML-DSA-65 sign and verify (liboqs), cross-checked by the cryptography second witness.
+- `sdk-typescript`: the TypeScript verify SDK (`sdk/typescript/`) type-checked, unit-tested, and driven through the language-agnostic conformance runner (`@noble/post-quantum` ML-DSA-65 agreeing with liboqs and OpenSSL).
 - `cve-scan`: dependency CVE audit (pip-audit) plus SAST (bandit).
 - `image-cve-scan`: Trivy scan of the self-built prod images; gates on fixable CRITICALs.
 - `prod-stack-boot`: boots the full prod compose end to end and asserts `/api/health` serves through the TLS edge.

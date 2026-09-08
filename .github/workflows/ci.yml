@@ -1582,6 +1582,34 @@ jobs:
           set -o pipefail
           python -m unittest test_custody -v 2>&1 | grep -v faulthandler
   # --------------------------------------------------------------------------
+  # v9.290 (roadmap P3.5b) — the TypeScript verify SDK, held to the SAME
+  # conformance contract as the Python reference SDK. The repo's first Node job:
+  # it installs the SDK's pinned dependencies, type-checks the source with tsc,
+  # runs the SDK's unit tests, and — the load-bearing step — drives the LANGUAGE-
+  # AGNOSTIC conformance runner against the TypeScript verifier, so both languages
+  # are proven to decide the published cases identically. @noble/post-quantum's
+  # ML-DSA-65 is a third independent implementation agreeing with liboqs and
+  # OpenSSL on the vectors.
+  # --------------------------------------------------------------------------
+  sdk-typescript:
+    name: TypeScript SDK — typecheck, tests, conformance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install pinned dependencies
+        run: cd sdk/typescript && npm ci
+      - name: Type-check (tsc --noEmit)
+        run: cd sdk/typescript && npx tsc --noEmit
+      - name: SDK unit tests
+        run: cd sdk/typescript && node --test
+      - name: Conformance suite — TypeScript SDK (the same runner as the Python SDK)
+        run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"
+  # --------------------------------------------------------------------------
   # Dependency CVE scan. The dependency surface was pinned but never audited —
   # a known CVE in a pinned package would ship silently. This GATES on the
   # RUNTIME surface (requirements.txt, what the Docker images install): a known
