@@ -6054,6 +6054,40 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"
 
 
+def test_federation_topology_check_discriminates(tmp_path):
+    # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
+    # delta + the vocation grounding, and is kept honest against the code. Each
+    # perturbation removes one leg.
+    good = {'docs/design/federation-topology.md': '# Federation topology (ADR)\nStatus: Accepted 2026-09-08\nDecision: federated per-authority instances; no central instance/root/service.\nCross-authority trust is explicit and non-transitive.\n## Threat-model delta\ncentral vs federated; a central instance is a monopoly.\nGrounded: AgencyTrustAttestation, _federation_trust_holds, signing_public_key_hex, verify_pack.\n', 'polaris_sql/01_schema.sql': 'CREATE TABLE AgencyTrustAttestation (...);\nsigning_public_key_hex TEXT\n', 'polaris_web/app.py': 'def _federation_trust_holds(v, t, c):\n    return True\n', 'scripts/polaris-verify.py': 'def verify_pack(pack, anchor_keys=None):\n    return {}\n', 'docs/design/README.md': '| [federation-topology.md](federation-topology.md) | the ADR |\n'}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_federation_topology(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the ADR does not record the decision
+    write({"docs/design/federation-topology.md": good["docs/design/federation-topology.md"].replace("federated per-authority", "some topology")})
+    assert checks.check_federation_topology(tmp_path)[0].level == "FAIL", "must FAIL without the decision"
+    # 2. the ADR drops the non-transitive property
+    write({"docs/design/federation-topology.md": good["docs/design/federation-topology.md"].replace("non-transitive", "recursive")})
+    assert checks.check_federation_topology(tmp_path)[0].level == "FAIL", "must FAIL without non-transitive trust"
+    # 3. the ADR drops the threat-model delta
+    write({"docs/design/federation-topology.md": good["docs/design/federation-topology.md"].replace("Threat-model delta", "Notes")})
+    assert checks.check_federation_topology(tmp_path)[0].level == "FAIL", "must FAIL without the threat-model delta"
+    # 4. the ADR drops the vocation grounding
+    write({"docs/design/federation-topology.md": good["docs/design/federation-topology.md"].replace("monopoly", "preference")})
+    assert checks.check_federation_topology(tmp_path)[0].level == "FAIL", "must FAIL without the anti-monopoly grounding"
+    # 5. drift: the ADR claims the federated model but the schema lacks the attestation table
+    write({"polaris_sql/01_schema.sql": "signing_public_key_hex TEXT only"})
+    assert checks.check_federation_topology(tmp_path)[0].level == "FAIL", "must FAIL if the cited attestation table is absent (drift)"
+    # 6. the ADR is not linked from the docs/design index
+    write({"docs/design/README.md": "| other | doc |\n"})
+    assert checks.check_federation_topology(tmp_path)[0].level == "FAIL", "must FAIL if the ADR is not indexed"
+
+
 def test_offline_verification_check_discriminates(tmp_path):
     # v9.291 (P3.6): a short-lived signed status assertion + offline stapled verify.
     # Signed by the issuer, verified offline (standalone), freshness/window enforced,

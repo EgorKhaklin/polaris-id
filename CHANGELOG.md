@@ -5,6 +5,42 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.292 — 2026-09-08 (Federation topology decision record, P3.1)
+
+The federation track needs a topology before an inter-authority protocol can be
+specified. This records the decision, and grounds it so it cannot drift into prose.
+
+- **The ADR.** [docs/design/federation-topology.md](docs/design/federation-topology.md)
+  records that Polaris is FEDERATED per-authority, not central: each authority is its
+  own ML-DSA-65 trust root, cross-authority trust is explicit and non-transitive
+  (`AgencyTrustAttestation`, resolved by a single non-recursive lookup), and a relying
+  party verifies against published keys with no central service in the path. There is
+  no central identity database, no central trust root, and no central verification
+  service.
+
+- **The choice is not free.** The ADR derives the federated shape from the constitution,
+  not from engineering taste: the vocation names the federation graph with "no agency
+  holds a monopoly", and Polaris is "NOT a surveillance backbone" with population-scale
+  aggregation "refused ... structural". A central instance is a monopoly and a single
+  store of every person, which those clauses forbid, so it is not an available option.
+  The threat-model delta (breach blast radius, aggregation, coercion, trust semantics,
+  and the cost the federated choice accepts) is documented.
+
+- **Kept honest against the code.** `check_federation_topology` will not pass the ADR
+  unless the primitives it cites are actually present: `AgencyTrustAttestation`, the
+  non-transitive resolver `_federation_trust_holds`, per-authority keys
+  (`Agency.signing_public_key_hex`), and the detached verifier. The record therefore
+  cannot claim a federated model the code has drifted away from. It is grounded in what
+  already runs (PE.2 detached verifier, PE.3 two-issuer drill, PE.3b federation in the
+  app), which this decision merely names and fixes.
+
+This unblocks P3.2 (the inter-authority protocol) and P3.10 (two instances
+interoperating in CI). It reopens no non-goal and does not soften the constitution.
+
+158 machine-checked invariants.
+
+---
+
 ## v9.291 — 2026-09-08 (Offline verification: authorization with no connectivity, P3.6)
 
 The last connectivity gap in the holder<->verifier flow. Authenticity was already

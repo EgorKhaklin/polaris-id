@@ -6872,6 +6872,60 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_federation_topology(root: pathlib.Path) -> list[Finding]:
+    """P3.1: the topology decision record (ADR) chooses federated per-authority
+    instances over a central instance, and records why the constitution forces it and
+    the threat-model delta. The decision is kept HONEST against the code: the ADR may
+    not claim the federated model unless the primitives it cites are actually present,
+    so the record cannot drift into prose describing an architecture the code lacks."""
+    adr = _read(root, "docs/design/federation-topology.md")
+    if not adr:
+        return _fail("federation_topology", "docs/design/federation-topology.md (the topology ADR) is missing")
+    low = adr.lower()
+    if "status:" not in low or "accepted" not in low:
+        return _fail("federation_topology", "the ADR must carry a Status (Accepted) so it is a decision, not a draft")
+    if "federated per-authority" not in low:
+        return _fail("federation_topology", "the ADR must record the DECISION: federated per-authority instances")
+    if "non-transitive" not in low:
+        return _fail("federation_topology", "the ADR must state that cross-authority trust is non-transitive")
+    if "no central" not in low:
+        return _fail("federation_topology",
+                     "the ADR must state there is no central instance / trust root / verification service")
+    if "threat-model delta" not in low:
+        return _fail("federation_topology", "the ADR must document the threat-model delta (central vs federated)")
+    if "monopoly" not in low:
+        return _fail("federation_topology",
+                     "the ADR must ground the choice in the constitution (the anti-monopoly / anti-surveillance vocation), "
+                     "not engineering taste")
+    # Kept honest against the code: every architectural primitive the ADR cites must
+    # actually exist, so a central-instance drift would fail this check.
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    app = _read(root, "polaris_web/app.py")
+    bindings = [
+        ("AgencyTrustAttestation", "AgencyTrustAttestation" in adr and "AgencyTrustAttestation" in schema,
+         "explicit attestation (AgencyTrustAttestation) cited by the ADR and present in the schema"),
+        ("_federation_trust_holds", "_federation_trust_holds" in adr and "_federation_trust_holds" in app,
+         "the non-transitive resolver (_federation_trust_holds) cited by the ADR and present in app.py"),
+        ("signing_public_key_hex", "signing_public_key_hex" in adr and "signing_public_key_hex" in schema,
+         "per-authority roots (Agency.signing_public_key_hex) cited by the ADR and present in the schema"),
+        ("detached verifier", "verify_pack" in adr and bool(_read(root, "scripts/polaris-verify.py")),
+         "verification against published keys (the detached verifier verify_pack) cited by the ADR and present"),
+    ]
+    for name, ok, desc in bindings:
+        if not ok:
+            return _fail("federation_topology",
+                         "the ADR's federated model is not grounded in the code: %s is missing" % desc)
+    if "](federation-topology.md)" not in _read(root, "docs/design/README.md"):
+        return _fail("federation_topology", "the ADR must be linked from the docs/design index")
+    return _ok("federation_topology",
+               "the topology decision is recorded and grounded: the ADR chooses federated per-authority instances "
+               "over a central instance (each authority its own root, explicit non-transitive attestation, a relying "
+               "party verifying against published keys with no central service), derives the choice from the "
+               "anti-monopoly and anti-surveillance vocation, documents the threat-model delta, and cites only "
+               "primitives that actually exist in the code (AgencyTrustAttestation, _federation_trust_holds, "
+               "per-authority keys, the detached verifier) so the record cannot drift")
+
+
 def check_offline_verification(root: pathlib.Path) -> list[Finding]:
     """P3.6: authorization verifiable with NO connectivity. The issuer signs a
     short-lived STATUS ASSERTION (POST /api/v1/status-assertion); the detached
@@ -7188,6 +7242,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_federation_topology,
     check_offline_verification,
     check_typescript_sdk,
     check_conformance_suite,
