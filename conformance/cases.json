@@ -1,0 +1,13 @@
+{
+  "format": "polaris-conformance/1",
+  "note": "The Polaris verification conformance cases: offline ML-DSA-65 authenticity. Each case is an authenticity pack (referenced from the published vectors/) with an optional trusted-anchor set and the verdict a conformant verifier MUST return. `anchors: \"self\"` means the pack's own public key is trusted. See SPEC.md.",
+  "cases": [
+    {"name": "genuine-no-anchors",       "pack_file": "vectors/ml-dsa-65-valid.json",              "expect": {"authentic": true,  "issuer_trusted": null}},
+    {"name": "genuine-trusted-anchor",    "pack_file": "vectors/ml-dsa-65-valid.json", "anchors": "self",  "expect": {"authentic": true,  "issuer_trusted": true}},
+    {"name": "genuine-untrusted-anchor",  "pack_file": "vectors/ml-dsa-65-valid.json", "anchors": ["00"],  "expect": {"authentic": true,  "issuer_trusted": false}},
+    {"name": "tampered-signature",        "pack_file": "vectors/ml-dsa-65-tampered-signature.json", "expect": {"authentic": false, "issuer_trusted": null}},
+    {"name": "tampered-token",            "pack_file": "vectors/ml-dsa-65-tampered-token.json",     "expect": {"authentic": false, "issuer_trusted": null}},
+    {"name": "wrong-key",                 "pack_file": "vectors/ml-dsa-65-wrong-key.json",          "expect": {"authentic": false, "issuer_trusted": null}},
+    {"name": "placeholder",               "pack_file": "vectors/placeholder.json",                  "expect": {"authentic": false, "issuer_trusted": null}}
+  ]
+}

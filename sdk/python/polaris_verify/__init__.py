@@ -1,0 +1,206 @@
+"""polaris-verify -- a server-side SDK to verify Polaris identity credentials.
+
+A relying party (a bank, a border kiosk, an online service) drops this into its
+backend to answer one narrow question about a credential a holder presented: is it
+authentic, and is it authoritative right now? It never returns a person's data.
+
+Two independent checks, deliberately kept apart:
+
+  * AUTHENTICITY -- offline, cryptographic, cacheable. Verify the ML-DSA-65
+    signature over SHA3-256(token_value) with a standard library (cryptography /
+    OpenSSL, and liboqs as a second witness when present), optionally against a
+    set of trusted issuer anchor keys. No network, no Polaris code.
+  * AUTHORIZATION -- online, fresh. Ask the issuer's /api/v1/verify, authenticating
+    as a registered organization with OAuth2 client-credentials, whether the token
+    is authoritative now.
+
+`accept` requires both. Without a reachable issuer the verdict is `provisional`
+(authentic, status unverified) -- never a full accept. Self-contained: only the
+`cryptography` package plus the standard library.
+
+    from polaris_verify import PolarisVerifier
+    v = PolarisVerifier(issuer_url="https://issuer.example",
+                        client_id="rp_...", client_secret="...",
+                        anchors=["<issuer public key hex>"])
+    verdict = v.verify_presentation(presentation)   # -> Verdict(decision="accept", ...)
+
+Conformance: `python -m polaris_verify.conformance` implements the language-agnostic
+verifier CLI the published conformance suite drives (see conformance/SPEC.md).
+"""
+import base64
+import dataclasses
+import hashlib
+import json
+import time
+import urllib.request
+from typing import List, Optional
+
+__version__ = "1.0.0"
+ALGORITHM = "ML-DSA-65"
+PLACEHOLDER_LABEL = "DETERMINISTIC-PLACEHOLDER-SHA3-256"
+
+
+@dataclasses.dataclass
+class AuthenticityVerdict:
+    authentic: bool
+    issuer_trusted: Optional[bool]   # None when no anchors were supplied
+    algorithm: Optional[str]
+    note: Optional[str] = None
+    witnesses: Optional[List[str]] = None
+
+
+@dataclasses.dataclass
+class Verdict:
+    decision: str                    # "accept" | "reject" | "provisional"
+    authentic: bool
+    issuer_trusted: Optional[bool]
+    currently_authoritative: Optional[bool]
+    status: Optional[str] = None
+    reasons: Optional[List[str]] = None
+
+    def as_dict(self):
+        return dataclasses.asdict(self)
+
+
+def _digest(token_value: str) -> bytes:
+    # The signer signs SHA3-256(token_value.encode('utf-8')); reconstruct it.
+    return hashlib.sha3_256(token_value.encode("utf-8")).digest()
+
+
+def _verify_cryptography(digest, sig, pk):
+    try:
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        from cryptography.exceptions import InvalidSignature
+    except Exception:
+        return None
+    if not hasattr(mldsa, "MLDSA65PublicKey"):
+        return None
+    try:
+        key = mldsa.MLDSA65PublicKey.from_public_bytes(pk)
+    except Exception:
+        return None
+    try:
+        key.verify(sig, digest)
+        return True
+    except InvalidSignature:
+        return False
+    except Exception:
+        return False
+
+
+def _verify_liboqs(digest, sig, pk):
+    try:
+        import oqs  # type: ignore
+    except Exception:
+        return None
+    try:
+        with oqs.Signature(ALGORITHM) as v:
+            return bool(v.verify(digest, sig, pk))
+    except Exception:
+        return False
+
+
+def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
+    """Verify a Polaris authenticity pack OFFLINE. `anchors` is an optional
+    iterable of trusted issuer public keys (hex); when given, issuer_trusted says
+    whether the pack's key is one of them."""
+    tok = pack.get("token_value")
+    alg = pack.get("algorithm")
+    sig_hex = pack.get("signature_hex")
+    pk_hex = pack.get("public_key_hex")
+    if alg == PLACEHOLDER_LABEL or not pk_hex:
+        return AuthenticityVerdict(False, None, alg,
+                                   note="placeholder credential -- not authenticatable offline")
+    if not tok or not sig_hex:
+        return AuthenticityVerdict(False, None, alg, note="pack missing token_value or signature_hex")
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        return AuthenticityVerdict(False, None, alg, note="signature_hex/public_key_hex are not valid hex")
+    digest = _digest(tok)
+    primary = _verify_cryptography(digest, sig, pk)
+    witness = _verify_liboqs(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("cryptography=%s" % ("valid" if primary else "invalid"))
+    if witness is not None:
+        ran.append("liboqs=%s" % ("valid" if witness else "invalid"))
+    if primary is None and witness is None:
+        return AuthenticityVerdict(False, None, alg, witnesses=ran,
+                                   note="no ML-DSA-65 verifier available: pip install 'cryptography>=48'")
+    if primary is not None and witness is not None and primary != witness:
+        return AuthenticityVerdict(False, None, alg, witnesses=ran,
+                                   note="the two witnesses DISAGREE -- treat as invalid")
+    ok = primary if primary is not None else witness
+    trusted = None
+    note = None
+    if anchors is not None:
+        trusted = pk_hex.lower() in {a.lower() for a in anchors}
+        if ok and not trusted:
+            note = "signature is genuine but its key is not in the trusted issuer anchors"
+    return AuthenticityVerdict(bool(ok), trusted, alg, note=note, witnesses=ran)
+
+
+class PolarisVerifier:
+    def __init__(self, issuer_url=None, client_id=None, client_secret=None,
+                 anchors=None, timeout=30):
+        self.issuer_url = issuer_url.rstrip("/") if issuer_url else None
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.anchors = list(anchors) if anchors is not None else None
+        self.timeout = timeout
+        self._bearer = None
+        self._bearer_exp = 0.0
+
+    # --- OAuth2 client-credentials (cached, refreshed on expiry) --------------
+    def _access_token(self):
+        if self._bearer and time.time() < self._bearer_exp - 5:
+            return self._bearer
+        creds = base64.b64encode(("%s:%s" % (self.client_id, self.client_secret)).encode()).decode()
+        req = urllib.request.Request(
+            "%s/api/v1/oauth/token" % self.issuer_url, data=b"grant_type=client_credentials",
+            headers={"Authorization": "Basic " + creds,
+                     "Content-Type": "application/x-www-form-urlencoded"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            body = json.loads(r.read())
+        self._bearer = body["access_token"]
+        self._bearer_exp = time.time() + int(body.get("expires_in", 300))
+        return self._bearer
+
+    def _online_status(self, cred):
+        body = json.dumps({"token_value": cred.get("token_value"),
+                           "signature_hex": cred.get("signature_hex")}).encode()
+        req = urllib.request.Request(
+            "%s/api/v1/verify" % self.issuer_url, data=body,
+            headers={"Authorization": "Bearer " + self._access_token(),
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            return json.loads(r.read())
+
+    def verify_presentation(self, presentation) -> Verdict:
+        """Decide accept / reject / provisional for a holder's presentation (a
+        wallet presentation object, or a bare authenticity pack)."""
+        cred = presentation.get("credential") if isinstance(presentation, dict) and "credential" in presentation \
+            else presentation
+        cred = cred or {}
+        a = verify_authenticity(cred, self.anchors)
+        reasons = []
+        if not a.authentic:
+            reasons.append(a.note or "not authentic")
+            return Verdict("reject", False, a.issuer_trusted, None, reasons=reasons)
+        if a.issuer_trusted is False:
+            reasons.append(a.note or "issuer not trusted")
+            return Verdict("reject", True, False, None, reasons=reasons)
+        if not self.issuer_url:
+            reasons.append("status not checked (offline) -- authenticity only, not a full accept")
+            return Verdict("provisional", True, a.issuer_trusted, None, reasons=reasons)
+        try:
+            status = self._online_status(cred)
+        except Exception as e:
+            reasons.append("status check failed: %s" % e)
+            return Verdict("reject", True, a.issuer_trusted, None, reasons=reasons)
+        current = bool(status.get("currently_authoritative"))
+        if not current:
+            reasons.append("not currently authoritative (revoked/inactive): status=%s" % status.get("status"))
+        return Verdict("accept" if current else "reject", True, a.issuer_trusted, current,
+                       status=status.get("status"), reasons=reasons or None)

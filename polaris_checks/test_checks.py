@@ -6054,6 +6054,43 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"
 
 
+def test_conformance_suite_check_discriminates(tmp_path):
+    # v9.289 (P3.5): the verification conformance suite + Python reference SDK.
+    # Standalone SDK (real ML-DSA + OAuth online), a language-agnostic runner, cases
+    # covering authentic/not/untrusted-issuer, run in CI. Each perturbation removes a leg.
+    good = {'sdk/python/polaris_verify/__init__.py': "import hashlib, urllib.request\ndef verify_authenticity(pack, anchors=None):\n    hashlib.sha3_256(b'')\n    from cryptography.hazmat.primitives.asymmetric import mldsa\n    mldsa.MLDSA65PublicKey\nclass PolarisVerifier:\n    def _t(self):\n        return ('/api/v1/oauth/token', '/api/v1/verify')\n", 'sdk/python/polaris_verify/conformance.py': 'from . import verify_authenticity\n', 'conformance/run_conformance.py': "import argparse\nFLAGS = ('--verifier', '--self', 'issuer_trusted')\n", 'conformance/SPEC.md': '# contract\nstdin authentic issuer_trusted\n', 'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": [{"name": "a", "expect": {"authentic": true, "issuer_trusted": null}}, {"name": "b", "expect": {"authentic": true, "issuer_trusted": false}}, {"name": "c", "expect": {"authentic": false, "issuer_trusted": null}}]}', '.github/workflows/ci.yml': '      - run: python conformance/run_conformance.py --self\n', 'sdk/python/test_sdk.py': 'class ConformanceRunnerTest:\n    def t(self): pass\n'}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_conformance_suite(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the SDK is no longer standalone (imports Polaris code)
+    write({"sdk/python/polaris_verify/__init__.py": "import app\n" + good["sdk/python/polaris_verify/__init__.py"]})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL if the SDK imports Polaris code"
+    # 2. the SDK no longer verifies real ML-DSA
+    write({"sdk/python/polaris_verify/__init__.py": good["sdk/python/polaris_verify/__init__.py"].replace("MLDSA65PublicKey", "TrustMe")})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without real ML-DSA verification"
+    # 3. the cases drop the genuine-but-untrusted-issuer verdict
+    import json as _json
+    cases = _json.loads(good["conformance/cases.json"])
+    cases["cases"] = [c for c in cases["cases"] if c["expect"].get("issuer_trusted") is not False]
+    write({"conformance/cases.json": _json.dumps(cases)})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without the untrusted-issuer case"
+    # 4. the runner is no longer language-agnostic
+    write({"conformance/run_conformance.py": good["conformance/run_conformance.py"].replace("--verifier", "--only-self")})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL if the runner cannot drive any verifier"
+    # 5. the suite is not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL if the conformance suite does not run in CI"
+    # 6. the SDK is not tested against the suite
+    write({"sdk/python/test_sdk.py": "class Other:\n    pass\n"})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without the SDK conformance test"
+
+
 def test_relying_party_api_check_discriminates(tmp_path):
     # v9.288 (P3.4): the relying-party verification API -- OAuth2 client-credentials,
     # scope CHECK-constrained to 'verify', a possession-proof + uniform 'not

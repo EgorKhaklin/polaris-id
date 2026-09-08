@@ -5,6 +5,49 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.289 — 2026-09-08 (Verification conformance suite + Python SDK: the integration contract, P3.5a)
+
+P3.4 gave a relying party an API to call; this makes "correctly verifying a Polaris
+credential" a runnable, publishable contract, with a reference implementation that
+passes it. It is what lets an external team integrate from the docs alone (the P3
+exit gate).
+
+- **The conformance suite is the contract.** `conformance/` publishes the cases a
+  conformant verifier must decide and a LANGUAGE-AGNOSTIC runner that checks any
+  implementation against them. A verifier is any command that reads a case on stdin
+  (`{pack, anchors}`) and prints a verdict (`{authentic, issuer_trusted}`);
+  `run_conformance.py --verifier "<cmd>"` drives it over every case and exits non-zero
+  on any mismatch. The cases (`cases.json`, built on the CI-verified `vectors/`) cover
+  a genuine signature, a tampered signature, a genuine signature over a different
+  token, a signature against an unrelated key, the dev placeholder, and — the case a
+  simple "does it verify" check misses — a genuine signature by an UNTRUSTED issuer
+  (authentic, but `issuer_trusted: false`, which a relying party must reject).
+  `SPEC.md` is the published contract.
+
+- **A Python reference SDK that passes it.** `sdk/python/` (`polaris-verify`) is a
+  standalone, pip-installable library — only `cryptography` plus the standard library,
+  no Polaris code — that a relying party drops into its backend. It verifies the
+  ML-DSA-65 signature over `SHA3-256(token_value)` offline (with liboqs as a second
+  witness when present), optionally against trusted issuer anchors, and does the
+  online status check by authenticating as an organization (OAuth2 client-credentials)
+  and calling `/api/v1/verify`. `accept` needs both; offline it is `provisional`. The
+  online path is proven end to end against a live server.
+
+- **It runs, it does not merely describe.** The conformance runner drives the bundled
+  SDK (`--self`) in the pqc-real CI job every release, alongside the SDK's own unit
+  tests; `check_conformance_suite` pins that the SDK is standalone, verifies real
+  ML-DSA (not a flag), the runner can drive any language, the cases carry the
+  untrusted-issuer verdict, and the suite runs in CI. An external SDK — in any
+  language — is conformant exactly when it passes the same runner.
+
+The TypeScript SDK (P3.5b) is the remaining half of P3.5: the repo has no Node
+toolchain yet, so it is a clean separate ship against this now-locked contract.
+
+155 machine-checked invariants; verifying a Polaris credential is now a contract
+anyone can hold their own code to.
+
+---
+
 ## v9.288 — 2026-09-08 (Relying-party API v1: a bounded verification oracle)
 
 P3.4. The holder can present a credential (v9.287); this gives the other side a way

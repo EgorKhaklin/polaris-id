@@ -1533,6 +1533,17 @@ jobs:
       - name: End-to-end — holder presents, relying party accepts/rejects
         run: python scripts/polaris-e2e-drill.py
 
+      # v9.289 (roadmap P3.5) — the verification conformance suite is the integration
+      # contract: it drives a verifier over the published authenticity cases and
+      # checks every verdict. Run the bundled Python reference SDK against it (real
+      # ML-DSA-65 via cryptography), then the SDK's own unit tests. An external team
+      # certifies its verifier, in any language, with the same runner. Exits non-zero
+      # on any mismatch.
+      - name: Conformance suite — Python reference SDK
+        run: python conformance/run_conformance.py --self
+      - name: SDK unit tests (polaris-verify)
+        run: cd sdk/python && python -m unittest test_sdk
+
       # v9.279 (roadmap PE.8) — real numbers from the runner: single-core ML-DSA-65
       # sign/verify throughput, printed with the box spec and version. Re-measured
       # every release so the published dyno (docs/reference/DYNO.md) cannot rot; the

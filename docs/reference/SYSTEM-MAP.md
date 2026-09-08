@@ -62,6 +62,8 @@ polaris/
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── vectors/            ← published authenticity packs a relying party re-verifies offline with scripts/polaris-verify.py (README.md explains the format)
 ├── attacks/            ← adversaries that MUST fail (forge, tamper, revoked-token); run_attacks.py runs every release and goes red if any SUCCEEDS
+├── sdk/                ← server-side verify SDKs a relying party installs; sdk/python is the reference polaris-verify SDK (offline authenticity + the OAuth2 /api/v1 online check) (P3.5)
+├── conformance/        ← the verification conformance suite: the published cases + a language-agnostic runner (SPEC.md); passing it is the integration contract
 ├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
 │
 ├── .github/workflows/  ← ci.yml (16 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)

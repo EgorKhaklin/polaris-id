@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polaris-verify"
+version = "1.0.0"
+description = "Server-side SDK to verify Polaris identity credentials (offline authenticity + online status)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Egor Khaklin" }]
+dependencies = ["cryptography>=48"]
+
+[project.urls]
+Homepage = "https://github.com/EgorKhaklin/polaris-id"
+Conformance = "https://github.com/EgorKhaklin/polaris-id/tree/main/conformance"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["polaris_verify*"]

@@ -6872,6 +6872,69 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
+    """P3.5: the verification conformance suite is the integration contract, and the
+    Python reference SDK passes it. A relying party (or an external SDK author)
+    certifies its verifier -- in any language -- by making it pass the published
+    cases; passing them is what "conformant" means. The SDK is standalone (an
+    external org installs it) and the suite RUNS in CI, not a document that says it
+    would."""
+    # 1. The Python reference SDK: real ML-DSA authenticity + the online contract,
+    #    standalone (only a standard crypto library + stdlib, no Polaris imports).
+    sdk = _read(root, "sdk/python/polaris_verify/__init__.py")
+    if not sdk:
+        return _fail("conformance_suite", "sdk/python/polaris_verify/__init__.py is missing")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", sdk, re.M):
+            return _fail("conformance_suite",
+                         f"the SDK imports {mod!r}; a server-side verify SDK an external org installs must be "
+                         "standalone (only a standard ML-DSA library + stdlib, no Polaris code)")
+    if "def verify_authenticity" not in sdk or "class PolarisVerifier" not in sdk:
+        return _fail("conformance_suite", "the SDK must expose verify_authenticity() and PolarisVerifier")
+    if "sha3_256" not in sdk or "MLDSA65PublicKey" not in sdk:
+        return _fail("conformance_suite",
+                     "the SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value), not trust a flag")
+    if "/api/v1/oauth/token" not in sdk or "/api/v1/verify" not in sdk:
+        return _fail("conformance_suite",
+                     "the SDK's online path must authenticate (OAuth2 client-credentials) and call /api/v1/verify")
+    # 2. The verifier CLI contract (stdin -> stdout) and the language-agnostic runner.
+    if "verify_authenticity" not in _read(root, "sdk/python/polaris_verify/conformance.py"):
+        return _fail("conformance_suite", "polaris_verify.conformance must implement the stdin->stdout verifier CLI")
+    runner = _read(root, "conformance/run_conformance.py")
+    if "--verifier" not in runner or "--self" not in runner or "issuer_trusted" not in runner:
+        return _fail("conformance_suite",
+                     "conformance/run_conformance.py must drive ANY verifier (--verifier) as well as the bundled SDK "
+                     "(--self), checking authentic + issuer_trusted")
+    if not _read(root, "conformance/SPEC.md"):
+        return _fail("conformance_suite", "conformance/SPEC.md (the published contract) is missing")
+    # 3. The cases: real JSON, versioned, covering authentic AND not-authentic AND an
+    #    untrusted-issuer verdict.
+    try:
+        manifest = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+    except Exception as e:
+        return _fail("conformance_suite", f"conformance/cases.json is not valid JSON ({e})")
+    if manifest.get("format") != "polaris-conformance/1":
+        return _fail("conformance_suite", "conformance/cases.json must declare format polaris-conformance/1")
+    expects = [c.get("expect", {}) for c in manifest.get("cases", [])]
+    if not any(e.get("authentic") is True for e in expects) or not any(e.get("authentic") is False for e in expects):
+        return _fail("conformance_suite", "the cases must cover both an authentic and a not-authentic verdict")
+    if not any(e.get("issuer_trusted") is False for e in expects):
+        return _fail("conformance_suite",
+                     "the cases must cover a genuine signature by an UNTRUSTED issuer (authentic but issuer_trusted "
+                     "false) -- a valid signature by an untrusted key must be rejectable")
+    # 4. It RUNS in CI, and the SDK is tested.
+    if "run_conformance.py --self" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("conformance_suite",
+                     "the conformance suite must run in CI (a contract that never runs is displacement)")
+    if "ConformanceRunnerTest" not in _read(root, "sdk/python/test_sdk.py"):
+        return _fail("conformance_suite", "sdk/python/test_sdk.py must prove the SDK passes the conformance suite")
+    return _ok("conformance_suite",
+               "the verification conformance suite is the runnable integration contract: a language-agnostic runner "
+               "drives any verifier (stdin->stdout) over the published authenticity cases -- authentic, tampered, "
+               "placeholder, and a genuine-but-untrusted-issuer verdict -- and the standalone Python reference SDK "
+               "(real ML-DSA-65 offline + OAuth2 online) passes it every release, with SDK unit tests")
+
+
 def check_relying_party_api(root: pathlib.Path) -> list[Finding]:
     """P3.4: the relying-party verification API. A third-party organization
     authenticates AS ITSELF (OAuth2 client-credentials) and calls the versioned
@@ -7027,6 +7090,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_conformance_suite,
     check_relying_party_api,
     check_holder_verifier_flow,
     check_federation_in_app,
