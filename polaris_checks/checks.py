@@ -372,7 +372,7 @@ def check_pqc_signing_wired(root: pathlib.Path) -> list[Finding]:
                      "app.py must expose the verify-at-use endpoint /api/tokens/<id>/verify (the "
                      "throughput verification path)")
     verify_ep = app.split("def api_token_verify", 1)
-    ep_body = verify_ep[1][:3600] if len(verify_ep) == 2 else ""
+    ep_body = verify_ep[1][:4400] if len(verify_ep) == 2 else ""
     if len(verify_ep) == 2 and not re.search(r"witnesses\s*=\s*['\"]single['\"]", ep_body):
         return _fail("pqc_wired",
                      "the verify-at-use endpoint must use single-witness verification "
@@ -385,6 +385,17 @@ def check_pqc_signing_wired(root: pathlib.Path) -> list[Finding]:
                      "the verify-at-use endpoint must read the token's current status from the PRIMARY "
                      "(query(..., primary=True)) for its `usable` decision; a stale replica status could "
                      "report a revoked token as usable")
+    # v9.271: the authenticity/authorization split must be EXPLICIT in the
+    # response, so a relying party never confuses a genuine signature with a
+    # current one. Authenticity is cacheable/replica-safe; authorization carries a
+    # primary-backed freshness contract (as_of + a max-staleness bound).
+    if len(verify_ep) == 2 and not all(t in ep_body for t in (
+            "signature_cacheable", "currently_authoritative", "as_of", "max_staleness_seconds")):
+        return _fail("pqc_wired",
+                     "the verify-at-use endpoint must make the authenticity/authorization split explicit: "
+                     "signature_cacheable (authenticity is replica-safe and cacheable) plus "
+                     "currently_authoritative, as_of, and max_staleness_seconds (the primary-backed "
+                     "freshness contract for the authorization verdict)")
     return _ok("pqc_wired",
                "single, bulk, and uc6-migration signatures all route through the pqc_signing module; "
                "bulk stores a staged real signature and refuses an unsigned row (no placeholder literal); "

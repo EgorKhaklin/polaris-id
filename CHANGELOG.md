@@ -5,6 +5,34 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.271 — 2026-09-07 (Verify-at-use: an explicit authenticity/authorization split)
+
+P1.18 item 4, the highest-value backend change: make the verify endpoint's
+freshness contract explicit, so a relying party can never confuse a genuine
+signature with a currently-usable token. Builds on v9.264 (which already read
+authorization from the primary); this names the two verdicts and states their
+freshness.
+
+`GET /api/tokens/<id>/verify` now returns two clearly-separated verdicts:
+- **Authenticity** — `signature_valid` with `signature_cacheable: true`. Immutable
+  material (the signed token value, the signature bytes, the stored key), so it
+  is replica-safe and a relying party MAY cache it.
+- **Authorization** — `currently_authoritative` (status is ACTIVE), read fresh
+  from the primary, carrying `as_of` (the primary clock at the read) and
+  `max_staleness_seconds: 0` (primary-backed, no replica lag). A caller must NOT
+  cache this; the `as_of` / `max_staleness_seconds` pair states exactly how fresh
+  the verdict is. If a deployment ever routes the authorization read to a replica
+  for scale, that is the single field it raises — the API shape is stable.
+
+`usable` is kept as a back-compat convenience (`signature_valid` AND
+`currently_authoritative`). `check_pqc_signing_wired` now pins the split (the
+endpoint must expose `signature_cacheable`, `currently_authoritative`, `as_of`
+and `max_staleness_seconds`), and `TokenVerifyTests` proves a revoked token stays
+authentic (cacheable) while ceasing to be currently authoritative.
+docs/design/verification-scaling.md and the API reference document the contract.
+No new check (139).
+
+
 ## v9.270 — 2026-09-07 (The constitution, layered: constitutional vs engineering)
 
 P1.18 item 3: split the ten constraints into two tiers beneath the vocation, so

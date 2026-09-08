@@ -107,8 +107,11 @@ def test_pqc_wired_check_fails_when_issuance_bypasses_signing_module(tmp_path):
            "@app.route('/api/tokens/<int:tok_id>/verify')\n"
            "def api_token_verify(tok_id):\n"
            "    ok = pqc_signing.verify_stored_signature(tv, sig, pk, witnesses='single')\n"
-           "    status = query('SELECT status ...', (tok_id,), fetch='one', primary=True)\n"
-           "    return jsonify(signature_valid=ok, status=status, usable=(ok and status=='ACTIVE'))\n")
+           "    row = query('SELECT status, now() AS as_of ...', (tok_id,), fetch='one', primary=True)\n"
+           "    status = row['status']; as_of = row['as_of'].isoformat()\n"
+           "    return jsonify(signature_valid=ok, signature_cacheable=True, status=status,\n"
+           "                   status_source='primary', currently_authoritative=(status=='ACTIVE'),\n"
+           "                   as_of=as_of, max_staleness_seconds=0, usable=(ok and status=='ACTIVE'))\n")
     SCHEMA = ("CREATE TABLE IF NOT EXISTS BulkEnrollmentStaging (\n"
               "  staging_id BIGSERIAL PRIMARY KEY, batch_id INTEGER, token_value VARCHAR(128) NOT NULL,\n"
               "  signature_bytes BYTEA, signing_public_key_hex TEXT\n);\n")

@@ -7947,6 +7947,11 @@ class TokenVerifyTests(PolarisTestCase):
         # v9.264: the authorization (status) that decides `usable` is read from
         # the PRIMARY, not a possibly-stale replica.
         self.assertEqual(data['status_source'], 'primary')
+        # v9.271: the authenticity/authorization split is explicit in the response.
+        self.assertTrue(data['signature_cacheable'], "authenticity is immutable and cacheable")
+        self.assertTrue(data['currently_authoritative'], "an ACTIVE token is currently authoritative")
+        self.assertEqual(data['max_staleness_seconds'], 0, "primary-backed => zero staleness")
+        self.assertIsNotNone(data['as_of'], "the authorization read carries an as_of timestamp")
         # The load-bearing distinction of this endpoint: it is the single-witness
         # verify-AT-USE path, not the two-witness issuance check.
         self.assertEqual(data['witnesses'], 'single')
@@ -7983,6 +7988,11 @@ class TokenVerifyTests(PolarisTestCase):
                          "not a possibly-stale replica")
         self.assertTrue(after['signature_valid'],
                         "the signature itself is unchanged by revocation")
+        # v9.271: the split makes this precise — the signature stays authentic
+        # (cacheable), but the token is no longer currently authoritative.
+        self.assertTrue(after['signature_cacheable'])
+        self.assertFalse(after['currently_authoritative'],
+                         "a revoked token is authentic but not currently authoritative")
         self.assertFalse(after['usable'],
                          "a revoked token is not usable even though it is signed")
 

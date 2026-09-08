@@ -4853,12 +4853,15 @@ def api_token_verify(tok_id):
     if not rows:
         return jsonify(error='no such token, or it has no active signature'), 404
 
-    # Current authorization — freshness is load-bearing, so read the PRIMARY even
-    # though the route is replica-routed: a just-revoked token must not read as
-    # usable within the replica's lag window.
-    status_row = query("SELECT status FROM IdentityToken WHERE token_id = %s",
-                       (tok_id,), fetch='one', primary=True)
-    status = status_row['status'] if status_row else None
+    # Current authorization — freshness is load-bearing, so read the PRIMARY (and
+    # its clock) even though the route is replica-routed: a just-revoked token must
+    # not read as usable within a replica's lag window. `as_of` and
+    # max_staleness_seconds below make the freshness contract explicit for the
+    # relying party, so it never confuses a genuine signature with a current one.
+    auth_row = query("SELECT status, now() AS as_of FROM IdentityToken WHERE token_id = %s",
+                     (tok_id,), fetch='one', primary=True)
+    status = auth_row['status'] if auth_row else None
+    as_of = auth_row['as_of'].isoformat() if auth_row and auth_row.get('as_of') else None
 
     token_value = rows[0]['token_value']
     signatures = []
@@ -4877,12 +4880,25 @@ def api_token_verify(tok_id):
 
     return jsonify(
         token_id=tok_id,
-        signature_valid=all_valid,          # authenticity (replica-safe)
-        status=status,                      # current authorization (primary-fresh)
-        status_source='primary',
-        usable=(all_valid and status == 'ACTIVE'),
+        # Authenticity — immutable material, replica-safe, and safe for a relying
+        # party to cache. Says the signature is genuine, NOT that the token is
+        # usable now.
+        signature_valid=all_valid,
+        signature_cacheable=True,
         witnesses='single',
         signatures=signatures,
+        # Current authorization — read fresh from the primary. currently_authoritative
+        # is the "usable right now" verdict; as_of is when it was read, and
+        # max_staleness_seconds is the freshness bound the response guarantees
+        # (0 = primary-backed, no replica lag). A relying party that caches must
+        # cache only signature_valid, never the authorization.
+        status=status,
+        status_source='primary',
+        currently_authoritative=(status == 'ACTIVE'),
+        as_of=as_of,
+        max_staleness_seconds=0,
+        # Back-compat convenience: authenticity AND current authorization.
+        usable=(all_valid and status == 'ACTIVE'),
     )
 
 

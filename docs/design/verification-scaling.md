@@ -89,6 +89,18 @@ is pinned to the PRIMARY (`query(..., primary=True)`) and the response carries
 the expensive ML-DSA verify touches no database, so throughput is preserved while
 `usable` is never decided on stale state.
 
+**The freshness contract is explicit (v9.271).** So a relying party never
+confuses a genuine signature with a current one, the response separates the two
+verdicts by name. Authenticity is `signature_valid` with `signature_cacheable:
+true` — immutable, replica-safe, cacheable. Authorization is
+`currently_authoritative` (status is ACTIVE) carrying `as_of` (the primary clock
+at the read) and `max_staleness_seconds: 0` (primary-backed, no lag). A caller
+may cache `signature_valid`; it must re-read authorization, and the `as_of` /
+`max_staleness_seconds` pair tells it exactly how fresh the verdict it holds is.
+If a deployment ever routes the authorization read to a replica for scale, that
+is the single field it raises (to the replica's lag bound); the API shape does
+not change.
+
 ## Under HA, failover, and rolling deploys
 
 Verification is stateless and read-only, so it inherits the HA properties the

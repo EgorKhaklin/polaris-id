@@ -542,10 +542,14 @@ Returns JSON:
 | field | type | notes |
 |---|---|---|
 | `token_id` | int | echoes the path |
-| `signature_valid` | bool | the active signature verifies (authenticity; read from a replica is safe, the material is immutable) |
+| `signature_valid` | bool | authenticity: the active signature verifies. Immutable material, replica-safe, and safe for a relying party to cache |
+| `signature_cacheable` | bool | always `true` — the authenticity verdict may be cached; the authorization verdict below may NOT |
 | `status` | string | the token's current lifecycle status, read from the PRIMARY |
-| `status_source` | string | always `primary` — the `usable` decision is made on fresh state, never a stale replica |
-| `usable` | bool | `signature_valid` AND `status` is `ACTIVE`, decided on the primary-fresh status |
+| `status_source` | string | always `primary` — the authorization verdict is made on fresh state, never a stale replica |
+| `currently_authoritative` | bool | the "usable right now" authorization verdict: `status` is `ACTIVE`, read fresh from the primary |
+| `as_of` | string | ISO-8601 timestamp (primary clock) at which the authorization state was read |
+| `max_staleness_seconds` | int | the freshness bound the authorization verdict guarantees: `0` = primary-backed, no replica lag |
+| `usable` | bool | back-compat convenience: `signature_valid` AND `currently_authoritative` |
 | `witnesses` | string | always `single` for this endpoint |
 | `signatures` | array | per-signature `{algorithm, valid, real_signature}` |
 
