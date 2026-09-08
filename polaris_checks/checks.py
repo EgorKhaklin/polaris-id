@@ -6679,7 +6679,55 @@ def check_real_pqc_default_boot(root: pathlib.Path) -> list[Finding]:
                "loudly when used unnamed")
 
 
+# ---------------------------------------------------------------------------
+# The two witnesses are fuzzed for disagreement (frontier engine item). Verify-at-
+# use runs a SINGLE witness (liboqs) and trusts it because issuance already
+# two-witnessed the signature — the whole throughput-soundness argument rests on
+# liboqs and cryptography/OpenSSL never disagreeing. So the attack suite hunts for
+# an input where they DO: many random rounds (genuine, tampered, wrong-key,
+# garbage), verifying each under BOTH witnesses separately and asserting they
+# return the same verdict every time; a disagreement is the break. This check pins
+# that the fuzzer is real — it exercises both witnesses independently and compares
+# them, and it is registered so the attack runner (and thus CI) actually runs it.
+# Detection: test_checks unregisters the fuzzer, drops the second witness, and
+# removes the disagreement comparison.
+# ---------------------------------------------------------------------------
+def check_witness_fuzz(root: pathlib.Path) -> list[Finding]:
+    src = _read(root, "attacks/attack_crypto.py")
+    if not src:
+        return _fail("witness_fuzz", "attacks/attack_crypto.py is missing")
+    m = re.search(r"def attack_witnesses_disagree_under_fuzz\(.*?(?=\ndef |\nATTACKS)", src, re.S)
+    if not m:
+        return _fail("witness_fuzz",
+                     "attacks/attack_crypto.py must have a differential fuzzer of the two witnesses "
+                     "(attack_witnesses_disagree_under_fuzz)")
+    body = m.group(0)
+    # It must verify under BOTH witnesses SEPARATELY (liboqs and cryptography), not
+    # the combined verify_both — a disagreement is only visible with independent verdicts.
+    if "pqc_signing.verify(" not in body or "_verify_second_witness(" not in body:
+        return _fail("witness_fuzz",
+                     "the fuzzer must verify each case under BOTH witnesses independently "
+                     "(pqc_signing.verify AND pqc_signing._verify_second_witness), not only the combined check")
+    # And it must actually COMPARE their verdicts (the disagreement is the break).
+    if "!=" not in body or "return True" not in body:
+        return _fail("witness_fuzz",
+                     "the fuzzer must flag a DISAGREEMENT (the two verdicts differ) as the break it hunts for")
+    # It must be registered so run_attacks actually runs it.
+    if '"witnesses_disagree_under_fuzz"' not in src and "'witnesses_disagree_under_fuzz'" not in src:
+        return _fail("witness_fuzz",
+                     "the fuzzer must be registered in ATTACKS so the runner (and CI) exercises it")
+    # CI runs the crypto attack suite (which includes the fuzzer).
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "run_attacks.py --suite crypto" not in ci:
+        return _fail("witness_fuzz",
+                     "ci.yml must run the crypto attack suite so the witness fuzzer runs every release")
+    return _ok("witness_fuzz",
+               "the two witnesses are differentially fuzzed every release: many random rounds verify under liboqs "
+               "AND cryptography independently and flag any disagreement, run via the attack suite in CI")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_witness_fuzz,
     check_real_pqc_default_boot,
     check_detached_verifier,
     check_dyno_published,

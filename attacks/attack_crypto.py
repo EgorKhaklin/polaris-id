@@ -28,6 +28,10 @@ def _digest(token_value):
     return hashlib.sha3_256(token_value.encode("utf-8")).digest()
 
 
+def _digest_bytes(message):
+    return hashlib.sha3_256(message).digest()
+
+
 def _load_verifier():
     spec = importlib.util.spec_from_file_location(
         "polaris_verify_under_attack", os.path.join(_ROOT, "scripts", "polaris-verify.py"))
@@ -144,8 +148,59 @@ def attack_app_two_witness_verify_rejects_tamper():
     return ok is True, "verify_stored_signature(both) accepted a tampered signature? %s" % ok
 
 
+def attack_witnesses_disagree_under_fuzz():
+    """Differential fuzzing of the two witnesses. Verify-at-use runs ONE witness
+    (liboqs) and trusts it because issuance already two-witnessed the signature —
+    that whole soundness argument rests on liboqs and cryptography/OpenSSL never
+    disagreeing. So hunt for an input where they DO: across many random rounds
+    (genuine, flipped-signature, altered-message, wrong-key, garbage), the two
+    independent verifiers must return the SAME verdict every time. A single
+    disagreement is the break, and the failing case is printed so it reproduces.
+    Fresh randomness each run widens coverage release over release; set
+    POLARIS_WITNESS_FUZZ_ROUNDS to fuzz deeper."""
+    import random
+    import oqs
+    pw = os.path.join(_ROOT, "polaris_web")
+    if pw not in sys.path:
+        sys.path.insert(0, pw)
+    import pqc_signing
+    if not pqc_signing.second_witness_available():
+        return False, "the cryptography second witness is unavailable; cannot fuzz for disagreement"
+    rounds = int(os.environ.get("POLARIS_WITNESS_FUZZ_ROUNDS", "80"))
+    rng = random.SystemRandom()
+    checked = 0
+    with oqs.Signature(_ALG) as signer:
+        for i in range(rounds):
+            pk = bytes(signer.generate_keypair())
+            msg = os.urandom(rng.randint(1, 64))
+            sig = bytes(signer.sign(_digest_bytes(msg)))  # sign SHA3-256(msg), as the app does
+            m, s, p = msg, sig, pk
+            mode = i % 5
+            if mode == 1:  # flip one signature bit
+                b = bytearray(sig); b[rng.randrange(len(b))] ^= (1 << rng.randrange(8)); s = bytes(b)
+            elif mode == 2:  # alter the message
+                m = msg + bytes([rng.randrange(256)])
+            elif mode == 3:  # an unrelated key
+                p = bytes(signer.generate_keypair())
+            elif mode == 4:  # garbage signature of the right length
+                s = os.urandom(len(sig))
+            # Each witness verifies the SAME (message, signature, key) independently;
+            # pqc_signing.verify / _verify_second_witness both hash the message.
+            liboqs_v = pqc_signing.verify(m, s.hex(), p.hex())
+            crypto_v = pqc_signing._verify_second_witness(m, s.hex(), p.hex())
+            if crypto_v is None:
+                continue
+            checked += 1
+            if bool(liboqs_v) != bool(crypto_v):
+                return True, ("WITNESS DISAGREEMENT at round %d (mode %d): liboqs=%s cryptography=%s; "
+                              "pk=%s sig=%s msg=%s" % (i, mode, liboqs_v, crypto_v,
+                                                       p.hex()[:32], s.hex()[:32], m.hex()))
+    return False, "%d fuzz rounds, liboqs and cryptography agreed on every one" % checked
+
+
 ATTACKS = [
     ("forge_with_attacker_key", attack_forge_with_attacker_key),
+    ("witnesses_disagree_under_fuzz", attack_witnesses_disagree_under_fuzz),
     ("tamper_signature", attack_tamper_signature),
     ("alter_token", attack_alter_token),
     ("wrong_key", attack_wrong_key),

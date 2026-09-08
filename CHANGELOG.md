@@ -5,6 +5,37 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.281 — 2026-09-08 (Differential fuzzing of the two witnesses)
+
+With Phase E complete, a frontier hardening of the crypto the whole engine rests
+on. Verify-at-use runs a SINGLE witness (liboqs) and trusts it because issuance
+already two-witnessed the signature — so the entire throughput-soundness argument
+depends on liboqs and cryptography/OpenSSL never disagreeing. This ship hunts for
+the input where they would.
+
+- **`attacks/attack_crypto.py` gains `witnesses_disagree_under_fuzz`.** Across many
+  random rounds — genuine signatures, a flipped signature bit, an altered message,
+  an unrelated key, garbage of the right length — it verifies each case under the
+  two witnesses INDEPENDENTLY and asserts they return the same verdict. A single
+  disagreement is the break, and the failing case is printed so it reproduces.
+  Fresh randomness each run widens coverage release over release
+  (`POLARIS_WITNESS_FUZZ_ROUNDS` fuzzes deeper). Proven locally over hundreds of
+  rounds: zero disagreements. It runs in the `pqc-real` job via the attack suite.
+- **`check_witness_fuzz` (#149)** pins that the fuzzer is real — it verifies under
+  both witnesses separately, compares their verdicts, and is registered so the
+  runner (and CI) exercises it — with a detection test.
+
+Note on scope: a true NIST FIPS 204 Known-Answer-Test against the official published
+vectors is the natural companion, but it needs those vectors fetched from NIST/
+Wycheproof, which this environment cannot pull reliably; it is a good follow-up
+where there is network access. Differential fuzzing needs no external vectors and
+strengthens the same property — that the two witnesses cannot be made to diverge.
+
+Constitutional note: no change to C1-C10 or the vocation. The fuzzer signs and
+verifies its own throwaway keys and touches no identity data.
+
+---
+
 ## v9.280 — 2026-09-08 (The default boot is the real motor — Phase E complete)
 
 Phase E, PE.1 — and with it the whole engine phase. The one place the engine could

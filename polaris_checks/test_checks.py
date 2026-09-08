@@ -5895,3 +5895,41 @@ def test_real_pqc_default_boot_check_discriminates(tmp_path):
     # 4. the production boot refusal is not exercised
     write({"polaris_web/test_app.py": TEST.replace("test_production_refuses_boot_without_real_pqc", "test_noop")})
     assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", "must FAIL without the boot-refusal test"
+
+
+def test_witness_fuzz_check_discriminates(tmp_path):
+    # (v9.281) the two witnesses must be differentially fuzzed: the fuzzer verifies
+    # each case under liboqs AND cryptography independently and flags a disagreement,
+    # registered so the runner (and CI) exercises it. Each perturbation removes a leg.
+    CRYPTO = (
+        "def attack_witnesses_disagree_under_fuzz():\n"
+        "    liboqs_v = pqc_signing.verify(m, s, p)\n"
+        "    crypto_v = pqc_signing._verify_second_witness(m, s, p)\n"
+        "    if bool(liboqs_v) != bool(crypto_v):\n"
+        "        return True, 'WITNESS DISAGREEMENT'\n"
+        "    return False, 'agreed'\n"
+        "ATTACKS = [('witnesses_disagree_under_fuzz', attack_witnesses_disagree_under_fuzz)]\n"
+    )
+    CI = "jobs:\n  pqc-real:\n    steps:\n      - run: python attacks/run_attacks.py --suite crypto\n"
+    good = {"attacks/attack_crypto.py": CRYPTO, ".github/workflows/ci.yml": CI}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_witness_fuzz(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the second witness is dropped (only one verifier -> no disagreement possible)
+    write({"attacks/attack_crypto.py": CRYPTO.replace("_verify_second_witness", "verify")})
+    assert checks.check_witness_fuzz(tmp_path)[0].level == "FAIL", "must FAIL without the independent second witness"
+    # 2. the disagreement comparison is gone
+    write({"attacks/attack_crypto.py": CRYPTO.replace("!=", "==")})
+    assert checks.check_witness_fuzz(tmp_path)[0].level == "FAIL", "must FAIL without the disagreement comparison"
+    # 3. the fuzzer is unregistered (the runner would never call it)
+    write({"attacks/attack_crypto.py": CRYPTO.replace("('witnesses_disagree_under_fuzz'", "('noop'")})
+    assert checks.check_witness_fuzz(tmp_path)[0].level == "FAIL", "must FAIL when the fuzzer is not registered"
+    # 4. CI does not run the crypto suite
+    write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
+    assert checks.check_witness_fuzz(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the crypto suite"

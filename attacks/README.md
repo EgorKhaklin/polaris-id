@@ -39,6 +39,7 @@ defenses actually held.
 | `placeholder_relabeled_as_real` | the dev SHA3 placeholder relabeled `ML-DSA-65` | a SHA3 binding is never accepted as a signature |
 | `empty_signature` | an empty signature | rejected |
 | `outsider_accepted_by_federation_set` | an issuer outside the federation, presented to a party trusting a 2-issuer set | the outsider's key is not in the set; `issuer_trusted` is False (the cross-issuer boundary, PE.3) |
+| `witnesses_disagree_under_fuzz` | many random rounds (genuine, tampered, wrong-key, garbage) verified under liboqs and cryptography **separately** | the two witnesses return the same verdict every time — verify-at-use trusts one witness only because the two never disagree; a divergence is the break |
 | `app_two_witness_verify_rejects_tamper` | a tampered signature into the app's own `verify_stored_signature(both)` | both witnesses reject it |
 
 **db** (`attack_db.py`, the app + Postgres — attacks the verify-at-use route):
