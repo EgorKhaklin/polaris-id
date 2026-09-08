@@ -6054,6 +6054,40 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"
 
 
+def test_offline_verification_check_discriminates(tmp_path):
+    # v9.291 (P3.6): a short-lived signed status assertion + offline stapled verify.
+    # Signed by the issuer, verified offline (standalone), freshness/window enforced,
+    # run in CI. Each perturbation removes one leg.
+    good = {'polaris_web/app.py': "@app.route('/api/v1/status-assertion', methods=['POST'])\ndef api_v1_status_assertion():\n    _status_assertion_statement(tv, st, ia, ea)\n    pqc_signing.signature_over_message(stmt)\n    return jsonify(expires_at=ea)\n", 'polaris_web/pqc_signing.py': "def signature_over_message(message, agency_id=None):\n    return b'', 'ML-DSA-65', None\n", 'scripts/polaris-verify.py': "import json, hashlib\ndef _status_assertion_canonical(a):\n    return b''\ndef verify_status_assertion(a, now=None, max_window_seconds=None, anchor_keys=None):\n    fresh = True\n    return {'fresh': fresh, 'format': 'polaris-status-assertion/1'}\ndef verify_stapled(pack, a, now=None, max_window_seconds=None, anchor_keys=None):\n    return {'decision': 'accept'}\n", 'scripts/polaris-offline-status-drill.py': 'def main():\n    verify_stapled(p, a)\n', '.github/workflows/ci.yml': '      - run: python scripts/polaris-offline-status-drill.py\n', 'polaris_web/test_app.py': 'class OfflineStatusAssertionTests:\n    def t(self): pass\n'}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_offline_verification(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the assertion is not issuer-signed
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("pqc_signing.signature_over_message(stmt)", "pass")})
+    assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL if the assertion is not signed"
+    # 2. the offline verifier drops the freshness/window enforcement
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("max_window_seconds", "ignored")})
+    assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL without the window bound"
+    # 3. the verifier is no longer standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 4. the drill is not wired into CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
+    # 5. verify_stapled is gone
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_stapled", "def other")})
+    assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL without offline stapled verify"
+    # 6. the endpoint test is gone
+    write({"polaris_web/test_app.py": "class Other:\n    pass\n"})
+    assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL without OfflineStatusAssertionTests"
+
+
 def test_typescript_sdk_check_discriminates(tmp_path):
     # v9.290 (P3.5b): the TypeScript verify SDK, same conformance contract, second
     # implementation, run in CI. Each perturbation removes one leg.

@@ -376,6 +376,34 @@ def signature_with_key_for_token(token_value: str, agency_id=None) -> tuple:
     return digest, PLACEHOLDER_LABEL, None
 
 
+def signature_over_message(message: bytes, agency_id=None) -> tuple:
+    """Sign an arbitrary message with the issuer's ML-DSA-65 key (P3.6, the offline
+    status assertion). Mirrors `signature_with_key_for_token` but over `message`
+    rather than a token_value: real ML-DSA-65 (two-witness self-checked) when
+    POLARIS_USE_REAL_PQC=1 and liboqs is present, else the deterministic
+    SHA3-256 placeholder. Returns `(signature_bytes, algorithm_label,
+    public_key_hex_or_none)`; the signer/verifier both bind to SHA3-256(message)."""
+    flag_set = os.environ.get("POLARIS_USE_REAL_PQC", "0") == "1"
+    if flag_set and not _OQS_AVAILABLE:
+        raise PQCUnavailableError(
+            "POLARIS_USE_REAL_PQC=1 but liboqs-python is not importable: "
+            f"{_OQS_IMPORT_ERROR}. Install per this module's docstring or unset the flag.")
+    if flag_set:
+        if not second_witness_available():
+            raise SigningError(
+                "real ML-DSA-65 status-assertion signing requires the independent second witness "
+                "(cryptography/OpenSSL MLDSA65); it is unavailable "
+                f"({_WITNESS_IMPORT_ERROR or 'no ML-DSA support'}). Install cryptography>=48 on "
+                "OpenSSL 3.5+, or use the placeholder path (unset POLARIS_USE_REAL_PQC).")
+        result = sign(message, agency_id=agency_id)
+        if not verify_both(message, result.signature_hex, result.public_key_hex, require_witness=True):
+            raise SigningError(
+                "produced ML-DSA-65 status assertion failed two-witness self-verification; refusing to sign")
+        return bytes.fromhex(result.signature_hex), result.algorithm_name, result.public_key_hex
+    # Flag off: deterministic, dependency-free placeholder (not a signature).
+    return hashlib.sha3_256(message).digest(), PLACEHOLDER_LABEL, None
+
+
 def verify_stored_signature(
     token_value: str,
     signature_bytes: bytes,

@@ -55,6 +55,7 @@ Test: python3 test_app.py
 
 import os
 import hmac
+import hashlib
 import functools
 import sys
 import time
@@ -5273,6 +5274,92 @@ def api_v1_verify():
         decision=('accept' if currently_authoritative else 'reject'),
         reason=(None if currently_authoritative else 'authentic but not currently authoritative'),
     )
+
+
+# --- P3.6: offline verification — a short-lived signed status assertion --------
+_STATUS_ASSERTION_TTL = int(os.environ.get('POLARIS_STATUS_ASSERTION_TTL', '3600'))
+_STATUS_ASSERTION_FORMAT = 'polaris-status-assertion/1'
+
+
+def _status_assertion_statement(token_value, status, issued_at, expires_at):
+    """The canonical, deterministic bytes the issuer signs and an offline verifier
+    reconstructs: sorted-keys compact JSON of exactly these five fields."""
+    return json.dumps({
+        'format': _STATUS_ASSERTION_FORMAT, 'token_value': token_value,
+        'status': status, 'issued_at': issued_at, 'expires_at': expires_at,
+    }, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+@app.route('/api/v1/status-assertion', methods=['POST'])
+def api_v1_status_assertion():
+    """P3.6: mint a short-lived, issuer-signed status assertion. A holder fetches it
+    when connected, staples it to a presentation, and a relying party verifies it
+    OFFLINE — the credential's signature (authenticity) AND this assertion's signature
+    + binding + freshness + status (authorization), with no issuer contact, so the
+    issuer never learns the verification happened. Possession-authenticated (present
+    the genuine credential signature, as /verify does); no bearer, so a holder can
+    refresh its own status without being a registered relying party. No personal data,
+    no who-fetched record."""
+    body = request.get_json(silent=True) or {}
+    token_value = body.get('token_value')
+    presented_sig_hex = body.get('signature_hex')
+    if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
+        return jsonify(error='invalid_request',
+                       error_description='token_value and signature_hex are required'), 400
+    # Bound refresh frequency per credential without logging the token itself.
+    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
+    if not security.rate_limiter.allow('statusassert:%s' % _tk, 10, 60):
+        return jsonify(error='rate_limited'), 429
+
+    def _not_verifiable():
+        return jsonify(error='not_verifiable',
+                       error_description='present the genuine issued credential (token_value + signature_hex)'), 400
+
+    row = query("""
+        SELECT it.token_value, it.status, it.issuing_agency_id,
+               ts.signature_bytes, ts.signing_public_key_hex
+        FROM   IdentityToken it
+        JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
+        WHERE  it.token_value = %s
+        ORDER BY ts.signed_at DESC
+    """, (token_value,), fetch='one', primary=True)
+    if not row:
+        return _not_verifiable()
+    stored_raw = row['signature_bytes']
+    stored_sig = bytes(stored_raw) if stored_raw is not None else b''
+    try:
+        presented_sig = bytes.fromhex(presented_sig_hex)
+    except (ValueError, TypeError):
+        return _not_verifiable()
+    if not stored_sig or not hmac.compare_digest(presented_sig, stored_sig):
+        return _not_verifiable()
+    if not pqc_signing.verify_stored_signature(
+            token_value, stored_sig, row['signing_public_key_hex'], witnesses='single'):
+        return _not_verifiable()
+
+    # Sign a status assertion reflecting the CURRENT status, with the issuing
+    # agency's key (so the assertion's key matches the token's signing key under a
+    # verifier's anchor set). Short-lived: it expires within the freshness window,
+    # which is how a revoked token's stale ACTIVE assertion stops being usable.
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    issued_at = now.isoformat().replace('+00:00', 'Z')
+    expires_at = (now + timedelta(seconds=_STATUS_ASSERTION_TTL)).isoformat().replace('+00:00', 'Z')
+    statement = _status_assertion_statement(token_value, row['status'], issued_at, expires_at)
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(statement, agency_id=row['issuing_agency_id'])
+    return jsonify({
+        'format': _STATUS_ASSERTION_FORMAT,
+        'token_value': token_value,
+        'status': row['status'],
+        'issued_at': issued_at,
+        'expires_at': expires_at,
+        'algorithm': alg,
+        'signature_hex': sig_bytes.hex(),
+        'public_key_hex': pub,
+        'max_window_seconds': _STATUS_ASSERTION_TTL,
+        'digest_construction': ('SHA3-256(canonical statement: sorted-keys compact JSON of '
+                                '{format,token_value,status,issued_at,expires_at})'),
+    })
 
 
 # ============================================================================

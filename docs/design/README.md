@@ -29,6 +29,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [partitioning.md](partitioning.md) | Why the event tables are monthly-partitioned, how C1 holds across attach and detach, and the online conversion |
 | [bulk-enrollment.md](bulk-enrollment.md) | How a whole population is issued set-based in one atomic transaction, every row still through the full constraint set |
 | [verification-scaling.md](verification-scaling.md) | Taking real ML-DSA-65 verification from hundreds to thousands/sec: single-witness verify-at-use, why it is sound, and how it fans out across workers and HA replicas |
+| [offline-verification.md](offline-verification.md) | Verifying authorization with no connectivity (P3.6): the short-lived signed status assertion, what a verifier MUST check, and the freshness and replay bounds |
 
 ## One mechanism each
 

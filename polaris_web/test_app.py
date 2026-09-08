@@ -10006,3 +10006,68 @@ class RelyingPartyApiTests(PolarisTestCase):
         # It cannot POST-issue either.
         self.assertIn(anon.post('/uc1/issue', headers=bearer, data={'token_value': 'X'}).status_code,
                       (301, 302, 400, 401, 403))
+
+
+# --- Offline verification: signed status assertions (P3.6) -------------------
+# POST /api/v1/status-assertion mints a short-lived issuer-signed status assertion
+# a holder staples to a presentation for OFFLINE verification. The possession proof,
+# the assertion shape, the current-status reflection, and the no-PII rule are
+# exercised here (placeholder-safe: the assertion is a placeholder when real PQC is
+# absent, but its shape and the endpoint logic are identical). The full real-ML-DSA
+# offline accept/reject matrix runs in scripts/polaris-offline-status-drill.py.
+class OfflineStatusAssertionTests(PolarisTestCase):
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _issue_pack(self, token_value):
+        r = self._post('/uc1/issue', data={
+            'legal_name': 'Offline Holder', 'date_of_birth': '1990-01-15', 'jurisdiction': 'US-OH',
+            'issuing_agency_id': '1', 'algorithm_id': '1', 'biometric_binding_type': 'IRIS',
+            'witness_agency_id': '2', 'liveness_check_type': 'MULTI_MODAL', 'token_value': token_value,
+            'physical_serial': 'SN-' + token_value, 'hardware_model': 'TitanQ-3', 'contexts': ['1'],
+        }, follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (token_value,))
+            tid = cur.fetchone()['token_id']
+        return tid, self.client.get('/api/tokens/%d/authenticity-pack' % tid).get_json()
+
+    def test_possession_is_required(self):
+        _tid, pack = self._issue_pack('OFFLINE-POSSESS-0001')
+        # a wrong signature -> uniform not_verifiable
+        bad = self.client.post('/api/v1/status-assertion',
+                               json={'token_value': pack['token_value'], 'signature_hex': 'dead'})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(bad.get_json()['error'], 'not_verifiable')
+        # an unknown token -> the SAME not_verifiable (no existence oracle)
+        unk = self.client.post('/api/v1/status-assertion',
+                               json={'token_value': 'NO-SUCH', 'signature_hex': pack['signature_hex']})
+        self.assertEqual(unk.status_code, 400)
+        self.assertEqual(unk.get_json()['error'], 'not_verifiable')
+
+    def test_assertion_shape_is_short_lived_and_carries_no_pii(self):
+        _tid, pack = self._issue_pack('OFFLINE-SHAPE-0001')
+        a = self.client.post('/api/v1/status-assertion',
+                             json={'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}).get_json()
+        self.assertEqual(a['format'], 'polaris-status-assertion/1')
+        self.assertEqual(a['token_value'], pack['token_value'])
+        self.assertEqual(a['status'], 'ACTIVE')
+        for f in ('issued_at', 'expires_at', 'algorithm', 'signature_hex', 'max_window_seconds'):
+            self.assertIn(f, a)
+        self.assertGreater(a['expires_at'], a['issued_at'], "the assertion must be short-lived")
+        forbidden = {'legal_name', 'name', 'date_of_birth', 'dob', 'jurisdiction',
+                     'individual_id', 'biometric', 'biometric_binding_type', 'physical_serial'}
+        self.assertEqual(forbidden & set(k.lower() for k in a.keys()), set(),
+                         "a status assertion must carry no personal data")
+
+    def test_assertion_reflects_current_status(self):
+        tid, pack = self._issue_pack('OFFLINE-STATUS-CHG-1')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.assertEqual(self.client.post('/api/v1/status-assertion', json=body).get_json()['status'], 'ACTIVE')
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO IssuerDiscretionPolicy (agency_id,max_revoke_percent,window_days,set_by_admin,justification) "
+                        "VALUES (1,90,30,'test','offline status assertion revoke fixture') "
+                        "ON CONFLICT (agency_id) DO UPDATE SET max_revoke_percent=90")
+            cur.execute("CALL uc8_revoke_token(%s,1,'ADMINISTRATIVE','https://crl/off.crl',NULL)", (tid,))
+            conn.commit()
+        self.assertEqual(self.client.post('/api/v1/status-assertion', json=body).get_json()['status'], 'REVOKED')

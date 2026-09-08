@@ -6872,6 +6872,57 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_offline_verification(root: pathlib.Path) -> list[Finding]:
+    """P3.6: authorization verifiable with NO connectivity. The issuer signs a
+    short-lived STATUS ASSERTION (POST /api/v1/status-assertion); the detached
+    verifier decides the whole holder<->verifier flow offline -- the credential's
+    authenticity AND a fresh, bound, ACTIVE assertion -- with a freshness/replay
+    bound (expiry + a window ceiling) and no issuer contact. Runs every release."""
+    app = _read(root, "polaris_web/app.py")
+    if "/api/v1/status-assertion" not in app or "_status_assertion_statement" not in app:
+        return _fail("offline_verification",
+                     "app.py must expose POST /api/v1/status-assertion signing a canonical status statement")
+    if "signature_over_message" not in app or "expires_at" not in app:
+        return _fail("offline_verification",
+                     "the status assertion must be issuer-SIGNED (signature_over_message) and SHORT-LIVED (expires_at)")
+    if "def signature_over_message" not in _read(root, "polaris_web/pqc_signing.py"):
+        return _fail("offline_verification",
+                     "pqc_signing.signature_over_message must sign the assertion (real ML-DSA or placeholder)")
+    # The detached verifier decides it OFFLINE, and stays standalone.
+    verifier = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_status_assertion", "def verify_stapled", "polaris-status-assertion/1",
+                "_status_assertion_canonical"):
+        if sym not in verifier:
+            return _fail("offline_verification",
+                         "scripts/polaris-verify.py must verify a stapled presentation offline (%s missing)" % sym)
+    if "max_window_seconds" not in verifier or "fresh" not in verifier:
+        return _fail("offline_verification",
+                     "the offline verifier must enforce freshness: now within [issued_at, expires_at) AND a window "
+                     "no longer than an accepted maximum (max_window_seconds)")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", verifier, re.M):
+            return _fail("offline_verification",
+                         f"the offline verifier imports {mod!r}; it must stay standalone (a relying party runs it "
+                         "with no Polaris code, no database, no connectivity)")
+    # It RUNS every release, red on any wrong decision.
+    drill = _read(root, "scripts/polaris-offline-status-drill.py")
+    if not drill or "verify_stapled" not in drill:
+        return _fail("offline_verification",
+                     "scripts/polaris-offline-status-drill.py must run the offline accept/reject matrix")
+    if "polaris-offline-status-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("offline_verification",
+                     "the offline-status drill must run in CI (a protocol that never runs is displacement)")
+    if "OfflineStatusAssertionTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("offline_verification", "test_app.py must carry OfflineStatusAssertionTests")
+    return _ok("offline_verification",
+               "authorization is verifiable with no connectivity: POST /api/v1/status-assertion mints a "
+               "short-lived issuer-signed status assertion (possession-authenticated, no personal data), and the "
+               "standalone detached verifier decides the whole flow offline -- credential authenticity plus a "
+               "fresh, bound, ACTIVE assertion, rejecting a revoked/expired/over-long-window/tampered/misbound one "
+               "-- proven every release by scripts/polaris-offline-status-drill.py under real ML-DSA, so the issuer "
+               "never learns a verification happened")
+
+
 def check_typescript_sdk(root: pathlib.Path) -> list[Finding]:
     """P3.5b: the TypeScript verify SDK, held to the SAME conformance contract as
     the Python reference SDK. A second, independent implementation (ML-DSA-65 via
@@ -7137,6 +7188,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_offline_verification,
     check_typescript_sdk,
     check_conformance_suite,
     check_relying_party_api,

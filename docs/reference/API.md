@@ -663,6 +663,50 @@ accepted here for exactly that reason. Per-relying-party rate limited; no
 per-verification record is kept (a who-verified-whom log would be a surveillance
 store).
 
+### `POST /api/v1/status-assertion`
+
+**Possession-authenticated (no bearer).** Mints a short-lived, issuer-signed
+**status assertion** so authorization can be checked with **no connectivity**
+(roadmap P3.6). A holder fetches it when connected — presenting the genuine
+credential (`token_value` + `signature_hex`, the same possession proof as
+`/verify`, and the same uniform `not_verifiable` on a bad/unknown one) — staples it
+to a presentation, and a relying party verifies it fully offline. No bearer is
+required, so a holder refreshes its own status without being a registered relying
+party; no personal data, and no record of who fetched it.
+
+```json
+{ "token_value": "…", "signature_hex": "…" }
+```
+
+Returns the signed assertion — the issuer's ML-DSA-65 signature over
+`SHA3-256(canonical statement)`, where the canonical statement is the sorted-keys
+compact JSON of `{format, token_value, status, issued_at, expires_at}`:
+
+| field | notes |
+|---|---|
+| `format` | `polaris-status-assertion/1` |
+| `token_value` | binds the assertion to the credential |
+| `status` | the token's **current** lifecycle status (a revoked token gets a `REVOKED` assertion) |
+| `issued_at` / `expires_at` | the validity window; short-lived (`POLARIS_STATUS_ASSERTION_TTL`, default 3600s) |
+| `algorithm` / `signature_hex` / `public_key_hex` | the issuer's ML-DSA-65 signature and key (`public_key_hex` is null for the dev placeholder) |
+| `max_window_seconds` | the issuer's declared window |
+| `digest_construction` | how to reconstruct the signed bytes |
+
+**Offline verification** (the reference verifier, no server): a relying party
+accepts iff the credential is authentic **and** the assertion is authentic, bound to
+that credential, `ACTIVE`, and fresh — `now` within `[issued_at, expires_at)` and the
+window no longer than a ceiling it accepts. A revoked token's stale `ACTIVE`
+assertion is usable only until it expires, so the freshness window bounds staleness;
+an expired assertion, an over-long window, a wrong binding, or a non-`ACTIVE` status
+is rejected.
+
+```bash
+python3 scripts/polaris-verify.py --pack pack.json --status-assertion assertion.json --max-window 86400
+```
+
+Because verification touches no issuer, the issuer never learns that a verification
+happened — offline verification is *more* private than the online `/verify`.
+
 ## Verification API (use cases UC-1 through UC-8)
 
 Each use case is reachable through the operator UI (HTML form) AND

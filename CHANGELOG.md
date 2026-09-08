@@ -5,6 +5,48 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.291 — 2026-09-08 (Offline verification: authorization with no connectivity, P3.6)
+
+The last connectivity gap in the holder<->verifier flow. Authenticity was already
+offline (the detached verifier), but "is this authoritative right now?" needed an
+online call. This makes authorization verifiable with no connectivity, within a
+bounded freshness window — and, because verification touches no issuer, the issuer
+never learns a verification happened. Offline verification is *more* private than online.
+
+- **A short-lived signed status assertion.** `POST /api/v1/status-assertion` mints an
+  issuer-signed statement — the sorted-keys canonical JSON of `{format, token_value,
+  status, issued_at, expires_at}`, signed with the issuing agency's ML-DSA-65 key over
+  `SHA3-256(canonical)`. A holder fetches it when connected (possession-authenticated:
+  it presents the genuine credential signature, same uniform `not_verifiable` on a
+  bad/unknown one as `/verify`; no bearer, so a holder refreshes its own status without
+  being a registered relying party), staples it to a presentation, and presents offline.
+  No personal data, no record of who fetched it.
+
+- **The reference verifier decides it offline.** `scripts/polaris-verify.py --pack …
+  --status-assertion …` accepts iff the credential is authentic AND the assertion is
+  authentic, bound to that credential, `ACTIVE`, and fresh — `now` within
+  `[issued_at, expires_at)` and the window no longer than a ceiling the verifier accepts
+  (`--max-window`), so a verifier never trusts an arbitrarily long window an issuer
+  declares. A revoked token's stale `ACTIVE` assertion is usable only until it expires;
+  the window (`POLARIS_STATUS_ASSERTION_TTL`, default 3600s) bounds staleness. The
+  verifier stays standalone: no Polaris code, no database, no connectivity.
+
+- **Freshness and replay bounds specified and run.** The protocol, and exactly what a
+  verifier MUST reject (expired, over-long window, wrong binding, non-`ACTIVE`, bad
+  signature), are in [docs/design/offline-verification.md](docs/design/offline-verification.md).
+  `scripts/polaris-offline-status-drill.py` signs a credential and assertions with one
+  real ML-DSA-65 key and drives the whole matrix every release in the `pqc-real` CI job,
+  red on any wrong decision. `check_offline_verification` pins it; the endpoint's
+  possession proof, assertion shape, current-status reflection, and no-personal-data
+  rule are covered by `OfflineStatusAssertionTests`.
+
+Deferred to P3.6b: an aggregate signed status bundle, holder-wallet stapling and the
+SDK offline-status methods, and epoch binding.
+
+157 machine-checked invariants; 91 routes.
+
+---
+
 ## v9.290 — 2026-09-08 (TypeScript verify SDK: P3.5 complete across two languages)
 
 The other half of P3.5. The conformance suite (v9.289) is the contract; this adds a

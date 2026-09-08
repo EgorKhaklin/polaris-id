@@ -1533,6 +1533,15 @@ jobs:
       - name: End-to-end — holder presents, relying party accepts/rejects
         run: python scripts/polaris-e2e-drill.py
 
+      # v9.291 (roadmap P3.6) — offline verification: a short-lived issuer-signed
+      # STATUS assertion decides authorization with NO connectivity. The drill signs
+      # a credential and a status assertion with one real ML-DSA-65 key and proves the
+      # detached verifier accepts an active+fresh presentation and rejects a revoked,
+      # expired, over-long-window, tampered, wrong-bound, or untrusted-issuer one.
+      # Red if any decision is wrong. No database (pure crypto), like the e2e drill.
+      - name: Offline verification — signed status assertion, no connectivity
+        run: python scripts/polaris-offline-status-drill.py
+
       # v9.289 (roadmap P3.5) — the verification conformance suite is the integration
       # contract: it drives a verifier over the published authenticity cases and
       # checks every verdict. Run the bundled Python reference SDK against it (real

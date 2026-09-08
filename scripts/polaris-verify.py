@@ -256,6 +256,126 @@ def selftest() -> int:
     return 0 if ok else 2
 
 
+_STATUS_ASSERTION_FORMAT = "polaris-status-assertion/1"
+
+
+def _status_assertion_canonical(assertion):
+    """The canonical bytes the issuer signed — MUST match app.py's
+    _status_assertion_statement: sorted-keys compact JSON of exactly five fields."""
+    return json.dumps({
+        "format": assertion.get("format"),
+        "token_value": assertion.get("token_value"),
+        "status": assertion.get("status"),
+        "issued_at": assertion.get("issued_at"),
+        "expires_at": assertion.get("expires_at"),
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _parse_iso(s):
+    from datetime import datetime, timezone
+    if isinstance(s, str) and s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor_keys=None):
+    """Verify a short-lived signed status assertion (P3.6) OFFLINE: the ML-DSA-65
+    signature over SHA3-256(canonical statement), and freshness (now within
+    [issued_at, expires_at) and the window no longer than max_window_seconds, when a
+    bound is given). Reports status and, with anchors, issuer trust. No network."""
+    from datetime import datetime, timezone
+    v = {"status_authentic": False, "fresh": None, "status": assertion.get("status"),
+         "issued_at": assertion.get("issued_at"), "expires_at": assertion.get("expires_at"),
+         "issuer_trusted": None, "witnesses": [], "note": None}
+    alg = assertion.get("algorithm")
+    pk_hex = assertion.get("public_key_hex")
+    sig_hex = assertion.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder status assertion — not authenticatable offline"
+        return v
+    if assertion.get("format") != _STATUS_ASSERTION_FORMAT:
+        v["note"] = "not a %s" % _STATUS_ASSERTION_FORMAT
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_status_assertion_canonical(assertion)).digest()
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    v["witnesses"] = ran
+    if primary is None and witness is None:
+        v["note"] = "no ML-DSA-65 verifier available"
+        return v
+    if primary is not None and witness is not None and primary != witness:
+        v["note"] = "the two witnesses DISAGREE — treat as invalid"
+        return v
+    ok = primary if primary is not None else witness
+    v["status_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "status assertion signature is invalid"
+        return v
+    now = now or datetime.now(timezone.utc)
+    try:
+        ia, ea = _parse_iso(assertion["issued_at"]), _parse_iso(assertion["expires_at"])
+    except Exception as e:
+        v["fresh"] = False
+        v["note"] = "unparseable issued_at/expires_at (%s)" % e
+        return v
+    window = (ea - ia).total_seconds()
+    within = ia <= now < ea
+    window_ok = True if max_window_seconds is None else (0 < window <= max_window_seconds)
+    v["fresh"] = bool(within and window_ok)
+    if not within:
+        v["note"] = "stale or not-yet-valid: now is not within [issued_at, expires_at)"
+    elif not window_ok:
+        v["note"] = "window %ds exceeds the accepted maximum %ds" % (int(window), max_window_seconds)
+    if anchor_keys is not None:
+        v["issuer_trusted"] = pk_hex.lower() in {a.lower() for a in anchor_keys}
+    return v
+
+
+def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_keys=None):
+    """The full OFFLINE holder<->verifier decision (P3.6): the credential's
+    authenticity AND a fresh, bound, ACTIVE status assertion — with no connectivity.
+    accept iff both signatures are genuine (and issuer-trusted, when anchored), the
+    assertion is bound to this credential, fresh, and ACTIVE."""
+    a = verify_pack(pack, anchor_keys)
+    s = verify_status_assertion(assertion, now=now, max_window_seconds=max_window_seconds,
+                                anchor_keys=anchor_keys)
+    bound = bool(pack.get("token_value")) and pack.get("token_value") == assertion.get("token_value")
+    reasons = []
+    if not a["signature_valid"]:
+        reasons.append("credential is not authentic")
+    if a.get("issuer_trusted") is False:
+        reasons.append("credential issuer is not trusted")
+    if not bound:
+        reasons.append("the status assertion is not bound to this credential")
+    if not s["status_authentic"]:
+        reasons.append("status assertion not authentic: %s" % (s.get("note") or "invalid"))
+    elif not s["fresh"]:
+        reasons.append("status not fresh: %s" % (s.get("note") or "expired"))
+    elif s["status"] != "ACTIVE":
+        reasons.append("status is %s, not ACTIVE" % s["status"])
+    if s.get("issuer_trusted") is False:
+        reasons.append("status assertion issuer is not trusted")
+    accept = (a["signature_valid"] and a.get("issuer_trusted") in (None, True)
+              and bound and s["status_authentic"] and s.get("issuer_trusted") in (None, True)
+              and bool(s["fresh"]) and s["status"] == "ACTIVE")
+    return {"decision": "accept" if accept else "reject",
+            "authentic": a["signature_valid"], "status": s["status"], "fresh": s["fresh"],
+            "bound": bound, "reasons": reasons, "credential": a, "status_assertion": s}
+
+
 def _load_anchor(path):
     with open(path) as f:
         data = json.load(f)
@@ -272,6 +392,11 @@ def _load_anchor(path):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Detached authenticity verifier for a Polaris credential.")
     ap.add_argument("--pack", help="authenticity pack JSON file (default: stdin)")
+    ap.add_argument("--status-assertion",
+                    help="a signed status assertion JSON file (P3.6): with --pack, decide "
+                         "ACCEPT/REJECT fully OFFLINE (authenticity + fresh, bound, ACTIVE status)")
+    ap.add_argument("--max-window", type=int, default=None,
+                    help="reject a status assertion whose validity window exceeds this many seconds")
     ap.add_argument("--issuer-anchor", help="JSON file of the issuer's published verification key(s)")
     ap.add_argument("--json", action="store_true", help="machine-readable verdict")
     ap.add_argument("--verify-dir", help="re-verify every published vector in a directory")
@@ -297,6 +422,26 @@ def main(argv=None):
         except Exception as e:
             print("could not read the issuer anchor: %s" % e, file=sys.stderr)
             return 3
+
+    # P3.6: with a stapled status assertion, decide the whole thing OFFLINE.
+    if args.status_assertion:
+        try:
+            assertion = json.loads(open(args.status_assertion).read())
+        except Exception as e:
+            print("could not read the status assertion: %s" % e, file=sys.stderr)
+            return 3
+        verdict = verify_stapled(pack, assertion, max_window_seconds=args.max_window, anchor_keys=anchor)
+        if args.json:
+            print(json.dumps(verdict, indent=2))
+        else:
+            print("decision:         %s" % verdict["decision"].upper())
+            print("authentic:        %s" % verdict["authentic"])
+            print("status:           %s" % verdict["status"])
+            print("fresh:            %s" % verdict["fresh"])
+            print("bound:            %s" % verdict["bound"])
+            for r in verdict["reasons"]:
+                print("  - %s" % r)
+        return 0 if verdict["decision"] == "accept" else 2
 
     verdict = verify_pack(pack, anchor)
     if args.json:
