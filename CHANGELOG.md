@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.282 — 2026-09-08 (ML-DSA-65 conformance against Project Wycheproof)
+
+The companion to the witness fuzzing, and the item the previous ship parked. The
+published `vectors/` prove three implementations agree with EACH OTHER; this proves
+something stronger — that Polaris's two production witnesses agree with an
+INDEPENDENT authority's known answers.
+
+- **`vectors/kat/mldsa_65_verify.json`** — a curated, empty-context subset of
+  Project Wycheproof's ML-DSA-65 verify vectors (Apache-2.0), pinned to a source
+  commit and capped per flag-set so every edge case Wycheproof exercises is
+  represented (51 vectors: 21 valid, 30 invalid — bit-flipped signatures, boundary
+  conditions, zero public keys, wrong lengths, infinity-norm violations). The
+  invalid vectors are the point: they catch a verifier that accepts a bad signature.
+- **`scripts/polaris-kat-verify.py`** verifies every vector under BOTH witnesses —
+  liboqs and cryptography/OpenSSL — and asserts each matches Wycheproof's expected
+  valid/invalid verdict. Proven locally: 51/51 conformant under both. It runs in
+  CI's `pqc-real` job; a non-conformance fails the job.
+- **`scripts/polaris-fetch-kat.py`** regenerates the committed subset from the
+  pinned Wycheproof commit, so the vectors are auditable and refreshable, not
+  hand-made. `check_kat_conformance` (#150) pins the provenance, both directions
+  (valid AND invalid), both witnesses, and the CI wiring — with a detection test.
+
+This closes the follow-up noted in v9.281: earlier the official vectors could not be
+fetched; the network was in fact reachable, so the true known-answer test is now
+wired against Wycheproof (empty-context tests; the few context-string vectors are
+excluded pending a context-aware verify).
+
+Constitutional note: no change to C1-C10 or the vocation. The KAT verifies public
+test vectors and touches no identity data.
+
+---
+
 ## v9.281 — 2026-09-08 (Differential fuzzing of the two witnesses)
 
 With Phase E complete, a frontier hardening of the crypto the whole engine rests

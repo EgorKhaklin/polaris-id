@@ -1521,6 +1521,15 @@ jobs:
       - name: Dyno — ML-DSA-65 primitives (real numbers from this box)
         run: python scripts/polaris-dyno.py --ml-dsa-samples 500
 
+      # v9.282 — ML-DSA-65 conformance against Project Wycheproof's known-answer
+      # verify vectors. The published vectors/ show three implementations agreeing
+      # with each other; this shows the two PRODUCTION witnesses (liboqs and
+      # cryptography/OpenSSL) agreeing with an INDEPENDENT authority's verdicts on
+      # every vector. A non-conformance (accepting a signature Wycheproof calls
+      # invalid, or rejecting a valid one) fails the job.
+      - name: KAT — ML-DSA-65 conformance vs Wycheproof
+        run: python scripts/polaris-kat-verify.py
+
       # v9.139 — the signing-key GENERATION must emit clean JSON. liboqs prints a
       # banner to stdout at import; polaris-generate-secrets.sh captures a python
       # one-liner's stdout to mint the key, so a naive capture corrupts the file

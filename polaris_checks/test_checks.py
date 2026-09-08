@@ -5933,3 +5933,54 @@ def test_witness_fuzz_check_discriminates(tmp_path):
     # 4. CI does not run the crypto suite
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_witness_fuzz(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the crypto suite"
+
+
+def test_kat_conformance_check_discriminates(tmp_path):
+    import json as _json
+    # (v9.282) ML-DSA-65 must be checked against an independent authority's known
+    # answers (Wycheproof): committed vectors with provenance + BOTH valid and
+    # invalid cases, a verifier that checks under both witnesses vs the expected
+    # result, and CI wiring. Each perturbation removes one leg.
+    def vectors(results, prov=True):
+        tests = [{"tcId": i, "result": r, "msg": "00", "sig": "00"} for i, r in enumerate(results)]
+        obj = {"algorithm": "ML-DSA-65", "testGroups": [{"publicKey": "ab", "tests": tests}]}
+        if prov:
+            obj["provenance"] = {"source": "C2SP/wycheproof testvectors_v1/mldsa_65_verify_test.json",
+                                 "commit": "613a2e44cb645a9890e49f8d8798cd59ef38379b", "license": "Apache-2.0"}
+        return _json.dumps(obj)
+    VERIFIER = (
+        "import oqs\n"
+        "from cryptography.hazmat.primitives.asymmetric import mldsa\n"
+        "def check(pk, msg, sig, expect):\n"
+        "    a = mldsa.MLDSA65PublicKey.from_public_bytes(pk)\n"
+        "    return (result == 'valid') == expect\n"
+    )
+    FETCH = "#!/usr/bin/env python3\n# regenerates the KAT vectors from a pinned Wycheproof commit\n"
+    CI = "jobs:\n  pqc-real:\n    steps:\n      - run: python scripts/polaris-kat-verify.py\n"
+    good = {
+        "vectors/kat/mldsa_65_verify.json": vectors(["valid"] * 10 + ["invalid"] * 15),
+        "scripts/polaris-kat-verify.py": VERIFIER,
+        "scripts/polaris-fetch-kat.py": FETCH,
+        ".github/workflows/ci.yml": CI,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_kat_conformance(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the vectors lose their provenance (unauditable)
+    write({"vectors/kat/mldsa_65_verify.json": vectors(["valid"] * 10 + ["invalid"] * 15, prov=False)})
+    assert checks.check_kat_conformance(tmp_path)[0].level == "FAIL", "must FAIL without provenance"
+    # 2. the verifier checks only one witness
+    write({"scripts/polaris-kat-verify.py": VERIFIER.replace("MLDSA65", "SomethingElse")})
+    assert checks.check_kat_conformance(tmp_path)[0].level == "FAIL", "must FAIL without the second witness"
+    # 3. no invalid vectors (would not catch a forgery-accepting verifier)
+    write({"vectors/kat/mldsa_65_verify.json": vectors(["valid"] * 25)})
+    assert checks.check_kat_conformance(tmp_path)[0].level == "FAIL", "must FAIL without invalid vectors"
+    # 4. CI does not run the KAT
+    write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
+    assert checks.check_kat_conformance(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the KAT"

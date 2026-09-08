@@ -60,6 +60,8 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-federation-drill.py` | Two issuers on one box with distinct ML-DSA-65 roots plus a third outsider; proves via the detached verifier that each relying party accepts its own issuer and rejects a foreign one (PE.3), red if the boundary breaks | `ci.yml`'s pqc-real job |
 | `polaris-wallet.py` | The holder's wallet (PE.7), the first non-operator surface: hold a credential as a file, verify it offline, present it (a duress presentation is indistinguishable from a normal one), and prove membership in zero knowledge. Standalone — no server code, no database | A holder; `test_wallet.py` in CI |
 | `polaris-dyno.py` | Real numbers from the box (PE.8): single-core ML-DSA-65 sign/verify (single- and two-witness) and ZK prove/verify at the tree depth, printed with the box spec and version; measured, not extrapolated ([DYNO.md](../docs/reference/DYNO.md)) | `ci.yml` (pqc-real: ML-DSA; test: ZK), and anyone on their own box |
+| `polaris-kat-verify.py` | ML-DSA-65 conformance: verifies the committed Wycheproof known-answer vectors (`vectors/kat/`) under both production witnesses and asserts each matches Wycheproof's valid/invalid verdict | `ci.yml`'s pqc-real job |
+| `polaris-fetch-kat.py` | Regenerates `vectors/kat/mldsa_65_verify.json` from Project Wycheproof at a pinned commit (empty-context subset, capped per flag-set) | A contributor refreshing the KAT set |
 
 ## Contributor: run before a commit
 

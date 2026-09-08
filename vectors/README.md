@@ -68,3 +68,22 @@ ever stopped verifying, or a tampered one ever started, CI goes red.
 
 Regenerate them with `python3 scripts/polaris-make-vectors.py --out vectors`
 (prefers liboqs when present, falls back to `dilithium-py`).
+
+## Conformance against an independent authority (`kat/`)
+
+The packs above prove three implementations agree with *each other*.
+`kat/mldsa_65_verify.json` proves something stronger: that Polaris's two
+production witnesses (liboqs and cryptography/OpenSSL) agree with **Project
+Wycheproof's** independent known-answer verdicts — valid signatures that must
+verify, and invalid ones (bit-flipped, boundary conditions, zero keys, wrong
+lengths) that must be rejected. It is a curated, empty-context subset of
+Wycheproof's ML-DSA-65 verify vectors, pinned to a source commit (see the file's
+`provenance`); Wycheproof is Apache-2.0.
+
+```bash
+python3 scripts/polaris-kat-verify.py          # both witnesses vs Wycheproof's answers
+python3 scripts/polaris-fetch-kat.py           # regenerate the committed subset from the pinned source
+```
+
+CI runs the KAT in the `pqc-real` job every release; `check_kat_conformance` keeps
+it wired and both-directional.

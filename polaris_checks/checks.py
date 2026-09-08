@@ -6726,7 +6726,66 @@ def check_witness_fuzz(root: pathlib.Path) -> list[Finding]:
                "AND cryptography independently and flag any disagreement, run via the attack suite in CI")
 
 
+# ---------------------------------------------------------------------------
+# ML-DSA-65 conformance against an independent authority (Project Wycheproof).
+# The published vectors/ (PE.2) prove three implementations agree with EACH OTHER;
+# this proves something stronger — that Polaris's two PRODUCTION witnesses (liboqs
+# and cryptography/OpenSSL) agree with Wycheproof's INDEPENDENT known-answer
+# verdicts (valid/invalid) on every vector, including the invalid ones that hunt
+# for a verifier that accepts a bad signature. This check pins that the committed
+# vectors carry their provenance and both directions (valid AND invalid), that the
+# verifier checks under BOTH witnesses against the expected result, and that CI runs
+# it. Detection: test_checks strips the provenance, drops a witness, removes the
+# invalid vectors, and un-wires CI.
+# ---------------------------------------------------------------------------
+def check_kat_conformance(root: pathlib.Path) -> list[Finding]:
+    path = root / "vectors" / "kat" / "mldsa_65_verify.json"
+    if not path.is_file():
+        return _fail("kat_conformance", "vectors/kat/mldsa_65_verify.json (the conformance vectors) is missing")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return _fail("kat_conformance", f"the KAT vectors are not valid JSON ({e})")
+    prov = data.get("provenance") or {}
+    if "wycheproof" not in str(prov.get("source", "")).lower() or not prov.get("commit"):
+        return _fail("kat_conformance",
+                     "the KAT vectors must record their provenance: an independent authority (Wycheproof) and a "
+                     "pinned commit, so a reviewer can audit where the known answers came from")
+    results = [t.get("result") for g in data.get("testGroups", []) for t in g.get("tests", [])]
+    if results.count("valid") < 1 or results.count("invalid") < 1:
+        return _fail("kat_conformance",
+                     "the KAT must exercise BOTH directions — valid signatures that must verify AND invalid ones "
+                     "that must be rejected; the invalid vectors are what catch a verifier that accepts a forgery")
+    if len(results) < 20:
+        return _fail("kat_conformance", f"only {len(results)} KAT vectors; keep a representative set (>=20)")
+    # The verifier checks under BOTH witnesses against the expected result.
+    verifier = _read(root, "scripts/polaris-kat-verify.py")
+    if not verifier:
+        return _fail("kat_conformance", "scripts/polaris-kat-verify.py is missing")
+    if "MLDSA65" not in verifier or "oqs" not in verifier:
+        return _fail("kat_conformance",
+                     "the KAT verifier must check under BOTH production witnesses — liboqs and cryptography's "
+                     "MLDSA65 — not one of them")
+    if 'result' not in verifier or "expect" not in verifier:
+        return _fail("kat_conformance",
+                     "the KAT verifier must compare each verdict against Wycheproof's expected `result`")
+    # A regeneration path keeps the committed subset auditable.
+    if not _read(root, "scripts/polaris-fetch-kat.py"):
+        return _fail("kat_conformance",
+                     "scripts/polaris-fetch-kat.py (the pinned regeneration path) is missing")
+    # CI runs it every release.
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-kat-verify.py" not in ci:
+        return _fail("kat_conformance",
+                     "ci.yml must run scripts/polaris-kat-verify.py so ML-DSA-65 conformance is checked every release")
+    return _ok("kat_conformance",
+               f"ML-DSA-65 is checked for conformance against Wycheproof's independent known answers "
+               f"({results.count('valid')} valid + {results.count('invalid')} invalid vectors) under both "
+               "production witnesses, run in CI, with a pinned regeneration path")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_kat_conformance,
     check_witness_fuzz,
     check_real_pqc_default_boot,
     check_detached_verifier,
