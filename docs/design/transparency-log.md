@@ -85,6 +85,13 @@ Two uses follow, both verified offline (`scripts/polaris-verify.py`):
 The append-only guarantee of the base log does not depend on any of this; witnessing adds
 the defence against the one attack a lone monitor cannot see.
 
+What is built here is the **protocol** for independent witnesses: the cosignature format, the
+threshold rule, the equivocation proof, and a witness daemon anyone can run. What is not
+here, and cannot be until deployment, is a set of **institutionally independent** witnesses
+actually running it (a bank, a civil-society group, another authority). That gap is not a
+software deficiency; it is that the system has not been deployed. The strength of the
+defence in practice is exactly the independence of whoever runs the witnesses.
+
 ## External-ledger publication (P3.3c)
 
 Witnesses attest the heads they were shown; an external **ledger** is the complete, ordered,

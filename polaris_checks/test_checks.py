@@ -5515,6 +5515,14 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     write(site=SITE.replace("a reference implementation of an identity-token system",
                             "a reference implementation of a national identity-token system"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL if the title calls it 'national'"
+    # a bare 'unlinkable' on the shareable surface, without the issuer qualifier
+    write(site=SITE.replace("a reference implementation of an identity-token system",
+                            "a reference implementation of an unlinkable-by-default identity-token system"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on bare 'unlinkable' without the issuer qualifier"
+    # the qualified form passes
+    write(site=SITE.replace("a reference implementation of an identity-token system",
+                            "a reference implementation of an issuer-unlinkable identity-token system"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS when unlinkability is qualified as issuer-side"
     # an overclaim returns to the README
     write(readme=README + "Polaris consolidates them into one physical token per person.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a retired overclaim"

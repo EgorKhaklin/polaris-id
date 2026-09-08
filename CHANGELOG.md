@@ -5,6 +5,42 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.304 — 2026-09-08 (Front-door honesty pass, and a flaky-benchmark fix)
+
+An audit of the outward surfaces against three internal points, plus a CI-reliability fix.
+
+- **"Unlinkable" is now qualified where the claim is made.** The tagline, title, and social
+  card said "unlinkable-by-default", which reads as covering the holder-to-verifier hop; they
+  now say "issuer-unlinkable", so the qualifier the README body already carried sits beside the
+  claim. `check_public_claims_honest` pins it: the shareable title and social card must say
+  "issuer-unlinkable", not a bare "unlinkable".
+
+- **Cross-relying-party correlation stays a documented boundary.** A full-credential
+  presentation carries a stable `token_value`, so unrelated relying parties can correlate a
+  holder; this is a permanent, out-of-scope design decision, not a bug, and the README already
+  states it positively (no pairwise/blinded/one-time/anonymous presentation). Restated, unchanged.
+
+- **Offline authorization keeps authenticity and currency mechanically distinct.** A stapled
+  presentation can be cryptographically authentic and still not certainly ACTIVE at this
+  instant; the detached verifier already returns them as separate fields (`authentic` versus
+  the `decision`/`status`), and a high-risk relying party sets a `max_age` of seconds. The
+  README now says so explicitly beside the tradeoff.
+
+- **The witness point is phrased carefully.** v9.302 shipped the protocol for independent
+  transparency witnesses; institutionally independent witnesses actually running it are a
+  deployment step, not a software one. docs/design/transparency-log.md now says so.
+
+- **A flaky benchmark is fixed.** The polaris_sim single-vs-two-witness micro-benchmark is
+  overhead-dominated, so the two rates hover near parity and swing under CI noise (measured
+  ratios ~0.94 at v9.295 and ~0.77 at v9.302 both reddened the build against an 80% floor).
+  The ordering is not a reliable regression signal at this scale and is no longer asserted; the
+  test now only trips if single-witness falls below half the two-witness rate, which is a broken
+  path rather than noise.
+
+165 machine-checked invariants.
+
+---
+
 ## v9.303 — 2026-09-08 (Transparency external-ledger publication, P3.3c)
 
 Witnesses (P3.3b) attest the heads they were shown; an external ledger is the complete,

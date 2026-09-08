@@ -6194,6 +6194,15 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
             return _fail("public_claims",
                          f"the site {label} calls Polaris a 'national' system; that category overstates a reference "
                          "implementation on notional data. Drop 'national' from the title and social card.")
+        # Unlinkability is issuer-side and ZK-mode-scoped. A bare "unlinkable-by-default"
+        # on the shareable surface reads as covering the holder-to-verifier hop, which it
+        # does not; the qualifier must be beside the claim, so say "issuer-unlinkable".
+        low = m.group(1).lower()
+        if "unlinkable" in low and "issuer-unlinkable" not in low:
+            return _fail("public_claims",
+                         f"the site {label} says 'unlinkable' without the issuer qualifier; unlinkability is "
+                         "issuer-side and ZK-mode-scoped, so the shareable surface must say 'issuer-unlinkable' "
+                         "(a full-credential presentation is correlatable across verifiers)")
     for bad in _OVERCLAIM_PHRASES:
         if bad in readme:
             return _fail("public_claims",
