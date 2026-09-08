@@ -55,6 +55,8 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-trace-drill.sh` | Tracing joins logs to spans, and the dashboards load | `ci.yml` |
 | `polaris-perf-baseline.sh` | The published latency baseline, re-measured in smoke mode | `ci.yml` |
 | `polaris-custody-pkcs11-drill.sh` | ML-DSA-65 signing inside a PKCS#11 token | `ci.yml`'s custody job |
+| `polaris-verify.py` | The detached verifier: an ML-DSA-65 authenticity pack verifies offline with only a standard ML-DSA library, no Polaris code and no database; `--selftest` (a live round-trip) and `--verify-dir vectors` run in the pqc-real job | `ci.yml`, and any relying party with no Polaris installed |
+| `polaris-make-vectors.py` | Generates the published authenticity vectors (`vectors/`), preferring liboqs and falling back to an independent FIPS-204 implementation | A contributor regenerating `vectors/` |
 
 ## Contributor: run before a commit
 

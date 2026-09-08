@@ -5,6 +5,60 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.274 — 2026-09-08 (The engine, not the wrap: a detached verifier a relying party runs offline)
+
+The owner called it: too much effort on the wrap of the car (consoles, ontology,
+presentation), too little on the engine (the cryptographic primitives as things
+that run detached, for real, under attack). The test of engine work is
+displacement, a path that runs without anyone watching, not a document that says
+the path exists. The roadmap is remade engine-first (a new active Phase E), and
+this ship is its flagship: Polaris's ML-DSA-65 signatures can now be verified by
+someone other than Polaris, offline, with no Polaris code and no database.
+
+- **A detached verifier (`scripts/polaris-verify.py`).** A standalone CLI a
+  relying party runs with only a standard ML-DSA-65 library; it imports no Polaris
+  code and no database driver. It reads an authenticity pack, reconstructs
+  `SHA3-256(token_value)`, and verifies the signature under two independent
+  witnesses (liboqs and cryptography/OpenSSL), exactly as issuance does. Exit 0
+  iff the signature is valid; a placeholder is reported as not-authenticatable,
+  never as a green check.
+- **An authenticity pack the app exports (`GET /api/tokens/<id>/authenticity-pack`).**
+  The deliberate opposite of `/export`, which strips the signature and key bytes:
+  this route EXPORTS them (token_value, signature, public key, algorithm, and a
+  `digest_construction` field) so there is something to verify offline. It carries
+  authenticity, never authorization; whether a token is usable now stays the
+  online `/verify` question.
+- **Published test vectors (`vectors/`).** Five fixed authenticity packs anyone
+  can re-verify offline: a genuine one, three tampered ones (a flipped signature,
+  an altered token, a wrong key) that must fail, and the placeholder. They were
+  produced by an INDEPENDENT FIPS-204 implementation (dilithium-py), and CI's
+  `pqc-real` job re-verifies every one under liboqs AND cryptography/OpenSSL on
+  every release: three implementations agreeing, not one agreeing with itself.
+- **Exercised, not merely present.** CI runs `polaris-verify.py --selftest` (a
+  live ML-DSA-65 round-trip: a genuine pack verifies; a flipped signature, an
+  altered token and a wrong key each fail; the placeholder is refused) and
+  `--verify-dir vectors`. `check_detached_verifier` (#142) pins that the verifier
+  is standalone (no Polaris or DB imports), does the real crypto, that the pack
+  route exports the signature, that the vectors carry their expectations, and that
+  CI runs it, each with a detection test. `AuthenticityPackTests` proves the DB
+  round-trip: issue a token, export its pack, run the real detached script on it,
+  and get the correct verdict.
+- **Roadmap remade engine-first.** A new active Phase E carries the eight engine
+  items in order: the real default boot; the detached verifier (this ship); two
+  issuers on one machine; the HSM as the sole production signer with rotation;
+  attacks that must fail every release; the offline pack (this ship); a holder
+  CLI; and published numbers. The wrap is frozen behind it: further Atlas and
+  Athena and ontology surface, invariants that only read a file, and any
+  "national"-scale expansion yield until Phase E's exit gate is met.
+
+Constitutional note: no change to C1-C10 or the vocation. The pack exports only
+authenticity material a logged-in operator can already see; it is audit-logged
+and replica-routed like `/verify`, and carries no authorization state. C6 holds
+(zero-knowledge verifications carry no token id, so nothing in this path can
+locate one).
+
+---
+
 ## v9.273 — 2026-09-08 (Honesty pass: shrink every claim to what the code does now)
 
 Before continuing the scale work, a pass over every outward-facing surface to

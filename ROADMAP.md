@@ -18,6 +18,16 @@ what a deployment may not yet claim is bounded by
 previously retired scope decisions are reopened here with reasons, rather
 than silently.
 
+**Engine before wrap (2026-09-08).** The owner directed a hard reprioritization:
+too much effort had gone into the *wrap* (consoles, ontology, presentation) and
+too little into the *engine* (the cryptographic primitives as things that run
+detached, for real, under attack). The test of engine work is **displacement** —
+a path that exists and runs without anyone watching, not another document saying
+the path exists. Phase E below is that engine work, and it is the active phase:
+it precedes the numbered deployment phases, and the wrap is frozen behind it (see
+"Frozen behind the engine" in Phase E). This reopens no non-goal and does not
+soften the constitution.
+
 **Status marks:** `[ ]` pending · `[>]` in progress · `[x]` done ·
 `[EXT]` blocked on an external actor (funding, law, vendor, institution).
 Update marks in place as part of each ship; never delete rows.
@@ -30,7 +40,7 @@ XL (multi-arc). Risk is delivery risk, not security risk.
 ## Where we are (inventory at v9.236)
 
 **Have, working, CI-proven:** a 30-table constraint-enforced schema (37 tables
-in a migrated deployment) with append-only audit; an 87-route application with
+in a migrated deployment) with append-only audit; an 88-route application with
 WebAuthn operator MFA, a server-side session registry, per-role network policy,
 per-agency quotas and the Atlas; an operator CLI; Plonky2 ZK Merkle inclusion
 with an independent Python second witness and a parameterized tree depth; real
@@ -44,8 +54,8 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 141 invariant
-checks (v9.262) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
+release; CVE gates on dependencies and images; a coverage floor; 142 invariant
+checks (v9.274) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 **Do not have:** hardware tokens (the physical artifact is modeled, not built);
@@ -76,6 +86,7 @@ OpenSSL 3.5 reaching the pgbouncer and postgres images.
 
 | Phase | Objective | Scale target | Exit gate |
 |---|---|---|---|
+| **E** | **The engine: real, detached, adversarial** (ACTIVE) | n/a | A relying party verifies offline with no Polaris code; two issuers interoperate; the HSM is the only prod signer; attacks run every release and fail; a person holds a credential; numbers are published |
 | P0 | Foundation closure | n/a | Every claim reproducible by command; supply chain signed; zero known debts |
 | P1 | Single-authority production | 10k-100k persons, one org | A non-author operator runs it from docs alone; pen test closed; SLOs met |
 | P2 | Scale architecture | 1-10M persons (state) | 10M load profile green on HA topology through a rolling deploy and a failover |
@@ -85,9 +96,46 @@ OpenSSL 3.5 reaching the pgbouncer and postgres images.
 | P6 | Certification and assurance | Authorization-ready | Validated crypto option, 800-63 mapping, audit and red team published |
 | P7 | National rollout | 350M persons | First state live; a national program office assumes ownership |
 
-P4 runs in parallel from P1 onward. P5-P7 are gated on external actors; the
-buildable machinery for each is listed so no external gate is ever waiting on
-us.
+Phase E is the active phase and precedes P0-P7: the engine is built before more
+deployment machinery is wrapped around it. P4 runs in parallel from P1 onward.
+P5-P7 are gated on external actors; the buildable machinery for each is listed so
+no external gate is ever waiting on us.
+
+---
+
+## PE - The engine: real, detached, adversarial  [ACTIVE]
+
+Objective: the cryptographic core is not a thing the app does behind a login; it
+is a set of primitives that run **detached, for real, and under attack**. Each
+row is measured by displacement — a path that runs without anyone watching — not
+by a document that says it does. This phase is active; it precedes the numbered
+deployment phases below.
+
+| ID | Item | Size | Risk | Blocked by | Definition of done |
+|---|---|---|---|---|---|
+| [>] PE.1 | The default boot is the real motor | M | med | - | `POLARIS_USE_REAL_PQC` is on wherever the app is not explicitly in a dev profile named `placeholder`; issuance FAILS CLOSED at boot when it cannot sign for real, rather than falling to a silent placeholder in production; a check pins the boot guard and the named dev profile. The prod compose and Helm already set the flag (v9.116); this row adds the fail-closed *boot* guard and the explicit `placeholder` profile |
+| [x] PE.2 | A detached verifier a relying party runs with no Polaris code (v9.274) | M | med | - | `scripts/polaris-verify.py` verifies an ML-DSA-65 authenticity pack OFFLINE with only a standard ML-DSA library, no Polaris code and no database; `GET /api/tokens/<id>/authenticity-pack` exports the pack; the published `vectors/` are re-verified in CI under liboqs AND cryptography/OpenSSL (three independent implementations agree). Pinned by `check_detached_verifier`; the pack round-trip is a DB test; CI's `pqc-real` job runs `--selftest` and `--verify-dir` |
+| [ ] PE.3 | Two issuers on one machine — real federation | L | med | PE.2 | Two independent issuer identities (distinct signing keys and trust anchors) run on one host; a token issued by A verifies against A's anchor and is REJECTED against B's; the detached verifier takes an issuer anchor and distinguishes them; a CI drill proves cross-issuer accept and reject |
+| [ ] PE.4 | The HSM is the only production signing path (one profile) + rotation | L | med | PE.1 | A profile in which SoftHSM (PKCS#11) is the SOLE signer, with no file key anywhere in it; a key rotation performed end to end (the old anchor still verifies old tokens, the new anchor signs new ones); drilled in CI |
+| [ ] PE.5 | Attacks that must fail, run every release | M | med | PE.2 | An `attacks/` folder of executable adversaries (forge a signature, tamper a pack, present a revoked token, replay, wrong key), each of which MUST fail against the real code; CI runs them every release and goes red if any SUCCEEDS. Running attacks, not greps |
+| [x] PE.6 | An offline authenticity pack, re-verifiable with the network off (v9.274) | S | low | - | Folded into PE.2: the authenticity pack is one self-contained file, and `polaris-verify.py --pack file.json` verifies it with no network and no database. The published `vectors/` are exactly such files |
+| [ ] PE.7 | One held-in-hand flow, even ugly — a holder CLI | L | med | PE.2 | A holder-side CLI (a wallet): enroll (including a duress code), hold a credential as a file, present it for verification, and produce a ZK membership proof — the first non-operator surface, however plain |
+| [ ] PE.8 | Publish real numbers from this box | M | low | PE.2 | Measured, reproducible throughput and latency for issue, verify (single- and two-witness) and ZK prove/verify at a stated tree depth, produced by a committed benchmark and published with the box's spec and a version stamp; no extrapolation called certification |
+
+Exit gate: a relying party verifies a Polaris credential offline with no Polaris
+code (met at PE.2); two issuers interoperate with correct accept and reject; the
+HSM is the only signer in one profile with a drilled rotation; the attack suite
+runs every release and is green (every attack fails); a person holds and presents
+a credential; and the published numbers come from a reproducible bench on a named
+box. Until this gate is met, the work below yields to it.
+
+**Frozen behind the engine.** These add surface, not displacement, and are frozen
+until PE's exit gate is met: further Atlas ships (Investigate, Alerts) and any
+Athena / ontology / foresight / "constitution tiers" expansion; any invariant
+that only reads a file rather than exercising a path; wiring a second signature
+algorithm (SLH-DSA) before the HSM is the sole production signer (PE.4); and any
+"national"-scale expansion of scope. The permanent non-goals below hold
+independently of this freeze.
 
 ---
 
@@ -337,7 +385,8 @@ before the P5 consent framework exists. These do not expire with any phase.
 
 ## Execution protocol for the next session
 
-1. Read [CLAUDE.md](CLAUDE.md), then this file. The active phase is the lowest
+1. Read [CLAUDE.md](CLAUDE.md), then this file. The active phase is Phase E (the
+   engine); after its exit gate is met, the active phase is the lowest numbered
    phase with pending rows.
 2. Pick the first row whose Blocked-by column is satisfied; prefer S and M
    rows when resuming cold.

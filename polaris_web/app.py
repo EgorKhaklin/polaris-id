@@ -4962,6 +4962,72 @@ def api_token_verify(tok_id):
     )
 
 
+@app.route('/api/tokens/<int:tok_id>/authenticity-pack')
+@security.login_required
+@replica_reads
+def token_authenticity_pack(tok_id):
+    """Export a token's signature as a self-contained AUTHENTICITY PACK: the
+    material a relying party needs to verify the ML-DSA-65 signature OFFLINE, with
+    no Polaris server, no database, and no Polaris code — only a standard ML-DSA-65
+    library and scripts/polaris-verify.py.
+
+    This is the deliberate OPPOSITE of /export, which STRIPS the signature and key
+    bytes (that route is an operator's view-of-record; this one is a verifiable
+    credential). The pack carries exactly the immutable authenticity material the
+    verify-at-use path reads — token_value, signature, the public key stored with
+    it, the algorithm — plus digest_construction, so a third party reproduces the
+    check with their own verifier and trusts the math, not this server. It is
+    login-gated and replica-eligible for the same reason /verify's authenticity
+    read is: the signed material never changes once issued.
+
+    It says NOTHING about current authorization. Whether the token is usable right
+    now is a separate, freshness-critical question answered online by /verify; an
+    offline pack is authenticity, not status. A NULL public key means the token
+    carries the deterministic dev/CI placeholder (a SHA3 binding, not a signature),
+    and the pack says so rather than let a relying party mistake it for genuine."""
+    rows = query("""
+        SELECT it.token_value, it.issued_date, it.status,
+               ts.signature_bytes, ts.signing_public_key_hex, ts.signed_at,
+               alg.name AS algorithm, ag.name AS issuer
+        FROM   IdentityToken it
+        JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
+        JOIN   CryptographicAlgorithm alg ON ts.algorithm_id = alg.algorithm_id
+        JOIN   Agency ag ON it.issuing_agency_id = ag.agency_id
+        WHERE  it.token_id = %s
+        ORDER BY ts.signed_at DESC
+    """, (tok_id,))
+    if not rows:
+        return jsonify(error='no such token, or it has no active signature'), 404
+
+    r = rows[0]
+    raw = r['signature_bytes']
+    sig_hex = bytes(raw).hex() if raw is not None else ''
+    real = r['signing_public_key_hex'] is not None
+    pack = {
+        'format': 'polaris-authenticity-pack/1',
+        'token_id': tok_id,
+        'token_value': r['token_value'],
+        # A real signature records ML-DSA-65; a placeholder records the label the
+        # detached verifier keys on so it can refuse to authenticate it.
+        'algorithm': r['algorithm'] if real else pqc_signing.PLACEHOLDER_LABEL,
+        'signature_hex': sig_hex,
+        'public_key_hex': r['signing_public_key_hex'],
+        'real_signature': real,
+        'issuer': r['issuer'],
+        'issued_at': r['issued_date'].isoformat() if r['issued_date'] else None,
+        'signed_at': r['signed_at'].isoformat() if r['signed_at'] else None,
+        # How the signed message is formed, so an INDEPENDENT implementer can
+        # reconstruct exactly what was signed without reading Polaris code: the
+        # signer signs SHA3-256(token_value.encode('utf-8')) under `algorithm`.
+        'digest_construction': 'SHA3-256(token_value.encode("utf-8"))',
+        'verify_with': 'python3 scripts/polaris-verify.py --pack <this-file>',
+    }
+    if not real:
+        pack['note'] = ('this token was signed with the development placeholder, not a '
+                        'real ML-DSA-65 key; it cannot be authenticated offline')
+    return jsonify(pack)
+
+
 # ============================================================================
 # INVESTIGATE — Object Card UX (v9.19)
 # ============================================================================

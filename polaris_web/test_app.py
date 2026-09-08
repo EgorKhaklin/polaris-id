@@ -7903,6 +7903,99 @@ class TokenExportTests(PolarisTestCase):
         self.assertEqual(self.client.get('/api/tokens/999999/export').status_code, 404)
 
 
+class AuthenticityPackTests(PolarisTestCase):
+    """GET /api/tokens/<id>/authenticity-pack exports a token's signature as a
+    self-contained pack a relying party verifies OFFLINE with the detached
+    scripts/polaris-verify.py (roadmap P-E1). It is the anti-decal to /export:
+    the pack INCLUDES the signature and public key (export strips them). This
+    proves the round-trip end to end — issue, export the pack, run the REAL
+    detached verifier script on it, get the correct verdict — plus the export
+    contrast and the placeholder honesty (a SHA3 binding is never called
+    authentic). Real ML-DSA-65 verification is exercised in CI's pqc-real job,
+    which runs the same script's --selftest and --verify-dir under liboqs."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _issue_token(self, token_value):
+        r = self._post('/uc1/issue', data={
+            'legal_name': 'Authpack Holder', 'date_of_birth': '1990-01-15',
+            'jurisdiction': 'US-OH', 'issuing_agency_id': '1', 'algorithm_id': '1',
+            'biometric_binding_type': 'IRIS', 'witness_agency_id': '2',
+            'liveness_check_type': 'MULTI_MODAL', 'token_value': token_value,
+            'physical_serial': 'SN-' + token_value, 'hardware_model': 'TitanQ-3',
+            'contexts': ['1'],
+        }, follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (token_value,))
+            return cur.fetchone()['token_id']
+
+    def _run_detached_verifier(self, pack):
+        """Run the ACTUAL shipped scripts/polaris-verify.py on a pack via stdin.
+        The point of the test is that this is a separate process with no Polaris
+        imports — exactly how a relying party runs it."""
+        import subprocess, sys, json as _json, pathlib
+        script = str(pathlib.Path(__file__).resolve().parent.parent / "scripts" / "polaris-verify.py")
+        return subprocess.run([sys.executable, script, "--json"],
+                              input=_json.dumps(pack), capture_output=True, text=True)
+
+    def test_pack_round_trips_through_the_detached_verifier(self):
+        import hashlib, json as _json
+        tid = self._issue_token('AUTHPACK-RT-0001')
+        pack = self.client.get(f'/api/tokens/{tid}/authenticity-pack').get_json()
+        # Self-describing, and names how to reconstruct the signed message.
+        self.assertEqual(pack['format'], 'polaris-authenticity-pack/1')
+        self.assertEqual(pack['token_value'], 'AUTHPACK-RT-0001')
+        self.assertEqual(pack['digest_construction'], 'SHA3-256(token_value.encode("utf-8"))')
+        self.assertIn('verify_with', pack)
+        # No real key in the placeholder profile; the pack says so plainly.
+        self.assertFalse(pack['real_signature'])
+        self.assertIsNone(pack['public_key_hex'])
+        self.assertEqual(pack['algorithm'], 'DETERMINISTIC-PLACEHOLDER-SHA3-256')
+        self.assertEqual(pack['signature_hex'],
+                         hashlib.sha3_256('AUTHPACK-RT-0001'.encode()).hexdigest())
+        # The REAL shipped detached script consumes the route's output and returns
+        # the correct verdict: a placeholder is never authenticated (exit 2).
+        proc = self._run_detached_verifier(pack)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        verdict = _json.loads(proc.stdout)
+        self.assertFalse(verdict['signature_valid'])
+        self.assertEqual(verdict['authenticity'], 'none')
+        self.assertIn('matches', verdict['note'])  # the honest placeholder binding
+
+    def test_pack_exports_crypto_that_export_strips(self):
+        # The anti-decal contract: the pack carries signature_hex; /export does not.
+        tid = self._issue_token('AUTHPACK-CONTRAST-0001')
+        pack = self.client.get(f'/api/tokens/{tid}/authenticity-pack').get_json()
+        self.assertIn('signature_hex', pack)
+        self.assertTrue(pack['signature_hex'])
+        export = self.client.get(f'/api/tokens/{tid}/export').get_json()
+        for s in export['signatures']:
+            self.assertNotIn('signature_bytes', s)
+            self.assertNotIn('signing_public_key_hex', s)
+
+    def test_tampered_pack_is_reported_not_matching(self):
+        import json as _json
+        tid = self._issue_token('AUTHPACK-TAMPER-0001')
+        pack = self.client.get(f'/api/tokens/{tid}/authenticity-pack').get_json()
+        pack['signature_hex'] = '00' * 32  # not the real SHA3 binding
+        proc = self._run_detached_verifier(pack)
+        self.assertEqual(proc.returncode, 2)
+        verdict = _json.loads(proc.stdout)
+        self.assertFalse(verdict['signature_valid'])
+        self.assertIn('does NOT match', verdict['note'])
+
+    def test_pack_404_for_missing_token(self):
+        self.assertEqual(self.client.get('/api/tokens/999999/authenticity-pack').status_code, 404)
+
+    def test_pack_requires_login(self):
+        self._logout()
+        r = self.client.get('/api/tokens/2/authenticity-pack')
+        self.assertEqual(r.status_code, 302)
+        self.assertIn('/login', r.headers.get('Location', ''))
+
+
 class TokenVerifyTests(PolarisTestCase):
     """GET /api/tokens/<id>/verify cryptographically verifies a token's active
     signature AT USE, single-witness (v9.258, the throughput path). It must

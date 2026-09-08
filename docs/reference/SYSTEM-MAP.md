@@ -59,7 +59,8 @@ polaris/
 │   └── paper/          ← the academic report (TeX and PDF)
 ├── DEVNOTES/           ← the contributor's working notes: gotchas, house style, the project record
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
-├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks
+├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py and its vector generator live here too
+├── vectors/            ← published authenticity packs a relying party re-verifies offline with scripts/polaris-verify.py (README.md explains the format)
 ├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
 │
 ├── .github/workflows/  ← ci.yml (16 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)

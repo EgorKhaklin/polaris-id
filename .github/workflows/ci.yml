@@ -1465,6 +1465,20 @@ jobs:
           # Runs SecondWitnessTests (skips unless BOTH libs present — they are here).
           python -m unittest test_pqc_signing -v
 
+      # v9.274 (roadmap P-E1) — the DETACHED verifier a relying party runs with no
+      # Polaris code and no database. --selftest does a live ML-DSA-65 round-trip
+      # (genuine pack verifies; a flipped signature, an altered token and a wrong
+      # key each fail; the placeholder is refused). --verify-dir re-verifies the
+      # PUBLISHED vectors/ under BOTH witnesses installed above — the committed
+      # packs were produced by an INDEPENDENT FIPS-204 implementation, so a pass is
+      # cross-implementation interop (three implementations agree), not just self-
+      # consistency. Run from the repo root: the verifier imports no app code and
+      # needs no working-directory, which is exactly the property under test.
+      - name: Detached verifier — selftest + re-verify published vectors
+        run: |
+          python scripts/polaris-verify.py --selftest
+          python scripts/polaris-verify.py --verify-dir vectors
+
       # v9.139 — the signing-key GENERATION must emit clean JSON. liboqs prints a
       # banner to stdout at import; polaris-generate-secrets.sh captures a python
       # one-liner's stdout to mint the key, so a naive capture corrupts the file

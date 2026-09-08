@@ -559,6 +559,45 @@ signature per view.
 
 ---
 
+### `GET /api/tokens/<id>/authenticity-pack`
+
+**Login required; replica-routed.** Exports the token's active signature as a
+self-contained **authenticity pack**: the material a relying party needs to
+verify the ML-DSA-65 signature OFFLINE, with no Polaris server, no database and
+no Polaris code, using only a standard ML-DSA-65 library and
+[`scripts/polaris-verify.py`](../../scripts/polaris-verify.py). It is the
+deliberate opposite of `/export`, which strips the signature and key bytes: this
+route is a verifiable credential, that route is an operator's view-of-record.
+
+The pack carries exactly the immutable authenticity material and nothing about
+authorization — whether the token is usable *right now* is the freshness-critical
+question `/verify` answers online. A `null` `public_key_hex` means the token
+carries the deterministic dev/CI placeholder (a SHA3 binding, not a signature),
+and the pack says so rather than let it be mistaken for genuine.
+
+Returns JSON:
+
+| field | type | notes |
+|---|---|---|
+| `format` | string | `polaris-authenticity-pack/1` |
+| `token_id` | int | echoes the path |
+| `token_value` | string | the signed message |
+| `algorithm` | string | `ML-DSA-65`, or the placeholder label when unsigned |
+| `signature_hex` | string | the ML-DSA-65 signature (hex) |
+| `public_key_hex` | string \| null | the issuer public key the signature verifies against; `null` for a placeholder |
+| `real_signature` | bool | `false` for the dev/CI placeholder |
+| `issuer` | string | the issuing agency name |
+| `issued_at` / `signed_at` | string | ISO-8601 timestamps |
+| `digest_construction` | string | `SHA3-256(token_value.encode("utf-8"))` — how to reconstruct the signed message with any FIPS-204 verifier |
+| `verify_with` | string | the exact command to check the pack offline |
+
+`404` if the token does not exist or has no active signature. Verify a pack with
+`python3 scripts/polaris-verify.py --pack pack.json`; the published test vectors
+under [`vectors/`](../../vectors/) are re-verified under the app's real witnesses
+(liboqs + cryptography/OpenSSL) on every CI run.
+
+---
+
 ## Verification API (use cases UC-1 through UC-8)
 
 Each use case is reachable through the operator UI (HTML form) AND

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pathlib
 import hashlib
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -6173,7 +6174,108 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
                "retired overclaim, and the comparison marks Polaris the one system not deployed")
 
 
+# ---------------------------------------------------------------------------
+# Detached verifier (roadmap P-E1: the engine's exposed driveshaft). Polaris's
+# ML-DSA-65 signatures are only worth something if someone OTHER than Polaris can
+# check them. Four things must hold together for that to be real, not a claim:
+#   1. scripts/polaris-verify.py is genuinely STANDALONE — imports no Polaris code
+#      and no database driver, so a relying party runs it with only a standard
+#      ML-DSA-65 library. A verifier that needs the app is not detached.
+#   2. It does the real crypto: reconstruct SHA3-256(token_value) and verify under
+#      ML-DSA-65 with both witnesses the app uses, not a stub that returns True.
+#   3. GET /api/tokens/<id>/authenticity-pack EXPORTS the signature + public key
+#      (the opposite of /export, which strips them), so there is something to
+#      verify offline.
+#   4. The published vectors/ exist with declared expectations, AND CI actually
+#      RUNS the verifier (--selftest + --verify-dir) every release, so the path is
+#      exercised under real crypto rather than merely committed.
+# Detection: test_checks injects a psycopg2 import, strips a pack crypto field,
+# deletes a vector, and removes the CI invocation.
+# ---------------------------------------------------------------------------
+_VERIFIER_FORBIDDEN_IMPORTS = ("psycopg2", "flask", "app", "pqc_signing", "custody",
+                               "security", "observability", "zk", "anchoring",
+                               "webauthn_auth", "tracing")
+
+
+def check_detached_verifier(root: pathlib.Path) -> list[Finding]:
+    verifier = _read(root, "scripts/polaris-verify.py")
+    if not verifier:
+        return _fail("detached_verifier", "scripts/polaris-verify.py is missing")
+    # 1. Standalone: no Polaris code, no DB driver (that IS the capability).
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", verifier, re.M):
+            return _fail("detached_verifier",
+                         f"scripts/polaris-verify.py imports {mod!r}; the detached verifier must be standalone "
+                         "(only a standard ML-DSA-65 library) so a relying party runs it with no Polaris code "
+                         "and no database")
+    # 2. Real crypto, not a stub.
+    if "sha3_256" not in verifier:
+        return _fail("detached_verifier",
+                     "scripts/polaris-verify.py must reconstruct SHA3-256(token_value) — the digest the signer "
+                     "signs — not trust a value handed to it in the pack")
+    if "ML-DSA-65" not in verifier or "import oqs" not in verifier:
+        return _fail("detached_verifier",
+                     "scripts/polaris-verify.py must verify ML-DSA-65 via liboqs (the primary witness)")
+    if "MLDSA65PublicKey" not in verifier:
+        return _fail("detached_verifier",
+                     "scripts/polaris-verify.py must also carry the independent cryptography/OpenSSL second "
+                     "witness (MLDSA65PublicKey)")
+    # 3. The pack route EXPORTS the crypto (the anti-decal to /export).
+    app = _read(root, "polaris_web/app.py")
+    m = re.search(r"def token_authenticity_pack\(.*?(?=\n\n\n)", app, re.S)
+    if "authenticity-pack" not in app or not m:
+        return _fail("detached_verifier",
+                     "app.py has no /api/tokens/<id>/authenticity-pack route; there is nothing to verify offline")
+    body = m.group(0)
+    for field in ("signature_hex", "public_key_hex", "digest_construction"):
+        if field not in body:
+            return _fail("detached_verifier",
+                         f"the authenticity-pack route omits {field!r}; it must EXPORT the crypto (unlike /export, "
+                         "which strips it) or an offline verifier has nothing to check")
+    if "signature_bytes" not in body or "signing_public_key_hex" not in body:
+        return _fail("detached_verifier",
+                     "the authenticity-pack route must read the real signature material (signature_bytes + "
+                     "signing_public_key_hex), not a stripped view")
+    # 4a. Published vectors exist with declared expectations.
+    vdir = root / "vectors"
+    packs = sorted(vdir.glob("*.json")) if vdir.is_dir() else []
+    if not packs:
+        return _fail("detached_verifier", "vectors/ has no published *.json vectors")
+    have_valid = have_tampered = have_placeholder = False
+    for p in packs:
+        try:
+            obj = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            return _fail("detached_verifier", f"vectors/{p.name} is not valid JSON ({e})")
+        if obj.get("format") != "polaris-authenticity-pack/1":
+            return _fail("detached_verifier", f"vectors/{p.name} is not a polaris-authenticity-pack/1")
+        expect = (obj.get("_vector") or {}).get("expect")
+        if expect == "valid" and obj.get("public_key_hex"):
+            have_valid = True
+        if expect == "invalid" and obj.get("public_key_hex"):
+            have_tampered = True
+        if str(obj.get("algorithm", "")).startswith("DETERMINISTIC-PLACEHOLDER"):
+            have_placeholder = True
+    if not (have_valid and have_tampered and have_placeholder):
+        return _fail("detached_verifier",
+                     "vectors/ must publish at least a genuine pack (expect valid), a tampered pack (expect "
+                     "invalid, real key), and the placeholder — so a verifier proves it passes the real one AND "
+                     "fails the tampered one")
+    # 4b. CI runs the verifier every release (exercised, not just present).
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-verify.py" not in ci or "--selftest" not in ci or "--verify-dir" not in ci:
+        return _fail("detached_verifier",
+                     "ci.yml must run scripts/polaris-verify.py --selftest (a live ML-DSA-65 round-trip) and "
+                     "--verify-dir vectors (re-verify the published packs) so the detached path is exercised "
+                     "under real crypto every release, not merely committed")
+    return _ok("detached_verifier",
+               f"the detached verifier is standalone (no Polaris/DB imports), does real ML-DSA-65 crypto, the "
+               f"authenticity-pack route exports the signature, {len(packs)} vectors are published with "
+               "expectations, and CI runs the verifier every release")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_detached_verifier,
     check_public_claims_honest,
     check_verify_witness_sampling,
     check_constitution_layered,

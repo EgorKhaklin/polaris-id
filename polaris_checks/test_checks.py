@@ -5492,3 +5492,76 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     # the comparison loses its 'not deployed' column
     write(readme=README.replace("Deployed to a real population", "National-scope issuance"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL without the not-deployed column"
+
+
+def test_detached_verifier_check_discriminates(tmp_path):
+    import json as _json
+    # P-E1 (v9.274): the detached verifier must be STANDALONE (no Polaris/DB
+    # imports), do real ML-DSA-65 crypto, be fed by a pack route that EXPORTS the
+    # signature, backed by published vectors, and RUN in CI. The good fixture has
+    # every leg; each perturbation removes exactly one.
+    VERIFIER = (
+        "import argparse, hashlib, json, os, sys\n"
+        "def _digest(t): return hashlib.sha3_256(t.encode('utf-8')).digest()\n"
+        "def v(digest, sig, pk):\n"
+        "    import oqs\n"
+        "    with oqs.Signature('ML-DSA-65') as s: return s.verify(digest, sig, pk)\n"
+        "def w(digest, sig, pk):\n"
+        "    from cryptography.hazmat.primitives.asymmetric import mldsa\n"
+        "    mldsa.MLDSA65PublicKey.from_public_bytes(pk).verify(sig, digest)\n"
+    )
+    APP = (
+        "@app.route('/api/tokens/<int:tok_id>/authenticity-pack')\n"
+        "def token_authenticity_pack(tok_id):\n"
+        "    rows = query('SELECT ts.signature_bytes, ts.signing_public_key_hex FROM TokenSignature ts')\n"
+        "    pack = {'signature_hex': sig_hex, 'public_key_hex': pk,\n"
+        "            'digest_construction': 'SHA3-256(token_value.encode(\"utf-8\"))'}\n"
+        "    return jsonify(pack)\n"
+        "\n\n"
+        "# next route\n"
+    )
+    CI = ("jobs:\n  pqc-real:\n    steps:\n"
+          "      - run: python scripts/polaris-verify.py --selftest\n"
+          "      - run: python scripts/polaris-verify.py --verify-dir vectors\n")
+
+    def vec(name, expect, alg, pk):
+        return _json.dumps({"format": "polaris-authenticity-pack/1", "algorithm": alg,
+                            "public_key_hex": pk, "signature_hex": "ab", "token_value": "T",
+                            "_vector": {"name": name, "expect": expect}})
+
+    good = {
+        "scripts/polaris-verify.py": VERIFIER,
+        "polaris_web/app.py": APP,
+        ".github/workflows/ci.yml": CI,
+        "vectors/ml-dsa-65-valid.json": vec("valid", "valid", "ML-DSA-65", "dead"),
+        "vectors/ml-dsa-65-tampered.json": vec("tampered", "invalid", "ML-DSA-65", "dead"),
+        "vectors/placeholder.json": vec("placeholder", "invalid", "DETERMINISTIC-PLACEHOLDER-SHA3-256", None),
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            if body is None:
+                if f.exists(): f.unlink()
+            else:
+                f.write_text(body)
+
+    write()
+    assert checks.check_detached_verifier(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. not standalone — imports a DB driver
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + VERIFIER})
+    assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL when the verifier imports psycopg2"
+    # 2. drops the independent second witness
+    write({"scripts/polaris-verify.py": VERIFIER.replace("MLDSA65PublicKey", "SomethingElse")})
+    assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL without the cryptography second witness"
+    # 3. the pack route stops exporting the signature (a decal again) — signature_hex
+    #    is unique to the export (signing_public_key_hex would still match public_key_hex)
+    write({"polaris_web/app.py": APP.replace("'signature_hex': sig_hex, ", "")})
+    assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL when the pack route omits signature_hex"
+    # 4. no tampered vector — cannot prove the verifier FAILS a forgery
+    write({"vectors/ml-dsa-65-tampered.json": None})
+    assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL without a tampered vector"
+    # 5. CI does not re-verify the published vectors
+    write({".github/workflows/ci.yml": CI.replace("--verify-dir vectors", "echo skip")})
+    assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run --verify-dir"
