@@ -48,6 +48,17 @@ defenses actually held.
 |---|---|---|
 | `revoked_token_treated_as_authoritative` | a real signed token, revoked through the real `uc8` procedure, then presented to `/verify` | the authenticity/authorization split: the signature stays authentic, but `currently_authoritative` and `usable` are False (the replay defense) |
 
+**controls** (`attack_controls.py`, the app + Postgres — NIST 800-53 AC + AU as
+attacks, not a control-mapping document):
+
+| attack | control | the defense that must hold |
+|---|---|---|
+| `ac3_unauthenticated_reaches_protected_data` | AC-3 | an unauthenticated request to login-gated data is redirected/denied, not served |
+| `ac3_operator_reaches_admin_auditor_route` | AC-3 | a logged-in operator gets 403 on an admin/auditor-only route (authenticated ≠ authorized) |
+| `au9_audit_row_delete_allowed` | AU-9 | an audit-of-record row (`TokenLifecycleEvent`) cannot be DELETEd — the append-only trigger refuses (attempt rolled back) |
+| `au9_audit_row_update_allowed` | AU-9 | the same row cannot be UPDATEd |
+| `ac7_failed_logins_do_not_lock` | AC-7 | five failed logins lock the account (the failure counter enforces; reset afterward) |
+
 ## Adding an attack
 
 Add an `attack_*` function to the right module returning `(succeeded, note)` where

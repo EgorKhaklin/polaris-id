@@ -209,6 +209,14 @@ jobs:
       - name: Attacks that must fail — db suite (revoked token not authoritative)
         run: python3 attacks/run_attacks.py --suite db
 
+      # v9.284 — NIST 800-53 controls as attacks (AC + AU). Adversaries that try to
+      # violate access enforcement (AC-3: unauthenticated data access; a lower role
+      # on an admin/auditor route), audit protection (AU-9: delete/update an
+      # audit-of-record row), and the logon-attempt lockout (AC-7), against the real
+      # app + database. Each MUST fail; the runner goes red if a control is violated.
+      - name: Attacks that must fail — controls suite (AC + AU)
+        run: python3 attacks/run_attacks.py --suite controls
+
       # v9.279 (roadmap PE.8) — the ZK half of the dyno: real Plonky2 prove/verify
       # time at the configured tree depth, from the binary this job builds. The
       # ML-DSA half is measured in the pqc-real job (which has liboqs).

@@ -6795,7 +6795,59 @@ def check_kat_conformance(root: pathlib.Path) -> list[Finding]:
                "production witnesses, run in CI, with a pinned regeneration path")
 
 
+# ---------------------------------------------------------------------------
+# Security controls as attacks (NIST 800-53 AC + AU). "Apply the standards" done
+# as displacement, not a control-mapping document: the applicable controls that map
+# to Polaris's real mechanisms are expressed as adversaries that try to VIOLATE
+# them against the running app + database and must fail. AC-3 (an unauthenticated
+# request must not reach protected data; a lower role must not reach an
+# admin/auditor route), AU-9 (an audit-of-record row must be neither deletable nor
+# updatable — the append-only invariant), AC-7 (failed logins lock the account).
+# This check pins that those adversaries exist, ATTACK THE REAL SYSTEM (routes and
+# the append-only audit table, safely rolled back), and are run in CI. The
+# enforcement is the runner going red if a control is violated.
+# Detection: test_checks removes an audit-integrity adversary, a route adversary,
+# and the CI wiring.
+# ---------------------------------------------------------------------------
+def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
+    src = _read(root, "attacks/attack_controls.py")
+    if not src:
+        return _fail("controls_as_attacks", "attacks/attack_controls.py is missing")
+    for control in ("ac3", "au9", "ac7"):
+        if control not in src:
+            return _fail("controls_as_attacks",
+                         f"attacks/attack_controls.py is missing the {control.upper()} adversary "
+                         "(AC-3 access enforcement, AU-9 audit protection, AC-7 logon lockout)")
+    # AU-9 must attack the real append-only audit table and never actually mutate it.
+    if "TokenLifecycleEvent" not in src or ("DELETE" not in src and "UPDATE" not in src):
+        return _fail("controls_as_attacks",
+                     "the AU-9 adversary must attempt to DELETE/UPDATE a real audit-of-record row "
+                     "(TokenLifecycleEvent) and assert it is refused")
+    if "rollback" not in src:
+        return _fail("controls_as_attacks",
+                     "the audit-integrity adversary must roll back its attempted mutation so it never actually "
+                     "changes the audit table")
+    # AC adversaries must drive real routes and key on the HTTP status.
+    if ".get(" not in src or "status_code" not in src:
+        return _fail("controls_as_attacks",
+                     "the AC-3 adversary must drive a real route and key on the HTTP status (a redirect/403 is "
+                     "the control holding)")
+    if "ATTACKS" not in src:
+        return _fail("controls_as_attacks", "attack_controls.py must register its adversaries in ATTACKS")
+    # CI runs the controls suite every release.
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "run_attacks.py --suite controls" not in ci:
+        return _fail("controls_as_attacks",
+                     "ci.yml must run attacks/run_attacks.py --suite controls so the AC/AU controls are attacked "
+                     "every release")
+    return _ok("controls_as_attacks",
+               "NIST 800-53 AC + AU controls are enforced by running adversaries — unauthenticated and wrong-role "
+               "access denied, the audit-of-record proven un-deletable and un-updatable, and failed logins lock "
+               "the account — run against the real system in CI")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_controls_as_attacks,
     check_kat_conformance,
     check_witness_fuzz,
     check_real_pqc_default_boot,

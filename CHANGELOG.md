@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.284 — 2026-09-08 (Security controls as attacks: NIST 800-53 AC + AU)
+
+The honest, engine-shaped answer to "apply the standards": not a control-mapping
+document (that would be wrap, and claiming HIPAA/ISO on notional data would
+overclaim), but the applicable controls turned into RUNNING adversaries that try to
+violate them against the real app and database and must fail. First batch — the two
+families that map most directly to Polaris's mechanisms.
+
+- **`attacks/attack_controls.py`** (a new `controls` suite) — five adversaries:
+  - **AC-3 (access enforcement):** an unauthenticated request to protected data is
+    redirected/denied (HTTP 302), and a logged-in **operator** gets **403** on an
+    admin/auditor-only route (`/api/atlas/subject`) — authenticated is not authorized.
+  - **AU-9 (audit protection):** an audit-of-record row (`TokenLifecycleEvent`) can
+    be neither DELETEd nor UPDATEd — the append-only trigger refuses, and the attempt
+    is rolled back so it never actually touches the audit table.
+  - **AC-7 (unsuccessful logon attempts):** five failed logins lock the account (the
+    failure counter enforces; the attack resets the lock afterward).
+- All five hold locally against the real system. The suite runs in CI's `test` job
+  every release; `run_attacks.py` goes red if any control is violated.
+- **`check_controls_as_attacks` (#151)** pins that the AC/AU adversaries exist,
+  attack the real routes and the real append-only audit table (safely rolled back),
+  and are wired into CI — with a detection test.
+
+This is "apply NIST" as displacement: every control is an adversary that fails, not
+a checkbox. AC + AU first; more families can follow the same shape.
+
+Constitutional note: no change to C1-C10 or the vocation — these adversaries prove
+the existing constitution (append-only audit, role gates, lockout) holds under
+attack. The one that writes resets its own lock and rolls back its own mutation.
+
+---
+
 ## v9.283 — 2026-09-08 (The KAT covers context strings too)
 
 Closes the scope line v9.282 left open. The conformance set had excluded the 7

@@ -5995,3 +5995,43 @@ def test_kat_conformance_check_discriminates(tmp_path):
     # 6. the verifier is not context-aware (context vectors verified without their context)
     write({"scripts/polaris-kat-verify.py": VERIFIER.replace("verify_with_ctx_str", "verify")})
     assert checks.check_kat_conformance(tmp_path)[0].level == "FAIL", "must FAIL when the verifier is not context-aware"
+
+
+def test_controls_as_attacks_check_discriminates(tmp_path):
+    # (v9.284) NIST 800-53 AC + AU controls must be enforced by RUNNING adversaries:
+    # AC-3 (route access), AU-9 (audit-of-record immutability, safely rolled back),
+    # AC-7 (lockout), run in CI. Each perturbation removes one leg.
+    CTRL = (
+        "def attack_ac3_unauth():\n"
+        "    r = client.get('/api/tokens/2/authenticity-pack')\n"
+        "    return r.status_code == 200, 'ac3'\n"
+        "def attack_au9_delete():\n"
+        "    cur.execute('DELETE FROM TokenLifecycleEvent WHERE event_id=%s', (eid,))\n"
+        "    conn.rollback()\n"
+        "def attack_ac7_lock():\n"
+        "    pass  # five failed logins lock the account\n"
+        "ATTACKS = [('ac3', attack_ac3_unauth), ('au9', attack_au9_delete), ('ac7', attack_ac7_lock)]\n"
+    )
+    CI = "jobs:\n  test:\n    steps:\n      - run: python3 attacks/run_attacks.py --suite controls\n"
+    good = {"attacks/attack_controls.py": CTRL, ".github/workflows/ci.yml": CI}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_controls_as_attacks(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the AU-9 adversary no longer attacks the real audit-of-record table
+    write({"attacks/attack_controls.py": CTRL.replace("TokenLifecycleEvent", "SomeScratchTable")})
+    assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when AU-9 does not attack the audit table"
+    # 2. a control adversary is missing (AC-7)
+    write({"attacks/attack_controls.py": CTRL.replace("ac7", "noop")})
+    assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when the AC-7 adversary is gone"
+    # 3. the audit mutation is not rolled back (would actually mutate the audit table)
+    write({"attacks/attack_controls.py": CTRL.replace("    conn.rollback()\n", "")})
+    assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when the mutation is not rolled back"
+    # 4. CI does not run the controls suite
+    write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
+    assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the controls suite"
