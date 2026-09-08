@@ -204,14 +204,14 @@ def check_changelog_matches_version(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # Thesis honesty — past the v9.40 terminus, the strong claim must read as RETIRED.
 #
-# MISSION.md's abandonment clause is mechanical: "if no cold-read attempt occurs
-# by v9.40 ... the thesis is documented as inconclusive and the strong claim is
-# retired permanently." No external cold read occurred and the repo is past v9.40,
-# so docs/THESIS.md must reflect that terminal state — not leave the thesis framed
-# as an open, still-pending hypothesis. Leaving the softer wording past the
-# deadline is itself the dishonesty the project's discipline forbids. This check
-# enforces the constitution's own rule against drift back to the open framing.
-# (It does NOT touch MISSION.md's freeze line, which is un-amendable here.)
+# docs/THESIS.md's terminus is mechanical: if no external cold-read attempt
+# occurred by v9.40, the thesis is documented as inconclusive and the strong
+# claim is retired permanently. No external cold read occurred and the repo is
+# past v9.40, so docs/THESIS.md must reflect that terminal state — not leave the
+# thesis framed as an open, still-pending hypothesis. Leaving the softer wording
+# past the deadline is itself the dishonesty the project's discipline forbids.
+# This check reads THESIS.md and the version, which are its source of record.
+# (The v9.27 MISSION.md freeze line that once narrated this was retired at v9.297.)
 # ---------------------------------------------------------------------------
 def check_thesis_terminus_honest(root: pathlib.Path) -> list[Finding]:
     ver = _read(root, "polaris_web/__version__.py")

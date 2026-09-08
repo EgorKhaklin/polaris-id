@@ -5,6 +5,33 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.297 — 2026-09-08 (Retire the freeze line from the constitution)
+
+The v9.27 freeze line was a definition-of-done: it limited the work that followed the
+core to hardening, measurement and thesis evidence, and required a named owner trigger to
+open a new arc. That trigger fired on 2026-08-31, the project entered its deployment arc,
+and the freeze line stopped describing how the project runs. On the owner's recorded
+direction, it is retired from MISSION.md.
+
+- **MISSION.md opens on the vocation.** The `## Freeze line` section is removed, so the
+  constitution now leads with `## Vocation`, its deepest constraint, rather than a
+  definition-of-done that no longer holds. The `## Amending this document` section records
+  the retirement, its authorizing act (the owner's recorded direction, the same authority
+  that removed the Sanctum apparatus at v9.55), and where the honesty it named now lives.
+
+- **The thesis-terminus honesty is unaffected.** The one durable claim the freeze line
+  narrated, that the strong thesis is retired past the v9.40 terminus, lives in
+  [docs/THESIS.md](docs/THESIS.md) and is pinned by `check_thesis_terminus_honest`, which
+  reads THESIS.md and the version and never depended on MISSION.md's freeze line. No check
+  required the removed section; all 159 pass unchanged.
+
+- **The two external references are corrected.** ROADMAP.md's decision-record preamble no
+  longer frames the deployment arc as acting under a live freeze line, and the comment on
+  `check_thesis_terminus_honest` no longer cites the freeze line as its authority. Both now
+  name the version at which the freeze line was retired.
+
+---
+
 ## v9.296 — 2026-09-08 (Inter-authority protocol v1: the signed federation manifest, P3.2)
 
 The federation topology (P3.1) says each authority is its own root; this is how two

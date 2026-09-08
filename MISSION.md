@@ -8,111 +8,6 @@ rule at the end of this file.
 
 ---
 
-## Freeze line — definition of done (v9.27, amended once v9.29)
-
-**Status: closed and passed (2026-09-04, additive).** Nothing below this
-note is altered, softened, or removed; the freeze line stands as written and
-is now a closed record rather than a pending target.
-
-*The six conditions are met, and each is still verifiable from outside by
-the command it names:* the ten constraints are enforced in the schema and
-exercised by the constraint suite; the invariant layer maps a plain check to
-each of them and to the production posture, every check paired with a
-detection test, and `python3 -m polaris_checks.run` exits zero; the property
-tests drive adversarial inputs at C1, C2 and C3 and at the redaction proof;
-the Rust prover and the Python second witness agree bit for bit on the epoch
-root; the observability surface is wired and serves; and the full product
-suite is green on every push, in a CI that also boots the production stack,
-proves the post-quantum handshake, round-trips an encrypted backup, and
-measures recovery against its targets.
-
-*The abandonment clause fired.* The v9.40 terminus passed with no external
-cold read, so [docs/THESIS.md](docs/THESIS.md) documents the strong claim as
-retired and inconclusive, permanently. `check_thesis_terminus_honest` fails
-the build if that framing ever drifts back to open.
-
-*The external trigger this section requires for a new arc occurred* on
-2026-08-31, when the project owner directed a complete plan to national
-deployment. [ROADMAP.md](ROADMAP.md) carries that decision record; the arc is
-national deployment, and it runs under the phases in that file with this
-constitution as a hard gate on every one of them. What such a deployment
-still needs, and what it may not yet claim, is
-[docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md), which is the
-bound on every claim this repository makes.
-
-**AMENDMENT LOG:**
-
-| Date         | Old → New          | Cost                | Authority |
-|--------------|--------------------| ------------------- |-----------|
-| 2026-05-16   | v9.30 → v9.31      | one ship slip       | v9.29 Sanctum |
-| 2026-09-04   | pending → closed   | none: no condition changed | Owner direction, recorded in CHANGELOG v9.212 |
-
-Each amendment is logged with its stated cost. No further amendments are
-pre-authorized; the next one requires the owner's recorded direction, in
-this table and in the CHANGELOG. The second row records a status change,
-not a change to any condition: the conditions themselves are unaltered,
-and the 2026-09-04 note above says which of them are met and how each is
-checked. (The Sanctum apparatus the first row names was removed at v9.55;
-the owner's recorded direction is what authorizes an amendment now.)
-
----
-
-The core is **done** when ALL of the following are true, mechanically
-verifiable from outside by `grep` and one-line `bash` checks:
-
-1. All 10 hard constraints (C1–C10) are enforced at the schema level
-   (verifiable: `polaris_sql/01_schema.sql` + `06_triggers.sql`, with
-   the `test_check_constraints` regression suite exercising each one).
-2. The flat invariant layer (`polaris_checks/`) maps a plain
-   `check_*` function to each constitutional constraint, with its
-   detection correctness itself tested (verifiable: `python3 -m
-   polaris_checks.run` exits 0; `polaris_checks/test_checks.py` passes).
-3. The Hypothesis property tests (`test_invariants_property`,
-   `test_redaction_property`) drive adversarial inputs against C1, C2,
-   C3 and the M2-12 redaction-proof (verifiable: both pass).
-4. The ZK SNARK has an independent second witness: the Rust Plonky2
-   prover and the Python re-checker (`polaris_zk/witness2/`) agree
-   bit-for-bit on the epoch root (verifiable: `test_zk_second_witness`
-   + `test_witness2` pass against the release binary).
-5. The application observability surface (`polaris_web/observability.py`
-   + `/api/metrics`) is wired into `app.py` + `security.py`.
-6. The full product test suite — `test_app`, `test_cli`,
-   `test_check_constraints`, the property tests — is green, and CI
-   (`.github/workflows/ci.yml`) runs all of the above on every push.
-
-**From v9.32 forward, all work is one of:**
-
-- **(a) Hardening** — security fixes, dependency updates, bug fixes
-  against the existing surface.
-- **(b) Measurement** — extensions to `polaris_checks`, the property
-  tests, the ZK two-witness differential, and the observability metrics.
-- **(c) Thesis cold-read evidence** — an independent external party
-  attempts the cold-read test (per `docs/THESIS.md`) and the result
-  is documented.
-
-**New arcs require a Sanctum that explicitly names an external
-trigger** (operator-side event in the world, not agent-internal
-observation). The triggers are NOT pre-catalogued; they are named
-in real time by the operator when they occur.
-
-**The abandonment clause:** if no cold-read attempt occurs by v9.40
-(per `docs/THESIS.md` terminus), the thesis is documented as
-inconclusive and the strong claim is retired permanently. The system
-is kept as good tooling.
-
-**This is the freeze line. It is mechanical, not aspirational. It is
-externally verifiable. It includes the abandonment condition.**
-
-The freeze line is the operational answer to "this stops being
-infinite." If this section ever gets edited to soften a condition,
-remove the abandonment clause, or add unproven thesis claims, the
-constitutional contract is broken; future operators should treat
-that edit as a fork.
-
----
-
----
-
 ## Vocation
 
 **Polaris is the anti-coercion identity substrate. The deepest
@@ -352,9 +247,14 @@ with real threads.
 
 ## Amending this document
 
-- The freeze-line section's conditions are never edited. Dated notes may be
-  appended beneath its heading and rows to its amendment log; neither alters
-  a condition, and the log states the authority for each change.
+- Amendments require the owner's recorded direction, logged in the CHANGELOG
+  with the cost each carries. No amendment is pre-authorized. (The Sanctum
+  apparatus that once gated this was removed at v9.55; the owner's recorded
+  direction is what authorizes an amendment now. The v9.27 freeze line, a
+  definition-of-done that limited work to hardening until an owner trigger,
+  was retired once that trigger fired and the project entered its national
+  deployment arc; the thesis-terminus honesty it named lives on in
+  [docs/THESIS.md](docs/THESIS.md), pinned by check_thesis_terminus_honest.)
 - The bound on what this repository may claim is
   [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md). "Production
   ready" is not a phrase this project applies to itself until the decisions
