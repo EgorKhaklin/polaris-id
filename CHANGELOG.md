@@ -5,6 +5,36 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.299 — 2026-09-08 (Federation proven across two instances, P3.10)
+
+The federation protocol was proven in one process by the crypto drills. P3.10 proves it
+across the deployment boundary: two independent instances, each its own database and its
+own real ML-DSA-65 root, talking only over HTTP.
+
+- **The federation-two-instances CI job.** The repo's first CI job with both a database and
+  real liboqs. It loads two authority databases and runs the two-instance drill under real
+  ML-DSA-65 every release.
+
+- **Two instances federate over HTTP.** `scripts/polaris-federation-instances-drill.py`
+  boots an instance (gunicorn) against each database and drives the cross-authority matrix
+  over the wire. Cross-verification: authority B publishes a manifest attesting to A's key
+  in a context, and a relying party that trusts B accepts A's credential in that context
+  from B's manifest, fetched over HTTP. Attestation revocation: B revokes the attestation,
+  and the re-fetched manifest no longer accepts A. Anchor cross-checks: A's signed epoch
+  checkpoint and revocation feed are fetched over HTTP and verified, and A's feed rejects a
+  revoked credential. The adversarial cases (wrong context, forged credential) reject
+  throughout. Red on any wrong decision.
+
+- **Pinned.** `check_federation_two_instances` requires the drill to boot two instances,
+  drive the federation endpoints over HTTP under real ML-DSA, prove the attestation and
+  revocation lifecycle, and run in its own CI job. This completes the first clause of the P3
+  exit gate (two instances interoperate in CI); the second (an external team integrating
+  docs-only) is external.
+
+161 machine-checked invariants; 18 CI jobs.
+
+---
+
 ## v9.298 — 2026-09-08 (Epoch alignment and revocation propagation across authorities, P3.2b)
 
 The inter-authority protocol (P3.2) let two authorities publish their anchors and

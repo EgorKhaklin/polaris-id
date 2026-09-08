@@ -6913,6 +6913,45 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_federation_two_instances(root: pathlib.Path) -> list[Finding]:
+    """P3.10: federation proven across the DEPLOYMENT boundary. Two independent instances,
+    each its own database and its own real ML-DSA-65 root, talk only over HTTP: a relying
+    party accepts a foreign credential from trust data (a federation manifest, an epoch
+    checkpoint, a revocation feed) it pulls over the wire from the running instances, and
+    the decision flips as attestations and revocations change on those instances. This is
+    the milestone the in-process drills approximate, proven across two real deployments."""
+    drill = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if not drill:
+        return _fail("federation_two_instances",
+                     "scripts/polaris-federation-instances-drill.py (the two-instance drill) is missing")
+    # It boots two REAL instances against two databases and drives them over HTTP.
+    for sym in ("gunicorn", "POLARIS_FED_A_DB", "POLARIS_FED_B_DB", "verify_cross_authority",
+                "http://127.0.0.1", "/api/v1/federation-manifest/", "/api/v1/epoch-checkpoint/",
+                "/api/v1/revocation-feed/"):
+        if sym not in drill:
+            return _fail("federation_two_instances",
+                         "the two-instance drill must boot two instances and drive the federation "
+                         "endpoints OVER HTTP (%s missing)" % sym)
+    if "POLARIS_USE_REAL_PQC" not in drill:
+        return _fail("federation_two_instances",
+                     "the two-instance drill must run under real ML-DSA (POLARIS_USE_REAL_PQC)")
+    # The decision must flip on real state changes: an attestation and a revocation.
+    if "AgencyTrustAttestation" not in drill or "revocation" not in drill.lower():
+        return _fail("federation_two_instances",
+                     "the drill must prove attestation revocation and revocation propagation over the wire")
+    # It RUNS every release in its own CI job -- the first with both a database and real liboqs.
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-federation-instances-drill.py" not in ci or "federation-two-instances" not in ci:
+        return _fail("federation_two_instances",
+                     "the two-instance drill must run in its own CI job (a deployment proof that never runs "
+                     "is displacement)")
+    return _ok("federation_two_instances",
+               "federation is proven across two independent instances: each its own database and real "
+               "ML-DSA-65 root, a relying party accepts a foreign credential from a manifest, epoch checkpoint, "
+               "and revocation feed pulled OVER HTTP, and the decision flips as attestations and revocations "
+               "change on the running instances -- driven every release by the federation-two-instances CI job")
+
+
 def check_epoch_revocation_propagation(root: pathlib.Path) -> list[Finding]:
     """P3.2b: epoch alignment + revocation propagation across authorities. Two more signed
     objects an authority publishes and a relying party consumes OFFLINE: an EPOCH CHECKPOINT
@@ -7398,6 +7437,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_federation_two_instances,
     check_epoch_revocation_propagation,
     check_inter_authority_protocol,
     check_federation_topology,

@@ -6183,6 +6183,53 @@ def test_epoch_revocation_propagation_check_discriminates(tmp_path):
     assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without EpochRevocationTests"
 
 
+def test_federation_two_instances_check_discriminates(tmp_path):
+    # v9.299 (P3.10): a drill that boots two real instances and drives the federation
+    # endpoints over HTTP under real ML-DSA, run in its own CI job. Each perturbation
+    # removes one leg.
+    good = {
+        'scripts/polaris-federation-instances-drill.py': (
+            "import os\n"
+            "os.environ['POLARIS_USE_REAL_PQC'] = '1'\n"
+            "A = os.environ.get('POLARIS_FED_A_DB', 'polaris_fa')\n"
+            "B = os.environ.get('POLARIS_FED_B_DB', 'polaris_fb')\n"
+            "# boots each instance with gunicorn; AgencyTrustAttestation drives the\n"
+            "# attestation revocation; base URL http://127.0.0.1:PORT ; endpoints:\n"
+            "#   /api/v1/federation-manifest/ /api/v1/epoch-checkpoint/ /api/v1/revocation-feed/\n"
+            "def main():\n"
+            "    verify_cross_authority(pack, 1, [manifest])  # revocation flips the decision\n"
+        ),
+        '.github/workflows/ci.yml': (
+            "jobs:\n  federation-two-instances:\n    steps:\n"
+            "      - run: python scripts/polaris-federation-instances-drill.py\n"
+        ),
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_federation_two_instances(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. an endpoint is not driven over HTTP
+    write({"scripts/polaris-federation-instances-drill.py": good["scripts/polaris-federation-instances-drill.py"].replace("/api/v1/revocation-feed/", "/api/v1/nope/")})
+    assert checks.check_federation_two_instances(tmp_path)[0].level == "FAIL", "must FAIL without the revocation-feed fetch"
+    # 2. it does not boot real instances
+    write({"scripts/polaris-federation-instances-drill.py": good["scripts/polaris-federation-instances-drill.py"].replace("gunicorn", "print")})
+    assert checks.check_federation_two_instances(tmp_path)[0].level == "FAIL", "must FAIL if it does not boot instances (gunicorn)"
+    # 3. not real ML-DSA
+    write({"scripts/polaris-federation-instances-drill.py": good["scripts/polaris-federation-instances-drill.py"].replace("POLARIS_USE_REAL_PQC", "PLACEHOLDER")})
+    assert checks.check_federation_two_instances(tmp_path)[0].level == "FAIL", "must FAIL if it does not run under real PQC"
+    # 4. no attestation lifecycle
+    write({"scripts/polaris-federation-instances-drill.py": good["scripts/polaris-federation-instances-drill.py"].replace("AgencyTrustAttestation", "SomeTable")})
+    assert checks.check_federation_two_instances(tmp_path)[0].level == "FAIL", "must FAIL without the attestation lifecycle"
+    # 5. the drill does not run in its own CI job
+    write({".github/workflows/ci.yml": "jobs:\n  other:\n    steps:\n      - run: echo nothing\n"})
+    assert checks.check_federation_two_instances(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
+
+
 def test_federation_topology_check_discriminates(tmp_path):
     # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
     # delta + the vocation grounding, and is kept honest against the code. Each

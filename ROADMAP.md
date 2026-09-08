@@ -54,7 +54,7 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 160 invariant
+release; CVE gates on dependencies and images; a coverage floor; 161 invariant
 checks (v9.286) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
@@ -253,7 +253,7 @@ parties verify against Polaris without talking to us.
 | [ ] P3.7 | mDL / ISO 18013-5 bridge | L | med | P3.4 | Read-only derived mdoc presentment from a Polaris token for mDL-reader interop; no new trust semantics |
 | [ ] P3.8 | W3C VC issuance endpoint | M | low | P3.4 | An optional VC representation of a verification result; explicitly a format, not a trust model |
 | [ ] P3.9 | Per-authority isolation review | L | med | P3.1 | Operator RBAC and data isolation reviewed for the federated topology; row-level security added where the review demands it |
-| [ ] P3.10 | Federation proven in CI | M | med | P3.2 | A CI job boots two instances as two authorities and proves cross-verification, attestation revocation, and anchor cross-checks end to end |
+| [x] P3.10 | Federation proven in CI (v9.299) | M | med | P3.2 | SHIPPED. The `federation-two-instances` CI job (the first with BOTH a database and real liboqs) boots two independent instances as two authorities, each its own database and its own real ML-DSA-65 root, talking only over HTTP. `scripts/polaris-federation-instances-drill.py` launches an instance (gunicorn) against each of two loaded databases and drives the cross-authority matrix over the wire: cross-verification (B publishes a manifest attesting to A's key in a context; a relying party that trusts B accepts A's credential in that context, from B's manifest fetched over HTTP), attestation revocation (B revokes the attestation; the re-fetched manifest no longer accepts A), and anchor cross-checks (A's signed epoch checkpoint and revocation feed are fetched over HTTP and verified; A's feed rejects a revoked credential), with the adversarial cases (wrong context, forged credential) rejecting throughout. Red on any wrong decision. `check_federation_two_instances`. Completes the P3 exit gate's first clause (two instances interoperate in CI); the second clause (an external team integrating docs-only) is `[EXT]`. |
 
 Exit gate: P3.10 green, plus one external team completing an SDK integration
 using only the public docs and the conformance suite.

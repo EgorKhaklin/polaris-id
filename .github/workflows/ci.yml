@@ -1609,6 +1609,86 @@ jobs:
         run: |
           set -o pipefail
           python -m unittest test_custody -v 2>&1 | grep -v faulthandler
+
+  # --------------------------------------------------------------------------
+  # v9.299 (roadmap P3.10) — federation proven across the DEPLOYMENT boundary.
+  # The crypto drills prove the protocol in one process; this proves it between
+  # two INDEPENDENT instances, each its own database and its own real ML-DSA-65
+  # root, talking only over HTTP. The first job with BOTH a database and real
+  # liboqs: it loads two authority databases, and the drill boots an instance
+  # against each (gunicorn) and drives the cross-authority matrix over the wire.
+  # Cross-verification (B's fetched manifest lets a relying party accept A's
+  # credential), attestation revocation (revoke on B -> the re-fetched manifest
+  # rejects), and anchor cross-checks (A's epoch checkpoint and revocation feed,
+  # fetched and verified, reject a revoked credential). Red on any wrong decision.
+  # --------------------------------------------------------------------------
+  federation-two-instances:
+    name: Federation proven across two instances (P3.10)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: polaris_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      POLARIS_DB_HOST: localhost
+      POLARIS_DB_PORT: '5432'
+      POLARIS_DB_USER: postgres
+      POLARIS_DB_PASSWORD: ci_password
+      PGPASSWORD: ci_password
+      POLARIS_FED_A_DB: polaris_fa
+      POLARIS_FED_B_DB: polaris_fb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install PostgreSQL client + build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client cmake ninja-build
+
+      - name: Install the app runtime + liboqs + the cryptography witness
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r polaris_web/requirements.txt
+          pip install liboqs-python
+          pip install "$(grep -E '^cryptography==' polaris_web/requirements.txt)"
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U postgres; then break; fi
+            sleep 1
+          done
+
+      - name: Create and load two authority databases
+        run: |
+          cd polaris_sql
+          for db in polaris_fa polaris_fb; do
+            psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db;"
+            psql -h localhost -U postgres -d "$db" -v ON_ERROR_STOP=1 -f 00_load_all.sql > "/tmp/load_$db.log" 2>&1 \
+              || { echo "::error::schema load failed for $db"; tail -40 "/tmp/load_$db.log"; exit 1; }
+            echo "loaded $db"
+          done
+
+      - name: Two instances federate over HTTP (real ML-DSA-65)
+        env:
+          POLARIS_USE_REAL_PQC: '1'
+        run: python scripts/polaris-federation-instances-drill.py
+
   # --------------------------------------------------------------------------
   # v9.290 (roadmap P3.5b) — the TypeScript verify SDK, held to the SAME
   # conformance contract as the Python reference SDK. The repo's first Node job:
