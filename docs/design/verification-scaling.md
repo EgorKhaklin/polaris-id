@@ -101,6 +101,22 @@ If a deployment ever routes the authorization read to a replica for scale, that
 is the single field it raises (to the replica's lag bound); the API shape does
 not change.
 
+**The single-witness path earns its speed by being continuously checked
+(v9.272).** Single-witness verify-at-use is sound only while the fast witness
+stays trustworthy, so the endpoint does not take that on faith: a random
+fraction of successful checks (`POLARIS_VERIFY_SAMPLE_RATE`) is replayed through
+the SECOND witness, and any disagreement increments
+`polaris_verify_witness_disagreements_total` and pages
+(`PolarisWitnessDisagreement`, a SEV-1, not a log line). Every response names
+which witness set actually ran — `witnesses: single` on the fast path, `both`
+when this request was sampled, plus a `sampled` flag — so an operator can see
+the coverage. Sampling is MANDATORY in production: the rate is floored above
+zero there, so two-witness verification can never be silently turned off. The
+sampling read is read-only; it re-reads the same immutable material and never
+touches authorization. Two witnesses that are optional would be one witness with
+extra docs; the sampling is what keeps the second witness real. Pinned by
+`check_verify_witness_sampling` and `test_app.VerifyWitnessSamplingTests`.
+
 ## Under HA, failover, and rolling deploys
 
 Verification is stateless and read-only, so it inherits the HA properties the

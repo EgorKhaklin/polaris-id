@@ -5419,3 +5419,51 @@ def test_constitution_layered_check_discriminates(tmp_path):
     both = dict(tiers); both['C4'] = 'Constitutional'
     write(both, both)
     assert checks.check_constitution_layered(tmp_path)[0].level == "FAIL", "must FAIL when the constitutional set changes"
+
+
+def test_verify_witness_sampling_check_discriminates(tmp_path):
+    # The two-witness availability clause: sampling, paging, witness-naming, prod floor.
+    APP = (
+        "def _verify_sample_rate():\n"
+        "    rate = 0.02\n"
+        "    if _PRODUCTION:\n"
+        "        rate = max(rate, 0.005)\n"
+        "    return rate\n"
+        "def api_token_verify(tok_id):\n"
+        "    all_valid = True\n"
+        "    sampled = False\n"
+        "    if _VERIFY_SAMPLE_RATE > 0:\n"
+        "        both_valid = pqc_signing.verify_stored_signature(tv, sig, pk, witnesses='both')\n"
+        "        sampled = True\n"
+        "        if both_valid != all_valid:\n"
+        "            observability.record_witness_disagreement(token_id=tok_id)\n"
+        "            _METRICS_VERIFY_DISAGREEMENT.inc()\n"
+        "    return jsonify(witnesses=('both' if sampled else 'single'), sampled=sampled)\n")
+    OBS = "def record_witness_disagreement(**kw):\n    structured_log('verify.witness_disagreement', **kw)\n"
+    ALERTS = ("groups:\n  - name: polaris\n    rules:\n"
+              "      - alert: PolarisWitnessDisagreement\n"
+              "        expr: increase(polaris_verify_witness_disagreements_total[5m]) > 0\n")
+    def write(app=APP, obs=OBS, alerts=ALERTS):
+        (tmp_path / "polaris_web").mkdir(exist_ok=True)
+        (tmp_path / "polaris_web" / "app.py").write_text(app)
+        (tmp_path / "polaris_web" / "observability.py").write_text(obs)
+        (tmp_path / "deploy" / "observability").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "deploy" / "observability" / "polaris-alerts.yml").write_text(alerts)
+
+    write()
+    assert checks.check_verify_witness_sampling(tmp_path)[0].level == "OK", "must PASS the full clause"
+    # no second-witness sampling
+    write(app=APP.replace("witnesses='both'", "witnesses='single'"))
+    assert checks.check_verify_witness_sampling(tmp_path)[0].level == "FAIL", "must FAIL without second-witness sampling"
+    # the disagreement no longer pages
+    write(app=APP.replace("_METRICS_VERIFY_DISAGREEMENT.inc()", "pass"))
+    assert checks.check_verify_witness_sampling(tmp_path)[0].level == "FAIL", "must FAIL when a disagreement does not page"
+    # the response no longer names the witness set
+    write(app=APP.replace("witnesses=('both' if sampled else 'single'), sampled=sampled", "ok=True"))
+    assert checks.check_verify_witness_sampling(tmp_path)[0].level == "FAIL", "must FAIL without witness-set naming"
+    # sampling is not mandatory in production
+    write(app=APP.replace("    if _PRODUCTION:\n        rate = max(rate, 0.005)\n", ""))
+    assert checks.check_verify_witness_sampling(tmp_path)[0].level == "FAIL", "must FAIL when prod sampling is not floored"
+    # the alert is gone
+    write(alerts="groups: []\n")
+    assert checks.check_verify_witness_sampling(tmp_path)[0].level == "FAIL", "must FAIL without the PolarisWitnessDisagreement alert"

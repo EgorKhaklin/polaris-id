@@ -176,6 +176,15 @@ try:
         'Read-only queries that fell back from the replica to the primary',
         registry=_METRICS_REGISTRY,
     )
+    # v9.272 (P1.18 item 5) — the two-witness availability alarm. Continuous
+    # sampling replays a fraction of single-witness verify-at-use checks through
+    # the SECOND witness; ANY disagreement means the fast path can no longer be
+    # trusted to stand in for the two-witness reference, so this is a paging SEV.
+    _METRICS_VERIFY_DISAGREEMENT = _PromCounter(
+        'polaris_verify_witness_disagreements_total',
+        'Sampled verify-at-use checks where the second witness disagreed with the single-witness result',
+        registry=_METRICS_REGISTRY,
+    )
 except ImportError:
     _PROM_AVAILABLE = False
     _PROM_MULTIPROC_DIR = None
@@ -279,6 +288,29 @@ LAUNCHER_WATCH = _env_flag('POLARIS_LAUNCHER_WATCH', False)
 # deployment renders no sim control and answers 404 on the sim route.
 # polaris_sim.assert_expendable() is the matching hard gate on the writer itself.
 SIM_MODE = _env_flag('POLARIS_SIM_MODE', False) and not _PRODUCTION
+
+
+# VERIFY_SAMPLE_RATE (v9.272, roadmap P1.18 item 5): the two-witness availability
+# clause. The verify-at-use endpoint runs a single witness for throughput, which
+# is only sound if the fast witness stays trustworthy — so a random fraction of
+# successful single-witness checks is replayed through the SECOND witness and any
+# disagreement pages (polaris_verify_witness_disagreements_total). Sampling is
+# MANDATORY in production: the rate is floored above zero there so it cannot be
+# turned off, mirroring the DEMO_MODE production guard. Dev/test default off (0)
+# for deterministic tests; a test opts in by setting the rate.
+def _verify_sample_rate():
+    try:
+        rate = float(os.environ.get('POLARIS_VERIFY_SAMPLE_RATE',
+                                    '0.02' if _PRODUCTION else '0'))
+    except ValueError:
+        rate = 0.02 if _PRODUCTION else 0.0
+    rate = min(max(rate, 0.0), 1.0)
+    if _PRODUCTION:
+        rate = max(rate, 0.005)   # mandatory: sampling cannot be disabled in production
+    return rate
+
+
+_VERIFY_SAMPLE_RATE = _verify_sample_rate()
 if _PRODUCTION and _env_flag('POLARIS_SIM_MODE', False):
     print("[boot] POLARIS_SIM_MODE is ignored under POLARIS_ENV=production", file=sys.stderr)
 
@@ -4878,6 +4910,29 @@ def api_token_verify(tok_id):
         })
         all_valid = all_valid and ok
 
+    # v9.272 (P1.18 item 5) — continuous second-witness sampling, the two-witness
+    # availability clause. Replay a small random fraction of single-witness checks
+    # through the SECOND witness and page on ANY disagreement, so the fast path is
+    # continuously checked against the two-witness reference rather than trusted on
+    # faith. Read-only: it re-reads the same immutable material and never touches
+    # authorization state. Mandatory in production (the rate is floored above 0).
+    sampled = False
+    if _VERIFY_SAMPLE_RATE > 0:
+        import random
+        if random.random() < _VERIFY_SAMPLE_RATE:
+            sampled = True
+            both_valid = True
+            for r in rows:
+                raw = r['signature_bytes']
+                sig = bytes(raw) if raw is not None else b''
+                both_valid = both_valid and pqc_signing.verify_stored_signature(
+                    token_value, sig, r['signing_public_key_hex'], witnesses='both')
+            if both_valid != all_valid:
+                observability.record_witness_disagreement(
+                    token_id=tok_id, single_ok=all_valid, both_ok=both_valid)
+                if _PROM_AVAILABLE:
+                    _METRICS_VERIFY_DISAGREEMENT.inc()
+
     return jsonify(
         token_id=tok_id,
         # Authenticity — immutable material, replica-safe, and safe for a relying
@@ -4885,7 +4940,12 @@ def api_token_verify(tok_id):
         # usable now.
         signature_valid=all_valid,
         signature_cacheable=True,
-        witnesses='single',
+        # Which witness set actually ran for this response: 'single' on the
+        # throughput path, 'both' when this request was sampled through the second
+        # witness (the availability clause). A disagreement pages; it never
+        # changes what this response returns.
+        witnesses=('both' if sampled else 'single'),
+        sampled=sampled,
         signatures=signatures,
         # Current authorization — read fresh from the primary. currently_authoritative
         # is the "usable right now" verdict; as_of is when it was read, and

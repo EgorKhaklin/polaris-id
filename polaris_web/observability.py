@@ -259,6 +259,21 @@ def record_duress_event(*, individual_id: int = 0, agency_id: int = 0) -> None:
                    agency_id=agency_id)
 
 
+def record_witness_disagreement(*, token_id: int = 0, single_ok: bool = False,
+                                both_ok: bool = False) -> None:
+    """Call from app.py:api_token_verify when continuous second-witness sampling
+    (P1.18 item 5) finds the two-witness reference disagreeing with the single-
+    witness result. It means the fast verify-at-use path can no longer be trusted
+    to stand in for the reference, so it is a paging SEV: the Prometheus counter
+    polaris_verify_witness_disagreements_total is the alerting surface, and this
+    structured log at critical grain is the audit record."""
+    structured_log("verify.witness_disagreement",
+                   token_id=token_id,
+                   single_ok=single_ok,
+                   both_ok=both_ok,
+                   severity="critical")
+
+
 def structured_log(event: str, **fields) -> None:
     """Emit one JSON object per line to stdout.
 

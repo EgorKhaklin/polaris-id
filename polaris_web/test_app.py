@@ -9397,3 +9397,55 @@ class AthenaConsoleAPITests(PolarisTestCase):
         levels = {d['level'] for d in data['disclosures']}
         self.assertEqual(levels, {'ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'})
         self.assertEqual(self.client.get('/api/athena/explain-proof?context=x').status_code, 400)
+
+
+class VerifyWitnessSamplingTests(PolarisTestCase):
+    """v9.272 (P1.18 item 5): the two-witness availability clause. The verify-at-use
+    endpoint samples a fraction of single-witness checks through the SECOND witness,
+    names which witness set ran, and pages on any disagreement."""
+
+    def _issue(self, tv):
+        r = self._post('/uc1/issue', data={
+            'legal_name': 'Sample Holder', 'date_of_birth': '1988-01-01',
+            'jurisdiction': 'US-OH', 'issuing_agency_id': '1', 'algorithm_id': '1',
+            'biometric_binding_type': 'IRIS', 'witness_agency_id': '2',
+            'liveness_check_type': 'MULTI_MODAL', 'token_value': tv,
+            'physical_serial': 'SN-' + tv, 'hardware_model': 'TitanQ-3', 'contexts': ['1'],
+        }, follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        with closing(psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)) as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (tv,))
+            return cur.fetchone()['token_id']
+
+    def test_sampling_runs_both_witnesses_and_names_them(self):
+        tok = self._issue('TKN-SAMPLE-NAME-1')
+        with patch.object(flask_app, '_VERIFY_SAMPLE_RATE', 1.0):
+            data = self.client.get(f'/api/tokens/{tok}/verify').get_json()
+        self.assertTrue(data['sampled'], "rate=1.0 forces sampling")
+        self.assertEqual(data['witnesses'], 'both', "a sampled response names both witnesses")
+        # a matching sig produces no disagreement — the response is unchanged otherwise
+        self.assertTrue(data['signature_valid'])
+
+    def test_no_sampling_names_single(self):
+        tok = self._issue('TKN-SAMPLE-NAME-2')
+        with patch.object(flask_app, '_VERIFY_SAMPLE_RATE', 0.0):
+            data = self.client.get(f'/api/tokens/{tok}/verify').get_json()
+        self.assertFalse(data['sampled'])
+        self.assertEqual(data['witnesses'], 'single')
+
+    def test_witness_disagreement_pages(self):
+        tok = self._issue('TKN-SAMPLE-DISAGREE-1')
+
+        def fake_verify(token_value, sig, pk, witnesses='both'):
+            return witnesses == 'single'   # single says valid, both says invalid -> disagreement
+
+        paged = []
+        with patch.object(flask_app, '_VERIFY_SAMPLE_RATE', 1.0), \
+             patch.object(flask_app.pqc_signing, 'verify_stored_signature', side_effect=fake_verify), \
+             patch.object(flask_app.observability, 'record_witness_disagreement',
+                          side_effect=lambda **kw: paged.append(kw)):
+            data = self.client.get(f'/api/tokens/{tok}/verify').get_json()
+        self.assertTrue(data['sampled'])
+        self.assertTrue(paged, "a witness disagreement must be recorded (it pages via the SEV alert)")
+        self.assertEqual(paged[0]['single_ok'], True)
+        self.assertEqual(paged[0]['both_ok'], False)

@@ -170,6 +170,26 @@ window; clearing is not "resolved"; the human response is.
 
 ---
 
+
+## PolarisWitnessDisagreement
+
+**Severity: SEV-1.** Continuous second-witness sampling on `/api/tokens/<id>/verify`
+replayed a single-witness verification through the second implementation and the two
+disagreed. The single-witness verify-at-use path is sound only while the fast witness
+agrees with the two-witness reference; a disagreement means that assumption has broken.
+
+1. **Stop trusting single-witness verification.** Raise `POLARIS_VERIFY_SAMPLE_RATE` toward
+   `1.0` (every check runs both witnesses) while you investigate; throughput drops but
+   every response is now two-witnessed.
+2. **Read the evidence.** Find the `verify.witness_disagreement` structured log lines
+   (they carry `token_id`, `single_ok`, `both_ok`). Determine which witness is wrong by
+   re-verifying the token's stored signature offline against each implementation.
+3. **Identify the cause.** A witness library upgrade or downgrade, a build mismatch
+   between the two implementations, or corrupted stored signature material are the usual
+   causes. Pin the witness versions and re-run the crypto suites.
+4. **Recover.** Once the divergence is explained and fixed, return
+   `POLARIS_VERIFY_SAMPLE_RATE` to its normal value. Do not silence the alert.
+
 ## PolarisHigh5xx
 
 **Severity:** SEV-2 · **For:** 10m

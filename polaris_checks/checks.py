@@ -372,7 +372,7 @@ def check_pqc_signing_wired(root: pathlib.Path) -> list[Finding]:
                      "app.py must expose the verify-at-use endpoint /api/tokens/<id>/verify (the "
                      "throughput verification path)")
     verify_ep = app.split("def api_token_verify", 1)
-    ep_body = verify_ep[1][:4400] if len(verify_ep) == 2 else ""
+    ep_body = verify_ep[1][:7000] if len(verify_ep) == 2 else ""
     if len(verify_ep) == 2 and not re.search(r"witnesses\s*=\s*['\"]single['\"]", ep_body):
         return _fail("pqc_wired",
                      "the verify-at-use endpoint must use single-witness verification "
@@ -6082,7 +6082,55 @@ def check_constitution_layered(root: pathlib.Path) -> list[Finding]:
                "engineering (C4, C5, C7, C8, C9) — and MISSION.md agrees with Athena's queryable model")
 
 
+# ---------------------------------------------------------------------------
+# P1.18 item 5 (v9.272) — the two-witness availability clause: single-witness
+# verify-at-use is only sound while continuous sampling checks it.
+# ---------------------------------------------------------------------------
+def check_verify_witness_sampling(root: pathlib.Path) -> list[Finding]:
+    """The single-witness verify-at-use path is fast, but sound only while the
+    fast witness stays trustworthy. So a random fraction of successful checks is
+    continuously replayed through the SECOND witness; any disagreement pages (a
+    SEV, not a log line); the response names which witness set actually ran; and
+    sampling is MANDATORY in production (the rate is floored above zero). Two
+    witnesses that are optional are one witness with extra docs. Detection:
+    test_checks removes the sampling, the production floor, the alert, and the
+    witness-set naming."""
+    app = _read(root, "polaris_web/app.py")
+    obs = _read(root, "polaris_web/observability.py")
+    alerts = _read(root, "deploy/observability/polaris-alerts.yml")
+    if not app or not obs or not alerts:
+        return _fail("verify_sampling", "app.py / observability.py / polaris-alerts.yml is missing")
+    ep = app.split("def api_token_verify", 1)
+    ep_body = ep[1][:7000] if len(ep) == 2 else ""
+    if "_VERIFY_SAMPLE_RATE" not in ep_body or "witnesses='both'" not in ep_body:
+        return _fail("verify_sampling",
+                     "the verify-at-use endpoint must sample a fraction of checks through the SECOND "
+                     "witness (_VERIFY_SAMPLE_RATE + a witnesses='both' re-verify): the availability clause")
+    if "record_witness_disagreement" not in ep_body or "_METRICS_VERIFY_DISAGREEMENT" not in ep_body:
+        return _fail("verify_sampling",
+                     "a sampling disagreement must page: record_witness_disagreement + the alertable counter "
+                     "polaris_verify_witness_disagreements_total")
+    if "sampled=" not in ep_body or "'both' if sampled else 'single'" not in ep_body:
+        return _fail("verify_sampling",
+                     "the verify response must name which witness set actually ran (witnesses 'both' when "
+                     "sampled, else 'single', plus a `sampled` flag)")
+    if not re.search(r"if _PRODUCTION:\s*\n\s*rate = max\(rate,", app):
+        return _fail("verify_sampling",
+                     "continuous sampling must be MANDATORY in production: the sample rate is floored above "
+                     "zero under _PRODUCTION so it cannot be disabled")
+    if "def record_witness_disagreement" not in obs:
+        return _fail("verify_sampling", "observability.record_witness_disagreement is missing")
+    if "PolarisWitnessDisagreement" not in alerts or "polaris_verify_witness_disagreements_total" not in alerts:
+        return _fail("verify_sampling",
+                     "a PolarisWitnessDisagreement alert on polaris_verify_witness_disagreements_total must exist")
+    return _ok("verify_sampling",
+               "the verify-at-use path continuously samples through the second witness, pages on any "
+               "disagreement (a SEV), names the witness set that ran, and keeps sampling mandatory in "
+               "production (the two-witness availability clause)")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_verify_witness_sampling,
     check_constitution_layered,
     check_no_scifi_schema,
     check_zk_claim_precise,

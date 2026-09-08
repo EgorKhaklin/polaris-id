@@ -45,6 +45,20 @@ groups:
           summary: "Duress code matched, a coerced verification was recorded"
           description: "polaris_duress_events_total increased: at least one duress-code match in the last 5m. Treat as a person signalling coercion; work the PolarisDuressEvent runbook out-of-band."
 
+      # SEV-1: the two-witness availability alarm (P1.18 item 5). The verify-at-use
+      # path runs a single witness for throughput; continuous sampling replays a
+      # fraction through the SECOND witness. A disagreement means the fast witness
+      # can no longer be trusted to stand in for the two-witness reference, so the
+      # throughput soundness argument is broken. Fires immediately on any new event
+      # (no `for`: a witness disagreement cannot wait out a window).
+      - alert: PolarisWitnessDisagreement
+        expr: increase(polaris_verify_witness_disagreements_total[5m]) > 0
+        labels:
+          severity: sev1
+        annotations:
+          summary: "Verify-at-use witness disagreement: the single-witness result diverged from the two-witness reference"
+          description: "polaris_verify_witness_disagreements_total increased: sampled second-witness re-verification disagreed with the single-witness verify-at-use result. The fast path's soundness rests on the two witnesses agreeing; page and stop trusting single-witness verification until the divergence is explained."
+
       # SEV-2: sustained 5xx share. A ratio: valid per worker.
       - alert: PolarisHigh5xx
         expr: |

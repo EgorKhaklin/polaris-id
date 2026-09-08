@@ -5,6 +5,30 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.272 — 2026-09-07 (The two-witness availability clause: continuous sampling)
+
+P1.18 item 5. Single-witness verify-at-use is ~10x the two-witness issuance
+check, but that speed is only sound while the fast witness stays trustworthy.
+This makes that assumption continuously checked rather than trusted on faith.
+
+`GET /api/tokens/<id>/verify` now replays a random fraction of successful
+single-witness checks (`POLARIS_VERIFY_SAMPLE_RATE`) through the SECOND witness.
+Any disagreement increments `polaris_verify_witness_disagreements_total` and fires
+`PolarisWitnessDisagreement` (a SEV-1 with a runbook) — a paging event, not a log
+line, because a fast witness diverging from the two-witness reference breaks the
+throughput soundness argument. Every response names which witness set actually
+ran (`witnesses`: `single` on the fast path, `both` when sampled, plus a
+`sampled` flag). Sampling is MANDATORY in production: the rate is floored above
+zero there, so two-witness verification can never be silently disabled. The
+sampling read is read-only — the fast path never changes authorization state.
+
+`check_verify_witness_sampling` (with a detection test) pins the whole clause
+(sampling through the second witness, the paging metric + alert, the witness-set
+naming, and the production floor); `VerifyWitnessSamplingTests` proves the naming
+and that a forced disagreement pages. 140 checks (was 139).
+docs/design/verification-scaling.md and the PolarisWitnessDisagreement runbook.
+
+
 ## v9.271 — 2026-09-07 (Verify-at-use: an explicit authenticity/authorization split)
 
 P1.18 item 4, the highest-value backend change: make the verify endpoint's
