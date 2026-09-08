@@ -54,8 +54,8 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 142 invariant
-checks (v9.274) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
+release; CVE gates on dependencies and images; a coverage floor; 143 invariant
+checks (v9.275) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 **Do not have:** hardware tokens (the physical artifact is modeled, not built);
@@ -117,7 +117,7 @@ deployment phases below.
 | [x] PE.2 | A detached verifier a relying party runs with no Polaris code (v9.274) | M | med | - | `scripts/polaris-verify.py` verifies an ML-DSA-65 authenticity pack OFFLINE with only a standard ML-DSA library, no Polaris code and no database; `GET /api/tokens/<id>/authenticity-pack` exports the pack; the published `vectors/` are re-verified in CI under liboqs AND cryptography/OpenSSL (three independent implementations agree). Pinned by `check_detached_verifier`; the pack round-trip is a DB test; CI's `pqc-real` job runs `--selftest` and `--verify-dir` |
 | [ ] PE.3 | Two issuers on one machine — real federation | L | med | PE.2 | Two independent issuer identities (distinct signing keys and trust anchors) run on one host; a token issued by A verifies against A's anchor and is REJECTED against B's; the detached verifier takes an issuer anchor and distinguishes them; a CI drill proves cross-issuer accept and reject |
 | [ ] PE.4 | The HSM is the only production signing path (one profile) + rotation | L | med | PE.1 | A profile in which SoftHSM (PKCS#11) is the SOLE signer, with no file key anywhere in it; a key rotation performed end to end (the old anchor still verifies old tokens, the new anchor signs new ones); drilled in CI |
-| [ ] PE.5 | Attacks that must fail, run every release | M | med | PE.2 | An `attacks/` folder of executable adversaries (forge a signature, tamper a pack, present a revoked token, replay, wrong key), each of which MUST fail against the real code; CI runs them every release and goes red if any SUCCEEDS. Running attacks, not greps |
+| [x] PE.5 | Attacks that must fail, run every release (v9.275) | M | med | PE.2 | An `attacks/` folder of executable adversaries (forge a signature, tamper a pack, present a revoked token, replay, wrong key), each of which MUST fail against the real code; CI runs them every release and goes red if any SUCCEEDS. Running attacks, not greps |
 | [x] PE.6 | An offline authenticity pack, re-verifiable with the network off (v9.274) | S | low | - | Folded into PE.2: the authenticity pack is one self-contained file, and `polaris-verify.py --pack file.json` verifies it with no network and no database. The published `vectors/` are exactly such files |
 | [ ] PE.7 | One held-in-hand flow, even ugly — a holder CLI | L | med | PE.2 | A holder-side CLI (a wallet): enroll (including a duress code), hold a credential as a file, present it for verification, and produce a ZK membership proof — the first non-operator surface, however plain |
 | [ ] PE.8 | Publish real numbers from this box | M | low | PE.2 | Measured, reproducible throughput and latency for issue, verify (single- and two-witness) and ZK prove/verify at a stated tree depth, produced by a committed benchmark and published with the box's spec and a version stamp; no extrapolation called certification |

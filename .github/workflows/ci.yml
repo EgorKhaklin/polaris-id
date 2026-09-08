@@ -197,6 +197,14 @@ jobs:
           COVERAGE_FLOOR: "72"
         run: bash scripts/polaris-coverage.sh
 
+      # v9.275 (roadmap PE.5) — attacks that MUST fail, run every release. The db
+      # suite issues a real signed token, revokes it through the real uc8
+      # procedure, and asserts /verify treats it as authentic-but-NOT-authoritative
+      # (the replay defense). run_attacks.py exits non-zero if the attack succeeds
+      # or if the suite cannot run, so a green here means the defense held.
+      - name: Attacks that must fail — db suite (revoked token not authoritative)
+        run: python3 attacks/run_attacks.py --suite db
+
       # v9.190 (roadmap P1.8) — abuse controls, exercised: promtool unit tests
       # of the velocity + quota alerts, then a per-agency verification quota
       # held under real traffic (the load generator logging in and POSTing the
@@ -1478,6 +1486,14 @@ jobs:
         run: |
           python scripts/polaris-verify.py --selftest
           python scripts/polaris-verify.py --verify-dir vectors
+
+      # v9.275 (roadmap PE.5) — attacks that MUST fail, run every release, not
+      # greps. The crypto suite throws real ML-DSA-65 forgeries and tampers at the
+      # detached verifier and the app's two-witness verify; run_attacks.py exits
+      # non-zero if ANY attack succeeds (a defense is broken) or if the suite
+      # cannot run, so a green here means the defenses actually held under attack.
+      - name: Attacks that must fail — crypto suite
+        run: python attacks/run_attacks.py --suite crypto
 
       # v9.139 — the signing-key GENERATION must emit clean JSON. liboqs prints a
       # banner to stdout at import; polaris-generate-secrets.sh captures a python

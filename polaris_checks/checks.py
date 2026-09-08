@@ -6274,8 +6274,111 @@ def check_detached_verifier(root: pathlib.Path) -> list[Finding]:
                "expectations, and CI runs the verifier every release")
 
 
+# ---------------------------------------------------------------------------
+# Attacks that must fail (roadmap PE.5). The engine is only as strong as what it
+# rejects, so attacks/ holds adversaries that actively try to break a real defense
+# (forge, tamper, wrong key, a revoked token presented as authoritative) against
+# the REAL code. The enforcement is CI RUNNING them every release; this check
+# guards that they stay wired AND that the runner is genuinely fail-closed.
+#
+# In the spirit of the ship ("run the attacks, don't grep"), this check does not
+# merely read run_attacks.py for a string: it EXECUTES the runner's contract with
+# an in-process canary and asserts a succeeding attack yields exit 1, an all-held
+# run yields 0, and a non-runnable suite yields 3 (a hard error, never a silent
+# green). A runner that stopped failing on a successful attack fails this check.
+# Detection: test_checks breaks the contract, un-wires a CI suite, and guts ATTACKS.
+# ---------------------------------------------------------------------------
+_ATTACK_MODULES = ("attack_crypto", "attack_db")
+_ATTACK_NAMES_REQUIRED = ("forge", "tamper", "revoked")
+
+
+def _attacks_runner_contract_holds(root: pathlib.Path):
+    """Load attacks/run_attacks.py and drive its decision logic with fake suites.
+    Returns (ok, detail). No liboqs/DB needed: the attacks are canary lambdas."""
+    import importlib
+    import importlib.util
+    import io
+    import types
+    import contextlib
+    path = root / "attacks" / "run_attacks.py"
+    if not path.is_file():
+        return False, "attacks/run_attacks.py is missing"
+    spec = importlib.util.spec_from_file_location("polaris_attacks_runner", path)
+    if spec is None or spec.loader is None:
+        return False, "could not build a module spec for the runner"
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        return False, f"could not load the runner ({e})"
+
+    def fake_import(name):
+        if name.endswith("_succeed"):
+            return types.SimpleNamespace(available=lambda: (True, "canary"),
+                                         ATTACKS=[("c", lambda: (True, "broke"))])
+        if name.endswith("_hold"):
+            return types.SimpleNamespace(available=lambda: (True, "canary"),
+                                         ATTACKS=[("c", lambda: (False, "held"))])
+        return types.SimpleNamespace(available=lambda: (False, "unavailable"), ATTACKS=[])
+
+    orig = importlib.import_module
+    try:
+        importlib.import_module = fake_import
+        with contextlib.redirect_stdout(io.StringIO()):
+            setattr(mod, "_SUITES", ("succeed",))
+            rc_broken = mod.main(["--suite", "succeed"])
+            setattr(mod, "_SUITES", ("hold",))
+            rc_held = mod.main(["--suite", "hold"])
+            setattr(mod, "_SUITES", ("blocked",))
+            rc_blocked = mod.main(["--suite", "blocked"])
+    except Exception as e:
+        return False, f"executing the runner contract raised {type(e).__name__}: {e}"
+    finally:
+        importlib.import_module = orig
+
+    if rc_broken != 1:
+        return False, f"a SUCCEEDING attack produced exit {rc_broken}, not 1 (the runner is not red-on-break)"
+    if rc_held != 0:
+        return False, f"an all-held run produced exit {rc_held}, not 0"
+    if rc_blocked != 3:
+        return False, f"a non-runnable suite produced exit {rc_blocked}, not 3 (it must hard-error, not skip)"
+    return True, "red on a successful attack, hard-error on a non-runnable suite, green only when all held"
+
+
+def check_attacks_run(root: pathlib.Path) -> list[Finding]:
+    if not _read(root, "attacks/run_attacks.py"):
+        return _fail("attacks_run", "attacks/run_attacks.py is missing")
+    # The adversary modules declare their attacks.
+    corpus = []
+    for mod in _ATTACK_MODULES:
+        src = _read(root, f"attacks/{mod}.py")
+        if not src:
+            return _fail("attacks_run", f"attacks/{mod}.py is missing")
+        if "ATTACKS" not in src or "def available" not in src:
+            return _fail("attacks_run", f"attacks/{mod}.py must define ATTACKS and available()")
+        corpus.append(src)
+    allsrc = "\n".join(corpus)
+    for needle in _ATTACK_NAMES_REQUIRED:
+        if needle not in allsrc:
+            return _fail("attacks_run",
+                         f"the attack suite no longer includes a '{needle}' adversary; it must not be silently gutted")
+    # CI runs BOTH suites every release (the actual enforcement).
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "run_attacks.py --suite crypto" not in ci or "run_attacks.py --suite db" not in ci:
+        return _fail("attacks_run",
+                     "ci.yml must run attacks/run_attacks.py for BOTH the crypto and db suites every release")
+    # The runner is fail-closed — proven by executing its contract, not grepping it.
+    ok, detail = _attacks_runner_contract_holds(root)
+    if not ok:
+        return _fail("attacks_run", f"the attack runner is not fail-closed: {detail}")
+    return _ok("attacks_run",
+               "attacks/ is wired into CI (crypto + db) and the runner is fail-closed, verified by executing "
+               f"its contract ({detail})")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_detached_verifier,
+    check_attacks_run,
     check_public_claims_honest,
     check_verify_witness_sampling,
     check_constitution_layered,

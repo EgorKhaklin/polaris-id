@@ -5565,3 +5565,73 @@ def test_detached_verifier_check_discriminates(tmp_path):
     # 5. CI does not re-verify the published vectors
     write({".github/workflows/ci.yml": CI.replace("--verify-dir vectors", "echo skip")})
     assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run --verify-dir"
+
+
+def test_attacks_run_check_discriminates(tmp_path):
+    # PE.5 (v9.275): the attack suite must be wired into CI (both suites) AND the
+    # runner must be fail-closed — red when an attack SUCCEEDS. The good fixture has
+    # a contract-correct minimal runner; each perturbation removes exactly one leg.
+    RUNNER = (
+        "import argparse, importlib, sys\n"
+        "_SUITES = ('crypto','db')\n"
+        "def main(argv=None):\n"
+        "    ap = argparse.ArgumentParser()\n"
+        "    ap.add_argument('--suite', choices=_SUITES+('all',), default='all')\n"
+        "    a = ap.parse_args(argv)\n"
+        "    suites = _SUITES if a.suite=='all' else (a.suite,)\n"
+        "    broken = False; hard = False\n"
+        "    for s in suites:\n"
+        "        m = importlib.import_module('attack_%s' % s)\n"
+        "        ok, _ = m.available()\n"
+        "        if not ok:\n"
+        "            hard = True; continue\n"
+        "        for name, fn in m.ATTACKS:\n"
+        "            succeeded, _ = fn()\n"
+        "            if succeeded: broken = True\n"
+        "    if broken: return 1\n"
+        "    if hard: return 3\n"
+        "    return 0\n"
+        "if __name__ == '__main__':\n"
+        "    sys.exit(main())\n"
+    )
+    CRYPTO = ("def available(): return (True, 'x')\n"
+              "def _forge(): return (False, 'held')\n"
+              "def _tamper(): return (False, 'held')\n"
+              "ATTACKS = [('forge_with_key', _forge), ('tamper_signature', _tamper)]\n")
+    DB = ("def available(): return (True, 'x')\n"
+          "def _revoked(): return (False, 'held')\n"
+          "ATTACKS = [('revoked_token_treated_as_authoritative', _revoked)]\n")
+    CI = ("jobs:\n  pqc-real:\n    steps:\n"
+          "      - run: python attacks/run_attacks.py --suite crypto\n"
+          "  test:\n    steps:\n"
+          "      - run: python3 attacks/run_attacks.py --suite db\n")
+    good = {
+        "attacks/run_attacks.py": RUNNER,
+        "attacks/attack_crypto.py": CRYPTO,
+        "attacks/attack_db.py": DB,
+        ".github/workflows/ci.yml": CI,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            if body is None:
+                if f.exists(): f.unlink()
+            else:
+                f.write_text(body)
+
+    write()
+    assert checks.check_attacks_run(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the runner is NOT fail-closed — it never returns 1 on a successful attack
+    write({"attacks/run_attacks.py": RUNNER.replace("    if broken: return 1\n", "")})
+    assert checks.check_attacks_run(tmp_path)[0].level == "FAIL", "must FAIL when the runner is not red-on-break"
+    # 2. CI does not run the db suite
+    write({".github/workflows/ci.yml": CI.replace("      - run: python3 attacks/run_attacks.py --suite db\n", "")})
+    assert checks.check_attacks_run(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run both suites"
+    # 3. the crypto suite is gutted of its forge adversary (every 'forge' removed)
+    write({"attacks/attack_crypto.py": CRYPTO.replace("forge", "noop")})
+    assert checks.check_attacks_run(tmp_path)[0].level == "FAIL", "must FAIL when a required adversary is gone"
+    # 4. an attack module is missing
+    write({"attacks/attack_db.py": None})
+    assert checks.check_attacks_run(tmp_path)[0].level == "FAIL", "must FAIL when an attack module is missing"

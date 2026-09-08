@@ -5,6 +5,44 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.275 — 2026-09-08 (Attacks that must fail: an adversary suite run every release, not greps)
+
+Phase E, PE.5. The engine is only as strong as what it rejects, so this ship adds
+`attacks/`: adversaries that actively try to break a real defense against the real
+code. An attack SUCCEEDS when the defense fails to stop it, and the rule is simple:
+run every release, and if any attack succeeds the build goes red. This is the
+opposite of a grep. A grep proves a line exists; an attack proves the defense holds
+when something hostile is thrown at it.
+
+- **`attacks/run_attacks.py`** — the runner. Exit 0 iff every attack failed to break
+  its defense; exit 1 if any attack SUCCEEDED; exit 3 if a requested suite could not
+  run or an attack crashed (a hard error, never a silent green, so a 0 always means
+  the defenses actually held).
+- **The crypto suite (`attack_crypto.py`, real ML-DSA-65).** Seven adversaries thrown
+  at the detached verifier's `verify_pack` and the app's own two-witness
+  `verify_stored_signature`: a forgery signed with an attacker key (rejected as
+  not-issuer against the anchor), a one-byte-tampered signature, a genuine signature
+  against an altered token, a wrong key, the SHA3 placeholder relabeled as a real
+  signature, an empty signature, and a tamper thrown at the app's two-witness verify.
+  All must fail; all do. Runs in CI's `pqc-real` job.
+- **The db suite (`attack_db.py`, app + Postgres).** The replay defense: issue a real
+  signed token, revoke it through the real `uc8` procedure, and present it to
+  `/verify`. The signature stays authentic (permanent) while `currently_authoritative`
+  and `usable` go False — an authentic-but-revoked credential is not current. Runs in
+  CI's `test` job.
+- **`check_attacks_run` (#143) does not grep the runner — it EXECUTES its contract.**
+  It loads `run_attacks.py`, drives it with an in-process canary, and asserts a
+  succeeding attack yields exit 1, an all-held run yields 0, and a non-runnable suite
+  yields 3. A runner that stopped failing on a successful attack fails this check.
+  It also pins that CI runs both suites and that the key adversaries (forge, tamper,
+  revoked) are not silently removed, each with a detection test.
+
+Constitutional note: no change to C1-C10 or the vocation. The attacks read and
+verify; the one that writes (the db suite) issues and revokes through the real
+authorized procedures on the test database, exactly as an operator would.
+
+---
+
 ## v9.274 — 2026-09-08 (The engine, not the wrap: a detached verifier a relying party runs offline)
 
 The owner called it: too much effort on the wrap of the car (consoles, ontology,

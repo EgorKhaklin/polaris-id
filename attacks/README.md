@@ -1,0 +1,56 @@
+# attacks/ — adversaries that must fail
+
+Every file here is an **attack**: it actively tries to break a real Polaris
+security property against the **real code**, not a mock. An attack *succeeds* when
+the defense *fails* to stop it. The rule is simple:
+
+> Run every release. If any attack succeeds, the build goes red.
+
+This is the opposite of a check that greps for a string. A grep proves a line
+exists; an attack proves the defense *holds* when something hostile is thrown at
+it. The two suites run in CI on every push (`polaris-verify.py`'s witnesses in the
+`pqc-real` job for the crypto suite, the app + Postgres in the `test` job for the
+db suite), and `check_attacks_run` keeps them wired.
+
+## Run them
+
+```bash
+python3 attacks/run_attacks.py --suite crypto   # needs liboqs (real ML-DSA-65)
+python3 attacks/run_attacks.py --suite db        # needs the app + Postgres
+python3 attacks/run_attacks.py                   # both
+```
+
+Exit `0` = every attack failed to break its defense (good). Exit `1` = an attack
+**succeeded** (a defense is broken). Exit `3` = a suite you asked for could not run,
+or an attack crashed — a hard error, never a silent green, so a `0` always means the
+defenses actually held.
+
+## The adversaries
+
+**crypto** (`attack_crypto.py`, real ML-DSA-65 — attacks the detached verifier's
+`verify_pack` and the app's two-witness `verify_stored_signature`):
+
+| attack | what it throws | the defense that must hold |
+|---|---|---|
+| `forge_with_attacker_key` | a token signed with an attacker key, presented against the issuer's anchor | not-issuer: `issuer_trusted` is False even though the signature is internally valid |
+| `tamper_signature` | a genuine signature with one byte flipped | the ML-DSA-65 verify rejects it |
+| `alter_token` | a genuine signature against a different `token_value` | the digest no longer matches; rejected |
+| `wrong_key` | a genuine signature against an unrelated public key | rejected |
+| `placeholder_relabeled_as_real` | the dev SHA3 placeholder relabeled `ML-DSA-65` | a SHA3 binding is never accepted as a signature |
+| `empty_signature` | an empty signature | rejected |
+| `app_two_witness_verify_rejects_tamper` | a tampered signature into the app's own `verify_stored_signature(both)` | both witnesses reject it |
+
+**db** (`attack_db.py`, the app + Postgres — attacks the verify-at-use route):
+
+| attack | what it throws | the defense that must hold |
+|---|---|---|
+| `revoked_token_treated_as_authoritative` | a real signed token, revoked through the real `uc8` procedure, then presented to `/verify` | the authenticity/authorization split: the signature stays authentic, but `currently_authoritative` and `usable` are False (the replay defense) |
+
+## Adding an attack
+
+Add an `attack_*` function to the right module returning `(succeeded, note)` where
+`succeeded=True` means the defense was broken, and list it in that module's
+`ATTACKS`. Prefer attacks that would have *caught a real regression*: a forgery a
+weaker verify would accept, an authorization a stale read would grant. Keep them
+fast and hermetic (the crypto suite generates its own keys; the db suite reloads
+sample data through the test harness).
