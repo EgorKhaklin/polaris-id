@@ -5575,6 +5575,116 @@ def api_v1_revocation_feed(agency_id):
     return jsonify(body)
 
 
+# --- P3.3: the transparency log over the audit-anchor roots --------------------
+#
+# The AnchorBatch table is append-only at the database. These routes turn its ordered
+# sequence of Merkle roots into a PUBLIC, append-only, independently verifiable log in
+# the style of RFC 6962 (SHA3-256): a Signed Tree Head, a consistency proof between any
+# two sizes (the append-only evidence), an inclusion proof for any entry, and the entries
+# themselves for replication. A monitor that caches an STH verifies each newer STH is a
+# consistent extension; a rewrite or a fork fails the proof. Public trust data, no
+# personal content; the tree head is signed with the instance's own key. The Merkle math
+# is anchoring.py's log_* helpers, which mirror scripts/polaris-verify.py.
+_STH_FORMAT = 'polaris-transparency-sth/1'
+_LOG_ID = 'polaris-audit-anchor-log'
+_TRANSPARENCY_ENTRIES_CAP = int(os.environ.get('POLARIS_TRANSPARENCY_ENTRIES_CAP', '1000'))
+
+
+def _sth_statement(body):
+    """Canonical bytes the log signs for a Signed Tree Head. MUST match
+    scripts/polaris-verify.py's _sth_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'log_id', 'tree_size', 'root_hash_hex', 'timestamp')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _transparency_entries():
+    """The log entries: every AnchorBatch Merkle root, in append order (batch_id)."""
+    rows = query("SELECT merkle_root FROM AnchorBatch ORDER BY batch_id", primary=True)
+    return [r['merkle_root'] for r in rows]
+
+
+@app.route('/api/v1/transparency/sth')
+def api_v1_transparency_sth():
+    """P3.3: the log's Signed Tree Head over the append-only AnchorBatch root sequence.
+    A monitor caches this and later proves each newer STH is a consistent (append-only)
+    extension via /consistency. Signed with the instance's own key over SHA3-256(canonical)."""
+    entries = _transparency_entries()
+    root_hex = anchoring.log_tree_head(entries).hex()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    body = {
+        'format': _STH_FORMAT,
+        'log_id': _LOG_ID,
+        'tree_size': len(entries),
+        'root_hash_hex': root_hex,
+        'timestamp': now.isoformat().replace('+00:00', 'Z'),
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_sth_statement(body))
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of '
+                                   '{format,log_id,tree_size,root_hash_hex,timestamp})')
+    return jsonify(body)
+
+
+@app.route('/api/v1/transparency/consistency/<int:m>/<int:n>')
+def api_v1_transparency_consistency(m, n):
+    """P3.3: an RFC-6962 consistency proof that the size-m tree is a prefix of the size-n
+    tree -- the cryptographic evidence the log only appended between those two heads."""
+    entries = _transparency_entries()
+    size = len(entries)
+    if m < 0 or n < m or n > size:
+        return jsonify(error='invalid range', log_size=size), 400
+    proof = anchoring.log_consistency_proof(m, entries[:n]) if 0 < m < n else []
+    return jsonify({
+        'log_id': _LOG_ID,
+        'first_size': m, 'second_size': n,
+        'first_root_hex': anchoring.log_tree_head(entries[:m]).hex(),
+        'second_root_hex': anchoring.log_tree_head(entries[:n]).hex(),
+        'proof_hex': proof,
+    })
+
+
+@app.route('/api/v1/transparency/proof/<int:index>')
+def api_v1_transparency_proof(index):
+    """P3.3: an RFC-6962 inclusion proof that the entry at `index` is in the current log."""
+    entries = _transparency_entries()
+    size = len(entries)
+    if index < 0 or index >= size:
+        return jsonify(error='index out of range', log_size=size), 400
+    return jsonify({
+        'log_id': _LOG_ID,
+        'index': index,
+        'tree_size': size,
+        'entry_hex': entries[index],
+        'leaf_hash_hex': anchoring.log_leaf_hash(entries[index]).hex(),
+        'proof_hex': anchoring.log_inclusion_proof(index, entries),
+        'root_hash_hex': anchoring.log_tree_head(entries).hex(),
+    })
+
+
+@app.route('/api/v1/transparency/entries')
+def api_v1_transparency_entries():
+    """P3.3: the log entries (anchor roots) in [start, end), for a monitor or mirror to
+    replicate. Bounded result set (C8): at most POLARIS_TRANSPARENCY_ENTRIES_CAP per call."""
+    entries = _transparency_entries()
+    size = len(entries)
+    start = request.args.get('start', 0, type=int)
+    end = request.args.get('end', size, type=int)
+    if start is None or end is None or start < 0 or end < start:
+        return jsonify(error='invalid range', log_size=size), 400
+    end = min(end, size, start + _TRANSPARENCY_ENTRIES_CAP)
+    return jsonify({
+        'log_id': _LOG_ID,
+        'tree_size': size,
+        'start': start,
+        'end': end,
+        'entries': entries[start:end],
+    })
+
+
 # ============================================================================
 # INVESTIGATE — Object Card UX (v9.19)
 # ============================================================================

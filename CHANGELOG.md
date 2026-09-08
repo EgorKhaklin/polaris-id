@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.301 — 2026-09-08 (The transparency log, P3.3)
+
+The audit anchor (docs/design/anchoring.md) proves the rows under one Merkle root; it does
+not, alone, prove the operator did not later drop a root and publish a different one. P3.3
+closes that: the append-only AnchorBatch root sequence becomes a public, independently
+verifiable transparency log in the style of RFC 6962, using SHA3-256.
+
+- **The log, as a signed view over AnchorBatch.** `GET /api/v1/transparency/sth` publishes a
+  Signed Tree Head (`polaris-transparency-sth/1`), `/consistency/<m>/<n>` an append-only
+  consistency proof, `/proof/<index>` an inclusion proof, and `/entries` the entries for
+  replication. The Merkle math is anchoring.py's `log_*` helpers; there is no new mutable
+  state and no personal data. The STH joins the four other signed statements in the
+  canonical-signing oracle, which now covers five types.
+
+- **The detached verifier proves append-only.** `scripts/polaris-verify.py` gains the
+  RFC-6962 log verification (`merkle_tree_head`, `verify_consistency`, `verify_inclusion`,
+  `verify_sth`, `verify_log_consistency`): it accepts an append-only extension and rejects a
+  rewrite, a fork (two roots at one size), a shrink, and a wrong-key head. The math is
+  self-tested exhaustively across tree sizes with inclusion and consistency proofs and their
+  tamper-rejection, and it stays standalone.
+
+- **An independent monitor, and a tampering drill.** `scripts/polaris-transparency-monitor.py`
+  is the daemon anyone runs: it caches the last head it saw and ALERTs (non-zero) on any
+  tampering. `scripts/polaris-transparency-drill.py` proves the whole thing end to end under
+  real ML-DSA-65 every release: the detection matrix, AND the actual monitor run over HTTP
+  against a live log that is then rewritten, forked, shrunk, and wrong-key-signed, exiting 0
+  while the log only appends and alerting the moment it is tampered. `check_transparency_log`
+  pins it; the spec is docs/design/transparency-log.md. Cross-monitor gossip and
+  external-ledger publication are P3.3b.
+
+163 machine-checked invariants; 98 routes.
+
+---
+
 ## v9.300 — 2026-09-08 (The canonical-signing equivalence oracle)
 
 Every signed statement in Polaris is signed by the application over a canonical byte

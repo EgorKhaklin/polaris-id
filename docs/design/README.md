@@ -45,6 +45,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [token-signature.md](token-signature.md) | How a signature is produced, stored, and verified across rotation |
 | [zk-snark.md](zk-snark.md) | What the Plonky2 circuit proves, and the witness that checks it |
 | [anchoring.md](anchoring.md) | Committing a batch of audit rows to an external anchor |
+| [transparency-log.md](transparency-log.md) | The public, append-only, RFC-6962-style log over the anchor roots (P3.3): the signed tree head and consistency proofs, what an independent monitor proves and what it does not, and the tampering drill |
 | [tiered-enrollment.md](tiered-enrollment.md) | The evidence tiers behind an issued token |
 | [webauthn.md](webauthn.md) | Operator credentials, enforcement, and the grace period |
 | [abuse-controls.md](abuse-controls.md) | The per-agency quotas and what a refusal looks like |

@@ -780,6 +780,233 @@ def check_revocation_progression(prev_feed, next_feed):
             "note": "forward progression (%d new revocation(s))" % len(next_leaves - prev_leaves)}
 
 
+# ---------------------------------------------------------------------------
+# P3.3: the transparency log over the audit-anchor roots.
+#
+# The audit anchor log (AnchorBatch) is append-only at the database. This turns
+# its sequence of Merkle roots into a PUBLIC, append-only, independently verifiable
+# transparency log in the style of RFC 6962 (Certificate Transparency), using
+# SHA3-256 to match the rest of Polaris: a leaf is hashed with a 0x00 prefix, an
+# interior node with a 0x01 prefix, so a leaf can never be presented as a node.
+#
+# The log publishes a SIGNED TREE HEAD (STH: {tree_size, root_hash, timestamp},
+# signed by the authority) and, between any two sizes, a CONSISTENCY PROOF: the
+# cryptographic evidence that the smaller tree is a prefix of the larger one --
+# that the log only ever appended, never rewrote or dropped history. A monitor
+# that has cached an old STH verifies each new STH is consistent with it; a fork
+# (two different roots at one size) or a rewrite fails the proof. All of this is
+# verified here with no Polaris code, no database, and no key but the published one.
+# ---------------------------------------------------------------------------
+_STH_FORMAT = "polaris-transparency-sth/1"
+
+
+def _lh(entry):
+    """RFC 6962 leaf hash, SHA3-256(0x00 || entry). `entry` is a log entry -- an anchor
+    root hex string -- taken as its UTF-8 bytes."""
+    return hashlib.sha3_256(b"\x00" + entry.encode("utf-8")).digest()
+
+
+def _ih(left, right):
+    """RFC 6962 interior node hash, SHA3-256(0x01 || left || right), over two digests."""
+    return hashlib.sha3_256(b"\x01" + left + right).digest()
+
+
+def _largest_pow2_below(n):
+    k = 1
+    while k < n:
+        k <<= 1
+    return k >> 1
+
+
+def merkle_tree_head(entries):
+    """RFC 6962 Merkle Tree Hash over an ordered list of log entries (anchor root hex
+    strings). Returns the tree head digest (bytes)."""
+    n = len(entries)
+    if n == 0:
+        return hashlib.sha3_256(b"").digest()
+    if n == 1:
+        return _lh(entries[0])
+    k = _largest_pow2_below(n)
+    return _ih(merkle_tree_head(entries[:k]), merkle_tree_head(entries[k:]))
+
+
+def consistency_proof(m, entries):
+    """RFC 6962 consistency proof that the first `m` entries form a prefix of `entries`.
+    Returns a list of digests. (Generator side, for drills and reference.)"""
+    def sub(m, ents, b):
+        n = len(ents)
+        if m == n:
+            return [] if b else [merkle_tree_head(ents)]
+        k = _largest_pow2_below(n)
+        if m <= k:
+            return sub(m, ents[:k], b) + [merkle_tree_head(ents[k:])]
+        return sub(m - k, ents[k:], False) + [merkle_tree_head(ents[:k])]
+    if m <= 0 or m > len(entries):
+        return []
+    return sub(m, entries, True)
+
+
+def verify_consistency(m, n, root1, root2, proof):
+    """Verify a consistency proof (RFC 6962 §2.1.4): the size-`m` tree with head `root1`
+    is a prefix of the size-`n` tree with head `root2`. root1/root2/proof are digests.
+    True iff the log only appended between the two heads."""
+    if m < 0 or n < m:
+        return False
+    if m == n:
+        return not proof and root1 == root2
+    if m == 0:
+        return not proof
+    if not proof:
+        return False
+    node, last = m - 1, n - 1
+    while node & 1:
+        node >>= 1
+        last >>= 1
+    it = iter(proof)
+    if node:
+        h1 = h2 = next(it, None)
+        if h1 is None:
+            return False
+    else:
+        h1 = h2 = root1
+    while node:
+        if node & 1:
+            s = next(it, None)
+            if s is None:
+                return False
+            h1, h2 = _ih(s, h1), _ih(s, h2)
+        elif node < last:
+            s = next(it, None)
+            if s is None:
+                return False
+            h2 = _ih(h2, s)
+        node >>= 1
+        last >>= 1
+    while last:
+        s = next(it, None)
+        if s is None:
+            return False
+        h2 = _ih(h2, s)
+        last >>= 1
+    return h1 == root1 and h2 == root2 and next(it, None) is None
+
+
+def inclusion_proof(idx, entries):
+    """RFC 6962 inclusion proof for the entry at `idx`. Returns a list of digests."""
+    def sub(i, ents):
+        n = len(ents)
+        if n <= 1:
+            return []
+        k = _largest_pow2_below(n)
+        if i < k:
+            return sub(i, ents[:k]) + [merkle_tree_head(ents[k:])]
+        return sub(i - k, ents[k:]) + [merkle_tree_head(ents[:k])]
+    if idx < 0 or idx >= len(entries):
+        return []
+    return sub(idx, entries)
+
+
+def verify_inclusion(idx, tree_size, leaf, root, proof):
+    """Verify (RFC 6962 §2.1.1) that `leaf` (a leaf digest) is the entry at `idx` in a
+    tree of `tree_size` with head `root`."""
+    if idx < 0 or idx >= tree_size:
+        return False
+    fn, sn = idx, tree_size - 1
+    r = leaf
+    for p in proof:
+        if sn == 0:
+            return False
+        if (fn & 1) or (fn == sn):
+            r = _ih(p, r)
+            if not (fn & 1):
+                while fn != 0 and not (fn & 1):
+                    fn >>= 1
+                    sn >>= 1
+        else:
+            r = _ih(r, p)
+        fn >>= 1
+        sn >>= 1
+    return sn == 0 and r == root
+
+
+def _sth_canonical(sth):
+    """The canonical bytes an authority signs for a Signed Tree Head. MUST match app.py's
+    _sth_statement: sorted-keys compact JSON of exactly these fields."""
+    statement = {k: sth.get(k) for k in
+                 ("format", "log_id", "tree_size", "root_hash_hex", "timestamp")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_sth(sth, issuer_key=None):
+    """Verify a Signed Tree Head OFFLINE (P3.3): the signature over SHA3-256(canonical)
+    with two witnesses, and (with issuer_key) that it is signed by the expected log key.
+    Returns a verdict dict. Append-only consistency between two heads, and timestamp
+    monotonicity, are verify_log_consistency and the monitor's concern."""
+    v = {"sth_authentic": False, "tree_size": sth.get("tree_size"),
+         "root_hash_hex": sth.get("root_hash_hex"), "issuer_matches": None,
+         "witnesses": [], "note": None}
+    if sth.get("format") != _STH_FORMAT:
+        v["note"] = "not a %s" % _STH_FORMAT
+        return v
+    alg, pk_hex, sig_hex = sth.get("algorithm"), sth.get("public_key_hex"), sth.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder STH -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_sth_canonical(sth)).digest()
+    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["sth_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "STH signature is invalid"
+    if issuer_key is not None:
+        v["issuer_matches"] = (pk_hex.lower() == issuer_key.lower())
+    return v
+
+
+def verify_log_consistency(old_sth, new_sth, proof, issuer_key=None):
+    """Decide whether new_sth is an append-only extension of old_sth (P3.3), using a
+    consistency proof. Both STHs must be authentic (and, with issuer_key, from the same
+    expected log key); the newer tree must be at least as large; and the proof must show
+    the older head is a prefix of the newer. Returns {consistent, fork, note}. fork=True
+    means the log rewrote or dropped history -- the tampering a monitor exists to catch."""
+    ov = verify_sth(old_sth, issuer_key=issuer_key)
+    nv = verify_sth(new_sth, issuer_key=issuer_key)
+    if not (ov["sth_authentic"] and nv["sth_authentic"]):
+        return {"consistent": False, "fork": False, "note": "an STH is not authentic"}
+    if issuer_key is not None and not (ov["issuer_matches"] and nv["issuer_matches"]):
+        return {"consistent": False, "fork": False, "note": "an STH is not signed by the expected log key"}
+    if (old_sth.get("log_id") != new_sth.get("log_id")):
+        return {"consistent": False, "fork": False, "note": "the STHs are from different logs"}
+    m, n = old_sth.get("tree_size"), new_sth.get("tree_size")
+    if not isinstance(m, int) or not isinstance(n, int) or m < 0 or n < 0:
+        return {"consistent": False, "fork": False, "note": "a tree_size is missing or invalid"}
+    if n < m:
+        return {"consistent": False, "fork": True,
+                "note": "the newer STH is SMALLER (tree shrank from %d to %d) -- a rewrite" % (m, n)}
+    try:
+        root1, root2 = bytes.fromhex(old_sth["root_hash_hex"]), bytes.fromhex(new_sth["root_hash_hex"])
+        pf = [bytes.fromhex(h) for h in (proof or [])]
+    except (ValueError, TypeError, KeyError):
+        return {"consistent": False, "fork": False, "note": "root_hash_hex or proof is not valid hex"}
+    if m == n:
+        ok = root1 == root2
+        return {"consistent": ok, "fork": not ok,
+                "note": "same size; heads %s" % ("match" if ok else "DIFFER -- a fork at size %d" % m)}
+    if verify_consistency(m, n, root1, root2, pf):
+        return {"consistent": True, "fork": False, "note": "append-only from %d to %d" % (m, n)}
+    return {"consistent": False, "fork": True,
+            "note": "consistency proof FAILED: the size-%d head is not a prefix of the size-%d head "
+                    "-- the log rewrote history" % (m, n)}
+
+
 def _load_anchor(path):
     with open(path) as f:
         data = json.load(f)

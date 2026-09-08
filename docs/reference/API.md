@@ -778,6 +778,34 @@ contact. Because `RevocationList` is append-only the feed is monotone, so
 published revocation). The protocol is specified in
 [inter-authority-protocol.md](../design/inter-authority-protocol.md).
 
+### `GET /api/v1/transparency/sth`
+
+**Public; no auth.** The transparency log's **Signed Tree Head** (roadmap P3.3): the log's
+commitment to its entire history at a size, over the append-only `AnchorBatch` root
+sequence. `{format: polaris-transparency-sth/1, log_id, tree_size, root_hash_hex,
+timestamp}`, signed with the instance's own key over `SHA3-256(canonical)`. A monitor
+caches this and later proves each newer head is an append-only extension. No personal data.
+
+### `GET /api/v1/transparency/consistency/<m>/<n>`
+
+**Public; no auth.** An RFC-6962 **consistency proof** that the size-`m` tree is a prefix
+of the size-`n` tree: `{first_size, second_size, first_root_hex, second_root_hex,
+proof_hex}`. This is the append-only evidence; a monitor verifies it with
+`scripts/polaris-verify.py` (`verify_log_consistency`). `400` if the range is invalid.
+
+### `GET /api/v1/transparency/proof/<index>`
+
+**Public; no auth.** An RFC-6962 **inclusion proof** that the entry at `index` is in the
+current log: `{index, tree_size, entry_hex, leaf_hash_hex, proof_hex, root_hash_hex}`,
+verifiable with `verify_inclusion`. `400` if the index is out of range.
+
+### `GET /api/v1/transparency/entries`
+
+**Public; no auth.** The log entries (anchor roots) in `[start, end)` for a monitor or
+mirror to replicate and recompute independently. Bounded result set (C8): at most
+`POLARIS_TRANSPARENCY_ENTRIES_CAP` per call. The append-only guarantee and the monitor are
+specified in [transparency-log.md](../design/transparency-log.md).
+
 ## Verification API (use cases UC-1 through UC-8)
 
 Each use case is reachable through the operator UI (HTML form) AND

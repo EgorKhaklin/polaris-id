@@ -175,3 +175,71 @@ def compute_batch(anchors: list[tuple[int, str]],
     for i, (aid, _) in enumerate(sorted_anchors):
         proofs[str(aid)] = inclusion_proof(leaves, i, algorithm_name)
     return root, proofs
+
+
+# ----------------------------------------------------------------------------
+# Transparency log (P3.3): an RFC-6962-style append-only Merkle log over the
+# ordered sequence of AnchorBatch roots, using SHA3-256. Distinct from the
+# per-batch anchor tree above -- this log's leaves are whole batch roots, and it
+# supports CONSISTENCY proofs (the append-only evidence) the per-batch tree does
+# not. A leaf is hashed with a 0x00 prefix and an interior node with 0x01, so a
+# leaf can never be presented as a node. These mirror scripts/polaris-verify.py
+# so an app-signed tree head verifies under the standalone verifier; the
+# transparency drill proves that agreement under real ML-DSA every release.
+# ----------------------------------------------------------------------------
+def log_leaf_hash(entry: str) -> bytes:
+    """RFC 6962 leaf hash SHA3-256(0x00 || entry), entry taken as its UTF-8 bytes."""
+    return hashlib.sha3_256(b'\x00' + entry.encode('utf-8')).digest()
+
+
+def _log_node(left: bytes, right: bytes) -> bytes:
+    return hashlib.sha3_256(b'\x01' + left + right).digest()
+
+
+def _log_k(n: int) -> int:
+    k = 1
+    while k < n:
+        k <<= 1
+    return k >> 1
+
+
+def log_tree_head(entries) -> bytes:
+    """RFC 6962 Merkle Tree Hash over the ordered log entries (anchor root hex strings)."""
+    n = len(entries)
+    if n == 0:
+        return hashlib.sha3_256(b'').digest()
+    if n == 1:
+        return log_leaf_hash(entries[0])
+    k = _log_k(n)
+    return _log_node(log_tree_head(entries[:k]), log_tree_head(entries[k:]))
+
+
+def log_consistency_proof(m: int, entries) -> list:
+    """RFC 6962 consistency proof that the first `m` entries are a prefix of `entries`.
+    Returns a list of hex digests."""
+    def sub(mm, ents, b):
+        n = len(ents)
+        if mm == n:
+            return [] if b else [log_tree_head(ents)]
+        k = _log_k(n)
+        if mm <= k:
+            return sub(mm, ents[:k], b) + [log_tree_head(ents[k:])]
+        return sub(mm - k, ents[k:], False) + [log_tree_head(ents[:k])]
+    if m <= 0 or m > len(entries):
+        return []
+    return [h.hex() for h in sub(m, entries, True)]
+
+
+def log_inclusion_proof(idx: int, entries) -> list:
+    """RFC 6962 inclusion proof for the entry at `idx`. Returns a list of hex digests."""
+    def sub(i, ents):
+        n = len(ents)
+        if n <= 1:
+            return []
+        k = _log_k(n)
+        if i < k:
+            return sub(i, ents[:k]) + [log_tree_head(ents[k:])]
+        return sub(i - k, ents[k:]) + [log_tree_head(ents[:k])]
+    if idx < 0 or idx >= len(entries):
+        return []
+    return [h.hex() for h in sub(idx, entries)]

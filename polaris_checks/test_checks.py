@@ -6247,6 +6247,7 @@ def test_canonical_equivalence_check_discriminates(tmp_path):
         "def _status_assertion_statement(token_value, status, issued_at, expires_at):\n"
         "    return json.dumps({'format': 'F', 'token_value': token_value, 'status': status}, "
         "sort_keys=True, separators=(',', ':')).encode()\n"
+        "def _sth_statement(body):\n" + _proj(["format", "log_id"], "body", "'")
     )
     verify = (
         "import json\n"
@@ -6256,6 +6257,7 @@ def test_canonical_equivalence_check_discriminates(tmp_path):
         "def _status_assertion_canonical(a):\n"
         '    return json.dumps({"format": a.get("format"), "token_value": a.get("token_value"), '
         '"status": a.get("status")}, sort_keys=True, separators=(",", ":")).encode()\n'
+        "def _sth_canonical(s):\n" + _proj(["format", "log_id"], "s", '"')
     )
     good = {
         "polaris_web/app.py": app,
@@ -6284,6 +6286,66 @@ def test_canonical_equivalence_check_discriminates(tmp_path):
     # 4. the oracle is not wired into CI
     write({"scripts/polaris-coverage.sh": "run polaris_web unittest test_app\n"})
     assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL if the oracle does not run in CI"
+
+
+def test_transparency_log_check_discriminates(tmp_path):
+    # v9.301 (P3.3): a public append-only RFC-6962 log over AnchorBatch, verified offline
+    # (standalone), with an independent monitor that alerts on tampering, run in CI, spec'd.
+    good = {
+        "scripts/polaris-verify.py": (
+            "import json, hashlib\n"
+            "# polaris-transparency-sth/1\n"
+            "def merkle_tree_head(e): return b''\n"
+            "def verify_consistency(m,n,r1,r2,p): return True\n"
+            "def verify_inclusion(i,n,l,r,p): return True\n"
+            "def _sth_canonical(s): return b''\n"
+            "def verify_sth(s, issuer_key=None): return {}\n"
+            "def verify_log_consistency(a,b,p,issuer_key=None): return {'fork': False}\n"
+        ),
+        "polaris_web/app.py": (
+            "@app.route('/api/v1/transparency/sth')\ndef sth():\n"
+            "    _sth_statement(body); pqc_signing.signature_over_message(x)  # AnchorBatch\n"
+            "@app.route('/api/v1/transparency/consistency/<int:m>/<int:n>')\ndef cons(m,n): pass\n"
+            "@app.route('/api/v1/transparency/proof/<int:i>')\ndef pf(i): pass\n"
+            "@app.route('/api/v1/transparency/entries')\ndef ent(): pass\n"
+        ),
+        "polaris_web/anchoring.py": "def log_tree_head(e): pass\ndef log_consistency_proof(m,e): pass\n",
+        "scripts/polaris-transparency-monitor.py": "verify_log_consistency\nprint('ALERT: x')\n",
+        "scripts/polaris-transparency-drill.py": "verify_log_consistency\n# runs scripts/polaris-transparency-monitor.py\n",
+        ".github/workflows/ci.yml": "      - run: python scripts/polaris-transparency-drill.py\n",
+        "docs/design/transparency-log.md": "# transparency log\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_transparency_log(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the verifier loses append-only detection
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_log_consistency", "def gone")})
+    assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL without verify_log_consistency"
+    # 2. the verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 3. an endpoint is missing
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("/api/v1/transparency/entries", "/api/v1/nope")})
+    assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL without the entries endpoint"
+    # 4. the app-side log math is gone
+    write({"polaris_web/anchoring.py": "def something_else(): pass\n"})
+    assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL without the RFC-6962 log math"
+    # 5. the monitor does not alert
+    write({"scripts/polaris-transparency-monitor.py": "verify_log_consistency\nprint('all good')\n"})
+    assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL if the monitor never ALERTs"
+    # 6. the drill does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
+    # 7. the spec is missing
+    write()
+    (tmp_path / "docs" / "design" / "transparency-log.md").unlink()
+    assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL without the spec"
 
 
 def test_federation_topology_check_discriminates(tmp_path):

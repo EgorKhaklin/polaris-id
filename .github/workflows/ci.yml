@@ -1561,6 +1561,15 @@ jobs:
       - name: Inter-authority — epoch alignment and revocation propagation
         run: python scripts/polaris-epoch-revocation-drill.py
 
+      # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
+      # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
+      # head and consistency proofs; the detached verifier accepts an append-only extension
+      # and rejects a rewrite/fork/shrink/wrong-key head; and the ACTUAL monitor daemon,
+      # run over HTTP against a live log, exits 0 while the log only appends and ALERTS the
+      # moment it is tampered. Red on any wrong decision or monitor exit code. No database.
+      - name: Transparency log — append-only proven, monitor catches tampering
+        run: python scripts/polaris-transparency-drill.py
+
       # v9.289 (roadmap P3.5) — the verification conformance suite is the integration
       # contract: it drives a verifier over the published authenticity cases and
       # checks every verdict. Run the bundled Python reference SDK against it (real

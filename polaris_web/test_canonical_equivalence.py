@@ -88,6 +88,12 @@ SIGNED_TYPES = {
             b.get("token_value"), b.get("status"), b.get("issued_at"), b.get("expires_at")),
         "verify": lambda b: _V._status_assertion_canonical(b),
     },
+    "transparency-sth": {
+        "keys": ["format", "log_id", "tree_size", "root_hash_hex", "timestamp"],
+        "fixed": {},
+        "app": lambda b: flask_app._sth_statement(b),
+        "verify": lambda b: _V._sth_canonical(b),
+    },
 }
 
 
@@ -235,6 +241,7 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
         covered = {
             "polaris-federation-manifest/1", "polaris-epoch-checkpoint/1",
             "polaris-revocation-feed/1", "polaris-status-assertion/1",
+            "polaris-transparency-sth/1",
         }
         pack = {"polaris-authenticity-pack/1"}
         missing = formats - covered - pack

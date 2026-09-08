@@ -6934,6 +6934,63 @@ def _signed_statement_keys(src: str, fn: str):
     return re.findall(r"""['"]([a-z_]+)['"]\s*:""", body)
 
 
+def check_transparency_log(root: pathlib.Path) -> list[Finding]:
+    """P3.3: the audit anchor log is exposed as a PUBLIC, append-only, independently
+    verifiable transparency log (RFC-6962 style over SHA3-256). The app publishes a signed
+    tree head and consistency proofs over the append-only AnchorBatch roots; the standalone
+    verifier proves an append-only extension and rejects a rewrite, fork, shrink, or
+    wrong-key head; and an independent monitor daemon, run over HTTP, alerts on tampering.
+    A signed view over AnchorBatch -- no new mutable state."""
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def merkle_tree_head", "def verify_consistency", "def verify_inclusion",
+                "def verify_sth", "def verify_log_consistency", "_sth_canonical",
+                "polaris-transparency-sth/1"):
+        if sym not in v:
+            return _fail("transparency_log",
+                         "scripts/polaris-verify.py must carry the RFC-6962 log verification (%s missing)" % sym)
+    if '"fork"' not in v and "'fork'" not in v:
+        return _fail("transparency_log",
+                     "verify_log_consistency must detect a FORK (a rewrite or a non-consistent head)")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("transparency_log",
+                         f"the offline verifier imports {mod!r}; it must stay standalone (a monitor verifies "
+                         "the log with no Polaris code, no database)")
+    # The app publishes the signed log as a view over the append-only AnchorBatch.
+    app = _read(root, "polaris_web/app.py")
+    for sym in ("/api/v1/transparency/sth", "/api/v1/transparency/consistency",
+                "/api/v1/transparency/proof", "/api/v1/transparency/entries",
+                "_sth_statement", "signature_over_message", "AnchorBatch"):
+        if sym not in app:
+            return _fail("transparency_log",
+                         "app.py must publish the signed transparency log over AnchorBatch (%s missing)" % sym)
+    anc = _read(root, "polaris_web/anchoring.py")
+    if "log_tree_head" not in anc or "log_consistency_proof" not in anc:
+        return _fail("transparency_log",
+                     "anchoring.py must carry the RFC-6962 log math (log_tree_head / log_consistency_proof)")
+    # An independent monitor daemon that alerts on tampering.
+    mon = _read(root, "scripts/polaris-transparency-monitor.py")
+    if not mon or "verify_log_consistency" not in mon or "ALERT" not in mon:
+        return _fail("transparency_log",
+                     "scripts/polaris-transparency-monitor.py must independently verify consistency and ALERT on tampering")
+    # It RUNS every release, and the monitor is exercised under attack.
+    drill = _read(root, "scripts/polaris-transparency-drill.py")
+    if not drill or "verify_log_consistency" not in drill or "polaris-transparency-monitor.py" not in drill:
+        return _fail("transparency_log",
+                     "scripts/polaris-transparency-drill.py must run the detection matrix AND the monitor daemon")
+    if "polaris-transparency-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("transparency_log",
+                     "the transparency drill must run in CI (a tampering proof that never runs is displacement)")
+    if not _read(root, "docs/design/transparency-log.md"):
+        return _fail("transparency_log", "docs/design/transparency-log.md (the spec) is missing")
+    return _ok("transparency_log",
+               "the audit anchor log is a public, append-only, RFC-6962-style transparency log: the app "
+               "publishes a signed tree head (GET /api/v1/transparency/sth) and consistency proofs over the "
+               "append-only AnchorBatch roots, the standalone verifier proves append-only and rejects a "
+               "rewrite/fork/shrink/wrong-key head, and an independent monitor daemon alerts on tampering -- "
+               "proven every release by the transparency drill under real ML-DSA")
+
+
 def check_canonical_equivalence(root: pathlib.Path) -> list[Finding]:
     """Every signed statement type is signed by the app over a canonical byte string and
     reconstructed INDEPENDENTLY by scripts/polaris-verify.py. If the two sides ever
@@ -6953,6 +7010,7 @@ def check_canonical_equivalence(root: pathlib.Path) -> list[Finding]:
         ("epoch-checkpoint", "_epoch_checkpoint_statement", "_epoch_checkpoint_canonical"),
         ("revocation-feed", "_revocation_feed_statement", "_revocation_feed_canonical"),
         ("status-assertion", "_status_assertion_statement", "_status_assertion_canonical"),
+        ("transparency-sth", "_sth_statement", "_sth_canonical"),
     ]
     for name, app_fn, ver_fn in pairs:
         a_keys = _signed_statement_keys(app, app_fn)
@@ -7511,6 +7569,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_transparency_log,
     check_canonical_equivalence,
     check_federation_two_instances,
     check_epoch_revocation_propagation,
