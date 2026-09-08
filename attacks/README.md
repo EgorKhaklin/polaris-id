@@ -48,8 +48,8 @@ defenses actually held.
 |---|---|---|
 | `revoked_token_treated_as_authoritative` | a real signed token, revoked through the real `uc8` procedure, then presented to `/verify` | the authenticity/authorization split: the signature stays authentic, but `currently_authoritative` and `usable` are False (the replay defense) |
 
-**controls** (`attack_controls.py`, the app + Postgres — NIST 800-53 AC + AU as
-attacks, not a control-mapping document):
+**controls** (`attack_controls.py`, the app + Postgres — NIST 800-53 AC + AU + IA +
+SC as attacks, not a control-mapping document):
 
 | attack | control | the defense that must hold |
 |---|---|---|
@@ -58,6 +58,10 @@ attacks, not a control-mapping document):
 | `au9_audit_row_delete_allowed` | AU-9 | an audit-of-record row (`TokenLifecycleEvent`) cannot be DELETEd — the append-only trigger refuses (attempt rolled back) |
 | `au9_audit_row_update_allowed` | AU-9 | the same row cannot be UPDATEd |
 | `ac7_failed_logins_do_not_lock` | AC-7 | five failed logins lock the account (the failure counter enforces; reset afterward) |
+| `ia5_password_stored_reversibly` | IA-5 | passwords are stored one-way (scrypt), never as plaintext or a reversible form |
+| `ia2_forged_session_grants_access` | IA-2 | a forged/tampered `polaris_session` cookie does not authenticate |
+| `sc5_login_rate_limit_bypassed` | SC-5 | per-IP login attempts are rate-limited (a 429 after the limit) |
+| `sc23_csrf_protected_write_without_token` | SC-23 | a state-changing POST without a valid CSRF token is rejected (403) |
 
 ## Adding an attack
 

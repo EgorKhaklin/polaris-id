@@ -5998,9 +5998,10 @@ def test_kat_conformance_check_discriminates(tmp_path):
 
 
 def test_controls_as_attacks_check_discriminates(tmp_path):
-    # (v9.284) NIST 800-53 AC + AU controls must be enforced by RUNNING adversaries:
-    # AC-3 (route access), AU-9 (audit-of-record immutability, safely rolled back),
-    # AC-7 (lockout), run in CI. Each perturbation removes one leg.
+    # (v9.284/v9.285) NIST 800-53 AC/AU/IA/SC controls must be enforced by RUNNING
+    # adversaries against the real system: AC-3 (route access), AU-9 (audit-of-record
+    # immutability, safely rolled back), AC-7 (lockout), IA-5/IA-2 (password hashing,
+    # forged session), SC-5/SC-23 (rate limit, CSRF). Each perturbation removes a leg.
     CTRL = (
         "def attack_ac3_unauth():\n"
         "    r = client.get('/api/tokens/2/authenticity-pack')\n"
@@ -6010,7 +6011,17 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
         "    conn.rollback()\n"
         "def attack_ac7_lock():\n"
         "    pass  # five failed logins lock the account\n"
-        "ATTACKS = [('ac3', attack_ac3_unauth), ('au9', attack_au9_delete), ('ac7', attack_ac7_lock)]\n"
+        "def attack_ia5_hash():\n"
+        "    cur.execute('SELECT password_hash FROM AppUser'); return stored == plaintext, 'ia5'\n"
+        "def attack_ia2_session():\n"
+        "    client.set_cookie('polaris_session', 'forged'); return client.get('/x').status_code == 200, 'ia2'\n"
+        "def attack_sc5_rate():\n"
+        "    codes = [client.post('/login').status_code]; return 429 not in codes, 'sc5'\n"
+        "def attack_sc23_csrf():\n"
+        "    return client.post('/individuals/new').status_code != 403, 'sc23'\n"
+        "ATTACKS = [('ac3', attack_ac3_unauth), ('au9', attack_au9_delete), ('ac7', attack_ac7_lock),\n"
+        "           ('ia5', attack_ia5_hash), ('ia2', attack_ia2_session), ('sc5', attack_sc5_rate),\n"
+        "           ('sc23', attack_sc23_csrf)]\n"
     )
     CI = "jobs:\n  test:\n    steps:\n      - run: python3 attacks/run_attacks.py --suite controls\n"
     good = {"attacks/attack_controls.py": CTRL, ".github/workflows/ci.yml": CI}
@@ -6035,3 +6046,9 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     # 4. CI does not run the controls suite
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the controls suite"
+    # 5. the IA adversaries no longer attack the real mechanism (the stored hash)
+    write({"attacks/attack_controls.py": CTRL.replace("password_hash", "some_other_col")})
+    assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when IA-5 does not read the real password hash"
+    # 6. the SC adversaries no longer check rate limiting (no 429)
+    write({"attacks/attack_controls.py": CTRL.replace("429", "200")})
+    assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"

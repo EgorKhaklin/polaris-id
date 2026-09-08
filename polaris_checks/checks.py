@@ -6813,11 +6813,13 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
     src = _read(root, "attacks/attack_controls.py")
     if not src:
         return _fail("controls_as_attacks", "attacks/attack_controls.py is missing")
-    for control in ("ac3", "au9", "ac7"):
+    # AC-3 access enforcement, AU-9 audit protection, AC-7 logon lockout, IA-5
+    # authenticator storage, IA-2 session authenticity, SC-5 rate limiting, SC-23 CSRF.
+    for control in ("ac3", "au9", "ac7", "ia5", "ia2", "sc5", "sc23"):
         if control not in src:
             return _fail("controls_as_attacks",
                          f"attacks/attack_controls.py is missing the {control.upper()} adversary "
-                         "(AC-3 access enforcement, AU-9 audit protection, AC-7 logon lockout)")
+                         "(the AC/AU/IA/SC controls, each expressed as an attack that must fail)")
     # AU-9 must attack the real append-only audit table and never actually mutate it.
     if "TokenLifecycleEvent" not in src or ("DELETE" not in src and "UPDATE" not in src):
         return _fail("controls_as_attacks",
@@ -6832,6 +6834,15 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
         return _fail("controls_as_attacks",
                      "the AC-3 adversary must drive a real route and key on the HTTP status (a redirect/403 is "
                      "the control holding)")
+    # IA/SC adversaries must attack the real mechanisms, not merely carry the names.
+    if "password_hash" not in src or "polaris_session" not in src:
+        return _fail("controls_as_attacks",
+                     "the IA adversaries must attack the real mechanisms — the stored password_hash (IA-5) and a "
+                     "forged polaris_session cookie (IA-2)")
+    if ".post(" not in src or ("429" not in src and "RATE_LIMIT" not in src):
+        return _fail("controls_as_attacks",
+                     "the SC adversaries must drive a real state-changing POST (SC-23 CSRF) and check rate "
+                     "limiting (SC-5, a 429)")
     if "ATTACKS" not in src:
         return _fail("controls_as_attacks", "attack_controls.py must register its adversaries in ATTACKS")
     # CI runs the controls suite every release.
@@ -6841,9 +6852,10 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
                      "ci.yml must run attacks/run_attacks.py --suite controls so the AC/AU controls are attacked "
                      "every release")
     return _ok("controls_as_attacks",
-               "NIST 800-53 AC + AU controls are enforced by running adversaries — unauthenticated and wrong-role "
-               "access denied, the audit-of-record proven un-deletable and un-updatable, and failed logins lock "
-               "the account — run against the real system in CI")
+               "NIST 800-53 AC/AU/IA/SC controls are enforced by running adversaries — unauthenticated and "
+               "wrong-role access denied, the audit-of-record un-deletable/un-updatable, failed logins lock, "
+               "passwords stored one-way, a forged session rejected, login rate-limited, and a CSRF-less write "
+               "refused — all run against the real system in CI")
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [

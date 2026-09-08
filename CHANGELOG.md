@@ -5,6 +5,37 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.285 — 2026-09-08 (Controls as attacks: IA + SC join AC + AU)
+
+The second batch of controls-as-attacks. The `controls` suite adds the two families
+that cover authentication and transport/session protection, again as running
+adversaries against the real app and database — not a mapping document.
+
+- **IA-5 (authenticator management):** the stored `password_hash` is a one-way scrypt
+  hash, never the plaintext or a reversible form.
+- **IA-2 (identification):** a forged/tampered `polaris_session` cookie does not
+  authenticate — the request is treated as anonymous and redirected.
+- **SC-5 (denial-of-service protection):** per-IP login attempts are rate-limited;
+  past the limit the server answers 429.
+- **SC-23 (session authenticity):** a state-changing POST (`/individuals/new`)
+  without a valid CSRF token is rejected with 403.
+
+All nine controls (AC-3 ×2, AU-9 ×2, AC-7, IA-5, IA-2, SC-5, SC-23) hold locally
+against the real system and run in CI's `test` job every release.
+`check_controls_as_attacks` (#151) now pins the AC/AU/IA/SC families and that the IA
+adversaries read the real password hash and forge the real session cookie, and the
+SC adversaries drive a real CSRF-protected POST and check the rate-limit 429 —
+detection-tested.
+
+That's four NIST 800-53 families enforced by attack. The same shape extends to more
+families when useful; each control stays an adversary that fails, never a checkbox.
+
+Constitutional note: no change to C1-C10 or the vocation. The adversaries use a
+non-existent username for the rate-limit probe and a fresh client for the forged
+cookie; nothing writes real state.
+
+---
+
 ## v9.284 — 2026-09-08 (Security controls as attacks: NIST 800-53 AC + AU)
 
 The honest, engine-shaped answer to "apply the standards": not a control-mapping

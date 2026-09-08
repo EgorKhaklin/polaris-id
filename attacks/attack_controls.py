@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Access-control (AC) and audit (AU) controls as attacks — the NIST 800-53
-families that map to Polaris's real mechanisms, each expressed as an adversary that
-tries to VIOLATE the control against the running app + database and must fail:
+"""Security controls as attacks — the NIST 800-53 families that map to Polaris's
+real mechanisms (AC, AU, IA, SC), each expressed as an adversary that tries to
+VIOLATE the control against the running app + database and must fail:
 
   AC-3  access enforcement   an unauthenticated request must not reach protected
                              data; a lower role (operator) must not reach an
@@ -10,6 +10,11 @@ tries to VIOLATE the control against the running app + database and must fail:
                              neither deletable nor updatable — the append-only
                              invariant (C1).
   AC-7  logon attempts       repeated failed logins must lock the account.
+  IA-5  authenticator mgmt   passwords are stored one-way (scrypt), never plaintext.
+  IA-2  identification       a forged/tampered session cookie must not authenticate.
+  SC-5  denial of service    per-IP login attempts are rate-limited (429).
+  SC-23 session authenticity a state-changing POST without a valid CSRF token is
+                             rejected (403).
 
 Not a control-mapping document: these RUN against the real system every release.
 Needs the app + Postgres; reuses the DB test harness via attack_db. Each attack
@@ -142,10 +147,72 @@ def attack_ac7_failed_logins_do_not_lock():
         conn.close()
 
 
+def attack_ia5_password_stored_reversibly():
+    """IA-5: authenticators (passwords) must be stored as one-way hashes, never as
+    plaintext or a reversible form."""
+    import attack_db
+    ta = _setup()
+    conn = attack_db._conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password_hash FROM AppUser WHERE username=%s", ("admin",))
+            row = cur.fetchone()
+        stored = (row["password_hash"] if row else "") or ""
+        plaintext = ta.TEST_PASSWORDS["admin"]
+        looks_hashed = stored.startswith(("scrypt:", "pbkdf2:", "argon2", "$2"))
+        succeeded = (stored == plaintext) or (not looks_hashed)
+        return succeeded, ("admin password stored as %r%s (recognised hash=%s)"
+                           % (stored[:14], "..." if len(stored) > 14 else "", looks_hashed))
+    finally:
+        conn.close()
+
+
+def attack_ia2_forged_session_grants_access():
+    """IA-2: a forged/tampered session cookie must not authenticate a request."""
+    ta = _setup()
+    c = _fresh_client(ta)
+    try:
+        c.set_cookie("polaris_session", "forged.admin.session.value")
+    except TypeError:  # older Werkzeug signature
+        c.set_cookie("localhost", "polaris_session", "forged.admin.session.value")
+    r = c.get("/api/tokens/2/authenticity-pack")
+    succeeded = (r.status_code == 200)
+    return succeeded, ("a forged polaris_session cookie returned HTTP %d (expected a redirect/deny)"
+                       % r.status_code)
+
+
+def attack_sc5_login_rate_limit_bypassed():
+    """SC-5: per-IP login attempts must be rate-limited (429) to blunt brute force/DoS."""
+    ta = _setup()
+    _reset_rate_limit(ta)
+    c = _fresh_client(ta)
+    limit = ta.flask_app.security.RATE_LIMIT_LOGIN_MAX
+    codes = []
+    for _ in range(limit + 3):  # a non-existent username, so no real account is locked
+        codes.append(c.post("/login", data={"username": "ratelimit-probe", "password": "x"}).status_code)
+    succeeded = 429 not in codes
+    return succeeded, ("%d login attempts produced statuses %s (expected a 429 after the limit of %d)"
+                       % (len(codes), sorted(set(codes)), limit))
+
+
+def attack_sc23_csrf_protected_write_without_token():
+    """SC-23: a state-changing POST without a valid CSRF token must be rejected (403)."""
+    import attack_db
+    tc = attack_db._harness()  # a logged-in admin client (its session has a CSRF token)
+    r = tc.client.post("/individuals/new", data={  # raw post: deliberately no csrf_token
+        "legal_name": "SC23 Attacker", "date_of_birth": "1990-01-01", "jurisdiction": "US-NJ"})
+    succeeded = (r.status_code != 403)  # broken if the write was NOT CSRF-rejected
+    return succeeded, ("a CSRF-less state-changing POST returned HTTP %d (expected 403)" % r.status_code)
+
+
 ATTACKS = [
     ("ac3_unauthenticated_reaches_protected_data", attack_ac3_unauthenticated_reaches_protected_data),
     ("ac3_operator_reaches_admin_auditor_route", attack_ac3_operator_reaches_admin_auditor_route),
     ("au9_audit_row_delete_allowed", attack_au9_audit_row_delete_allowed),
     ("au9_audit_row_update_allowed", attack_au9_audit_row_update_allowed),
     ("ac7_failed_logins_do_not_lock", attack_ac7_failed_logins_do_not_lock),
+    ("ia5_password_stored_reversibly", attack_ia5_password_stored_reversibly),
+    ("ia2_forged_session_grants_access", attack_ia2_forged_session_grants_access),
+    ("sc5_login_rate_limit_bypassed", attack_sc5_login_rate_limit_bypassed),
+    ("sc23_csrf_protected_write_without_token", attack_sc23_csrf_protected_write_without_token),
 ]
