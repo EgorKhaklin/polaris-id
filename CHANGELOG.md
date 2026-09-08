@@ -5,6 +5,36 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.294 — 2026-09-08 (Front door opens on the engine, with proof-of-life)
+
+A second surface review: the v9.293 fixes landed (the site title dropped "national";
+the comparison marks Polaris neither deployed nor issuing at national scale, pinned so
+CI fails on a regression), but the first screen still taught the constitution, the
+Atlas, and the six-cards motivation rather than the verification engine the repository
+now is. Reordered to open on the engine, and added a runnable demonstration.
+
+- **The README and the site open on the engine.** "What Polaris is" now leads with the
+  post-quantum credential verification engine (issue, hold, present; authenticity offline
+  via the detached verifier; authorization online via the relying-party API or offline
+  via the signed status assertion; the Python and TypeScript SDKs and the conformance
+  suite; explicit non-transitive federation), then the schema backbone, then the
+  six-cards motivation. The Atlas moved from the top hero to the Architecture section,
+  where the operator's surface belongs.
+
+- **Proof-of-life a stranger can run.** A new "See it run" section gives three commands
+  that need no database and no server: the detached verifier's self-test, its re-check of
+  the published authenticity packs (a genuine one passes, every tampered one fails), and
+  the conformance suite against the reference SDK. They are the same code a third party
+  integrates and the same code CI runs every push, so "clone and see the engine work" is
+  now on the page, not only in the changelog.
+
+Presentation only; no code, schema, or CI-job change. The comparison tick and the
+"national"-free title were verified on the raw files, not assumed from the changelog.
+
+158 machine-checked invariants; the first screen now teaches the engine.
+
+---
+
 ## v9.293 — 2026-09-08 (Front door: state reality, and pin it)
 
 A review of the live surfaces found them drifting from the code and, in a few places,

@@ -6,7 +6,7 @@
 <title>Polaris: a reference implementation of a post-quantum, unlinkable-by-default, compulsion-resistant identity-token system</title>
 <meta name="description" content="A working reference implementation of a post-quantum, unlinkable-by-default, compulsion-resistant identity-token system. Educational; notional data only. The guarantees live in the database; CI boots the production-profile stack on every push. A reference implementation, not a deployment.">
 <meta property="og:title" content="Polaris: a reference implementation of a post-quantum, unlinkable-by-default, compulsion-resistant identity-token system">
-<meta property="og:description" content="One token per person. Post-quantum signed. Unlinkable verification by default. Compulsion-resistant by construction. It runs; CI proves it on every push.">
+<meta property="og:description" content="A post-quantum credential verification engine: issue, hold, present, and verify a credential offline against published keys or online against current status. Unlinkable by default, compulsion-resistant by construction. A reference implementation on notional data; CI proves it on every push.">
 <meta property="og:image" content="https://egorkhaklin.github.io/polaris-id/atlas-globe.png">
 <meta property="og:image:alt" content="The Polaris Atlas: a dark operational map of North America with verification clusters and the coverage figures. Notional data.">
 <meta property="og:image:width" content="2400">
@@ -209,19 +209,25 @@ footer a{color:var(--ink-dim)}
 
 <section id="what" aria-labelledby="what-h">
     <h2 id="what-h">What Polaris is</h2>
-    <p class="lede">Americans carry six to eight credentials that do not talk to each other:
-        driver's license, passport, Social Security card, Real ID, voter registration,
-        insurance card. Each is a separate artifact, signed by a separate authority, secured
-        to a separate standard, with no shared revocation path and no shared audit trail.</p>
-    <p class="lede">Polaris consolidates them into one token per person, signed under
-        post-quantum cryptography and verified through context-scoped events: banking, voting
-        and healthcare are different events with different disclosure rules. The default
-        disclosure level is zero-knowledge, so the typical verification stores no token
-        identifier at all, so the zero-knowledge verification graph cannot be reconstructed even by
-        someone holding the whole database (SELECTIVE and FULL events do carry a token id).</p>
-    <p class="lede">One design rule holds it together: the guarantees live in the database,
-        not in application code. A rule enforced by a trigger, a CHECK constraint or a unique
-        index binds every client and survives every restore from backup.</p>
+    <p class="lede">Polaris is a <strong>post-quantum credential verification engine</strong>, on a
+        schema backbone. An authority issues a credential signed with ML-DSA-65; a holder holds it
+        and presents it; and anyone can check it two ways. <strong>Authenticity</strong> is offline:
+        a standalone detached verifier confirms the signature against published keys, with no Polaris
+        code, no database and no network. <strong>Authorization</strong> is answered online by a
+        versioned relying-party API a third party calls as itself, or offline by a short-lived signed
+        status assertion, so a relying party need not contact the issuer to accept a credential.
+        Python and TypeScript verify SDKs and a language-agnostic conformance suite make correct
+        verification a contract anyone can hold their own code to.</p>
+    <p class="lede">The backbone is a schema whose constraints are the security boundary: the
+        guarantees live in the database, not in application code. A rule enforced by a trigger, a
+        CHECK constraint or a unique index binds every client and survives every restore from backup.</p>
+    <p class="lede">The problem it models: Americans carry six to eight credentials that do not talk
+        to each other. Polaris consolidates them into one token per person, verified through
+        context-scoped events (banking, voting and healthcare are different events with different
+        disclosure rules). The default disclosure level is zero-knowledge, so the typical verification
+        stores no token identifier at all, and the zero-knowledge verification graph cannot be
+        reconstructed even by someone holding the whole database (SELECTIVE and FULL events do carry a
+        token id).</p>
 </section>
 
 <section class="atlas-showcase" id="atlas" aria-labelledby="atlas-h">
