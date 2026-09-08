@@ -44,18 +44,26 @@ def main(argv=None):
     kept_by_flags = defaultdict(int)
     groups_out = []
     n_tests = 0
+    n_ctx = 0
     for g in src["testGroups"]:
         tests = []
         for t in g["tests"]:
-            if t.get("ctx") not in (None, ""):
-                continue  # empty-context only — the standard verify path
+            ctx = t.get("ctx") or ""
+            has_ctx = ctx != ""
             key = tuple(t.get("flags", []))
-            if kept_by_flags[key] >= args.per_flagset:
+            # Cap the empty-context tests per flag-set; ALWAYS keep the rare
+            # context-string tests (only a handful, and they exercise a distinct
+            # verify path — the ML-DSA context domain separation and its 255-byte cap).
+            if not has_ctx and kept_by_flags[key] >= args.per_flagset:
                 continue
             kept_by_flags[key] += 1
-            tests.append({"tcId": t["tcId"], "comment": t.get("comment", ""),
-                          "flags": t.get("flags", []), "result": t["result"],
-                          "msg": t["msg"], "sig": t["sig"]})
+            entry = {"tcId": t["tcId"], "comment": t.get("comment", ""),
+                     "flags": t.get("flags", []), "result": t["result"],
+                     "msg": t["msg"], "sig": t["sig"]}
+            if has_ctx:
+                entry["ctx"] = ctx
+                n_ctx += 1
+            tests.append(entry)
             n_tests += 1
         if tests:
             groups_out.append({"publicKey": g["publicKey"], "tests": tests})
@@ -67,8 +75,9 @@ def main(argv=None):
             "commit": _COMMIT,
             "url": _URL,
             "license": "Apache-2.0",
-            "note": ("Project Wycheproof ML-DSA-65 verify vectors, empty-context tests only, "
-                     "curated to <=%d per flag-set. Regenerate with scripts/polaris-fetch-kat.py."
+            "note": ("Project Wycheproof ML-DSA-65 verify vectors: empty-context tests curated to "
+                     "<=%d per flag-set, PLUS every context-string test (a `ctx` field, verified with "
+                     "the ML-DSA context domain separation). Regenerate with scripts/polaris-fetch-kat.py."
                      % args.per_flagset),
         },
         "flag_sets_covered": [list(k) for k in sorted(kept_by_flags)],
@@ -79,8 +88,9 @@ def main(argv=None):
         json.dump(out, f, indent=1, sort_keys=False)
         f.write("\n")
     valid = sum(1 for g in groups_out for t in g["tests"] if t["result"] == "valid")
-    print("wrote %s: %d tests (%d valid / %d invalid) across %d groups, %d flag-sets, %d bytes"
-          % (args.out, n_tests, valid, n_tests - valid, len(groups_out),
+    print("wrote %s: %d tests (%d valid / %d invalid; %d with a context string) across %d groups, "
+          "%d flag-sets, %d bytes"
+          % (args.out, n_tests, valid, n_tests - valid, n_ctx, len(groups_out),
              len(kept_by_flags), os.path.getsize(args.out)))
     return 0
 

@@ -5941,8 +5941,10 @@ def test_kat_conformance_check_discriminates(tmp_path):
     # answers (Wycheproof): committed vectors with provenance + BOTH valid and
     # invalid cases, a verifier that checks under both witnesses vs the expected
     # result, and CI wiring. Each perturbation removes one leg.
-    def vectors(results, prov=True):
+    def vectors(results, prov=True, with_ctx=True):
         tests = [{"tcId": i, "result": r, "msg": "00", "sig": "00"} for i, r in enumerate(results)]
+        if with_ctx:  # a context-string vector (exercises ML-DSA's context domain separation)
+            tests.append({"tcId": 9999, "result": "valid", "msg": "00", "sig": "00", "ctx": "436f6e74657874"})
         obj = {"algorithm": "ML-DSA-65", "testGroups": [{"publicKey": "ab", "tests": tests}]}
         if prov:
             obj["provenance"] = {"source": "C2SP/wycheproof testvectors_v1/mldsa_65_verify_test.json",
@@ -5951,8 +5953,11 @@ def test_kat_conformance_check_discriminates(tmp_path):
     VERIFIER = (
         "import oqs\n"
         "from cryptography.hazmat.primitives.asymmetric import mldsa\n"
-        "def check(pk, msg, sig, expect):\n"
+        "def check(pk, msg, sig, ctx, expect):\n"
         "    a = mldsa.MLDSA65PublicKey.from_public_bytes(pk)\n"
+        "    if ctx:\n"
+        "        oqs.Signature('ML-DSA-65').verify_with_ctx_str(msg, sig, ctx, pk)\n"
+        "        a.verify(sig, msg, context=ctx)\n"
         "    return (result == 'valid') == expect\n"
     )
     FETCH = "#!/usr/bin/env python3\n# regenerates the KAT vectors from a pinned Wycheproof commit\n"
@@ -5984,3 +5989,9 @@ def test_kat_conformance_check_discriminates(tmp_path):
     # 4. CI does not run the KAT
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_kat_conformance(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the KAT"
+    # 5. no context-string vectors (the ctx-domain-separation path is untested)
+    write({"vectors/kat/mldsa_65_verify.json": vectors(["valid"] * 10 + ["invalid"] * 15, with_ctx=False)})
+    assert checks.check_kat_conformance(tmp_path)[0].level == "FAIL", "must FAIL without a context-string vector"
+    # 6. the verifier is not context-aware (context vectors verified without their context)
+    write({"scripts/polaris-kat-verify.py": VERIFIER.replace("verify_with_ctx_str", "verify")})
+    assert checks.check_kat_conformance(tmp_path)[0].level == "FAIL", "must FAIL when the verifier is not context-aware"

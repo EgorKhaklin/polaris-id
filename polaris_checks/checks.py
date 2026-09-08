@@ -6758,6 +6758,12 @@ def check_kat_conformance(root: pathlib.Path) -> list[Finding]:
                      "that must be rejected; the invalid vectors are what catch a verifier that accepts a forgery")
     if len(results) < 20:
         return _fail("kat_conformance", f"only {len(results)} KAT vectors; keep a representative set (>=20)")
+    # Context-string vectors are covered — they exercise ML-DSA's context domain
+    # separation and its 255-byte cap, a distinct verify path — not silently dropped.
+    if not any(t.get("ctx") for g in data.get("testGroups", []) for t in g.get("tests", [])):
+        return _fail("kat_conformance",
+                     "the KAT must include context-string vectors (a `ctx` field), which exercise ML-DSA's "
+                     "context domain separation, not only the empty-context tests")
     # The verifier checks under BOTH witnesses against the expected result.
     verifier = _read(root, "scripts/polaris-kat-verify.py")
     if not verifier:
@@ -6769,6 +6775,11 @@ def check_kat_conformance(root: pathlib.Path) -> list[Finding]:
     if 'result' not in verifier or "expect" not in verifier:
         return _fail("kat_conformance",
                      "the KAT verifier must compare each verdict against Wycheproof's expected `result`")
+    # It must be context-aware, or the context-string vectors are not actually verified with their context.
+    if "verify_with_ctx_str" not in verifier or "context=" not in verifier:
+        return _fail("kat_conformance",
+                     "the KAT verifier must be context-aware (liboqs verify_with_ctx_str and cryptography "
+                     "context=) so the context-string vectors are verified with their context, not without it")
     # A regeneration path keeps the committed subset auditable.
     if not _read(root, "scripts/polaris-fetch-kat.py"):
         return _fail("kat_conformance",

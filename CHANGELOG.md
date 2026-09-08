@@ -5,6 +5,33 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.283 — 2026-09-08 (The KAT covers context strings too)
+
+Closes the scope line v9.282 left open. The conformance set had excluded the 7
+Wycheproof vectors that use a non-empty ML-DSA context string, because the default
+verify path uses an empty context. Both witnesses do expose a context-aware verify
+(liboqs `verify_with_ctx_str`, cryptography `verify(..., context=)`), so they are
+now wired in.
+
+- **`vectors/kat/mldsa_65_verify.json` now carries the context-string tests** (a
+  `ctx` field): tc3 (a 7-byte context) and tc4 (a 255-byte context) that must
+  verify, and tc5/tc153-156 (a 256-byte context, one over ML-DSA's 255-byte cap)
+  that must be REJECTED as an invalid context. `polaris-fetch-kat.py` always keeps
+  the context tests and records their `ctx`; the set is now 58 vectors (23 valid,
+  35 invalid, 7 with a context).
+- **`polaris-kat-verify.py` is context-aware:** each vector is verified with its
+  context under both witnesses. Proven locally: 58/58 conformant, including the
+  256-byte-context vectors correctly rejected. `check_kat_conformance` (#150) now
+  also pins that the vectors include a context-string case and that the verifier
+  actually uses the context-aware APIs — so they cannot be silently dropped again.
+
+The ML-DSA-65 conformance is now over the whole Wycheproof verify surface (both the
+empty-context and the context-string cases), under both production witnesses.
+
+Constitutional note: no change to C1-C10 or the vocation.
+
+---
+
 ## v9.282 — 2026-09-08 (ML-DSA-65 conformance against Project Wycheproof)
 
 The companion to the witness fuzzing, and the item the previous ship parked. The

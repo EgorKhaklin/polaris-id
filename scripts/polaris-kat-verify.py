@@ -35,16 +35,18 @@ except Exception:
     _oqs = None
 
 
-def _liboqs_verify(pk, msg, sig):
+def _liboqs_verify(pk, msg, sig, ctx):
     import oqs
     try:
         with oqs.Signature("ML-DSA-65") as v:
+            if ctx:
+                return bool(v.verify_with_ctx_str(msg, sig, ctx, pk))
             return bool(v.verify(msg, sig, pk))
     except Exception:
-        return False
+        return False  # e.g. a context longer than ML-DSA's 255-byte cap is invalid
 
 
-def _crypto_verify(pk, msg, sig):
+def _crypto_verify(pk, msg, sig, ctx):
     from cryptography.hazmat.primitives.asymmetric import mldsa
     from cryptography.exceptions import InvalidSignature
     try:
@@ -52,7 +54,7 @@ def _crypto_verify(pk, msg, sig):
     except Exception:
         return False
     try:
-        key.verify(sig, msg)
+        key.verify(sig, msg, context=ctx or None)
         return True
     except InvalidSignature:
         return False
@@ -86,14 +88,15 @@ def main(argv=None):
         for t in g["tests"]:
             expect = (t["result"] == "valid")
             msg = bytes.fromhex(t["msg"])
+            ctx = bytes.fromhex(t.get("ctx", "") or "")  # empty unless a context-string test
             try:
                 sig = bytes.fromhex(t["sig"])
             except ValueError:
                 sig = b"\x00"  # malformed hex must verify as invalid
             checked += 1
-            if _liboqs_verify(pk, msg, sig) != expect:
+            if _liboqs_verify(pk, msg, sig, ctx) != expect:
                 mism["liboqs"].append(t["tcId"])
-            if _crypto_verify(pk, msg, sig) != expect:
+            if _crypto_verify(pk, msg, sig, ctx) != expect:
                 mism["cryptography"].append(t["tcId"])
 
     prov = data.get("provenance", {})
