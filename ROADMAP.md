@@ -54,8 +54,8 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 146 invariant
-checks (v9.278) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
+release; CVE gates on dependencies and images; a coverage floor; 147 invariant
+checks (v9.279) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 **Do not have:** hardware tokens (the physical artifact is modeled, not built);
@@ -120,7 +120,7 @@ deployment phases below.
 | [x] PE.5 | Attacks that must fail, run every release (v9.275) | M | med | PE.2 | An `attacks/` folder of executable adversaries (forge a signature, tamper a pack, present a revoked token, replay, wrong key), each of which MUST fail against the real code; CI runs them every release and goes red if any SUCCEEDS. Running attacks, not greps |
 | [x] PE.6 | An offline authenticity pack, re-verifiable with the network off (v9.274) | S | low | - | Folded into PE.2: the authenticity pack is one self-contained file, and `polaris-verify.py --pack file.json` verifies it with no network and no database. The published `vectors/` are exactly such files |
 | [x] PE.7 | One held-in-hand flow, even ugly — a holder CLI (v9.278) | L | med | PE.2 | `scripts/polaris-wallet.py` is the first NON-operator surface: a person holds a credential as a file (`enroll`, optionally a duress code), sees it offline (`show`), verifies it offline through the detached verifier (`verify`), presents it to a relying party (`present`; a duress presentation is byte-identical in structure to a normal one — the holder-side of the anti-coercion vocation), and proves membership in ZERO KNOWLEDGE against a published epoch (`prove-membership`, via the polaris-zk binary — a real proof that round-trips through `polaris-zk verify`). Standalone: no server code, no database. Pinned by `check_holder_wallet`; `test_wallet.py` (in the coverage suite) proves the deniability property and the ZK round-trip |
-| [ ] PE.8 | Publish real numbers from this box | M | low | PE.2 | Measured, reproducible throughput and latency for issue, verify (single- and two-witness) and ZK prove/verify at a stated tree depth, produced by a committed benchmark and published with the box's spec and a version stamp; no extrapolation called certification |
+| [x] PE.8 | Publish real numbers from this box (v9.279) | M | low | PE.2 | `scripts/polaris-dyno.py` measures the real primitives on the box it runs on — ML-DSA-65 sign and verify (single-witness verify-at-use AND two-witness issuance-grade) and ZK membership prove/verify at the configured tree depth — and prints them with the box spec and a version stamp. A committed run is published in [docs/reference/DYNO.md](docs/reference/DYNO.md) (Apple Silicon, 8 cores: ~2,110 sign/s, ~7,840 single-verify/s, ~740 two-witness/s, ZK prove ~35 ms / verify ~13 ms at depth 14), cross-checking the national-sim numbers in BENCHMARK.md. The numbers are MEASURED, single-core, and NOT extrapolated (a fleet number stays a separate labelled projection); CI re-measures every release (ML-DSA in pqc-real, ZK in the test job). Pinned by `check_dyno_published` |
 
 Exit gate: a relying party verifies a Polaris credential offline with no Polaris
 code (met at PE.2); two issuers interoperate with correct accept and reject; the

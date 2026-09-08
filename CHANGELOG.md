@@ -5,6 +5,37 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.279 — 2026-09-08 (Real numbers from the box: the engine on a dyno, measured not extrapolated)
+
+Phase E, PE.8. "Ten times faster" is not a number. `scripts/polaris-dyno.py`
+measures the engine's real primitives on the machine it runs on and prints them
+with that machine's spec and a version stamp: ML-DSA-65 signing and verification
+(single-witness verify-at-use and two-witness issuance-grade) and ZK membership
+prove/verify at the configured tree depth. If it is slow on your box, it prints
+slow.
+
+- **A committed run** (`docs/reference/DYNO.md`), Apple Silicon, 8 cores, one core:
+  ML-DSA-65 sign ~2,110/s, verify single-witness ~7,840/s, verify two-witness
+  ~740/s; ZK membership prove ~35 ms and verify ~13 ms at depth 14 (a 16,384-leaf
+  anonymity set). Every sampled signature verified (2,000/2,000). The single- and
+  two-witness figures cross-check the national-simulation run in BENCHMARK.md
+  (~7,848 and ~745/s), measured by a different harness — two independent
+  measurements agreeing.
+- **Measured, not extrapolated.** Every figure is a single process on a single
+  core. The fleet arithmetic stays in BENCHMARK.md, labelled a projection. The dyno
+  and DYNO.md both keep that distinction, and `check_dyno_published` (#147) fails
+  the build if the honesty, the ZK measurement, the box spec, or the CI wiring goes
+  missing.
+- **Re-measured every release.** CI runs the dyno so the numbers cannot rot: the
+  ML-DSA half in the `pqc-real` job (which has liboqs), the ZK half in the `test`
+  job (which builds the polaris-zk binary). The liboqs import banner is swallowed so
+  `--json` stays parseable (the v9.139 hazard).
+
+Constitutional note: no change to C1-C10 or the vocation. The dyno signs and
+verifies its own throwaway keys and touches no identity data.
+
+---
+
 ## v9.278 — 2026-09-08 (The holder gets a surface: a wallet that holds, presents, and proves in zero knowledge)
 
 Phase E, PE.7. Everything in Polaris until now was operator-facing — an agency

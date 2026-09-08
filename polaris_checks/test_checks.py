@@ -5805,3 +5805,47 @@ def test_holder_wallet_check_discriminates(tmp_path):
     # 4. the coverage suite does not run the wallet test
     write({"scripts/polaris-coverage.sh": COV.replace("test_wallet", "test_other")})
     assert checks.check_holder_wallet(tmp_path)[0].level == "FAIL", "must FAIL when coverage does not run test_wallet"
+
+
+def test_dyno_published_check_discriminates(tmp_path):
+    # PE.8 (v9.279): the dyno must measure the real primitives (ML-DSA sign/verify
+    # single+both, ZK prove/verify at a stated depth) with the box spec and version,
+    # keep the measured/not-extrapolated honesty, publish a run in DYNO.md, and be
+    # re-measured by CI. Each perturbation removes one leg.
+    DYNO = (
+        "import platform, os\n"
+        "def _version(): return '9.279'\n"
+        "def box(): return {'platform': platform.platform(), 'cpu_count': os.cpu_count()}\n"
+        "MEASURES = ['sign_per_sec', 'verify_single_per_sec', 'verify_both_per_sec']\n"
+        "ZK = ['prove_ms', 'verify_ms', 'tree_depth']\n"
+        "DISCLAIMER = 'measured on this box, single core; NOT extrapolated'\n"
+    )
+    MD = ("# Dyno\n\n- Box: 8 cores, Apple Silicon\n- Version v9.279\n\n"
+          "Reproduce: `python3 scripts/polaris-dyno.py`\n\nMeasured, not extrapolated.\n")
+    CI = "jobs:\n  pqc-real:\n    steps:\n      - run: python scripts/polaris-dyno.py --ml-dsa-samples 500\n"
+    good = {
+        "scripts/polaris-dyno.py": DYNO,
+        "docs/reference/DYNO.md": MD,
+        ".github/workflows/ci.yml": CI,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_dyno_published(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the ZK measurement is gone
+    write({"scripts/polaris-dyno.py": DYNO.replace("prove_ms", "noop")})
+    assert checks.check_dyno_published(tmp_path)[0].level == "FAIL", "must FAIL without the ZK measurement"
+    # 2. the not-extrapolated honesty is gone from the dyno
+    write({"scripts/polaris-dyno.py": DYNO.replace("NOT extrapolated", "faster")})
+    assert checks.check_dyno_published(tmp_path)[0].level == "FAIL", "must FAIL without the not-extrapolated honesty"
+    # 3. DYNO.md loses its box spec
+    write({"docs/reference/DYNO.md": MD.replace("cores", "CPUs")})
+    assert checks.check_dyno_published(tmp_path)[0].level == "FAIL", "must FAIL when DYNO.md does not name the box"
+    # 4. CI does not re-measure
+    write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
+    assert checks.check_dyno_published(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the dyno"

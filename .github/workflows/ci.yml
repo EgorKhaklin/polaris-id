@@ -205,6 +205,12 @@ jobs:
       - name: Attacks that must fail — db suite (revoked token not authoritative)
         run: python3 attacks/run_attacks.py --suite db
 
+      # v9.279 (roadmap PE.8) — the ZK half of the dyno: real Plonky2 prove/verify
+      # time at the configured tree depth, from the binary this job builds. The
+      # ML-DSA half is measured in the pqc-real job (which has liboqs).
+      - name: Dyno — ZK prove/verify (real numbers from this box)
+        run: python3 scripts/polaris-dyno.py --zk-iters 2
+
       # v9.190 (roadmap P1.8) — abuse controls, exercised: promtool unit tests
       # of the velocity + quota alerts, then a per-agency verification quota
       # held under real traffic (the load generator logging in and POSTing the
@@ -1503,6 +1509,13 @@ jobs:
       # database lookup. Exits non-zero if the federation boundary does not hold.
       - name: Federation — two issuers on one box, cross-issuer accept/reject
         run: python scripts/polaris-federation-drill.py
+
+      # v9.279 (roadmap PE.8) — real numbers from the runner: single-core ML-DSA-65
+      # sign/verify throughput, printed with the box spec and version. Re-measured
+      # every release so the published dyno (docs/reference/DYNO.md) cannot rot; the
+      # ZK half is measured in the test job, which builds the polaris-zk binary.
+      - name: Dyno — ML-DSA-65 primitives (real numbers from this box)
+        run: python scripts/polaris-dyno.py --ml-dsa-samples 500
 
       # v9.139 — the signing-key GENERATION must emit clean JSON. liboqs prints a
       # banner to stdout at import; polaris-generate-secrets.sh captures a python

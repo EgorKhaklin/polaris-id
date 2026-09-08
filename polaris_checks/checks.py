@@ -6564,8 +6564,65 @@ def check_holder_wallet(root: pathlib.Path) -> list[Finding]:
                "derives the epoch leaf with the issuer's recipe, and its deniability + ZK round-trip are tested in CI")
 
 
+# ---------------------------------------------------------------------------
+# The numbers are published and honest (roadmap PE.8). "Ten times faster" is not a
+# number; scripts/polaris-dyno.py measures the real primitives — ML-DSA-65
+# sign/verify (single- and two-witness) and ZK membership prove/verify at a stated
+# tree depth — and prints them with the box spec and a version stamp. The
+# committed docs/reference/DYNO.md publishes a real run, and CI re-measures every
+# release so the figures cannot rot. The load-bearing honesty is that these are
+# MEASURED, single-core, and NOT extrapolated (a fleet number is a separate
+# labelled projection); this check pins that discipline, not any figure.
+# Detection: test_checks drops the ZK measurement, the not-extrapolated honesty,
+# DYNO.md's box spec, and the CI wiring.
+# ---------------------------------------------------------------------------
+def check_dyno_published(root: pathlib.Path) -> list[Finding]:
+    dyno = _read(root, "scripts/polaris-dyno.py")
+    if not dyno:
+        return _fail("dyno_published", "scripts/polaris-dyno.py is missing")
+    # It measures the real primitives: ML-DSA sign + single- and two-witness verify.
+    for marker in ("sign_per_sec", "verify_single_per_sec", "verify_both_per_sec"):
+        if marker not in dyno:
+            return _fail("dyno_published",
+                         f"the dyno must measure {marker} (real ML-DSA-65 throughput), not a slogan")
+    # And the ZK prove/verify at a stated depth.
+    if "prove_ms" not in dyno or "tree_depth" not in dyno or "verify_ms" not in dyno:
+        return _fail("dyno_published",
+                     "the dyno must measure ZK membership prove/verify time at a stated tree depth")
+    # It reports the box spec and a version stamp (so a number is interpretable).
+    if "cpu_count" not in dyno or "platform" not in dyno or "_version" not in dyno:
+        return _fail("dyno_published",
+                     "the dyno must print the box spec (cpu_count/platform) and a version stamp")
+    # The honesty: measured, not extrapolated.
+    if "extrapolat" not in dyno.lower():
+        return _fail("dyno_published",
+                     "the dyno must state that its numbers are measured and NOT extrapolated")
+    # The published run.
+    published = _read(root, "docs/reference/DYNO.md")
+    if not published:
+        return _fail("dyno_published", "docs/reference/DYNO.md (the published run) is missing")
+    if "polaris-dyno.py" not in published:
+        return _fail("dyno_published", "DYNO.md must give the reproduction command (scripts/polaris-dyno.py)")
+    if not re.search(r"\bcores?\b", published) or not re.search(r"v9\.\d+", published):
+        return _fail("dyno_published",
+                     "DYNO.md must name the box (cores) and stamp the version the numbers were measured at")
+    if "extrapolat" not in published.lower():
+        return _fail("dyno_published",
+                     "DYNO.md must keep the measured/not-extrapolated distinction so its figures are not read as "
+                     "a fleet claim")
+    # CI re-measures every release.
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-dyno.py" not in ci:
+        return _fail("dyno_published",
+                     "ci.yml must run scripts/polaris-dyno.py so the published numbers are re-measured every release")
+    return _ok("dyno_published",
+               "the dyno measures the real ML-DSA-65 and ZK primitives with the box spec and version, DYNO.md "
+               "publishes a measured (not extrapolated) run, and CI re-measures every release")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_detached_verifier,
+    check_dyno_published,
     check_attacks_run,
     check_federation_real,
     check_key_rotation_drilled,
