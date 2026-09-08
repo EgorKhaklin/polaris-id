@@ -544,6 +544,7 @@ Returns JSON:
 | `token_id` | int | echoes the path |
 | `signature_valid` | bool | authenticity: the active signature verifies. Immutable material, replica-safe, and safe for a relying party to cache |
 | `signature_cacheable` | bool | always `true` — the authenticity verdict may be cached; the authorization verdict below may NOT |
+| `issuer_authentic` | bool \| null | PE.3b federation binding: the signature was produced by the token's issuing agency's own registered key. `null` when it cannot be decided (a placeholder signature, or an agency with no registered key) |
 | `status` | string | the token's current lifecycle status, read from the PRIMARY |
 | `status_source` | string | always `primary` — the authorization verdict is made on fresh state, never a stale replica |
 | `currently_authoritative` | bool | the "usable right now" authorization verdict: `status` is `ACTIVE`, read fresh from the primary |

@@ -5,6 +5,43 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.286 — 2026-09-08 (Federation in the running app: each agency signs its own tokens)
+
+PE.3b. PE.3 proved the cryptographic federation boundary with a standalone drill;
+this puts it in the app. An agency's identity is now cryptographically its own, not
+a database field on top of one shared signing key.
+
+- **Each agency registers its own key.** A new nullable `Agency.signing_public_key_hex`
+  (migration + schema) holds the agency's published ML-DSA-65 verification key. NULL
+  = not federated / single global key.
+- **Issuance signs with the issuing agency's key.** Custody gains
+  `get_custody_for_agency(agency_id)`: it loads the agency's key from
+  `POLARIS_AGENCY_KEYS_DIR/<agency_id>.json`, falling back to the global key when
+  absent — so single-key deployments are unchanged. `pqc_signing.sign` /
+  `signature_with_key_for_token` thread `agency_id`; `/uc1/issue` signs with the
+  issuing agency's key.
+- **Issuance refuses a cross-key token.** When the agency has a registered key and
+  the signature is real, `/uc1/issue` REFUSES to issue a token whose signature was
+  produced by a different key — an agency cannot issue a token signed by a
+  non-agency key.
+- **/verify reports the binding.** A new `issuer_authentic` field: the token was
+  signed by its issuing agency's registered key (`true`/`false`; `null` when it
+  cannot be decided — a placeholder signature, or an agency with no registered key).
+  Distinct from `signature_valid` (the signature is genuine) and
+  `currently_authoritative` (usable now).
+- **Proven both ways.** `test_custody.PerAgencyCustodyTests` proves per-agency
+  signing under real ML-DSA (two agencies, distinct keys, each signs its own);
+  `test_app.FederationInAppTests` proves `/verify`'s `issuer_authentic` at the field
+  level in the placeholder suite; the full real-PQC issue→verify→refuse flow runs
+  where liboqs is present. `check_federation_in_app` (#152) pins the whole chain,
+  detection-tested. Backward compatible: single-key issuance and verify are
+  unchanged (the existing suites pass).
+
+Constitutional note: no change to C1-C10 or the vocation. This binds an agency's
+tokens to the agency's own key; it adds no personal-data path.
+
+---
+
 ## v9.285 — 2026-09-08 (Controls as attacks: IA + SC join AC + AU)
 
 The second batch of controls-as-attacks. The `controls` suite adds the two families

@@ -121,7 +121,11 @@ CREATE TABLE Agency (
     jurisdiction        VARCHAR(10)  NOT NULL
         CHECK (jurisdiction ~ '^[A-Z]{2}(-[A-Z0-9]{1,3})?$'),
     authorization_level INTEGER      NOT NULL DEFAULT 1
-        CHECK (authorization_level BETWEEN 1 AND 5)
+        CHECK (authorization_level BETWEEN 1 AND 5),
+    -- PE.3b (v9.286): the agency's registered ML-DSA-65 verification key (hex).
+    -- When set, the agency's tokens must be signed by this key and /verify reports
+    -- issuer_authentic against it. NULL = not federated / single global key.
+    signing_public_key_hex TEXT
 );
 
 COMMENT ON TABLE Agency IS

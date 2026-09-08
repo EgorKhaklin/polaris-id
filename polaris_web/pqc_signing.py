@@ -244,7 +244,7 @@ def generate_keypair() -> dict:
     }
 
 
-def sign(message: bytes) -> SigningResult:
+def sign(message: bytes, agency_id=None) -> SigningResult:
     """Sign `message` with ML-DSA-65.
 
     Uses the custodied long-lived key when one is configured (the file driver via
@@ -252,6 +252,11 @@ def sign(message: bytes) -> SigningResult:
     POLARIS_CUSTODY_DRIVER; see custody.py), so the public key is a stable trust
     anchor; otherwise generates an ephemeral per-call keypair (the dev/test
     fallback — not verifiable against a known anchor).
+
+    PE.3b: when `agency_id` is given, the ISSUING AGENCY's own key is used if one is
+    configured (POLARIS_AGENCY_KEYS_DIR/<agency_id>.json), else the global key — so a
+    token is signed by the agency it is issued for, and single-key deployments are
+    unchanged.
 
     Raises PQCUnavailableError if oqs is not importable.
     Returns SigningResult with public_key, signature, message hash.
@@ -271,7 +276,8 @@ def sign(message: bytes) -> SigningResult:
     # roadmap P1.2 — the custodied key (file, pkcs11, or awskms driver) signs
     # the digest; the driver returns raw ML-DSA-65 bytes, so nothing downstream
     # (storage, the two-witness verify) can tell which custody produced them.
-    cust = custody.get_custody()
+    # PE.3b: pick the issuing agency's key when one is registered.
+    cust = custody.get_custody_for_agency(agency_id) if agency_id is not None else custody.get_custody()
     if cust is not None:
         public_key = cust.public_key()
         signature = cust.sign(digest)
@@ -317,7 +323,7 @@ def signature_bytes_for_token(token_value: str) -> tuple:
     return sig, label
 
 
-def signature_with_key_for_token(token_value: str) -> tuple:
+def signature_with_key_for_token(token_value: str, agency_id=None) -> tuple:
     """Like `signature_bytes_for_token`, but also returns the signing PUBLIC KEY.
 
     Returns `(signature_bytes, algorithm_label, public_key_hex_or_none)`. The
@@ -325,6 +331,10 @@ def signature_with_key_for_token(token_value: str) -> tuple:
     signing_public_key_hex) so verification at use is self-contained — no live
     trust-anchor lookup, and it survives key rotation. For the placeholder path
     the third element is None (there is no key).
+
+    PE.3b: `agency_id` selects the issuing agency's own signing key when one is
+    registered (POLARIS_AGENCY_KEYS_DIR), else the global key. The placeholder path
+    ignores it (there is no key to pick).
     """
     flag_set = os.environ.get("POLARIS_USE_REAL_PQC", "0") == "1"
     if flag_set and not _OQS_AVAILABLE:
@@ -347,7 +357,7 @@ def signature_with_key_for_token(token_value: str) -> tuple:
                 "two-witnessed; it is unavailable "
                 f"({_WITNESS_IMPORT_ERROR or 'no ML-DSA support'}). Install cryptography>=48 on "
                 "OpenSSL 3.5+, or use the placeholder path (unset POLARIS_USE_REAL_PQC).")
-        result = sign(token_value.encode("utf-8"))
+        result = sign(token_value.encode("utf-8"), agency_id=agency_id)
         # Enforce verification on the issuance path: the signature we just
         # produced MUST verify against its own public key before it is handed to
         # the DB. v9.133 — verify with BOTH witnesses (liboqs + the independent

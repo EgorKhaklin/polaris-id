@@ -41,6 +41,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 from typing import Optional
 
@@ -399,11 +400,40 @@ def get_custody() -> Optional[KeyCustody]:
         return _current
 
 
+# PE.3b (v9.286) — per-agency signing keys for federation in the running app.
+# POLARIS_AGENCY_KEYS_DIR, when set, is a directory of ML-DSA-65 key files named
+# "<agency_id>.json" (the same shape the file driver reads). Issuance asks for the
+# issuing agency's key; if the directory or that agency's file is absent, it falls
+# back to the single global custody key — so single-key deployments are unchanged.
+_AGENCY_KEYS_DIR_ENV = "POLARIS_AGENCY_KEYS_DIR"
+_AGENCY_ID_RE = re.compile(r"\A[0-9]{1,12}\Z")
+_agency_custody: dict = {}
+
+
+def get_custody_for_agency(agency_id) -> Optional[KeyCustody]:
+    """The custody driver that signs for a specific issuing agency: its own key
+    when POLARIS_AGENCY_KEYS_DIR holds "<agency_id>.json", else the global key.
+    A per-agency file that is present but malformed fails loud (CustodyError);
+    an absent one is a silent, deliberate fallback to the global key."""
+    d = os.environ.get(_AGENCY_KEYS_DIR_ENV)
+    if not d or agency_id is None or not _AGENCY_ID_RE.match(str(agency_id)):
+        return get_custody()
+    path = os.path.join(d, "%s.json" % agency_id)
+    if not os.path.isfile(path):
+        return get_custody()
+    with _lock:
+        cached = _agency_custody.get(path)
+        if cached is None or cached[0] != os.path.getmtime(path):
+            _agency_custody[path] = (os.path.getmtime(path), FileCustody(path))
+        return _agency_custody[path][1]
+
+
 def reset() -> None:
     global _current, _current_cfg
     with _lock:
         _current = None
         _current_cfg = None
+        _agency_custody.clear()
 
 
 def describe_current() -> Optional[dict]:

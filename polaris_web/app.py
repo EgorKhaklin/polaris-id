@@ -4941,11 +4941,13 @@ def api_token_verify(tok_id):
     # Authenticity material — immutable, so replica-eligible (this route is
     # @replica_reads). It deliberately does NOT read status here.
     rows = query("""
-        SELECT it.token_value,
-               ts.signature_bytes, ts.signing_public_key_hex, alg.name AS algorithm
+        SELECT it.token_value, it.issuing_agency_id,
+               ts.signature_bytes, ts.signing_public_key_hex, alg.name AS algorithm,
+               ag.signing_public_key_hex AS agency_key
         FROM   IdentityToken it
         JOIN   TokenSignature ts  ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
         JOIN   CryptographicAlgorithm alg ON ts.algorithm_id = alg.algorithm_id
+        JOIN   Agency ag ON ag.agency_id = it.issuing_agency_id
         WHERE  it.token_id = %s
     """, (tok_id,))
     if not rows:
@@ -4999,6 +5001,16 @@ def api_token_verify(tok_id):
                 if _PROM_AVAILABLE:
                     _METRICS_VERIFY_DISAGREEMENT.inc()
 
+    # PE.3b (v9.286) — issuer binding: is the token signed by its ISSUING AGENCY's
+    # OWN registered key? True/False only when both the token carries a real signing
+    # key and the agency has a registered one; None when the binding cannot be
+    # decided (a placeholder signature, or an agency with no registered key). This is
+    # authenticity of the ISSUER, distinct from signature_valid (the signature is
+    # genuine) and currently_authoritative (the token is usable now).
+    _token_key = rows[0].get('signing_public_key_hex')
+    _agency_key = rows[0].get('agency_key')
+    issuer_authentic = (_token_key == _agency_key) if (_token_key and _agency_key) else None
+
     return jsonify(
         token_id=tok_id,
         # Authenticity — immutable material, replica-safe, and safe for a relying
@@ -5006,6 +5018,9 @@ def api_token_verify(tok_id):
         # usable now.
         signature_valid=all_valid,
         signature_cacheable=True,
+        # PE.3b: the signature was produced by the token's issuing agency's own
+        # registered key (federation binding); None when it cannot be decided.
+        issuer_authentic=issuer_authentic,
         # Which witness set actually ran for this response: 'single' on the
         # throughput path, 'both' when this request was sampled through the second
         # witness (the availability clause). A disagreement pages; it never
@@ -5350,8 +5365,23 @@ def uc1_issue():
             # v9.117: also capture the signing public key so it is stored with
             # the signature (TokenSignature.signing_public_key_hex) and
             # verification at use is self-contained. None for the placeholder.
+            # PE.3b (v9.286): sign with the ISSUING AGENCY's own key when one is
+            # registered (federation in the running app), falling back to the global
+            # key otherwise. Then, if this is a real signature AND the agency has a
+            # registered verification key, REFUSE to issue a token whose signature was
+            # produced by a different key — an agency's tokens must be signed by the
+            # agency, not by whatever key the box happens to hold.
+            _issuing_agency = int(request.form['issuing_agency_id'])
             sig_bytes, _sig_alg, sig_pubkey = pqc_signing.signature_with_key_for_token(
-                request.form['token_value'])
+                request.form['token_value'], agency_id=_issuing_agency)
+            if sig_pubkey is not None:
+                _reg = query("SELECT signing_public_key_hex FROM Agency WHERE agency_id = %s",
+                             (_issuing_agency,), fetch='one')
+                _registered = _reg['signing_public_key_hex'] if _reg else None
+                if _registered and _registered != sig_pubkey:
+                    raise pqc_signing.SigningError(
+                        "issuing agency %d is registered to a different signing key; refusing to issue a "
+                        "token signed by a non-agency key (PE.3b federation binding)" % _issuing_agency)
             new_token_id = query("""
                 SELECT uc1_issue_and_activate(
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s

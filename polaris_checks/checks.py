@@ -6858,7 +6858,59 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
                "refused — all run against the real system in CI")
 
 
+# ---------------------------------------------------------------------------
+# Federation in the running app (roadmap PE.3b). PE.3 proved the cryptographic
+# federation boundary with a standalone drill; this puts it in the app: each Agency
+# registers its own ML-DSA-65 key, /uc1/issue signs a token with the ISSUING
+# agency's key (custody selects it, falling back to the global key), refuses to
+# issue a token whose real signature was produced by a different key, and /verify
+# reports `issuer_authentic` (the token was signed by its issuing agency's
+# registered key). This check pins the whole chain — the schema column, the
+# per-agency custody selection, the agency_id threaded through signing, the issuance
+# binding enforcement, the verify field, and that BOTH halves are tested (per-agency
+# signing under real ML-DSA, and the issuer-binding field).
+# Detection: test_checks removes the enforcement, the verify field, the custody
+# selector, and the schema column.
+# ---------------------------------------------------------------------------
+def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
+    if "signing_public_key_hex" not in _read(root, "polaris_sql/01_schema.sql"):
+        return _fail("federation_in_app",
+                     "Agency must carry a signing_public_key_hex column (the agency's registered signing key)")
+    cust = _read(root, "polaris_web/custody.py")
+    if "get_custody_for_agency" not in cust or "POLARIS_AGENCY_KEYS_DIR" not in cust:
+        return _fail("federation_in_app",
+                     "custody.py must select the issuing agency's own key (get_custody_for_agency + "
+                     "POLARIS_AGENCY_KEYS_DIR), falling back to the global key")
+    if not re.search(r"def signature_with_key_for_token\(token_value[^)]*agency_id", _read(root, "polaris_web/pqc_signing.py")):
+        return _fail("federation_in_app",
+                     "pqc_signing.signature_with_key_for_token must accept agency_id so issuance signs with the "
+                     "issuing agency's key")
+    app = _read(root, "polaris_web/app.py")
+    if "signature_with_key_for_token(" not in app or "agency_id=" not in app:
+        return _fail("federation_in_app",
+                     "uc1_issue must sign with the issuing agency's key (signature_with_key_for_token(..., agency_id=...))")
+    if "federation binding" not in app:
+        return _fail("federation_in_app",
+                     "uc1_issue must REFUSE to issue a token whose real signature was produced by a key that is "
+                     "not the issuing agency's registered key (the federation binding), or an agency's identity is "
+                     "not cryptographically its own")
+    if "issuer_authentic" not in app:
+        return _fail("federation_in_app",
+                     "/verify must report issuer_authentic — whether the token was signed by its issuing agency's "
+                     "registered key")
+    if "get_custody_for_agency" not in _read(root, "polaris_web/test_custody.py"):
+        return _fail("federation_in_app",
+                     "test_custody must prove per-agency signing under real ML-DSA (get_custody_for_agency)")
+    if "issuer_authentic" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("federation_in_app", "test_app must prove /verify reports issuer_authentic")
+    return _ok("federation_in_app",
+               "federation is in the running app: each agency signs its own tokens (custody selects the agency "
+               "key), issuance refuses a cross-key token, and /verify reports issuer_authentic — with per-agency "
+               "signing tested under real ML-DSA and the issuer-binding field tested in the suite")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_federation_in_app,
     check_controls_as_attacks,
     check_kat_conformance,
     check_witness_fuzz,

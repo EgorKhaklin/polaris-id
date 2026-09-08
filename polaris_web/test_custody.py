@@ -61,6 +61,7 @@ class _EnvSnapshot:
             "POLARIS_CUSTODY_PKCS11_TOKEN_LABEL", "POLARIS_CUSTODY_PKCS11_PIN_FILE", "POLARIS_CUSTODY_PKCS11_PIN",
             "POLARIS_CUSTODY_PKCS11_KEY_LABEL", "POLARIS_CUSTODY_AWSKMS_KEY_ID", "POLARIS_CUSTODY_AWSKMS_REGION",
             "POLARIS_CUSTODY_AWSKMS_ENDPOINT_URL", "POLARIS_PQC_TRUST_ANCHORS_FILE", "POLARIS_USE_REAL_PQC",
+            "POLARIS_AGENCY_KEYS_DIR",
             "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")
 
     def __enter__(self):
@@ -162,6 +163,45 @@ class FileCustodyTests(unittest.TestCase):
                 pqc_signing.trust_anchor_public_keys()
         finally:
             os.unlink(nf.name); os.unlink(af.name)
+
+
+# ---------------------------------------------------------------------------
+@unittest.skipUnless(pqc_signing.is_available(), "liboqs not installed")
+class PerAgencyCustodyTests(unittest.TestCase):
+    """PE.3b: custody selects the ISSUING AGENCY's own key from
+    POLARIS_AGENCY_KEYS_DIR (federation in the running app), falling back to the
+    single global key when the agency has no key file — so an agency's tokens are
+    signed by the agency, and single-key deployments are unchanged."""
+
+    def test_per_agency_custody_and_signing_use_the_agency_key(self):
+        d = tempfile.mkdtemp()
+        keys = {}
+        for aid in (1, 2):
+            kp = pqc_signing.generate_keypair()
+            with open(os.path.join(d, "%d.json" % aid), "w") as f:
+                json.dump(kp, f)
+            keys[aid] = kp["public_key_hex"]
+        gk = pqc_signing.generate_keypair()
+        gkf = os.path.join(d, "global.json")
+        with open(gkf, "w") as f:
+            json.dump(gk, f)
+        with _EnvSnapshot():
+            os.environ["POLARIS_AGENCY_KEYS_DIR"] = d
+            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = gkf
+            os.environ["POLARIS_USE_REAL_PQC"] = "1"
+            custody.reset()
+            self.assertNotEqual(keys[1], keys[2])
+            # Each agency's custody is its OWN key.
+            self.assertEqual(custody.get_custody_for_agency(1).public_key().hex(), keys[1])
+            self.assertEqual(custody.get_custody_for_agency(2).public_key().hex(), keys[2])
+            # An agency with no key file falls back to the global key.
+            self.assertEqual(custody.get_custody_for_agency(9999).public_key(),
+                             custody.get_custody().public_key())
+            # Issuance signs a token with the ISSUING agency's own key.
+            _sig1, alg1, pk1 = pqc_signing.signature_with_key_for_token("tok-A1", agency_id=1)
+            _sig2, alg2, pk2 = pqc_signing.signature_with_key_for_token("tok-A2", agency_id=2)
+            self.assertEqual((alg1, pk1), ("ML-DSA-65", keys[1]))
+            self.assertEqual((alg2, pk2), ("ML-DSA-65", keys[2]))
 
 
 # ---------------------------------------------------------------------------

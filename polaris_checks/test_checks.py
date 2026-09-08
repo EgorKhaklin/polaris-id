@@ -6052,3 +6052,44 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     # 6. the SC adversaries no longer check rate limiting (no 429)
     write({"attacks/attack_controls.py": CTRL.replace("429", "200")})
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"
+
+
+def test_federation_in_app_check_discriminates(tmp_path):
+    # PE.3b (v9.286): federation is in the running app — Agency registers a signing
+    # key, custody selects it, issuance signs with the agency's key and refuses a
+    # cross-key token, /verify reports issuer_authentic, both halves tested. Each
+    # perturbation removes one leg.
+    good = {
+        "polaris_sql/01_schema.sql": "CREATE TABLE Agency (agency_id SERIAL, signing_public_key_hex TEXT);\n",
+        "polaris_web/custody.py": "def get_custody_for_agency(agency_id):\n    d = os.environ.get('POLARIS_AGENCY_KEYS_DIR')\n    return None\n",
+        "polaris_web/pqc_signing.py": "def signature_with_key_for_token(token_value, agency_id=None):\n    return b'', 'ML-DSA-65', None\n",
+        "polaris_web/app.py": (
+            "sig, alg, pk = pqc_signing.signature_with_key_for_token(tv, agency_id=aid)\n"
+            "if registered and registered != pk:\n"
+            "    raise pqc_signing.SigningError('PE.3b federation binding')\n"
+            "return jsonify(issuer_authentic=(token_key == agency_key))\n"
+        ),
+        "polaris_web/test_custody.py": "class PerAgencyCustodyTests:\n    def t(self): custody.get_custody_for_agency(1)\n",
+        "polaris_web/test_app.py": "class FederationInAppTests:\n    def t(self): assert v['issuer_authentic']\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_federation_in_app(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. issuance no longer enforces the binding (a cross-key token could be issued)
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("federation binding", "note")})
+    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", "must FAIL without the issuance binding enforcement"
+    # 2. /verify no longer reports issuer_authentic
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("issuer_authentic", "something_else")})
+    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", "must FAIL without the issuer_authentic field"
+    # 3. custody no longer selects the agency's key
+    write({"polaris_web/custody.py": "def get_custody():\n    return None\n"})
+    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", "must FAIL without per-agency custody selection"
+    # 4. the Agency schema loses its signing key column
+    write({"polaris_sql/01_schema.sql": "CREATE TABLE Agency (agency_id SERIAL);\n"})
+    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", "must FAIL without the Agency signing-key column"

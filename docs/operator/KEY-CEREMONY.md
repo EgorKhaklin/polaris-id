@@ -112,6 +112,25 @@ guard cannot see, a file key left in the environment. The boot refusal is tested
 in `polaris_web/test_app.py` (`HsmSoleSignerBootTests`) and pinned by
 `check_prod_fail_closed`.
 
+## Per-agency signing keys (federation)
+
+By default one signing key issues for every agency. To make each issuer's identity
+cryptographically its own (roadmap PE.3b), give each agency its own key:
+
+1. Perform a ceremony per agency and place its key file at
+   `$POLARIS_AGENCY_KEYS_DIR/<agency_id>.json` (the same shape the file driver
+   reads). Issuance signs a token with the key of the agency it is issued for; an
+   agency with no key file falls back to the global key, so single-key deployments
+   are unchanged.
+2. Register each agency's public key so the app can bind and verify it:
+   `UPDATE Agency SET signing_public_key_hex = '<hex>' WHERE agency_id = <id>;`.
+3. Once registered, `/uc1/issue` REFUSES to issue a token for that agency whose real
+   signature was produced by any other key, and `GET /api/tokens/<id>/verify`
+   reports `issuer_authentic` — whether the token was signed by its issuing agency's
+   registered key. Rotate an agency's key the same way as the global key (below),
+   updating its registered `signing_public_key_hex` and keeping the old key as a
+   trust anchor until its tokens expire.
+
 ## Rotation
 
 Rotation is safe because every stored signature carries its public key.

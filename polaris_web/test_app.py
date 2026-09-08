@@ -8073,6 +8073,77 @@ class RealPqcDefaultBootTests(unittest.TestCase):
         self.assertNotIn("DEVELOPMENT PLACEHOLDER", r.stderr)
 
 
+class FederationInAppTests(PolarisTestCase):
+    """PE.3b: /verify reports issuer_authentic — the token was signed by its issuing
+    agency's OWN registered key. Verified here at the field level with a chosen
+    stored signing key (a string binding, independent of the crypto, so it runs in
+    the placeholder CI suite); the per-agency SIGNING that makes it cryptographic is
+    in test_custody, and the full real-PQC issue->verify->refuse flow runs where
+    liboqs is present."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _token_signed_by(self, token_value, agency_id, signing_key_hex):
+        """Insert an ACTIVE token issued by agency_id whose active TokenSignature
+        carries signing_public_key_hex=signing_key_hex; returns token_id."""
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                            "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id",
+                            ('Fed ' + token_value,))
+                iid = cur.fetchone()['individual_id']
+                cur.execute("""
+                    INSERT INTO IdentityToken
+                        (token_value, physical_serial, hardware_model, biometric_binding_type,
+                         individual_id, issuing_agency_id, algorithm_id, status, issued_date, expiration_date)
+                    VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, 1, 'RESERVE', CURRENT_TIMESTAMP,
+                            (CURRENT_DATE + INTERVAL '10 years')::date)
+                    RETURNING token_id""", (token_value, 'SN-' + token_value, iid, agency_id))
+                tid = cur.fetchone()['token_id']
+                cur.execute("SELECT set_config('polaris.actor_agency_id', %s, false)", (str(agency_id),))
+                cur.execute("SELECT set_config('polaris.reason_code', 'TEST_SEED', false)")
+                cur.execute("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
+                            "WHERE token_id=%s", (tid,))
+                cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                            "signing_public_key_hex) VALUES (%s, 1, %s, %s)",
+                            (tid, b'seed-signature-bytes', signing_key_hex))
+                conn.commit()
+                return tid
+        finally:
+            conn.close()
+
+    def _register_agency_key(self, agency_id, key_hex):
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE Agency SET signing_public_key_hex=%s WHERE agency_id=%s",
+                            (key_hex, agency_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_issuer_authentic_true_when_signed_by_the_agencys_key(self):
+        tid = self._token_signed_by('FED-MATCH-0001', agency_id=1, signing_key_hex='a1a1a1')
+        self._register_agency_key(1, 'a1a1a1')
+        v = self.client.get('/api/tokens/%d/verify' % tid).get_json()
+        self.assertIs(v['issuer_authentic'], True)
+
+    def test_issuer_authentic_false_when_signed_by_a_different_key(self):
+        tid = self._token_signed_by('FED-MISMATCH-0001', agency_id=1, signing_key_hex='a1a1a1')
+        self._register_agency_key(1, 'b2b2b2')  # the agency is registered to a DIFFERENT key
+        v = self.client.get('/api/tokens/%d/verify' % tid).get_json()
+        self.assertIs(v['issuer_authentic'], False)
+
+    def test_issuer_authentic_none_when_binding_undecidable(self):
+        # A placeholder token (no signing key) — the binding cannot be decided.
+        tid = self._token_signed_by('FED-NONE-0001', agency_id=1, signing_key_hex=None)
+        self._register_agency_key(1, 'a1a1a1')
+        v = self.client.get('/api/tokens/%d/verify' % tid).get_json()
+        self.assertIsNone(v['issuer_authentic'])
+
+
 class TokenVerifyTests(PolarisTestCase):
     """GET /api/tokens/<id>/verify cryptographically verifies a token's active
     signature AT USE, single-witness (v9.258, the throughput path). It must
