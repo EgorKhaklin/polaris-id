@@ -93,6 +93,25 @@ Polaris's).
 Enable multi-region replication or a documented restore path in KMS; a deleted
 KMS key cannot be recovered after its waiting period.
 
+## The HSM-sole-signer profile
+
+A production authority that wants the HSM to be the ONLY thing that can ever sign
+sets `POLARIS_REQUIRE_HSM_SOLE_SIGNER=1`. The app then refuses to start (exit 2)
+unless:
+
+- `POLARIS_CUSTODY_DRIVER=pkcs11` (the HSM is the signer),
+- `POLARIS_PQC_SIGNING_KEY_FILE` is **unset** — no file key sits in the
+  environment as a latent fallback a flipped driver could use, and
+- `POLARIS_USE_REAL_PQC=1` — the deterministic placeholder is not the HSM.
+
+It is a fail-closed boot guard: it makes the profile's intent true at startup
+rather than discovering at first issuance that a file key or the placeholder was
+quietly in the path. `custody.get_custody()` itself never falls back (an
+unreachable token fails issuance loudly); this guard removes the one thing that
+guard cannot see, a file key left in the environment. The boot refusal is tested
+in `polaris_web/test_app.py` (`HsmSoleSignerBootTests`) and pinned by
+`check_prod_fail_closed`.
+
 ## Rotation
 
 Rotation is safe because every stored signature carries its public key.
@@ -134,7 +153,13 @@ driver runs against a real PKCS#11 v3.2 token in CI (Kryoptic, Fedora 43, job
 `custody-pkcs11`): key generated in-token, `CKM_ML_DSA` signatures verified by
 liboqs and OpenSSL, duplicate labels refused. Rotation is tested end to end:
 a token signed under the old key stops verifying after the switch and verifies
-again once the old key is an anchor. An opt-in live test runs against a real
+again once the old key is an anchor. In-token rotation is drilled too (PE.4): a
+second key is generated INSIDE the token under a new label, a token signed under
+the old in-token key still verifies after the switch while the new key signs, and
+dropping the old anchor completes retirement
+(`test_in_token_rotation_old_token_still_verifies_new_key_signs`, run against the
+real Kryoptic token by the `custody-pkcs11` job; pinned by
+`check_key_rotation_drilled`). An opt-in live test runs against a real
 KMS key when `POLARIS_CUSTODY_AWSKMS_LIVE_KEY_ID` is set. Stated limit: no
 hardware HSM is exercised in CI; the PKCS#11 conformance surface (v3.2 ML-DSA
 mechanisms) is exercised against a software token.

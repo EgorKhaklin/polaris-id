@@ -1331,10 +1331,22 @@ def check_prod_fail_closed(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_fail_closed",
                      "app.py must refuse to start in production when POLARIS_DURESS_SYNC=1 (it "
                      "reintroduces the duress timing side-channel)")
+    # v9.277 (PE.4) — the HSM-sole-signer profile. When POLARIS_REQUIRE_HSM_SOLE_SIGNER
+    # is set, the app must refuse to boot unless the HSM is the sole signer: the pkcs11
+    # driver, tied to a sys.exit, AND no file key in the environment (a latent fallback
+    # a flipped driver would use). Both are load-bearing to "the only prod signing path".
+    if not re.search(r"POLARIS_REQUIRE_HSM_SOLE_SIGNER.{0,900}sys\.exit", app, re.S):
+        return _fail("prod_fail_closed",
+                     "app.py must refuse to start when POLARIS_REQUIRE_HSM_SOLE_SIGNER is set but the HSM is "
+                     "not the sole signer (a sys.exit guard requiring the pkcs11 driver)")
+    if not re.search(r"POLARIS_REQUIRE_HSM_SOLE_SIGNER.{0,900}POLARIS_PQC_SIGNING_KEY_FILE", app, re.S):
+        return _fail("prod_fail_closed",
+                     "the HSM-sole-signer guard must forbid POLARIS_PQC_SIGNING_KEY_FILE (a latent file-key "
+                     "fallback the sole-HSM profile must not carry)")
     return _ok("prod_fail_closed",
                "app.py fails closed in production on a plaintext-capable POLARIS_DB_SSLMODE and on "
                "POLARIS_DURESS_SYNC=1 (the duress timing side-channel), alongside the default-SECRET_KEY "
-               "guard")
+               "guard and the HSM-sole-signer profile (POLARIS_REQUIRE_HSM_SOLE_SIGNER)")
 
 
 # ---------------------------------------------------------------------------
@@ -6435,10 +6447,64 @@ def check_federation_real(root: pathlib.Path) -> list[Finding]:
                "the boundary is also an attack")
 
 
+# ---------------------------------------------------------------------------
+# HSM key rotation is drilled IN-TOKEN, not just designed (roadmap PE.4). The
+# trust-anchor set (current key + previous keys) that makes rotation possible was
+# tested for the file driver, but the sole-HSM profile signs inside a PKCS#11
+# token with non-extractable keys, and rotation there means minting a NEW in-token
+# key under a new label while the OLD token keeps verifying against its retired
+# anchor. This check pins that the in-token rotation is actually EXERCISED: a test
+# mints two distinct in-token keys, proves a token signed under the old key still
+# verifies after rotation and that the new key signs, and the PKCS#11 drill (run
+# by CI's custody job) executes it against a real Kryoptic token.
+# Detection: test_checks removes the rotation test, the drill's suite run, and the
+# CI invocation.
+# ---------------------------------------------------------------------------
+def check_key_rotation_drilled(root: pathlib.Path) -> list[Finding]:
+    tc = _read(root, "polaris_web/test_custody.py")
+    if not tc:
+        return _fail("key_rotation_drilled", "polaris_web/test_custody.py is missing")
+    m = re.search(r"def test_in_token_rotation_old_token_still_verifies_new_key_signs\(.*?\n(?=    def |\nclass |\Z)",
+                  tc, re.S)
+    if not m:
+        return _fail("key_rotation_drilled",
+                     "test_custody.py must have an IN-TOKEN rotation test "
+                     "(test_in_token_rotation_old_token_still_verifies_new_key_signs)")
+    body = m.group(0)
+    # Two distinct in-token roots (a new label minted in the token), not a file key.
+    if "pkcs11_generate_key" not in body or "assertNotEqual" not in body:
+        return _fail("key_rotation_drilled",
+                     "the rotation test must mint a SECOND distinct key IN the token (pkcs11_generate_key with a "
+                     "new label) and assert it differs from the first")
+    # The OLD token must STILL verify after rotation, and the NEW key must sign.
+    if body.count("verify_token_signature") < 2 or "token-ROT-1" not in body:
+        return _fail("key_rotation_drilled",
+                     "the rotation test must prove the OLD token still verifies after rotation (via its retired "
+                     "anchor) AND that the new key signs")
+    if "assertFalse(pqc_signing.verify_token_signature" not in body:
+        return _fail("key_rotation_drilled",
+                     "the rotation test must prove retirement completes — once the old anchor is dropped, the old "
+                     "token no longer verifies")
+    # The PKCS#11 drill runs the in-token suite, and CI runs the drill.
+    drill = _read(root, "scripts/polaris-custody-pkcs11-drill.sh")
+    if "Pkcs11CustodyTests" not in drill:
+        return _fail("key_rotation_drilled",
+                     "scripts/polaris-custody-pkcs11-drill.sh must run Pkcs11CustodyTests (which now carries the "
+                     "in-token rotation) against a real token")
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-custody-pkcs11-drill.sh" not in ci:
+        return _fail("key_rotation_drilled",
+                     "ci.yml must run the PKCS#11 custody drill so in-token rotation is exercised every release")
+    return _ok("key_rotation_drilled",
+               "HSM key rotation is drilled in-token: a test mints two distinct in-token keys and proves the old "
+               "token still verifies after rotation while the new key signs, run against a real Kryoptic token in CI")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_detached_verifier,
     check_attacks_run,
     check_federation_real,
+    check_key_rotation_drilled,
     check_public_claims_honest,
     check_verify_witness_sampling,
     check_constitution_layered,

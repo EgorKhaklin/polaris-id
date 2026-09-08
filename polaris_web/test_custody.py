@@ -295,6 +295,52 @@ class Pkcs11CustodyTests(unittest.TestCase):
                 self.assertTrue(pqc_signing.verify_token_signature("token-ABC", sig, alg))
         os.unlink(pf.name)
 
+    def test_in_token_rotation_old_token_still_verifies_new_key_signs(self):
+        """PE.4: rotate the in-token issuer key. A token signed under the OLD key
+        must STILL verify (its public key stays a trusted anchor), while new
+        issuance signs under the NEW key — the sole-HSM profile's rotation, end to
+        end and in-token. Dropping the old anchor completes retirement."""
+        if not pqc_signing.is_available():
+            self.skipTest("liboqs not installed")
+        pin_file = tempfile.NamedTemporaryFile("w", delete=False)
+        pin_file.write(self.pin); pin_file.close()
+        new_label = self.label + "-v2"
+        new_pk = custody.pkcs11_generate_key(self.module, self.token, self.pin, new_label)
+        self.assertNotEqual(new_pk, self.pk)  # two distinct in-token roots
+        anchors = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump({"anchors": [{"public_key_hex": self.pk.hex(), "label": self.label,
+                                "retired": "2026-09-08"}]}, anchors); anchors.close()
+        try:
+            with _EnvSnapshot():
+                base = {"POLARIS_CUSTODY_DRIVER": "pkcs11",
+                        "POLARIS_CUSTODY_PKCS11_MODULE": self.module,
+                        "POLARIS_CUSTODY_PKCS11_TOKEN_LABEL": self.token,
+                        "POLARIS_CUSTODY_PKCS11_PIN_FILE": pin_file.name,
+                        "POLARIS_USE_REAL_PQC": "1"}
+                # Sign token T1 under the OLD key (v1).
+                os.environ.update(base)
+                os.environ["POLARIS_CUSTODY_PKCS11_KEY_LABEL"] = self.label
+                custody.reset()
+                sig_old, alg, pk_old = pqc_signing.signature_with_key_for_token("token-ROT-1")
+                self.assertEqual(pk_old, self.pk.hex())
+                self.assertTrue(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
+                # ROTATE: current key = v2, with v1 listed as a previous trusted anchor.
+                os.environ["POLARIS_CUSTODY_PKCS11_KEY_LABEL"] = new_label
+                os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"] = anchors.name
+                custody.reset()
+                sig_new, alg2, pk_new = pqc_signing.signature_with_key_for_token("token-ROT-2")
+                self.assertEqual(pk_new, new_pk.hex())
+                self.assertEqual(pqc_signing.trust_anchor_public_keys()[0], new_pk.hex())  # current is v2
+                # New token verifies (v2); the OLD token STILL verifies (v1 is a listed anchor).
+                self.assertTrue(pqc_signing.verify_token_signature("token-ROT-2", sig_new, alg2))
+                self.assertTrue(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
+                # Retirement complete: drop v1's anchor and the old token no longer verifies.
+                del os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"]
+                custody.reset()
+                self.assertFalse(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
+        finally:
+            os.unlink(pin_file.name); os.unlink(anchors.name)
+
 
 # ---------------------------------------------------------------------------
 class EnvSelectionTests(unittest.TestCase):

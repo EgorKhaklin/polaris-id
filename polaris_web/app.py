@@ -429,6 +429,34 @@ if _PRODUCTION:
         sys.exit(2)
 
 
+# v9.277 (roadmap PE.4) — the HSM-sole-signer profile. When
+# POLARIS_REQUIRE_HSM_SOLE_SIGNER is set, issuance must sign ONLY through the
+# PKCS#11/HSM path: there is no file key to fall back to, and the placeholder is
+# off. custody.get_custody() already never falls back (a down HSM fails issuance
+# loudly), but nothing stopped a file key from sitting in the environment as a
+# latent fallback a flipped driver would use. This guard refuses to boot unless
+# the HSM is genuinely the sole signer, and proves the profile's intent at startup
+# rather than at first issuance. Flag-gated (the flag IS the profile selector), so
+# it holds outside POLARIS_ENV=production too — the sole-signer stack turns it on.
+if _env_flag('POLARIS_REQUIRE_HSM_SOLE_SIGNER', False):
+    _hsm_errs = []
+    if os.environ.get('POLARIS_CUSTODY_DRIVER', '').strip().lower() != 'pkcs11':
+        _hsm_errs.append("POLARIS_CUSTODY_DRIVER must be 'pkcs11' (the HSM is the sole signer)")
+    if os.environ.get('POLARIS_PQC_SIGNING_KEY_FILE'):
+        _hsm_errs.append("POLARIS_PQC_SIGNING_KEY_FILE must NOT be set (a file key is a fallback signer)")
+    if os.environ.get('POLARIS_USE_REAL_PQC') != '1':
+        _hsm_errs.append("POLARIS_USE_REAL_PQC must be '1' (the deterministic placeholder is not the HSM)")
+    if _hsm_errs:
+        sys.stderr.write(
+            "\n  FATAL: POLARIS_REQUIRE_HSM_SOLE_SIGNER is set, but the HSM is not the sole\n"
+            "         signing path:\n"
+            + "".join("           - " + e + "\n" for e in _hsm_errs)
+            + "         Refusing to start so issuance cannot fall back to a file key or the\n"
+            "         placeholder. See docs/operator/KEY-CEREMONY.md (the HSM-sole profile).\n\n"
+        )
+        sys.exit(2)
+
+
 # ----------------------------------------------------------------------------
 # Database connection
 # ----------------------------------------------------------------------------

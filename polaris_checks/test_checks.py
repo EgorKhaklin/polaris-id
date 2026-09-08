@@ -2566,6 +2566,15 @@ def test_prod_fail_closed_check_discriminates(tmp_path):
     )
     # The 'prefer' token must appear (the message names the plaintext-capable modes).
     GOOD = GOOD + "# rejects prefer/allow/disable\n"
+    # v9.277 (PE.4) — the HSM-sole-signer guard (flag-gated, outside _PRODUCTION).
+    HSM_GUARD = (
+        "if os.environ.get('POLARIS_REQUIRE_HSM_SOLE_SIGNER') == '1':\n"
+        "    if os.environ.get('POLARIS_CUSTODY_DRIVER') != 'pkcs11':\n"
+        "        sys.exit(2)\n"
+        "    if os.environ.get('POLARIS_PQC_SIGNING_KEY_FILE'):\n"
+        "        sys.exit(2)\n"
+    )
+    GOOD = GOOD + HSM_GUARD
 
     def write(app=GOOD):
         (web / "app.py").write_text(app)
@@ -2598,6 +2607,15 @@ def test_prod_fail_closed_check_discriminates(tmp_path):
               "    if not os.environ.get('POLARIS_DB_SSLROOTCERT'):\n        sys.exit(2)\n")
     assert checks.check_prod_fail_closed(tmp_path)[0].level == "FAIL", \
         "must FAIL when the POLARIS_DURESS_SYNC guard is missing"
+
+    # 6. (PE.4) the HSM-sole-signer guard is gone -> FAIL.
+    write(app=GOOD.replace(HSM_GUARD, ""))
+    assert checks.check_prod_fail_closed(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the HSM-sole-signer guard is missing"
+    # 7. (PE.4) the HSM guard no longer forbids the file-key fallback -> FAIL.
+    write(app=GOOD.replace("    if os.environ.get('POLARIS_PQC_SIGNING_KEY_FILE'):\n        sys.exit(2)\n", ""))
+    assert checks.check_prod_fail_closed(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the HSM guard does not forbid POLARIS_PQC_SIGNING_KEY_FILE"
 
 
 def test_prod_real_pqc_check_discriminates(tmp_path):
@@ -5691,3 +5709,50 @@ def test_federation_real_check_discriminates(tmp_path):
     # 4. the federation adversary is gone from attacks/
     write({"attacks/attack_crypto.py": CRYPTO.replace("federation", "noop")})
     assert checks.check_federation_real(tmp_path)[0].level == "FAIL", "must FAIL without a federation adversary"
+
+
+def test_key_rotation_drilled_check_discriminates(tmp_path):
+    # PE.4 (v9.277): HSM key rotation must be DRILLED in-token — a test mints two
+    # distinct in-token keys, proves the old token still verifies after rotation
+    # and the new key signs, and CI runs the PKCS#11 drill. Each perturbation
+    # removes one leg.
+    ROT = (
+        "    def test_in_token_rotation_old_token_still_verifies_new_key_signs(self):\n"
+        "        new_pk = custody.pkcs11_generate_key(self.module, self.token, self.pin, self.label + '-v2')\n"
+        "        self.assertNotEqual(new_pk, self.pk)\n"
+        "        sig_old, alg, _ = pqc_signing.signature_with_key_for_token('token-ROT-1')\n"
+        "        self.assertTrue(pqc_signing.verify_token_signature('token-ROT-1', sig_old, alg))\n"
+        "        self.assertTrue(pqc_signing.verify_token_signature('token-ROT-2', sig_old, alg))\n"
+        "        self.assertFalse(pqc_signing.verify_token_signature('token-ROT-1', sig_old, alg))\n"
+        "    def _z(self):\n        pass\n"
+    )
+    TC = "class Pkcs11CustodyTests(unittest.TestCase):\n" + ROT
+    DRILL = "#!/usr/bin/env bash\npython3 -m unittest test_custody.Pkcs11CustodyTests -v\n"
+    CI = "jobs:\n  custody-pkcs11:\n    steps:\n      - run: bash scripts/polaris-custody-pkcs11-drill.sh\n"
+    good = {
+        "polaris_web/test_custody.py": TC,
+        "scripts/polaris-custody-pkcs11-drill.sh": DRILL,
+        ".github/workflows/ci.yml": CI,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the in-token rotation test is gone
+    write({"polaris_web/test_custody.py": "class Pkcs11CustodyTests(unittest.TestCase):\n    def _z(self):\n        pass\n"})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL without the in-token rotation test"
+    # 2. it no longer proves retirement (old token fails once the anchor is dropped)
+    write({"polaris_web/test_custody.py": TC.replace(
+        "        self.assertFalse(pqc_signing.verify_token_signature('token-ROT-1', sig_old, alg))\n", "")})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL without the retirement assertion"
+    # 3. the drill no longer runs the in-token suite
+    write({"scripts/polaris-custody-pkcs11-drill.sh": "#!/usr/bin/env bash\necho skip\n"})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not run Pkcs11CustodyTests"
+    # 4. CI does not run the custody drill
+    write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
+    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"

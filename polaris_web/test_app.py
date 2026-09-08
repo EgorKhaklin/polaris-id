@@ -7996,6 +7996,45 @@ class AuthenticityPackTests(PolarisTestCase):
         self.assertIn('/login', r.headers.get('Location', ''))
 
 
+class HsmSoleSignerBootTests(unittest.TestCase):
+    """PE.4: the HSM-sole-signer boot guard. When POLARIS_REQUIRE_HSM_SOLE_SIGNER is
+    set, the app must refuse to start (exit 2) unless the HSM is the sole signer —
+    the pkcs11 driver, no file key, real PQC — so the sole-HSM profile cannot
+    silently degrade to a file key or the placeholder. A subprocess imports app so
+    the guard's sys.exit is observable; only the FAIL paths are asserted (a valid
+    config would continue booting and reach the database)."""
+
+    def _boot(self, extra_env):
+        import subprocess as _sp
+        import sys as _sys
+        import os as _os
+        env = _os.environ.copy()
+        for k in ("POLARIS_ENV", "POLARIS_REQUIRE_HSM_SOLE_SIGNER", "POLARIS_CUSTODY_DRIVER",
+                  "POLARIS_PQC_SIGNING_KEY_FILE", "POLARIS_USE_REAL_PQC"):
+            env.pop(k, None)
+        env["POLARIS_SECRET_KEY"] = "x" * 64  # silence the unrelated dev-secret warning
+        env.update(extra_env)
+        cwd = _os.path.dirname(_os.path.abspath(flask_app.__file__))
+        return _sp.run([_sys.executable, "-c", "import app"], cwd=cwd,
+                       capture_output=True, text=True, env=env)
+
+    def test_refuses_boot_when_driver_not_pkcs11(self):
+        r = self._boot({"POLARIS_REQUIRE_HSM_SOLE_SIGNER": "1"})
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("HSM is not the sole", r.stderr)
+
+    def test_refuses_boot_when_file_key_present(self):
+        r = self._boot({"POLARIS_REQUIRE_HSM_SOLE_SIGNER": "1", "POLARIS_CUSTODY_DRIVER": "pkcs11",
+                        "POLARIS_USE_REAL_PQC": "1", "POLARIS_PQC_SIGNING_KEY_FILE": "/tmp/k.json"})
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("POLARIS_PQC_SIGNING_KEY_FILE", r.stderr)
+
+    def test_refuses_boot_when_placeholder_not_real_pqc(self):
+        r = self._boot({"POLARIS_REQUIRE_HSM_SOLE_SIGNER": "1", "POLARIS_CUSTODY_DRIVER": "pkcs11"})
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("POLARIS_USE_REAL_PQC", r.stderr)
+
+
 class TokenVerifyTests(PolarisTestCase):
     """GET /api/tokens/<id>/verify cryptographically verifies a token's active
     signature AT USE, single-witness (v9.258, the throughput path). It must

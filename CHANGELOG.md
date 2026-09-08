@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.277 — 2026-09-08 (The HSM is the sole signer: a fail-closed profile and in-token key rotation)
+
+Phase E, PE.4. Polaris already signs inside a PKCS#11 token (ML-DSA-65, in-token,
+non-extractable, both witnesses verified in CI), and the trust-anchor set that
+makes rotation possible was tested for the file key. Two things were missing to
+make the HSM genuinely "the only production signing path": nothing forced the HSM
+to be the sole signer, and rotation was never drilled INSIDE the token.
+
+- **A fail-closed sole-signer profile.** `POLARIS_REQUIRE_HSM_SOLE_SIGNER=1` makes
+  the app refuse to boot (exit 2) unless the HSM is genuinely the only signer: the
+  `pkcs11` driver, `POLARIS_PQC_SIGNING_KEY_FILE` UNSET (no file key sitting in the
+  environment as a latent fallback a flipped driver would use), and real PQC on.
+  `custody.get_custody()` already never falls back; this guard removes the one
+  thing it cannot see, a stray file key, and proves the profile's intent at startup
+  instead of at first issuance. `HsmSoleSignerBootTests` exercises the boot refusal
+  on all three misconfigurations; `check_prod_fail_closed` pins the guard.
+- **In-token key rotation, drilled.** `test_in_token_rotation_old_token_still_verifies_new_key_signs`
+  mints a SECOND ML-DSA-65 key inside a real Kryoptic token under a new label,
+  signs a token under the old in-token key, rotates (new key current, old key a
+  listed trust anchor), and proves the old token STILL verifies while new issuance
+  signs under the new key — then drops the old anchor and confirms the old token
+  no longer verifies (retirement complete). Runs against the real token in the
+  `custody-pkcs11` job; `check_key_rotation_drilled` (#145) pins it.
+- **Docs.** `docs/operator/KEY-CEREMONY.md` gains the HSM-sole-signer profile and
+  the in-token rotation drill.
+- **Note.** The software token is Kryoptic (the ML-DSA-capable PKCS#11 v3.2 module;
+  SoftHSMv2 does not implement ML-DSA). PE.4 does not depend on PE.1 after all: the
+  profile enforces real PQC itself.
+
+Constitutional note: no change to C1-C10 or the vocation. This hardens how the
+issuer key is held and rotated; it changes no identity data path.
+
+---
+
 ## v9.276 — 2026-09-08 (Two issuers on one box: federation with distinct roots, proven cryptographically)
 
 Phase E, PE.3. Polaris already carried a federation trust graph
