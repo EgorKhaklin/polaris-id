@@ -6934,6 +6934,45 @@ def _signed_statement_keys(src: str, fn: str):
     return re.findall(r"""['"]([a-z_]+)['"]\s*:""", body)
 
 
+def check_transparency_gossip(root: pathlib.Path) -> list[Finding]:
+    """P3.3b: the split-view defence. A lone monitor cannot catch a log that shows different
+    heads to different observers; witnesses and gossip can. The detached verifier gains
+    witness cosignatures (an independent party's attestation of a head), a witnessed-checkpoint
+    threshold (a relying party requires K independent cosignatures over the same head), and a
+    non-repudiable equivocation proof (two log-signed heads that conflict). An independent
+    witness daemon cosigns consistent heads, refuses a fork, and by gossip proves a split view;
+    the gossip drill runs it under attack every release."""
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_cosignature", "def verify_witnessed_checkpoint",
+                "def verify_equivocation", "_cosignature_canonical",
+                "polaris-transparency-cosignature/1"):
+        if sym not in v:
+            return _fail("transparency_gossip",
+                         "scripts/polaris-verify.py must carry the witness/equivocation verification (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("transparency_gossip",
+                         f"the offline verifier imports {mod!r}; it must stay standalone")
+    wit = _read(root, "scripts/polaris-transparency-witness.py")
+    if not wit or "verify_equivocation" not in wit or "def cosign" not in wit or "ALERT" not in wit:
+        return _fail("transparency_gossip",
+                     "scripts/polaris-transparency-witness.py must cosign heads, gossip, and ALERT with an equivocation proof")
+    drill = _read(root, "scripts/polaris-transparency-gossip-drill.py")
+    if (not drill or "verify_witnessed_checkpoint" not in drill or "verify_equivocation" not in drill
+            or "polaris-transparency-witness.py" not in drill):
+        return _fail("transparency_gossip",
+                     "scripts/polaris-transparency-gossip-drill.py must run the witness daemon and prove the split-view catch")
+    if "polaris-transparency-gossip-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("transparency_gossip",
+                     "the gossip drill must run in CI (a split-view proof that never runs is displacement)")
+    return _ok("transparency_gossip",
+               "the split view a lone monitor cannot catch is caught by witnesses: the standalone verifier "
+               "checks witness cosignatures, a witnessed-checkpoint threshold, and a non-repudiable equivocation "
+               "proof (two conflicting log-signed heads), and an independent witness daemon cosigns consistent "
+               "heads, refuses a fork, and by gossip proves a split view -- driven every release by the gossip "
+               "drill under real ML-DSA")
+
+
 def check_transparency_log(root: pathlib.Path) -> list[Finding]:
     """P3.3: the audit anchor log is exposed as a PUBLIC, append-only, independently
     verifiable transparency log (RFC-6962 style over SHA3-256). The app publishes a signed
@@ -7569,6 +7608,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_transparency_gossip,
     check_transparency_log,
     check_canonical_equivalence,
     check_federation_two_instances,

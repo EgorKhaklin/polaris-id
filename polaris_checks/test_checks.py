@@ -6348,6 +6348,56 @@ def test_transparency_log_check_discriminates(tmp_path):
     assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL without the spec"
 
 
+def test_transparency_gossip_check_discriminates(tmp_path):
+    # v9.302 (P3.3b): the split-view defence -- witness cosignatures, a witnessed-checkpoint
+    # threshold, and a non-repudiable equivocation proof, with a witness daemon and a gossip
+    # drill run in CI. Each perturbation removes one leg.
+    good = {
+        "scripts/polaris-verify.py": (
+            "import json, hashlib\n"
+            "# polaris-transparency-cosignature/1\n"
+            "def _cosignature_canonical(c): return b''\n"
+            "def verify_cosignature(c, witness_key=None): return {}\n"
+            "def verify_witnessed_checkpoint(s, cs, tw, threshold=1, issuer_key=None): return {}\n"
+            "def verify_equivocation(a, b, k): return {'proven': False}\n"
+        ),
+        "scripts/polaris-transparency-witness.py": (
+            "def cosign(head, key_file): pass\n"
+            "# uses verify_equivocation on the gossip pool\n"
+            "print('ALERT: equivocation')\n"
+        ),
+        "scripts/polaris-transparency-gossip-drill.py": (
+            "verify_witnessed_checkpoint\nverify_equivocation\n"
+            "# runs scripts/polaris-transparency-witness.py\n"
+        ),
+        ".github/workflows/ci.yml": "      - run: python scripts/polaris-transparency-gossip-drill.py\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_transparency_gossip(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the equivocation proof is gone
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_equivocation", "def gone")})
+    assert checks.check_transparency_gossip(tmp_path)[0].level == "FAIL", "must FAIL without verify_equivocation"
+    # 2. the verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_transparency_gossip(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 3. the witness never ALERTs
+    write({"scripts/polaris-transparency-witness.py": "def cosign(head, key_file): pass\nprint('all good')\n"})
+    assert checks.check_transparency_gossip(tmp_path)[0].level == "FAIL", "must FAIL if the witness never ALERTs"
+    # 4. the drill does not run the witness daemon
+    write({"scripts/polaris-transparency-gossip-drill.py": "verify_witnessed_checkpoint\nverify_equivocation\n"})
+    assert checks.check_transparency_gossip(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run the witness"
+    # 5. the drill does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_transparency_gossip(tmp_path)[0].level == "FAIL", "must FAIL if the gossip drill does not run in CI"
+
+
 def test_federation_topology_check_discriminates(tmp_path):
     # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
     # delta + the vocation grounding, and is kept honest against the code. Each

@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.302 — 2026-09-08 (Transparency witnesses and the split-view defence, P3.3b)
+
+The transparency log's monitor (P3.3) catches a log that rewrites its own history. It
+cannot, alone, catch a split view: a log that shows one head to one observer and a
+different head at the same size to another. P3.3b closes that with witnesses and a
+non-repudiable equivocation proof.
+
+- **Witness cosignatures and witnessed checkpoints.** The detached verifier gains
+  `verify_cosignature` (an independent witness's signature over a head,
+  `polaris-transparency-cosignature/1`) and `verify_witnessed_checkpoint`: a relying party
+  accepts a head only if it carries cosignatures from at least K distinct trusted witnesses,
+  so a split view needs K witnesses to equivocate, not just the log.
+
+- **The equivocation proof.** `verify_equivocation` takes two Signed Tree Heads for one log,
+  both validly signed by the log key, at the same size with different roots, and declares a
+  proven, non-repudiable equivocation. It is what two gossiping observers produce the moment
+  they compare the heads they were shown.
+
+- **The witness daemon, and a split-view drill.** `scripts/polaris-transparency-witness.py`
+  is the independent witness anyone runs: it cosigns consistent heads, refuses a fork,
+  gossips the head it saw, and alerts with a written proof on a rewrite or a gossip-detected
+  split view. `scripts/polaris-transparency-gossip-drill.py` proves it under real ML-DSA
+  every release: three witnesses cosign a head to a threshold, and a fork is caught both by a
+  witness refusing it and by two witnesses gossiping. `check_transparency_gossip` pins it.
+  The cosignature is signed by the witness, not the app, so its witness-vs-verifier byte
+  agreement is proven by the gossip drill rather than the canonical-signing oracle;
+  external-ledger publication remains a deployment integration.
+
+164 machine-checked invariants.
+
+---
+
 ## v9.301 — 2026-09-08 (The transparency log, P3.3)
 
 The audit anchor (docs/design/anchoring.md) proves the rows under one Merkle root; it does

@@ -234,8 +234,12 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
         with open(os.path.join(_ROOT, "scripts", "polaris-verify.py")) as f:
             verify_src = f.read()
         # Every `polaris-*/1` format literal the verifier knows must have an oracle case,
-        # except the authenticity pack, whose statement is SHA3-256(token_value) with no
-        # canonical-JSON builder (it is covered by the vectors and every drill).
+        # except two with no app-side statement builder to differentially test here: the
+        # authenticity pack (SHA3-256(token_value), no canonical-JSON builder; covered by
+        # the vectors and every drill) and the witness cosignature (signed by an independent
+        # witness, not the app; its witness-vs-verifier byte agreement is proven by the
+        # gossip drill, where a cosignature the witness signs must verify under the
+        # verifier's canonical builder).
         import re
         formats = set(re.findall(r'"(polaris-[a-z-]+/1)"', verify_src))
         covered = {
@@ -243,8 +247,8 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-revocation-feed/1", "polaris-status-assertion/1",
             "polaris-transparency-sth/1",
         }
-        pack = {"polaris-authenticity-pack/1"}
-        missing = formats - covered - pack
+        not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1"}
+        missing = formats - covered - not_app_signed
         self.assertFalse(missing, "signed formats with no canonical-equivalence oracle case: %s" % missing)
 
 

@@ -59,10 +59,33 @@ exits non-zero.
 What this proves is **consistency**: the operator cannot rewrite history without every
 monitor that saw the old head detecting it, because the old head will not be a prefix of
 the new one. What it does not prove on its own is that two monitors were shown the *same*
-head at the same size; catching that split-view requires the monitors to compare notes.
-Gossip between monitors, and publishing the heads to an external ledger, are the
-distribution layer (deferred to P3.3b); the append-only guarantee above does not depend on
-them.
+head at the same size; catching that split view requires the observers to compare notes.
+That is the split-view defence, built in P3.3b (below).
+
+## Witnesses and the split view (P3.3b)
+
+A **witness** (`scripts/polaris-transparency-witness.py`) is a monitor that does two more
+things. It **cosigns** a consistent head with its own key: a cosignature over
+`{log_id, tree_size, root_hash}` (`polaris-transparency-cosignature/1`), emitted only when
+the head is an append-only extension of the last one the witness cosigned. And it
+**gossips** the log-signed head it saw into a shared pool.
+
+Two uses follow, both verified offline (`scripts/polaris-verify.py`):
+
+- **Witnessed checkpoints.** `verify_witnessed_checkpoint` accepts a head only if it
+  carries cosignatures from at least K distinct trusted witnesses over that exact head. A
+  split view then requires K independent witnesses to equivocate, not just the log.
+- **The equivocation proof.** `verify_equivocation` takes two Signed Tree Heads for one
+  log, both validly signed by the log key, at the same size with different roots, and
+  declares a **proven** equivocation. It is non-repudiable: the log signed both. Two
+  gossiping witnesses produce it the moment they compare the heads they were shown, and a
+  witness that is itself shown a second head at a size it already cosigned refuses and
+  writes the proof.
+
+The append-only guarantee of the base log does not depend on any of this; witnessing adds
+the defence against the one attack a lone monitor cannot see. Publishing heads to an
+external ledger (a further, independent pin) remains a deployment integration on top of the
+existing anchor-to-external-chain mechanism ([anchoring.md](anchoring.md)).
 
 ## How this is tested
 
@@ -75,3 +98,10 @@ appends, and alerts the moment the log is tampered. It runs every release in the
 `pqc-real` CI job. Pinned by `check_transparency_log`; the RFC-6962 math is additionally
 self-tested exhaustively across tree sizes with inclusion and consistency proofs and their
 tamper-rejection.
+
+`scripts/polaris-transparency-gossip-drill.py` proves the P3.3b split-view defence the same
+way: three witnesses cosign a head to a threshold a relying party accepts, and then a fork
+is caught two ways -- a witness that already cosigned a head refuses a different one at the
+same size, and a fresh witness catches the split view by gossip -- each writing a
+non-repudiable equivocation proof. It too runs every release in `pqc-real`, pinned by
+`check_transparency_gossip`.

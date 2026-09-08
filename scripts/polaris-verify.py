@@ -1007,6 +1007,117 @@ def verify_log_consistency(old_sth, new_sth, proof, issuer_key=None):
                     "-- the log rewrote history" % (m, n)}
 
 
+# ---------------------------------------------------------------------------
+# P3.3b: witness cosignatures, and the proof of a split view.
+#
+# A single monitor catches a log that REWRITES its own history (the old head it cached is
+# no longer a prefix of the new one). It cannot, alone, catch a SPLIT VIEW: a log that
+# shows one head to one observer and a different head at the same size to another, each
+# internally consistent. Two defences, both here and both verified offline:
+#
+#   - Witness cosignatures. An independent witness cosigns a head with its OWN key only
+#     when that head is consistent with the last head it cosigned. A relying party requires
+#     a head to carry cosignatures from at least K distinct trusted witnesses, so a split
+#     view needs K witnesses to equivocate, not just the log.
+#   - The equivocation proof. Two Signed Tree Heads for one log, both validly signed by the
+#     log key, at the same size with different roots, ARE a non-repudiable proof the log
+#     signed two histories. It is what two gossiping observers produce the moment they
+#     compare the heads they were shown.
+# ---------------------------------------------------------------------------
+_COSIGNATURE_FORMAT = "polaris-transparency-cosignature/1"
+
+
+def _cosignature_canonical(cosig):
+    """The canonical bytes a witness signs to cosign a log head. MUST match the witness's
+    signer: sorted-keys compact JSON of exactly these fields."""
+    statement = {k: cosig.get(k) for k in ("format", "log_id", "tree_size", "root_hash_hex")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_cosignature(cosig, witness_key=None):
+    """Verify a witness cosignature over a log head (P3.3b): the signature over
+    SHA3-256(canonical) with two witnesses, and (with witness_key) that it is from the
+    expected witness. Returns a verdict dict."""
+    v = {"cosignature_authentic": False, "log_id": cosig.get("log_id"),
+         "tree_size": cosig.get("tree_size"), "root_hash_hex": cosig.get("root_hash_hex"),
+         "witness": cosig.get("public_key_hex"), "witness_matches": None, "witnesses": [], "note": None}
+    if cosig.get("format") != _COSIGNATURE_FORMAT:
+        v["note"] = "not a %s" % _COSIGNATURE_FORMAT
+        return v
+    alg, pk_hex, sig_hex = cosig.get("algorithm"), cosig.get("public_key_hex"), cosig.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder cosignature -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_cosignature_canonical(cosig)).digest()
+    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["cosignature_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "cosignature signature is invalid"
+    if witness_key is not None:
+        v["witness_matches"] = (pk_hex.lower() == witness_key.lower())
+    return v
+
+
+def verify_witnessed_checkpoint(sth, cosignatures, trusted_witnesses, threshold=1, issuer_key=None):
+    """Decide whether a log head carries enough independent witnessing to resist a split
+    view (P3.3b): the STH is log-authentic AND at least `threshold` DISTINCT trusted
+    witnesses have cosigned this exact head (same log_id, tree_size, root_hash). Returns
+    {witnessed, cosigner_count, note}."""
+    sv = verify_sth(sth, issuer_key=issuer_key)
+    if not sv["sth_authentic"]:
+        return {"witnessed": False, "cosigner_count": 0, "note": "the STH is not log-authentic"}
+    if issuer_key is not None and sv["issuer_matches"] is False:
+        return {"witnessed": False, "cosigner_count": 0, "note": "the STH is not signed by the expected log key"}
+    trusted = {t.lower() for t in (trusted_witnesses or [])}
+    seen = set()
+    for c in (cosignatures or []):
+        cv = verify_cosignature(c)
+        if not cv["cosignature_authentic"]:
+            continue
+        if (c.get("log_id") == sth.get("log_id") and c.get("tree_size") == sth.get("tree_size")
+                and (c.get("root_hash_hex") or "").lower() == (sth.get("root_hash_hex") or "").lower()):
+            w = (c.get("public_key_hex") or "").lower()
+            if w in trusted:
+                seen.add(w)
+    n = len(seen)
+    ok = n >= threshold
+    return {"witnessed": ok, "cosigner_count": n,
+            "note": ("%d distinct trusted witness cosignature(s) over this head (threshold %d)" % (n, threshold))
+                    if ok else ("only %d trusted witness cosignature(s), need %d" % (n, threshold))}
+
+
+def verify_equivocation(sth_a, sth_b, log_key):
+    """Given two Signed Tree Heads for one log, decide whether they are a PROVEN
+    equivocation -- non-repudiable evidence the log signed two conflicting histories
+    (P3.3b). Proven iff both are validly signed by `log_key`, carry the same log_id, and
+    conflict: the same tree_size with a DIFFERENT root_hash. This is the split view a lone
+    monitor cannot catch and two gossiping observers can. Returns {proven, note}."""
+    a = verify_sth(sth_a, issuer_key=log_key)
+    b = verify_sth(sth_b, issuer_key=log_key)
+    if not (a["sth_authentic"] and a["issuer_matches"] and b["sth_authentic"] and b["issuer_matches"]):
+        return {"proven": False, "note": "both heads must be validly signed by the log key to prove equivocation"}
+    if sth_a.get("log_id") != sth_b.get("log_id"):
+        return {"proven": False, "note": "the heads are for different logs"}
+    if sth_a.get("tree_size") == sth_b.get("tree_size"):
+        if (sth_a.get("root_hash_hex") or "").lower() != (sth_b.get("root_hash_hex") or "").lower():
+            return {"proven": True,
+                    "note": "PROVEN equivocation: the log signed two different roots at tree_size %s"
+                            % sth_a.get("tree_size")}
+        return {"proven": False, "note": "the two heads are identical (no equivocation)"}
+    return {"proven": False,
+            "note": "different sizes; consistency between them is decided by verify_log_consistency, "
+                    "and equivocation there is a smaller head shown NOT to be a prefix of the larger"}
+
+
 def _load_anchor(path):
     with open(path) as f:
         data = json.load(f)

@@ -1570,6 +1570,14 @@ jobs:
       - name: Transparency log — append-only proven, monitor catches tampering
         run: python scripts/polaris-transparency-drill.py
 
+      # v9.302 (roadmap P3.3b) — witnesses and the split-view attack. A lone monitor cannot
+      # catch a log that shows different heads to different observers. This proves the P3.3b
+      # defences: independent witnesses cosign a head to a threshold, and a split view is
+      # caught -- a witness refuses a forked head, and two gossiping witnesses produce a
+      # non-repudiable proof the log equivocated. Red on any wrong decision. No database.
+      - name: Transparency log — witnesses catch a split view
+        run: python scripts/polaris-transparency-gossip-drill.py
+
       # v9.289 (roadmap P3.5) — the verification conformance suite is the integration
       # contract: it drives a verifier over the published authenticity cases and
       # checks every verdict. Run the bundled Python reference SDK against it (real
