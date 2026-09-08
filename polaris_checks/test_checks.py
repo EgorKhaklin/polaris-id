@@ -6054,6 +6054,50 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"
 
 
+def test_holder_verifier_flow_check_discriminates(tmp_path):
+    # v9.287: the end-to-end holder<->verifier flow — a standalone relying party
+    # decides ACCEPT/REJECT by combining offline authenticity (verify_pack) with
+    # online status (currently_authoritative), the matrix runs in CI (the drill),
+    # and both the decision logic and the DB-backed flow are tested. Each
+    # perturbation removes one leg.
+    rp_good = 'import urllib.request\ndef verify_presentation(presentation, anchor_keys=None, status_checker=None):\n    a = _load_verifier().verify_pack(presentation[\'credential\'], anchor_keys)\n    current = None\n    if status_checker is not None:\n        current = status_checker(1).get(\'currently_authoritative\')\n    if not a["signature_valid"]:\n        return {"decision": "reject"}\n    if status_checker is None:\n        return {"decision": "provisional"}\n    return {"decision": "accept" if current else "reject"}\n'
+    good = {
+        "scripts/polaris-relying-party.py": rp_good,
+        "scripts/polaris-e2e-drill.py": "def main():\n    rp.verify_presentation(p, status_checker=s)\n",
+        ".github/workflows/ci.yml": "      - run: python scripts/polaris-e2e-drill.py\n",
+        "scripts/test_relying_party.py": "def test_x():\n    rp.verify_presentation(p)\n",
+        "scripts/polaris-coverage.sh": "run scripts unittest test_verify_load test_wallet test_relying_party\n",
+        "polaris_web/test_app.py": "class EndToEndFlowTests:\n    def t(self): pass\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_holder_verifier_flow(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the relying party is no longer standalone (imports app)
+    write({"scripts/polaris-relying-party.py": "import app\n" + rp_good})
+    assert checks.check_holder_verifier_flow(tmp_path)[0].level == "FAIL", "must FAIL if the relying party imports Polaris code"
+    # 2. it drops the online status check (authenticity alone is not authorization)
+    write({"scripts/polaris-relying-party.py": rp_good.replace("status_checker", "unused").replace("currently_authoritative", "gone")})
+    assert checks.check_holder_verifier_flow(tmp_path)[0].level == "FAIL", "must FAIL without an online status check"
+    # 3. it can no longer decide provisional (the offline outcome)
+    write({"scripts/polaris-relying-party.py": rp_good.replace('"provisional"', '"accept"')})
+    assert checks.check_holder_verifier_flow(tmp_path)[0].level == "FAIL", "must FAIL if it cannot decide provisional"
+    # 4. the drill is not wired into CI (a path that never runs)
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_holder_verifier_flow(tmp_path)[0].level == "FAIL", "must FAIL if the e2e drill does not run in CI"
+    # 5. the decision tests are not run under the coverage runner
+    write({"scripts/polaris-coverage.sh": "run scripts unittest test_verify_load test_wallet\n"})
+    assert checks.check_holder_verifier_flow(tmp_path)[0].level == "FAIL", "must FAIL if the decision logic is untested in coverage"
+    # 6. the DB-backed flow test is gone
+    write({"polaris_web/test_app.py": "class SomethingElse:\n    pass\n"})
+    assert checks.check_holder_verifier_flow(tmp_path)[0].level == "FAIL", "must FAIL without the DB-backed EndToEndFlowTests"
+
+
 def test_federation_in_app_check_discriminates(tmp_path):
     # PE.3b (v9.286): federation is in the running app — Agency registers a signing
     # key, custody selects it, issuance signs with the agency's key and refuses a

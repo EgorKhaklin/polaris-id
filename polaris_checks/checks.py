@@ -6872,6 +6872,62 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_holder_verifier_flow(root: pathlib.Path) -> list[Finding]:
+    """The end-to-end holder<->verifier flow: a relying party decides ACCEPT/REJECT
+    from a holder's presentation by combining OFFLINE authenticity (the detached
+    verifier) with ONLINE status (GET /verify). It ties the wallet (PE.7), the
+    detached verifier (PE.2), and issuer status into one runnable path, and RUNS
+    every release (the drill in the pqc-real job, the decision logic in the suite)."""
+    rp = _read(root, "scripts/polaris-relying-party.py")
+    if not rp:
+        return _fail("holder_verifier_flow", "scripts/polaris-relying-party.py is missing — a holder can present "
+                     "but no relying party decides ACCEPT/REJECT")
+    if "def verify_presentation" not in rp:
+        return _fail("holder_verifier_flow",
+                     "polaris-relying-party.py must expose verify_presentation(presentation, ...)")
+    # 1. Standalone: the relying party is a bank/kiosk, not the issuer — no app, no DB.
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", rp, re.M):
+            return _fail("holder_verifier_flow",
+                         f"polaris-relying-party.py imports {mod!r}; the relying party must be standalone (only the "
+                         "detached verifier + stdlib) so any service runs it with no Polaris code and no database")
+    # 2. It COMBINES the two questions Polaris keeps apart.
+    if "verify_pack" not in rp:
+        return _fail("holder_verifier_flow",
+                     "the relying party must check AUTHENTICITY offline via the detached verifier (verify_pack)")
+    if "currently_authoritative" not in rp or "status_checker" not in rp:
+        return _fail("holder_verifier_flow",
+                     "the relying party must check STATUS online (currently_authoritative via a status_checker) — "
+                     "authenticity alone is not authorization")
+    for token in ('"accept"', '"reject"', '"provisional"'):
+        if token not in rp:
+            return _fail("holder_verifier_flow",
+                         f"the relying party must be able to decide {token} (accept iff authentic AND currently "
+                         "authoritative; provisional when status is unchecked offline)")
+    # 3. The whole matrix RUNS end to end (the drill), wired into CI.
+    drill = _read(root, "scripts/polaris-e2e-drill.py")
+    if not drill or "verify_presentation" not in drill:
+        return _fail("holder_verifier_flow",
+                     "scripts/polaris-e2e-drill.py must run the holder->relying-party matrix end to end")
+    if "polaris-e2e-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("holder_verifier_flow",
+                     "the e2e drill must run in CI (a path that describes the flow but never runs is displacement)")
+    # 4. The decision logic and the DB-backed flow are tested.
+    tests = _read(root, "scripts/test_relying_party.py")
+    if "verify_presentation" not in tests or "test_relying_party" not in _read(root, "scripts/polaris-coverage.sh"):
+        return _fail("holder_verifier_flow",
+                     "scripts/test_relying_party.py must unit-test the decision logic and run under polaris-coverage.sh")
+    if "EndToEndFlowTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("holder_verifier_flow",
+                     "test_app.py must carry EndToEndFlowTests — the full issue->present->accept->revoke->reject "
+                     "flow against the real DB status service, under real ML-DSA")
+    return _ok("holder_verifier_flow",
+               "the holder<->verifier flow is one runnable path: the wallet presents, a standalone relying party "
+               "ACCEPTS a live credential and REJECTS a revoked one by combining offline authenticity with online "
+               "status (provisional when offline), and a duress presentation is indistinguishable from a normal "
+               "accept — the matrix runs every release (drill) with the decision logic and the DB-backed flow tested")
+
+
 def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
     if "signing_public_key_hex" not in _read(root, "polaris_sql/01_schema.sql"):
         return _fail("federation_in_app",
@@ -6910,6 +6966,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_holder_verifier_flow,
     check_federation_in_app,
     check_controls_as_attacks,
     check_kat_conformance,

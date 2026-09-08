@@ -9690,3 +9690,141 @@ class VerifyWitnessSamplingTests(PolarisTestCase):
         self.assertTrue(paged, "a witness disagreement must be recorded (it pages via the SEV alert)")
         self.assertEqual(paged[0]['single_ok'], True)
         self.assertEqual(paged[0]['both_ok'], False)
+
+
+# --- End-to-end holder<->verifier flow (v9.287) -----------------------------
+# The full path with a REAL database status service: issue -> authenticity pack
+# -> the holder wallet presents -> a relying party decides ACCEPT/REJECT by
+# combining offline authenticity (the detached verifier) with the ONLINE status
+# from GET /api/tokens/<id>/verify. Gated on real ML-DSA (so authenticity is the
+# genuine article); it runs wherever liboqs + cryptography are present and is
+# skipped in the placeholder CI suite. The stubbed-status form of the same
+# decision matrix runs every release in scripts/polaris-e2e-drill.py, and the
+# relying party's decision logic is unit-tested in scripts/test_relying_party.py.
+import importlib.util as _e2e_ilu
+import json as _e2e_json
+import subprocess as _e2e_sp
+import tempfile as _e2e_tmp
+
+try:
+    _E2E_REAL_PQC = (flask_app.pqc_signing.is_enabled()
+                     and flask_app.pqc_signing.second_witness_available())
+except Exception:
+    _E2E_REAL_PQC = False
+
+_E2E_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _e2e_load(name, filename):
+    spec = _e2e_ilu.spec_from_file_location(
+        name, os.path.join(_E2E_ROOT, "scripts", filename))
+    m = _e2e_ilu.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+@unittest.skipUnless(_E2E_REAL_PQC,
+                     "end-to-end flow needs real ML-DSA (POLARIS_USE_REAL_PQC=1 + liboqs + cryptography)")
+class EndToEndFlowTests(PolarisTestCase):
+    """The holder presents; the relying party accepts a live credential, rejects a
+    revoked one, and cannot tell a duress presentation from a normal accept —
+    against the REAL DB status service, with real signatures."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _issue(self, token_value):
+        r = self._post('/uc1/issue', data={
+            'legal_name': 'E2E Holder', 'date_of_birth': '1990-01-15', 'jurisdiction': 'US-OH',
+            'issuing_agency_id': '1', 'algorithm_id': '1', 'biometric_binding_type': 'IRIS',
+            'witness_agency_id': '2', 'liveness_check_type': 'MULTI_MODAL',
+            'token_value': token_value, 'physical_serial': 'SN-' + token_value,
+            'hardware_model': 'TitanQ-3', 'contexts': ['1'],
+        }, follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (token_value,))
+            return cur.fetchone()['token_id']
+
+    def _pack(self, token_id):
+        return self.client.get('/api/tokens/%d/authenticity-pack' % token_id).get_json()
+
+    def _present(self, tmp, pack, tag, duress=False):
+        wdir = os.path.join(tmp, "wallet-" + tag)
+        pf = os.path.join(tmp, "pack-" + tag + ".json")
+        with open(pf, "w") as f:
+            _e2e_json.dump(pack, f)
+        wallet = os.path.join(_E2E_ROOT, "scripts", "polaris-wallet.py")
+
+        def w(*a):
+            return _e2e_sp.run([sys.executable, wallet, "--wallet", wdir, *a],
+                               capture_output=True, text=True)
+        w("enroll", "--pack", pf, "--duress-code", "please-help-me")
+        out = os.path.join(tmp, "present-" + tag + ".json")
+        w("present", *(["--duress"] if duress else ["--code", "ordinary"]), "--out", out)
+        with open(out) as f:
+            return _e2e_json.load(f)
+
+    def _revoke(self, token_id):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO IssuerDiscretionPolicy
+                    (agency_id, max_revoke_percent, window_days, set_by_admin, justification)
+                VALUES (1, 90.00, 30, 'test_setup', 'EndToEndFlowTests fixture')
+                ON CONFLICT (agency_id) DO UPDATE SET max_revoke_percent = EXCLUDED.max_revoke_percent
+            """)
+            cur.execute("CALL uc8_revoke_token(%s, %s, %s, %s, %s)",
+                        (token_id, 1, 'ADMINISTRATIVE', 'https://crl.idtoken.gov/test/e2e.crl', None))
+            conn.commit()
+
+    def _relying_party(self):
+        verify = _e2e_load("polaris_verify_e2e", "polaris-verify.py")
+        rp = _e2e_load("polaris_relying_party_e2e", "polaris-relying-party.py")
+        rp._load_verifier = lambda: verify  # share the one detached-verifier instance
+        return rp
+
+    def _status_checker(self):
+        # The relying party's ONLINE status call, made against the real endpoint.
+        return lambda tid: self.client.get('/api/tokens/%s/verify' % tid).get_json()
+
+    def test_active_credential_is_accepted_then_rejected_after_revocation(self):
+        rp = self._relying_party()
+        status = self._status_checker()
+        tmp = _e2e_tmp.mkdtemp(prefix="polaris-e2e-app-")
+        tid = self._issue('E2E-APP-ACTIVE-0001')
+        pack = self._pack(tid)
+        self.assertTrue(pack.get('real_signature'), "issuance must produce a real ML-DSA signature")
+        presentation = self._present(tmp, pack, "active")
+
+        accept = rp.verify_presentation(presentation, status_checker=status)
+        self.assertEqual(accept['decision'], 'accept')
+        self.assertTrue(accept['authentic'])
+        self.assertTrue(accept['currently_authoritative'])
+
+        # Revocation changes ONLY the online authorization; the signature stays authentic.
+        self._revoke(tid)
+        after = rp.verify_presentation(presentation, status_checker=status)
+        self.assertEqual(after['decision'], 'reject')
+        self.assertTrue(after['authentic'], "the signature is unchanged by revocation")
+        self.assertFalse(after['currently_authoritative'])
+
+    def test_offline_check_is_provisional_not_accept(self):
+        rp = self._relying_party()
+        tmp = _e2e_tmp.mkdtemp(prefix="polaris-e2e-app-")
+        tid = self._issue('E2E-APP-OFFLINE-0002')
+        presentation = self._present(tmp, self._pack(tid), "offline")
+        v = rp.verify_presentation(presentation, status_checker=None)
+        self.assertEqual(v['decision'], 'provisional')  # authentic, but status unverified
+
+    def test_duress_presentation_is_indistinguishable_from_a_normal_accept(self):
+        rp = self._relying_party()
+        status = self._status_checker()
+        tmp = _e2e_tmp.mkdtemp(prefix="polaris-e2e-app-")
+        tid = self._issue('E2E-APP-DURESS-0003')
+        pack = self._pack(tid)
+        normal = rp.verify_presentation(self._present(tmp, pack, "normal"), status_checker=status)
+        duress = rp.verify_presentation(self._present(tmp, pack, "duress", duress=True), status_checker=status)
+        self.assertEqual(normal['decision'], duress['decision'])
+        self.assertEqual(normal['decision'], 'accept')
+        self.assertEqual(sorted(normal), sorted(duress),
+                         "the relying party's verdict has the same shape — it cannot tell duress from normal")

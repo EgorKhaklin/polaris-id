@@ -5,6 +5,46 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.287 — 2026-09-08 (The holder-to-verifier flow, run end to end)
+
+The pieces existed in isolation: the wallet holds and presents a credential (PE.7),
+the detached verifier checks a signature offline with no server (PE.2), and /verify
+reports whether a token is authoritative right now. This ship makes them one runnable
+path, and adds the piece that was missing: the relying party that decides.
+
+- **A relying-party verifier.** `scripts/polaris-relying-party.py` takes a holder's
+  presentation and returns ACCEPT or REJECT by combining the two questions Polaris
+  keeps deliberately apart. Authenticity is offline and cacheable: it runs the
+  detached verifier over the credential, optionally against a published issuer anchor
+  set. Authorization is online and fresh: it asks the issuer's
+  `GET /api/tokens/<id>/verify` whether the token is authoritative now. ACCEPT needs
+  both; without a reachable issuer the verdict is PROVISIONAL, never a full accept.
+  It is standalone the way the detached verifier is: only stdlib and the verifier, no
+  Polaris code and no database, because a bank or a border kiosk runs it, not the issuer.
+
+- **The whole matrix runs end to end.** `scripts/polaris-e2e-drill.py` issues a real
+  ML-DSA-65 credential, has the wallet present it, and drives the relying party through
+  the decision matrix: an active own-issuer credential is accepted, a revoked one is
+  rejected on status, a tampered signature and a foreign issuer are rejected, an offline
+  check is only provisional, and a presentation made under duress is accepted exactly
+  like a normal one. It fails the build if any decision is wrong, and runs every release
+  in the `pqc-real` CI job next to the detached verifier and the federation drill.
+
+- **The anti-coercion property, end to end.** A duress presentation is byte-for-byte a
+  normal accept from the relying party's side. The relying party cannot tell the two
+  apart; the distress signal is matched silently by the issuer, out of its sight. The
+  drill and the tests both assert the verdict is indistinguishable.
+
+- **Tested at every level.** The relying party's decision logic is unit-tested with
+  injected verdicts (`scripts/test_relying_party.py`, run under the coverage gate); the
+  full issue-to-present-to-accept-to-revoke-to-reject flow is tested against the real
+  database status service under real ML-DSA (`test_app.py` `EndToEndFlowTests`), and the
+  whole path is pinned by `check_holder_verifier_flow` (#1 of 153), detection-tested.
+
+153 machine-checked invariants; the holder now has someone to present to.
+
+---
+
 ## v9.286 — 2026-09-08 (Federation in the running app: each agency signs its own tokens)
 
 PE.3b. PE.3 proved the cryptographic federation boundary with a standalone drill;

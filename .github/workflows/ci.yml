@@ -1522,6 +1522,17 @@ jobs:
       - name: Federation — two issuers on one box, cross-issuer accept/reject
         run: python scripts/polaris-federation-drill.py
 
+      # v9.287 — the whole holder<->verifier flow, run end to end. The wallet holds
+      # a REAL ML-DSA-65 credential and presents it; the relying party decides
+      # ACCEPT/REJECT by combining offline authenticity (the detached verifier) with
+      # an online status signal — accepts an active own-issuer credential, rejects a
+      # revoked one, a tampered signature, and a foreign issuer, is only PROVISIONAL
+      # offline, and cannot tell a duress presentation from a normal accept. The
+      # status service is stubbed in memory here (its DB-backed form, GET .../verify,
+      # is exercised in test_app); exits non-zero if any decision is wrong.
+      - name: End-to-end — holder presents, relying party accepts/rejects
+        run: python scripts/polaris-e2e-drill.py
+
       # v9.279 (roadmap PE.8) — real numbers from the runner: single-core ML-DSA-65
       # sign/verify throughput, printed with the box spec and version. Re-measured
       # every release so the published dyno (docs/reference/DYNO.md) cannot rot; the

@@ -54,7 +54,7 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 152 invariant
+release; CVE gates on dependencies and images; a coverage floor; 153 invariant
 checks (v9.286) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
@@ -128,7 +128,13 @@ code (met at PE.2); two issuers interoperate with correct accept and reject; the
 HSM is the only signer in one profile with a drilled rotation; the attack suite
 runs every release and is green (every attack fails); a person holds and presents
 a credential; and the published numbers come from a reproducible bench on a named
-box. **Met at v9.280: all of PE.1-PE.8 are done — Phase E is COMPLETE.** The vinyl frozen behind it (further Atlas/Athena/ontology/constitution-tiers, file-only invariants, SLH-DSA-before-HSM, 'national' scope) can now be reconsidered with the owner.
+box. **Met at v9.280: all of PE.1-PE.8 are done — Phase E is COMPLETE.** Composed
+end to end at v9.287: `scripts/polaris-relying-party.py` is the relying party the
+exit gate implies — it decides ACCEPT/REJECT for a holder's presentation by combining
+offline authenticity (PE.2) with online status (`/verify`), refusing a revoked, tampered,
+or foreign-issuer credential and staying blind to duress; `scripts/polaris-e2e-drill.py`
+runs the whole wallet-to-relying-party matrix under real ML-DSA every release, pinned by
+`check_holder_verifier_flow`. The vinyl frozen behind it (further Atlas/Athena/ontology/constitution-tiers, file-only invariants, SLH-DSA-before-HSM, 'national' scope) can now be reconsidered with the owner.
 
 **Frozen behind the engine.** These add surface, not displacement, and are frozen
 until PE's exit gate is met: further Atlas ships (Investigate, Alerts) and any
