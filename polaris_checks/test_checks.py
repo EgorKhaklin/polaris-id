@@ -6074,6 +6074,46 @@ def test_controls_as_attacks_check_discriminates(tmp_path):
     assert checks.check_controls_as_attacks(tmp_path)[0].level == "FAIL", "must FAIL when SC-5 does not check the rate-limit 429"
 
 
+def test_inter_authority_protocol_check_discriminates(tmp_path):
+    # v9.296 (P3.2): a signed federation manifest, verified offline (standalone), with
+    # self-consistency + freshness + per-context key-bound attestation, run in CI. Each
+    # perturbation removes one leg.
+    good = {'polaris_web/app.py': "@app.route('/api/v1/federation-manifest/<int:agency_id>')\ndef api_v1_federation_manifest(agency_id):\n    _manifest_statement(body)\n    pqc_signing.signature_over_message(stmt)\n    return jsonify(anchors=[], attestations=[])\n", 'scripts/polaris-verify.py': "import json, hashlib\n# polaris-federation-manifest/1\ndef _manifest_canonical(m):\n    return b''\ndef verify_manifest(m, now=None, max_window_seconds=None, trusted_anchors=None):\n    fresh = True  # declared active anchors self-consistency\n    return {'fresh': fresh}\ndef verify_cross_authority(pack, context_id, trusted_manifests, now=None, max_window_seconds=None, trusted_anchors=None):\n    x = ('attested_public_key_hex', context_id)\n    return {'decision': 'accept'}\n", 'scripts/polaris-federation-manifest-drill.py': 'def main():\n    verify_cross_authority(p, 1, [m])\n', '.github/workflows/ci.yml': '      - run: python scripts/polaris-federation-manifest-drill.py\n', 'docs/design/inter-authority-protocol.md': '# inter-authority protocol v1\nthe federation manifest.\n', 'polaris_web/test_app.py': 'class FederationManifestTests:\n    def t(self): pass\n'}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_inter_authority_protocol(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the manifest is not issuer-signed
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("pqc_signing.signature_over_message(stmt)", "pass")})
+    assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL if the manifest is not signed"
+    # 2. verify_manifest drops the self-consistency (signed by own anchor)
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("declared active anchors", "anything")})
+    assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL without self-consistency"
+    # 3. verify_cross_authority drops the per-context key binding
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("attested_public_key_hex", "trust_me")})
+    assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL without key+context binding"
+    # 4. the verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 5. the drill does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
+    # 6. the spec is missing
+    (tmp_path / "docs" / "design" / "inter-authority-protocol.md").unlink()
+    for rel, body in {k: v for k, v in good.items() if k != "docs/design/inter-authority-protocol.md"}.items():
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL without the protocol spec"
+    write()
+    # 7. the endpoint test is gone
+    write({"polaris_web/test_app.py": "class Other:\n    pass\n"})
+    assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL without FederationManifestTests"
+
+
 def test_federation_topology_check_discriminates(tmp_path):
     # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
     # delta + the vocation grounding, and is kept honest against the code. Each

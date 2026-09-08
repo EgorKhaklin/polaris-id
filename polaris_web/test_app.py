@@ -10071,3 +10071,51 @@ class OfflineStatusAssertionTests(PolarisTestCase):
             cur.execute("CALL uc8_revoke_token(%s,1,'ADMINISTRATIVE','https://crl/off.crl',NULL)", (tid,))
             conn.commit()
         self.assertEqual(self.client.post('/api/v1/status-assertion', json=body).get_json()['status'], 'REVOKED')
+
+
+# --- Inter-authority federation manifest (P3.2) -----------------------------
+# GET /api/v1/federation-manifest/<agency_id> publishes an authority's signed
+# manifest: its anchors and the attestations it has made. The shape, the
+# attestation exchange, the not-federated 404, and the no-personal-data rule are
+# exercised here; the full real-ML-DSA sign->verify_manifest->cross-authority path
+# runs in scripts/polaris-federation-manifest-drill.py.
+class FederationManifestTests(PolarisTestCase):
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _register_key(self, agency_id, key_hex):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE Agency SET signing_public_key_hex=%s WHERE agency_id=%s", (key_hex, agency_id))
+            conn.commit()
+
+    def test_not_federated_agency_is_404(self):
+        self._register_key(1, None)
+        self.assertEqual(self.client.get('/api/v1/federation-manifest/1').status_code, 404)
+        self.assertEqual(self.client.get('/api/v1/federation-manifest/999999').status_code, 404)
+
+    def test_manifest_shape_and_attestation_exchange(self):
+        self._register_key(1, 'a1' * 32)
+        self._register_key(2, 'b2' * 32)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.actor_agency_id','1',false)")
+            cur.execute("SELECT context_id FROM VerificationContext LIMIT 1")
+            ctx = cur.fetchone()['context_id']
+            cur.execute("DELETE FROM AgencyTrustAttestation WHERE attesting_agency_id=1 AND attested_agency_id=2 AND context_id=%s", (ctx,))
+            cur.execute("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, valid_until, signed_by) "
+                        "VALUES (1, 2, %s, CURRENT_DATE + INTERVAL '1 year', 1)", (ctx,))
+            conn.commit()
+        m = self.client.get('/api/v1/federation-manifest/1').get_json()
+        self.assertEqual(m['format'], 'polaris-federation-manifest/1')
+        self.assertEqual(m['authority']['agency_id'], 1)
+        self.assertEqual(m['anchors'][0]['public_key_hex'], 'a1' * 32)
+        self.assertGreater(m['expires_at'], m['issued_at'])
+        for f in ('epoch', 'revocation', 'signature_hex', 'algorithm', 'max_window_seconds'):
+            self.assertIn(f, m)
+        # the attestation to agency 2 (with its key + context) is published
+        att = [a for a in m['attestations'] if a['attested_agency_id'] == 2 and a['context_id'] == ctx]
+        self.assertTrue(att, "the manifest must publish the attestation this agency made")
+        self.assertEqual(att[0]['attested_public_key_hex'], 'b2' * 32)
+        # no personal data anywhere in the manifest
+        blob = json.dumps(m).lower()
+        for pii in ('legal_name', 'date_of_birth', 'individual_id', 'biometric', 'physical_serial'):
+            self.assertNotIn(pii, blob, "a federation manifest must carry no personal data")

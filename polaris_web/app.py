@@ -5362,6 +5362,81 @@ def api_v1_status_assertion():
     })
 
 
+# --- P3.2: the inter-authority protocol -- a signed federation manifest --------
+_MANIFEST_FORMAT = 'polaris-federation-manifest/1'
+_FEDERATION_MANIFEST_TTL = int(os.environ.get('POLARIS_FEDERATION_MANIFEST_TTL', '86400'))
+
+
+def _manifest_statement(body):
+    """Canonical bytes the authority signs. MUST match scripts/polaris-verify.py's
+    _manifest_canonical: sorted-keys compact JSON of the manifest minus the signature
+    envelope."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'authority', 'anchors', 'attestations', 'epoch',
+                  'revocation', 'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+@app.route('/api/v1/federation-manifest/<int:agency_id>')
+def api_v1_federation_manifest(agency_id):
+    """P3.2: an authority publishes a signed FEDERATION MANIFEST -- its own anchors
+    (its trust roots) and the attestations it has made (who it accepts, per context).
+    Another authority or a relying party consumes it OFFLINE (scripts/polaris-verify.py
+    verify_manifest / verify_cross_authority) to decide cross-authority trust against
+    published keys, with no central service. Public: this is published trust data, not
+    a secret, and carries no personal data. Signed with the agency's own key, short-lived
+    so anchors and attestations do not go stale."""
+    ag = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
+               (agency_id,), fetch='one', primary=True)
+    if not ag:
+        return jsonify(error='no such agency'), 404
+    if not ag['signing_public_key_hex']:
+        return jsonify(error='agency is not federated (no registered signing key)'), 404
+    atts = query("""
+        SELECT att.attested_agency_id, att.context_id, att.valid_until,
+               ag2.signing_public_key_hex AS attested_public_key_hex
+        FROM   AgencyTrustAttestation att
+        JOIN   Agency ag2 ON ag2.agency_id = att.attested_agency_id
+        WHERE  att.attesting_agency_id = %s
+          AND  att.revocation_date IS NULL
+          AND  att.valid_until >= CURRENT_DATE
+        ORDER BY att.attested_agency_id, att.context_id
+    """, (agency_id,), primary=True)
+    epoch = query("SELECT epoch_id, merkle_root FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
+                  fetch='one', primary=True)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    issued_at = now.isoformat().replace('+00:00', 'Z')
+    expires_at = (now + timedelta(seconds=_FEDERATION_MANIFEST_TTL)).isoformat().replace('+00:00', 'Z')
+    body = {
+        'format': _MANIFEST_FORMAT,
+        'authority': {'agency_id': ag['agency_id'], 'name': ag['name']},
+        'anchors': [{'public_key_hex': ag['signing_public_key_hex'], 'algorithm': 'ML-DSA-65', 'status': 'active'}],
+        # Only attest to an agency that has a registered key: a verifier needs the
+        # attested key to bind the attestation to a foreign credential's signature.
+        'attestations': [
+            {'attested_agency_id': a['attested_agency_id'],
+             'attested_public_key_hex': a['attested_public_key_hex'],
+             'context_id': a['context_id'],
+             'valid_until': a['valid_until'].isoformat() if a['valid_until'] else None}
+            for a in atts if a['attested_public_key_hex']
+        ],
+        'epoch': ({'number': epoch['epoch_id'], 'root_hex': epoch['merkle_root']} if epoch else None),
+        'revocation': {'as_of': issued_at},
+        'issued_at': issued_at,
+        'expires_at': expires_at,
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_manifest_statement(body), agency_id=agency_id)
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['max_window_seconds'] = _FEDERATION_MANIFEST_TTL
+    body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                   'manifest minus signature_hex and public_key_hex)')
+    return jsonify(body)
+
+
 # ============================================================================
 # INVESTIGATE — Object Card UX (v9.19)
 # ============================================================================

@@ -39,6 +39,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [recovery-ceremony.md](recovery-ceremony.md) | Recovering an identity without a single point of compromise |
 | [federation.md](federation.md) | Cross-agency trust, recorded explicitly, never transitive |
 | [federation-topology.md](federation-topology.md) | The topology decision record (ADR, P3.1): federated per-authority instances over a central instance, why the constitution forces it, and the threat-model delta |
+| [inter-authority-protocol.md](inter-authority-protocol.md) | The inter-authority protocol v1 (P3.2): the signed federation manifest (anchor cross-publication + attestation exchange), how a relying party accepts a foreign credential offline, and what is deferred |
 | [issuer-discretion.md](issuer-discretion.md) | The ceiling on what an issuing agency can do at scale |
 | [multi-sig-migration.md](multi-sig-migration.md) | Moving a token to a new signature algorithm with no gap |
 | [token-signature.md](token-signature.md) | How a signature is produced, stored, and verified across rotation |

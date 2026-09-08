@@ -376,6 +376,126 @@ def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_ke
             "bound": bound, "reasons": reasons, "credential": a, "status_assertion": s}
 
 
+_MANIFEST_FORMAT = "polaris-federation-manifest/1"
+
+
+def _manifest_canonical(manifest):
+    """The canonical bytes an authority signs when it publishes a federation manifest.
+    Excludes the signature envelope (signature_hex, public_key_hex); everything else
+    is signed. MUST match app.py's _manifest_statement."""
+    statement = {k: manifest.get(k) for k in
+                 ("format", "authority", "anchors", "attestations", "epoch",
+                  "revocation", "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors=None):
+    """Verify a federation manifest (P3.2) OFFLINE: an authority's published anchors
+    and the attestations it has made, signed by that authority. Checks the signature
+    over SHA3-256(canonical), that the signing key is one of the manifest's own
+    declared active anchors (self-consistency), freshness, and, with trusted_anchors,
+    whether this authority is one the relying party trusts. No network."""
+    from datetime import datetime, timezone
+    v = {"manifest_authentic": False, "fresh": None, "issuer_trusted": None,
+         "authority": manifest.get("authority"), "anchors": manifest.get("anchors") or [],
+         "attestations": manifest.get("attestations") or [], "witnesses": [], "note": None}
+    alg = manifest.get("algorithm")
+    pk_hex = manifest.get("public_key_hex")
+    sig_hex = manifest.get("signature_hex")
+    if manifest.get("format") != _MANIFEST_FORMAT:
+        v["note"] = "not a %s" % _MANIFEST_FORMAT
+        return v
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder manifest -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    # Self-consistency: the manifest must be signed by one of the ACTIVE anchor keys
+    # it declares as its own roots, so a manifest cannot be signed by a stranger key.
+    active = {a.get("public_key_hex", "").lower() for a in v["anchors"]
+              if (a.get("status") or "active") == "active"}
+    if pk_hex.lower() not in active:
+        v["note"] = "the manifest is not signed by one of its own declared active anchors"
+        return v
+    digest = hashlib.sha3_256(_manifest_canonical(manifest)).digest()
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    v["witnesses"] = ran
+    if primary is None and witness is None:
+        v["note"] = "no ML-DSA-65 verifier available"
+        return v
+    if primary is not None and witness is not None and primary != witness:
+        v["note"] = "the two witnesses DISAGREE -- treat as invalid"
+        return v
+    ok = primary if primary is not None else witness
+    v["manifest_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "manifest signature is invalid"
+        return v
+    now = now or datetime.now(timezone.utc)
+    try:
+        ia, ea = _parse_iso(manifest["issued_at"]), _parse_iso(manifest["expires_at"])
+    except Exception as e:
+        v["fresh"] = False
+        v["note"] = "unparseable issued_at/expires_at (%s)" % e
+        return v
+    window = (ea - ia).total_seconds()
+    within = ia <= now < ea
+    window_ok = True if max_window_seconds is None else (0 < window <= max_window_seconds)
+    v["fresh"] = bool(within and window_ok)
+    if not within:
+        v["note"] = "manifest is stale or not yet valid"
+    elif not window_ok:
+        v["note"] = "manifest window %ds exceeds the accepted maximum %ds" % (int(window), max_window_seconds)
+    if trusted_anchors is not None:
+        trusted = {t.lower() for t in trusted_anchors}
+        v["issuer_trusted"] = bool(active & trusted)
+    return v
+
+
+def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
+                           max_window_seconds=None, trusted_anchors=None):
+    """Decide whether to accept a credential from ANOTHER authority, OFFLINE, using
+    published federation manifests (P3.2). Accept iff the credential's signature is
+    genuine AND some manifest the relying party trusts attests to the credential's
+    signing key in the presented context. `trusted_anchors` are the anchor keys of the
+    authorities the relying party already trusts (whose manifests it will honor)."""
+    a = verify_pack(pack)
+    reasons = []
+    if not a["signature_valid"]:
+        reasons.append("credential is not authentic")
+        return {"decision": "reject", "authentic": False, "reasons": reasons, "via": None}
+    token_key = (pack.get("public_key_hex") or "").lower()
+    via = None
+    for manifest in trusted_manifests:
+        mv = verify_manifest(manifest, now=now, max_window_seconds=max_window_seconds,
+                             trusted_anchors=trusted_anchors)
+        if not (mv["manifest_authentic"] and mv["fresh"]):
+            continue
+        if trusted_anchors is not None and not mv["issuer_trusted"]:
+            continue  # the relying party does not trust the manifest's authority
+        for att in mv["attestations"]:
+            same_key = (att.get("attested_public_key_hex") or "").lower() == token_key
+            same_ctx = (context_id is None or att.get("context_id") == context_id)
+            if same_key and same_ctx:
+                via = mv["authority"]
+                break
+        if via:
+            break
+    if not via:
+        reasons.append("no trusted authority attests to this credential's issuer in this context")
+    return {"decision": "accept" if via else "reject", "authentic": True,
+            "reasons": reasons, "via": via}
+
+
 def _load_anchor(path):
     with open(path) as f:
         data = json.load(f)

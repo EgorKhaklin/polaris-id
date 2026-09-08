@@ -6913,6 +6913,59 @@ def check_controls_as_attacks(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks removes the enforcement, the verify field, the custody
 # selector, and the schema column.
 # ---------------------------------------------------------------------------
+def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
+    """P3.2: the inter-authority protocol. An authority publishes a SIGNED federation
+    manifest (its anchors, plus the attestations it has made); another party decides
+    cross-authority trust OFFLINE from published manifests, with no central service.
+    A foreign credential is accepted iff a TRUSTED authority ATTESTS to its key in the
+    presented context: trust flows along published attestation edges, never a closure."""
+    app = _read(root, "polaris_web/app.py")
+    if "/api/v1/federation-manifest" not in app or "_manifest_statement" not in app:
+        return _fail("inter_authority", "app.py must publish GET /api/v1/federation-manifest signing a canonical manifest")
+    if "signature_over_message" not in app or "attestations" not in app or "anchors" not in app:
+        return _fail("inter_authority",
+                     "the manifest must be issuer-SIGNED and carry anchor cross-publication (anchors) and "
+                     "attestation exchange (attestations)")
+    # The detached verifier decides it OFFLINE and stays standalone.
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_manifest", "def verify_cross_authority", "_manifest_canonical",
+                "polaris-federation-manifest/1"):
+        if sym not in v:
+            return _fail("inter_authority", "scripts/polaris-verify.py must verify a manifest offline (%s missing)" % sym)
+    if "declared active anchors" not in v:
+        return _fail("inter_authority",
+                     "verify_manifest must enforce self-consistency: a manifest is signed by one of its own declared "
+                     "active anchors, so it cannot be signed by a stranger key")
+    if "fresh" not in v or "max_window_seconds" not in v:
+        return _fail("inter_authority", "verify_manifest must enforce freshness (a window-bounded validity)")
+    if "attested_public_key_hex" not in v or "context_id" not in v:
+        return _fail("inter_authority",
+                     "verify_cross_authority must accept a foreign credential only when a trusted manifest attests to "
+                     "its signing key IN THE PRESENTED CONTEXT (bind on attested_public_key_hex + context_id)")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("inter_authority",
+                         f"the offline verifier imports {mod!r}; it must stay standalone (a relying party decides "
+                         "cross-authority trust with no Polaris code, no database, no central service)")
+    # It RUNS every release, and is specified and tested.
+    drill = _read(root, "scripts/polaris-federation-manifest-drill.py")
+    if not drill or "verify_cross_authority" not in drill:
+        return _fail("inter_authority",
+                     "scripts/polaris-federation-manifest-drill.py must run the two-authority accept/reject matrix")
+    if "polaris-federation-manifest-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("inter_authority", "the manifest drill must run in CI (a protocol that never runs is displacement)")
+    if not _read(root, "docs/design/inter-authority-protocol.md"):
+        return _fail("inter_authority", "docs/design/inter-authority-protocol.md (the protocol spec) is missing")
+    if "FederationManifestTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("inter_authority", "test_app.py must carry FederationManifestTests")
+    return _ok("inter_authority",
+               "two authorities interoperate through signed federation manifests: each publishes its anchors and the "
+               "attestations it has made (GET /api/v1/federation-manifest), and the standalone detached verifier "
+               "accepts a FOREIGN credential offline iff a trusted authority attests to its key in the presented "
+               "context (self-consistent, fresh, non-transitive) -- proven every release by the two-authority drill "
+               "under real ML-DSA, specified in docs/design/inter-authority-protocol.md, and tested")
+
+
 def check_federation_topology(root: pathlib.Path) -> list[Finding]:
     """P3.1: the topology decision record (ADR) chooses federated per-authority
     instances over a central instance, and records why the constitution forces it and
@@ -7283,6 +7336,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_inter_authority_protocol,
     check_federation_topology,
     check_offline_verification,
     check_typescript_sdk,

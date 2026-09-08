@@ -707,6 +707,29 @@ python3 scripts/polaris-verify.py --pack pack.json --status-assertion assertion.
 Because verification touches no issuer, the issuer never learns that a verification
 happened — offline verification is *more* private than the online `/verify`.
 
+### `GET /api/v1/federation-manifest/<agency_id>`
+
+**Public; no auth.** An authority's signed **federation manifest** (roadmap P3.2): its
+own anchors (trust roots) and the attestations it has made (who it accepts, per
+context), so another authority or a relying party can decide cross-authority trust
+offline. Signed with the agency's own key over `SHA3-256(canonical)`, short-lived
+(`POLARIS_FEDERATION_MANIFEST_TTL`, default one day). Carries no personal data. `404`
+if the agency does not exist or is not federated (no registered signing key).
+
+```jsonc
+{ "format": "polaris-federation-manifest/1",
+  "authority": { "agency_id": 1, "name": "..." },
+  "anchors": [ { "public_key_hex": "...", "algorithm": "ML-DSA-65", "status": "active" } ],
+  "attestations": [ { "attested_agency_id": 2, "attested_public_key_hex": "...", "context_id": 3, "valid_until": "..." } ],
+  "epoch": { "number": 12, "root_hex": "..." }, "revocation": { "as_of": "..." },
+  "issued_at": "...", "expires_at": "...", "algorithm": "ML-DSA-65", "signature_hex": "...", "public_key_hex": "..." }
+```
+
+A relying party verifies it offline with `scripts/polaris-verify.py`
+(`verify_manifest`, `verify_cross_authority`) and accepts a foreign credential iff a
+trusted authority attests to its key in the presented context. The protocol is
+specified in [inter-authority-protocol.md](../design/inter-authority-protocol.md).
+
 ## Verification API (use cases UC-1 through UC-8)
 
 Each use case is reachable through the operator UI (HTML form) AND

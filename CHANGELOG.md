@@ -5,6 +5,45 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.296 — 2026-09-08 (Inter-authority protocol v1: the signed federation manifest, P3.2)
+
+The federation topology (P3.1) says each authority is its own root; this is how two
+of them interoperate. An authority publishes what another party needs to verify its
+credentials, signed, with no central service.
+
+- **The federation manifest.** `GET /api/v1/federation-manifest/<agency_id>` publishes
+  a signed `polaris-federation-manifest/1`: the authority's own anchors (its trust
+  roots) and the attestations it has made (from `AgencyTrustAttestation`: who it
+  accepts, in which context, carrying the attested key so a verifier can bind it to a
+  foreign credential's signature). It is public trust data with no personal content,
+  signed with the authority's own key over `SHA3-256(canonical)`, and short-lived so
+  anchors and attestations do not go stale. Epoch and revocation are carried as
+  references; their alignment and propagation protocols are named and deferred to P3.2b.
+
+- **Cross-authority verification, offline.** The detached verifier gains `verify_manifest`
+  and `verify_cross_authority` (still standalone: no Polaris code, no database, no
+  network). A manifest is honored only if it is self-consistent (signed by one of its
+  own declared active anchors, never a stranger key), authentic (two witnesses), fresh
+  (window-bounded), and from an authority the relying party trusts. A FOREIGN credential
+  is accepted iff a trusted authority attests to its signing key in the presented
+  context. Trust flows along published attestation edges, never a transitive closure.
+
+- **It runs, and it is specified.** `scripts/polaris-federation-manifest-drill.py` stands
+  up two authorities with distinct real ML-DSA-65 roots, has one attest to the other, and
+  drives the whole matrix (right context accepts; wrong context, un-attested issuer,
+  untrusted authority, stranger-signed manifest, expired manifest, forged credential all
+  reject) under real ML-DSA every release in the pqc-real CI job. The protocol is in
+  [inter-authority-protocol.md](docs/design/inter-authority-protocol.md); the endpoint's
+  shape, the attestation exchange, and the no-personal-data rule are covered by
+  `FederationManifestTests`; `check_inter_authority_protocol` pins it. The manifest the
+  endpoint builds was confirmed byte-compatible with the offline verifier under real crypto.
+
+This unblocks P3.10 (two instances interoperating end to end in CI).
+
+159 machine-checked invariants; 92 routes.
+
+---
+
 ## v9.295 — 2026-09-08 (Say what unlinkability does NOT cover, and split the witness claim)
 
 A technical-honesty review of the claims the front door makes. Three were imprecise;
