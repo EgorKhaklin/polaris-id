@@ -5,6 +5,42 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.273 — 2026-09-08 (Honesty pass: shrink every claim to what the code does now)
+
+Before continuing the scale work, a pass over every outward-facing surface to
+make sure it states what Polaris is NOW, and never overstates. Polaris models a
+national identity-token system; it is a reference implementation on notional
+data, not a deployment. Underclaim over overclaim, macro to micro.
+
+- **The social card and browser tab.** The site `<title>`, `og:title` and
+  `og:site_name` presented Polaris AS a national identity system; they now name
+  it a reference implementation (the visible page already did).
+- **"Where Polaris sits."** The comparison gains a "Deployed to a real
+  population" column where Polaris is the sole X, so its design ticks read as
+  design properties, not deployment parity with Real ID / Aadhaar / mDL.
+- **Hardware honesty.** "one physical token per person" -> "one token per
+  person" (the physical artifact is modeled, not manufactured); the "PKCS#11
+  token" is now named a software module (Kryoptic), not a hardware HSM.
+- **Scoped absolutes.** The unlinkability claim is scoped to zero-knowledge
+  events (SELECTIVE and FULL carry a token id); the duress "pixel-identical /
+  every surface shows success" is qualified as a tested property of the modeled
+  flow, not an audited side-channel guarantee; "the complete working system" and
+  "production stack" become "a reference implementation" and "the production
+  profile"; "hundred million events" ties to the measured ten million.
+- **The edge-reload claim matches the measurement.** "an edge reload with no
+  window at all" was disproven by the window drill itself (a graceful Caddy
+  reload occasionally drops one in-flight request at a listener swap). The drill
+  now asserts a small transient budget instead of an absolute zero, and the
+  README / PRODUCTION-READINESS claims say so. This also ends a CI flake that hit
+  every recent ship.
+- **De-"certification" carried into the benchmark doc; drill latencies labeled
+  CI/single-host; count and image drift reconciled (five images, 30/37 tables).**
+
+`check_public_claims_honest` (with a detection test) guards the title, the
+comparison column, and the retired overclaim phrases from creeping back. 141
+checks (was 140).
+
+
 ## v9.272 — 2026-09-07 (The two-witness availability clause: continuous sampling)
 
 P1.18 item 5. Single-witness verify-at-use is ~10x the two-witness issuance

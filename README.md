@@ -6,7 +6,7 @@
 
 **A working reference implementation of a post-quantum, unlinkable-by-default,<br>compulsion-resistant national identity-token system.**
 
-Educational project; notional data only. CI builds and boots the full production stack on every push, proves the post-quantum handshake and the backup round trip, and runs the disaster-recovery drill.
+Educational project; notional data only. CI builds and boots the production-profile container stack on every push, proves the post-quantum handshake and the backup round trip, and runs the disaster-recovery drill. It is a reference implementation, not a deployment.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?label=release&color=2b5797&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
@@ -31,11 +31,11 @@ Educational project; notional data only. CI builds and boots the full production
 
 Americans carry six to eight credentials that do not talk to each other: driver's license, passport, Social Security card, Real ID, voter registration, insurance card. Each is a separate artifact, signed by a separate authority, secured to a separate standard, with no shared revocation path and no shared audit trail.
 
-Polaris consolidates them into **one active credential record per person**, signed under post-quantum cryptography (ML-DSA-65, FIPS 204), verified through **context-scoped events** (banking, voting, and healthcare are different events with different disclosure rules) at three disclosure levels. The default level is **zero-knowledge**: the typical verification stores no token identifier at all, so the verification graph cannot be reconstructed even by someone holding the whole database.
+Polaris models consolidating them into **one active credential record per person**, signed under post-quantum cryptography (ML-DSA-65, FIPS 204), verified through **context-scoped events** (banking, voting, and healthcare are different events with different disclosure rules) at three disclosure levels. The default level is **zero-knowledge**: the typical verification stores no token identifier at all, so the zero-knowledge verification graph cannot be reconstructed even by someone holding the whole database (SELECTIVE and FULL events do carry a token id).
 
 Two things here use zero knowledge, and a third deliberately does not exist. *Unlinkable verification records*: a default (zero-knowledge-mode) verification stores no token identifier, so the verification graph cannot be rebuilt from the database. A *Merkle-membership proof* (a Plonky2 SNARK) proves a token was in a published ledger and nothing else. Polaris is **not** a general selective-disclosure or anonymous-credential system, and does not claim to be.
 
-This repository is the complete working system: a 30-table PostgreSQL schema whose constraints are the security boundary, a Flask application covering every use case, a Rust ZK-SNARK prover with an independent second witness, an operator CLI, a hardened production container stack behind a post-quantum TLS edge, and a flat layer of 140 machine-checked invariants (v9.272) that gates every change in CI.
+This repository is a complete, working reference implementation: a 30-table PostgreSQL schema whose constraints are the security boundary, a Flask application covering every use case, a Rust ZK-SNARK prover with an independent second witness, an operator CLI, a hardened container stack (the production profile) behind a post-quantum TLS edge, and a flat layer of 141 machine-checked invariants (v9.273) that gates every change in CI. It runs on notional data; it has never held real identity data, and the physical token it models is not manufactured.
 
 What holds it together is one design rule: **the guarantees live in the database, not in application code**. A rule enforced by a trigger, a CHECK constraint, or a unique index binds every client, survives every restore from backup, and cannot be bypassed by the next caller. Application-level policy can be skipped; schema-level structure cannot.
 
@@ -58,7 +58,7 @@ Above the ten sits the project's vocation: **no person can be compelled to renou
 | **C9** | Concurrency claims are tested with real threads, not mocks. | Engineering | Threaded test suites against a live database |
 | **C10** | Identity is not money. The schema carries no monetary claim. | Constitutional | Structural absence, pinned by a check |
 
-Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 140 plain `check_*` functions (v9.272), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. The reasoning for why these ten, and why they interlock, is in [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
+Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 141 plain `check_*` functions (v9.273), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. The reasoning for why these ten, and why they interlock, is in [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
 
 ---
 
@@ -68,7 +68,7 @@ Consolidating cards is the easy half. The hard half is what happens when an adve
 
 | Threat | In practice | The answer | Detail |
 |---|---|---|---|
-| **Cryptographic compulsion** | "Sign this or I break your fingers." | A second secret produces an indistinguishable verification that silently records a `DuressEvent`. Every operator-visible surface shows success. | [duress-codes](docs/design/duress-codes.md) |
+| **Cryptographic compulsion** | "Sign this or I break your fingers." | A second secret produces a verification that looks identical and silently records a `DuressEvent`. By design every operator-visible surface shows success (a tested property of the modeled flow, not an audited side-channel guarantee). | [duress-codes](docs/design/duress-codes.md) |
 | **Catastrophic loss** | Token lost; the holder has nothing to prove who they are. | A two-phase recovery ceremony with independent out-of-band channels, a cooldown, and an admin-gated completion. | [recovery-ceremony](docs/design/recovery-ceremony.md) |
 | **Quantum migration** | Today's signatures break when a quantum computer arrives. | Tokens carry classical and post-quantum signatures simultaneously during cutover, with a database rule that exactly one is active. The default is already post-quantum. | [multi-sig-migration](docs/design/multi-sig-migration.md) |
 | **Issuer concentration** | One agency issues tokens that pass as another agency's. | Explicit-only federation, no transitive trust. Every cross-agency verification gates on an active trust attestation row. | [federation](docs/design/federation.md) |
@@ -118,7 +118,7 @@ Four layers. The schema is the core; everything else is a client of it.
 | [`polaris_web/`](polaris_web/) | Flask application: dashboard, the Atlas, per-use-case flows, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 Merkle-inclusion prover (Rust), plus [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation that must agree with it. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI: issuance, revocation, recovery, audit queries, without a browser. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer. 140 checks (v9.272), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer. 141 checks (v9.273), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | Operator tooling (backup, restore, archive, purge, migrate, recover-admin) and observability config (Prometheus alerts, Grafana dashboards-as-code, opt-in OTel tracing). |
 
 The production topology is five services: a self-built Caddy TLS edge, gunicorn, PgBouncer, PostgreSQL with pgBackRest WAL archiving, and Redis. Every service runs as non-root with all Linux capabilities dropped.
@@ -148,16 +148,16 @@ ECDSA-P256       ECDSA            FIPS 186-4   128         64 B         72 B   l
 
 ## Verified, not asserted
 
-Every claim above is backed by a gate that fails if the claim stops being true. The table, check, route and CI-job counts are re-measured by `polaris_checks` on every run; the two test counts were measured at v9.237 (12 product tests skip without optional backends; 3 crypto witnesses need a PKCS#11 token and 1 a real KMS key).
+Every claim above is backed by a gate that fails if the claim stops being true. The table, check, route and CI-job counts are re-measured by `polaris_checks` on every run and are current; the two test counts are a point-in-time floor measured earlier (they have grown since, not shrunk). 12 product tests skip without optional backends; 3 crypto witnesses need a PKCS#11 token and 1 a real KMS key.
 
 | Layer | Scale | What it proves |
 |---|---|---|
 | Product tests (live database) | 649 | Every CHECK constraint, every use case, every route, redaction at every read path, concurrency with real threads, the secret store; `test_app`, `test_cli`, `test_check_constraints`, the two property suites, `test_secretstore` |
-| Crypto witnesses | 95 passing of 99 collected | ML-DSA-65 sign/verify against both witnesses, in-file and in-token (PKCS#11) custody; the Rust and Python epoch roots agree; `test_pqc_signing`, `test_custody`, `test_zk_second_witness`, `witness2`. Both rows count tests passing on the reference machine at v9.215 (`pytest -q` per suite); the four crypto tests and twelve product tests skipped there need an optional backend (AWS KMS, a PKCS#11 module, a browser) and run in CI |
-| Invariant checks | 140 | C1-C10 plus production posture, each check paired with a detection test |
+| Crypto witnesses | 95 passing of 99 collected | ML-DSA-65 sign/verify against both witnesses, in-file and in a software PKCS#11 module (Kryoptic) custody; the Rust and Python epoch roots agree; `test_pqc_signing`, `test_custody`, `test_zk_second_witness`, `witness2`. Both rows count tests passing on the reference machine at v9.215 (`pytest -q` per suite); the four crypto tests and twelve product tests skipped there need an optional backend (AWS KMS, a PKCS#11 module, a browser) and run in CI |
+| Invariant checks | 141 | C1-C10 plus production posture, each check paired with a detection test |
 | CI jobs | 16 | See below |
 
-The CI jobs do not just run tests; they exercise the artifacts. On every push, CI **builds and boots the dev and prod images**, **boots the five-service production stack end to end** and asserts health through the TLS edge, **round-trips an encrypted backup and restore** with a fail-closed negative check and an off-site S3 drill, **kills the primary and restores it from the WAL archive** while measuring RPO and RTO, **rolls a deploy under traffic** and counts dropped requests, **installs the Linux server profile** on Debian and Rocky, **boots the Kubernetes reference profile** on kind, **pages a duress alert** through Prometheus and Alertmanager to a webhook, **proves the post-quantum TLS handshake** against a real certificate, **signs and verifies with real ML-DSA-65** both in the production image and inside a PKCS#11 token, and **fails the HA profile's leader, lease store and etcd member** under a live write stream, and **gates on CVE scans** of both the Python dependency surface and all five self-built container images.
+The CI jobs do not just run tests; they exercise the artifacts. On every push, CI **builds and boots the dev and prod images**, **boots the five-service production-profile stack end to end** and asserts health through the TLS edge, **round-trips an encrypted backup and restore** with a fail-closed negative check and an off-site S3 drill, **kills the primary and restores it from the WAL archive** while measuring RPO and RTO, **rolls a deploy under traffic** and counts dropped requests, **installs the Linux server profile** on Debian and Rocky, **boots the Kubernetes reference profile** on kind, **pages a duress alert** through Prometheus and Alertmanager to a webhook, **proves the post-quantum TLS handshake** against a real certificate, **signs and verifies with real ML-DSA-65** both in the production image and inside a software PKCS#11 module (Kryoptic; not a hardware HSM), and **fails the HA profile's leader, lease store and etcd member** under a live write stream, and **gates on CVE scans** of both the Python dependency surface and all five self-built container images.
 
 Most of those jobs carry a comment naming the specific past failure they exist to prevent. The pattern behind them: every defect class found by running the system, rather than reading it, gets a permanent gate.
 
@@ -202,16 +202,16 @@ On a fresh Debian, Ubuntu, or RHEL-family server, one script does all of the abo
 
 ## Where Polaris sits
 
-| System | National-scope issuance | Post-quantum default | Unlinkable verification default | Compulsion-resistant primitive | Append-only audit at schema |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Real ID (US) | ✓ | ✗ | ✗ | ✗ | ✗ |
-| mDL / ISO 18013-5 | ✓ | ✗ | partial | ✗ | ✗ |
-| Aadhaar (India) | ✓ | ✗ | ✗ | ✗ | partial |
-| e-Estonia | ✓ | ✗ | ✗ | ✗ | partial |
-| W3C DIDs / VCs | ✗ | method-dependent | method-dependent | ✗ | n/a |
-| **Polaris** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| System | Deployed to a real population | National-scope issuance | Post-quantum default | Unlinkable verification default | Compulsion-resistant primitive | Append-only audit at schema |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Real ID (US) | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
+| mDL / ISO 18013-5 | ✓ | ✓ | ✗ | partial | ✗ | ✗ |
+| Aadhaar (India) | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
+| e-Estonia | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
+| W3C DIDs / VCs | partial | ✗ | method-dependent | method-dependent | ✗ | n/a |
+| **Polaris** | **✗** | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-No single row is novel. The contribution is the assembly: all five properties in one running system, every one enforced at the schema level and machine-checked, rather than asserted in prose. The closest deployed relative is mDL, which has selective disclosure and real signatures but no post-quantum default, no duress primitive, and no constitutional layer governing the issuer itself.
+The first column is the honest one: every other row is deployed to real people, and Polaris is not — its remaining checks mark design properties present in the codebase, not a deployment. This compares designs, then, not deployments; Polaris runs on notional data. No single row is novel; the point is the assembly — all five properties in one working codebase, every one enforced at the schema level and machine-checked rather than asserted in prose. The closest deployed system is mDL, which has selective disclosure and real signatures but no post-quantum default, no duress primitive, and no constitutional layer governing the issuer itself.
 
 ---
 
@@ -223,7 +223,7 @@ No single row is novel. The contribution is the assembly: all five properties in
 | Reviewing the architecture | [ARCHITECTURE-OVERVIEW](docs/ARCHITECTURE-OVERVIEW.md) · [SYSTEM-MAP](docs/reference/SYSTEM-MAP.md) |
 | Reading the security posture | [SECURITY.md](SECURITY.md) · [PQC-POSTURE](docs/reference/PQC-POSTURE.md) · [RED-TEAM-SCOPE](docs/RED-TEAM-SCOPE.md) · [threat model](docs/design/threat-model.md) |
 | Integrating against it | [API](docs/reference/API.md) · [DATA-MODEL](docs/reference/DATA-MODEL.md) · [GLOSSARY](docs/reference/GLOSSARY.md) |
-| Operating a deployment | [docs/operator/](docs/operator/README.md), seventeen runbooks and ledgers from install to disaster recovery |
+| Running an instance | [docs/operator/](docs/operator/README.md), the operator runbooks and ledgers, from install to disaster recovery |
 | Asking why a mechanism is built this way | [docs/design/](docs/design/README.md), one record per mechanism plus the cross-cutting notes |
 | Reading it as an academic artifact | [The project report](docs/paper/polaris_project_report.pdf) (PDF, same license) · [CITATION.cff](CITATION.cff) |
 | Working on the code, human or AI agent | [CONTRIBUTING.md](CONTRIBUTING.md) · [CLAUDE.md](CLAUDE.md) · [CHANGELOG.md](CHANGELOG.md) |

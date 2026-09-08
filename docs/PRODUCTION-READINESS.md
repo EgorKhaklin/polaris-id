@@ -33,10 +33,12 @@ recorded as made for a named deployment.
 | **Independent penetration test and threat-model sign-off** | The readiness pack in [RED-TEAM-SCOPE.md](RED-TEAM-SCOPE.md); roadmap row P1.12. | The firm, the funding, and an accountable human signature. |
 
 One engineering limit is carried openly, and since v9.243 only its edge half
-remains: recreating the edge on a single host is a 0.3 s window, measured
+remains (every latency below is measured by the CI drills on an ephemeral single
+host or a kind cluster, not on production multi-node hardware): recreating the edge on a single host is a 0.3 s window, measured
 under traffic on every push by `scripts/polaris-window-drill.sh` against a
 30 s ceiling (v9.240), and an edge configuration change is a live reload
-with no window at all. The database half closed with the HA profile
+with a near-zero window (Caddy occasionally restarts a listener and drops a
+single in-flight request at the swap; the drill asserts a small transient budget). The database half closed with the HA profile
 (v9.243, [FAILOVER.md](operator/FAILOVER.md)): under Patroni a lost leader
 is replaced within its 20 s lease (20.0 s measured at v9.244; queries in
 flight fail fast at the pooler's 15 s query timeout and the app retries,

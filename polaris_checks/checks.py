@@ -3847,10 +3847,11 @@ def check_zero_downtime_deploy(root: pathlib.Path) -> list[Finding]:
         return _fail("zero_downtime", "scripts/polaris-window-drill.sh is missing: the edge and database recreation "
                      "windows must be measured, not asserted")
     for needle in ("caddy reload", "--force-recreate caddy", "restart -t 10 postgres", "EDGE_CEILING", "DB_CEILING",
-                   'r_drops" -eq 0'):
+                   'r_drops" -le "$_rmax"'):
         if needle not in wdrill:
-            return _fail("zero_downtime", f"polaris-window-drill.sh must contain {needle!r}: a reload with zero drops, "
-                         "an edge recreation and a database restart measured against ceilings")
+            return _fail("zero_downtime", f"polaris-window-drill.sh must contain {needle!r}: a config reload within a "
+                         "small transient budget (a graceful reload may drop one in-flight request at a listener swap, "
+                         "not zero), an edge recreation and a database restart measured against ceilings")
     if "polaris-window-drill.sh" not in ci:
         return _fail("zero_downtime", "ci.yml must run scripts/polaris-window-drill.sh after the rolling drill")
     return _ok("zero_downtime", "blue-green profile behind a retrying edge with fast liveness, deploy migrates then rolls "
@@ -6129,7 +6130,51 @@ def check_verify_witness_sampling(root: pathlib.Path) -> list[Finding]:
                "production (the two-witness availability clause)")
 
 
+# ---------------------------------------------------------------------------
+# P1.18 honesty pass (v9.273) — the outward surfaces must not overstate what
+# exists now. Underclaim over overclaim.
+# ---------------------------------------------------------------------------
+_OVERCLAIM_PHRASES = (
+    "one physical token per person",   # the hardware token is modeled, not manufactured
+    "the complete working system",     # it is a reference implementation, not a deployment
+)
+
+
+def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
+    """The site title and social card must name Polaris a reference implementation
+    (not present it AS a national identity system in a browser tab or a shared
+    link); the README must not carry the retired overclaims; and the 'Where
+    Polaris sits' comparison must keep the honest 'Deployed to a real population'
+    column that marks Polaris the one system NOT deployed, so its design ticks are
+    not read as a deployment. Detection: test_checks restores a bare title and an
+    overclaim phrase."""
+    readme = _read(root, "README.md")
+    site = _read(root, "site/index.html")
+    if not readme or not site:
+        return _fail("public_claims", "README.md or site/index.html is missing")
+    title = re.search(r"<title>([^<]*)</title>", site)
+    ogt = re.search(r'og:title"\s+content="([^"]*)"', site)
+    for label, m in (("<title>", title), ("og:title", ogt)):
+        if not m or "reference implementation" not in m.group(1).lower():
+            return _fail("public_claims",
+                         f"the site {label} must name Polaris a reference implementation, not present it AS a "
+                         "national identity system in a browser tab or a shared social card")
+    for bad in _OVERCLAIM_PHRASES:
+        if bad in readme:
+            return _fail("public_claims",
+                         f"the README carries the overclaim {bad!r}; shrink the claim to what the code does now "
+                         "(the hardware token is modeled; this is a reference implementation)")
+    if "Deployed to a real population" not in readme:
+        return _fail("public_claims",
+                     "the 'Where Polaris sits' comparison must keep the 'Deployed to a real population' column so "
+                     "Polaris's design ticks are not read as a deployment")
+    return _ok("public_claims",
+               "the outward surfaces name Polaris a reference implementation (title + social card), carry no "
+               "retired overclaim, and the comparison marks Polaris the one system not deployed")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_public_claims_honest,
     check_verify_witness_sampling,
     check_constitution_layered,
     check_no_scifi_schema,

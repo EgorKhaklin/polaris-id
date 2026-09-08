@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Polaris: a post-quantum, unlinkable-by-default national identity-token system</title>
-<meta name="description" content="A working reference implementation of a post-quantum, unlinkable-by-default, compulsion-resistant national identity-token system. Educational; notional data only. The guarantees live in the database; CI boots the full production stack on every push.">
-<meta property="og:title" content="Polaris: a post-quantum, unlinkable-by-default national identity system">
+<title>Polaris: a reference implementation of a post-quantum, unlinkable-by-default national identity-token system</title>
+<meta name="description" content="A working reference implementation of a post-quantum, unlinkable-by-default, compulsion-resistant national identity-token system. Educational; notional data only. The guarantees live in the database; CI boots the production-profile stack on every push. A reference implementation, not a deployment.">
+<meta property="og:title" content="Polaris: a reference implementation of a post-quantum, unlinkable-by-default national identity-token system">
 <meta property="og:description" content="One token per person. Post-quantum signed. Unlinkable verification by default. Compulsion-resistant by construction. It runs; CI proves it on every push.">
 <meta property="og:image" content="https://egorkhaklin.github.io/polaris-id/atlas-globe.png">
 <meta property="og:image:alt" content="The Polaris Atlas: a dark operational map of North America with verification clusters and the coverage figures. Notional data.">
@@ -13,7 +13,7 @@
 <meta property="og:image:height" content="1470">
 <meta property="og:url" content="https://egorkhaklin.github.io/polaris-id/">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Polaris Identity Token System">
+<meta property="og:site_name" content="Polaris (reference implementation)">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#050a12">
 <meta name="color-scheme" content="dark">
@@ -200,7 +200,7 @@ footer a{color:var(--ink-dim)}
     </div>
     <p class="strip">
         <strong>30</strong> schema tables · <strong>87</strong> routes ·
-        <strong>140</strong> machine-checked invariants ·
+        <strong>141</strong> machine-checked invariants ·
         <strong>ML-DSA-65</strong> signing default ·
         <strong>X25519MLKEM768</strong> TLS edge ·
         <strong>Plonky2</strong> ZK + second witness
@@ -217,8 +217,8 @@ footer a{color:var(--ink-dim)}
         post-quantum cryptography and verified through context-scoped events: banking, voting
         and healthcare are different events with different disclosure rules. The default
         disclosure level is zero-knowledge, so the typical verification stores no token
-        identifier at all and the verification graph cannot be reconstructed even by someone
-        holding the whole database.</p>
+        identifier at all, so the zero-knowledge verification graph cannot be reconstructed even by
+        someone holding the whole database (SELECTIVE and FULL events do carry a token id).</p>
     <p class="lede">One design rule holds it together: the guarantees live in the database,
         not in application code. A rule enforced by a trigger, a CHECK constraint or a unique
         index binds every client and survives every restore from backup.</p>
@@ -235,7 +235,7 @@ footer a{color:var(--ink-dim)}
         <figure>
             <span class="notional-badge">Notional data</span>
             <img src="atlas-street.png" width="2400" height="1470" decoding="async" alt="Notional data. The Atlas at street level, every verification event drawn on its own coordinate along one avenue" loading="lazy">
-            <figcaption><b>Zoom to the street.</b> Clusters resolve into single events, each on the coordinate where it happened. Events are fetched per viewport, so the browser holds only what is on screen, whether the ledger carries a thousand events or a hundred million. <span class="notional-note">Notional data.</span></figcaption>
+            <figcaption><b>Zoom to the street.</b> Clusters resolve into single events, each on the coordinate where it happened. Events are fetched per viewport, so the browser holds only what is on screen, whether the ledger carries a thousand events or the ten million the Atlas queries are measured against. <span class="notional-note">Notional data.</span></figcaption>
         </figure>
         <figure>
             <span class="notional-badge">Notional data</span>
@@ -272,7 +272,7 @@ footer a{color:var(--ink-dim)}
     <div class="threats">
         <div class="threat"><h3>Cryptographic compulsion</h3>
             <p class="attack">"Sign this or I break your fingers." The holder cannot refuse without injury.</p>
-            <p>A second secret produces an indistinguishable verification that silently records a DuressEvent. The coercer's view is pixel-identical to success.</p></div>
+            <p>A second secret produces a verification that looks identical and silently records a DuressEvent. By design the coercer sees success; the indistinguishability is a tested property of the modeled flow, not an audited side-channel guarantee.</p></div>
         <div class="threat"><h3>Catastrophic loss</h3>
             <p class="attack">Token lost, holder unidentified, nothing to prove who they are.</p>
             <p>A two-phase ceremony gated by independent out-of-band channels, a cooldown, and an admin-only decision. Compromising one channel is not enough.</p></div>
@@ -301,17 +301,17 @@ footer a{color:var(--ink-dim)}
     <div class="numbers">
         <div class="num"><b>649</b><span>product tests, live DB</span></div>
         <div class="num"><b>95</b><span>crypto-witness tests</span></div>
-        <div class="num"><b>140</b><span>invariant checks</span></div>
+        <div class="num"><b>141</b><span>invariant checks</span></div>
         <div class="num"><b>16</b><span>CI jobs</span></div>
         <div class="num"><b>5</b><span>services booted in CI</span></div>
     </div>
     <p class="asof">test counts measured at v9.237; the rest recomputed on every push</p>
     <ul class="prodlist">
-        <li><strong>The production stack boots in CI.</strong> Five services behind a self-built TLS edge come up end to end on every push, and health is asserted through the edge. Building that job surfaced four prod-down bugs the day it landed.</li>
+        <li><strong>The production-profile stack boots in CI.</strong> Five services behind a self-built TLS edge come up end to end on every push, and health is asserted through the edge. Building that job surfaced four prod-down bugs the day it landed.</li>
         <li><strong>Backups restore, provably.</strong> An encrypted backup and restore round-trip runs in CI with a fail-closed negative check, and the HA profile's automated failover is drilled on every push.</li>
         <li><strong>The post-quantum handshake is proven, not claimed.</strong> CI negotiates X25519MLKEM768 against a real certificate on every push, and signs with real ML-DSA-65 inside the production image.</li>
-        <li><strong>CVEs gate the build.</strong> Both the dependency surface and all four self-built container images are scanned on every push; a fixable CRITICAL fails CI.</li>
-        <li><strong>Every check can prove it works.</strong> Each of the 140 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
+        <li><strong>CVEs gate the build.</strong> Both the dependency surface and all five self-built container images are scanned on every push; a fixable CRITICAL fails CI.</li>
+        <li><strong>Every check can prove it works.</strong> Each of the 141 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
     </ul>
 </section>
 

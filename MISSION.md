@@ -155,7 +155,7 @@ the failure modes of every CBDC pilot.
 
 It is a working system, not a proposal. The schema, the application, the
 prover, the operator tooling and the deployment profiles in this
-repository run today, and the engineering bar is production-grade.
+repository run today, and the engineering bar is production-grade, though the system is not production-ready ([PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md)).
 Provenance and attribution are in [NOTICE](NOTICE).
 
 ---

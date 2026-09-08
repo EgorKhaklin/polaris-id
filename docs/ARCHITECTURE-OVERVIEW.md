@@ -99,7 +99,7 @@ of the schema. The schema can be operated via raw SQL (the
 `/sql` route is an authenticated, read-only console) and the
 constraints still hold; they are not mediated by the application.
 
-Key tables (29 in `01_schema.sql`, 33 in a migrated deployment; partial list):
+Key tables (30 in `01_schema.sql`, 37 in a migrated deployment; partial list):
 - `IdentityToken`: the central object
 - `Individual`: the person an identity is bound to
 - `Agency`: the issuer of an identity
@@ -230,7 +230,7 @@ table and a SEV-1 alert pages the responder.
 - **X25519MLKEM768** hybrid key exchange at the public TLS edge, proven
   off a real handshake in CI.
 
-The crypto is real, not stubbed. The Plonky2 SNARK has a working
+The crypto is real under the production flag (`POLARIS_USE_REAL_PQC=1` with liboqs), not stubbed; the dev/CI default is a labeled deterministic SHA3-256 placeholder (see [PQC-POSTURE.md](reference/PQC-POSTURE.md)). The Plonky2 SNARK has a working
 prover and verifier in Rust (`polaris_zk/`). Signature verification is a
 live FIPS 204 path. The Merkle anchoring batches actual tokens.
 

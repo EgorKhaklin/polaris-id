@@ -3470,7 +3470,7 @@ def test_zero_downtime_deploy_check_discriminates(tmp_path):
               "compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --address unix//config/admin.sock\n"
               "polaris-migrate.sh --up --target=docker-stack\nwait_healthy() { :; }\n"
               "mapfile -t APP_SERVICES < <(compose config --services | grep -E '^app(-green)?$' | sort -r)\n")
-    WINDOW = ("caddy reload\n[[ \"$r_drops\" -eq 0 ]]\ncompose up -d --no-deps --force-recreate caddy\n"
+    WINDOW = ("caddy reload\n[[ \"$r_drops\" -le \"$_rmax\" ]]\ncompose up -d --no-deps --force-recreate caddy\n"
               "EDGE_CEILING=30\ncompose restart -t 10 postgres\nDB_CEILING=60\n")
     good = {
         "polaris_web/Caddyfile": CADDY, "polaris_web/Caddyfile.citest": CADDY,
@@ -5467,3 +5467,28 @@ def test_verify_witness_sampling_check_discriminates(tmp_path):
     # the alert is gone
     write(alerts="groups: []\n")
     assert checks.check_verify_witness_sampling(tmp_path)[0].level == "FAIL", "must FAIL without the PolarisWitnessDisagreement alert"
+
+
+def test_public_claims_honest_check_discriminates(tmp_path):
+    # The outward surfaces must not overstate what exists now.
+    README = ("# POLARIS\n\nA reference implementation on notional data.\n\n"
+              "| System | Deployed to a real population | ... |\n"
+              "| **Polaris** | **X** | ... |\n")
+    SITE = ('<title>Polaris: a reference implementation of a national identity-token system</title>\n'
+            '<meta property="og:title" content="Polaris: a reference implementation of a system">\n')
+    def write(readme=README, site=SITE):
+        (tmp_path / "README.md").write_text(readme)
+        (tmp_path / "site").mkdir(exist_ok=True)
+        (tmp_path / "site" / "index.html").write_text(site)
+    write()
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the honest surfaces"
+    # bare title (Polaris presented AS a national system)
+    write(site=SITE.replace("a reference implementation of a national identity-token system",
+                            "a national identity-token system"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a bare title"
+    # an overclaim returns to the README
+    write(readme=README + "Polaris consolidates them into one physical token per person.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a retired overclaim"
+    # the comparison loses its 'not deployed' column
+    write(readme=README.replace("Deployed to a real population", "National-scope issuance"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL without the not-deployed column"

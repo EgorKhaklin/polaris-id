@@ -1,4 +1,4 @@
-# Benchmark and load certification
+# Benchmark and load characterization
 
 This is the committed record of Polaris driven at scale by the national
 simulation harness (`polaris_sim`, roadmap P2.14). The numbers were produced by
@@ -59,7 +59,7 @@ numbers.
 - **Invariants under load** are checked after the load: C3, C6, the C1
   append-only boundary, and that the mass-issued signatures verify.
 
-## Certified run (real ML-DSA-65)
+## Measured run (real ML-DSA-65)
 
 Scale 1:10000, 200,000 verification events, 2,000 signatures verified, seed 42,
 `POLARIS_USE_REAL_PQC=1` with a file-custody ML-DSA-65 authority key, on a
@@ -109,7 +109,7 @@ labeled as such.
    projected on this 8-core node. That takes real PQ verification from hundreds
    to tens of thousands per second without weakening issuance, which still
    two-witnesses every signature before it is persisted. This is what
-   [verification-scaling.md](../design/verification-scaling.md) certifies.
+   [verification-scaling.md](../design/verification-scaling.md) measures.
 3. **Real signing dominates enrollment.** At ~0.4 ms per ML-DSA-65 signature
    plus a two-witness self-check, mass enrollment is signing-bound (~372/s
    single-threaded here). Parallel signing across custody workers is the lever.
@@ -129,7 +129,7 @@ labeled as such.
 
 ## Relation to P2.9
 
-This is the single-node load certification the roadmap's P2.9 calls for: the
+This is the single-node load characterization the roadmap's P2.9 (a capacity model) calls for: the
 published harness drives the planning targets and commits the numbers, including
 that mass-issued identities are cryptographically valid. The HA integration —
 the same harness against the HA topology through a rolling deploy and an induced
