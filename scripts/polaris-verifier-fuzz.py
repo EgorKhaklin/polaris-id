@@ -184,6 +184,25 @@ def main():
             "issued_at": _iso(now), "algorithm": _FUZZ_ALG,
         }, V._exchange_request_canonical)
 
+    def g_receipt():
+        return _signed({
+            "format": "polaris-exchange-receipt/1", "requester": {"public_key_hex": kp2["public_key_hex"]},
+            "responder": {"agency_id": 1, "name": "Authority A"}, "context_id": 1,
+            "request_hash": hashlib.sha3_256(b'{"ask":"x"}').hexdigest(),
+            "response_hash": hashlib.sha3_256(b'{"answer":"y"}').hexdigest(),
+            "authorized_via": {"authority": {"agency_id": 1, "name": "Authority A"}, "context_id": 1},
+            "occurred_at": _iso(now), "algorithm": _FUZZ_ALG,
+        }, V._exchange_receipt_canonical)
+
+    def g_mint():
+        # `algorithm` is NOT a signed field of the mint statement (wire spec 3.9): it rides unsigned.
+        return _signed({
+            "format": "polaris-exchange-mint/1", "requester_public_key_hex": kp2["public_key_hex"],
+            "context_id": 1, "request_hash": hashlib.sha3_256(b'{"ask":"x"}').hexdigest(),
+            "response_hash": hashlib.sha3_256(b'{"answer":"y"}').hexdigest(),
+            "responder_agency_id": 1, "occurred_at": _iso(now), "algorithm": _FUZZ_ALG,
+        }, V._exchange_mint_canonical)
+
     def g_signed_document():
         return _signed({
             "format": "polaris-signed-document/1",
@@ -217,6 +236,12 @@ def main():
         ("id-token", g_id_token, lambda o: V.verify_id_token(o),
          lambda v: v["token_authentic"] and v.get("fresh") is True,
          ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr", "enrollment", "auth_time", "iat", "exp", "algorithm"]),
+        ("exchange-receipt", g_receipt, lambda o: V.verify_exchange_receipt(o),
+         lambda v: v["receipt_authentic"],
+         ["format", "requester", "responder", "context_id", "request_hash", "response_hash", "authorized_via", "occurred_at", "algorithm"]),
+        ("exchange-mint", g_mint, lambda o: V.verify_exchange_mint(o),
+         lambda v: v["mint_authentic"],
+         ["format", "requester_public_key_hex", "context_id", "request_hash", "response_hash", "responder_agency_id", "occurred_at"]),
         ("signed-document", g_signed_document, lambda o: V.verify_signed_document(o),
          lambda v: v["document_authentic"],
          ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"]),

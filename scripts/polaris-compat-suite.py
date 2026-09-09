@@ -46,6 +46,8 @@ FUNCTIONS = {
     "signed-document": ("verify_signed_document", "document_authentic"),
     "id-token": ("verify_id_token", "token_authentic"),
     "trust-list": ("verify_trust_list", "trust_list_authentic"),
+    "exchange-receipt": ("verify_exchange_receipt", "receipt_authentic"),
+    "exchange-mint": ("verify_exchange_mint", "mint_authentic"),
 }
 
 

@@ -396,7 +396,9 @@ signing needs and which gives every receipt independent time evidence) -> P8.3 (
 registry the gateway routes through) -> P8.2d (the mediating gateway, the flagship) -> P8.5
 (document signing, on timestamps) -> P8.4 (the auth broker's protocol core) -> P8.6 (the
 wallet PROTOCOL surface) -> P8.7b (trust-service lifecycle: trust list, compromise recovery,
-algorithm migration) -> P8.8 (versioning and cross-version compatibility). Two scope
+algorithm migration) -> P8.8 (versioning and cross-version compatibility); complete at v9.330, with v9.331 the
+sweep that certified the exchange receipt and mint in both SDKs and the conformance suite and
+brought the reference documents up to the protocol layer. Two scope
 decisions are deliberate: the wallet ships as a protocol the detached verifier checks, not
 as native mobile or desktop clients (a product mountain, not a reference-implementation
 concern), and a unified operator control-plane console is wrap that stays behind the

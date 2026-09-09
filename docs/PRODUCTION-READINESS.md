@@ -5,9 +5,13 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v9.314): not production-ready for real identity data.** Every
+**Status (v9.331): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
-table at the end). What remains is not buildable here: nine decisions that
+table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
+trust list, the exchange gateway and its receipts, the timestamp authority,
+document signing, the auth broker, wallet presentations, algorithm agility and
+versioning) is complete, certified in two SDKs and frozen at version 1; it
+changes nothing about this status. What remains is not buildable here: nine decisions that
 belong to the deploying organization, two engineering limits carried openly,
 and the deployment-scale work that [ROADMAP.md](../ROADMAP.md) tracks phase by
 phase. [MISSION.md](../MISSION.md) still governs every change, and

@@ -8472,6 +8472,8 @@ def check_typescript_sdk(root: pathlib.Path) -> list[Finding]:
         return _fail("typescript_sdk",
                      "the TS SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value) via "
                      "@noble/post-quantum, not trust a flag")
+    if '"polaris-exchange-receipt/1"' not in sdk or '"polaris-exchange-mint/1"' not in sdk:
+        return _fail("typescript_sdk", "the TS SDK must verify the exchange receipt and the mint statement (v9.331)")
     if "/api/v1/oauth/token" not in sdk or "/api/v1/verify" not in sdk:
         return _fail("typescript_sdk",
                      "the TS SDK's online path must authenticate (OAuth2 client-credentials) and call /api/v1/verify")
@@ -8534,6 +8536,8 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
     if "def verify_cross_authority" not in sdk:
         return _fail("conformance_suite",
                      "the SDK must decide the federation trust decision offline (verify_cross_authority)")
+    if '"polaris-exchange-receipt/1"' not in sdk or '"polaris-exchange-mint/1"' not in sdk:
+        return _fail("conformance_suite", "the SDK must verify the exchange receipt and the mint statement (v9.331)")
     if "sha3_256" not in sdk or "MLDSA65PublicKey" not in sdk:
         return _fail("conformance_suite",
                      "the SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value), not trust a flag")

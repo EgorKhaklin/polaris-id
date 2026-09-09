@@ -466,6 +466,46 @@
       },
       "note": "P8.8a: the same list signed by the RETIRED ML-DSA-65 key is refused: a publisher signs only under a key it lists active.",
       "since": "9.329"
+    },
+    {
+      "name": "exchange-receipt-valid",
+      "artifact": "exchange-receipt",
+      "object_file": "conformance/vectors/exchange-receipt-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.331",
+      "note": "P8.2: the responder-signed receipt a service holds after an exchange; evidence without the payload."
+    },
+    {
+      "name": "exchange-receipt-tampered",
+      "artifact": "exchange-receipt",
+      "object_file": "conformance/vectors/exchange-receipt-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.331",
+      "note": "P8.2: the response commitment changed after signing."
+    },
+    {
+      "name": "exchange-mint-valid",
+      "artifact": "exchange-mint",
+      "object_file": "conformance/vectors/exchange-mint-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.331",
+      "note": "P8.2b: the statement a responder's service signs to mint a receipt; `algorithm` rides unsigned."
+    },
+    {
+      "name": "exchange-mint-tampered",
+      "artifact": "exchange-mint",
+      "object_file": "conformance/vectors/exchange-mint-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.331",
+      "note": "P8.2b: the responder agency changed after signing."
     }
   ]
 }

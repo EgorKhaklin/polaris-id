@@ -1625,6 +1625,60 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     return v
 
 
+def _alg_for_key_length(pk_hex):
+    """The accepted parameter set a public key's length identifies, for an artifact whose
+    `algorithm` is not a signed field (the mint statement); None when no accepted set fits."""
+    try:
+        n = len(bytes.fromhex(pk_hex or ""))
+    except (ValueError, TypeError):
+        return None
+    for name, (_cls, pk_len, _sig_len) in _ACCEPTED.items():
+        if n == pk_len:
+            return name
+    return None
+
+
+def verify_exchange_mint(mint, responder_key=None):
+    """Verify a responder-signed MINT statement OFFLINE (P8.2b): the responder service's
+    ML-DSA signature over SHA3-256(canonical) with two witnesses, and (with responder_key)
+    that the expected responder agency's registered key signed it. `algorithm` is not a
+    signed field of this artifact; the declared value is used when present, else the
+    parameter set the key's length identifies. An audit holding the statement a service sent
+    to mint a receipt can confirm who asked for it. Total over hostile input."""
+    if not isinstance(mint, dict):
+        mint = {}
+    v = {"mint_authentic": False, "responder_matches": None,
+         "responder_agency_id": mint.get("responder_agency_id"), "context_id": mint.get("context_id"),
+         "requester_public_key_hex": mint.get("requester_public_key_hex"), "occurred_at": mint.get("occurred_at"),
+         "witnesses": [], "note": None}
+    if mint.get("format") != _EXCHANGE_MINT_FORMAT:
+        v["note"] = "not a %s" % _EXCHANGE_MINT_FORMAT
+        return v
+    pk_hex, sig_hex = mint.get("public_key_hex"), mint.get("signature_hex")
+    alg = mint.get("algorithm") if mint.get("algorithm") is not None else _alg_for_key_length(pk_hex)
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder mint -- not authenticatable offline"
+        return v
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_exchange_mint_canonical(mint)).digest()
+    ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
+    v["witnesses"] = ran
+    if ok is not True:
+        v["note"] = note or "signature INVALID"
+        return v
+    v["mint_authentic"] = True
+    if responder_key is not None:
+        v["responder_matches"] = _hexstr(pk_hex) == _hexstr(responder_key)
+    return v
+
+
 def exchange_evidence(envelope, receipt):
     """The evidentiary chain of one exchange (P8.2d): the requester-signed envelope and the
     responder-signed receipt agree on the requester key, the context, the request hash and the

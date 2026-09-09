@@ -5,6 +5,26 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.331 — 2026-09-09 (The P8 sweep: every protocol artifact certified, the map redrawn)
+
+The closing pass over the protocol arc. Nothing new is designed; everything built is now
+certified everywhere it should be and described where a reader looks.
+
+- **The exchange receipt and the mint statement in both SDKs.** Both were verified only by
+  the detached verifier; `verify_signed_artifact` / `verifySignedArtifact` now cover them,
+  the detached verifier gains `verify_exchange_mint` (the mint's `algorithm` rides unsigned,
+  so the declared value or the key's length picks the parameter set), four new conformance
+  vectors (`conformance/make_exchange_vectors.py`) bring the suite to 48 cases passing in all
+  three verifiers, the fuzzer holds 14 signed types (1714 cases) under both parameter sets,
+  and the compatibility suite maps both (the pinned v9.317 verifier agrees on the receipt,
+  predates the mint). `check_typescript_sdk` and `check_conformance_suite` pin them.
+- **The reference documents know the protocol layer.** SYSTEM-MAP gains the protocol-layer
+  table (nine subsystems, each with its routes, verifier functions and design record) and
+  the directories the tree had grown (`sdk/`, `conformance/`, `vectors/`, `attacks/`);
+  ARCHITECTURE-OVERVIEW gains the protocol layer beside the pages; both SDK READMEs state
+  what they verify and which parameter sets they accept; PRODUCTION-READINESS is restamped
+  with P8's bearing on it (none); the conformance spec's count is current.
+
 ## v9.330 — 2026-09-09 (Protocol versioning, negotiation and cross-version compatibility, P8.8b)
 
 Compatibility was a belief; now it is a rule with a proof on every push, and P8 is complete.

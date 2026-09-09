@@ -19,7 +19,7 @@ polaris/
 │
 ├── README.md                     ← the front page
 ├── MISSION.md                    ← the constitution (C1-C10 and the vocation)
-├── ROADMAP.md                    ← the build plan, P0 to P7
+├── ROADMAP.md                    ← the build plan, P0 to P8
 ├── CHANGELOG.md                  ← every ship, never edited retroactively
 ├── CLAUDE.md                     ← the developer and agent runbook
 ├── CONTRIBUTING.md / SECURITY.md ← contributor guide; vulnerability disclosure
@@ -46,6 +46,10 @@ polaris/
 ├── polaris_cli/        ← the operator CLI
 ├── polaris_checks/     ← the flat invariant layer that gates CI (README.md indexes it)
 ├── polaris_sim/        ← the national simulation and benchmark harness (a synthetic USA through the real pipeline)
+├── sdk/                ← the verify SDKs a relying party installs: python/ (the reference) and typescript/
+├── conformance/        ← the verification conformance suite: cases.json, vectors/, the frozen version-1 set (frozen/v1/)
+├── vectors/            ← the published authenticity vectors (real ML-DSA-65 packs, made by an independent implementation)
+├── attacks/            ← the attack suite: every attack must fail to break its defense
 │
 ├── deploy/             ← the three substrates, with README.md naming each one's limit
 │   ├── helm/polaris/   ← the Kubernetes reference profile (plus kind-config.yaml for CI)
@@ -112,6 +116,22 @@ publishes `site/`.
 | [`polaris_zk/`](../../polaris_zk/) | The Plonky2 Merkle-inclusion prover and verifier in Rust, and `witness2/`, the independent Python re-derivation. |
 | [`polaris_cli/`](../../polaris_cli/) | The operator CLI: the same operations without a browser. |
 
+### The protocol layer (P8, v9.320 to v9.331)
+
+The authority layer's institutional protocol, built on the product and verified outside it. Every artifact below is a signed statement specified in [WIRE-SPEC.md](WIRE-SPEC.md), verified offline by [`scripts/polaris-verify.py`](../../scripts/polaris-verify.py) and both SDKs, certified by the conformance suite, and fuzzed for totality.
+
+| Subsystem | Where | Record |
+|---|---|---|
+| The exchange gateway and its receipts (evidence without retention), service-to-service minting, the receipt transparency log | `POST /api/v1/exchange/<id>`, the mint and receipt-log routes in `app.py`; `verify_exchange_receipt`, `verify_exchange_mint`, `exchange_evidence` | [exchange-gateway.md](../design/exchange-gateway.md) |
+| The signed registry: discovery over the authority layer (services, authorities and their key registers, contexts, trust, protocol formats and versions, accepted algorithms) | `GET /api/v1/registry/<id>`; `verify_registry`, `registry_service`, `registry_authority`, `registry_key_status`, `registry_speaks` | [registry.md](../design/registry.md) |
+| The timestamp authority (digest-only, unlogged time evidence) | `POST /api/v1/timestamp/<id>`; `verify_timestamp`, `timestamp_binds` | [timestamp-authority.md](../design/timestamp-authority.md) |
+| Document signing with long-term validation | the signing routes; `verify_signed_document`, `attach_ltv` | [document-signing.md](../design/document-signing.md) |
+| The auth broker: log in with a credential, no login record (code + PKCE, a credential-bound ID token) | the broker routes; `verify_id_token` | [auth-broker.md](../design/auth-broker.md) |
+| The wallet protocol surface: offline presentations and QR framing | `verify_presentation`, `encode_presentation_frames`; `verify_presentation` in both SDKs | [wallet-protocol.md](../design/wallet-protocol.md) |
+| The trust-service lifecycle: the append-only key register, honest statuses, the signed trust list, compromise recovery | `AuthorityKeyEvent` / `AuthorityKeyCurrent`; `GET /api/v1/trust-list/<id>`; `verify_trust_list`, `key_status_at` | [trust-lifecycle.md](../design/trust-lifecycle.md) |
+| Algorithm agility and migration (ML-DSA-65 and ML-DSA-87 accepted everywhere, ML-DSA-44 refused, the key decides each body's algorithm) | `custody.ACCEPTED_ALGORITHMS`, `pqc_signing.algorithm_name`, `_signing_algorithm` | [algorithm-migration.md](../design/algorithm-migration.md) |
+| Protocol versioning, negotiation and the frozen version-1 set with the cross-version suite | `_format_check`, `instance.protocol.versions`; `conformance/frozen/v1/`, `scripts/polaris-compat-suite.py` | [protocol-versioning.md](../design/protocol-versioning.md) |
+
 ### Layer 2: enforcement and tooling
 
 | Directory | What |
@@ -126,7 +146,7 @@ publishes `site/`.
 | Directory | What |
 |---|---|
 | [`docs/operator/`](../operator/README.md) | INSTALL, DEPLOYMENT, LINUX-SERVER, KUBERNETES, HARDENING, OPERATIONS, SECRETS, KEY-CEREMONY, SECURITY, PRIVACY, DR, DR-DRILLS (ledger), CHAOS-DRILLS (ledger), FAILOVER, ENCRYPTION-AT-REST, SLOS, RUNBOOKS, WEBAUTHN-ROLLOUT |
-| [`docs/reference/`](README.md) | API, DATA-MODEL, PQC-POSTURE, PERFORMANCE-BASELINE, SCALING, GLOSSARY, this map |
+| [`docs/reference/`](README.md) | API, DATA-MODEL, WIRE-SPEC (the normative protocol), PQC-POSTURE, PERFORMANCE-BASELINE, SCALING, GLOSSARY, this map |
 | [`docs/`](../README.md) | ARCHITECTURE-OVERVIEW, PRODUCTION-READINESS (the bound on every claim), RED-TEAM-SCOPE, THESIS, SEED_DATA, CONVENTIONS |
 | [`docs/paper/`](../paper/) | The academic report |
 | [`DEVNOTES/`](../../DEVNOTES/) | The contributor's working notes: the gotcha list, the house style, the project record, and the plan of the pass in progress. The design set moved to [`docs/design/`](../design/README.md) at v9.224. |
@@ -173,4 +193,4 @@ CHANGELOG.md                       every ship, never edited retroactively
 | A contributor, human or agent | [CLAUDE.md](../../CLAUDE.md), [MISSION.md](../../MISSION.md), then `python3 -m polaris_checks.run` |
 | An academic reviewer | [the report](../paper/README.md), then [THESIS.md](../THESIS.md) |
 
-Last regenerated: 2026-09-02 (v9.198).
+Last regenerated: 2026-09-09 (v9.331).

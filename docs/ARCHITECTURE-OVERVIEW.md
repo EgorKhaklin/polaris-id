@@ -404,6 +404,19 @@ has none.
 
 For a first look: walk `/demo`, then the dashboard and the Atlas.
 
+**The protocol layer (P8).** Beside the pages, the authority layer speaks an institutional
+protocol of signed statements specified in [WIRE-SPEC.md](reference/WIRE-SPEC.md): the signed
+registry (`GET /api/v1/registry/<id>`: services, authorities and their key registers, protocol
+formats and versions, accepted algorithms), the trust list (`GET /api/v1/trust-list/<id>`), the
+exchange gateway and its receipts (`POST /api/v1/exchange/<id>`, evidence without retention),
+the timestamp authority, document signing with long-term validation, the auth broker's
+credential-bound ID token, and offline wallet presentations. Every one is verified offline by
+[`scripts/polaris-verify.py`](../scripts/polaris-verify.py) and the Python and TypeScript SDKs,
+certified by the conformance suite, fuzzed for totality, and frozen at version 1 with a
+cross-version suite that runs in both directions on every push. The system map's
+[protocol-layer table](reference/SYSTEM-MAP.md#the-protocol-layer-p8-v9320-to-v9331) names each
+subsystem's routes, verifier functions and design record.
+
 ---
 
 ## Further reading

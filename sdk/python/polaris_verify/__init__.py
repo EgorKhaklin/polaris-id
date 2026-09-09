@@ -265,6 +265,8 @@ _ARTIFACT_KEYS = {
     "polaris-signed-document/1": ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"],
     "polaris-id-token/1": ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr", "enrollment", "auth_time", "iat", "exp", "algorithm"],
     "polaris-trust-list/1": ["format", "publisher", "keys", "issued_at", "expires_at", "algorithm"],
+    "polaris-exchange-receipt/1": ["format", "requester", "responder", "context_id", "request_hash", "response_hash", "authorized_via", "occurred_at", "algorithm"],
+    "polaris-exchange-mint/1": ["format", "requester_public_key_hex", "context_id", "request_hash", "response_hash", "responder_agency_id", "occurred_at"],
 }
 
 
