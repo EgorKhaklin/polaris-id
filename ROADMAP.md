@@ -37,7 +37,7 @@ XL (multi-arc). Risk is delivery risk, not security risk.
 
 ---
 
-## Where we are (inventory at v9.236)
+## Where we are (inventory at v9.311)
 
 **Have, working, CI-proven:** a 31-table constraint-enforced schema (38 tables
 in a migrated deployment) with append-only audit; a 99-route application with
@@ -55,25 +55,38 @@ a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
 release; CVE gates on dependencies and images; a coverage floor; 168 invariant
-checks (v9.286) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
+checks (v9.311) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
+Since the v9.236 base, and CI-proven: HA automation (Patroni with an etcd leader
+lease and an automated failover drill under a live write stream); monthly table
+partitioning holding C1 across attach and detach; a read replica under a staleness
+contract; a holder credential wallet; a versioned relying-party API (`/api/v1`) with
+Python and TypeScript verify SDKs and a language-agnostic conformance suite; offline
+verification via short-lived issuer-signed status assertions; an inter-authority
+federation protocol (signed federation manifests, epoch checkpoints, revocation
+feeds, and an aggregate status bundle) whose trust is decided OFFLINE by a standalone
+detached verifier, proven across two INDEPENDENT instances over HTTP in CI; a public
+RFC-6962-style transparency log with independent witnesses, an equivocation proof, and
+external-ledger publication; and that detached verifier held TOTAL against hostile
+input by a metamorphic fuzzer.
+
 **Do not have:** hardware tokens (the physical artifact is modeled, not built);
-holder-facing surfaces (everything today is operator-facing); identity-proofing
-evidence flows mapped to NIST 800-63; scale beyond a single node (no
-partitioning, no HA automation, no multi-region; the Helm profile runs one
-postgres replica); a COMPLETE relying-party ecosystem (the versioned `/api/v1`
-verification contract (P3.4), Python and TypeScript verify SDKs, and the public conformance
-suite now ship (P3.4/P3.5); multi-instance interop remains); (offline verification now ships (P3.6: a short-lived signed status
-assertion verifiable with no connectivity; the aggregate bundle is P3.6b)); status and revocation
-distribution at scale; inter-authority federation as deployed topology (the
-schema supports it; no protocol spec or second instance exists); a hardware
-HSM in CI (the PKCS#11 driver is proven against a software token); certified
-cryptography (liboqs is not FIPS-validated); published registry images and
-image signing (deferred from P0.6 until images are published); accessibility
-conformance; any external audit, pen test, or pilot; and every institutional
-prerequisite of a national system (statute, funding, enrollment workforce,
-manufacturing, authorization to operate).
+identity-proofing evidence flows mapped to NIST 800-63; multi-region scale
+(monthly partitioning, HA automation and a read replica now ship; the profile
+is still single-region); status and revocation distribution at production CDN
+scale (the signed artifacts and the aggregate bundle ship, P3.2b/P3.2c; a
+distribution deployment does not); a hardware HSM in CI (the PKCS#11 driver is
+proven against a software token); certified cryptography (liboqs is not
+FIPS-validated); published registry images and image signing (deferred from P0.6
+until images are published); accessibility conformance; any external audit, pen
+test, or pilot; **the digital-society fabric around the identity core** -- a
+general secure-exchange gateway (an X-Road-class but evidence-without-retention
+service-to-service fabric), a service-and-authority registry, an auth/SSO broker,
+general document signing, and a normative wire specification that lets software
+which is not Polaris interoperate as a first-class peer (this is **Phase P8**
+below); and every institutional prerequisite of a national system (statute,
+funding, enrollment workforce, manufacturing, authorization to operate).
 
 **Carrying debts:** none from the P0 list; that paragraph closed with P0
 (v9.160 to v9.175). One engineering limit is carried openly in the readiness
@@ -97,10 +110,16 @@ OpenSSL 3.5 reaching the pgbouncer and postgres images.
 | P5 | Pilots | Real, consenting users | Two completed pilots with public reports, zero constitutional violations |
 | P6 | Certification and assurance | Authorization-ready | Validated crypto option, 800-63 mapping, audit and red team published |
 | P7 | National rollout | 350M persons | First state live; a national program office assumes ownership |
+| P8 | The exchange fabric, the Polaris way | Many independent organizations | A non-Polaris implementation interoperates from the spec alone; an institutional exchange is provable to a third party WITHOUT retaining the payload |
 
 Phase E is COMPLETE (v9.280): all of PE.1-PE.8 shipped. The engine was built before
 more deployment machinery was wrapped around it; the numbered phases below resume as
 the active work. P4 runs in parallel from P1 onward.
+P8 is a SOFTWARE arc, buildable now: it extends P3's federation and relying-party work
+into the "digital society" layer (the X-Road-class piece Polaris lacks), and it is NOT
+gated on the P4-P7 deployment or institutional phases. Its defining constraint is the
+anti-surveillance inversion of X-Road: evidence that an exchange occurred and was
+authorized, without retaining the underlying personal data.
 P5-P7 are gated on external actors; the buildable machinery for each is listed so
 no external gate is ever waiting on us.
 
@@ -352,6 +371,42 @@ instances; an enrollment surge of 200,000/day sustained during rollout years;
 Exit gate: the first state authority live at scale on its own instance; a
 national program office assumes ownership; the project transitions to steward
 of the reference implementation.
+
+---
+
+## P8 - The exchange fabric, the Polaris way [SOFTWARE ARC, BUILDABLE NOW]
+
+Objective: the "digital society" layer around the identity core, which is the
+X-Road-class piece Polaris lacks. This is not more identity crypto; it is a general
+authenticated, signed, evidenced exchange between ARBITRARY institutions, built as the
+anti-surveillance INVERSION of X-Road: an exchange is provable to a third party WITHOUT
+retaining the underlying personal data (a signed cryptographic receipt plus a
+transparency commitment, not a logged message body). Every primitive already exists (the
+detached verifier, the transparency log with witnesses, status bundles, ML-DSA signing,
+ZK inclusion); P8 composes them into the fabric. It is buildable now, extends P3, and is
+not gated on the P4-P7 deployment or institutional phases.
+
+Order by leverage: P8.1 (the normative spec + conformance) is the keystone and comes
+first. It is what turns everything already built into a substrate that independent
+implementations can target, and it is exactly the P3 exit gate ("an external team
+integrates docs-only"). The gateway (P8.2) is the flagship differentiator; the rest
+follow the specs they implement, and the polished end-user clients (P8.6) follow the
+protocol rather than leading it, so the wrap never runs ahead of the engine.
+
+| ID | Item | Size | Risk | Blocked by | Definition of done |
+|---|---|---|---|---|---|
+| [ ] P8.1 | Normative wire specification + conformance for independent implementations | L | med | P3 | A versioned, normative specification of the signed artifacts (authenticity pack, federation manifest, epoch checkpoint, revocation feed, status assertion, status bundle, transparency STH) and the federation trust decision, with a language-agnostic conformance suite; an implementation that imports no Polaris code passes it |
+| [ ] P8.2 | Polaris Gateway: an evidence-without-retention service-to-service fabric | XL | high | P8.1 | Arbitrary institutions exchange authenticated, signed requests mediated by Polaris trust; each exchange yields a signed receipt plus a transparency commitment proving it occurred and was authorized, WITHOUT retaining the payload; an independent party verifies the receipt offline |
+| [ ] P8.3 | Service-and-authority registry | L | med | P8.1 | A machine-readable, signed registry of authorities, relying parties, endpoints, protocol versions, capabilities, trust roots and schemas, powered by Athena, discoverable and independently verifiable |
+| [ ] P8.4 | Auth/SSO broker across credential types | L | med | P3.4 | The relying-party API becomes an OIDC/OAuth authentication broker with sessions, step-up auth, multiple credential types and explicit assurance levels, with no credential-type lock-in |
+| [ ] P8.5 | Polaris Sign: general document signing | L | med | P8.1 | Detached signing, timestamping, long-term validation and portable signed containers for ARBITRARY documents (not only identity artifacts), verifiable by an independent implementation from the spec |
+| [ ] P8.6 | Wallet client platform | XL | med | P8.1, PE.7 | Cross-platform holder software (mobile, desktop, browser/WebAuthn bridge, card/NFC, QR and offline presentation, recovery, document signing) built to the spec; the clients follow the protocol, never lead it |
+
+Exit gate: a non-Polaris implementation interoperates from P8.1 alone; an institutional
+exchange over P8.2 is provable to a third party with the payload never retained. This
+phase is where Polaris's architecture reaches the same broad class as an X-Road/eID
+ecosystem while keeping a stronger privacy and post-quantum posture; it deliberately does
+not reproduce X-Road's message-body logging, which the vocation forbids.
 
 ---
 

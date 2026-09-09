@@ -5,6 +5,29 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.311 — 2026-09-08 (ROADMAP honesty pass, and the P8 exchange-fabric arc)
+
+Docs only. The ROADMAP "Where we are" inventory had drifted: fresh agents use it to choose
+what to build, and it still listed shipped work as missing.
+
+- **Inventory corrected.** HA automation, monthly partitioning, a read replica, a holder
+  wallet, the versioned relying-party API with Python and TypeScript SDKs and a conformance
+  suite, offline verification, the inter-authority federation protocol proven across two
+  independent instances, the transparency log with witnesses and external-ledger publication,
+  and the fuzzer-hardened detached verifier all move from "Do not have" to "Have". The header
+  and the invariant-count stamp are restamped current.
+- **Phase P8 added: the exchange fabric, the Polaris way.** The largest code-level gap between
+  Polaris and an X-Road/eID-class ecosystem is not more identity crypto; it is the general
+  service-to-service exchange layer around the identity core. P8 records it, built as the
+  anti-surveillance INVERSION of X-Road: an exchange is provable to a third party WITHOUT
+  retaining the payload (a signed receipt plus a transparency commitment, not a logged message
+  body). Six items ordered by leverage: P8.1 a normative wire spec plus conformance for
+  independent, non-Polaris implementations (the keystone, and exactly the standing P3 exit
+  gate); P8.2 the evidence-without-retention gateway (the flagship); P8.3 a service-and-authority
+  registry; P8.4 an auth/SSO broker; P8.5 general document signing; P8.6 a wallet client
+  platform. Buildable now, extends P3, not gated on the P4-P7 deployment phases; every primitive
+  it composes already ships.
+
 ## v9.310 — 2026-09-08 (Federation status bundle: the aggregator holds no member key)
 
 The P3.2c status-bundle endpoint modeled federation aggregation wrongly. It built each
