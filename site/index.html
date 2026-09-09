@@ -6,7 +6,7 @@
 <title>Polaris: a reference implementation of a post-quantum, issuer-unlinkable, compulsion-resistant identity-token system</title>
 <meta name="description" content="A working reference implementation of a post-quantum, issuer-unlinkable, compulsion-resistant identity-token system. Educational; notional data only. The guarantees live in the database; CI boots the production-profile stack on every push. A reference implementation, not a deployment.">
 <meta property="og:title" content="Polaris: a reference implementation of a post-quantum, issuer-unlinkable, compulsion-resistant identity-token system">
-<meta property="og:description" content="A post-quantum credential verification engine: issue, hold, present, and verify a credential offline against published keys or online against current status. Unlinkable by default, compulsion-resistant by construction. A reference implementation on notional data; CI proves it on every push.">
+<meta property="og:description" content="A post-quantum credential verification engine: issue, hold, present, and verify a credential offline against published keys or online against current status. Issuer-unlinkable in its default verification mode, compulsion-resistant by construction. A reference implementation on notional data; CI proves it on every push.">
 <meta property="og:image" content="https://egorkhaklin.github.io/polaris-id/atlas-globe.png">
 <meta property="og:image:alt" content="The Polaris Atlas: a dark operational map of North America with verification clusters and the coverage figures. Notional data.">
 <meta property="og:image:width" content="2400">
@@ -221,6 +221,7 @@ footer a{color:var(--ink-dim)}
     <p class="lede">The backbone is a schema whose constraints are the security boundary: the
         guarantees live in the database, not in application code. A rule enforced by a trigger, a
         CHECK constraint or a unique index binds every client and survives every restore from backup.</p>
+      <p class="lede">Around the credential sits an institutional protocol of signed statements, each verified offline by the same detached verifier and both SDKs: a signed registry of what an authority offers and trusts, a trust list carrying each key's lifecycle, exchange receipts that prove an exchange occurred without keeping the message, a timestamp authority, document signing with long-term validation, a credential-bound login token, and offline wallet presentations. Version 1 of that protocol is frozen, and a cross-version suite proves on every push that today's verifiers still accept what version 1 published and that a pinned older verifier never accepts what the suite rejects.</p>
     <p class="lede">The problem it models: Americans carry six to eight credentials that do not talk
         to each other. Polaris consolidates them into one token per person, verified through
         context-scoped events (banking, voting and healthcare are different events with different
@@ -305,13 +306,13 @@ footer a{color:var(--ink-dim)}
         counts are measured per release on the reference machine. CI does not just run tests;
         it exercises the artifacts.</p>
     <div class="numbers">
-        <div class="num"><b>649</b><span>product tests, live DB</span></div>
-        <div class="num"><b>95</b><span>crypto-witness tests</span></div>
+        <div class="num"><b>755</b><span>product tests, live DB</span></div>
+        <div class="num"><b>84</b><span>crypto-witness tests</span></div>
         <div class="num"><b>184</b><span>invariant checks</span></div>
         <div class="num"><b>18</b><span>CI jobs</span></div>
         <div class="num"><b>5</b><span>services booted in CI</span></div>
     </div>
-    <p class="asof">test counts measured at v9.237; the rest recomputed on every push</p>
+    <p class="asof">test counts measured at v9.332; the rest recomputed on every push</p>
     <ul class="prodlist">
         <li><strong>The production-profile stack boots in CI.</strong> Five services behind a self-built TLS edge come up end to end on every push, and health is asserted through the edge. Building that job surfaced four prod-down bugs the day it landed.</li>
         <li><strong>Backups restore, provably.</strong> An encrypted backup and restore round-trip runs in CI with a fail-closed negative check, and the HA profile's automated failover is drilled on every push.</li>

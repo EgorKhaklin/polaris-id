@@ -5,6 +5,25 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.332 — 2026-09-09 (The front door restated)
+
+What an outside observer sees, brought to the tree it describes, without a new claim.
+
+- **The shareable surfaces say the same thing.** The repository description and the site's
+  social description now say "issuer-unlinkable" as the README does (the unlinkability is
+  issuer-side and scoped to the default verification mode); the citation's title drops
+  "national", its abstract names the protocol layer, and its release date is current.
+- **The README and the site know the protocol layer.** One paragraph on the institutional
+  protocol (registry, trust list, exchange receipts, timestamp authority, document signing,
+  the credential-bound login token, offline wallet presentations), ML-DSA-87 named beside
+  the default wherever ML-DSA-65 was named alone, the compatibility suite in the run block,
+  the protocol drills in the CI paragraph.
+- **The measured numbers are re-measured.** The product suites pass 755 tests today (15 skip
+  without optional backends) and the crypto witnesses 84 of 89 collected (5 need a PKCS#11
+  token or a KMS key); the previous figures were a v9.215 and v9.237 measurement, and the
+  "grown since, not shrunk" clause is gone because one figure did not grow. Stamped v9.332.
+- Repository topics gained `post-quantum`, `postgresql`, `zero-knowledge`, `conformance-suite`.
+
 ## v9.331 — 2026-09-09 (The P8 sweep: every protocol artifact certified, the map redrawn)
 
 The closing pass over the protocol arc. Nothing new is designed; everything built is now

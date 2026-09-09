@@ -1,12 +1,12 @@
 cff-version: 1.2.0
 message: "If you use or build on Polaris, please cite it as below."
-title: "Polaris: a post-quantum, zero-knowledge, compulsion-resistant national identity-token reference implementation"
+title: "Polaris: a reference implementation of a post-quantum, issuer-unlinkable, compulsion-resistant identity-token system"
 type: software
 authors:
   - family-names: Khaklin
     given-names: Egor
-version: "9.331"
-date-released: "2026-09-08"
+version: "9.332"
+date-released: "2026-09-09"
 repository-code: "https://github.com/EgorKhaklin/polaris-id"
 url: "https://egorkhaklin.github.io/polaris-id/"
 license: Apache-2.0
@@ -17,8 +17,12 @@ keywords:
   - ML-DSA
   - anti-coercion
 abstract: >-
-  A working reference implementation of a national identity-token system whose
+  A working reference implementation of an identity-token system whose
   guarantees are enforced in the database schema: post-quantum signatures
-  (ML-DSA-65), zero-knowledge verification with an independent second witness,
-  an append-only audit of record, and duress-resistant operation. Educational;
-  notional data only.
+  (ML-DSA-65 by default, ML-DSA-87 accepted), zero-knowledge verification with
+  an independent second witness, an append-only audit of record, duress-resistant
+  operation, and an institutional protocol of signed statements (a registry, a
+  trust list, exchange receipts, timestamps, signed documents, a credential-bound
+  login token, offline wallet presentations) verified offline by a detached
+  verifier and two SDKs against a frozen, conformance-tested wire specification.
+  Educational; notional data only; never deployed.
