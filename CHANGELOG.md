@@ -5,6 +5,17 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.342 — 2026-09-09 (The edge image build retries a transient checksum-database failure)
+
+Twice today a CI job failed inside the self-built Caddy edge image: `xcaddy build` fetches Go
+modules and verifies each against the public checksum database, and the database answered
+mid-download with an HTTP/2 stream error. That is a transient network failure, not a
+verification failure, and it reddened a job with no code change behind it. The build now
+retries the same command a bounded four times with a growing pause before declaring the image
+broken. Verification is never weakened: the checksum database stays on and no module flag is
+relaxed; only the fetch is retried. The Caddy image was rebuilt locally with the change and the
+rate-limit plugin confirmed compiled in.
+
 ## v9.341 — 2026-09-09 (Timestamp transparency: anchoring as the caller's choice, P8.5b)
 
 The maintainer's decision on the one design question the review series left open. Long-term

@@ -42,9 +42,21 @@ FROM caddy:2.11.4-builder-alpine@sha256:b6a94e74b72261bd536b35acdd22f3577d4e466a
 # fails with "cannot find module providing package"); --replace writes a plain
 # replace directive to go.mod, which is what xcaddy documents for exactly this
 # case. Remove it once the pinned base resolves x/crypto >= 0.55.0 on its own.
-RUN xcaddy build \
-    --with github.com/mholt/caddy-ratelimit \
-    --replace golang.org/x/crypto=golang.org/x/crypto@v0.55.0
+# v9.342: the build fetches Go modules and verifies every one against the checksum
+# database; that verification is never skipped (GOSUMDB stays on, GOFLAGS is not set).
+# But the checksum database answered two CI builds in one day with an HTTP/2 stream
+# error mid-download, which is a transient network failure, not a verification
+# failure, so the build is retried a bounded number of times with a growing pause
+# before the image (and every CI job that boots the stack) is declared broken.
+RUN for attempt in 1 2 3 4; do \
+        xcaddy build \
+            --with github.com/mholt/caddy-ratelimit \
+            --replace golang.org/x/crypto=golang.org/x/crypto@v0.55.0 \
+        && break; \
+        if [ "$attempt" = 4 ]; then echo "xcaddy build failed 4 times; giving up" >&2; exit 1; fi; \
+        echo "xcaddy build attempt $attempt failed (a module fetch or a checksum-database stream error); retrying in $((attempt * 20))s" >&2; \
+        sleep $((attempt * 20)); \
+    done
 
 FROM caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
 
