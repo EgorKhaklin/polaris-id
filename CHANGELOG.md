@@ -5,6 +5,16 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.340 — 2026-09-09 (The comparison table names its subjects)
+
+At the maintainer's direction, the README's "Where Polaris sits" comparison table names the
+system it compares against again (the row that read "federated national eID" since v9.319
+carries the name it did before). A comparison that hides its subjects is a weaker claim,
+not a stronger one. The rule that the tree describes the class rather than the instance stands
+everywhere else: `check_no_named_reference_systems` exempts exactly the rows of that table, not
+the prose around it, not the site, not the documentation or the code, and its detection test
+proves each of those boundaries.
+
 ## v9.339 — 2026-09-09 (The same-key timestamp guard applies to real keys)
 
 v9.336 made the signing route refuse a `timestamp_agency_id` whose key custody on the instance

@@ -234,7 +234,7 @@ On a fresh Debian, Ubuntu, or RHEL-family server, one script does all of the abo
 | Real ID (US) | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
 | mDL / ISO 18013-5 | ✓ | ✓ | ✗ | partial | ✗ | ✗ |
 | Aadhaar (India) | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
-| Federated national eID (classical PKI, two decades in production) | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
+| e-Estonia | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
 | W3C DIDs / VCs | partial | ✗ | method-dependent | method-dependent | ✗ | n/a |
 | **Polaris** | **✗** | **✗** | ✓ | ✓ | ✓ | ✓ |
 

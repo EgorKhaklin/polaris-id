@@ -8365,7 +8365,11 @@ def check_no_named_reference_systems(root: pathlib.Path) -> list[Finding]:
     eID, an exchange-fabric-class system, an evidentiary message log), not by name, so
     the project stands on its own terms rather than reading as a derivative. Scans every
     text file in the tree (skipping vendored and build directories and the two check
-    files that carry the pattern list) and fails on the first named reference."""
+    files that carry the pattern list) and fails on the first named reference. ONE
+    documented exception (v9.340, at the maintainer's direction): the rows of the README's
+    "Where Polaris sits" comparison table may name the systems they compare against,
+    because a comparison that hides its subjects is a weaker claim, not a stronger one;
+    nowhere else, and not the prose around the table."""
     pats = [re.compile(x, re.I) if mode == "i" else re.compile(x) for mode, x in _NAMED_REFERENCE_SYSTEMS]
     for f in sorted(root.rglob("*")):
         if not f.is_file() or f.suffix.lower() not in _NAMED_REF_EXTS:
@@ -8378,7 +8382,12 @@ def check_no_named_reference_systems(root: pathlib.Path) -> list[Finding]:
             text = f.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
+        in_comparison = False
         for i, line in enumerate(text.splitlines(), 1):
+            if rel == "README.md" and line.startswith("## "):
+                in_comparison = line.strip() == "## Where Polaris sits"
+            if rel == "README.md" and in_comparison and line.startswith("| "):
+                continue   # the comparison table's rows: the one place the tree names what it compares against
             for pat in pats:
                 if pat.search(line):
                     return _fail("no_named_reference_systems",

@@ -7007,6 +7007,15 @@ def test_no_named_reference_systems_check_discriminates(tmp_path):
     (tmp_path / "app.py").write_text("# an acronym: the TARA broker\n")
     assert checks.check_no_named_reference_systems(tmp_path)[0].level == "FAIL", \
         "must FAIL on a whole-word product acronym"
+    # v9.340: the README's comparison table may name its subjects; nothing else may, not even the README's prose.
+    (tmp_path / "app.py").write_text("clean\n")
+    (tmp_path / "README.md").write_text("## Where Polaris sits\n\n| System | Deployed |\n|---|---|\n| Estonia (X-Road) | yes |\n\n## Documentation\n\nprose\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "OK", "the comparison table's rows may name what they compare against"
+    (tmp_path / "README.md").write_text("## Where Polaris sits\n\nModelled on Estonia.\n\n| System | Deployed |\n|---|---|\n| a | b |\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "FAIL", "the prose around the table gets no exemption"
+    (tmp_path / "README.md").write_text("## Documentation\n\n| Estonia | row outside the comparison section |\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "FAIL", "a table row outside the comparison section gets no exemption"
+    (tmp_path / "README.md").unlink()
     (tmp_path / "app.py").write_text("# tara is an ordinary lowercase word; sixteen findings at the crossroad; criteria too\n")
     assert checks.check_no_named_reference_systems(tmp_path)[0].level == "OK", \
         "lowercase ordinary words and embedded letters must NOT trip the acronym patterns"
