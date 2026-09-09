@@ -262,6 +262,25 @@ CREATE TRIGGER trg_exchange_nonce_append_only
     FOR EACH ROW
     EXECUTE FUNCTION reject_exchange_nonce_modification();
 
+-- P8.4 (v9.326): a consumed authorization code must never be un-consumed.
+CREATE OR REPLACE FUNCTION reject_auth_code_modification()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION
+        '% on AuthCodeConsumed is forbidden: a consumed authorization code must never be un-consumed.',
+        TG_OP
+        USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_auth_code_append_only ON AuthCodeConsumed;
+CREATE TRIGGER trg_auth_code_append_only
+    BEFORE UPDATE OR DELETE ON AuthCodeConsumed
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_auth_code_modification();
+
 COMMENT ON FUNCTION reject_audit_modification IS
   'Blocks UPDATE and DELETE on append-only audit tables (TokenLifecycleEvent, '
   'VerificationEvent, EnrollmentStatusEvent, AnchorBatch). Realizes NFR-4 at '

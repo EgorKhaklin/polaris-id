@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **33 tables** in `01_schema.sql` (v9.324), organized
-into six functional groups. A migrated deployment holds **40 tables**: those,
+The Polaris schema is **34 tables** in `01_schema.sql` (v9.326), organized
+into six functional groups. A migrated deployment holds **41 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -249,6 +249,15 @@ identical envelope replayed to any worker hits the primary key and is refused
 (`409`), and a request is never delivered twice. No body, no person. Strictly
 append-only by trigger (`trg_exchange_nonce_append_only`: a consumed nonce must
 never be un-consumed) and by privilege, exactly like `ZkVerificationNonce`.
+
+### `AuthCodeConsumed` (constraint C1: append-only; roadmap P8.4)
+
+The auth broker's consumed-code register. An authorization code is a stateless
+signed blob; the token endpoint consumes its SHA3-256 here before minting an ID
+token, so a code is single-use across every worker (a replay hits the primary
+key: `invalid_grant`). Only the code hash is kept -- no subject, no relying
+party, no instant -- so the broker holds no record of who authenticated where.
+Strictly append-only by trigger (`trg_auth_code_append_only`) and by privilege.
 
 ## Operational tables
 

@@ -119,6 +119,8 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         "exchangereceiptlog",
         # v9.324 (P8.2d): the exchange gateway's replay register.
         "exchangenonce",
+        # v9.326 (P8.4): the auth broker's consumed-code register.
+        "authcodeconsumed",
     ]
     if not re.search(r"REVOKE\s+UPDATE\s*,\s*DELETE", grants, re.I):
         return _fail("c1_aor_priv",
@@ -7163,6 +7165,7 @@ _WIRE_SIGNED_TYPES = {
     "polaris-registry/1": "_registry_canonical",
     "polaris-exchange-request/1": "_exchange_request_canonical",
     "polaris-signed-document/1": "_signed_document_canonical",
+    "polaris-id-token/1": "_id_token_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7520,6 +7523,76 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_auth_broker(root: pathlib.Path) -> list[Finding]:
+    """P8.4: the auth broker's protocol core -- authorization code + PKCE, a holder-side
+    possession-authenticated authorize, an RP-side client-credentials exchange for an
+    issuing-agency-signed polaris-id-token/1, step-up by ZK proof, duress served identically --
+    with the vocation's guards pinned: the subject is a credential hash, the only write is the
+    consumed code's hash (no record of who authenticated where), and a verify bearer cannot
+    reach the broker (a running AC-6 adversary)."""
+    app = _read(root, "polaris_web/app.py")
+    for sym, why in (("/api/v1/auth/authorize", "the holder-side authorize route"),
+                     ("/api/v1/auth/token", "the RP-side token route"),
+                     ("_id_token_statement", "the ID token statement builder"),
+                     ("polaris-id-token/1", "the ID token format"),
+                     ("rp_auth.SCOPE_AUTHENTICATE", "the 'authenticate' scope gate"),
+                     ("_possession_authenticated(token_value, presented)", "possession authentication of the holder"),
+                     ("'sub': hashlib.sha3_256(token_value", "the subject is a credential hash"),
+                     ("_pkce_challenge(verifier)", "PKCE binding"),
+                     ("INSERT INTO AuthCodeConsumed (code_hash)", "single-use codes via the consumed-code register"),
+                     ("_check_and_record_duress(row['token_id']", "duress served identically and recorded silently"),
+                     ("_zk_verify_and_consume(", "ZK step-up")):
+        if sym not in app:
+            return _fail("auth_broker", "polaris_web/app.py lacks %s (%s)" % (why, sym))
+    # The authorize route writes nothing: no INSERT between its def and the token route's def.
+    i0, i1 = app.find("def api_v1_auth_authorize():"), app.find("def api_v1_auth_token():")
+    if i0 < 0 or i1 < 0 or "INSERT INTO" in app[i0:i1].replace("INSERT INTO ZkVerificationNonce", ""):
+        return _fail("auth_broker", "the authorize route must write nothing (no record of who authenticated where)")
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    m = re.search(r"CREATE TABLE AuthCodeConsumed \((.*?)\);", schema, re.S)
+    if not m or re.search(r"\b(rp_id|client_id|sub|subject|token|individual)\b", m.group(1)):
+        return _fail("auth_broker", "AuthCodeConsumed must hold only the code hash and instant -- never a subject or relying party")
+    if "trg_auth_code_append_only" not in _read(root, "polaris_sql/06_triggers.sql") or "authcodeconsumed" not in _read(root, "polaris_sql/09_grants.sql").lower():
+        return _fail("auth_broker", "the consumed-code register must be strictly append-only by trigger and by privilege")
+    rpa = _read(root, "polaris_web/rp_auth.py")
+    if "def issue_auth_code" not in rpa or "def validate_auth_code" not in rpa or "_CODE_SALT" not in rpa:
+        return _fail("auth_broker", "rp_auth.py must issue and validate stateless authorization codes under a salt distinct from access tokens")
+    v = _read(root, "scripts/polaris-verify.py")
+    if "def verify_id_token" not in v or "_id_token_canonical" not in v:
+        return _fail("auth_broker", "scripts/polaris-verify.py must verify the ID token offline (verify_id_token)")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("auth_broker", f"the offline verifier imports {mod!r}; it must stay standalone")
+    if "def verify_id_token" not in _read(root, "sdk/python/polaris_verify/__init__.py") or "export function verifyIdToken" not in _read(root, "sdk/typescript/src/index.ts"):
+        return _fail("auth_broker", "both SDKs must verify the ID token as a relying party (verify_id_token / verifyIdToken)")
+    if "_id_token_statement" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("auth_broker", "the ID token must be in the canonical-equivalence oracle")
+    if "polaris-id-token/1" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("auth_broker", "the ID token must be specified in the wire spec")
+    if '"artifact": "id-token"' not in _read(root, "conformance/cases.json"):
+        return _fail("auth_broker", "conformance/cases.json must carry id-token cases")
+    if "verify_id_token" not in _read(root, "scripts/polaris-verifier-fuzz.py"):
+        return _fail("auth_broker", "the metamorphic fuzzer must hold verify_id_token total")
+    if "/api/v1/auth/token" not in _read(root, "attacks/attack_controls.py"):
+        return _fail("auth_broker", "the AC-6 adversary must prove a verify bearer cannot reach the broker's token endpoint")
+    drill = _read(root, "scripts/polaris-auth-broker-drill.py")
+    if not drill or "verify_id_token" not in drill or "polaris-auth-broker-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("auth_broker", "scripts/polaris-auth-broker-drill.py must drive the ID-token verifier matrix in CI")
+    fed = _read(root, "scripts/polaris-federation-instances-drill.py")
+    for sym in ("/api/v1/auth/authorize", "/api/v1/auth/token", "code_verifier", "invalid_grant"):
+        if sym not in fed:
+            return _fail("auth_broker", "the two-instance drill must run the full code + PKCE flow over HTTP with replay refused (%s missing)" % sym)
+    if "AuthBrokerTests" not in _read(root, "polaris_web/test_app.py") or "DuressEvent" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("auth_broker", "polaris_web/test_app.py must exercise the broker incl. duress indistinguishability")
+    if "def cmd_login" not in _read(root, "scripts/polaris-wallet.py"):
+        return _fail("auth_broker", "the holder wallet must be able to drive the authorize step (polaris-wallet.py login)")
+    return _ok("auth_broker",
+               "a holder authenticates to a relying party through Polaris by possession (authorization code + PKCE), "
+               "receiving an issuing-agency-signed ID token whose subject is a credential hash, with ZK step-up, "
+               "duress served identically, no record of who authenticated where (only consumed code hashes), a "
+               "verify bearer unable to reach the broker, and the flow proven over HTTP across two instances")
 
 
 def check_document_signing(root: pathlib.Path) -> list[Finding]:
@@ -8268,20 +8341,24 @@ def check_relying_party_api(root: pathlib.Path) -> list[Finding]:
     """P3.4: the relying-party verification API. A third-party organization
     authenticates AS ITSELF (OAuth2 client-credentials) and calls the versioned
     /api/v1/verify to confirm a presented credential is authentic and currently
-    authoritative -- API-access auth ONLY (scope is CHECK-constrained to 'verify',
-    so identity never becomes a login product), a verdict that never carries
-    personal data, and a credential that reaches nothing but verification. The
-    bound and the no-PII rule are RUNNING adversaries, not comments."""
-    # 1. The scope is constrained to 'verify' at the SCHEMA -- the vocation guard is
-    #    a database CHECK, not a policy the app could relax.
+    authoritative -- API-access auth with a scope CHECK-constrained at the schema
+    to exactly 'verify', 'authenticate' (the P8.4 auth broker) or both, so the
+    surface can never grow a scope the vocation has not weighed; a verdict that
+    never carries personal data; and a verify credential that reaches nothing but
+    verification. Identity never becomes a login RECORD: the broker writes nothing
+    but consumed code hashes. The bound and the no-PII rule are RUNNING
+    adversaries, not comments."""
+    # 1. The scope set is fixed at the SCHEMA -- the vocation guard is a database CHECK,
+    #    not a policy the app could relax. v9.326 widened it to admit the auth broker;
+    #    anything beyond these three values is a scope creep the constitution has not seen.
     schema = _read(root, "polaris_sql/01_schema.sql")
     if "CREATE TABLE RelyingParty" not in schema:
         return _fail("relying_party_api", "polaris_sql/01_schema.sql has no RelyingParty table")
-    if not re.search(r"scope\s+VARCHAR[^\n]*\n[^\n]*CHECK\s*\(scope IN \('verify'\)\)", schema) \
-       and "CHECK (scope IN ('verify'))" not in schema:
+    if "CHECK (scope IN ('verify', 'authenticate', 'verify authenticate'))" not in schema:
         return _fail("relying_party_api",
-                     "RelyingParty.scope must be CHECK-constrained to 'verify' -- the schema-level guard that the "
-                     "relying-party API can never become a login product (the vocation)")
+                     "RelyingParty.scope must be CHECK-constrained to exactly 'verify' | 'authenticate' | "
+                     "'verify authenticate' -- the schema-level guard that the relying-party surface can never "
+                     "grow a scope the vocation has not weighed")
     if "client_secret_hash" not in schema:
         return _fail("relying_party_api", "RelyingParty must store client_secret_hash (scrypt), never the secret")
     # 2. Stateless, scope-bounded bearer, salted distinctly from the session cookie.
@@ -8419,6 +8496,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_auth_broker,
     check_document_signing,
     check_exchange_gateway,
     check_registry,

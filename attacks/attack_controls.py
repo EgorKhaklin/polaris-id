@@ -256,6 +256,11 @@ def attack_ac6_rp_credential_reaches_operator_surface():
                       "/api/tokens/1/verify", "/dashboard", "/individuals", "/api/atlas/records"):
             if anon.get(route, headers=bearer).status_code == 200:
                 breaches.append(route)
+        # P8.4: a VERIFY bearer must not reach the auth broker either -- the token endpoint
+        # takes client credentials plus a code, never a bearer.
+        if anon.post("/api/v1/auth/token", headers=bearer,
+                     data={"grant_type": "authorization_code", "code": "x", "code_verifier": "y" * 43}).status_code == 200:
+            breaches.append("/api/v1/auth/token")
     finally:
         _delete_rp(ta, cid)
     return bool(breaches), ("an RP bearer reached operator surfaces %s (scope bound broken)" % breaches

@@ -391,6 +391,96 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         self.assertEqual(bad.get_json()['error'], 'not_verifiable')
 
 
+class AuthBrokerTests(UnauthenticatedTestCase):
+    """P8.4: the authorization-code + PKCE flow under the test profile (placeholder signatures):
+    a relying party with the 'authenticate' scope, a holder authorizing by possession, a code
+    exchanged once for an ID token whose subject is the credential hash, replay and a wrong
+    verifier refused, a verify-only relying party refused, and DURESS served identically while
+    recorded silently. Real-ML-DSA verification of the token runs in the drills."""
+
+    def _rp(self, scope):
+        import os
+        cid, secret = "rp_test_auth_" + os.urandom(6).hex(), "test-secret-" + os.urandom(8).hex()
+        flask_app.query("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min, scope) "
+                        "VALUES (%s, %s, %s, TRUE, 120, %s)", (cid, flask_app.security.hash_password(secret), "Test RP", scope), fetch='none')
+        return cid, secret
+
+    def _credential(self):
+        import hashlib
+        import psycopg2
+        row = flask_app.query("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
+                              "AND status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one', primary=True)
+        placeholder = hashlib.sha3_256(row['token_value'].encode('utf-8')).digest()
+        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+                        "VALUES (%s, 1, %s, NULL)", (row['token_id'], psycopg2.Binary(placeholder)), fetch='none')
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
+        return row['token_id'], row['token_value'], placeholder.hex()
+
+    def _pkce(self):
+        import base64
+        import hashlib
+        import os
+        verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b'=').decode('ascii')
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode('ascii')).digest()).rstrip(b'=').decode('ascii')
+        return verifier, challenge
+
+    def _authorize(self, cid, tv, sig, challenge, **extra):
+        body = {'client_id': cid, 'nonce': 'nonce-test-0001', 'code_challenge': challenge, 'code_challenge_method': 'S256',
+                'context_id': 1, 'disclosure_level': 'ZERO_KNOWLEDGE', 'token_value': tv, 'signature_hex': sig}
+        body.update(extra)
+        return self.client.post('/api/v1/auth/authorize', json=body)
+
+    def _basic(self, cid, secret):
+        import base64
+        return {'Authorization': 'Basic ' + base64.b64encode(('%s:%s' % (cid, secret)).encode()).decode()}
+
+    def test_code_flow_with_pkce_replay_and_scope(self):
+        import hashlib
+        cid, secret = self._rp('verify authenticate')
+        _tid, tv, sig = self._credential()
+        verifier, challenge = self._pkce()
+        r = self._authorize(cid, tv, sig, challenge)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        code = r.get_json()['code']
+        t = self.client.post('/api/v1/auth/token', headers=self._basic(cid, secret),
+                             data={'grant_type': 'authorization_code', 'code': code, 'code_verifier': verifier})
+        self.assertEqual(t.status_code, 200, t.get_data(as_text=True))
+        idt = t.get_json()['id_token']
+        self.assertEqual(idt['format'], 'polaris-id-token/1')
+        self.assertEqual(idt['aud'], cid)
+        self.assertEqual(idt['nonce'], 'nonce-test-0001')
+        self.assertEqual(idt['sub'], hashlib.sha3_256(tv.encode()).hexdigest())
+        self.assertEqual(idt['acr'], 'polaris:possession')
+        self.assertNotIn(tv, json.dumps(idt))
+        replay = self.client.post('/api/v1/auth/token', headers=self._basic(cid, secret),
+                                  data={'grant_type': 'authorization_code', 'code': code, 'code_verifier': verifier})
+        self.assertEqual((replay.status_code, replay.get_json()['error']), (400, 'invalid_grant'))
+        r2 = self._authorize(cid, tv, sig, challenge)
+        bad = self.client.post('/api/v1/auth/token', headers=self._basic(cid, secret),
+                               data={'grant_type': 'authorization_code', 'code': r2.get_json()['code'], 'code_verifier': 'x' * 43})
+        self.assertEqual((bad.status_code, bad.get_json()['error']), (400, 'invalid_grant'))
+        vcid, _ = self._rp('verify')
+        self.assertEqual(self._authorize(vcid, tv, sig, challenge).status_code, 401)
+        self.assertEqual(self._authorize(cid, tv, '00' * 64, challenge).status_code, 400)
+        self.assertEqual(self._authorize(cid, tv, sig, challenge, require_zk=True).status_code, 403)
+
+    def test_duress_is_served_identically_and_recorded_silently(self):
+        import time
+        cid, _secret = self._rp('authenticate')
+        tid, tv, sig = self._credential()
+        flask_app.query("UPDATE IdentityToken SET duress_code_hash = %s WHERE token_id = %s",
+                        (flask_app.security.hash_password('4321'), tid), fetch='none')
+        _v, challenge = self._pkce()
+        before = flask_app.query("SELECT count(*) AS n FROM DuressEvent", fetch='one', primary=True)['n']
+        r_wrong = self._authorize(cid, tv, sig, challenge, presented_code='9999')
+        r_duress = self._authorize(cid, tv, sig, challenge, presented_code='4321')
+        self.assertEqual((r_wrong.status_code, r_duress.status_code), (200, 200))
+        self.assertEqual(set(r_wrong.get_json().keys()), set(r_duress.get_json().keys()))
+        time.sleep(1.0)   # the duress record is written off the request thread by design
+        after = flask_app.query("SELECT count(*) AS n FROM DuressEvent", fetch='one', primary=True)['n']
+        self.assertEqual(after, before + 1)
+
+
 class DashboardTests(PolarisTestCase):
     """v9.238: the operations page reports state an operator acts on. It no
     longer prints schema row counts or a token roster; those assertions moved

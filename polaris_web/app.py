@@ -4017,6 +4017,58 @@ def api_zk_epoch_get(epoch_id):
     })
 
 
+def _zk_verify_and_consume(epoch_id, context_id, nonce, proof_bundle):
+    """Verify a ZK membership proof against a published epoch and consume its nonce (R2
+    anti-replay). Returns (verified, reason, http_status). Shared by /api/zk/verify and the
+    auth broker's step-up (P8.4)."""
+    epoch = query("""
+        SELECT merkle_root, valid_until
+          FROM TokenStateEpoch
+         WHERE epoch_id = %s
+    """, (epoch_id,), fetch='one')
+    if not epoch:
+        return False, "epoch not found", 404
+
+    # R4: epoch-boundary check. valid_until is a TIMESTAMP-without-zone stored
+    # as local wall clock (app+DB co-located), so compare against datetime.now()
+    # like every other boundary in this module — a UTC clock would shift the
+    # boundary by the server's offset.
+    if epoch['valid_until'] < datetime.now():
+        return False, "epoch expired", 200
+
+    try:
+        ok = zk.verify_proof_against_epoch(
+            proof_bundle,
+            expected_root_hex=epoch['merkle_root'],
+            expected_epoch_id=epoch_id,
+            expected_context_id=context_id,
+            expected_nonce=nonce,
+        )
+    except Exception as e:
+        return False, f"verifier error: {e}", 400
+
+    if not ok:
+        return False, None, 200
+
+    # R2 anti-replay (T-T2): the (epoch, context, nonce) binding stops proof
+    # SUBSTITUTION, but the identical bundle would otherwise verify again. Consume
+    # the nonce as single-use: the INSERT succeeds on first verified use; a replay
+    # hits the PK and ON CONFLICT DO NOTHING returns no row, so we reject it. The
+    # INSERT is atomic, so two concurrent replays of the same bundle serialize on
+    # the PK and exactly one wins. We consume only AFTER a true verify, so a failed
+    # proof never burns a nonce a legitimate later proof might use.
+    consumed = query("""
+        INSERT INTO ZkVerificationNonce (epoch_id, context_id, nonce)
+        VALUES (%s, %s, %s)
+        ON CONFLICT ON CONSTRAINT pk_zk_verification_nonce DO NOTHING
+        RETURNING consumed_at
+    """, (epoch_id, context_id, nonce), fetch='returning')
+    if consumed is None:
+        return False, "nonce already consumed (replay)", 200
+
+    return True, None, 200
+
+
 @app.route('/api/zk/verify', methods=['POST'])
 @security.login_required
 @security.csrf_protect
@@ -4048,52 +4100,11 @@ def api_zk_verify():
     except (KeyError, ValueError, TypeError) as e:
         return jsonify(error=f"required fields: epoch_id, context_id, nonce, proof_bundle ({e})"), 400
 
-    epoch = query("""
-        SELECT merkle_root, valid_until
-          FROM TokenStateEpoch
-         WHERE epoch_id = %s
-    """, (epoch_id,), fetch='one')
-    if not epoch:
-        return jsonify(verified=False, reason="epoch not found"), 404
-
-    # R4: epoch-boundary check. valid_until is a TIMESTAMP-without-zone stored
-    # as local wall clock (app+DB co-located), so compare against datetime.now()
-    # like every other boundary in this module — a UTC clock would shift the
-    # boundary by the server's offset.
-    if epoch['valid_until'] < datetime.now():
-        return jsonify(verified=False, reason="epoch expired")
-
-    try:
-        ok = zk.verify_proof_against_epoch(
-            proof_bundle,
-            expected_root_hex=epoch['merkle_root'],
-            expected_epoch_id=epoch_id,
-            expected_context_id=context_id,
-            expected_nonce=nonce,
-        )
-    except Exception as e:
-        return jsonify(verified=False, reason=f"verifier error: {e}"), 400
-
-    if not ok:
-        return jsonify(verified=False)
-
-    # R2 anti-replay (T-T2): the (epoch, context, nonce) binding stops proof
-    # SUBSTITUTION, but the identical bundle would otherwise verify again. Consume
-    # the nonce as single-use: the INSERT succeeds on first verified use; a replay
-    # hits the PK and ON CONFLICT DO NOTHING returns no row, so we reject it. The
-    # INSERT is atomic, so two concurrent replays of the same bundle serialize on
-    # the PK and exactly one wins. We consume only AFTER a true verify, so a failed
-    # proof never burns a nonce a legitimate later proof might use.
-    consumed = query("""
-        INSERT INTO ZkVerificationNonce (epoch_id, context_id, nonce)
-        VALUES (%s, %s, %s)
-        ON CONFLICT ON CONSTRAINT pk_zk_verification_nonce DO NOTHING
-        RETURNING consumed_at
-    """, (epoch_id, context_id, nonce), fetch='returning')
-    if consumed is None:
-        return jsonify(verified=False, reason="nonce already consumed (replay)")
-
-    return jsonify(verified=True)
+    ok, reason, status = _zk_verify_and_consume(epoch_id, context_id, nonce, proof_bundle)
+    body = {'verified': ok}
+    if reason:
+        body['reason'] = reason
+    return jsonify(**body), status
 
 
 # ---------------------------------------------------------------------------
@@ -5139,6 +5150,33 @@ def _rp_client_credentials(req):
     return req.form.get('client_id'), req.form.get('client_secret')
 
 
+def _rp_authenticate_client(req):
+    """Authenticate a relying party by client credentials (HTTP Basic or form), in constant
+    time whether or not the client_id exists, with per-client stuffing bounds. Returns
+    (row, client_id, None) or (None, None, error_response). Shared by the client-credentials
+    grant (P3.4) and the authorization-code grant (P8.4)."""
+    client_id, client_secret = _rp_client_credentials(req)
+    if not client_id or not client_secret:
+        return None, None, (jsonify(error='invalid_request',
+                       error_description='client_id and client_secret are required'), 400)
+    # Slow credential stuffing per client_id (the per-IP write limiter in
+    # _security_before_request already applies to this POST).
+    if not security.rate_limiter.allow('rptoken:%s' % client_id,
+                                       security.RATE_LIMIT_LOGIN_MAX,
+                                       security.RATE_LIMIT_LOGIN_WINDOW):
+        return None, None, (jsonify(error='rate_limited'), 429)
+    row = query("SELECT rp_id, client_secret_hash, enabled, scope "
+                "FROM RelyingParty WHERE client_id = %s",
+                (client_id,), fetch='one', primary=True)
+    # Constant time whether or not the client_id exists: always run one scrypt
+    # verify (against a dummy hash for an unknown id) before deciding.
+    stored_hash = row['client_secret_hash'] if row else _rp_dummy_hash()
+    secret_ok = security.verify_password(stored_hash, client_secret)
+    if not row or not secret_ok or not row['enabled']:
+        return None, None, (jsonify(error='invalid_client'), 401)
+    return row, client_id, None
+
+
 @app.route('/api/v1/oauth/token', methods=['POST'])
 def api_v1_oauth_token():
     """OAuth2 client-credentials grant (RFC 6749 section 4.4) for a registered
@@ -5148,25 +5186,9 @@ def api_v1_oauth_token():
     grant = request.form.get('grant_type', 'client_credentials')
     if grant != 'client_credentials':
         return jsonify(error='unsupported_grant_type'), 400
-    client_id, client_secret = _rp_client_credentials(request)
-    if not client_id or not client_secret:
-        return jsonify(error='invalid_request',
-                       error_description='client_id and client_secret are required'), 400
-    # Slow credential stuffing per client_id (the per-IP write limiter in
-    # _security_before_request already applies to this POST).
-    if not security.rate_limiter.allow('rptoken:%s' % client_id,
-                                       security.RATE_LIMIT_LOGIN_MAX,
-                                       security.RATE_LIMIT_LOGIN_WINDOW):
-        return jsonify(error='rate_limited'), 429
-    row = query("SELECT rp_id, client_secret_hash, enabled, scope "
-                "FROM RelyingParty WHERE client_id = %s",
-                (client_id,), fetch='one', primary=True)
-    # Constant time whether or not the client_id exists: always run one scrypt
-    # verify (against a dummy hash for an unknown id) before deciding.
-    stored_hash = row['client_secret_hash'] if row else _rp_dummy_hash()
-    secret_ok = security.verify_password(stored_hash, client_secret)
-    if not row or not secret_ok or not row['enabled']:
-        return jsonify(error='invalid_client'), 401
+    row, client_id, err = _rp_authenticate_client(request)
+    if err:
+        return err
     token = rp_auth.issue_access_token(app.secret_key, row['rp_id'], client_id, row['scope'])
     # Coarse liveness only — NOT a log of what was verified.
     query("UPDATE RelyingParty SET last_used_at = now() WHERE rp_id = %s",
@@ -5291,7 +5313,7 @@ def _possession_authenticated(token_value, presented_sig_hex):
     None -- and every failure looks the same, so this is never an existence oracle. Shared by
     the status assertion (P3.6) and holder-authorized document signing (P8.5)."""
     row = query("""
-        SELECT it.token_value, it.status, it.issuing_agency_id,
+        SELECT it.token_id, it.individual_id, it.token_value, it.status, it.issuing_agency_id,
                ts.signature_bytes, ts.signing_public_key_hex
         FROM   IdentityToken it
         JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
@@ -6013,6 +6035,7 @@ _PROTOCOL_FORMATS = {
     'polaris-registry': 1,
     'polaris-exchange-request': 1,
     'polaris-signed-document': 1,
+    'polaris-id-token': 1,
 }
 _REGISTRY_SERVICES = [
     {'kind': 'oauth-token', 'path': '/api/v1/oauth/token', 'auth': 'client-credentials', 'method': 'POST'},
@@ -6031,6 +6054,8 @@ _REGISTRY_SERVICES = [
     {'kind': 'exchange', 'path': '/api/v1/exchange/{agency_id}', 'auth': 'requester-signature', 'method': 'POST'},
     {'kind': 'sign', 'path': '/api/v1/sign/{agency_id}', 'auth': 'operator', 'method': 'POST'},
     {'kind': 'sign-holder', 'path': '/api/v1/sign/{agency_id}/holder', 'auth': 'possession', 'method': 'POST'},
+    {'kind': 'auth-authorize', 'path': '/api/v1/auth/authorize', 'auth': 'possession', 'method': 'POST'},
+    {'kind': 'auth-token', 'path': '/api/v1/auth/token', 'auth': 'client-credentials', 'method': 'POST'},
 ]
 
 
@@ -6403,6 +6428,158 @@ def api_v1_sign_holder(agency_id):
     on_behalf_of = {'credential_hash': hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()}
     doc, err = _sign_document(agency, agency_id, body, on_behalf_of)
     return err if err else jsonify(doc)
+
+
+# --- P8.4: the AUTH BROKER -- a holder authenticates to a relying party through Polaris ------
+#
+# Authorization code + PKCE, the protocol core with no session product around it. The holder
+# proves possession of an issued, ACTIVE credential at its issuing authority's instance and
+# names the relying party, the context, the disclosure level and (optionally) a ZK membership
+# proof for step-up; the instance hands back a short-lived, stateless, signed authorization
+# code. The relying party exchanges the code -- authenticated by its client credentials and
+# bound by PKCE to the holder's session -- for a polaris-id-token/1 signed by the ISSUING
+# AGENCY's ML-DSA-65 key. The vocation's guards stay: the subject is the credential hash (the
+# same commitment every other artifact uses; correlatable across relying parties BY DESIGN, a
+# documented permanent property), no claim beyond the context's disclosure vocabulary, no
+# server-side record of who authenticated where (the only write is the consumed code's hash),
+# and a duress presentation is served identically. Identity never becomes a login RECORD.
+_ID_TOKEN_FORMAT = 'polaris-id-token/1'
+_ID_TOKEN_TTL = 300
+_AUTH_ACR_POSSESSION = 'polaris:possession'
+_AUTH_ACR_ZK = 'polaris:possession+zk'
+
+
+def _id_token_statement(body):
+    """Canonical bytes the issuing agency signs for an ID token. MUST match
+    scripts/polaris-verify.py's _id_token_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'iss', 'sub', 'aud', 'nonce', 'context_id', 'disclosure_level', 'acr',
+                  'enrollment', 'auth_time', 'iat', 'exp', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _pkce_challenge(verifier):
+    import base64
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode('utf-8')).digest()).rstrip(b'=').decode('ascii')
+
+
+@app.route('/api/v1/auth/authorize', methods=['POST'])
+def api_v1_auth_authorize():
+    """P8.4, the HOLDER side. Body: {client_id, nonce, code_challenge, code_challenge_method
+    'S256', context_id, disclosure_level, token_value, signature_hex, presented_code?,
+    require_zk?, zk? {epoch_id, nonce, proof_bundle}, required_enrollment?}. Possession-
+    authenticated, no session. Refuses a relying party without the 'authenticate' scope
+    (uniform invalid_client), a credential that is not ACTIVE, an enrollment below the RP's
+    requirement, and a step-up the holder cannot meet; a duress code is served identically and
+    recorded silently. Returns a signed, stateless authorization code bound to the PKCE
+    challenge. Nothing is written."""
+    body = request.get_json(silent=True) or {}
+    client_id = body.get('client_id')
+    rp = query("SELECT rp_id, client_id, scope, enabled FROM RelyingParty WHERE client_id = %s",
+               (client_id,), fetch='one', primary=True) if isinstance(client_id, str) else None
+    if not rp or not rp['enabled'] or not rp_auth.has_scope(rp['scope'], rp_auth.SCOPE_AUTHENTICATE):
+        return jsonify(error='invalid_client'), 401
+    nonce, challenge = body.get('nonce'), body.get('code_challenge')
+    if not (isinstance(nonce, str) and 8 <= len(nonce) <= 128) or not (isinstance(challenge, str) and 43 <= len(challenge) <= 128) \
+            or body.get('code_challenge_method', 'S256') != 'S256':
+        return jsonify(error='invalid_request', error_description='nonce (8-128 chars), code_challenge (43-128 chars) and code_challenge_method S256 are required'), 400
+    try:
+        context_id = int(body.get('context_id'))
+    except (TypeError, ValueError):
+        return jsonify(error='invalid_request', error_description='context_id must be an integer'), 400
+    disclosure_level = str(body.get('disclosure_level') or 'ZERO_KNOWLEDGE').upper()
+    if disclosure_level not in ('ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'):
+        return jsonify(error='invalid_request', error_description='disclosure_level must be ZERO_KNOWLEDGE, SELECTIVE or FULL'), 400
+    token_value, presented = body.get('token_value'), body.get('signature_hex')
+    if not isinstance(token_value, str) or not isinstance(presented, str):
+        return jsonify(error='invalid_request', error_description='token_value and signature_hex (the presented credential) are required'), 400
+    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
+    if not security.rate_limiter.allow('auth:%s' % _tk, 10, 60):
+        return jsonify(error='rate_limited'), 429
+    row = _possession_authenticated(token_value, presented)
+    if row is None:
+        return jsonify(error='not_verifiable', error_description='present the genuine issued credential (token_value + signature_hex)'), 400
+    if row['status'] != 'ACTIVE':
+        return jsonify(error='forbidden', error_description='the presented credential is not ACTIVE'), 403
+    # Duress: an enrolled duress code presented here is recorded silently and the flow proceeds
+    # identically -- an observer, or a coercer, sees the same response either way.
+    presented_code = body.get('presented_code')
+    if isinstance(presented_code, str) and presented_code:
+        _check_and_record_duress(row['token_id'], context_id, row['issuing_agency_id'], presented_code)
+    enr = query("SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
+                (row['individual_id'],), fetch='one', primary=True)
+    enrollment = enr['current_status'] if enr else 'NOT_ENROLLED'
+    required = body.get('required_enrollment')
+    if isinstance(required, str) and required and enrollment != required.upper():
+        return jsonify(error='insufficient_enrollment', error_description='the holder is not %s' % required.upper()), 403
+    acr = _AUTH_ACR_POSSESSION
+    if body.get('require_zk'):
+        zk_req = body.get('zk') if isinstance(body.get('zk'), dict) else None
+        try:
+            ok, reason, _status = _zk_verify_and_consume(int(zk_req['epoch_id']), context_id, int(zk_req['nonce']), zk_req['proof_bundle']) \
+                if zk_req else (False, 'no proof presented', 200)
+        except (KeyError, TypeError, ValueError):
+            ok, reason = False, 'malformed zk step-up'
+        if not ok:
+            return jsonify(error='insufficient_assurance', error_description='step-up required: %s' % (reason or 'the proof did not verify')), 403
+        acr = _AUTH_ACR_ZK
+    from datetime import datetime, timezone
+    auth_time = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+    code = rp_auth.issue_auth_code(app.secret_key, {
+        'rp': int(rp['rp_id']), 'cid': rp['client_id'], 'sub': hashlib.sha3_256(token_value.encode('utf-8')).hexdigest(),
+        'ag': int(row['issuing_agency_id']), 'ctx': context_id, 'dl': disclosure_level, 'acr': acr,
+        'enr': enrollment, 'nonce': nonce, 'cc': challenge, 'at': auth_time,
+    })
+    return jsonify(code=code, expires_in=rp_auth.CODE_TTL, acr=acr)
+
+
+@app.route('/api/v1/auth/token', methods=['POST'])
+def api_v1_auth_token():
+    """P8.4, the RELYING-PARTY side: the authorization-code grant (RFC 6749 4.1 + PKCE, RFC
+    7636). Form: grant_type=authorization_code, code, code_verifier; client credentials by HTTP
+    Basic or form. The code must be ours, unexpired, issued to THIS client, bound to the
+    verifier, and unused (its hash is consumed in the append-only register; a replay is
+    invalid_grant). Mints a polaris-id-token/1 signed by the ISSUING AGENCY's key. Only the
+    code hash is written: no record of who authenticated where."""
+    if request.form.get('grant_type') != 'authorization_code':
+        return jsonify(error='unsupported_grant_type'), 400
+    rp, client_id, err = _rp_authenticate_client(request)
+    if err:
+        return err
+    if not rp_auth.has_scope(rp['scope'], rp_auth.SCOPE_AUTHENTICATE):
+        return jsonify(error='invalid_client'), 401
+    code, verifier = request.form.get('code'), request.form.get('code_verifier')
+    payload = rp_auth.validate_auth_code(app.secret_key, code)
+    if not payload or payload.get('cid') != client_id or not isinstance(verifier, str) or not (43 <= len(verifier) <= 128) \
+            or not hmac.compare_digest(_pkce_challenge(verifier), str(payload.get('cc') or '')):
+        return jsonify(error='invalid_grant'), 400
+    code_hash = hashlib.sha3_256(str(code).encode('utf-8')).hexdigest()
+    try:
+        query("INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)", (code_hash,), fetch='none')
+    except Exception as e:  # noqa: BLE001 -- the primary key is the single-use guard
+        if type(e).__name__ == 'UniqueViolation' or 'duplicate key' in str(e).lower():
+            return jsonify(error='invalid_grant', error_description='the code was already used'), 400
+        raise
+    agency = query("SELECT agency_id, name FROM Agency WHERE agency_id = %s", (payload['ag'],), fetch='one', primary=True)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    tok = {
+        'format': _ID_TOKEN_FORMAT,
+        'iss': {'agency_id': agency['agency_id'], 'name': agency['name']},
+        'sub': payload['sub'], 'aud': client_id, 'nonce': payload['nonce'],
+        'context_id': payload['ctx'], 'disclosure_level': payload['dl'], 'acr': payload['acr'],
+        'enrollment': payload['enr'], 'auth_time': payload['at'],
+        'iat': now.isoformat().replace('+00:00', 'Z'),
+        'exp': (now + timedelta(seconds=_ID_TOKEN_TTL)).isoformat().replace('+00:00', 'Z'),
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_id_token_statement(tok), agency_id=agency['agency_id'])
+    tok['algorithm'] = alg
+    tok['signature_hex'] = sig_bytes.hex()
+    tok['public_key_hex'] = pub
+    tok['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                  'token minus signature_hex and public_key_hex)')
+    return jsonify(id_token=tok, token_type='polaris-id-token', expires_in=_ID_TOKEN_TTL)
 
 
 # --- P3.3: the transparency log over the audit-anchor roots --------------------

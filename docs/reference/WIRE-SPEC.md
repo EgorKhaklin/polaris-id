@@ -253,6 +253,27 @@ verification time, which is what keeps a signature valid after its key is rotate
 a timestamp from an authority other than the signer gives time evidence independent of the
 signer.
 
+### 3.13 `polaris-id-token/1`
+
+The auth broker's ID token (P8.4): the issuing agency's signed statement that a holder of a
+credential it issued authenticated, by possession, to a named relying party.
+Signed fields: format, iss, sub, aud, nonce, context_id, disclosure_level, acr, enrollment, auth_time, iat, exp, algorithm
+
+`sub` is the SHA3-256 of the credential's token value -- the same commitment every other
+artifact uses; it is stable per credential and therefore correlatable across relying parties,
+a documented permanent property of Polaris, and it is never a person identifier. `aud` is the
+relying party's client id; `nonce` is the value the relying party's login started with; `acr`
+is `polaris:possession` or `polaris:possession+zk` (a ZK membership proof was verified and its
+nonce consumed at authorization); `enrollment` is the holder's current enrollment status;
+`auth_time` the instant of the possession proof; `iat`/`exp` the token's validity window. A
+relying party MUST confirm the signature, MUST require `aud` to equal its own client id and
+`nonce` to equal the one it issued, MUST require `iat <= now < exp`, and decides issuer trust
+over its own anchors. The token carries no claim beyond these; whatever the context's
+disclosure vocabulary permits is disclosed elsewhere, never here. The code that precedes the
+token is stateless and signed under a salt distinct from access tokens, bound to a PKCE
+challenge (S256), and single-use: the broker consumes its hash in an append-only register that
+holds nothing else, so the broker keeps no record of who authenticated where.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:

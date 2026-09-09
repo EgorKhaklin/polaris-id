@@ -318,6 +318,22 @@
       "expect": {
         "authentic": false
       }
+    },
+    {
+      "name": "id-token-valid",
+      "artifact": "id-token",
+      "object_file": "conformance/vectors/id-token-valid.json",
+      "expect": {
+        "authentic": true
+      }
+    },
+    {
+      "name": "id-token-tampered",
+      "artifact": "id-token",
+      "object_file": "conformance/vectors/id-token-tampered.json",
+      "expect": {
+        "authentic": false
+      }
     }
   ]
 }

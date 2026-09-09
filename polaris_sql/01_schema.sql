@@ -88,6 +88,7 @@ DROP TABLE IF EXISTS AuthAuditLog           CASCADE;
 DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
 DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
+DROP TABLE IF EXISTS AuthCodeConsumed       CASCADE;
 DROP TABLE IF EXISTS AppUser                CASCADE;
 DROP TABLE IF EXISTS VerificationContext    CASCADE;
 DROP TABLE IF EXISTS CryptographicAlgorithm CASCADE;
@@ -225,7 +226,7 @@ COMMENT ON TABLE AppUser IS
 -- P3.4 (v9.288): a registered relying-party organization that calls the
 -- versioned verification API (/api/v1) as itself, via OAuth2 client-credentials.
 -- API-access auth ONLY: scope is constrained to 'verify' at the schema level, so
--- the identity system never becomes a login product (the vocation). A relying
+-- the identity system never becomes a login RECORD (the vocation). A relying
 -- party can confirm a credential is authentic and currently authoritative, and
 -- nothing else. No per-verification row is kept anywhere (who-verified-whom would
 -- be a surveillance store); bounding is rate limit + aggregate metrics + a coarse
@@ -238,7 +239,10 @@ CREATE TABLE RelyingParty (
     org_name           VARCHAR(200) NOT NULL
         CONSTRAINT chk_rp_org_name CHECK (char_length(trim(org_name)) >= 1),
     scope              VARCHAR(40)  NOT NULL DEFAULT 'verify'
-        CONSTRAINT chk_rp_scope CHECK (scope IN ('verify')),
+        -- P8.4 (v9.326): 'authenticate' lets a relying party use the auth broker. The
+        -- guard that mattered stays: no PII beyond the context's disclosure, and no
+        -- record of who authenticated where (the broker keeps only consumed code hashes).
+        CONSTRAINT chk_rp_scope CHECK (scope IN ('verify', 'authenticate', 'verify authenticate')),
     enabled            BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_used_at       TIMESTAMP,
@@ -249,7 +253,7 @@ CREATE TABLE RelyingParty (
 COMMENT ON TABLE RelyingParty IS
   'P3.4 relying-party organization for the /api/v1 verification API. API-access '
   'auth only: scope is CHECK-constrained to ''verify'' so identity never becomes '
-  'a login product (the vocation). client_secret_hash is scrypt (never the '
+  'a login record (the vocation). client_secret_hash is scrypt (never the '
   'secret). No who-verified-whom log is kept; bounding is rate limit + metrics.';
 
 CREATE INDEX idx_relyingparty_client_id ON RelyingParty(client_id);
@@ -292,6 +296,21 @@ COMMENT ON TABLE ExchangeNonce IS
   'P8.2d exchange-gateway replay register: (SHA3-256 of the requester key, nonce) consumed '
   'before an exchange is forwarded; a replay hits the primary key and is refused. No body, '
   'no person. Append-only by trigger and by privilege.';
+
+-- P8.4 (v9.326): the auth broker's CONSUMED-CODE register. An authorization code is a
+-- stateless signed blob; consuming its SHA3-256 here makes it single-use across every
+-- worker (a replay hits the primary key). ONLY the code hash is kept: no subject, no
+-- relying party, no instant of login -- the broker holds no record of who authenticated
+-- where. Append-only by trigger and by privilege.
+CREATE TABLE AuthCodeConsumed (
+    code_hash    CHAR(64)   PRIMARY KEY
+        CONSTRAINT chk_auth_code_hash CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+    consumed_at  TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE AuthCodeConsumed IS
+  'P8.4 auth-broker consumed authorization codes (SHA3-256 of the code only; no subject, '
+  'no relying party): single use across workers. Append-only by trigger and by privilege.';
 
 -- coverage:exempt — C1 AoR enforced by tg_authauditlog_append_only; schema_watcher verifies the trigger exists
 CREATE TABLE AuthAuditLog (

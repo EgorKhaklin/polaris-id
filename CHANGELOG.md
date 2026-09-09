@@ -5,6 +5,43 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.326 — 2026-09-09 (The auth broker: log in with a credential, no login record, P8.4)
+
+The one constitutional question of the P8 arc, answered in the open. The relying-party layer
+was pinned "verify-only, never a login product"; an auth broker is authentication. The scope
+bound is widened deliberately -- at the schema, to exactly `verify | authenticate | verify
+authenticate` -- and every guard that made the old wording true is kept and pinned: identity
+never becomes a login RECORD.
+
+- **Authorization code + PKCE, the protocol core.** `POST /api/v1/auth/authorize`: the holder
+  presents its credential by possession (as for a status assertion) with the relying party's
+  client id, nonce and S256 challenge, the context, the disclosure level and, for step-up, a ZK
+  membership proof verified and nonce-consumed through the same path as `/api/zk/verify`;
+  the instance answers with a signed, stateless, 60-second code and writes nothing.
+  `POST /api/v1/auth/token`: the relying party exchanges the code with its client credentials
+  and the PKCE verifier; the code's hash is consumed in the new append-only `AuthCodeConsumed`
+  register (single use across workers; the register holds no subject and no relying party) and
+  the instance mints a `polaris-id-token/1` signed by the holder's ISSUING AGENCY: `iss, sub,
+  aud, nonce, context_id, disclosure_level, acr, enrollment, auth_time, iat, exp`. The subject
+  is the credential hash -- stable per credential, correlatable across relying parties by
+  design, never a person. No claim beyond the vocabulary. Duress is served identically and
+  recorded silently. The wallet's new `login` command drives the authorize step.
+- **Shared machinery, honestly rewritten.** Client-credential authentication and ZK
+  verification are now shared functions; `rp_auth` treats scope as a set and issues codes
+  under a salt distinct from access tokens; `rp-register --scope`; the schema, migration,
+  CLI and check comments say "never a login record". `check_relying_party_api` pins the widened
+  set exactly, so a fourth scope value is a constitutional change; the AC-6 adversary now
+  proves a verify bearer cannot reach the broker's token endpoint.
+- **Proven.** The two-instance drill runs the whole flow over HTTP with B's real-signed
+  credential and verifies the ID token offline under B's key, then refuses replay, a wrong
+  verifier, a verify-only relying party, a wrong presentation and an unmet step-up, and shows
+  the register holding exactly the consumed hashes. `scripts/polaris-auth-broker-drill.py`
+  (`pqc-real`, 11 cases) drives the relying party's contract; DB tests cover the flow under
+  the placeholder profile and duress indistinguishability (identical response, one recorded
+  event). Thirteenth oracle pair; wire spec 3.13; two conformance vectors in BOTH SDKs, each
+  of which gained an ID-token helper; the fuzzer holds `verify_id_token` total.
+  `check_auth_broker` (#180). 180 checks, 113 routes, 34 tables (41 migrated).
+
 ## v9.325 — 2026-09-09 (Document signing with long-term validation, P8.5)
 
 Polaris signed identity artifacts; now it signs anything, and the signature stays valid after

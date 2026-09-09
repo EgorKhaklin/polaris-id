@@ -113,7 +113,9 @@ DECLARE
         'exchangereceiptlog',
         -- P8.2d: the exchange gateway's replay register. polaris_app consumes a
         -- nonce (INSERT); un-consuming one (UPDATE/DELETE) would re-open replay.
-        'exchangenonce'
+        'exchangenonce',
+        -- P8.4: the auth broker's consumed-code register (code hashes only).
+        'authcodeconsumed'
     ];
 BEGIN
     FOREACH v_tbl IN ARRAY v_append_only_tables LOOP

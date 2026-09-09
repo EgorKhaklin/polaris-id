@@ -122,6 +122,25 @@ class _EchoUpstream(BaseHTTPRequestHandler):
         pass
 
 
+def _http_post_form(url, data, basic=None):
+    """POST a urlencoded form (optionally HTTP Basic), returning (status, json-or-{})."""
+    import base64
+    from urllib.parse import urlencode
+    req = urllib.request.Request(url, data=urlencode(data).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+    if basic:
+        req.add_header("Authorization", "Basic " + base64.b64encode(("%s:%s" % basic).encode("utf-8")).decode("ascii"))
+    try:
+        with _NO_REDIRECT_OPENER.open(req, timeout=10) as r:
+            status, raw = r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, (e.read().decode("utf-8", "replace") if e.fp else "")
+    try:
+        return status, json.loads(raw or "{}")
+    except ValueError:
+        return status, {}
+
+
 def _http_get_soft(url):
     """GET returning (status, json-or-{}) without raising on 4xx."""
     try:
@@ -602,6 +621,67 @@ def main():
                        (enroll.returncode, signed.returncode), (0, 0)))
         checks.append(("the wallet-signed container verifies offline and is valid long term",
                        bool(V.verify_signed_document(wdoc, trusted_anchors=[pub_b], document_bytes=the_doc).get("valid_long_term")), True))
+
+        # 6i. THE AUTH BROKER (P8.4) over HTTP: a relying party registered on B with the
+        #     'authenticate' scope starts a login (nonce + PKCE); the holder of B's real-signed
+        #     credential authorizes by possession; the relying party exchanges the code with its
+        #     client credentials and receives an ID token signed by B's agency key, which it
+        #     verifies OFFLINE. Replay, a wrong verifier, a verify-only relying party, a wrong
+        #     presentation and an unmet step-up are all refused.
+        import base64
+        import security as _sec
+        rp_cid, rp_secret = "rp_drill_auth_" + os.urandom(6).hex(), "drill-secret-" + os.urandom(8).hex()
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min, scope) "
+                        "VALUES (%s, %s, %s, TRUE, 120, 'verify authenticate')", (rp_cid, _sec.hash_password(rp_secret), "Drill Bank"))
+            cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min, scope) "
+                        "VALUES (%s, %s, %s, TRUE, 120, 'verify')", (rp_cid + "v", _sec.hash_password(rp_secret), "Verify-only Bank"))
+            cb.commit()
+        verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+        login_nonce = "login-" + os.urandom(8).hex()
+
+        def authorize(extra=None, cid=rp_cid, sig=None):
+            body = {"client_id": cid, "nonce": login_nonce, "code_challenge": challenge, "code_challenge_method": "S256",
+                    "context_id": CONTEXT_ID, "disclosure_level": "ZERO_KNOWLEDGE",
+                    "token_value": b_tok_value, "signature_hex": sig or b_sig.hex()}
+            body.update(extra or {})
+            return _http_post_json(base_b + "/api/v1/auth/authorize", body)
+
+        st22, auth = authorize()
+        checks.append(("the holder authorizes by possession for the relying party (200, a signed code)", (st22, bool(auth.get("code"))), (200, True)))
+        st23, tokr = _http_post_form(base_b + "/api/v1/auth/token",
+                                     {"grant_type": "authorization_code", "code": auth.get("code", ""), "code_verifier": verifier},
+                                     basic=(rp_cid, rp_secret))
+        idt = (tokr or {}).get("id_token") or {}
+        checks.append(("the relying party exchanges the code (client credentials + PKCE verifier) for an ID token (200)", st23, 200))
+        iv = V.verify_id_token(idt, audience=rp_cid, nonce=login_nonce, trusted_anchors=[pub_b])
+        checks.append(("the ID token verifies OFFLINE: B-signed, for this relying party, with its nonce, fresh, trusted",
+                       bool(iv.get("token_authentic") and iv.get("audience_matches") and iv.get("nonce_matches") and iv.get("fresh") and iv.get("issuer_trusted")), True))
+        checks.append(("the subject is the credential hash and the token value appears nowhere",
+                       (idt.get("sub") == V.revocation_leaf(b_tok_value), b_tok_value not in json.dumps(idt)), (True, True)))
+        st24, rep = _http_post_form(base_b + "/api/v1/auth/token",
+                                    {"grant_type": "authorization_code", "code": auth.get("code", ""), "code_verifier": verifier},
+                                    basic=(rp_cid, rp_secret))
+        checks.append(("the SAME code exchanged again is refused (invalid_grant): single use", (st24, rep.get("error")), (400, "invalid_grant")))
+        st25, _a2 = authorize()
+        st26, wrong = _http_post_form(base_b + "/api/v1/auth/token",
+                                      {"grant_type": "authorization_code", "code": _a2.get("code", ""), "code_verifier": "w" * 43},
+                                      basic=(rp_cid, rp_secret))
+        checks.append(("a wrong PKCE verifier is refused (invalid_grant)", (st26, wrong.get("error")), (400, "invalid_grant")))
+        st27, _ = authorize(cid=rp_cid + "v")
+        checks.append(("a relying party holding only the verify scope cannot use the broker (401)", st27, 401))
+        st28, _ = authorize(sig="00" * 64)
+        checks.append(("a wrong presentation is uniformly 'not verifiable' (400)", st28, 400))
+        st29, _ = authorize(extra={"require_zk": True})
+        checks.append(("a step-up the holder cannot meet is refused (403 insufficient_assurance)", st29, 403))
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("SELECT count(*) FROM AuthCodeConsumed")
+            n_codes = cur.fetchone()[0]
+        # a code refused for a wrong verifier is not consumed (refused before the register is
+        # touched, so the legitimate party may retry within the window); only the successful
+        # exchange left a row, and that row is a code hash and nothing else
+        checks.append(("the broker's only record is the consumed code hash of the one successful exchange", n_codes, 1))
 
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:

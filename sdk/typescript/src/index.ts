@@ -181,6 +181,7 @@ const ARTIFACT_KEYS: Record<string, string[]> = {
   "polaris-registry/1": ["format", "publisher", "instance", "authorities", "contexts", "trust", "relying_parties", "issued_at", "expires_at", "algorithm"],
   "polaris-exchange-request/1": ["format", "requester", "target", "context_id", "request_hash", "nonce", "issued_at", "algorithm"],
   "polaris-signed-document/1": ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"],
+  "polaris-id-token/1": ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr", "enrollment", "auth_time", "iat", "exp", "algorithm"],
 };
 
 export type ArtifactVerdict = { authentic: boolean; fresh: boolean | null; note?: string };
@@ -202,6 +203,35 @@ function membersRoot(members: any): string {
  * recompute the canonical statement for its `format`, verify the ML-DSA-65 signature over its
  * SHA3-256, check freshness for a windowed artifact, and check the commitment (feed/bundle) or
  * self-consistency (manifest). The federation TRUST decision is a separate composite check. */
+export type IdTokenVerdict = {
+  authentic: boolean;
+  audienceMatches: boolean | null;
+  nonceMatches: boolean | null;
+  fresh: boolean | null;
+  sub: string | null;
+  acr: string | null;
+  note?: string;
+};
+
+/** Verify a polaris-id-token/1 (P8.4) as a relying party, offline: the issuing agency's
+ * signature, that it was issued to THIS audience, that it carries the login's nonce, and
+ * freshness (iat <= now < exp). The subject is a credential hash, never a person. */
+export function verifyIdToken(tok: any, audience?: string | null, nonce?: string | null, now?: string | null): IdTokenVerdict {
+  const t = tok ?? {};
+  if (t.format !== "polaris-id-token/1") {
+    return { authentic: false, audienceMatches: null, nonceMatches: null, fresh: null, sub: t.sub ?? null, acr: t.acr ?? null, note: "not a polaris-id-token/1" };
+  }
+  const base = verifySignedArtifact(t, now);
+  if (!base.authentic) {
+    return { authentic: false, audienceMatches: null, nonceMatches: null, fresh: null, sub: t.sub ?? null, acr: t.acr ?? null, note: base.note };
+  }
+  const ia = isoToEpoch(t.iat), ea = isoToEpoch(t.exp);
+  const n = now != null ? isoToEpoch(now) : Date.now() / 1000;
+  const fresh = ia !== null && ea !== null && n !== null ? ia <= n && n < ea : null;
+  return { authentic: true, audienceMatches: audience != null ? t.aud === audience : null,
+           nonceMatches: nonce != null ? t.nonce === nonce : null, fresh, sub: t.sub ?? null, acr: t.acr ?? null };
+}
+
 export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVerdict {
   const o = obj ?? {};
   const keys = ARTIFACT_KEYS[o.format];

@@ -107,7 +107,7 @@ publishes `site/`.
 
 | Directory | What |
 |---|---|
-| [`polaris_sql/`](../../polaris_sql/) | The schema (33 tables, 40 in a migrated deployment), procedures, triggers, atlas functions, migrations. The security boundary. |
+| [`polaris_sql/`](../../polaris_sql/) | The schema (34 tables, 41 in a migrated deployment), procedures, triggers, atlas functions, migrations. The security boundary. |
 | [`polaris_web/`](../../polaris_web/) | The Flask application: every route, the security layer, WebAuthn, custody and signing, tracing, the Atlas. |
 | [`polaris_zk/`](../../polaris_zk/) | The Plonky2 Merkle-inclusion prover and verifier in Rust, and `witness2/`, the independent Python re-derivation. |
 | [`polaris_cli/`](../../polaris_cli/) | The operator CLI: the same operations without a browser. |

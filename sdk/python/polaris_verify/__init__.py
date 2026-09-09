@@ -246,6 +246,7 @@ _ARTIFACT_KEYS = {
     "polaris-registry/1": ["format", "publisher", "instance", "authorities", "contexts", "trust", "relying_parties", "issued_at", "expires_at", "algorithm"],
     "polaris-exchange-request/1": ["format", "requester", "target", "context_id", "request_hash", "nonce", "issued_at", "algorithm"],
     "polaris-signed-document/1": ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"],
+    "polaris-id-token/1": ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr", "enrollment", "auth_time", "iat", "exp", "algorithm"],
 }
 
 
@@ -270,6 +271,35 @@ def _members_root(members) -> str:
     digs = sorted(hashlib.sha3_256(json.dumps(m, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
                   for m in members)
     return hashlib.sha3_256("\n".join(digs).encode("utf-8")).hexdigest()
+
+
+@dataclasses.dataclass
+class IdTokenVerdict:
+    authentic: bool
+    audience_matches: Optional[bool]
+    nonce_matches: Optional[bool]
+    fresh: Optional[bool]
+    sub: Optional[str]
+    acr: Optional[str]
+    note: Optional[str] = None
+
+
+def verify_id_token(tok: dict, audience=None, nonce=None, now=None) -> IdTokenVerdict:
+    """Verify a polaris-id-token/1 (P8.4) as a relying party, offline: the issuing agency's
+    signature, that it was issued to THIS audience, that it carries the login's nonce, and
+    freshness (iat <= now < exp). The subject is a credential hash, never a person."""
+    tok = tok if isinstance(tok, dict) else {}
+    if tok.get("format") != "polaris-id-token/1":
+        return IdTokenVerdict(False, None, None, None, tok.get("sub"), tok.get("acr"), "not a polaris-id-token/1")
+    base = verify_signed_artifact(tok, now)
+    if not base.authentic:
+        return IdTokenVerdict(False, None, None, None, tok.get("sub"), tok.get("acr"), base.note)
+    ia, ea = _iso_to_epoch(tok.get("iat")), _iso_to_epoch(tok.get("exp"))
+    n = _iso_to_epoch(now) if now is not None else time.time()
+    fresh = (ia <= n < ea) if (ia is not None and ea is not None and n is not None) else None
+    return IdTokenVerdict(True, (tok.get("aud") == audience) if audience is not None else None,
+                          (tok.get("nonce") == nonce) if nonce is not None else None, fresh,
+                          tok.get("sub"), tok.get("acr"))
 
 
 def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:

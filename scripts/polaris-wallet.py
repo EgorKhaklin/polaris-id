@@ -201,6 +201,33 @@ def cmd_sign(args):
     return 0
 
 
+def cmd_login(args):
+    """Authenticate to a relying party through your issuing authority (P8.4): present the held
+    credential at the authorize endpoint with the relying party's nonce and PKCE challenge and
+    receive the authorization code to hand back to the relying party. Nothing about the login
+    is recorded at the authority."""
+    import urllib.error
+    import urllib.request
+    wallet = _wallet_dir(args)
+    pack = _load_credential(wallet)
+    body = {"client_id": args.client_id, "nonce": args.nonce, "code_challenge": args.code_challenge,
+            "code_challenge_method": "S256", "context_id": args.context,
+            "disclosure_level": args.disclosure_level, "token_value": pack.get("token_value"),
+            "signature_hex": pack.get("signature_hex")}
+    if args.code:
+        body["presented_code"] = args.code
+    req = urllib.request.Request(args.instance.rstrip("/") + "/api/v1/auth/authorize",
+                                 data=json.dumps(body).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            out = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise SystemExit("authorization refused: HTTP %d %s" % (e.code, e.read().decode("utf-8", "replace")[:200]))
+    sys.stdout.write(json.dumps(out, indent=2) + "\n")
+    return 0
+
+
 def cmd_prove_membership(args):
     """Produce a zero-knowledge proof that the held credential's token is in a
     published epoch, without revealing WHICH member it is. The epoch bundle is
@@ -281,6 +308,16 @@ def main(argv=None):
     p.add_argument("--zk-binary", help="path to the polaris-zk binary")
     p.add_argument("--out", help="write the proof to a file instead of stdout")
     p.set_defaults(fn=cmd_prove_membership)
+
+    p = sub.add_parser("login", help="authenticate to a relying party through your issuing authority (authorization code + PKCE)")
+    p.add_argument("--instance", required=True, help="base URL of the issuing authority's instance")
+    p.add_argument("--client-id", required=True, help="the relying party's client id")
+    p.add_argument("--nonce", required=True, help="the nonce the relying party's login started with")
+    p.add_argument("--code-challenge", required=True, help="the relying party's PKCE S256 challenge")
+    p.add_argument("--context", type=int, required=True, help="verification context id")
+    p.add_argument("--disclosure-level", default="ZERO_KNOWLEDGE", help="ZERO_KNOWLEDGE (default), SELECTIVE or FULL")
+    p.add_argument("--code", help="a presentation code (a duress code is served identically)")
+    p.set_defaults(fn=cmd_login)
 
     p = sub.add_parser("sign", help="sign a document on your behalf via your issuing authority (the document never leaves the wallet)")
     p.add_argument("--document", required=True, help="the file to sign (hashed locally; only its SHA3-256 is sent)")

@@ -2,7 +2,7 @@
 
 This directory contains the complete SQL realization of the Polaris
 database design specified in `docs/paper/polaris_project_report.pdf`. The schema
-is in BCNF (proven in §6.5 of the report), implements **33 tables** (v9.324; a migrated deployment holds 40, with the
+is in BCNF (proven in §6.5 of the report), implements **34 tables** (v9.326; a migrated deployment holds 41, with the
 `schema_version` registry, the three migration-added tables, and the three
 Athena curated tables)
 (12 core entities + `IssuerDiscretionPolicy` from M2-11 +
@@ -45,7 +45,7 @@ psql -d polaris -f 00_load_all.sql
 
 That single command:
 
-1. Creates all 33 tables (`01_schema.sql`)
+1. Creates all 34 tables (`01_schema.sql`)
 2. Adds the partial unique index, the v6 spatial index on
    `VerificationEvent(latitude, longitude)`, the revocation-rate
    index (R11-6), the enrollment-event
@@ -94,7 +94,7 @@ labels valid` (plus all assertion-suite messages).
 | File | Purpose |
 |------|---------|
 | `00_load_all.sql` | Master driver that runs every file in order |
-| `01_schema.sql` | DDL: 33 tables (incl. ExchangeNonce, ExchangeReceiptLog, RelyingParty, IssuerDiscretionPolicy, EnrollmentStatusEvent, RecoveryRequest, TokenSignature, AnchorBatch, AgencyTrustAttestation, TokenStateEpoch, TokenStateEpochLeaf, DuressEvent, LifecycleArchiveCheckpoint, AppUser, AuthAuditLog, RetentionPolicy) |
+| `01_schema.sql` | DDL: 34 tables (incl. AuthCodeConsumed, ExchangeNonce, ExchangeReceiptLog, RelyingParty, IssuerDiscretionPolicy, EnrollmentStatusEvent, RecoveryRequest, TokenSignature, AnchorBatch, AgencyTrustAttestation, TokenStateEpoch, TokenStateEpochLeaf, DuressEvent, LifecycleArchiveCheckpoint, AppUser, AuthAuditLog, RetentionPolicy) |
 | `02_indexes.sql` | Partial unique indexes + spatial + revocation-rate + enrollment-event + recovery-queue + active-signature indexes + secondary indexes |
 | `03_view.sql` | `ActiveTokens` + `IndividualCurrentEnrollment` views |
 | `04_data.sql` | Coherent sample data with 8 individuals across all five enrollment states + TokenSignature backfill |

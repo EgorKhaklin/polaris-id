@@ -22,7 +22,7 @@ from . import (verify_authenticity, verify_cross_authority, verify_signed_artifa
                verify_status_assertion)
 
 _SIGNED_ARTIFACTS = {"epoch-checkpoint", "revocation-feed", "federation-manifest",
-                     "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document"}
+                     "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token"}
 
 
 def main(argv=None):

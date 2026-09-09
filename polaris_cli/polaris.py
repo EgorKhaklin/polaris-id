@@ -1682,6 +1682,8 @@ def build_parser():
     p_rp.add_argument('org_name', help='The relying-party organization name')
     p_rp.add_argument('--rate-limit-per-min', type=int, default=120,
                       help='Max verifications per minute for this relying party (default 120)')
+    p_rp.add_argument('--scope', choices=['verify', 'authenticate', 'verify authenticate'], default='verify',
+                      help="'verify' (the verification API), 'authenticate' (the P8.4 auth broker), or both")
 
     # retention (roadmap P1.11)
     p_rsh = sub.add_parser('retention-show',
@@ -1736,7 +1738,8 @@ def cmd_rp_register(args):
     (roadmap P3.4). Generates a client_id and a client_secret, stores only the
     scrypt hash of the secret, and prints the secret ONCE. The credential's scope
     is 'verify' (schema-enforced): it can call POST /api/v1/verify and nothing
-    else -- identity never becomes a login product."""
+    else; with 'authenticate' it may also use the auth broker (P8.4), which keeps no
+    record of who logged in where -- identity never becomes a login record."""
     generate_password_hash = _require_werkzeug()
     import secrets as _secrets
     client_id = "rp_" + _secrets.token_hex(12)          # matches ^rp_[A-Za-z0-9_-]{16,}$
@@ -1746,10 +1749,10 @@ def cmd_rp_register(args):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, rate_limit_per_min)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, rate_limit_per_min, scope)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING rp_id
-            """, (client_id, secret_hash, args.org_name, args.rate_limit_per_min))
+            """, (client_id, secret_hash, args.org_name, args.rate_limit_per_min, args.scope))
             rp_id = cur.fetchone()['rp_id']
             conn.commit()
         print(green(f"\u2713 Registered relying party #{rp_id}: {args.org_name}"))

@@ -567,7 +567,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     mig.mkdir(parents=True)
     base_tables = ("tokenlifecycleevent verificationevent enrollmentstatusevent "
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
-                   "individualerasureevent", "exchangereceiptlog", "exchangenonce")
+                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed")
 
     def write(grants, mig_revoke, proc_definer):
         (sql / "09_grants.sql").write_text(grants)
@@ -6408,13 +6408,14 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _registry_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'publisher')}\n"
         "def _exchange_request_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'nonce')}\n"
         "def _signed_document_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'document')}\n"
+        "def _id_token_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'aud')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1 polaris-id-token/1\n"
         "manifest signed fields: format, authority\n"
         "receipt signed fields: format, requester\n"
         "mint signed fields: format, responder_agency_id\n"
@@ -6422,6 +6423,7 @@ def test_wire_spec_check_discriminates(tmp_path):
         "registry signed fields: format, publisher\n"
         "envelope signed fields: format, nonce\n"
         "container signed fields: format, document\n"
+        "id token signed fields: format, aud\n"
         "checkpoint signed fields: format, epoch\n"
         "feed signed fields: format, as_of\n"
         "assertion signed fields: format, status\n"
@@ -6470,6 +6472,69 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_auth_broker_check_discriminates(tmp_path):
+    # v9.326 (P8.4): the auth broker's protocol core with the vocation's guards; each
+    # perturbation removes one leg.
+    APP = (
+        "@app.route('/api/v1/auth/authorize', methods=['POST'])\n"
+        "def api_v1_auth_authorize():\n"
+        "    rp_auth.SCOPE_AUTHENTICATE; row = _possession_authenticated(token_value, presented)\n"
+        "    _check_and_record_duress(row['token_id'], c, a, code); _zk_verify_and_consume(1, 2, 3, b)\n"
+        "    code = {'sub': hashlib.sha3_256(token_value.encode()).hexdigest()}\n"
+        "@app.route('/api/v1/auth/token', methods=['POST'])\n"
+        "def api_v1_auth_token():\n"
+        "    _pkce_challenge(verifier); query('INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)')\n"
+        "    _id_token_statement(tok)  # polaris-id-token/1\n"
+    )
+    good = {
+        'polaris_web/app.py': APP,
+        'polaris_sql/01_schema.sql': "CREATE TABLE AuthCodeConsumed (\n    code_hash CHAR(64) PRIMARY KEY,\n    consumed_at TIMESTAMP\n);\n",
+        'polaris_sql/06_triggers.sql': "CREATE TRIGGER trg_auth_code_append_only BEFORE UPDATE OR DELETE ON AuthCodeConsumed EXECUTE FUNCTION f();\n",
+        'polaris_sql/09_grants.sql': "'authcodeconsumed'\n",
+        'polaris_web/rp_auth.py': "_CODE_SALT = 'x'\ndef issue_auth_code(k, p): pass\ndef validate_auth_code(k, c, max_age=60): pass\n",
+        'scripts/polaris-verify.py': "import json\ndef _id_token_canonical(t): return b''\ndef verify_id_token(t, **k): return {}\n",
+        'sdk/python/polaris_verify/__init__.py': "def verify_id_token(tok, audience=None, nonce=None, now=None): pass\n",
+        'sdk/typescript/src/index.ts': "export function verifyIdToken(tok: any) {}\n",
+        'polaris_web/test_canonical_equivalence.py': "flask_app._id_token_statement\n",
+        'docs/reference/WIRE-SPEC.md': "polaris-id-token/1\n",
+        'conformance/cases.json': '{"cases": [{"artifact": "id-token"}]}\n',
+        'scripts/polaris-verifier-fuzz.py': "V.verify_id_token(o)\n",
+        'attacks/attack_controls.py': "anon.post('/api/v1/auth/token', headers=bearer)\n",
+        'scripts/polaris-auth-broker-drill.py': "V.verify_id_token(tok)\n",
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-auth-broker-drill.py\n',
+        'scripts/polaris-federation-instances-drill.py': "'/api/v1/auth/authorize'; '/api/v1/auth/token'; 'code_verifier'; 'invalid_grant'\n",
+        'polaris_web/test_app.py': "class AuthBrokerTests(PolarisTestCase):\n    def t(self): DuressEvent\n",
+        'scripts/polaris-wallet.py': "def cmd_login(args): pass\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_auth_broker(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_web/app.py': APP.replace("'sub': hashlib.sha3_256(token_value", "'sub': token_value")})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the subject is the token rather than its hash"
+    write({'polaris_web/app.py': APP.replace("def api_v1_auth_authorize():\n", "def api_v1_auth_authorize():\n    query('INSERT INTO LoginLog (sub, rp) VALUES (1, 2)')\n")})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the authorize route records a login"
+    write({'polaris_sql/01_schema.sql': "CREATE TABLE AuthCodeConsumed (\n    code_hash CHAR(64) PRIMARY KEY,\n    client_id TEXT,\n    sub TEXT\n);\n"})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the consumed-code register links a subject or relying party"
+    write({'polaris_web/app.py': APP.replace("_pkce_challenge(verifier)", "True")})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL without PKCE"
+    write({'polaris_web/app.py': APP.replace("_check_and_record_duress(row['token_id']", "pass; x(")})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if duress is not served through the broker"
+    write({'attacks/attack_controls.py': "# no probe\n"})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the AC-6 adversary does not probe the broker"
+    write({'sdk/typescript/src/index.ts': "// nothing\n"})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the TS SDK cannot verify the ID token"
+    write({'scripts/polaris-federation-instances-drill.py': "# no flow\n"})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the flow is not proven over HTTP"
+    write({'scripts/polaris-wallet.py': "# no login\n"})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the wallet cannot drive authorize"
 
 
 def test_document_signing_check_discriminates(tmp_path):
@@ -6606,7 +6671,7 @@ def test_registry_check_discriminates(tmp_path):
         "    _registry_statement(body)  # polaris-registry/1\n"
         "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
         "_REGISTRY_SERVICES = []\n"
-        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
+        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
     )
     good = {
         'polaris_web/app.py': APP,
@@ -7427,7 +7492,7 @@ def test_relying_party_api_check_discriminates(tmp_path):
     # scope CHECK-constrained to 'verify', a possession-proof + uniform 'not
     # verifiable' verdict (no enumeration), no personal data, and the bound run as
     # adversaries. Each perturbation removes one leg.
-    good = {'polaris_sql/01_schema.sql': "CREATE TABLE RelyingParty (\n    rp_id SERIAL PRIMARY KEY,\n    client_id VARCHAR(64) NOT NULL UNIQUE,\n    client_secret_hash VARCHAR(255) NOT NULL,\n    scope VARCHAR(40) NOT NULL DEFAULT 'verify'\n        CONSTRAINT chk_rp_scope CHECK (scope IN ('verify'))\n);\n", 'polaris_web/rp_auth.py': "_SALT = 'polaris-rp-access-token-v1'\ndef issue_access_token(secret_key, rp_id, client_id, scope='verify'): return 't'\ndef validate_access_token(secret_key, token, max_age=300): return {}\ndef parse_bearer(h): return None\n", 'polaris_web/app.py': "import hmac\n@app.route('/api/v1/oauth/token', methods=['POST'])\ndef api_v1_oauth_token():\n    grant = 'client_credentials'\n    return jsonify(error='invalid_client'), 401\n@app.route('/api/v1/verify', methods=['POST'])\ndef api_v1_verify():\n    if not hmac.compare_digest(a, b): return _not\n    return jsonify(reason='not a verifiable presentation')\n", 'polaris_cli/polaris.py': 'def cmd_rp_register(args):\n    pass\n', 'scripts/polaris-relying-party.py': 'def _oauth_status_checker(u, i, s, c):\n    pass\n', 'polaris_web/test_app.py': 'class RelyingPartyApiTests:\n    def t(self): pass\n', 'attacks/attack_controls.py': 'def attack_ac6_rp_credential_reaches_operator_surface(): pass\ndef attack_ac6_rp_verdict_leaks_personal_data(): pass\n'}
+    good = {'polaris_sql/01_schema.sql': "CREATE TABLE RelyingParty (\n    rp_id SERIAL PRIMARY KEY,\n    client_id VARCHAR(64) NOT NULL UNIQUE,\n    client_secret_hash VARCHAR(255) NOT NULL,\n    scope VARCHAR(40) NOT NULL DEFAULT 'verify'\n        CONSTRAINT chk_rp_scope CHECK (scope IN ('verify', 'authenticate', 'verify authenticate'))\n);\n", 'polaris_web/rp_auth.py': "_SALT = 'polaris-rp-access-token-v1'\ndef issue_access_token(secret_key, rp_id, client_id, scope='verify'): return 't'\ndef validate_access_token(secret_key, token, max_age=300): return {}\ndef parse_bearer(h): return None\n", 'polaris_web/app.py': "import hmac\n@app.route('/api/v1/oauth/token', methods=['POST'])\ndef api_v1_oauth_token():\n    grant = 'client_credentials'\n    return jsonify(error='invalid_client'), 401\n@app.route('/api/v1/verify', methods=['POST'])\ndef api_v1_verify():\n    if not hmac.compare_digest(a, b): return _not\n    return jsonify(reason='not a verifiable presentation')\n", 'polaris_cli/polaris.py': 'def cmd_rp_register(args):\n    pass\n', 'scripts/polaris-relying-party.py': 'def _oauth_status_checker(u, i, s, c):\n    pass\n', 'polaris_web/test_app.py': 'class RelyingPartyApiTests:\n    def t(self): pass\n', 'attacks/attack_controls.py': 'def attack_ac6_rp_credential_reaches_operator_surface(): pass\ndef attack_ac6_rp_verdict_leaks_personal_data(): pass\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -7438,7 +7503,7 @@ def test_relying_party_api_check_discriminates(tmp_path):
     write()
     assert checks.check_relying_party_api(tmp_path)[0].level == "OK", "must PASS on the full fixture"
     # 1. scope is no longer CHECK-constrained to 'verify' (could become a login product)
-    write({"polaris_sql/01_schema.sql": good["polaris_sql/01_schema.sql"].replace("CHECK (scope IN ('verify'))", "CHECK (scope IN ('verify','login'))")})
+    write({"polaris_sql/01_schema.sql": good["polaris_sql/01_schema.sql"].replace("CHECK (scope IN ('verify', 'authenticate', 'verify authenticate'))", "CHECK (scope IN ('verify', 'authenticate', 'verify authenticate', 'login'))")})
     assert checks.check_relying_party_api(tmp_path)[0].level == "FAIL", "must FAIL if scope is not constrained to verify"
     # 2. the bearer is no longer salted distinctly from the session cookie
     write({"polaris_web/rp_auth.py": good["polaris_web/rp_auth.py"].replace("polaris-rp-access-token-v1", "polaris-session")})

@@ -1689,6 +1689,83 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     return v
 
 
+_ID_TOKEN_FORMAT = "polaris-id-token/1"
+
+
+def _id_token_canonical(t):
+    """The bytes an issuing agency signs for an ID token (P8.4). MUST match polaris_web/app.py's
+    _id_token_statement (pinned by the canonical oracle)."""
+    if not isinstance(t, dict):
+        t = {}
+    statement = {k: t.get(k) for k in
+                 ("format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr",
+                  "enrollment", "auth_time", "iat", "exp", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=None):
+    """Verify a polaris-id-token/1 OFFLINE (P8.4) as a relying party: the issuing agency's
+    ML-DSA-65 signature (two witnesses); that it was issued to THIS audience and carries the
+    nonce this login started with; freshness (iat <= now < exp); and, with trusted_anchors,
+    that the issuer is one the relying party trusts. The subject is a credential hash, never
+    a token or a person. No network."""
+    from datetime import datetime, timezone
+    if not isinstance(tok, dict):
+        tok = {}
+    v = {"token_authentic": False, "audience_matches": None, "nonce_matches": None, "fresh": None,
+         "issuer_trusted": None, "sub": tok.get("sub"), "acr": tok.get("acr"), "enrollment": tok.get("enrollment"),
+         "context_id": tok.get("context_id"), "disclosure_level": tok.get("disclosure_level"),
+         "witnesses": [], "note": None}
+    alg, pk_hex, sig_hex = tok.get("algorithm"), tok.get("public_key_hex"), tok.get("signature_hex")
+    if tok.get("format") != _ID_TOKEN_FORMAT:
+        v["note"] = "not a %s" % _ID_TOKEN_FORMAT
+        return v
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder token -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_id_token_canonical(tok)).digest()
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    v["witnesses"] = ran
+    if primary is None and witness is None:
+        v["note"] = "no ML-DSA-65 verifier available"
+        return v
+    if primary is not None and witness is not None and primary != witness:
+        v["note"] = "the two witnesses DISAGREE -- treat as invalid"
+        return v
+    ok = primary if primary is not None else witness
+    v["token_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "token signature is invalid"
+        return v
+    if audience is not None:
+        v["audience_matches"] = (tok.get("aud") == audience)
+    if nonce is not None:
+        v["nonce_matches"] = (tok.get("nonce") == nonce)
+    now = now or datetime.now(timezone.utc)
+    try:
+        v["fresh"] = _parse_iso(tok["iat"]) <= now < _parse_iso(tok["exp"])
+    except Exception:
+        v["fresh"] = False
+        v["note"] = "iat/exp are not valid instants"
+    if trusted_anchors is not None:
+        try:
+            v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
+        except TypeError:
+            v["issuer_trusted"] = False
+    return v
+
+
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
                             request_body=None, response_body=None, max_window_seconds=None):
     """Verify an exchange receipt OFFLINE (P8.2). Establishes, WITHOUT the payload, that an

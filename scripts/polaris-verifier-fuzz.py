@@ -190,8 +190,19 @@ def main():
             "signed_at": _iso(now), "algorithm": "ML-DSA-65",
         }, V._signed_document_canonical)
 
+    def g_id_token():
+        return _signed({
+            "format": "polaris-id-token/1", "iss": {"agency_id": 1, "name": "Authority A"},
+            "sub": hashlib.sha3_256(b"TKN-1").hexdigest(), "aud": "rp_fuzz_client_000000001", "nonce": "n-12345678",
+            "context_id": 1, "disclosure_level": "ZERO_KNOWLEDGE", "acr": "polaris:possession", "enrollment": "ENROLLED",
+            "auth_time": _iso(now), "iat": _iso(now), "exp": _iso(now + timedelta(minutes=5)), "algorithm": "ML-DSA-65",
+        }, V._id_token_canonical)
+
     # spec: name, build(), verify(obj)->verdict, accept(verdict)->bool, bound_fields
     specs = [
+        ("id-token", g_id_token, lambda o: V.verify_id_token(o),
+         lambda v: v["token_authentic"] and v.get("fresh") is True,
+         ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr", "enrollment", "auth_time", "iat", "exp", "algorithm"]),
         ("signed-document", g_signed_document, lambda o: V.verify_signed_document(o),
          lambda v: v["document_authentic"],
          ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"]),

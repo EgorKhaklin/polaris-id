@@ -859,6 +859,30 @@ of the seven `mint` fields (wire spec section 3.8.1); `scripts/polaris-verify.py
 `_exchange_mint_canonical` builds them for a client. Proven over HTTP, with no session, by the
 two-instance federation drill.
 
+### `POST /api/v1/auth/authorize`
+
+**Possession-authenticated; no session (P8.4, the holder side).** Body `{client_id, nonce,
+code_challenge, code_challenge_method: "S256", context_id, disclosure_level, token_value,
+signature_hex, presented_code?, require_zk?, zk?: {epoch_id, nonce, proof_bundle},
+required_enrollment?}`. The relying party must hold the `authenticate` scope (uniform `401
+invalid_client` otherwise); the credential must be ACTIVE (`403`); a wrong or unknown
+credential is the uniform `400 not_verifiable`; an unmet step-up is `403
+insufficient_assurance`; a duress code is served identically and recorded silently. Returns
+`{code, expires_in, acr}`: a signed, stateless, 60-second authorization code bound to the PKCE
+challenge. Nothing is written. The wallet's `login` command drives this route.
+
+### `POST /api/v1/auth/token`
+
+**Client credentials (HTTP Basic or form) (P8.4, the relying-party side).** Form
+`grant_type=authorization_code`, `code`, `code_verifier`. The code must be this instance's,
+unexpired, issued to this client, bound to the verifier (S256), and unused -- its hash is
+consumed in the append-only `AuthCodeConsumed` register, so a replay is `400 invalid_grant`.
+Returns `{id_token, token_type: "polaris-id-token", expires_in}`: a `polaris-id-token/1`
+signed by the holder's issuing agency (`iss, sub = credential hash, aud, nonce, context_id,
+disclosure_level, acr, enrollment, auth_time, iat, exp`). Verified offline with
+`verify_id_token` (audience, nonce, freshness, issuer trust). Specified in
+[auth-broker.md](../design/auth-broker.md); wire spec section 3.13.
+
 ### `POST /api/v1/sign/<agency_id>`
 
 **Operator auth (login + CSRF) (P8.5).** The institution signs a document under its registered

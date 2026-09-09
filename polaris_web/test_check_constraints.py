@@ -888,6 +888,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "ExchangeReceiptLog",
         # v9.324 (P8.2d): the exchange gateway's replay register.
         "ExchangeNonce",
+        # v9.326 (P8.4): the auth broker's consumed-code register.
+        "AuthCodeConsumed",
     )
 
     def _app_conn(self):
@@ -973,6 +975,26 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             cur.execute("INSERT INTO ExchangeNonce (requester_key_hash, nonce) VALUES (%s, %s)", (kh, nonce))
             with self.assertRaises(pg_errors.InsufficientPrivilege):
                 cur.execute("DELETE FROM ExchangeNonce WHERE requester_key_hash = %s", (kh,))
+        conn.rollback()
+
+    def test_auth_code_consumed_once_and_never_unconsumed(self):
+        """P8.4: AuthCodeConsumed holds ONLY a code hash (chk_auth_code_hash); a second INSERT of
+        the same hash is a replay (UniqueViolation) and polaris_app can never DELETE one."""
+        conn = self._app_conn()
+        h = "ef" * 32
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)", (h,))
+            with self.assertRaises(pg_errors.UniqueViolation):
+                cur.execute("INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)", (h,))
+        conn.rollback()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation):
+                cur.execute("INSERT INTO AuthCodeConsumed (code_hash) VALUES ('not-a-hash')")
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)", (h,))
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("DELETE FROM AuthCodeConsumed WHERE code_hash = %s", (h,))
         conn.rollback()
 
     def test_app_role_can_still_append_audit_rows(self):
