@@ -247,6 +247,7 @@ _ARTIFACT_KEYS = {
     "polaris-exchange-request/1": ["format", "requester", "target", "context_id", "request_hash", "nonce", "issued_at", "algorithm"],
     "polaris-signed-document/1": ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"],
     "polaris-id-token/1": ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr", "enrollment", "auth_time", "iat", "exp", "algorithm"],
+    "polaris-trust-list/1": ["format", "publisher", "keys", "issued_at", "expires_at", "algorithm"],
 }
 
 
@@ -340,6 +341,12 @@ def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
                   and (a.get("status") or "active") == "active"]
         ok = str(obj.get("public_key_hex") or "").lower() in listed
         note = None if ok else "the registry is not signed by the key it lists for its own publisher"
+    elif ok and fmt == "polaris-trust-list/1":
+        pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
+        active = [str(k.get("public_key_hex") or "").lower() for k in (obj.get("keys") or [])
+                  if isinstance(k, dict) and k.get("agency_id") == pub.get("agency_id") and k.get("status") == "active"]
+        ok = str(obj.get("public_key_hex") or "").lower() in active
+        note = None if ok else "the trust list is not signed by a key it lists as active for its own publisher"
     return ArtifactVerdict(ok, _within_window(obj, now), note, ran)
 
 

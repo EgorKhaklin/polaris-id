@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **34 tables** in `01_schema.sql` (v9.326), organized
-into six functional groups. A migrated deployment holds **41 tables**: those,
+The Polaris schema is **35 tables** in `01_schema.sql` (v9.328), organized
+into six functional groups. A migrated deployment holds **42 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -258,6 +258,17 @@ token, so a code is single-use across every worker (a replay hits the primary
 key: `invalid_grant`). Only the code hash is kept -- no subject, no relying
 party, no instant -- so the broker holds no record of who authenticated where.
 Strictly append-only by trigger (`trg_auth_code_append_only`) and by privilege.
+
+### `AuthorityKeyEvent` (constraint C1: append-only; roadmap P8.7b)
+
+The authority key register. Every event in an authority key's life is an
+append-only row: `registered`, `retired` (an orderly rotation), `compromised`
+(untrusted from an `effective_at` that may predate the discovery). The view
+`AuthorityKeyCurrent` derives each key's status (compromised over retired over
+active) with the instants each took effect; the signed trust list
+(`/api/v1/trust-list/<id>`) publishes it, and the federation manifest and the
+registry report real statuses from it. Transitions are one-way by construction;
+append-only by trigger (`trg_authority_key_event_append_only`) and by privilege.
 
 ## Operational tables
 

@@ -195,7 +195,9 @@ A publishing authority's signed statement of what its instance offers and trusts
 `instance.protocol` (the format names it speaks with their major versions, its algorithms,
 where the wire spec and conformance suite live), `instance.services` (kind, path template,
 method, and how each authenticates), `instance.transparency_logs`, the `authorities` it knows
-(with registered keys and status), the verification `contexts` and the proof each requires,
+(each with its configured key and status and its `keys` register: every key the publisher
+knows for that authority, with `public_key_hex`, `algorithm`, `status`), the verification
+`contexts` and the proof each requires,
 the in-context `trust` graph (attesting agency, attested agency and key, context, validity),
 and the `relying_parties` it serves (organization and scope only). Institutional data only.
 Signed fields: format, publisher, instance, authorities, contexts, trust, relying_parties, issued_at, expires_at, algorithm
@@ -295,6 +297,27 @@ refuse frames naming different digests (mixed transfers), a missing index, a con
 duplicate, or a reassembled payload whose SHA3-256 differs from the named digest. No frame
 exceeds the emitter's frame budget (RECOMMENDED 1800 bytes). Framing is transport integrity
 only; it adds no authenticity.
+
+### 3.15 `polaris-trust-list/1`
+
+A publishing authority's signed statement of every authority key its instance knows, with each
+key's lifecycle status (P8.7b).
+Signed fields: format, publisher, keys, issued_at, expires_at, algorithm
+
+Each entry of `keys` carries `agency_id`, `name`, `public_key_hex`, `algorithm`, `status`
+(`active`, `retired` or `compromised`), and the instants `registered_at`, `retired_at` and
+`compromised_at` (null where not applicable; a compromise's instant MAY predate its discovery).
+A verifier MUST confirm the signature, MUST require the list to be signed by a key it carries
+as ACTIVE for its own publisher (an impostor cannot publish a trust list in an authority's
+name; a publisher cannot sign one under a key it has retired), and MUST check freshness.
+Whether the publisher is trusted is the consumer's anchor decision. A consumer decides a key's
+status AT AN INSTANT from the list (`key_status_at`): compromised from `compromised_at`,
+retired from `retired_at`, active from `registered_at`, unknown before registration or when
+absent. The section 4 trust decision, given a trust list, MUST reject a credential whose
+issuer key is compromised; long-term validation of a signed document (section 3.12), given a
+trust list, MUST require the signer key active at the evidence's instant per the list, not
+only per the signer's own manifest. Statuses in a manifest's `anchors` (3.1) and a registry's
+`authorities` (3.10) MUST reflect the same register.
 
 ## 4. The federation trust decision
 

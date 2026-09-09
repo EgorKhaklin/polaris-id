@@ -72,3 +72,25 @@ COMMENT ON VIEW IndividualCurrentEnrollment IS
   'EnrollmentStatusEvent row wins; individuals with no events default to '
   'NOT_ENROLLED via COALESCE — the absence is itself the default, not a '
   'positive flag. Implements PDF §9 population-coverage civic visibility.';
+
+-- P8.7b (v9.328): each authority key's CURRENT status from its append-only events. A key
+-- is 'compromised' if any compromised event exists (from the earliest such effective_at),
+-- else 'retired' if a retired event exists, else 'active' from its registration.
+CREATE OR REPLACE VIEW AuthorityKeyCurrent AS
+SELECT  e.agency_id,
+        e.public_key_hex,
+        MIN(e.algorithm)                                                     AS algorithm,
+        CASE WHEN BOOL_OR(e.event = 'compromised') THEN 'compromised'
+             WHEN BOOL_OR(e.event = 'retired')     THEN 'retired'
+             ELSE 'active' END                                               AS status,
+        MIN(e.effective_at) FILTER (WHERE e.event = 'registered')            AS registered_at,
+        MIN(e.effective_at) FILTER (WHERE e.event = 'retired')               AS retired_at,
+        MIN(e.effective_at) FILTER (WHERE e.event = 'compromised')           AS compromised_at
+FROM    AuthorityKeyEvent e
+GROUP BY e.agency_id, e.public_key_hex;
+
+COMMENT ON VIEW AuthorityKeyCurrent IS
+  'P8.7b per-key current status derived from AuthorityKeyEvent: compromised wins over '
+  'retired wins over active, with the instants each took effect. Published by the signed '
+  'trust list; read by the federation manifest and the registry.';
+

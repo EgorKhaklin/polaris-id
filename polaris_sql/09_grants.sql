@@ -115,7 +115,9 @@ DECLARE
         -- nonce (INSERT); un-consuming one (UPDATE/DELETE) would re-open replay.
         'exchangenonce',
         -- P8.4: the auth broker's consumed-code register (code hashes only).
-        'authcodeconsumed'
+        'authcodeconsumed',
+        -- P8.7b: the authority key register (history is never edited).
+        'authoritykeyevent'
     ];
 BEGIN
     FOREACH v_tbl IN ARRAY v_append_only_tables LOOP

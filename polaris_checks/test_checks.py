@@ -567,7 +567,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     mig.mkdir(parents=True)
     base_tables = ("tokenlifecycleevent verificationevent enrollmentstatusevent "
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
-                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed")
+                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent")
 
     def write(grants, mig_revoke, proc_definer):
         (sql / "09_grants.sql").write_text(grants)
@@ -6409,13 +6409,14 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _exchange_request_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'nonce')}\n"
         "def _signed_document_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'document')}\n"
         "def _id_token_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'aud')}\n"
+        "def _trust_list_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'keys')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1 polaris-id-token/1 polaris-presentation/1 polaris-qr/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1 polaris-id-token/1 polaris-presentation/1 polaris-qr/1 polaris-trust-list/1\n"
         "manifest signed fields: format, authority\n"
         "receipt signed fields: format, requester\n"
         "mint signed fields: format, responder_agency_id\n"
@@ -6424,6 +6425,7 @@ def test_wire_spec_check_discriminates(tmp_path):
         "envelope signed fields: format, nonce\n"
         "container signed fields: format, document\n"
         "id token signed fields: format, aud\n"
+        "trust list signed fields: format, keys\n"
         "checkpoint signed fields: format, epoch\n"
         "feed signed fields: format, as_of\n"
         "assertion signed fields: format, status\n"
@@ -6472,6 +6474,64 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_trust_lifecycle_check_discriminates(tmp_path):
+    # v9.328 (P8.7b): the trust-service lifecycle; each perturbation removes one leg.
+    APP = ("@app.route('/api/v1/trust-list/<int:agency_id>')\ndef api_v1_trust_list(agency_id):\n"
+           "    _trust_list_statement(body)  # polaris-trust-list/1 ; AuthorityKeyCurrent\n"
+           "    'anchors': [{'status': k['status']} for k in _authority_keys(agency_id, ag['signing_public_key_hex'])]\n"
+           "    'status': _key_status(a['agency_id'], a['signing_public_key_hex'])\n"
+           "    'keys': _authority_keys(a['agency_id'], a['signing_public_key_hex'])\n")
+    VER = ("import json\ndef _trust_list_canonical(t): return b''\ndef verify_trust_list(t, **k): return {}\n"
+           "def key_status_at(t, k, i=None): return None\n"
+           "def registry_key_status(r, k): return None\n"
+           "def verify_cross_authority(p, c, m, trust_list=None): return ['listed COMPROMISED']\n"
+           "def verify_signed_document(d, trust_list=None): return {'signer_key_status_per_trust_list': None}\n")
+    good = {
+        'polaris_sql/01_schema.sql': "CREATE TABLE AuthorityKeyEvent (event VARCHAR(20) CONSTRAINT chk_authority_key_event CHECK (x));\n",
+        'polaris_sql/03_view.sql': "CREATE OR REPLACE VIEW AuthorityKeyCurrent AS SELECT 1;\n",
+        'polaris_sql/06_triggers.sql': "CREATE TRIGGER trg_authority_key_event_append_only BEFORE UPDATE OR DELETE ON AuthorityKeyEvent EXECUTE FUNCTION f();\n",
+        'polaris_sql/09_grants.sql': "'authoritykeyevent'\n",
+        'polaris_web/app.py': APP,
+        'scripts/polaris-verify.py': VER,
+        'polaris_cli/polaris.py': "'key-register' 'key-retire' 'key-compromise'\n",
+        'polaris_web/test_canonical_equivalence.py': "flask_app._trust_list_statement\n",
+        'docs/reference/WIRE-SPEC.md': "polaris-trust-list/1\n",
+        'conformance/cases.json': '{"cases": [{"artifact": "trust-list"}]}\n',
+        'sdk/python/polaris_verify/__init__.py': '"polaris-trust-list/1": ["format"]\n',
+        'sdk/typescript/src/index.ts': '"polaris-trust-list/1": ["format"]\n',
+        'scripts/polaris-verifier-fuzz.py': "V.verify_trust_list(o)\n",
+        'scripts/polaris-trust-lifecycle-drill.py': "# COMPROMISE\nV.key_status_at(tl, k, t)\n",
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-trust-lifecycle-drill.py\n',
+        'scripts/polaris-federation-instances-drill.py': "'/api/v1/trust-list/1'; 'INSERT INTO AuthorityKeyEvent'; V.verify_cross_authority(p, c, m, trust_list=tl)\n",
+        'docs/reference/DATA-MODEL.md': "### `AuthorityKeyEvent`\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_sql/01_schema.sql': "CREATE TABLE AuthorityKeyEvent (event VARCHAR(20));\n"})
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL without the one-way event vocabulary"
+    write({'polaris_sql/06_triggers.sql': "-- editable history\n"})
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if key history is editable"
+    write({'polaris_web/app.py': APP.replace("for k in _authority_keys(agency_id, ag['signing_public_key_hex'])]", "'active'")})
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if the manifest hardcodes active"
+    write({'scripts/polaris-verify.py': VER.replace("listed COMPROMISED", "ignored")})
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if a compromised issuer key does not reject"
+    write({'scripts/polaris-verify.py': VER.replace("def key_status_at", "def nope")})
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL without status-at-an-instant"
+    write({'polaris_cli/polaris.py': "# no lifecycle\n"})
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if the CLI cannot record the lifecycle"
+    write({'scripts/polaris-trust-lifecycle-drill.py': "V.key_status_at(tl, k, t)\n"})
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if compromise recovery is not drilled"
+    write({'scripts/polaris-federation-instances-drill.py': "# no compromise across instances\n"})
+    assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if not proven across two instances"
 
 
 def test_wallet_presentation_check_discriminates(tmp_path):
@@ -6711,7 +6771,7 @@ def test_registry_check_discriminates(tmp_path):
         "    _registry_statement(body)  # polaris-registry/1\n"
         "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
         "_REGISTRY_SERVICES = []\n"
-        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-presentation': 1,\n    'polaris-qr': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
+        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-presentation': 1,\n    'polaris-qr': 1,\n    'polaris-trust-list': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
     )
     good = {
         'polaris_web/app.py': APP,

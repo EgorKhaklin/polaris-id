@@ -474,7 +474,7 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
 
 def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                            max_window_seconds=None, trusted_anchors=None,
-                           revocation_feed=None):
+                           revocation_feed=None, trust_list=None):
     """Decide whether to accept a credential from ANOTHER authority, OFFLINE, using
     published federation manifests (P3.2). Accept iff the credential's signature is
     genuine AND some manifest the relying party trusts attests to the credential's
@@ -519,6 +519,19 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
         return {"decision": "reject", "authentic": True,
                 "reasons": ["no trusted authority attests to this credential's issuer in this context"],
                 "via": None, "revocation_checked": False, "revoked": None}
+    # P8.7b: a trust list the relying party holds decides the issuer KEY's status independently
+    # of the issuer's own manifest -- a compromised key rejects the credential outright.
+    if trust_list is not None:
+        tv = verify_trust_list(trust_list, now=now, max_window_seconds=max_window_seconds, trusted_anchors=trusted_anchors)
+        if not (tv["trust_list_authentic"] and tv["fresh"]) or (trusted_anchors is not None and not tv["issuer_trusted"]):
+            return {"decision": "reject", "authentic": True,
+                    "reasons": ["the supplied trust list is not authentic, fresh and trusted"],
+                    "via": via, "revocation_checked": False, "revoked": None, "key_status": None}
+        status = key_status_at(trust_list, token_key, now)
+        if status == "compromised":
+            return {"decision": "reject", "authentic": True,
+                    "reasons": ["the issuer key is listed COMPROMISED by a trusted trust list"],
+                    "via": via, "revocation_checked": False, "revoked": None, "key_status": status}
     # P3.2b: fail-closed revocation propagation, if the relying party supplies the feed.
     if revocation_feed is not None:
         rv = verify_revocation_feed(revocation_feed, now=now,
@@ -1407,13 +1420,39 @@ def registry_service(reg, kind):
     return None
 
 
+def _hexstr(v):
+    """A hex string compared case-insensitively; anything else compares to nothing."""
+    return v.lower() if isinstance(v, str) else ""
+
+
+def registry_key_status(reg, public_key_hex):
+    """The status the registry lists for `public_key_hex` ('active', 'retired', 'compromised'),
+    wherever the key appears (an authority's `keys` register, else its configured key), or
+    None when the registry does not list the key at all."""
+    key = _hexstr(public_key_hex)
+    for a in (reg.get("authorities") if isinstance(reg, dict) and isinstance(reg.get("authorities"), list) else []):
+        if not isinstance(a, dict):
+            continue
+        for k in (a.get("keys") if isinstance(a.get("keys"), list) else []):
+            if isinstance(k, dict) and _hexstr(k.get("public_key_hex")) == key:
+                return k.get("status") or "active"
+        if _hexstr(a.get("public_key_hex")) == key:
+            return a.get("status") or "active"
+    return None
+
+
 def registry_authority(reg, public_key_hex):
-    """The authority entry whose active key is `public_key_hex`, or None."""
+    """The authority entry whose active key is `public_key_hex` (its configured key, or any
+    key its `keys` register lists as active), or None."""
     want = str(public_key_hex or "").lower()
     for a in (reg.get("authorities") if isinstance(reg, dict) and isinstance(reg.get("authorities"), list) else []):
         if isinstance(a, dict) and str(a.get("public_key_hex") or "").lower() == want \
                 and (a.get("status") or "active") == "active":
             return a
+        for k in (a.get("keys") if isinstance(a, dict) and isinstance(a.get("keys"), list) else []):
+            if isinstance(k, dict) and _hexstr(k.get("public_key_hex")) == _hexstr(public_key_hex) \
+                    and (k.get("status") or "active") == "active":
+                return a
     return None
 
 
@@ -1585,7 +1624,7 @@ def attach_ltv(doc, timestamp=None, manifest=None, epoch_checkpoint=None, revoca
     return out
 
 
-def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=None):
+def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=None, trust_list=None):
     """Verify a signed document OFFLINE (P8.5): the signer's ML-DSA-65 signature over
     SHA3-256(canonical) (two witnesses); with trusted_anchors, signer trust; with
     document_bytes, that the container binds them. Then LONG-TERM VALIDATION from the embedded
@@ -1602,7 +1641,8 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
          "signer": doc.get("signer"), "on_behalf_of": doc.get("on_behalf_of"),
          "digest_hex": d.get("digest_hex"), "signed_at": doc.get("signed_at"),
          "ltv": {"present": False, "timestamp_authentic": None, "timestamp_binds": None, "instant": None,
-                 "signer_key_active_at_instant": None, "credential_unrevoked_at_instant": None},
+                 "signer_key_active_at_instant": None, "credential_unrevoked_at_instant": None,
+                 "signer_key_status_per_trust_list": None},
          "valid_long_term": False, "witnesses": [], "note": None}
     alg, pk_hex, sig_hex = doc.get("algorithm"), doc.get("public_key_hex"), doc.get("signature_hex")
     if doc.get("format") != _SIGNED_DOCUMENT_FORMAT:
@@ -1679,9 +1719,17 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
                                                         and not is_revoked_leaf(feed, obo["credential_hash"]))
         else:
             L["credential_unrevoked_at_instant"] = False
+    # P8.7b: with a trust list the verifier trusts, the signer key's status AT THE INSTANT is
+    # decided independently of the signer's own manifest (which a compromised key could forge).
+    L["signer_key_status_per_trust_list"] = None
+    if trust_list is not None:
+        tlv = verify_trust_list(trust_list, now=now, trusted_anchors=trusted_anchors)
+        L["signer_key_status_per_trust_list"] = (key_status_at(trust_list, signer_key, instant)
+                                                 if (tlv["trust_list_authentic"] and tlv["fresh"] and instant is not None) else None)
     v["valid_long_term"] = bool(v["document_authentic"] and L["timestamp_authentic"] and L["timestamp_binds"]
                                 and L["signer_key_active_at_instant"]
-                                and L["credential_unrevoked_at_instant"] is not False)
+                                and L["credential_unrevoked_at_instant"] is not False
+                                and (trust_list is None or L["signer_key_status_per_trust_list"] == "active"))
     if not v["valid_long_term"]:
         v["note"] = "long-term validation failed: " + ", ".join(
             k for k in ("timestamp_authentic", "timestamp_binds", "signer_key_active_at_instant") if not L[k]
@@ -1764,6 +1812,130 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
         except TypeError:
             v["issuer_trusted"] = False
     return v
+
+
+_TRUST_LIST_FORMAT = "polaris-trust-list/1"
+
+
+def _trust_list_canonical(t):
+    """The bytes a publisher signs for a trust list (P8.7b). MUST match polaris_web/app.py's
+    _trust_list_statement (pinned by the canonical oracle)."""
+    if not isinstance(t, dict):
+        t = {}
+    statement = {k: t.get(k) for k in ("format", "publisher", "keys", "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _trust_list_publisher_key(tl):
+    pub = tl.get("publisher") if isinstance(tl.get("publisher"), dict) else {}
+    for k in (tl.get("keys") if isinstance(tl.get("keys"), list) else []):
+        if isinstance(k, dict) and k.get("agency_id") == pub.get("agency_id") and k.get("status") == "active" and k.get("public_key_hex"):
+            yield str(k["public_key_hex"]).lower()
+
+
+def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=None):
+    """Verify a signed trust list OFFLINE (P8.7b): the publisher's ML-DSA-65 signature; that it is
+    signed by a key the list itself carries as ACTIVE for its publisher (an impostor cannot publish
+    a trust list in an authority's name, and a publisher cannot sign one under a key it has
+    retired); freshness; and, with trusted_anchors, whether the publisher is trusted."""
+    from datetime import datetime, timezone
+    if not isinstance(tl, dict):
+        tl = {}
+    v = {"trust_list_authentic": False, "fresh": None, "issuer_trusted": None,
+         "publisher": tl.get("publisher"), "key_count": len(tl.get("keys")) if isinstance(tl.get("keys"), list) else 0,
+         "witnesses": [], "note": None}
+    alg, pk_hex, sig_hex = tl.get("algorithm"), tl.get("public_key_hex"), tl.get("signature_hex")
+    if tl.get("format") != _TRUST_LIST_FORMAT:
+        v["note"] = "not a %s" % _TRUST_LIST_FORMAT
+        return v
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder trust list -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    if str(pk_hex).lower() not in set(_trust_list_publisher_key(tl)):
+        v["note"] = "the trust list is not signed by a key it lists as active for its own publisher"
+        return v
+    digest = hashlib.sha3_256(_trust_list_canonical(tl)).digest()
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    v["witnesses"] = ran
+    if primary is None and witness is None:
+        v["note"] = "no ML-DSA-65 verifier available"
+        return v
+    if primary is not None and witness is not None and primary != witness:
+        v["note"] = "the two witnesses DISAGREE -- treat as invalid"
+        return v
+    ok = primary if primary is not None else witness
+    v["trust_list_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "trust list signature is invalid"
+        return v
+    now = now or datetime.now(timezone.utc)
+    try:
+        ia, ea = _parse_iso(tl["issued_at"]), _parse_iso(tl["expires_at"])
+        fresh = ia <= now < ea
+        if max_window_seconds is not None and (ea - ia).total_seconds() > max_window_seconds:
+            fresh = False
+        v["fresh"] = fresh
+    except Exception:
+        v["fresh"] = False
+        v["note"] = "issued_at/expires_at are not valid instants"
+    if trusted_anchors is not None:
+        try:
+            v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
+        except TypeError:
+            v["issuer_trusted"] = False
+    return v
+
+
+def key_status_at(tl, public_key_hex, instant=None):
+    """A key's status AT AN INSTANT per a (verified) trust list: 'compromised' from its
+    compromised_at (which may predate the discovery), 'retired' from its retired_at, 'active'
+    from its registration, None if the list does not carry the key or the instant precedes its
+    registration. Decides long-term validity and cross-authority trust independently of the
+    signer's own word."""
+    from datetime import datetime, timezone
+    want = str(public_key_hex or "").lower()
+    if not isinstance(tl, dict):
+        return None
+    if instant is None:
+        instant = datetime.now(timezone.utc)
+    elif isinstance(instant, str):
+        try:
+            instant = _parse_iso(instant)
+        except Exception:
+            return None
+    for k in (tl.get("keys") if isinstance(tl.get("keys"), list) else []):
+        if not isinstance(k, dict) or str(k.get("public_key_hex") or "").lower() != want:
+            continue
+        def _at(field):
+            val = k.get(field)
+            if not val:
+                return None
+            try:
+                return _parse_iso(val if str(val).endswith("Z") or "+" in str(val) else str(val) + "Z")
+            except Exception:
+                return None
+        reg, ret, comp = _at("registered_at"), _at("retired_at"), _at("compromised_at")
+        if reg is not None and instant < reg:
+            return None
+        if k.get("status") == "compromised" and (comp is None or instant >= comp):
+            return "compromised"
+        if k.get("status") in ("retired", "compromised") and ret is not None and instant >= ret:
+            return "retired"
+        if k.get("status") == "retired" and ret is None:
+            return "retired"
+        return "active"
+    return None
 
 
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,

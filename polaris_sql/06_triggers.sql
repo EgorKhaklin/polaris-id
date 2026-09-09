@@ -281,6 +281,25 @@ CREATE TRIGGER trg_auth_code_append_only
     FOR EACH ROW
     EXECUTE FUNCTION reject_auth_code_modification();
 
+-- P8.7b (v9.328): a key event is history; it is never edited or removed.
+CREATE OR REPLACE FUNCTION reject_authority_key_event_modification()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION
+        '% on AuthorityKeyEvent is forbidden: an authority key''s history is append-only.',
+        TG_OP
+        USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_authority_key_event_append_only ON AuthorityKeyEvent;
+CREATE TRIGGER trg_authority_key_event_append_only
+    BEFORE UPDATE OR DELETE ON AuthorityKeyEvent
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_authority_key_event_modification();
+
 COMMENT ON FUNCTION reject_audit_modification IS
   'Blocks UPDATE and DELETE on append-only audit tables (TokenLifecycleEvent, '
   'VerificationEvent, EnrollmentStatusEvent, AnchorBatch). Realizes NFR-4 at '

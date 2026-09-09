@@ -890,6 +890,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "ExchangeNonce",
         # v9.326 (P8.4): the auth broker's consumed-code register.
         "AuthCodeConsumed",
+        # v9.328 (P8.7b): the authority key register.
+        "AuthorityKeyEvent",
     )
 
     def _app_conn(self):
@@ -995,6 +997,29 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             cur.execute("INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)", (h,))
             with self.assertRaises(pg_errors.InsufficientPrivilege):
                 cur.execute("DELETE FROM AuthCodeConsumed WHERE code_hash = %s", (h,))
+        conn.rollback()
+
+    def test_authority_key_history_is_append_only_and_one_way(self):
+        """P8.7b: AuthorityKeyEvent accepts registered/retired/compromised rows (chk_authority_key_event),
+        never an edit or a removal, and AuthorityKeyCurrent derives compromised > retired > active."""
+        conn = self._app_conn()
+        key = "ab" * 32
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation):
+                cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) VALUES (1, %s, 'revived')", (key,))
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) VALUES (1, %s, 'registered')", (key,))
+            cur.execute("SELECT status FROM AuthorityKeyCurrent WHERE public_key_hex = %s", (key,))
+            self.assertEqual(cur.fetchone()["status"], "active")
+            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) VALUES (1, %s, 'retired')", (key,))
+            cur.execute("SELECT status FROM AuthorityKeyCurrent WHERE public_key_hex = %s", (key,))
+            self.assertEqual(cur.fetchone()["status"], "retired")
+            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) VALUES (1, %s, 'compromised')", (key,))
+            cur.execute("SELECT status FROM AuthorityKeyCurrent WHERE public_key_hex = %s", (key,))
+            self.assertEqual(cur.fetchone()["status"], "compromised")
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("DELETE FROM AuthorityKeyEvent WHERE public_key_hex = %s", (key,))
         conn.rollback()
 
     def test_app_role_can_still_append_audit_rows(self):

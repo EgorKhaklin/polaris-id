@@ -5,6 +5,44 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.328 — 2026-09-09 (The trust-service lifecycle: compromise recovery, P8.7b)
+
+Before this ship an authority had one key and every surface said "active". Now a key's whole
+life is recorded, published, and decided at any instant.
+
+- **The register.** `AuthorityKeyEvent` is append-only and one-way: `registered`, `retired`
+  (an orderly rotation), `compromised` (untrusted from an instant that may predate the
+  discovery); `AuthorityKeyCurrent` derives each key's status and instants. The CLI records
+  events (`key-register` also makes the key the agency's current signing key). 35 tables (42
+  migrated), reversible migration 005, C1 by trigger and privilege.
+- **Honest surfaces.** The federation manifest's `anchors` list every key of the authority with
+  its real status; the registry's `authorities` report the current key's real status and
+  carry the register itself (`keys`, the same builder as the anchors and the trust list, so
+  all three reflect one register; `registry_key_status` reads a key's status from it); an
+  instance with no events reports its single key active, exactly as before. The register is
+  indexed by hash: an ML-DSA-65 public key is 3904 hex characters, past a btree row's limit,
+  which the short keys of the unit tests hid and the real keys of the two-instance drill
+  exposed.
+- **`polaris-trust-list/1` at `GET /api/v1/trust-list/<id>`.** Every key the instance knows --
+  its own and its federated peers' -- with statuses and instants, signed by a key the list
+  carries as ACTIVE for its publisher (an impostor cannot publish one; a publisher cannot sign
+  one under a retired key). `key_status_at(list, key, instant)` decides status at an instant.
+- **Compromise recovery, decided independently of the compromised party.** Given a trust list
+  it trusts, `verify_cross_authority` rejects a credential under a compromised issuer key
+  regardless of the issuer's own manifest, and `verify_signed_document` requires the signer key
+  active at the evidence's instant per the list: a document timestamped before the compromise
+  stays valid, one after does not. Without a list nothing changes shape.
+- **Proven.** `scripts/polaris-trust-lifecycle-drill.py` (`pqc-real`, 15 cases: authentic /
+  impostor / retired-key / tampered lists; status at instants across registration, retirement
+  and a compromise predating its recording; accepted before, rejected after, re-issued key
+  accepted; documents before and after; the fallback; hostile input). The two-instance drill
+  records A's key compromised on B and watches the same relying party flip from accept to
+  reject over HTTP with no change to A; B's registry reports the status. Fourteenth oracle
+  pair; wire spec 3.15; three conformance vectors (valid, tampered, impostor) in BOTH SDKs,
+  which apply the publisher rule; the fuzzer holds `verify_trust_list` total; a DB test
+  proves the register append-only and one-way. `check_trust_lifecycle` (#182). 182 checks,
+  114 routes.
+
 ## v9.327 — 2026-09-09 (The wallet protocol surface: offline presentation and QR framing, P8.6)
 
 The wallet is a protocol, not a product; this ship makes the protocol complete on the

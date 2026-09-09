@@ -5405,6 +5405,47 @@ def _manifest_statement(body):
     return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
+# --- P8.7b: the authority key register, read ---------------------------------------------
+#
+# Every authority key's status comes from AuthorityKeyCurrent (a view over the append-only
+# AuthorityKeyEvent). An agency with no recorded events -- every instance before v9.328 --
+# reports its single registered key as active, so nothing already deployed changes shape.
+_TRUST_LIST_FORMAT = 'polaris-trust-list/1'
+_TRUST_LIST_TTL = int(os.environ.get('POLARIS_TRUST_LIST_TTL', '86400'))
+
+
+def _authority_keys(agency_id, current_key_hex=None):
+    """Every key the register holds for an agency with its status and instants; with no events,
+    the agency's current key as active."""
+    rows = query("""
+        SELECT public_key_hex, algorithm, status, registered_at, retired_at, compromised_at
+        FROM   AuthorityKeyCurrent WHERE agency_id = %s ORDER BY registered_at NULLS LAST, public_key_hex
+    """, (agency_id,), primary=True)
+    keys = [{'public_key_hex': r['public_key_hex'], 'algorithm': r['algorithm'], 'status': r['status'],
+             'registered_at': r['registered_at'].isoformat() if r['registered_at'] else None,
+             'retired_at': r['retired_at'].isoformat() if r['retired_at'] else None,
+             'compromised_at': r['compromised_at'].isoformat() if r['compromised_at'] else None}
+            for r in rows]
+    if current_key_hex and not any(str(k['public_key_hex']).lower() == str(current_key_hex).lower() for k in keys):
+        keys.append({'public_key_hex': current_key_hex, 'algorithm': 'ML-DSA-65', 'status': 'active',
+                     'registered_at': None, 'retired_at': None, 'compromised_at': None})
+    return keys
+
+
+def _key_status(agency_id, public_key_hex):
+    row = query("SELECT status FROM AuthorityKeyCurrent WHERE agency_id = %s AND public_key_hex = %s",
+                (agency_id, str(public_key_hex or '').lower()), fetch='one', primary=True)
+    return row['status'] if row else 'active'
+
+
+def _trust_list_statement(body):
+    """Canonical bytes the publisher signs for a trust list. MUST match
+    scripts/polaris-verify.py's _trust_list_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'publisher', 'keys', 'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
 def _federation_manifest_body(ag, now):
     """Build and sign one agency's federation manifest (P3.2) at instant `now`. Shared by the
     /federation-manifest endpoint and, since P8.5, the long-term-validation evidence attached
@@ -5428,7 +5469,10 @@ def _federation_manifest_body(ag, now):
     body = {
         'format': _MANIFEST_FORMAT,
         'authority': {'agency_id': ag['agency_id'], 'name': ag['name']},
-        'anchors': [{'public_key_hex': ag['signing_public_key_hex'], 'algorithm': 'ML-DSA-65', 'status': 'active'}],
+        # P8.7b: every key the register holds for this authority, with its real status (a
+        # retired or compromised key stays listed so a verifier can see it is no longer active).
+        'anchors': [{'public_key_hex': k['public_key_hex'], 'algorithm': k['algorithm'], 'status': k['status']}
+                    for k in _authority_keys(agency_id, ag['signing_public_key_hex'])],
         # Only attest to an agency that has a registered key: a verifier needs the
         # attested key to bind the attestation to a foreign credential's signature.
         'attestations': [
@@ -6038,6 +6082,7 @@ _PROTOCOL_FORMATS = {
     'polaris-id-token': 1,
     'polaris-presentation': 1,
     'polaris-qr': 1,
+    'polaris-trust-list': 1,
 }
 _REGISTRY_SERVICES = [
     {'kind': 'oauth-token', 'path': '/api/v1/oauth/token', 'auth': 'client-credentials', 'method': 'POST'},
@@ -6058,6 +6103,7 @@ _REGISTRY_SERVICES = [
     {'kind': 'sign-holder', 'path': '/api/v1/sign/{agency_id}/holder', 'auth': 'possession', 'method': 'POST'},
     {'kind': 'auth-authorize', 'path': '/api/v1/auth/authorize', 'auth': 'possession', 'method': 'POST'},
     {'kind': 'auth-token', 'path': '/api/v1/auth/token', 'auth': 'client-credentials', 'method': 'POST'},
+    {'kind': 'trust-list', 'path': '/api/v1/trust-list/{agency_id}', 'auth': 'none', 'method': 'GET'},
 ]
 
 
@@ -6125,7 +6171,11 @@ def api_v1_registry(agency_id):
         'authorities': [
             {'agency_id': a['agency_id'], 'name': a['name'], 'agency_type': a['agency_type'],
              'jurisdiction': a['jurisdiction'], 'authorization_level': a['authorization_level'],
-             'public_key_hex': a['signing_public_key_hex'], 'algorithm': 'ML-DSA-65', 'status': 'active'}
+             'public_key_hex': a['signing_public_key_hex'], 'algorithm': 'ML-DSA-65',
+             'status': _key_status(a['agency_id'], a['signing_public_key_hex']),
+             # P8.7b: the register itself (every key this instance knows for the authority, with its status),
+             # so a registry, a manifest's anchors and the trust list all reflect the same register.
+             'keys': _authority_keys(a['agency_id'], a['signing_public_key_hex'])}
             for a in authorities
         ],
         'contexts': [
@@ -6582,6 +6632,44 @@ def api_v1_auth_token():
     tok['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                   'token minus signature_hex and public_key_hex)')
     return jsonify(id_token=tok, token_type='polaris-id-token', expires_in=_ID_TOKEN_TTL)
+
+
+@app.route('/api/v1/trust-list/<int:agency_id>')
+def api_v1_trust_list(agency_id):
+    """P8.7b: the SIGNED TRUST LIST. Every authority key this instance knows -- its own and its
+    federated peers' -- with its status (active / retired / compromised) and the instants each
+    status took effect, from the append-only key register, signed by the publishing authority
+    (which must list itself active). A verifier decides a key's status AT AN INSTANT from it
+    (key_status_at): a credential under a compromised issuer key is rejected, a long-term
+    validated signature made before a compromise stays valid, one made after does not. Public
+    trust data; no personal data."""
+    publisher, err = _federated_agency(agency_id)
+    if err:
+        return err
+    agencies = query("SELECT agency_id, name, signing_public_key_hex FROM Agency "
+                     "WHERE signing_public_key_hex IS NOT NULL ORDER BY agency_id", primary=True)
+    keys = []
+    for ag in agencies:
+        for k in _authority_keys(ag['agency_id'], ag['signing_public_key_hex']):
+            keys.append(dict(k, agency_id=ag['agency_id'], name=ag['name']))
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    body = {
+        'format': _TRUST_LIST_FORMAT,
+        'publisher': {'agency_id': publisher['agency_id'], 'name': publisher['name']},
+        'keys': keys,
+        'issued_at': now.isoformat().replace('+00:00', 'Z'),
+        'expires_at': (now + timedelta(seconds=_TRUST_LIST_TTL)).isoformat().replace('+00:00', 'Z'),
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_trust_list_statement(body), agency_id=agency_id)
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['max_window_seconds'] = _TRUST_LIST_TTL
+    body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                   'trust list minus signature_hex and public_key_hex)')
+    return jsonify(body)
 
 
 # --- P3.3: the transparency log over the audit-anchor roots --------------------

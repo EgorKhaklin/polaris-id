@@ -198,8 +198,19 @@ def main():
             "auth_time": _iso(now), "iat": _iso(now), "exp": _iso(now + timedelta(minutes=5)), "algorithm": "ML-DSA-65",
         }, V._id_token_canonical)
 
+    def g_trust_list():
+        return _signed({
+            "format": "polaris-trust-list/1", "publisher": {"agency_id": 1, "name": "Authority A"},
+            "keys": [{"agency_id": 1, "name": "Authority A", "public_key_hex": key_hex, "algorithm": "ML-DSA-65",
+                      "status": "active", "registered_at": _iso(now - timedelta(days=30)), "retired_at": None, "compromised_at": None}],
+            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": "ML-DSA-65",
+        }, V._trust_list_canonical)
+
     # spec: name, build(), verify(obj)->verdict, accept(verdict)->bool, bound_fields
     specs = [
+        ("trust-list", g_trust_list, lambda o: V.verify_trust_list(o),
+         lambda v: v["trust_list_authentic"] and v.get("fresh") is True,
+         ["format", "publisher", "keys", "issued_at", "expires_at", "algorithm"]),
         ("id-token", g_id_token, lambda o: V.verify_id_token(o),
          lambda v: v["token_authentic"] and v.get("fresh") is True,
          ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr", "enrollment", "auth_time", "iat", "exp", "algorithm"]),

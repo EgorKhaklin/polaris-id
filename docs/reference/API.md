@@ -920,6 +920,18 @@ envelope's signed time and logged. No body is ever persisted. Verified offline w
 `verify_exchange_request` + `verify_exchange_receipt` + `exchange_evidence`. Specified in
 [exchange-gateway.md](../design/exchange-gateway.md); wire spec section 3.11.
 
+### `GET /api/v1/trust-list/<agency_id>`
+
+**Public; no auth (P8.7b).** The **signed trust list**: every authority key this instance knows
+-- its own and its federated peers' -- with `status` (`active` / `retired` / `compromised`) and
+the instants each took effect, from the append-only key register; signed by the publishing
+authority, which must list itself active. A verifier decides a key's status at an instant with
+`key_status_at`; given a trust list, `verify_cross_authority` rejects a credential under a
+compromised issuer key and `verify_signed_document` requires the signer key active at the
+evidence's instant per the list. Recorded with the CLI's `key-register`, `key-retire`,
+`key-compromise`. Specified in [trust-lifecycle.md](../design/trust-lifecycle.md); wire spec
+section 3.15.
+
 ### `GET /api/v1/registry/<agency_id>`
 
 **Public; no auth (P8.3).** The **signed registry**: what this instance offers and trusts, as one

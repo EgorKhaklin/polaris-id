@@ -683,6 +683,31 @@ def main():
         # exchange left a row, and that row is a code hash and nothing else
         checks.append(("the broker's only record is the consumed code hash of the one successful exchange", n_codes, 1))
 
+        # 6j. THE TRUST LIST (P8.7b) over HTTP: B publishes a signed trust list of every key it
+        #     knows (its own, A's as agency 2). B then RECORDS A's key compromised (an append-only
+        #     event, effective now); the re-fetched trust list says so, B's registry and manifest
+        #     report the real status, and a relying party holding B's trust list REJECTS A's
+        #     credential that it accepted a moment ago -- with no change to A at all.
+        tl1 = _http_get(base_b + "/api/v1/trust-list/1")[1]
+        tlv1 = V.verify_trust_list(tl1, trusted_anchors=[pub_b])
+        checks.append(("B's fetched trust list is authentic, fresh, self-consistent and trusted",
+                       bool(tlv1.get("trust_list_authentic") and tlv1.get("fresh") and tlv1.get("issuer_trusted")), True))
+        checks.append(("it lists A's key (agency 2 on B) as active and B's own key as active",
+                       (V.key_status_at(tl1, pub_a), V.key_status_at(tl1, pub_b)), ("active", "active")))
+        checks.append(("with that trust list, A's credential is accepted",
+                       V.verify_cross_authority(pack, CONTEXT_ID, [b_manifest()], trusted_anchors=[pub_b], trust_list=tl1)["decision"], "accept"))
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event, note) VALUES (2, %s, 'registered', 'drill')", (pub_a,))
+            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event, note) VALUES (2, %s, 'compromised', 'drill: A key compromised')", (pub_a,))
+            cb.commit()
+        tl2 = _http_get(base_b + "/api/v1/trust-list/1")[1]
+        checks.append(("B records A's key COMPROMISED: the re-fetched trust list says so", V.key_status_at(tl2, pub_a), "compromised"))
+        checks.append(("... and A's credential is now REJECTED by a relying party holding B's trust list (A unchanged)",
+                       V.verify_cross_authority(pack, CONTEXT_ID, [b_manifest()], trusted_anchors=[pub_b], trust_list=tl2)["decision"], "reject"))
+        reg_t = _http_get(base_b + "/api/v1/registry/1")[1]
+        checks.append(("B's registry reports A's key status honestly (compromised), no longer a hardcoded active",
+                       V.registry_key_status(reg_t, pub_a), "compromised"))
+
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:
             cur.execute("UPDATE AgencyTrustAttestation SET revocation_date=CURRENT_DATE, "

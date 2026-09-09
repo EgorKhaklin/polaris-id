@@ -1638,6 +1638,11 @@ jobs:
       - name: Wallet — presentation and QR framing
         run: python scripts/polaris-presentation-drill.py
 
+      # v9.328 (roadmap P8.7b) — the trust-service lifecycle: a signed trust list decides every
+      # authority key's status AT AN INSTANT; compromise recovery (reject after, keep before).
+      - name: Trust lifecycle — compromise recovery
+        run: python scripts/polaris-trust-lifecycle-drill.py
+
       # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
       # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
       # head and consistency proofs; the detached verifier accepts an append-only extension

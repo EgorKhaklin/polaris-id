@@ -155,6 +155,13 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._id_token_statement(b),
         "verify": lambda b: _V._id_token_canonical(b),
     },
+    # polaris-trust-list/1 (P8.7b): the signed authority key register.
+    "trust-list": {
+        "keys": ["format", "publisher", "keys", "issued_at", "expires_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._trust_list_statement(b),
+        "verify": lambda b: _V._trust_list_canonical(b),
+    },
 }
 
 
@@ -311,6 +318,7 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-exchange-receipt/1", "polaris-exchange-mint/1", "polaris-timestamp/1",
             "polaris-registry/1", "polaris-exchange-request/1",
             "polaris-signed-document/1", "polaris-id-token/1",
+            "polaris-trust-list/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1",

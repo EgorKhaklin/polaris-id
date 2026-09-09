@@ -35,6 +35,9 @@ drift from what the program accepts):
     retention-set      Record a retention decision, or adopt a named template
     audit-log          Tail the authentication audit log
     rp-register        Register a relying-party org for the /api/v1 verification API
+    key-register       Register an authority signing key (P8.7b): it becomes the agency's current key
+    key-retire         Retire an authority key: an orderly rotation, effective from an instant
+    key-compromise     Declare an authority key compromised, untrusted from an instant
 
 The database connection uses the same environment variables as the web
 application: POLARIS_DB_HOST, POLARIS_DB_NAME, POLARIS_DB_USER,
@@ -1685,6 +1688,16 @@ def build_parser():
     p_rp.add_argument('--scope', choices=['verify', 'authenticate', 'verify authenticate'], default='verify',
                       help="'verify' (the verification API), 'authenticate' (the P8.4 auth broker), or both")
 
+    # authority key lifecycle (roadmap P8.7b)
+    for name, help_ in (('key-register', 'Register an authority signing key (it becomes the agency\'s current key)'),
+                        ('key-retire', 'Retire an authority key: an orderly rotation, effective from an instant'),
+                        ('key-compromise', 'Declare an authority key compromised, untrusted from an instant that may predate the discovery')):
+        p_k = sub.add_parser(name, help=help_)
+        p_k.add_argument('agency_id', type=int, help='The agency the key belongs to')
+        p_k.add_argument('public_key_hex', help='The key (hex)')
+        p_k.add_argument('--effective-at', default=None, help='ISO-8601 instant the event takes effect (default: now)')
+        p_k.add_argument('--note', default=None, help='A short note recorded with the event (no personal data)')
+
     # retention (roadmap P1.11)
     p_rsh = sub.add_parser('retention-show',
                            help='What retention is in force, and the cutoff it resolves to')
@@ -1731,6 +1744,47 @@ def build_parser():
     p_al.add_argument('--limit', type=int, default=50, help='Max rows (default 50)')
 
     return p
+
+
+def _cmd_key_event(args, event):
+    """Append one authority-key event (P8.7b). 'registered' also makes the key the agency's
+    current signing key; a retirement or compromise never edits history, it appends to it."""
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event, effective_at, note) "
+                "VALUES (%s, %s, %s, COALESCE(%s::timestamp, CURRENT_TIMESTAMP), %s) RETURNING event_id",
+                (args.agency_id, args.public_key_hex.lower(), event, args.effective_at, args.note))
+            event_id = cur.fetchone()[0]
+            if event == 'registered':
+                cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = %s",
+                            (args.public_key_hex.lower(), args.agency_id))
+            conn.commit()
+        print(green(f"\u2713 Recorded key event #{event_id}: agency {args.agency_id} key {args.public_key_hex[:16]}... {event}"))
+        if event == 'registered':
+            print("  The key is now the agency's current signing key; the trust list, manifest and registry report it active.")
+        elif event == 'compromised':
+            print(red("  Verifiers holding the trust list will reject signatures under this key from the effective instant."))
+        return 0
+    except Exception as e:
+        conn.rollback()
+        print(red(f"key event failed: {e}"))
+        return 1
+    finally:
+        conn.close()
+
+
+def cmd_key_register(args):
+    return _cmd_key_event(args, 'registered')
+
+
+def cmd_key_retire(args):
+    return _cmd_key_event(args, 'retired')
+
+
+def cmd_key_compromise(args):
+    return _cmd_key_event(args, 'compromised')
 
 
 def cmd_rp_register(args):
@@ -1797,6 +1851,9 @@ HANDLERS = {
     'retention-set':    cmd_retention_set,
     'audit-log':        cmd_audit_log,
     'rp-register':      cmd_rp_register,
+    'key-register':     cmd_key_register,
+    'key-retire':       cmd_key_retire,
+    'key-compromise':   cmd_key_compromise,
 }
 
 

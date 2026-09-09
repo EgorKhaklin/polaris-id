@@ -334,6 +334,34 @@
       "expect": {
         "authentic": false
       }
+    },
+    {
+      "name": "trust-list-valid",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-valid.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      }
+    },
+    {
+      "name": "trust-list-tampered",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-tampered.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      }
+    },
+    {
+      "name": "trust-list-impostor",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-impostor.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      }
     }
   ]
 }

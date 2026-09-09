@@ -89,6 +89,7 @@ DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
 DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
 DROP TABLE IF EXISTS AuthCodeConsumed       CASCADE;
+DROP TABLE IF EXISTS AuthorityKeyEvent      CASCADE;
 DROP TABLE IF EXISTS AppUser                CASCADE;
 DROP TABLE IF EXISTS VerificationContext    CASCADE;
 DROP TABLE IF EXISTS CryptographicAlgorithm CASCADE;
@@ -311,6 +312,34 @@ CREATE TABLE AuthCodeConsumed (
 COMMENT ON TABLE AuthCodeConsumed IS
   'P8.4 auth-broker consumed authorization codes (SHA3-256 of the code only; no subject, '
   'no relying party): single use across workers. Append-only by trigger and by privilege.';
+
+-- P8.7b (v9.328): the AUTHORITY KEY REGISTER. Every event in an authority key's life --
+-- registered, retired (an orderly rotation), compromised (untrusted from an instant that
+-- may predate the discovery) -- is an append-only row; the current status of each key is
+-- the view AuthorityKeyCurrent over these rows. The signed trust list (polaris-trust-list/1)
+-- publishes it, and manifests and the registry report real statuses from it. Transitions
+-- are one-way by construction: a later row never revives a key. No token, no person.
+CREATE TABLE AuthorityKeyEvent (
+    event_id        SERIAL       PRIMARY KEY,
+    agency_id       INTEGER      NOT NULL REFERENCES Agency(agency_id),
+    public_key_hex  TEXT         NOT NULL
+        CONSTRAINT chk_authority_key_hex CHECK (public_key_hex ~ '^[0-9a-f]{64,}$'),
+    algorithm       VARCHAR(40)  NOT NULL DEFAULT 'ML-DSA-65',
+    event           VARCHAR(20)  NOT NULL
+        CONSTRAINT chk_authority_key_event CHECK (event IN ('registered', 'retired', 'compromised')),
+    effective_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    recorded_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    note            VARCHAR(200)
+);
+
+COMMENT ON TABLE AuthorityKeyEvent IS
+  'P8.7b append-only register of authority key events (registered / retired / compromised, '
+  'effective from an instant). AuthorityKeyCurrent derives each key''s status; the signed '
+  'trust list publishes it. One-way by construction; append-only by trigger and privilege.';
+
+-- A hash index: an ML-DSA-65 public key is 3904 hex characters, beyond a btree's row limit;
+-- a hash index stores the hash and serves the equality lookups the view and the app make.
+CREATE INDEX idx_authority_key_event_key ON AuthorityKeyEvent USING hash (public_key_hex);
 
 -- coverage:exempt — C1 AoR enforced by tg_authauditlog_append_only; schema_watcher verifies the trigger exists
 CREATE TABLE AuthAuditLog (

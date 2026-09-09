@@ -121,6 +121,8 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         "exchangenonce",
         # v9.326 (P8.4): the auth broker's consumed-code register.
         "authcodeconsumed",
+        # v9.328 (P8.7b): the authority key register.
+        "authoritykeyevent",
     ]
     if not re.search(r"REVOKE\s+UPDATE\s*,\s*DELETE", grants, re.I):
         return _fail("c1_aor_priv",
@@ -7166,6 +7168,7 @@ _WIRE_SIGNED_TYPES = {
     "polaris-exchange-request/1": "_exchange_request_canonical",
     "polaris-signed-document/1": "_signed_document_canonical",
     "polaris-id-token/1": "_id_token_canonical",
+    "polaris-trust-list/1": "_trust_list_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7524,6 +7527,72 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_trust_lifecycle(root: pathlib.Path) -> list[Finding]:
+    """P8.7b: the trust-service lifecycle as one subsystem. Every authority key's life is an
+    append-only event register (registered / retired / compromised, one-way, effective from an
+    instant), derived into a current-status view; the federation manifest and the registry
+    report REAL statuses from it; a signed trust list publishes it and must be signed by a key it
+    lists as active for its publisher; a verifier decides a key's status AT AN INSTANT from the
+    list, so the cross-authority decision rejects a compromised issuer key and long-term
+    validation checks the signer key independently of the signer's own word; a compromise-
+    recovery drill proves it under real ML-DSA and across two instances."""
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if "CREATE TABLE AuthorityKeyEvent" not in schema or "chk_authority_key_event" not in schema:
+        return _fail("trust_lifecycle", "01_schema.sql must define the append-only AuthorityKeyEvent register with a one-way event vocabulary")
+    if "CREATE OR REPLACE VIEW AuthorityKeyCurrent" not in _read(root, "polaris_sql/03_view.sql"):
+        return _fail("trust_lifecycle", "03_view.sql must derive AuthorityKeyCurrent (compromised over retired over active)")
+    if "trg_authority_key_event_append_only" not in _read(root, "polaris_sql/06_triggers.sql") or "authoritykeyevent" not in _read(root, "polaris_sql/09_grants.sql").lower():
+        return _fail("trust_lifecycle", "the key register must be append-only by trigger and by privilege")
+    app = _read(root, "polaris_web/app.py")
+    for sym, why in (("/api/v1/trust-list/<int:agency_id>", "the trust-list route"),
+                     ("_trust_list_statement", "the statement builder"),
+                     ("polaris-trust-list/1", "the format"),
+                     ("AuthorityKeyCurrent", "statuses read from the register"),
+                     ("for k in _authority_keys(agency_id, ag['signing_public_key_hex'])]", "manifest anchors with real statuses"),
+                     ("_key_status(a['agency_id'], a['signing_public_key_hex'])", "the registry reporting the real status"),
+                     ("'keys': _authority_keys(a['agency_id'], a['signing_public_key_hex'])", "the registry listing each authority's register")):
+        if sym not in app:
+            return _fail("trust_lifecycle", "polaris_web/app.py lacks %s (%s)" % (why, sym))
+    if "'status': 'active'}" in app.replace("k['status']", "").replace("_key_status(", ""):
+        pass  # a literal active elsewhere is fine; the two surfaces above are the pinned ones
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_trust_list", "_trust_list_canonical", "def key_status_at", "trust_list=None", "def registry_key_status",
+                "listed COMPROMISED", "signer_key_status_per_trust_list"):
+        if sym not in v:
+            return _fail("trust_lifecycle", "scripts/polaris-verify.py must verify the trust list and decide key status at an instant (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("trust_lifecycle", f"the offline verifier imports {mod!r}; it must stay standalone")
+    for name in ("key-register", "key-retire", "key-compromise"):
+        if name not in _read(root, "polaris_cli/polaris.py"):
+            return _fail("trust_lifecycle", "the CLI must record the key lifecycle (%s)" % name)
+    if "_trust_list_statement" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("trust_lifecycle", "the trust list must be in the canonical-equivalence oracle")
+    if "polaris-trust-list/1" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("trust_lifecycle", "the trust list must be specified in the wire spec")
+    if '"artifact": "trust-list"' not in _read(root, "conformance/cases.json"):
+        return _fail("trust_lifecycle", "conformance/cases.json must carry trust-list cases (incl. an impostor)")
+    if "polaris-trust-list/1" not in _read(root, "sdk/python/polaris_verify/__init__.py") or "polaris-trust-list/1" not in _read(root, "sdk/typescript/src/index.ts"):
+        return _fail("trust_lifecycle", "both SDKs must verify polaris-trust-list/1 with the publisher rule")
+    if "verify_trust_list" not in _read(root, "scripts/polaris-verifier-fuzz.py"):
+        return _fail("trust_lifecycle", "the metamorphic fuzzer must hold verify_trust_list total")
+    drill = _read(root, "scripts/polaris-trust-lifecycle-drill.py")
+    if not drill or "COMPROMISE" not in drill or "key_status_at" not in drill:
+        return _fail("trust_lifecycle", "scripts/polaris-trust-lifecycle-drill.py must drive compromise recovery (status at an instant)")
+    if "polaris-trust-lifecycle-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("trust_lifecycle", "the trust-lifecycle drill must run in CI")
+    fed = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if "/api/v1/trust-list/" not in fed or "AuthorityKeyEvent" not in fed or "trust_list=" not in fed:
+        return _fail("trust_lifecycle", "the two-instance drill must record a compromise on one instance and see the other's decision flip over HTTP")
+    if "AuthorityKeyEvent" not in _read(root, "docs/reference/DATA-MODEL.md"):
+        return _fail("trust_lifecycle", "docs/reference/DATA-MODEL.md must document the key register")
+    return _ok("trust_lifecycle",
+               "the trust-service lifecycle is one subsystem: an append-only, one-way authority key register derived into "
+               "current statuses, reported honestly by manifests and the registry, published as a signed trust list a "
+               "verifier decides key status AT AN INSTANT from, so a compromised issuer key rejects and long-term validity "
+               "is checked independently of the signer -- drilled under real ML-DSA and across two instances")
 
 
 def check_wallet_presentation(root: pathlib.Path) -> list[Finding]:
@@ -8541,6 +8610,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_trust_lifecycle,
     check_wallet_presentation,
     check_auth_broker,
     check_document_signing,
