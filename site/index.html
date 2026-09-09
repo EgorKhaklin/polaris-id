@@ -200,7 +200,7 @@ footer a{color:var(--ink-dim)}
     </div>
     <p class="strip">
         <strong>36</strong> schema tables · <strong>119</strong> routes ·
-        <strong>190</strong> machine-checked invariants ·
+        <strong>191</strong> machine-checked invariants ·
         <strong>ML-DSA-65</strong> signing default ·
         <strong>X25519MLKEM768</strong> TLS edge ·
         <strong>Plonky2</strong> ZK + second witness
@@ -308,17 +308,18 @@ footer a{color:var(--ink-dim)}
     <div class="numbers">
         <div class="num"><b>755</b><span>product tests, live DB</span></div>
         <div class="num"><b>84</b><span>crypto-witness tests</span></div>
-        <div class="num"><b>190</b><span>invariant checks</span></div>
+        <div class="num"><b>191</b><span>invariant checks</span></div>
         <div class="num"><b>18</b><span>CI jobs</span></div>
         <div class="num"><b>5</b><span>services booted in CI</span></div>
     </div>
     <p class="asof">test counts measured at v9.332; the rest recomputed on every push</p>
+    <p class="asof"><a href="regression.html">the same counts as data: every tagged version measured, with least-squares fits between the dimensions</a></p>
     <ul class="prodlist">
         <li><strong>The production-profile stack boots in CI.</strong> Five services behind a self-built TLS edge come up end to end on every push, and health is asserted through the edge. Building that job surfaced four prod-down bugs the day it landed.</li>
         <li><strong>Backups restore, provably.</strong> An encrypted backup and restore round-trip runs in CI with a fail-closed negative check, and the HA profile's automated failover is drilled on every push.</li>
         <li><strong>The post-quantum handshake is proven, not claimed.</strong> CI negotiates X25519MLKEM768 against a real certificate on every push, and signs with real ML-DSA-65 inside the production image.</li>
         <li><strong>CVEs gate the build.</strong> Both the dependency surface and all five self-built container images are scanned on every push; a fixable CRITICAL fails CI.</li>
-        <li><strong>Every check can prove it works.</strong> Each of the 190 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
+        <li><strong>Every check can prove it works.</strong> Each of the 191 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
     </ul>
 </section>
 

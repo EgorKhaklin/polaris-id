@@ -7530,6 +7530,54 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_regression_tool(root: pathlib.Path) -> list[Finding]:
+    """v9.343: Polaris as data. The regression tool's least squares is CHECKED, not trusted: the
+    check imports scripts/polaris-regression.py and requires exact answers on an exact line, an
+    exact plane, and the reference notebook's nine points; the dataset, the fits and the viewer
+    must exist, agree on the tag they were generated from, and the reference document must carry
+    a generated fits table rather than its placeholder. A tool that draws numbers must get the
+    arithmetic right first."""
+    script = root / "scripts" / "polaris-regression.py"
+    if not script.is_file() or not (root / "scripts" / "polaris_regression_viewer.py").is_file():
+        return _fail("regression_tool", "scripts/polaris-regression.py and its viewer module must exist")
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("polaris_regression_check", str(script))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        line = mod.simple_fit([1, 2, 3, 4, 5], [3, 5, 7, 9, 11])
+        plane = mod.ols([[1, 1], [2, 1], [3, 2], [4, 5], [5, 3]], [6, 8, 13, 24, 20])["coefficients"]
+        ref = mod.simple_fit([15, 21, 33, 20, 7, 17, 24, 11, 40], [77, 89, 96, 87, 96, 80, 91, 66, 99])
+    except Exception as e:  # noqa: BLE001 -- a tool that cannot compute is a failed check
+        return _fail("regression_tool", "the least-squares implementation does not run: %s: %s" % (type(e).__name__, e))
+    if abs(line["slope"] - 2) > 1e-9 or abs(line["intercept"] - 1) > 1e-9 or abs(line["r2"] - 1) > 1e-12:
+        return _fail("regression_tool", "simple least squares must recover an exact line (got slope %r, intercept %r)" % (line["slope"], line["intercept"]))
+    if max(abs(plane[0] - 1), abs(plane[1] - 2), abs(plane[2] - 3)) > 1e-9:
+        return _fail("regression_tool", "multiple least squares must recover an exact plane (got %r)" % (plane,))
+    if abs(ref["slope"] - 0.602369) > 1e-5 or abs(ref["intercept"] - 74.194952) > 1e-5 or abs(ref["r2"] - 0.341976) > 1e-5:
+        return _fail("regression_tool", "the reference notebook's nine points must fit to slope 0.602, intercept 74.19, R^2 0.342 (got %.6f, %.6f, %.6f)" % (ref["slope"], ref["intercept"], ref["r2"]))
+    dims = _read(root, "docs/reference/regression/dimensions.json")
+    fits = _read(root, "docs/reference/regression/fits.json")
+    viewer = _read(root, "site/regression.html")
+    if not dims or not fits or not viewer:
+        return _fail("regression_tool", "the dataset (dimensions.json), the fits (fits.json) and the viewer (site/regression.html) must be generated and committed")
+    try:
+        d, f = json.loads(dims), json.loads(fits)
+    except ValueError:
+        return _fail("regression_tool", "dimensions.json and fits.json must be valid JSON")
+    if d.get("format") != "polaris-dimensions/1" or f.get("format") != "polaris-fits/1" or len(d.get("rows") or []) < 100:
+        return _fail("regression_tool", "the dataset must carry its format and at least a hundred measured versions")
+    if d.get("generated_from") != f.get("generated_from") or ('"generated_from":"%s"' % d.get("generated_from")) not in viewer:
+        return _fail("regression_tool", "the dataset, the fits and the viewer must be generated from the same tag")
+    if "<!-- fits:begin -->\n**Fitted from" not in _read(root, "docs/reference/REGRESSION.md"):
+        return _fail("regression_tool", "docs/reference/REGRESSION.md must carry the generated fits table, not its placeholder")
+    if "not a law about identity systems" not in _read(root, "docs/reference/REGRESSION.md") or "not a law about identity systems" not in viewer:
+        return _fail("regression_tool", "the document and the viewer must state that a fit describes these points, not a law")
+    return _ok("regression_tool",
+               "the regression tool's least squares recovers an exact line, an exact plane and the reference points; the dataset, "
+               "fits and viewer exist, agree on their tag, and the reference document carries the generated table with its caveat")
+
+
 def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
     """P8.5b (v9.341): time evidence that survives the timestamp authority's key being stolen.
     A caller may ask for an ANCHORED timestamp: only then does the timestamp's SHA3-256 join an
@@ -9005,6 +9053,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_regression_tool,
     check_timestamp_transparency,
     check_roadmap_consistent,
     check_broker_policy_bound,

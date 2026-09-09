@@ -5,6 +5,39 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.343 — 2026-09-09 (Polaris as data)
+
+The system described by measurement rather than prose, modelled on a small pair of
+regression notebooks: least squares from scratch, then the same over real points, with the
+outlier lesson kept.
+
+- **Every tagged version measured the same way.** `scripts/polaris-regression.py extract` reads
+  the tree at each of the tags and counts invariant checks, routes, tables, tests, product lines,
+  documentation lines, drills, CI jobs and conformance cases, with the tag's date and day count;
+  the dataset ships as `docs/reference/regression/dimensions.json` and `.csv`.
+- **Least squares in closed form, no numeric library.** Simple (slope, intercept) and multiple
+  (the normal equations solved by elimination), with R², adjusted R² and a standard error per
+  coefficient; `fit` writes `fits.json` and the table in `docs/reference/REGRESSION.md`, which
+  states the model and reads the results honestly (growth against time is a velocity, pairs that
+  move together were built together, five points describe a table and nothing more).
+- **The measured performance tables, in the same shape.** The baseline's latency against load
+  and the scaling document's render time against event count (a power law in log-log space).
+- **A viewer, on the project site.** `site/regression.html`: pick two dimensions, see the points
+  (the versions themselves), the fitted line and its equation in the repository's own units, the
+  residuals beneath, the strongest pairs and the multiple-regression models; click a point to
+  exclude it and watch the fit move. Data embedded, no library, no network.
+- **What the data says at v9.342.** Checks against the version number: 0.62 per version,
+  R² 0.99. Checks against days since the first tag: about one a day, R² 0.76, because the tags
+  cluster on working days. Over the whole series, documentation lines against checks fit at
+  R² 0.18 and tests against checks at 0.62; from v9.60 on, after the apparatus and archive
+  removal had taken a thousand tests and 55,000 documentation lines out of the tree, the same
+  pairs fit at 0.98. The fits are reported both ways and the viewer has the switch; the
+  baseline's negative latency slope is read as what it is (the heavier route was offered the
+  lower rate), not as latency falling under load.
+- **The arithmetic is a gate.** `check_regression_tool` (#191) imports the tool and requires
+  exact answers on an exact line, an exact plane and the reference notebook's nine points, and
+  requires the dataset, fits and viewer to agree on the tag they were generated from.
+
 ## v9.342 — 2026-09-09 (The edge image build retries a transient checksum-database failure)
 
 Twice today a CI job failed inside the self-built Caddy edge image: `xcaddy build` fetches Go

@@ -15,6 +15,7 @@ the system without reading its source. For runbooks see
 | [`DATA-MODEL.md`](DATA-MODEL.md) | Every table in the schema and its migrations, grouped, with the invariant that guards it |
 | [`PQC-POSTURE.md`](PQC-POSTURE.md) | Which primitives are post-quantum and which are still classical, against the NIST 2030/2035 timeline |
 | [`PERFORMANCE-BASELINE.md`](PERFORMANCE-BASELINE.md) | Issuance and verification throughput and Atlas latency, measured end to end on stated hardware and re-run by CI |
+| [`REGRESSION.md`](REGRESSION.md) | Polaris as data: every tagged version measured (checks, routes, tables, tests, lines, drills), least-squares fits between the dimensions and through the performance tables, and the viewer that draws them |
 | [`SCALING.md`](SCALING.md) | The Atlas and the verification log at 10 million events: indexes, caps, rollups |
 | [`BENCHMARK.md`](BENCHMARK.md) | The committed load certification: the national simulation driven at scale, with throughput, latency, Atlas query times, and invariants under load |
 | [`DYNO.md`](DYNO.md) | Real numbers from a real box: single-core ML-DSA-65 sign/verify and ZK prove/verify at a stated tree depth, measured by `scripts/polaris-dyno.py` and re-measured every release |

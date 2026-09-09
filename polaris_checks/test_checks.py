@@ -8014,3 +8014,32 @@ def test_timestamp_transparency_check_discriminates(tmp_path):
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL without the stolen-key drill"
     write({'docs/design/timestamp-authority.md': "keeps no per-request record\n"})
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the promise is not restated honestly"
+
+
+def test_regression_tool_check_discriminates(tmp_path):
+    # v9.343: the least squares is checked against known answers; the artifacts must agree.
+    import shutil
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(REPO / "scripts" / "polaris-regression.py", tmp_path / "scripts" / "polaris-regression.py")
+    (tmp_path / "scripts" / "polaris_regression_viewer.py").write_text("def render_html(d, f, full_document=True): return ''\n")
+    good = {
+        'docs/reference/regression/dimensions.json': '{"format": "polaris-dimensions/1", "generated_from": "v9.343", "rows": [%s]}' % ",".join(['{"tag": "v"}'] * 120),
+        'docs/reference/regression/fits.json': '{"format": "polaris-fits/1", "generated_from": "v9.343", "simple": [], "multiple": []}',
+        'site/regression.html': '<script type="application/json">{"generated_from":"v9.343"}</script> not a law about identity systems',
+        'docs/reference/REGRESSION.md': "<!-- fits:begin -->\n**Fitted from 120 tagged versions.**\n<!-- fits:end -->\nnot a law about identity systems\n",
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_regression_tool(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'docs/reference/regression/fits.json': '{"format": "polaris-fits/1", "generated_from": "v9.300", "simple": [], "multiple": []}'})
+    assert checks.check_regression_tool(tmp_path)[0].level == "FAIL", "must FAIL if the fits and the dataset disagree on their tag"
+    write({'docs/reference/REGRESSION.md': "<!-- fits:begin -->\n(not yet generated)\n<!-- fits:end -->\nnot a law about identity systems\n"})
+    assert checks.check_regression_tool(tmp_path)[0].level == "FAIL", "must FAIL on the placeholder table"
+    src = (tmp_path / "scripts" / "polaris-regression.py").read_text()
+    (tmp_path / "scripts" / "polaris-regression.py").write_text(src.replace("beta = _solve(XtX, Xty)", "beta = [v * 1.01 for v in _solve(XtX, Xty)]"))
+    assert checks.check_regression_tool(tmp_path)[0].level == "FAIL", "must FAIL if the least squares is wrong by one percent"
