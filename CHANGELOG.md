@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.344 — 2026-09-09 (The instrument)
+
+The measurement of v9.343 pointed at the moments where a version goes wrong, after asking
+the record whether it carries a signal. No wrapper: the viewer is unchanged.
+
+- **The deltas refuse a regression.** Checks added against routes, tables and tests added,
+  per version since v9.60, fits at R² 0.09. The ship discipline is a per-version habit, so the
+  instrument reads the record as frequencies: a companion is a rule when every version that
+  moved the trigger moved it too (routes bring tests, 29 of 29; tables bring checks and tests,
+  12 of 12), and a note at seventy percent (routes bring checks, 21 of 29).
+- **`delta`, inside preflight.** The working tree, uncommitted and untracked files included,
+  measured against the last tag: what moved, which companion the record expects that did not
+  move, and the verification the change needs. The verification is the release recipe as code,
+  selected by the moved paths (the schema, the app, custody and signing, the verifiers and wire
+  formats, authentication, the prover, the checks, the CLI, the templates, the drills, the
+  deployment), plus the drills that mention a route whose handler changed, directly or through
+  a helper it calls. The v9.334 lesson, a changed verdict shipped without its drills, becomes a
+  line of output before the ship.
+- **`ci triage`.** A red run classified against the known flake signatures: the Go module
+  proxy stream error in the Caddy build, and the runner's apt index hash mismatch that turned
+  v9.343's run red in five jobs within a minute. A known flake gets the rerun command; anything
+  else gets the first failing lines per job. `ci extract` keeps the run history in
+  `docs/reference/regression/ci.json`: 342 runs on main, 285 green on the first try, 14 green
+  after a rerun, 43 red. The apt flake itself is removed at the source: the runner's Chrome
+  package list, which this workflow never uses, is dropped before apt runs in every install step.
+- **`cost`.** Minutes between consecutive tags by the size of the change, for estimates
+  grounded in the record: a median of 20 minutes per version since v9.60, 12 for a version
+  with no product lines, 36 for one adding a few hundred.
+- **Check #192 `check_regression_instrument`.** Known answers on synthetic records for the
+  rules, the flags, the cost, the changed-route selection through a helper, the drill matching
+  on a parameterised path, the verification map and the flake classifier; preflight and
+  CLAUDE.md must carry `delta` and `ci triage`; a warning when the committed record lags the
+  version by more than six releases.
+
 ## v9.343 — 2026-09-09 (Polaris as data)
 
 The system described by measurement rather than prose, modelled on a small pair of

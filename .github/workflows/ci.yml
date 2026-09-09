@@ -84,6 +84,7 @@ jobs:
 
       - name: Install PostgreSQL client
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
           sudo apt-get update
           sudo apt-get install -y postgresql-client age   # age: test_secretstore's age backend (P1.3)
 
@@ -436,6 +437,7 @@ jobs:
 
       - name: Install PostgreSQL client
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
@@ -463,7 +465,9 @@ jobs:
           done
 
       - name: Install headless Chromium
-        run: python -m playwright install --with-deps chromium
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
+          python -m playwright install --with-deps chromium
 
       - name: Drive the Atlas live simulation in a real browser
         # The wrapper boots the app (SIM_MODE on) on its own port and runs the
@@ -542,6 +546,7 @@ jobs:
       - name: Atlas e2e (Playwright, headless chromium)
         run: |
           python3 -m pip install --quiet playwright pytest
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
           python3 -m playwright install --with-deps chromium
           POLARIS_E2E_REQUIRE=1 POLARIS_E2E_PORT=5000 \
             python3 -m pytest polaris_web/test_e2e_atlas.py -v
@@ -1431,6 +1436,7 @@ jobs:
 
       - name: Install liboqs-python (builds liboqs) + the cryptography witness
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build
           pip install liboqs-python
@@ -1786,6 +1792,7 @@ jobs:
 
       - name: Install PostgreSQL client + build tools
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
           sudo apt-get update
           sudo apt-get install -y postgresql-client cmake ninja-build
 

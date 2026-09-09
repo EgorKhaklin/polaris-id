@@ -57,42 +57,42 @@ was a server-side rollup rather than a faster render.
 The table is written by `polaris-regression.py fit` and regenerated with the data.
 
 <!-- fits:begin -->
-**Fitted from 288 tagged versions, v9.342.**
+**Fitted from 289 tagged versions, v9.343.**
 
 | x | y | fit | R² | n |
 |---|---|---|---:|---:|
-| `day` | `checks` | y = 1.036·x + 15.4 | 0.759 | 288 |
-| `day` | `routes` | y = 0.170·x + 64.9 | 0.315 | 288 |
-| `day` | `tests` | y = 2.885·x + 577.1 | 0.431 | 288 |
-| `day` | `product_lines` | y = 182.197·x + 22638.9 | 0.498 | 288 |
-| `routes` | `checks` | y = 3.283·x - 159.3 | 0.702 | 288 |
-| `tables` | `checks` | y = 11.712·x - 258.3 | 0.803 | 288 |
-| `tests` | `checks` | y = 0.213·x - 74.0 | 0.623 | 288 |
-| `checks` | `docs_lines` | y = 63.948·x + 20663.8 | 0.181 | 288 |
-| `minor` | `checks` | y = 0.618·x - 23.1 | 0.993 | 288 |
-| `minor` | `product_lines` | y = 125.351·x + 12562.6 | 0.866 | 288 |
+| `day` | `checks` | y = 1.039·x + 15.3 | 0.758 | 289 |
+| `day` | `routes` | y = 0.172·x + 64.9 | 0.314 | 289 |
+| `day` | `tests` | y = 2.897·x + 576.8 | 0.432 | 289 |
+| `day` | `product_lines` | y = 183.466·x + 22605.7 | 0.496 | 289 |
+| `routes` | `checks` | y = 3.252·x - 157.0 | 0.703 | 289 |
+| `tables` | `checks` | y = 11.673·x - 257.1 | 0.804 | 289 |
+| `tests` | `checks` | y = 0.214·x - 74.6 | 0.626 | 289 |
+| `checks` | `docs_lines` | y = 64.342·x + 20636.5 | 0.184 | 289 |
+| `minor` | `checks` | y = 0.618·x - 23.1 | 0.993 | 289 |
+| `minor` | `product_lines` | y = 125.926·x + 12477.2 | 0.867 | 289 |
 
-The same pairs from v9.60 on (280 versions), after the apparatus and archive removal of v9.55 to v9.59:
+The same pairs from v9.60 on (281 versions), after the apparatus and archive removal of v9.55 to v9.59:
 
 | x | y | fit | R² | n |
 |---|---|---|---:|---:|
-| `day` | `checks` | y = 1.012·x + 18.0 | 0.742 | 280 |
-| `day` | `routes` | y = 0.171·x + 64.8 | 0.302 | 280 |
-| `day` | `tests` | y = 3.348·x + 528.1 | 0.674 | 280 |
-| `day` | `product_lines` | y = 191.254·x + 21675.5 | 0.517 | 280 |
-| `routes` | `checks` | y = 3.181·x - 149.7 | 0.711 | 280 |
-| `tables` | `checks` | y = 11.382·x - 246.9 | 0.810 | 280 |
-| `tests` | `checks` | y = 0.285·x - 128.1 | 0.981 | 280 |
-| `checks` | `docs_lines` | y = 99.363·x + 16165.0 | 0.978 | 280 |
-| `minor` | `checks` | y = 0.617·x - 22.9 | 0.992 | 280 |
-| `minor` | `product_lines` | y = 134.592·x + 10307.8 | 0.922 | 280 |
+| `day` | `checks` | y = 1.016·x + 17.9 | 0.740 | 281 |
+| `day` | `routes` | y = 0.174·x + 64.7 | 0.301 | 281 |
+| `day` | `tests` | y = 3.359·x + 527.8 | 0.673 | 281 |
+| `day` | `product_lines` | y = 192.538·x + 21640.3 | 0.515 | 281 |
+| `routes` | `checks` | y = 3.152·x - 147.5 | 0.713 | 281 |
+| `tables` | `checks` | y = 11.347·x - 245.8 | 0.812 | 281 |
+| `tests` | `checks` | y = 0.286·x - 128.2 | 0.981 | 281 |
+| `checks` | `docs_lines` | y = 99.504·x + 16154.7 | 0.978 | 281 |
+| `minor` | `checks` | y = 0.617·x - 22.9 | 0.992 | 281 |
+| `minor` | `product_lines` | y = 135.136·x + 10223.8 | 0.922 | 281 |
 
 | y | x | coefficients (b0, then one per x) | R² | adj. R² | n |
 |---|---|---|---:|---:|---:|
-| `checks` | `routes`, `tables`, `tests` | -231.7, 0.6521, 7.832, 0.04997 | 0.822 | 0.820 | 288 |
-| `product_lines` | `day`, `routes` | -2.146e+04, 66.6, 679.2 | 0.934 | 0.933 | 288 |
-| `tests` | `routes`, `tables` | -352.8, 1.773, 33.55 | 0.648 | 0.646 | 288 |
-| `docs_lines` | `checks`, `routes` | 5159, 6.304, 269.6 | 0.243 | 0.238 | 288 |
+| `checks` | `routes`, `tables`, `tests` | -230.5, 0.6256, 7.842, 0.05058 | 0.823 | 0.822 | 289 |
+| `product_lines` | `day`, `routes` | -2.125e+04, 66.93, 676 | 0.934 | 0.934 | 289 |
+| `tests` | `routes`, `tables` | -348.2, 1.658, 33.68 | 0.650 | 0.647 | 289 |
+| `docs_lines` | `checks`, `routes` | 5337, 6.661, 266.8 | 0.247 | 0.242 | 289 |
 
 | dataset | x | y | fit | R² | n |
 |---|---|---|---|---:|---:|
@@ -125,7 +125,63 @@ The same pairs from v9.60 on (280 versions), after the apparatus and archive rem
   table above shows both, and the viewer has a switch for it. The step stays in the record because
   it happened.
 
+## As a development instrument
+
+The fits above are a record for readers. What helps the work is the same measurement pointed
+at the three moments where a version goes wrong, and the record was asked first whether it
+carries a signal. A regression on the per-version deltas was tried and refused: checks added
+against routes, tables and tests added fits at R² 0.09 since v9.60, because the ship discipline
+is a per-version habit, not a proportion. So the instrument reads the record as frequencies.
+
+- **Before a ship: `delta`.** The working tree, uncommitted and untracked files included,
+  measured against the last tag, with the companions the record expects. A pair is a rule when
+  every version since v9.60 that moved the trigger also moved the companion, over at least ten
+  such versions, and a note at seventy percent or more. It runs inside
+  [polaris-preflight.sh](../../scripts/polaris-preflight.sh); `--strict` makes a broken rule count.
+- **Estimating: `cost`.** Minutes between consecutive tags, pauses over six hours excluded, by the
+  size of the change. An estimate quoted from this table is grounded in the record rather than
+  guessed.
+- **After CI: `ci`.** `ci extract` pulls the run history on main into
+  [regression/ci.json](regression/ci.json) with the counts of green on the first try, green after
+  a rerun and red. `ci triage [RUN_ID]` reads a red run's failed logs against the known flake
+  signatures and says whether to rerun or to investigate, with the first failing lines per job.
+  Both need the GitHub CLI and never run in CI.
+
+<!-- rules:begin -->
+**Derived from the record at v9.343, versions from v9.60 on.**
+
+| when a version adds | the record expects | since v9.60 | kind |
+|---|---|---:|---|
+| `routes` | `checks` | 21 of 29 (72%) | note |
+| `routes` | `tests` | 29 of 29 (100%) | rule |
+| `routes` | `product_lines` | 29 of 29 (100%) | rule |
+| `routes` | `docs_lines` | 29 of 29 (100%) | rule |
+| `tables` | `checks` | 12 of 12 (100%) | rule |
+| `tables` | `tests` | 12 of 12 (100%) | rule |
+| `tables` | `product_lines` | 12 of 12 (100%) | rule |
+| `tables` | `docs_lines` | 12 of 12 (100%) | rule |
+| `product_lines` | `checks` | 154 of 219 (70%) | note |
+| `product_lines` | `tests` | 183 of 219 (84%) | note |
+| `product_lines` | `docs_lines` | 217 of 219 (99%) | note |
+
+The refused alternative, a line through the deltas: `checks added ~ routes + tables + tests added` fits at R² 0.093 over 281 versions.
+
+| size of the change | versions | median minutes | quartiles |
+|---|---:|---:|---|
+| no product lines | 56 | 12 | 5 to 23 |
+| 1 to 100 product lines | 116 | 18 | 13 to 29 |
+| 101 to 500 product lines | 64 | 36 | 19 to 69 |
+| over 500 product lines | 21 | 26 | 18 to 78 |
+
+Median 20 minutes per version over 257 versions (18 over the last fifty); median 3 product lines per minute when lines were added. minutes between consecutive tags under six hours, from v9.60 on; a description of this record on this machine, not a rate anyone is owed.
+<!-- rules:end -->
+
 ## Re-running
+
+`delta` and `ci triage` need no regeneration: they measure the working tree and read the run
+live. `ci extract` and the rules table come from the committed record, so re-run `extract`,
+`fit` and `render` when a release should appear in them; check #192 warns when the record lags
+the version by more than six releases.
 
     python3 scripts/polaris-regression.py all      # extract every tag, fit, render the viewer
 

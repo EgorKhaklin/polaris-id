@@ -56,6 +56,14 @@ cd polaris_cli && python3 -m unittest test_cli
 # Cross-reference integrity + the thin pre-ship gate:
 ./scripts/polaris-link-check.sh --ci
 ./scripts/polaris-preflight.sh          # polaris_checks + link-check; --strict to fail hard
+
+# Before a ship: the working tree against the last tag, the companions the record
+# expects (a table has always brought a check and a test), and the verification the
+# change needs: suites by moved path, drills by changed route handler. Preflight runs it.
+python3 scripts/polaris-regression.py delta
+
+# CI red? Known flake (apt index, Go module proxy) -> rerun; else the first failing lines per job:
+python3 scripts/polaris-regression.py ci triage [RUN_ID]
 ```
 
 Read first: [`MISSION.md`](MISSION.md) (constitution), [`ROADMAP.md`](ROADMAP.md)
@@ -115,6 +123,11 @@ A ship is a coherent change, verified:
    `TokenSignature.signature_bytes`: real ML-DSA-65 when the flag + liboqs are
    present, a deterministic SHA3-256 placeholder otherwise (the default, incl.
    CI). `polaris_checks.check_pqc_signing_wired` guards the wiring.
+8. **CI flakes look like failures.** Two known signatures: the runner's apt index
+   (`Hash Sum mismatch`, jobs die in their install step with exit code 100) and the Go
+   module proxy in the Caddy build (`sum.golang.org` stream errors). `python3
+   scripts/polaris-regression.py ci triage` names them; `gh run rerun <id> --failed`
+   clears them. Anything else is real: run the verification `delta` names.
 
 ---
 

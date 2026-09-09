@@ -7530,6 +7530,85 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_regression_instrument(root: pathlib.Path) -> list[Finding]:
+    """v9.344: the measurement as a development instrument, not a wrapper. The record was asked
+    whether it carries a signal: a regression on the per-version deltas fits at R^2 0.09, so the
+    instrument reads the record as frequencies (a companion is a RULE when every version since
+    v9.60 that moved the trigger moved it too, over at least ten versions; a NOTE at seventy
+    percent). `delta` measures the working tree against the last tag, names the companions the
+    record expects and the verification the change needs (the release recipe as code, selected by
+    the moved paths, plus the drills that mention a route whose handler changed, directly or
+    through a helper: the v9.334 lesson). `ci triage` classifies a red run against the known flake
+    signatures. This check pins the logic with known answers on synthetic records, requires the
+    preflight gate and the runbook to carry the commands, and warns when the committed record lags
+    the version by more than five releases."""
+    name = "regression_instrument"
+    script = root / "scripts" / "polaris-regression.py"
+    if not script.is_file():
+        return _fail(name, "scripts/polaris-regression.py must exist")
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("polaris_regression_instrument_check", str(script))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        rows = [{"tag": "v9.60", "minor": 60, "checks": 10, "routes": 5, "tables": 3, "tests": 50, "product_lines": 1000, "docs_lines": 500,
+                 "drills": 1, "ci_jobs": 2, "conformance_cases": 1, "ts": 1700000000}]
+        k = 0
+        for i in range(1, 40):
+            r = dict(rows[-1]); r["tag"] = "v9.%d" % (60 + i); r["minor"] = 60 + i; r["ts"] += 600; r["product_lines"] += 20
+            if i % 3 == 0:
+                k += 1; r["routes"] += 1; r["tests"] += 2
+                if k <= 10:
+                    r["checks"] += 1
+            rows.append(r)
+        D = mod.deltas(rows)
+        rules = {(x["trigger"], x["companion"]): x for x in mod.derive_rules(D, since_minor=60, min_n=10)}
+        flags = mod.companion_flags({"routes": 1, "tests": 0, "checks": 1, "product_lines": 20}, list(rules.values()))
+        cost = mod.cost_summary(D, since_minor=60)
+        base = 'def _h():\n    return 1\n\n@app.route("/a")\ndef a():\n    return _h()\n\n@app.route("/b/<int:i>")\ndef b(i):\n    return i\n'
+        cr = mod.changed_routes(base, base.replace("return 1", "return 2"))
+        dr = mod.drills_for_routes(["/b/<int:i>", "/a"], {"d.py": 'get("/b/12?x=1")', "e.py": 'get("/ab")'})
+        ver = mod.verification_for(["polaris_web/custody.py", "docs/x.md"])
+        flake = mod.classify_failure_log("E: Failed to fetch https://example.invalid/Packages.gz  Hash Sum mismatch")[0]
+        real = mod.classify_failure_log("AssertionError: the verdict changed")[0]
+    except Exception as e:  # noqa: BLE001 -- an instrument that cannot compute is a failed check
+        return _fail(name, "the instrument does not run: %s: %s" % (type(e).__name__, e))
+    rt, rc = rules.get(("routes", "tests")), rules.get(("routes", "checks"))
+    if not rt or rt["kind"] != "rule" or rt["n"] != 13 or not rc or rc["kind"] != "note" or rc["hits"] != 10 or ("routes", "docs_lines") in rules:
+        return _fail(name, "derive_rules must read the synthetic record as: routes -> tests a rule over 13 versions, routes -> checks a note at 10 of 13, no rule for a companion that never moved (got %r)" % (sorted(rules),))
+    if len(flags) != 1 or flags[0]["companion"] != "tests" or flags[0]["kind"] != "rule":
+        return _fail(name, "companion_flags must flag exactly the broken rule (routes added, no tests) and nothing that moved (got %r)" % (flags,))
+    if D[1]["minutes"] != 10.0 or cost["n"] != 39 or cost["median_minutes"] != 10.0:
+        return _fail(name, "deltas must carry the minutes between tags and cost_summary their median (got %r, %r)" % (D[1].get("minutes"), cost.get("median_minutes")))
+    if cr != ["/a"] or dr != {"d.py": ["/b/<int:i>"]}:
+        return _fail(name, "changed_routes must flag the route that calls a changed helper and drills_for_routes must match a parameterised path (got %r, %r)" % (cr, dr))
+    if len(ver) != 1 or "custody" not in ver[0]["why"] or not any("verifier-fuzz" in x for x in ver[0]["run"]):
+        return _fail(name, "verification_for must select the signing verification for polaris_web/custody.py and nothing for a document (got %r)" % (ver,))
+    if flake != "flake" or real != "investigate":
+        return _fail(name, "classify_failure_log must call the apt index hash mismatch a flake and an assertion a failure to investigate (got %r, %r)" % (flake, real))
+    if "polaris-regression.py delta" not in _read(root, "scripts/polaris-preflight.sh"):
+        return _fail(name, "scripts/polaris-preflight.sh must run `polaris-regression.py delta` so the companions and the verification are named before every ship")
+    runbook = _read(root, "CLAUDE.md")
+    if "polaris-regression.py delta" not in runbook or "ci triage" not in runbook:
+        return _fail(name, "CLAUDE.md must carry `polaris-regression.py delta` and `ci triage` where a fresh session reads how to work")
+    doc = _read(root, "docs/reference/REGRESSION.md")
+    if "## As a development instrument" not in doc or "<!-- rules:begin -->\n**Derived from the record" not in doc:
+        return _fail(name, "docs/reference/REGRESSION.md must carry the instrument section and the generated rules table, not its placeholder")
+    try:
+        fits = json.loads(_read(root, "docs/reference/regression/fits.json") or "{}")
+    except ValueError:
+        fits = {}
+    if not (fits.get("rules") or {}).get("derived") or "cost" not in fits:
+        return _fail(name, "docs/reference/regression/fits.json must carry the derived rules and the cost record")
+    m_v = re.search(r"(\d+)\.(\d+)", _read(root, "polaris_web/__version__.py") or "")
+    m_g = re.search(r"v(\d+)\.(\d+)", str(fits.get("generated_from") or ""))
+    if m_v and m_g and int(m_v.group(1)) == int(m_g.group(1)) and int(m_v.group(2)) - int(m_g.group(2)) > 6:
+        return [Finding("WARN", name, "the committed record was generated from %s and the tree is at v%s.%s: re-run extract, fit and render so the rules and the viewer describe the current tree"
+                        % (fits.get("generated_from"), m_v.group(1), m_v.group(2)))]
+    return _ok(name, "the instrument's rules, flags, cost, changed-route and drill selection, verification map and flake classifier give the known answers; "
+                     "preflight and the runbook carry delta and ci triage; the record is current")
+
+
 def check_regression_tool(root: pathlib.Path) -> list[Finding]:
     """v9.343: Polaris as data. The regression tool's least squares is CHECKED, not trusted: the
     check imports scripts/polaris-regression.py and requires exact answers on an exact line, an
@@ -9053,6 +9132,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_regression_instrument,
     check_regression_tool,
     check_timestamp_transparency,
     check_roadmap_consistent,
