@@ -5,6 +5,24 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.318 — 2026-09-09 (The local gate type-checks the TypeScript SDK)
+
+v9.316 shipped with the `sdk-typescript` CI job red: a type-only regression the local pre-ship
+gate could not see. The gate now sees it.
+
+- **`polaris-preflight.sh` runs CI's `sdk-typescript` steps locally.** When node is present, the
+  gate now runs `tsc --noEmit`, `node --test`, and the conformance suite against the TypeScript
+  verifier -- the same offline steps CI runs -- and fails on any of them. It is guarded on node
+  availability, so a node-less environment still runs the rest of the gate (an honest SKIP line,
+  never a false pass).
+- **Why.** `tsc --noEmit` is a TYPE gate the Python check layer cannot see. v9.315's
+  `verifyCrossAuthority` fed an anchor-set element inferred `unknown` into a `Set<string>`
+  membership test; it passed `polaris-checks`, `node --test`, and every conformance case, yet
+  failed the CI type-check and shipped red at v9.316. That class of failure now surfaces at the
+  local gate instead of in CI.
+- **Pinned.** `check_preflight_typechecks_ts_sdk` (#172) asserts preflight runs `tsc --noEmit`
+  against `sdk/typescript`, guarded on node, so the gate step cannot silently regress. 172 checks.
+
 ## v9.317 — 2026-09-09 (The exchange receipt: evidence without retention, P8.2)
 
 The first primitive of the P8 exchange fabric, and its defining idea: a way to prove an

@@ -7496,6 +7496,34 @@ def check_cross_authority_zk(root: pathlib.Path) -> list[Finding]:
                "fixture and red on any wrong decision")
 
 
+def check_preflight_typechecks_ts_sdk(root: pathlib.Path) -> list[Finding]:
+    """The local pre-ship gate type-checks the TypeScript SDK.
+
+    CI's sdk-typescript job runs `tsc --noEmit`, but before v9.318 the local
+    preflight did not. A type-only regression is invisible to the rest of the
+    gate: v9.315's verifyCrossAuthority fed an anchor-set element inferred
+    `unknown` into a `Set<string>` membership test, which passed polaris-checks,
+    `node --test` and every conformance case yet failed the CI type-check and
+    shipped red at v9.316. Preflight must run the type-check locally, guarded on
+    node so a node-less environment still runs the rest of the gate."""
+    sh = _read(root, "scripts/polaris-preflight.sh")
+    if not sh:
+        return _fail("preflight_ts_typecheck", "scripts/polaris-preflight.sh is missing")
+    if "sdk/typescript" not in sh:
+        return _fail("preflight_ts_typecheck",
+                     "polaris-preflight.sh must exercise the sdk/typescript gate locally")
+    if "tsc --noEmit" not in sh:
+        return _fail("preflight_ts_typecheck",
+                     "polaris-preflight.sh must run `tsc --noEmit` -- the type gate CI runs but "
+                     "the Python check layer cannot see (a type-only regression shipped red at v9.316)")
+    if "command -v node" not in sh or "node_modules" not in sh:
+        return _fail("preflight_ts_typecheck",
+                     "the TS SDK step must be guarded on node availability (command -v node + "
+                     "node_modules) so preflight still runs in a node-less environment")
+    return _ok("preflight_ts_typecheck",
+               "polaris-preflight runs the TS SDK type-check locally, guarded on node")
+
+
 def check_exchange_receipt(root: pathlib.Path) -> list[Finding]:
     """P8.2: the exchange receipt, the gateway's evidence-without-retention primitive and the
     anti-surveillance inversion of a message log. A responder signs evidence that it served an
@@ -8002,6 +8030,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_preflight_typechecks_ts_sdk,
     check_exchange_receipt,
     check_wire_spec_matches_code,
     check_cross_authority_zk,

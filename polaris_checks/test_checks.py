@@ -6462,6 +6462,34 @@ def test_wire_spec_check_discriminates(tmp_path):
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
 
 
+def test_preflight_ts_typecheck_discriminates(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    good = (
+        "#!/usr/bin/env bash\n"
+        'TS="${ROOT}/sdk/typescript"\n'
+        'if command -v node > /dev/null 2>&1 && [ -d "${TS}/node_modules" ]; then\n'
+        '  ( cd "${TS}" && npx --no-install tsc --noEmit )\n'
+        '  ( cd "${TS}" && node --test )\n'
+        "fi\n"
+    )
+    sh = tmp_path / "scripts" / "polaris-preflight.sh"
+    sh.write_text(good)
+    assert checks.check_preflight_typechecks_ts_sdk(tmp_path)[0].level == "OK", \
+        "must PASS when preflight type-checks the TS SDK, guarded on node"
+    sh.write_text(good.replace("npx --no-install tsc --noEmit", "echo skip"))
+    assert checks.check_preflight_typechecks_ts_sdk(tmp_path)[0].level == "FAIL", \
+        "must FAIL when preflight does not run tsc --noEmit"
+    sh.write_text(good.replace("command -v node > /dev/null 2>&1 && ", ""))
+    assert checks.check_preflight_typechecks_ts_sdk(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the TS step is not guarded on node availability"
+    sh.write_text("#!/usr/bin/env bash\necho no ts here\n")
+    assert checks.check_preflight_typechecks_ts_sdk(tmp_path)[0].level == "FAIL", \
+        "must FAIL when preflight does not exercise the sdk/typescript gate"
+    sh.unlink()
+    assert checks.check_preflight_typechecks_ts_sdk(tmp_path)[0].level == "FAIL", \
+        "must FAIL when polaris-preflight.sh is missing"
+
+
 def test_exchange_receipt_check_discriminates(tmp_path):
     # v9.317 (P8.2): the exchange receipt, evidence without retention -- commit to request/
     # response HASHES not bodies, verified offline (standalone), authorization via a trusted
