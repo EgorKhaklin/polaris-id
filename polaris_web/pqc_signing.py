@@ -122,7 +122,36 @@ except Exception as e:  # cryptography too old / no ML-DSA
 
 
 # FIPS 204 algorithm identifier used by liboqs (per OQS naming)
-_ALG_NAME = "ML-DSA-65"
+_ALG_NAME = "ML-DSA-65"                 # the default parameter set (historical name)
+# P8.8a (v9.329): the accepted FIPS 204 parameter sets (custody.ACCEPTED_ALGORITHMS agrees;
+# test_pqc_signing pins the two equal) and the cryptography witness class for each.
+DEFAULT_ALGORITHM = "ML-DSA-65"
+ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")
+_WITNESS_CLASSES = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}
+
+
+def algorithm_for_public_key_hex(public_key_hex):
+    """The accepted parameter set a public key's length identifies, or None."""
+    try:
+        return custody.algorithm_for_public_key(bytes.fromhex(public_key_hex or ""))
+    except (ValueError, TypeError):
+        return None
+
+
+def algorithm_name(agency_id=None) -> str:
+    """The parameter set signatures for `agency_id` (or the instance) are made under: the
+    custodied key's when one is configured, else the configured default. Statement bodies
+    carry this BEFORE signing, since `algorithm` is a signed field."""
+    try:
+        cust = custody.get_custody_for_agency(agency_id) if agency_id is not None else custody.get_custody()
+    except custody.CustodyError:
+        cust = None
+    if cust is not None:
+        return cust.algorithm
+    try:
+        return custody.configured_algorithm()
+    except custody.CustodyError:
+        return DEFAULT_ALGORITHM
 
 
 @dataclass(frozen=True)
@@ -181,7 +210,8 @@ def availability_report() -> dict:
         "second_witness_error": _WITNESS_IMPORT_ERROR,
         "flag_set": os.environ.get("POLARIS_USE_REAL_PQC", "0") == "1",
         "is_enabled": is_enabled(),
-        "algorithm": _ALG_NAME,
+        "algorithm": algorithm_name(),
+        "accepted_algorithms": list(ACCEPTED_ALGORITHMS),
         # roadmap P1.2 — which custody holds the issuer key (non-secret facts;
         # None = no persistent key, the ephemeral dev fallback). A misconfigured
         # custody is reported as an error string rather than raising here.
@@ -223,8 +253,9 @@ def _load_persistent_keypair() -> Optional[tuple]:
     return _PERSISTENT_KEYPAIR
 
 
-def generate_keypair() -> dict:
-    """Generate a fresh ML-DSA-65 keypair for POLARIS_PQC_SIGNING_KEY_FILE.
+def generate_keypair(algorithm=None) -> dict:
+    """Generate a fresh keypair for POLARIS_PQC_SIGNING_KEY_FILE under `algorithm` (an
+    accepted parameter set; default POLARIS_PQC_ALGORITHM, else ML-DSA-65).
 
     Returns {algorithm, secret_key_hex, public_key_hex}. The secret key is the
     issuer's long-lived signing key: write it to a 0600 file (or load it into an
@@ -234,11 +265,14 @@ def generate_keypair() -> dict:
         raise PQCUnavailableError(
             f"liboqs-python is not importable: {_OQS_IMPORT_ERROR}.")
     import oqs as _oqs  # type: ignore
-    with _oqs.Signature(_ALG_NAME) as signer:
+    alg = algorithm or custody.configured_algorithm()
+    if alg not in ACCEPTED_ALGORITHMS:
+        raise ValueError(f"{alg!r} is not an accepted algorithm ({', '.join(ACCEPTED_ALGORITHMS)})")
+    with _oqs.Signature(alg) as signer:
         public_key = signer.generate_keypair()
         secret_key = signer.export_secret_key()
     return {
-        "algorithm": _ALG_NAME,
+        "algorithm": alg,
         "secret_key_hex": secret_key.hex(),
         "public_key_hex": public_key.hex(),
     }
@@ -279,16 +313,18 @@ def sign(message: bytes, agency_id=None) -> SigningResult:
     # PE.3b: pick the issuing agency's key when one is registered.
     cust = custody.get_custody_for_agency(agency_id) if agency_id is not None else custody.get_custody()
     if cust is not None:
+        alg = cust.algorithm
         public_key = cust.public_key()
         signature = cust.sign(digest)
     else:
         # No persistent key configured — ephemeral keypair (dev/test only).
-        with _oqs.Signature(_ALG_NAME) as signer:
+        alg = custody.configured_algorithm()
+        with _oqs.Signature(alg) as signer:
             public_key = signer.generate_keypair()
             signature = signer.sign(digest)
 
     return SigningResult(
-        algorithm_name=_ALG_NAME,
+        algorithm_name=alg,
         public_key_hex=public_key.hex(),
         signature_hex=signature.hex(),
         message_hash_hex=digest.hex(),
@@ -448,6 +484,7 @@ def verify(
     message: bytes,
     signature_hex: str,
     public_key_hex: str,
+    algorithm=None,
 ) -> bool:
     """Verify a signature against (message, public_key).
 
@@ -471,8 +508,11 @@ def verify(
     except ValueError:
         return False
 
+    alg = algorithm or custody.algorithm_for_public_key(public_key)
+    if not isinstance(alg, str) or alg not in ACCEPTED_ALGORITHMS:
+        return False
     try:
-        with _oqs.Signature(_ALG_NAME) as verifier:
+        with _oqs.Signature(alg) as verifier:
             return verifier.verify(digest, signature, public_key)
     except Exception:
         return False
@@ -483,7 +523,7 @@ def second_witness_available() -> bool:
     return _WITNESS_AVAILABLE
 
 
-def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: str):
+def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: str, algorithm=None):
     """Independent ML-DSA-65 verify via cryptography/OpenSSL — NOT liboqs.
 
     Returns True/False (the witness's verdict), or None when the witness cannot
@@ -498,7 +538,11 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
     except ValueError:
         return False
     try:
-        pk = _mldsa.MLDSA65PublicKey.from_public_bytes(pk_bytes)
+        alg = algorithm or custody.algorithm_for_public_key(pk_bytes)
+        cls = getattr(_mldsa, _WITNESS_CLASSES.get(alg, "") if isinstance(alg, str) else "", None)
+        if cls is None:
+            return None  # no witness implements this parameter set
+        pk = cls.from_public_bytes(pk_bytes)
     except Exception:
         return None  # the witness cannot load this key — it cannot witness
     digest = hashlib.sha3_256(message).digest()
@@ -513,7 +557,7 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
 
 
 def verify_both(message: bytes, signature_hex: str, public_key_hex: str,
-                *, require_witness: bool = False) -> bool:
+                *, require_witness: bool = False, algorithm=None) -> bool:
     """Two-witness ML-DSA-65 verify (v9.133): the primary (liboqs) AND an
     independent second witness (cryptography/OpenSSL) must AGREE the signature is
     valid. A DISAGREEMENT (one accepts, one rejects) is a cryptographic red flag —
@@ -528,8 +572,8 @@ def verify_both(message: bytes, signature_hex: str, public_key_hex: str,
     downgrade to one implementation. Raises PQCUnavailableError if the PRIMARY
     (oqs) is unavailable.
     """
-    primary = verify(message, signature_hex, public_key_hex)
-    witness = _verify_second_witness(message, signature_hex, public_key_hex)
+    primary = verify(message, signature_hex, public_key_hex, algorithm=algorithm)
+    witness = _verify_second_witness(message, signature_hex, public_key_hex, algorithm=algorithm)
     if witness is None:
         if require_witness:
             sys.stderr.write(
@@ -610,12 +654,13 @@ def verify_token_signature(
       proof (there is no key); it only confirms the bytes match `token_value`.
     - anything else — False (unknown signature scheme).
     """
-    if algorithm_label == _ALG_NAME:
+    if algorithm_label in ACCEPTED_ALGORITHMS:
         anchors = trust_anchor_public_keys()
         if not anchors:
             return False
         # The current key first, then any previous keys still trusted (rotation).
-        return any(verify_both(token_value.encode("utf-8"), signature_bytes.hex(), a) for a in anchors)
+        return any(verify_both(token_value.encode("utf-8"), signature_bytes.hex(), a, algorithm=algorithm_label)
+                   for a in anchors)
     if algorithm_label == PLACEHOLDER_LABEL:
         import hmac
         expected = hashlib.sha3_256(token_value.encode("utf-8")).digest()

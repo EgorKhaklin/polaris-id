@@ -45,10 +45,35 @@ import re
 import threading
 from typing import Optional
 
-ALGORITHM = "ML-DSA-65"
-PUBLIC_KEY_LEN = 1952
-SIGNATURE_LEN = 3309
+# P8.8a (v9.329): the accepted FIPS 204 parameter sets and their raw sizes. ML-DSA-65 (NIST
+# level 3) is the default; ML-DSA-87 (level 5) is accepted for migration and high-assurance
+# keys; ML-DSA-44 is below the system's floor and is not accepted anywhere. A key file names
+# its parameter set and the driver signs under it, so one instance can hold keys of both.
+DEFAULT_ALGORITHM = "ML-DSA-65"
+ALGORITHM_SIZES = {"ML-DSA-65": (1952, 3309), "ML-DSA-87": (2592, 4627)}
+ACCEPTED_ALGORITHMS = tuple(ALGORITHM_SIZES)
+ALGORITHM = DEFAULT_ALGORITHM          # the historical name of the default parameter set
+PUBLIC_KEY_LEN, SIGNATURE_LEN = ALGORITHM_SIZES[DEFAULT_ALGORITHM]
 DIGEST_LEN = 32
+_ALGORITHM_ENV = "POLARIS_PQC_ALGORITHM"
+
+
+def configured_algorithm() -> str:
+    """The parameter set this process generates keys and ephemeral signatures under:
+    POLARIS_PQC_ALGORITHM, default ML-DSA-65. An unaccepted value fails loud."""
+    alg = os.environ.get(_ALGORITHM_ENV) or DEFAULT_ALGORITHM
+    if alg not in ALGORITHM_SIZES:
+        raise CustodyError(f"{_ALGORITHM_ENV}={alg!r} is not an accepted algorithm "
+                           f"({', '.join(ACCEPTED_ALGORITHMS)})")
+    return alg
+
+
+def algorithm_for_public_key(public_key: bytes):
+    """The accepted parameter set a raw public key's length identifies, or None."""
+    for name, (pk_len, _sig_len) in ALGORITHM_SIZES.items():
+        if len(public_key) == pk_len:
+            return name
+    return None
 
 # ML-DSA-65 SubjectPublicKeyInfo: the raw key is the BIT STRING payload after a
 # fixed 22-byte header (SEQUENCE, AlgorithmIdentifier OID 2.16.840.1.101.3.4.3.18,
@@ -74,6 +99,7 @@ class KeyCustody:
     """The interface. Drivers subclass and implement public_key() and sign()."""
 
     driver = "abstract"
+    algorithm = DEFAULT_ALGORITHM   # the parameter set of the custodied key
 
     @property
     def key_id(self) -> str:
@@ -92,15 +118,15 @@ class KeyCustody:
                                f"got {len(digest) if isinstance(digest, (bytes, bytearray)) else type(digest)}")
 
     def _check_public_key(self, pk: bytes) -> bytes:
-        if len(pk) != PUBLIC_KEY_LEN:
-            raise CustodyError(f"{self.driver}: public key is {len(pk)} bytes, not the {PUBLIC_KEY_LEN} of "
-                               f"{ALGORITHM} (wrong key type or parameter set?)")
+        if len(pk) != ALGORITHM_SIZES[self.algorithm][0]:
+            raise CustodyError(f"{self.driver}: public key is {len(pk)} bytes, not the {ALGORITHM_SIZES[self.algorithm][0]} of "
+                               f"{self.algorithm} (wrong key type or parameter set?)")
         return bytes(pk)
 
     def _check_signature(self, sig: bytes) -> bytes:
-        if len(sig) != SIGNATURE_LEN:
-            raise CustodyError(f"{self.driver}: signature is {len(sig)} bytes, not the {SIGNATURE_LEN} of "
-                               f"{ALGORITHM}")
+        if len(sig) != ALGORITHM_SIZES[self.algorithm][1]:
+            raise CustodyError(f"{self.driver}: signature is {len(sig)} bytes, not the {ALGORITHM_SIZES[self.algorithm][1]} of "
+                               f"{self.algorithm}")
         return bytes(sig)
 
     def describe(self) -> dict:
@@ -109,7 +135,7 @@ class KeyCustody:
         return {
             "driver": self.driver,
             "key_id": self.key_id,
-            "algorithm": ALGORITHM,
+            "algorithm": self.algorithm,
             "public_key_fingerprint": fingerprint(pk),
             "public_key_len": len(pk),
         }
@@ -129,8 +155,10 @@ class FileCustody(KeyCustody):
         try:
             with open(path) as fh:
                 data = json.load(fh)
-            if data.get("algorithm") != ALGORITHM:
-                raise CustodyError(f"file: {path} algorithm {data.get('algorithm')!r} != {ALGORITHM}")
+            if data.get("algorithm") not in ALGORITHM_SIZES:
+                raise CustodyError(f"file: {path} algorithm {data.get('algorithm')!r} is not accepted "
+                                   f"({', '.join(ACCEPTED_ALGORITHMS)})")
+            self.algorithm = data["algorithm"]
             self._sk = bytes.fromhex(data["secret_key_hex"])
             self._pk = self._check_public_key(bytes.fromhex(data["public_key_hex"]))
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -149,7 +177,7 @@ class FileCustody(KeyCustody):
             import oqs  # type: ignore
         except ImportError as exc:
             raise CustodyError(f"file: liboqs-python is required to sign with a file key: {exc}") from exc
-        with oqs.Signature(ALGORITHM, secret_key=self._sk) as signer:
+        with oqs.Signature(self.algorithm, secret_key=self._sk) as signer:
             return self._check_signature(signer.sign(bytes(digest)))
 
     def keypair(self) -> tuple:

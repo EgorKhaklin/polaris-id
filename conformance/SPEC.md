@@ -9,8 +9,8 @@ The suite covers the **offline** checks over the protocol's signed artifacts, ea
 specified normatively in [`docs/reference/WIRE-SPEC.md`](../docs/reference/WIRE-SPEC.md). It
 certifies the **authenticity** of all seven app-signed artifacts:
 
-- the **authenticity pack** (is the ML-DSA-65 signature genuine, and -- with a trusted
-  issuer anchor set -- is the signing key trusted?);
+- the **authenticity pack** (is the ML-DSA signature genuine under the declared, accepted
+  parameter set, and -- with a trusted issuer anchor set -- is the signing key trusted?);
 - the **status assertion** (genuine, fresh, and ACTIVE?);
 - and the **epoch checkpoint**, **revocation feed**, **federation manifest**, **status
   bundle**, and **transparency STH**, each verified through one generic signed-statement
@@ -52,8 +52,10 @@ authenticity pack the verdict is:
 { "authentic": true, "issuer_trusted": true }
 ```
 
-- `authentic` (bool) -- the signature verifies as a genuine ML-DSA-65 signature
-  over `SHA3-256(token_value.encode("utf-8"))` under the pack's `public_key_hex`.
+- `authentic` (bool) -- the signature verifies as a genuine ML-DSA signature under the
+  pack's declared `algorithm` (ML-DSA-65 or ML-DSA-87; a genuine ML-DSA-44 signature MUST
+  be `false`, the set is below the floor) over `SHA3-256(token_value.encode("utf-8"))`
+  under the pack's `public_key_hex`.
   A placeholder pack (`algorithm` is the placeholder label, or a null
   `public_key_hex`) is **not** authenticatable offline and MUST be `false`.
 - `issuer_trusted` (bool or null) -- `null` when no `anchors` were supplied;

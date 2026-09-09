@@ -394,3 +394,49 @@ class SecondWitnessDegradationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class AlgorithmAgilityTests(unittest.TestCase):
+    """P8.8a (v9.329): the accepted parameter sets agree across modules, a key file names its
+    parameter set and the file driver signs under it, and an unaccepted set is refused."""
+
+    def test_accepted_sets_agree_with_custody(self):
+        import custody
+        self.assertEqual(tuple(pqc_signing.ACCEPTED_ALGORITHMS), tuple(custody.ACCEPTED_ALGORITHMS))
+        self.assertEqual(pqc_signing.DEFAULT_ALGORITHM, custody.DEFAULT_ALGORITHM)
+        self.assertIsNone(pqc_signing.algorithm_for_public_key_hex("ab" * 1312))   # ML-DSA-44: not accepted
+        self.assertEqual(pqc_signing.algorithm_for_public_key_hex("ab" * 1952), "ML-DSA-65")
+        self.assertEqual(pqc_signing.algorithm_for_public_key_hex("ab" * 2592), "ML-DSA-87")
+
+    def test_unaccepted_parameter_set_is_refused(self):
+        if not pqc_signing.is_available():
+            self.skipTest("liboqs not importable")
+        with self.assertRaises(ValueError):
+            pqc_signing.generate_keypair(algorithm="ML-DSA-44")
+
+    def test_file_key_names_its_parameter_set_and_signs_under_it(self):
+        if not pqc_signing.is_available():
+            self.skipTest("liboqs not importable")
+        import json, tempfile, custody
+        old = dict(os.environ)
+        try:
+            os.environ["POLARIS_USE_REAL_PQC"] = "1"
+            for alg, pk_len in (("ML-DSA-65", 1952), ("ML-DSA-87", 2592)):
+                kp = pqc_signing.generate_keypair(algorithm=alg)
+                self.assertEqual(kp["algorithm"], alg)
+                self.assertEqual(len(bytes.fromhex(kp["public_key_hex"])), pk_len)
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+                    json.dump(kp, fh)
+                os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = fh.name
+                custody._reset_for_tests() if hasattr(custody, "_reset_for_tests") else None
+                self.assertEqual(pqc_signing.algorithm_name(), alg)
+                res = pqc_signing.sign(b"agile")
+                self.assertEqual(res.algorithm_name, alg)
+                self.assertTrue(pqc_signing.verify(b"agile", res.signature_hex, res.public_key_hex))
+                self.assertTrue(pqc_signing.verify(b"agile", res.signature_hex, res.public_key_hex, algorithm=alg))
+                other = "ML-DSA-87" if alg == "ML-DSA-65" else "ML-DSA-65"
+                self.assertFalse(pqc_signing.verify(b"agile", res.signature_hex, res.public_key_hex, algorithm=other))
+                self.assertFalse(pqc_signing.verify(b"agile", res.signature_hex, res.public_key_hex, algorithm="ML-DSA-44"))
+        finally:
+            os.environ.clear(); os.environ.update(old)
+

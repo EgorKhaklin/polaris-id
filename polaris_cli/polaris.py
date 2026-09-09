@@ -1697,6 +1697,8 @@ def build_parser():
         p_k.add_argument('public_key_hex', help='The key (hex)')
         p_k.add_argument('--effective-at', default=None, help='ISO-8601 instant the event takes effect (default: now)')
         p_k.add_argument('--note', default=None, help='A short note recorded with the event (no personal data)')
+        p_k.add_argument('--algorithm', default=None, choices=('ML-DSA-65', 'ML-DSA-87'),
+                         help='The key\'s parameter set (default: inferred from the key length, else ML-DSA-65)')
 
     # retention (roadmap P1.11)
     p_rsh = sub.add_parser('retention-show',
@@ -1746,6 +1748,16 @@ def build_parser():
     return p
 
 
+_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87'}
+
+
+def _key_algorithm(args):
+    """The parameter set recorded with a key event (P8.8a): --algorithm, else the one the
+    key's length identifies, else the default."""
+    explicit = getattr(args, 'algorithm', None)
+    return explicit or _KEY_ALGORITHM_BY_HEX_LENGTH.get(len(args.public_key_hex), 'ML-DSA-65')
+
+
 def _cmd_key_event(args, event):
     """Append one authority-key event (P8.7b). 'registered' also makes the key the agency's
     current signing key; a retirement or compromise never edits history, it appends to it."""
@@ -1753,9 +1765,9 @@ def _cmd_key_event(args, event):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event, effective_at, note) "
-                "VALUES (%s, %s, %s, COALESCE(%s::timestamp, CURRENT_TIMESTAMP), %s) RETURNING event_id",
-                (args.agency_id, args.public_key_hex.lower(), event, args.effective_at, args.note))
+                "INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event, effective_at, note) "
+                "VALUES (%s, %s, %s, %s, COALESCE(%s::timestamp, CURRENT_TIMESTAMP), %s) RETURNING event_id",
+                (args.agency_id, args.public_key_hex.lower(), _key_algorithm(args), event, args.effective_at, args.note))
             event_id = cur.fetchone()[0]
             if event == 'registered':
                 cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = %s",

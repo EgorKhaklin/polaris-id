@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.329 — 2026-09-09 (Algorithm agility and migration, P8.8a)
+
+Before this ship every signature was ML-DSA-65 by construction, in the signer, in every
+signed body (written by hand before signing) and in every verifier. Now the key decides.
+
+- **Two accepted parameter sets, one floor.** ML-DSA-65 (the default) and ML-DSA-87 are
+  accepted by the signer, the detached verifier, both SDKs and the app's two witnesses;
+  ML-DSA-44 and any unknown value are refused without guessing, and the acceptance
+  predicate is total (the fuzzer found that a hostile dict in `algorithm` raised a
+  `TypeError` at the new gate; it now fails closed).
+- **The key decides, before signing.** A key file names its parameter set and the file
+  custody driver signs under it (`POLARIS_PQC_ALGORITHM` picks the set for new keys). No
+  signed body hardcodes its algorithm any more: `_signing_algorithm(agency_id)` reads it
+  from the custodied key before signing, since `algorithm` is a signed field and the old
+  code overwrote it from the signing result afterwards, which would have broken every
+  signature under another set. The registry advertises the accepted set
+  (`instance.protocol.algorithms`) and its own signing set; each listed key carries its
+  algorithm; the app's two-witness checks verify under each statement's declared set.
+- **Migration is a key-lifecycle event.** `key-register --algorithm ML-DSA-87` (the set is
+  inferred from the key length when not given) makes the new key current; the old one is
+  retired from an instant (P8.7b). A trust list signed by a retired key is refused.
+- **Proven.** `--selftest` signs under ML-DSA-87 and refuses a genuine ML-DSA-44 pack; six
+  new conformance vectors (`conformance/make_algorithm_vectors.py`: an ML-DSA-87 pack valid
+  and tampered, a genuine ML-DSA-44 pack that MUST be refused, a status assertion under
+  ML-DSA-87, a trust list recording a migration and the same list signed by the retired
+  key) and both SDKs pass all 44 cases; the fuzzer runs under both sets in CI; the
+  two-instance drill federates a mixed pair by default (A under ML-DSA-87, B under
+  ML-DSA-65) and B reports each key under its real algorithm. Wire spec sections 2 and 6
+  carry the normative rule; `check_algorithm_agility` (#183) pins it all; 183 checks.
+- **Limits stated.** The PKCS#11 and KMS custody drivers remain ML-DSA-65 (a ceremony
+  change, not a code change); SLH-DSA stays a registered row without a signer.
+
 ## v9.328 — 2026-09-09 (The trust-service lifecycle: compromise recovery, P8.7b)
 
 Before this ship an authority had one key and every surface said "active". Now a key's whole

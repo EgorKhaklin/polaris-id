@@ -7529,6 +7529,84 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
+    """P8.8a (v9.329): algorithm agility and migration. Two FIPS 204 parameter sets are accepted
+    everywhere (ML-DSA-65 the default, ML-DSA-87), ML-DSA-44 is refused as below the floor, and
+    no signed body hardcodes its algorithm: the key that signs decides it (C7 in the signed
+    statements). The file custody driver signs under the parameter set its key file names; the
+    detached verifier, both SDKs and the app's two witnesses dispatch on the declared algorithm
+    and fail closed on any other value; vectors under both sets plus an ML-DSA-44 refusal are in
+    the conformance suite; the fuzzer runs under both in CI; the two-instance drill federates a
+    mixed-algorithm pair; the CLI records a key's parameter set."""
+    cust = _read(root, "polaris_web/custody.py")
+    for sym in ("ACCEPTED_ALGORITHMS", '"ML-DSA-87": (2592, 4627)', "def configured_algorithm", "def algorithm_for_public_key",
+                'self.algorithm = data["algorithm"]', "oqs.Signature(self.algorithm, secret_key=self._sk)"):
+        if sym not in cust:
+            return _fail("algorithm_agility", "polaris_web/custody.py must accept both parameter sets and sign under the key file's (%s missing)" % sym)
+    pq = _read(root, "polaris_web/pqc_signing.py")
+    for sym in ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")', '"MLDSA87PublicKey"', "def algorithm_name",
+                "def algorithm_for_public_key_hex", "def generate_keypair(algorithm=None)"):
+        if sym not in pq:
+            return _fail("algorithm_agility", "polaris_web/pqc_signing.py must be algorithm-agile (%s missing)" % sym)
+    if "_oqs.Signature(_ALG_NAME)" in pq:
+        return _fail("algorithm_agility", "pqc_signing.py still signs or verifies under a hardcoded parameter set")
+    app = _read(root, "polaris_web/app.py")
+    if "'algorithm': 'ML-DSA-65'" in app:
+        return _fail("algorithm_agility", "polaris_web/app.py hardcodes a signed body's algorithm; the signing key decides it (C7)")
+    for sym in ("def _signing_algorithm", "def _algorithm_of_key", "'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS)",
+                "'signing_algorithm': _signing_algorithm(agency_id)"):
+        if sym not in app:
+            return _fail("algorithm_agility", "polaris_web/app.py must derive algorithms from the key and advertise the accepted set (%s missing)" % sym)
+    if app.count("_signing_algorithm(") < 10:
+        return _fail("algorithm_agility", "every signed statement body must carry the signing key's algorithm before signing")
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("_ACCEPTED = {", '"ML-DSA-87": ("MLDSA87PublicKey"', "def _accepted_alg",
+                "def _two_witness_verify(digest, sig, pk, alg=_ALG)", "a genuine ML-DSA-44 pack is refused"):
+        if sym not in v:
+            return _fail("algorithm_agility", "scripts/polaris-verify.py must dispatch on the declared algorithm, refuse ML-DSA-44 and prove it in --selftest (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("algorithm_agility", f"the offline verifier imports {mod!r}; it must stay standalone")
+    py = _read(root, "sdk/python/polaris_verify/__init__.py")
+    if 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}' not in py or "def _accepted" not in py:
+        return _fail("algorithm_agility", "the Python SDK must accept both parameter sets through a total predicate")
+    ts = _read(root, "sdk/typescript/src/index.ts")
+    for sym in ("ml_dsa87", "ACCEPTED_ALGORITHMS", "verifierFor("):
+        if sym not in ts:
+            return _fail("algorithm_agility", "the TypeScript SDK must dispatch on the declared algorithm (%s missing)" % sym)
+    cases = _read(root, "conformance/cases.json")
+    for name in ("pack-mldsa87-valid", "pack-mldsa44-unaccepted", "status-assertion-mldsa87-active", "trust-list-migration",
+                 "trust-list-migration-retired-signer"):
+        if '"name": "%s"' % name not in cases:
+            return _fail("algorithm_agility", "conformance/cases.json must carry the two-algorithm cases (%s missing)" % name)
+    if '"algorithm": "ML-DSA-87"' not in _read(root, "conformance/vectors/pack-mldsa87-valid.json"):
+        return _fail("algorithm_agility", "conformance/vectors/pack-mldsa87-valid.json must be a real ML-DSA-87 vector")
+    if not _read(root, "conformance/make_algorithm_vectors.py"):
+        return _fail("algorithm_agility", "conformance/make_algorithm_vectors.py must regenerate the two-algorithm vectors")
+    if "POLARIS_FUZZ_ALGORITHM" not in _read(root, "scripts/polaris-verifier-fuzz.py"):
+        return _fail("algorithm_agility", "the metamorphic fuzzer must run under a chosen parameter set")
+    if "POLARIS_FUZZ_ALGORITHM: ML-DSA-87" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("algorithm_agility", "CI must run the fuzzer under ML-DSA-87 as well as the default")
+    fed = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if "POLARIS_DRILL_ALGORITHM_A" not in fed or '"ML-DSA-87"' not in fed:
+        return _fail("algorithm_agility", "the two-instance drill must federate a mixed-algorithm pair")
+    cli = _read(root, "polaris_cli/polaris.py")
+    if "--algorithm" not in cli or "_KEY_ALGORITHM_BY_HEX_LENGTH" not in cli:
+        return _fail("algorithm_agility", "the CLI must record a registered key's parameter set")
+    spec = _read(root, "docs/reference/WIRE-SPEC.md")
+    if "ML-DSA-87" not in spec or "ML-DSA-44" not in spec:
+        return _fail("algorithm_agility", "the wire spec must name the accepted parameter sets and the floor")
+    if not _read(root, "docs/design/algorithm-migration.md"):
+        return _fail("algorithm_agility", "docs/design/algorithm-migration.md must record the design")
+    if "ML-DSA-87 (accepted parameter set)" not in _read(root, "docs/reference/PQC-POSTURE.md"):
+        return _fail("algorithm_agility", "PQC-POSTURE.md must carry ML-DSA-87 as an accepted parameter set")
+    return _ok("algorithm_agility",
+               "algorithm agility: ML-DSA-65 and ML-DSA-87 are accepted by the signer, the detached verifier, both SDKs and the "
+               "app's two witnesses, ML-DSA-44 is refused, no signed body hardcodes its algorithm (the key decides), vectors "
+               "under both sets are in the conformance suite, the fuzzer runs under both in CI, and a mixed-algorithm "
+               "federation is drilled across two instances")
+
+
 def check_trust_lifecycle(root: pathlib.Path) -> list[Finding]:
     """P8.7b: the trust-service lifecycle as one subsystem. Every authority key's life is an
     append-only event register (registered / retired / compromised, one-way, effective from an
@@ -8324,7 +8402,7 @@ def check_typescript_sdk(root: pathlib.Path) -> list[Finding]:
         return _fail("typescript_sdk",
                      "the TS SDK must verify the status assertion, the signed artifacts, and the federation "
                      "trust decision offline (verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority)")
-    if "@noble/post-quantum/ml-dsa" not in sdk or "ml_dsa65.verify" not in sdk or "sha3_256" not in sdk:
+    if "@noble/post-quantum/ml-dsa" not in sdk or "ml_dsa65" not in sdk or ".verify(" not in sdk or "sha3_256" not in sdk:
         return _fail("typescript_sdk",
                      "the TS SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value) via "
                      "@noble/post-quantum, not trust a flag")
@@ -8610,6 +8688,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_algorithm_agility,
     check_trust_lifecycle,
     check_wallet_presentation,
     check_auth_broker,

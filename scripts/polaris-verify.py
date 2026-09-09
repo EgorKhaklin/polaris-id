@@ -39,7 +39,17 @@ import json
 import os
 import sys
 
-_ALG = "ML-DSA-65"
+_ALG = "ML-DSA-65"          # the default parameter set
+# P8.8a: the accepted FIPS 204 parameter sets -> (cryptography witness class, public key
+# bytes, signature bytes). ML-DSA-44 is below the floor and is rejected like any unknown
+# algorithm; a verifier never guesses a parameter set from a key it was not told about.
+_ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627)}
+
+
+def _accepted_alg(alg):
+    """True iff `alg` names an accepted parameter set. Total: a hostile non-string is simply
+    not accepted (never a TypeError from an unhashable value)."""
+    return isinstance(alg, str) and alg in _ACCEPTED
 _PLACEHOLDER = "DETERMINISTIC-PLACEHOLDER-SHA3-256"
 
 
@@ -48,30 +58,33 @@ def _digest(token_value: str) -> bytes:
     return hashlib.sha3_256(token_value.encode("utf-8")).digest()
 
 
-def _verify_liboqs(digest: bytes, sig: bytes, pk: bytes):
+def _verify_liboqs(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
     """Primary witness: liboqs. Returns True/False, or None if liboqs is absent."""
+    if not _accepted_alg(alg):
+        return False
     try:
         import oqs  # type: ignore
     except Exception:
         return None
     try:
-        with oqs.Signature(_ALG) as v:
+        with oqs.Signature(alg) as v:
             return bool(v.verify(digest, sig, pk))
     except Exception:
         return False
 
 
-def _verify_cryptography(digest: bytes, sig: bytes, pk: bytes):
+def _verify_cryptography(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
     """Second, independent witness: cryptography/OpenSSL. None if unavailable."""
     try:
         from cryptography.hazmat.primitives.asymmetric import mldsa
         from cryptography.exceptions import InvalidSignature
     except Exception:
         return None
-    if not hasattr(mldsa, "MLDSA65PublicKey"):
+    cls_name = _ACCEPTED[alg][0] if _accepted_alg(alg) else None
+    if not cls_name or not hasattr(mldsa, cls_name):
         return None
     try:
-        key = mldsa.MLDSA65PublicKey.from_public_bytes(pk)
+        key = getattr(mldsa, cls_name).from_public_bytes(pk)
     except Exception:
         return None
     try:
@@ -120,8 +133,8 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
                            ("matches" if matches else "does NOT match"))
         return verdict
 
-    if alg != _ALG:
-        verdict["note"] = "unknown signature algorithm: %r" % alg
+    if not _accepted_alg(alg):
+        verdict["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return verdict
 
     if not sig_hex or not pk_hex:
@@ -135,8 +148,8 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
         return verdict
 
     digest = _digest(tok)
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -250,6 +263,26 @@ def selftest() -> int:
                    "public_key_hex": None}
     checks.append(("placeholder is refused",
                    verify_pack(placeholder)["signature_valid"] is False))
+    # P8.8a: algorithm agility. An ML-DSA-87 pack verifies under its own parameter set; a
+    # signature claiming the wrong set fails; a genuine ML-DSA-44 pack is refused (below the floor).
+    enabled = set(oqs.get_enabled_sig_mechanisms())
+    if "ML-DSA-87" in enabled:
+        with oqs.Signature("ML-DSA-87") as s87:
+            pk87 = bytes(s87.generate_keypair())
+            sig87 = bytes(s87.sign(digest))
+        p87 = dict(pack_for(tok, sig87, pk87), algorithm="ML-DSA-87")
+        checks.append(("ML-DSA-87 pack verifies (algorithm agility)", verify_pack(p87)["signature_valid"] is True))
+        bad87 = bytearray(sig87); bad87[0] ^= 0x01
+        checks.append(("flipped ML-DSA-87 signature fails",
+                       verify_pack(dict(p87, signature_hex=bytes(bad87).hex()))["signature_valid"] is False))
+        checks.append(("an ML-DSA-87 signature claiming ML-DSA-65 fails",
+                       verify_pack(dict(p87, algorithm="ML-DSA-65"))["signature_valid"] is False))
+    if "ML-DSA-44" in enabled:
+        with oqs.Signature("ML-DSA-44") as s44:
+            pk44 = bytes(s44.generate_keypair())
+            sig44 = bytes(s44.sign(digest))
+        checks.append(("a genuine ML-DSA-44 pack is refused (below the floor)",
+                       verify_pack(dict(pack_for(tok, sig44, pk44), algorithm="ML-DSA-44"))["signature_valid"] is False))
     ok = True
     for name, passed in checks:
         print("  [%s] %s" % ("PASS" if passed else "FAIL", name))
@@ -310,8 +343,11 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_status_assertion_canonical(assertion)).digest()
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -432,8 +468,11 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
         v["note"] = "the manifest is not signed by one of its own declared active anchors"
         return v
     digest = hashlib.sha3_256(_manifest_canonical(manifest)).digest()
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -611,12 +650,14 @@ def revocation_leaf(token_value):
     return hashlib.sha3_256(token_value.encode("utf-8")).hexdigest()
 
 
-def _two_witness_verify(digest, sig, pk):
+def _two_witness_verify(digest, sig, pk, alg=_ALG):
     """Shared ML-DSA-65 two-witness check (liboqs primary, cryptography second). Returns
     (ok, ran, note): ok is True/False, or None when no verifier is available or the two
     witnesses disagree -- in which case `note` says which."""
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        return None, [], "unknown or unaccepted signature algorithm: %r" % alg
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -674,7 +715,7 @@ def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=No
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_epoch_checkpoint_canonical(cp)).digest()
-    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -767,7 +808,7 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_revocation_feed_canonical(feed)).digest()
-    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -908,7 +949,7 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_status_bundle_canonical(bundle)).digest()
-    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -1220,8 +1261,11 @@ def verify_timestamp(ts, now=None, anchor_keys=None):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_timestamp_canonical(ts)).digest()
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -1374,8 +1418,11 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
         v["note"] = "the registry is not signed by the key it lists for its own publisher"
         return v
     digest = hashlib.sha3_256(_registry_canonical(reg)).digest()
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -1509,7 +1556,8 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     if envelope.get("format") != _EXCHANGE_REQUEST_FORMAT:
         v["note"] = "not a %s" % _EXCHANGE_REQUEST_FORMAT
         return v
-    if envelope.get("algorithm") == _PLACEHOLDER or not pk_hex:
+    alg = envelope.get("algorithm")
+    if alg == _PLACEHOLDER or not pk_hex:
         v["note"] = "placeholder envelope -- not authenticatable offline"
         return v
     # The signature envelope's key is the verification key (as for every artifact); it MUST be
@@ -1523,8 +1571,11 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_exchange_request_canonical(envelope)).digest()
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -1657,8 +1708,11 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_signed_document_canonical(doc)).digest()
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -1777,8 +1831,11 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_id_token_canonical(tok)).digest()
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -1860,8 +1917,11 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
         v["note"] = "the trust list is not signed by a key it lists as active for its own publisher"
         return v
     digest = hashlib.sha3_256(_trust_list_canonical(tl)).digest()
-    primary = _verify_liboqs(digest, sig, pk)
-    witness = _verify_cryptography(digest, sig, pk)
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    primary = _verify_liboqs(digest, sig, pk, alg)
+    witness = _verify_cryptography(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
@@ -1969,7 +2029,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_exchange_receipt_canonical(receipt)).digest()
-    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -2190,7 +2250,7 @@ def verify_sth(sth, issuer_key=None):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_sth_canonical(sth)).digest()
-    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -2286,7 +2346,7 @@ def verify_cosignature(cosig, witness_key=None):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
     digest = hashlib.sha3_256(_cosignature_canonical(cosig)).digest()
-    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note

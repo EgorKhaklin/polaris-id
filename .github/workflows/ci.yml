@@ -1599,6 +1599,13 @@ jobs:
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py
 
+      # v9.329 (P8.8a) — the same battery under ML-DSA-87: the verifier must be total under
+      # every accepted parameter set, not only the default.
+      - name: Detached verifier — metamorphic fuzz under ML-DSA-87
+        run: python scripts/polaris-verifier-fuzz.py
+        env:
+          POLARIS_FUZZ_ALGORITHM: ML-DSA-87
+
       # v9.317 (roadmap P8.2) — the exchange receipt, the gateway's evidence-without-retention
       # primitive. A responder signs a receipt committing to the SHA3-256 of a request and a
       # response, never the bodies; a third party proves the exchange occurred and was

@@ -7708,3 +7708,55 @@ def test_federation_in_app_check_discriminates(tmp_path):
     # 4. the Agency schema loses its signing key column
     write({"polaris_sql/01_schema.sql": "CREATE TABLE Agency (agency_id SERIAL);\n"})
     assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", "must FAIL without the Agency signing-key column"
+
+
+def test_algorithm_agility_check_discriminates(tmp_path):
+    # v9.329 (P8.8a): algorithm agility; each perturbation removes one leg.
+    APP = ("def _signing_algorithm(agency_id=None): return pqc_signing.algorithm_name(agency_id)\n"
+           "def _algorithm_of_key(h, agency_id=None): return None\n"
+           "'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS), 'signing_algorithm': _signing_algorithm(agency_id)\n"
+           + "'algorithm': _signing_algorithm(agency_id),\n" * 10)
+    VER = ('_ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627)}\n'
+           "def _accepted_alg(a): return isinstance(a, str) and a in _ACCEPTED\n"
+           "def _two_witness_verify(digest, sig, pk, alg=_ALG): return None\n"
+           "# selftest: a genuine ML-DSA-44 pack is refused (below the floor)\n")
+    TS = "import { ml_dsa65, ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';\nexport const ACCEPTED_ALGORITHMS = {};\nfunction verifierFor(a) { return null; }\n"
+    good = {
+        'polaris_web/custody.py': ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")\nALGORITHM_SIZES = {"ML-DSA-65": (1952, 3309), "ML-DSA-87": (2592, 4627)}\n'
+                                   "def configured_algorithm(): return 'ML-DSA-65'\ndef algorithm_for_public_key(pk): return None\n"
+                                   'self.algorithm = data["algorithm"]\noqs.Signature(self.algorithm, secret_key=self._sk)\n'),
+        'polaris_web/pqc_signing.py': ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")\n_WITNESS_CLASSES = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}\n'
+                                       "def algorithm_name(agency_id=None): return 'ML-DSA-65'\ndef algorithm_for_public_key_hex(h): return None\n"
+                                       "def generate_keypair(algorithm=None): return {}\n"),
+        'polaris_web/app.py': APP,
+        'scripts/polaris-verify.py': VER,
+        'sdk/python/polaris_verify/__init__.py': 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}\ndef _accepted(a): return True\n',
+        'sdk/typescript/src/index.ts': TS,
+        'conformance/cases.json': '{"cases": [{"name": "pack-mldsa87-valid"}, {"name": "pack-mldsa44-unaccepted"}, {"name": "status-assertion-mldsa87-active"}, {"name": "trust-list-migration"}, {"name": "trust-list-migration-retired-signer"}]}\n',
+        'conformance/vectors/pack-mldsa87-valid.json': '{"algorithm": "ML-DSA-87"}\n',
+        'conformance/make_algorithm_vectors.py': "# generator\n",
+        'scripts/polaris-verifier-fuzz.py': '_FUZZ_ALG = os.environ.get("POLARIS_FUZZ_ALGORITHM", "ML-DSA-65")\n',
+        '.github/workflows/ci.yml': "      - run: python scripts/polaris-verifier-fuzz.py\n        env:\n          POLARIS_FUZZ_ALGORITHM: ML-DSA-87\n",
+        'scripts/polaris-federation-instances-drill.py': 'ALG_A = os.environ.get("POLARIS_DRILL_ALGORITHM_A", "ML-DSA-87")\n',
+        'polaris_cli/polaris.py': "_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87'}\np.add_argument('--algorithm')\n",
+        'docs/reference/WIRE-SPEC.md': "accepted: ML-DSA-65, ML-DSA-87; ML-DSA-44 MUST be rejected\n",
+        'docs/design/algorithm-migration.md': "# Algorithm migration\n",
+        'docs/reference/PQC-POSTURE.md': "| ML-DSA-87 (accepted parameter set) | signing | PQ_SECURE | accepted |\n",
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_web/app.py': APP + "'algorithm': 'ML-DSA-65',\n"})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if a signed body hardcodes its algorithm"
+    write({'sdk/typescript/src/index.ts': TS.replace("ml_dsa87", "ml_dsa65")})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the TypeScript SDK cannot verify ML-DSA-87"
+    write({'conformance/cases.json': good['conformance/cases.json'].replace("pack-mldsa44-unaccepted", "pack-other")})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL without the ML-DSA-44 refusal case"
+    write({'polaris_web/pqc_signing.py': good['polaris_web/pqc_signing.py'] + "with _oqs.Signature(_ALG_NAME) as s: pass\n"})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the signer hardcodes its parameter set"
+    write({'scripts/polaris-verify.py': VER.replace("ML-DSA-44 pack is refused", "ML-DSA-44 pack is accepted")})
+    assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the selftest does not prove the floor"

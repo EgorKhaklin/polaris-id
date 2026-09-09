@@ -1614,12 +1614,24 @@ def _dashboard_service():
     return body.get('status', 'unhealthy'), strip
 
 
+def _signing_algorithm(agency_id=None):
+    """The parameter set this instance signs under for an agency (P8.8a): the custodied key's.
+    Statement bodies carry it BEFORE signing, since `algorithm` is a signed field."""
+    return pqc_signing.algorithm_name(agency_id)
+
+
+def _algorithm_of_key(public_key_hex, agency_id=None):
+    """The parameter set a registered key's length identifies; a key of no accepted shape
+    (the notional seed keys) is reported under the agency's signing algorithm."""
+    return pqc_signing.algorithm_for_public_key_hex(public_key_hex) or _signing_algorithm(agency_id)
+
+
 def _dashboard_signing():
     """Which signer is live, and whether it is the real one."""
     try:
         rep = pqc_signing.availability_report()
     except Exception as exc:  # the report must never take the page down
-        return {'algorithm': 'ML-DSA-65', 'real': False, 'backend': f'unavailable ({type(exc).__name__})',
+        return {'algorithm': pqc_signing.DEFAULT_ALGORITHM, 'real': False, 'backend': f'unavailable ({type(exc).__name__})',
                 'custody': None, 'second_witness': False}
     custody = rep.get('custody') if isinstance(rep.get('custody'), dict) else None
     real = bool(rep.get('is_enabled'))
@@ -1630,7 +1642,7 @@ def _dashboard_signing():
     else:
         backend = 'placeholder digest (development)'
     return {
-        'algorithm': rep.get('algorithm') or 'ML-DSA-65',
+        'algorithm': rep.get('algorithm') or pqc_signing.DEFAULT_ALGORITHM,
         'real': real,
         'backend': backend,
         'custody': custody,
@@ -5427,7 +5439,7 @@ def _authority_keys(agency_id, current_key_hex=None):
              'compromised_at': r['compromised_at'].isoformat() if r['compromised_at'] else None}
             for r in rows]
     if current_key_hex and not any(str(k['public_key_hex']).lower() == str(current_key_hex).lower() for k in keys):
-        keys.append({'public_key_hex': current_key_hex, 'algorithm': 'ML-DSA-65', 'status': 'active',
+        keys.append({'public_key_hex': current_key_hex, 'algorithm': _algorithm_of_key(current_key_hex, agency_id), 'status': 'active',
                      'registered_at': None, 'retired_at': None, 'compromised_at': None})
     return keys
 
@@ -5486,7 +5498,7 @@ def _federation_manifest_body(ag, now):
         'revocation': {'as_of': issued_at},
         'issued_at': issued_at,
         'expires_at': expires_at,
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(agency_id),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_manifest_statement(body), agency_id=agency_id)
     body['algorithm'] = alg
@@ -5588,7 +5600,7 @@ def _epoch_checkpoint_body(ag, now):
         'as_of': issued_at,
         'issued_at': issued_at,
         'expires_at': expires_at,
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(ag['agency_id']),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_epoch_checkpoint_statement(body), agency_id=ag['agency_id'])
     body['algorithm'] = alg
@@ -5649,7 +5661,7 @@ def _revocation_feed_body(ag, now):
         'revoked_leaves': leaves,
         'issued_at': issued_at,
         'expires_at': expires_at,
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(ag['agency_id']),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_revocation_feed_statement(body), agency_id=ag['agency_id'])
     body['algorithm'] = alg
@@ -5763,7 +5775,7 @@ def api_v1_federation_status_bundle(agency_id):
         'member_count': len(members),
         'issued_at': issued_at,
         'expires_at': expires_at,
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(agency_id),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_status_bundle_statement(body), agency_id=agency_id)
     body['algorithm'] = alg
@@ -5874,7 +5886,7 @@ def _build_exchange_receipt(responder, agency_id, fields, occurred_at=None):
         'authorized_via': {'authority': {'agency_id': att['authority_id'], 'name': att['authority_name']},
                            'context_id': context_id},
         'occurred_at': occurred_at,
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(agency_id),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_exchange_receipt_statement(body), agency_id=agency_id)
     body['algorithm'] = alg
@@ -5968,7 +5980,7 @@ def api_v1_exchange_receipt_signed(agency_id):
     # Authentication: the statement verifies, two-witness, under the responder's REGISTERED key.
     try:
         ok = pqc_signing.verify_both(_exchange_mint_statement(mint), sig_hex,
-                                     responder['signing_public_key_hex'], require_witness=True)
+                                     responder['signing_public_key_hex'], require_witness=True, algorithm=mint.get('algorithm'))
     except pqc_signing.PQCUnavailableError:
         ok = False
     if not ok:
@@ -6007,7 +6019,7 @@ def _timestamp_body(agency, agency_id, digest_hex, nonce):
         'format': _TIMESTAMP_FORMAT,
         'authority': {'agency_id': agency['agency_id'], 'name': agency['name']},
         'digest_hex': digest_hex, 'digest_algorithm': 'SHA3-256', 'nonce': nonce,
-        'issued_at': issued_at, 'algorithm': 'ML-DSA-65',
+        'issued_at': issued_at, 'algorithm': _signing_algorithm(agency_id),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_timestamp_statement(ts), agency_id=agency_id)
     ts['algorithm'] = alg
@@ -6160,7 +6172,7 @@ def api_v1_registry(agency_id):
         'format': _REGISTRY_FORMAT,
         'publisher': {'agency_id': publisher['agency_id'], 'name': publisher['name']},
         'instance': {
-            'protocol': {'formats': dict(_PROTOCOL_FORMATS), 'algorithms': ['ML-DSA-65'],
+            'protocol': {'formats': dict(_PROTOCOL_FORMATS), 'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS), 'signing_algorithm': _signing_algorithm(agency_id),
                          'wire_spec': 'docs/reference/WIRE-SPEC.md', 'conformance': 'conformance/cases.json'},
             'services': [dict(s) for s in _REGISTRY_SERVICES],
             'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID],
@@ -6171,7 +6183,7 @@ def api_v1_registry(agency_id):
         'authorities': [
             {'agency_id': a['agency_id'], 'name': a['name'], 'agency_type': a['agency_type'],
              'jurisdiction': a['jurisdiction'], 'authorization_level': a['authorization_level'],
-             'public_key_hex': a['signing_public_key_hex'], 'algorithm': 'ML-DSA-65',
+             'public_key_hex': a['signing_public_key_hex'], 'algorithm': _algorithm_of_key(a['signing_public_key_hex'], a['agency_id']),
              'status': _key_status(a['agency_id'], a['signing_public_key_hex']),
              # P8.7b: the register itself (every key this instance knows for the authority, with its status),
              # so a registry, a manifest's anchors and the trust list all reflect the same register.
@@ -6192,7 +6204,7 @@ def api_v1_registry(agency_id):
         'relying_parties': [{'org_name': r['org_name'], 'scope': r['scope']} for r in rps],
         'issued_at': issued_at,
         'expires_at': expires_at,
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(agency_id),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_registry_statement(body), agency_id=agency_id)
     body['algorithm'] = alg
@@ -6324,7 +6336,8 @@ def api_v1_exchange(target_agency_id):
     if not known:
         return jsonify(error='unknown_requester', error_description='the requester key is not a registered authority on this instance'), 401
     try:
-        ok = pqc_signing.verify_both(_exchange_request_statement(env), sig_hex, req_key, require_witness=True)
+        ok = pqc_signing.verify_both(_exchange_request_statement(env), sig_hex, req_key, require_witness=True,
+                                     algorithm=env.get('algorithm'))
     except pqc_signing.PQCUnavailableError:
         ok = False
     if not ok:
@@ -6415,7 +6428,7 @@ def _sign_document(agency, agency_id, fields, on_behalf_of):
         'on_behalf_of': on_behalf_of,
         'purpose': meta['purpose'],
         'signed_at': now.isoformat().replace('+00:00', 'Z'),
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(agency_id),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_signed_document_statement(doc), agency_id=agency_id)
     doc['algorithm'] = alg
@@ -6623,7 +6636,7 @@ def api_v1_auth_token():
         'enrollment': payload['enr'], 'auth_time': payload['at'],
         'iat': now.isoformat().replace('+00:00', 'Z'),
         'exp': (now + timedelta(seconds=_ID_TOKEN_TTL)).isoformat().replace('+00:00', 'Z'),
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(agency['agency_id']),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_id_token_statement(tok), agency_id=agency['agency_id'])
     tok['algorithm'] = alg
@@ -6660,7 +6673,7 @@ def api_v1_trust_list(agency_id):
         'keys': keys,
         'issued_at': now.isoformat().replace('+00:00', 'Z'),
         'expires_at': (now + timedelta(seconds=_TRUST_LIST_TTL)).isoformat().replace('+00:00', 'Z'),
-        'algorithm': 'ML-DSA-65',
+        'algorithm': _signing_algorithm(agency_id),
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(_trust_list_statement(body), agency_id=agency_id)
     body['algorithm'] = alg

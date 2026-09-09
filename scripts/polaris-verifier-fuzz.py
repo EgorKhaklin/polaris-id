@@ -48,6 +48,9 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "polaris_web"))
 
 _SEED = 20260908  # fixed, so a break reproduces
+# P8.8a: the parameter set every genuine object is signed under (CI runs the battery under
+# ML-DSA-65 and again under ML-DSA-87: the verifier must be total under both).
+_FUZZ_ALG = os.environ.get("POLARIS_FUZZ_ALGORITHM", "ML-DSA-65")
 
 
 def _load_verifier():
@@ -78,13 +81,13 @@ def main():
     tmp = tempfile.mkdtemp(prefix="polaris-verifier-fuzz-")
     now = datetime.now(timezone.utc)
 
-    kp = pqc_signing.generate_keypair()
+    kp = pqc_signing.generate_keypair(algorithm=_FUZZ_ALG)
     kf = os.path.join(tmp, "iss.key.json")
     with open(kf, "w") as f:
         json.dump(kp, f)
     key_hex = kp["public_key_hex"]
 
-    kp2 = pqc_signing.generate_keypair()
+    kp2 = pqc_signing.generate_keypair(algorithm=_FUZZ_ALG)
     kf2 = os.path.join(tmp, "iss2.key.json")
     with open(kf2, "w") as f:
         json.dump(kp2, f)
@@ -104,10 +107,10 @@ def main():
         return _signed({
             "format": "polaris-federation-manifest/1",
             "authority": {"agency_id": "A", "name": "Authority A"},
-            "anchors": [{"public_key_hex": key_hex, "algorithm": "ML-DSA-65", "status": "active"}],
+            "anchors": [{"public_key_hex": key_hex, "algorithm": _FUZZ_ALG, "status": "active"}],
             "attestations": [], "epoch": {"number": 2, "root_hex": "bb" * 16},
             "revocation": {"as_of": _iso(now)}, "issued_at": _iso(now),
-            "expires_at": _iso(now + timedelta(hours=24)), "algorithm": "ML-DSA-65",
+            "expires_at": _iso(now + timedelta(hours=24)), "algorithm": _FUZZ_ALG,
         }, V._manifest_canonical)
 
     def g_checkpoint():
@@ -116,7 +119,7 @@ def main():
             "authority": {"agency_id": "A", "name": "Authority A"},
             "epoch": {"number": 2, "root_hex": "bb" * 16, "committed_count": 2, "valid_until": _iso(now + timedelta(days=30))},
             "prev": {"number": 1, "root_hex": "aa" * 16}, "as_of": _iso(now),
-            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": "ML-DSA-65",
+            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": _FUZZ_ALG,
         }, V._epoch_checkpoint_canonical)
 
     def g_feed():
@@ -126,20 +129,20 @@ def main():
             "authority": {"agency_id": "A", "name": "Authority A"},
             "epoch_number": 2, "as_of": _iso(now), "revoked_root_hex": V.revoked_root(leaves),
             "revoked_count": len(leaves), "revoked_leaves": leaves, "issued_at": _iso(now),
-            "expires_at": _iso(now + timedelta(hours=24)), "algorithm": "ML-DSA-65",
+            "expires_at": _iso(now + timedelta(hours=24)), "algorithm": _FUZZ_ALG,
         }, V._revocation_feed_canonical)
 
     def g_status_assertion():
         return _signed({
             "format": "polaris-status-assertion/1", "token_value": "TKN-ACTIVE-1",
             "status": "ACTIVE", "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=1)),
-            "algorithm": "ML-DSA-65",
+            "algorithm": _FUZZ_ALG,
         }, V._status_assertion_canonical)
 
     def g_sth():
         return _signed({
             "format": "polaris-transparency-sth/1", "log_id": "polaris-audit-anchor-log",
-            "tree_size": 7, "root_hash_hex": "cd" * 32, "timestamp": _iso(now), "algorithm": "ML-DSA-65",
+            "tree_size": 7, "root_hash_hex": "cd" * 32, "timestamp": _iso(now), "algorithm": _FUZZ_ALG,
         }, V._sth_canonical)
 
     def g_bundle():
@@ -149,7 +152,7 @@ def main():
             "format": "polaris-federation-status-bundle/1",
             "publisher": {"agency_id": "P", "name": "Publisher P"}, "members": members,
             "members_root_hex": V.bundle_members_root(members), "member_count": len(members),
-            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=1)), "algorithm": "ML-DSA-65",
+            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=1)), "algorithm": _FUZZ_ALG,
         }
         return _signed(body, V._status_bundle_canonical)
 
@@ -157,7 +160,7 @@ def main():
         return _signed({
             "format": "polaris-timestamp/1", "authority": {"agency_id": "T", "name": "Timestamp Authority T"},
             "digest_hex": hashlib.sha3_256(b"some data").hexdigest(), "digest_algorithm": "SHA3-256",
-            "nonce": "client-nonce-1", "issued_at": _iso(now), "algorithm": "ML-DSA-65",
+            "nonce": "client-nonce-1", "issued_at": _iso(now), "algorithm": _FUZZ_ALG,
         }, V._timestamp_canonical)
 
     def g_registry():
@@ -167,10 +170,10 @@ def main():
                          "services": [{"kind": "timestamp", "path": "/api/v1/timestamp/{agency_id}", "auth": "none", "method": "POST"}],
                          "transparency_logs": ["polaris-audit-anchor-log"], "disclosure_levels": ["ZERO_KNOWLEDGE"]},
             "authorities": [{"agency_id": 1, "name": "Authority A", "agency_type": "FEDERAL", "jurisdiction": "US",
-                             "authorization_level": 5, "public_key_hex": key_hex, "algorithm": "ML-DSA-65", "status": "active"}],
+                             "authorization_level": 5, "public_key_hex": key_hex, "algorithm": _FUZZ_ALG, "status": "active"}],
             "contexts": [{"context_id": 1, "context_type": "BANKING", "requires_biometric": False, "min_security_level": 128}],
             "trust": [], "relying_parties": [],
-            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": "ML-DSA-65",
+            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": _FUZZ_ALG,
         }, V._registry_canonical)
 
     def g_exchange_request():
@@ -178,7 +181,7 @@ def main():
             "format": "polaris-exchange-request/1", "requester": {"public_key_hex": key_hex},
             "target": {"agency_id": 1, "kind": "echo"}, "context_id": 1,
             "request_hash": hashlib.sha3_256(b'{"ask":"x"}').hexdigest(), "nonce": "n-1",
-            "issued_at": _iso(now), "algorithm": "ML-DSA-65",
+            "issued_at": _iso(now), "algorithm": _FUZZ_ALG,
         }, V._exchange_request_canonical)
 
     def g_signed_document():
@@ -187,7 +190,7 @@ def main():
             "document": {"digest_hex": hashlib.sha3_256(b"doc").hexdigest(), "digest_algorithm": "SHA3-256",
                          "media_type": "text/plain", "name": "doc.txt"},
             "signer": {"agency_id": 1, "name": "Authority A"}, "on_behalf_of": None, "purpose": "fuzz",
-            "signed_at": _iso(now), "algorithm": "ML-DSA-65",
+            "signed_at": _iso(now), "algorithm": _FUZZ_ALG,
         }, V._signed_document_canonical)
 
     def g_id_token():
@@ -195,15 +198,15 @@ def main():
             "format": "polaris-id-token/1", "iss": {"agency_id": 1, "name": "Authority A"},
             "sub": hashlib.sha3_256(b"TKN-1").hexdigest(), "aud": "rp_fuzz_client_000000001", "nonce": "n-12345678",
             "context_id": 1, "disclosure_level": "ZERO_KNOWLEDGE", "acr": "polaris:possession", "enrollment": "ENROLLED",
-            "auth_time": _iso(now), "iat": _iso(now), "exp": _iso(now + timedelta(minutes=5)), "algorithm": "ML-DSA-65",
+            "auth_time": _iso(now), "iat": _iso(now), "exp": _iso(now + timedelta(minutes=5)), "algorithm": _FUZZ_ALG,
         }, V._id_token_canonical)
 
     def g_trust_list():
         return _signed({
             "format": "polaris-trust-list/1", "publisher": {"agency_id": 1, "name": "Authority A"},
-            "keys": [{"agency_id": 1, "name": "Authority A", "public_key_hex": key_hex, "algorithm": "ML-DSA-65",
+            "keys": [{"agency_id": 1, "name": "Authority A", "public_key_hex": key_hex, "algorithm": _FUZZ_ALG,
                       "status": "active", "registered_at": _iso(now - timedelta(days=30)), "retired_at": None, "compromised_at": None}],
-            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": "ML-DSA-65",
+            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": _FUZZ_ALG,
         }, V._trust_list_canonical)
 
     # spec: name, build(), verify(obj)->verdict, accept(verdict)->bool, bound_fields

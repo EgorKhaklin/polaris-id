@@ -22,10 +22,17 @@
  * Conformance: `node src/conformance.ts` implements the language-agnostic verifier
  * CLI the published conformance suite drives (see conformance/SPEC.md).
  */
-import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { ml_dsa65, ml_dsa87 } from "@noble/post-quantum/ml-dsa.js";
 import { sha3_256 } from "@noble/hashes/sha3.js";
 
 export const ALGORITHM = "ML-DSA-65";
+/** P8.8a: the accepted FIPS 204 parameter sets. ML-DSA-44 is below the floor and is rejected
+ * like any unknown algorithm; a verifier never guesses a parameter set. */
+export const ACCEPTED_ALGORITHMS: Record<string, typeof ml_dsa65> = { "ML-DSA-65": ml_dsa65, "ML-DSA-87": ml_dsa87 };
+function verifierFor(alg: unknown): typeof ml_dsa65 | null {
+  return typeof alg === "string" && Object.prototype.hasOwnProperty.call(ACCEPTED_ALGORITHMS, alg)
+    ? ACCEPTED_ALGORITHMS[alg] : null;
+}
 export const PLACEHOLDER_LABEL = "DETERMINISTIC-PLACEHOLDER-SHA3-256";
 
 export type AuthenticityVerdict = {
@@ -78,10 +85,15 @@ export function verifyAuthenticity(pack: Pack, anchors?: string[] | null): Authe
   if (!tok || !sigHex) {
     return { authentic: false, issuerTrusted: null, algorithm: alg, note: "pack missing token_value or signature_hex" };
   }
+  const impl = verifierFor(alg);
+  if (!impl) {
+    return { authentic: false, issuerTrusted: null, algorithm: alg,
+             note: "unknown or unaccepted signature algorithm: " + String(alg) };
+  }
   let ok: boolean;
   try {
     const digest = sha3_256(new TextEncoder().encode(tok));
-    ok = ml_dsa65.verify(hexToBytes(sigHex), digest, hexToBytes(pkHex));
+    ok = impl.verify(hexToBytes(sigHex), digest, hexToBytes(pkHex));
   } catch (e) {
     return { authentic: false, issuerTrusted: null, algorithm: alg,
              note: "verification error: " + (e as Error).message };
@@ -161,10 +173,15 @@ export function verifyStatusAssertion(assertion: any, now?: string | null): Stat
   if (a.format !== "polaris-status-assertion/1") {
     return { authentic: false, fresh: null, active: null, status, note: "not a polaris-status-assertion/1" };
   }
+  const impl = verifierFor(a.algorithm);
+  if (!impl) {
+    return { authentic: false, fresh: null, active: null, status,
+             note: "unknown or unaccepted signature algorithm: " + String(a.algorithm) };
+  }
   let ok: boolean;
   try {
     const digest = sha3_256(canonicalBytes(a, STATUS_ASSERTION_KEYS));
-    ok = ml_dsa65.verify(hexToBytes(a.signature_hex), digest, hexToBytes(a.public_key_hex));
+    ok = impl.verify(hexToBytes(a.signature_hex), digest, hexToBytes(a.public_key_hex));
   } catch (e) {
     return { authentic: false, fresh: null, active: null, status, note: "verification error: " + (e as Error).message };
   }
@@ -240,10 +257,14 @@ export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVer
   if (o.algorithm === PLACEHOLDER_LABEL || !o.public_key_hex) {
     return { authentic: false, fresh: null, note: "placeholder -- not authenticatable offline" };
   }
+  const impl = verifierFor(o.algorithm);
+  if (!impl) {
+    return { authentic: false, fresh: null, note: "unknown or unaccepted signature algorithm: " + String(o.algorithm) };
+  }
   let ok: boolean;
   try {
     const digest = sha3_256(canonicalBytes(o, keys));
-    ok = ml_dsa65.verify(hexToBytes(o.signature_hex), digest, hexToBytes(o.public_key_hex));
+    ok = impl.verify(hexToBytes(o.signature_hex), digest, hexToBytes(o.public_key_hex));
   } catch (e) {
     return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
   }

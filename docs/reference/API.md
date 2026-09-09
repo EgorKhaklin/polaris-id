@@ -935,15 +935,15 @@ section 3.15.
 ### `GET /api/v1/registry/<agency_id>`
 
 **Public; no auth (P8.3).** The **signed registry**: what this instance offers and trusts, as one
-machine-readable `polaris-registry/1` signed by the publishing authority -- protocol formats
-and algorithms, services (kind, path template, method, auth), transparency logs, the
+machine-readable `polaris-registry/1` signed by the publishing authority -- protocol formats,
+the accepted algorithms and the publisher's own signing algorithm, services (kind, path template, method, auth), transparency logs, the
 federated authorities it knows with their keys, the verification contexts and the proof each
 requires, the in-context trust graph, and the relying parties it serves (organization and
 scope only). Derived from Athena's views; institutional data only. Short-lived.
 
 ```jsonc
 { "format": "polaris-registry/1", "publisher": {...},
-  "instance": { "protocol": { "formats": { "polaris-timestamp": 1, ... }, "algorithms": ["ML-DSA-65"], ... },
+  "instance": { "protocol": { "formats": { "polaris-timestamp": 1, ... }, "algorithms": ["ML-DSA-65", "ML-DSA-87"], "signing_algorithm": "ML-DSA-65", ... },
                 "services": [ { "kind": "timestamp", "path": "/api/v1/timestamp/{agency_id}", "auth": "none", "method": "POST" }, ... ],
                 "transparency_logs": [...], "disclosure_levels": [...] },
   "authorities": [ { "agency_id": 1, "name": "...", "public_key_hex": "...", "status": "active", ... } ],

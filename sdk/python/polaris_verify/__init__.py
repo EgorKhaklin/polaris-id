@@ -36,7 +36,15 @@ import urllib.request
 from typing import List, Optional
 
 __version__ = "1.0.0"
-ALGORITHM = "ML-DSA-65"
+ALGORITHM = "ML-DSA-65"   # the default parameter set
+# P8.8a: the accepted FIPS 204 parameter sets -> the cryptography witness class. ML-DSA-44 is
+# below the floor and is rejected like any unknown algorithm.
+ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}
+
+
+def _accepted(alg):
+    """True iff `alg` names an accepted parameter set (total over hostile input)."""
+    return isinstance(alg, str) and alg in ACCEPTED_ALGORITHMS
 PLACEHOLDER_LABEL = "DETERMINISTIC-PLACEHOLDER-SHA3-256"
 
 
@@ -67,16 +75,17 @@ def _digest(token_value: str) -> bytes:
     return hashlib.sha3_256(token_value.encode("utf-8")).digest()
 
 
-def _verify_cryptography(digest, sig, pk):
+def _verify_cryptography(digest, sig, pk, alg=ALGORITHM):
     try:
         from cryptography.hazmat.primitives.asymmetric import mldsa
         from cryptography.exceptions import InvalidSignature
     except Exception:
         return None
-    if not hasattr(mldsa, "MLDSA65PublicKey"):
+    cls_name = ACCEPTED_ALGORITHMS[alg] if _accepted(alg) else None
+    if not cls_name or not hasattr(mldsa, cls_name):
         return None
     try:
-        key = mldsa.MLDSA65PublicKey.from_public_bytes(pk)
+        key = getattr(mldsa, cls_name).from_public_bytes(pk)
     except Exception:
         return None
     try:
@@ -88,13 +97,15 @@ def _verify_cryptography(digest, sig, pk):
         return False
 
 
-def _verify_liboqs(digest, sig, pk):
+def _verify_liboqs(digest, sig, pk, alg=ALGORITHM):
+    if not _accepted(alg):
+        return False
     try:
         import oqs  # type: ignore
     except Exception:
         return None
     try:
-        with oqs.Signature(ALGORITHM) as v:
+        with oqs.Signature(alg) as v:
             return bool(v.verify(digest, sig, pk))
     except Exception:
         return False
@@ -106,6 +117,8 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
     whether the pack's key is one of them."""
     tok = pack.get("token_value")
     alg = pack.get("algorithm")
+    if alg != PLACEHOLDER_LABEL and not _accepted(alg):
+        return AuthenticityVerdict(False, None, alg, note="unknown or unaccepted signature algorithm: %r" % (alg,))
     sig_hex = pack.get("signature_hex")
     pk_hex = pack.get("public_key_hex")
     if alg == PLACEHOLDER_LABEL or not pk_hex:
@@ -118,8 +131,8 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
     except (ValueError, TypeError):
         return AuthenticityVerdict(False, None, alg, note="signature_hex/public_key_hex are not valid hex")
     digest = _digest(tok)
-    primary = _verify_cryptography(digest, sig, pk)
-    witness = _verify_liboqs(digest, sig, pk)
+    primary = _verify_cryptography(digest, sig, pk, alg)
+    witness = _verify_liboqs(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("cryptography=%s" % ("valid" if primary else "invalid"))
@@ -153,15 +166,18 @@ def _canonical(obj: dict, keys) -> bytes:
     return json.dumps({k: obj.get(k) for k in keys}, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def _verify_over_digest(digest, sig_hex, pk_hex):
-    """Dual-witness ML-DSA-65 verify over a digest. Returns (ok, witnesses, note); ok is
-    None when no verifier is available or the witnesses disagree."""
+def _verify_over_digest(digest, sig_hex, pk_hex, alg=ALGORITHM):
+    """Dual-witness ML-DSA verify over a digest under `alg` (an accepted parameter set).
+    Returns (ok, witnesses, note); ok is None when no verifier is available, the witnesses
+    disagree, or the algorithm is not accepted."""
+    if not _accepted(alg):
+        return None, [], "unknown or unaccepted signature algorithm: %r" % (alg,)
     try:
         sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
     except (ValueError, TypeError):
         return None, [], "signature_hex/public_key_hex are not valid hex"
-    primary = _verify_cryptography(digest, sig, pk)
-    witness = _verify_liboqs(digest, sig, pk)
+    primary = _verify_cryptography(digest, sig, pk, alg)
+    witness = _verify_liboqs(digest, sig, pk, alg)
     ran = []
     if primary is not None:
         ran.append("cryptography=%s" % ("valid" if primary else "invalid"))
@@ -226,7 +242,8 @@ def verify_status_assertion(assertion: dict, now=None) -> StatusAssertionVerdict
     if assertion.get("format") != "polaris-status-assertion/1":
         return StatusAssertionVerdict(False, None, None, status, "not a polaris-status-assertion/1")
     digest = hashlib.sha3_256(_canonical(assertion, _STATUS_ASSERTION_KEYS)).digest()
-    ok, ran, note = _verify_over_digest(digest, assertion.get("signature_hex"), assertion.get("public_key_hex"))
+    ok, ran, note = _verify_over_digest(digest, assertion.get("signature_hex"), assertion.get("public_key_hex"),
+                                    assertion.get("algorithm"))
     if ok is None:
         return StatusAssertionVerdict(False, None, None, status, note, ran)
     return StatusAssertionVerdict(bool(ok), _within_window(assertion, now), status == "ACTIVE", status,
@@ -319,7 +336,7 @@ def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
     if obj.get("algorithm") == PLACEHOLDER_LABEL or not obj.get("public_key_hex"):
         return ArtifactVerdict(False, None, "placeholder -- not authenticatable offline")
     ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(obj, keys)).digest(),
-                                        obj.get("signature_hex"), obj.get("public_key_hex"))
+                                        obj.get("signature_hex"), obj.get("public_key_hex"), obj.get("algorithm"))
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
     ok = bool(ok)

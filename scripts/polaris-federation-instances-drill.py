@@ -51,6 +51,11 @@ DB_HOST = os.environ.get("POLARIS_DB_HOST", "localhost")
 DB_USER = os.environ.get("POLARIS_DB_USER", "postgres")
 DB_PORT = os.environ.get("POLARIS_DB_PORT", "5432")
 CONTEXT_ID = int(os.environ.get("POLARIS_FED_CONTEXT_ID", "1"))
+# P8.8a: a MIXED-algorithm federation by default. A signs under ML-DSA-87, B under ML-DSA-65,
+# so every cross-instance path is exercised across parameter sets; POLARIS_DRILL_ALGORITHM_A
+# = ML-DSA-65 runs the single-algorithm configuration.
+ALG_A = os.environ.get("POLARIS_DRILL_ALGORITHM_A", "ML-DSA-87")
+ALG_B = "ML-DSA-65"
 
 
 def _load_verifier():
@@ -224,15 +229,16 @@ def main():
     V = _load_verifier()
     tmp = tempfile.mkdtemp(prefix="polaris-fed-inst-")
 
-    def keypair(name):
-        kp = pqc_signing.generate_keypair()
+    def keypair(name, algorithm=ALG_B):
+        kp = pqc_signing.generate_keypair(algorithm=algorithm)
         f = os.path.join(tmp, "%s.json" % name)
         with open(f, "w") as fh:
             json.dump(kp, fh)
         return f, kp["public_key_hex"]
 
-    key_a, pub_a = keypair("keyA")
-    key_b, pub_b = keypair("keyB")
+    key_a, pub_a = keypair("keyA", ALG_A)
+    key_b, pub_b = keypair("keyB", ALG_B)
+    print("  A signs under %s, B under %s (mixed-algorithm federation)" % (ALG_A, ALG_B))
 
     # Register each instance's authority root, and give B an agency row that carries A's
     # key so B can attest to it. All state changes below are real rows on the instances.
@@ -282,7 +288,7 @@ def main():
     log_a, log_b = os.path.join(tmp, "a.log"), os.path.join(tmp, "b.log")
     proc_a = proc_b = None
     try:
-        proc_a = _launch(A_DB, port_a, key_a, log_a)
+        proc_a = _launch(A_DB, port_a, key_a, log_a, extra_env={"POLARIS_PQC_ALGORITHM": ALG_A})
         # P8.2d: B's gateway forwards service kind "echo" to an upstream the DRILL runs (the
         # institution's own service); the mapping is operator configuration, never a request.
         echo_srv = ThreadingHTTPServer(("127.0.0.1", 0), _EchoUpstream)
@@ -350,6 +356,7 @@ def main():
         member_b = {"authority_id": 1, "revocation_feed": b_feed, "epoch_checkpoint": b_cp}
 
         def hub_bundle(member_list):
+            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_b   # select the signer FIRST; the body names its algorithm
             import datetime as _dt
             n = _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0)
             body = {
@@ -360,10 +367,9 @@ def main():
                 "member_count": len(member_list),
                 "issued_at": n.isoformat().replace("+00:00", "Z"),
                 "expires_at": (n + _dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
-                "algorithm": "ML-DSA-65",
+                "algorithm": pqc_signing.algorithm_name(),
             }
             # B signs ONLY the envelope, with B's own key. A's embedded feed keeps A's signature.
-            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_b
             s, _a, p = pqc_signing.signature_over_message(V._status_bundle_canonical(body))
             body["signature_hex"], body["public_key_hex"] = s.hex(), p
             return body
@@ -515,11 +521,11 @@ def main():
         #     verifies offline with no body; replay, strangers, mismatched bodies, tampering,
         #     unknown kinds and stale envelopes are all refused; no body is ever stored or logged.
         def envelope(requester_key, key_file, body, nonce, kind="echo", when=None, target_id=1):
+            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_file   # the key decides the algorithm: select it FIRST
             env = {"format": "polaris-exchange-request/1", "requester": {"public_key_hex": requester_key},
                    "target": {"agency_id": target_id, "kind": kind}, "context_id": CONTEXT_ID,
                    "request_hash": V.canonical_body_hash(body), "nonce": nonce,
-                   "issued_at": when or now_iso, "algorithm": "ML-DSA-65"}
-            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_file
+                   "issued_at": when or now_iso, "algorithm": pqc_signing.algorithm_name()}
             sig, _alg, pk = pqc_signing.signature_over_message(V._exchange_request_canonical(env))
             env["signature_hex"], env["public_key_hex"] = sig.hex(), pk
             return env
@@ -606,7 +612,7 @@ def main():
         wdir = os.path.join(tmp, "wallet"); os.makedirs(wdir)
         pack_path = os.path.join(tmp, "b-pack.json")
         with open(pack_path, "w") as fh:
-            json.dump({"format": "polaris-authenticity-pack/1", "token_value": b_tok_value, "algorithm": "ML-DSA-65",
+            json.dump({"format": "polaris-authenticity-pack/1", "token_value": b_tok_value, "algorithm": _alg_b,
                        "signature_hex": b_sig.hex(), "public_key_hex": b_pk}, fh)
         doc_path = os.path.join(tmp, "report.txt")
         with open(doc_path, "wb") as fh:
@@ -697,8 +703,8 @@ def main():
         checks.append(("with that trust list, A's credential is accepted",
                        V.verify_cross_authority(pack, CONTEXT_ID, [b_manifest()], trusted_anchors=[pub_b], trust_list=tl1)["decision"], "accept"))
         with _conn(B_DB) as cb, cb.cursor() as cur:
-            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event, note) VALUES (2, %s, 'registered', 'drill')", (pub_a,))
-            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event, note) VALUES (2, %s, 'compromised', 'drill: A key compromised')", (pub_a,))
+            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event, note) VALUES (2, %s, %s, 'registered', 'drill')", (pub_a, ALG_A))
+            cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event, note) VALUES (2, %s, %s, 'compromised', 'drill: A key compromised')", (pub_a, ALG_A))
             cb.commit()
         tl2 = _http_get(base_b + "/api/v1/trust-list/1")[1]
         checks.append(("B records A's key COMPROMISED: the re-fetched trust list says so", V.key_status_at(tl2, pub_a), "compromised"))
@@ -707,6 +713,15 @@ def main():
         reg_t = _http_get(base_b + "/api/v1/registry/1")[1]
         checks.append(("B's registry reports A's key status honestly (compromised), no longer a hardcoded active",
                        V.registry_key_status(reg_t, pub_a), "compromised"))
+        # P8.8a: the mixed-algorithm federation is reported honestly, key by key.
+        checks.append(("A's credential verifies under A's own parameter set (%s)" % ALG_A,
+                       V.verify_pack(pack)["signature_valid"] is True and V.verify_pack(pack)["algorithm"] == ALG_A, True))
+        checks.append(("B's trust list reports A's key under its real algorithm, B's under its own",
+                       sorted({(k["algorithm"]) for k in tl2["keys"] if k["public_key_hex"] in (pub_a, pub_b)}),
+                       sorted({ALG_A, ALG_B})))
+        checks.append(("B's registry advertises both accepted parameter sets and its own signing one",
+                       (sorted(reg_t["instance"]["protocol"]["algorithms"]), reg_t["instance"]["protocol"]["signing_algorithm"]),
+                       (["ML-DSA-65", "ML-DSA-87"], ALG_B)))
 
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:

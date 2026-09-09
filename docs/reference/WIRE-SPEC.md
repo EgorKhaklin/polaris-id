@@ -24,12 +24,14 @@ authenticity pack and the published-head leaf are the two exceptions).
 Every signed artifact except the authenticity pack is a JSON object that carries a
 **signed statement** plus a signature envelope. The envelope fields are:
 
-- `algorithm`: the signature algorithm. Version 1 defines exactly one value,
-  `"ML-DSA-65"` (FIPS 204). A verifier MUST reject an artifact whose `algorithm` it
-  does not implement, and MUST treat a placeholder algorithm (any value naming a
-  development placeholder) as not authenticatable.
+- `algorithm`: the signature algorithm, a FIPS 204 parameter set. Version 1 accepts
+  exactly two values, `"ML-DSA-65"` (the default) and `"ML-DSA-87"` (section 6).
+  A verifier MUST verify under the declared value, MUST reject an artifact whose
+  `algorithm` it does not accept (`"ML-DSA-44"` included: it is below the floor), and
+  MUST treat a placeholder algorithm (any value naming a development placeholder) as
+  not authenticatable.
 - `signature_hex`: the signature, lowercase hex.
-- `public_key_hex`: the signer's ML-DSA-65 public key, lowercase hex.
+- `public_key_hex`: the signer's public key under `algorithm`, lowercase hex.
 - `max_window_seconds` (informative): the issuer's declared freshness bound.
 - `digest_construction` (informative): a self-describing string naming the digest.
 
@@ -365,8 +367,24 @@ An artifact declares its type and protocol version in its `format` field, as a
 A breaking change to an artifact's signed fields, semantics, or digest construction
 MUST bump its `format` to `/2`; a new signed field that all conformant verifiers can
 ignore MAY be added within `/1` only if it is not part of the signed statement.
-A future algorithm is introduced by defining a new `algorithm` value; a verifier MUST
-reject an `algorithm` it does not implement rather than guess.
+**Algorithm agility.** `algorithm` names a FIPS 204 parameter set. Version 1 accepts
+`"ML-DSA-65"` (NIST level 3, the default) and `"ML-DSA-87"` (level 5). A verifier MUST
+verify under the declared parameter set: a signature that verifies only under another
+set is invalid, and a value outside the accepted set (`"ML-DSA-44"` included, since it
+is below the floor; any unknown value) MUST be rejected without guessing. Every key an
+artifact lists (a manifest's `anchors`, a registry's `authorities` and their `keys`, a
+trust list's `keys`) carries its own `algorithm`, so one federation can hold keys of both
+sets and a registry advertises the set it accepts (`instance.protocol.algorithms`) beside
+the set its publisher signs under (`instance.protocol.signing_algorithm`).
+
+**Migration** is a key-lifecycle event (3.15), not a protocol change: an authority
+registers a key under the new parameter set (it becomes the current signing key), issues
+under it, and retires the old key from an instant. Evidence signed under the retired key
+before that instant stays valid under long-term validation; a trust list signed under a
+retired key is refused. The conformance suite carries vectors under both accepted sets, a
+genuine ML-DSA-44 pack that MUST be refused, and a trust list recording such a migration.
+A future parameter set or algorithm family is introduced by adding it to the accepted set
+in a new version of this specification; until then a verifier MUST reject it.
 
 There is no runtime version negotiation in version 1: a producer and consumer agree on
 `/1` out of band. Negotiation and a signed capability registry are P8.3.

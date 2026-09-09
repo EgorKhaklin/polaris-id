@@ -362,6 +362,66 @@
       "expect": {
         "authentic": false
       }
+    },
+    {
+      "name": "pack-mldsa87-valid",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-mldsa87-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "note": "P8.8a: a genuine ML-DSA-87 pack verifies; an accepted parameter set beside the default."
+    },
+    {
+      "name": "pack-mldsa87-tampered",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-mldsa87-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "P8.8a: one flipped signature byte under ML-DSA-87."
+    },
+    {
+      "name": "pack-mldsa44-unaccepted",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/vectors/pack-mldsa44-unaccepted.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "P8.8a: a GENUINE ML-DSA-44 signature MUST be refused: the parameter set is below the floor (wire spec section 6)."
+    },
+    {
+      "name": "status-assertion-mldsa87-active",
+      "artifact": "status-assertion",
+      "assertion_file": "conformance/vectors/status-assertion-mldsa87-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "active": true
+      },
+      "note": "P8.8a: the status assertion under ML-DSA-87."
+    },
+    {
+      "name": "trust-list-migration",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-migration.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "note": "P8.8a: an algorithm migration recorded in a trust list: the ML-DSA-65 key retired, the ML-DSA-87 key active and signing."
+    },
+    {
+      "name": "trust-list-migration-retired-signer",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-migration-retired-signer.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "note": "P8.8a: the same list signed by the RETIRED ML-DSA-65 key is refused: a publisher signs only under a key it lists active."
     }
   ]
 }
