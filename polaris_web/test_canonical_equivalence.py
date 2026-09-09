@@ -124,6 +124,14 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._timestamp_statement(b),
         "verify": lambda b: _V._timestamp_canonical(b),
     },
+    # polaris-registry/1 (P8.3): the signed discovery artifact over the Athena authority layer.
+    "registry": {
+        "keys": ["format", "publisher", "instance", "authorities", "contexts", "trust",
+                 "relying_parties", "issued_at", "expires_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._registry_statement(b),
+        "verify": lambda b: _V._registry_canonical(b),
+    },
 }
 
 
@@ -278,6 +286,7 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-revocation-feed/1", "polaris-status-assertion/1",
             "polaris-transparency-sth/1", "polaris-federation-status-bundle/1",
             "polaris-exchange-receipt/1", "polaris-exchange-mint/1", "polaris-timestamp/1",
+            "polaris-registry/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1"}

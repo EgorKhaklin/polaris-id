@@ -7158,6 +7158,7 @@ _WIRE_SIGNED_TYPES = {
     "polaris-exchange-receipt/1": "_exchange_receipt_canonical",
     "polaris-exchange-mint/1": "_exchange_mint_canonical",
     "polaris-timestamp/1": "_timestamp_canonical",
+    "polaris-registry/1": "_registry_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7515,6 +7516,66 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_registry(root: pathlib.Path) -> list[Finding]:
+    """P8.3: the signed registry -- what an instance offers and trusts as ONE machine-readable
+    artifact (protocol formats, services + auth, federated authorities with keys, contexts and
+    the proof they require, the in-context trust graph, relying parties), derived from Athena's
+    views, signed by a publisher that must list itself, verified offline, and used for
+    DISCOVERY: the two-instance drill drives a call from a path it read out of the registry.
+    The advertised formats are pinned to the wire spec's list."""
+    app = _read(root, "polaris_web/app.py")
+    for sym, why in (("/api/v1/registry/<int:agency_id>", "the registry route"),
+                     ("_registry_statement", "the statement builder"),
+                     ("polaris-registry/1", "the format"),
+                     ("_PROTOCOL_FORMATS", "the advertised protocol formats"),
+                     ("_REGISTRY_SERVICES", "the advertised services"),
+                     ("v_athena_agency", "authorities from Athena"),
+                     ("v_athena_trust_agreement", "the trust graph from Athena"),
+                     ("v_athena_proof_policy", "contexts and required proof from Athena")):
+        if sym not in app:
+            return _fail("registry", "polaris_web/app.py lacks %s (%s)" % (why, sym))
+    m = re.search(r"_PROTOCOL_FORMATS\s*=\s*\{(.*?)\n\}", app, re.S)
+    advertised = set(re.findall(r"'(polaris-[a-z-]+)'", m.group(1))) if m else set()
+    specified = {f.split("/")[0] for f in _WIRE_ALL_FORMATS}
+    if advertised != specified:
+        return _fail("registry", "the registry's advertised formats must equal the wire spec's: missing %s, extra %s"
+                     % (sorted(specified - advertised), sorted(advertised - specified)))
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_registry", "_registry_canonical", "def registry_service", "def registry_authority",
+                "def registry_trusts"):
+        if sym not in v:
+            return _fail("registry", "scripts/polaris-verify.py must verify the registry offline and read it for discovery (%s missing)" % sym)
+    if "lists for its own publisher" not in v:
+        return _fail("registry", "verify_registry must require the registry to be signed by the key it lists for its own publisher (self-consistency)")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("registry", f"the offline verifier imports {mod!r}; it must stay standalone")
+    if "_registry_statement" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("registry", "the registry must be in the canonical-equivalence oracle")
+    if "polaris-registry/1" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("registry", "the registry must be specified in the wire spec")
+    if '"artifact": "registry"' not in _read(root, "conformance/cases.json"):
+        return _fail("registry", "conformance/cases.json must carry registry cases (artifact: registry)")
+    if "polaris-registry/1" not in _read(root, "sdk/python/polaris_verify/__init__.py"):
+        return _fail("registry", "the Python SDK must verify polaris-registry/1")
+    if "polaris-registry/1" not in _read(root, "sdk/typescript/src/index.ts"):
+        return _fail("registry", "the TypeScript SDK must verify polaris-registry/1")
+    if "verify_registry" not in _read(root, "scripts/polaris-verifier-fuzz.py"):
+        return _fail("registry", "the metamorphic fuzzer must hold verify_registry total")
+    drill = _read(root, "scripts/polaris-registry-drill.py")
+    if not drill or "registry_service" not in drill:
+        return _fail("registry", "scripts/polaris-registry-drill.py must prove the registry verifies and drives discovery")
+    if "polaris-registry-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("registry", "the registry drill must run in CI (a protocol that never runs is displacement)")
+    fed = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if "registry_service" not in fed or "registry_trusts" not in fed:
+        return _fail("registry", "the two-instance drill must DISCOVER a service path and the trust graph from a fetched, verified registry")
+    return _ok("registry",
+               "the signed registry publishes what an instance offers and trusts (formats pinned to the wire spec, "
+               "services + auth, Athena-derived authorities/contexts/trust, relying parties), self-consistent and "
+               "verified offline; discovery-driven calls are proven across two instances")
 
 
 def check_receipt_transparency(root: pathlib.Path) -> list[Finding]:
@@ -8220,6 +8281,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_registry,
     check_receipt_transparency,
     check_timestamp_authority,
     check_exchange_mint_signed_auth,

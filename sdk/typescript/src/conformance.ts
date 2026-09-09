@@ -13,7 +13,7 @@
 import { verifyAuthenticity, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
-  "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth",, "timestamp"]);
+  "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth",, "timestamp", "registry"]);
 
 let input = "";
 process.stdin.setEncoding("utf8");

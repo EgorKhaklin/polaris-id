@@ -189,6 +189,25 @@ data; a timestamp over an artifact's canonical bytes (section 3 or 3.8) from an 
 than the artifact's signer is time evidence independent of that signer. Authority trust is a
 relying-party decision over its trusted keys.
 
+### 3.10 `polaris-registry/1`
+
+A publishing authority's signed statement of what its instance offers and trusts (P8.3):
+`instance.protocol` (the format names it speaks with their major versions, its algorithms,
+where the wire spec and conformance suite live), `instance.services` (kind, path template,
+method, and how each authenticates), `instance.transparency_logs`, the `authorities` it knows
+(with registered keys and status), the verification `contexts` and the proof each requires,
+the in-context `trust` graph (attesting agency, attested agency and key, context, validity),
+and the `relying_parties` it serves (organization and scope only). Institutional data only.
+Signed fields: format, publisher, instance, authorities, contexts, trust, relying_parties, issued_at, expires_at, algorithm
+
+A verifier MUST confirm the signature, MUST require self-consistency (the signing key equals
+the active key the registry lists for its own `publisher`, so a stranger cannot publish a
+registry in an authority's name), and MUST check freshness (`issued_at <= now < expires_at`).
+Whether the publisher is trusted is the consumer's anchor decision. A consumer that has
+verified a registry MAY discover services from `instance.services` (substituting the `{...}`
+path parameters) and MAY read the in-context trust graph from `trust`; both are non-transitive:
+a registry describes its publisher's instance and attestations, never another authority's.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:

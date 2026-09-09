@@ -258,6 +258,34 @@
       "expect": {
         "authentic": false
       }
+    },
+    {
+      "name": "registry-valid",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-valid.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      }
+    },
+    {
+      "name": "registry-tampered",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-tampered.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      }
+    },
+    {
+      "name": "registry-impostor",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-impostor.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      }
     }
   ]
 }

@@ -1615,6 +1615,12 @@ jobs:
       - name: Timestamp authority — time evidence for anything
         run: python scripts/polaris-timestamp-drill.py
 
+      # v9.323 (roadmap P8.3) — the signed registry: what an instance offers and trusts as one
+      # artifact, verified offline (self-consistent: signed by the key it lists for its own
+      # publisher), then used for DISCOVERY of services and the in-context trust graph.
+      - name: Registry — signed discovery
+        run: python scripts/polaris-registry-drill.py
+
       # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
       # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
       # head and consistency proofs; the detached verifier accepts an append-only extension

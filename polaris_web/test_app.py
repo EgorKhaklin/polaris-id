@@ -305,6 +305,27 @@ class ExchangeReceiptLogTests(PolarisTestCase):
         self.assertEqual(self.client.get('/api/v1/exchange-receipt/inclusion/not-a-hash').status_code, 400)
 
 
+class RegistryTests(PolarisTestCase):
+    """P8.3: the signed registry is served from the Athena views once the publisher has a
+    registered key, lists the publisher among its authorities, the seven contexts, the trust
+    graph, and the protocol formats; an unfederated publisher gets 404."""
+
+    def test_registry_served_from_athena_views(self):
+        self.assertEqual(self.client.get('/api/v1/registry/1').status_code, 404)
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
+        r = self.client.get('/api/v1/registry/1')
+        self.assertEqual(r.status_code, 200)
+        reg = r.get_json()
+        self.assertEqual(reg['format'], 'polaris-registry/1')
+        self.assertEqual(reg['publisher']['agency_id'], 1)
+        self.assertIn(1, [a['agency_id'] for a in reg['authorities']])
+        self.assertEqual(len(reg['contexts']), 7)
+        self.assertIn('polaris-registry', reg['instance']['protocol']['formats'])
+        self.assertTrue(any(s['kind'] == 'timestamp' for s in reg['instance']['services']))
+        self.assertEqual(reg['instance']['disclosure_levels'], ['ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'])
+        self.assertNotIn('client_id', json.dumps(reg))
+
+
 class DashboardTests(PolarisTestCase):
     """v9.238: the operations page reports state an operator acts on. It no
     longer prints schema row counts or a token roster; those assertions moved

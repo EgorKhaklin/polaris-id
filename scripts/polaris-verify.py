@@ -1306,6 +1306,129 @@ def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
     return v
 
 
+_REGISTRY_FORMAT = "polaris-registry/1"
+
+
+def _registry_canonical(r):
+    """The bytes a publishing authority signs for its registry (P8.3). MUST match
+    polaris_web/app.py's _registry_statement (pinned by the canonical oracle)."""
+    if not isinstance(r, dict):
+        r = {}
+    statement = {k: r.get(k) for k in
+                 ("format", "publisher", "instance", "authorities", "contexts", "trust",
+                  "relying_parties", "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _registry_publisher_key(reg):
+    """The registered key the registry itself lists for its publisher, or None."""
+    pub = reg.get("publisher") if isinstance(reg.get("publisher"), dict) else {}
+    for a in (reg.get("authorities") if isinstance(reg.get("authorities"), list) else []):
+        if isinstance(a, dict) and a.get("agency_id") == pub.get("agency_id") \
+                and (a.get("status") or "active") == "active" and a.get("public_key_hex"):
+            return str(a["public_key_hex"]).lower()
+    return None
+
+
+def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None):
+    """Verify a signed registry (P8.3) OFFLINE: the publisher's ML-DSA-65 signature over
+    SHA3-256(canonical); self-consistency (the signing key is the key the registry itself
+    lists for its publisher, so a stranger cannot publish a registry in an authority's name);
+    freshness; and, with trusted_anchors, whether the publisher is one the consumer trusts.
+    No network. Discovery then reads the verified registry: registry_service,
+    registry_authority, registry_trusts."""
+    from datetime import datetime, timezone
+    if not isinstance(reg, dict):
+        reg = {}
+    v = {"registry_authentic": False, "fresh": None, "issuer_trusted": None,
+         "publisher": reg.get("publisher"),
+         "services": reg.get("instance", {}).get("services") if isinstance(reg.get("instance"), dict) else None,
+         "witnesses": [], "note": None}
+    alg, pk_hex, sig_hex = reg.get("algorithm"), reg.get("public_key_hex"), reg.get("signature_hex")
+    if reg.get("format") != _REGISTRY_FORMAT:
+        v["note"] = "not a %s" % _REGISTRY_FORMAT
+        return v
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder registry -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    listed = _registry_publisher_key(reg)
+    if listed is None or listed != str(pk_hex).lower():
+        v["note"] = "the registry is not signed by the key it lists for its own publisher"
+        return v
+    digest = hashlib.sha3_256(_registry_canonical(reg)).digest()
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    v["witnesses"] = ran
+    if primary is None and witness is None:
+        v["note"] = "no ML-DSA-65 verifier available"
+        return v
+    if primary is not None and witness is not None and primary != witness:
+        v["note"] = "the two witnesses DISAGREE -- treat as invalid"
+        return v
+    ok = primary if primary is not None else witness
+    v["registry_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "registry signature is invalid"
+        return v
+    now = now or datetime.now(timezone.utc)
+    try:
+        ia, ea = _parse_iso(reg["issued_at"]), _parse_iso(reg["expires_at"])
+        fresh = ia <= now < ea
+        if max_window_seconds is not None and (ea - ia).total_seconds() > max_window_seconds:
+            fresh = False
+        v["fresh"] = fresh
+    except Exception:
+        v["fresh"] = False
+        v["note"] = "issued_at/expires_at are not valid instants"
+    if trusted_anchors is not None:
+        try:
+            v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
+        except TypeError:
+            v["issuer_trusted"] = False
+    return v
+
+
+def registry_service(reg, kind):
+    """The service entry of the given kind from a (verified) registry, or None."""
+    inst = reg.get("instance") if isinstance(reg, dict) and isinstance(reg.get("instance"), dict) else {}
+    for s in (inst.get("services") if isinstance(inst.get("services"), list) else []):
+        if isinstance(s, dict) and s.get("kind") == kind:
+            return s
+    return None
+
+
+def registry_authority(reg, public_key_hex):
+    """The authority entry whose active key is `public_key_hex`, or None."""
+    want = str(public_key_hex or "").lower()
+    for a in (reg.get("authorities") if isinstance(reg, dict) and isinstance(reg.get("authorities"), list) else []):
+        if isinstance(a, dict) and str(a.get("public_key_hex") or "").lower() == want \
+                and (a.get("status") or "active") == "active":
+            return a
+    return None
+
+
+def registry_trusts(reg, attested_public_key_hex, context_id):
+    """The attesting agency ids that, per the registry's trust graph, attest the given key IN
+    the given context (non-transitive, in-context, like every Polaris trust decision)."""
+    want = str(attested_public_key_hex or "").lower()
+    out = []
+    for t in (reg.get("trust") if isinstance(reg, dict) and isinstance(reg.get("trust"), list) else []):
+        if isinstance(t, dict) and str(t.get("attested_public_key_hex") or "").lower() == want \
+                and t.get("context_id") == context_id:
+            out.append(t.get("attesting_agency_id"))
+    return sorted(x for x in out if x is not None)
+
+
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
                             request_body=None, response_body=None, max_window_seconds=None):
     """Verify an exchange receipt OFFLINE (P8.2). Establishes, WITHOUT the payload, that an

@@ -5940,6 +5940,145 @@ def api_v1_timestamp(agency_id):
     return jsonify(ts)
 
 
+# --- P8.3: the signed registry -- discovery over the Athena authority layer ---------------
+#
+# What an instance offers and trusts, as ONE signed, machine-readable artifact: the protocol
+# formats and algorithms it speaks, its services (paths + how each authenticates), the
+# federated authorities it knows (with keys), the verification contexts and what proof each
+# requires, the in-context trust graph, and the relying parties it serves. Every fact is a
+# VIEW over Athena (v_athena_*) and the authority tables -- the registry adds no truth of its
+# own -- and it is signed by the publishing authority so a consumer verifies it offline and
+# then drives its calls from what the registry says rather than from hardcoded knowledge.
+# Institutional, never personal: no token, no holder, no verification record.
+_REGISTRY_FORMAT = 'polaris-registry/1'
+_REGISTRY_TTL = int(os.environ.get('POLARIS_REGISTRY_TTL', '86400'))
+# Every protocol format this instance speaks, by name -> major version. Pinned to the wire
+# spec's format list by check_registry, so the registry can never advertise a format the spec
+# does not define, nor omit one it does.
+_PROTOCOL_FORMATS = {
+    'polaris-authenticity-pack': 1,
+    'polaris-status-assertion': 1,
+    'polaris-federation-manifest': 1,
+    'polaris-epoch-checkpoint': 1,
+    'polaris-revocation-feed': 1,
+    'polaris-federation-status-bundle': 1,
+    'polaris-transparency-sth': 1,
+    'polaris-transparency-cosignature': 1,
+    'polaris-transparency-publication': 1,
+    'polaris-published-head': 1,
+    'polaris-exchange-receipt': 1,
+    'polaris-exchange-mint': 1,
+    'polaris-timestamp': 1,
+    'polaris-registry': 1,
+}
+_REGISTRY_SERVICES = [
+    {'kind': 'oauth-token', 'path': '/api/v1/oauth/token', 'auth': 'client-credentials', 'method': 'POST'},
+    {'kind': 'verify', 'path': '/api/v1/verify', 'auth': 'bearer:verify', 'method': 'POST'},
+    {'kind': 'status-assertion', 'path': '/api/v1/status-assertion', 'auth': 'possession', 'method': 'POST'},
+    {'kind': 'federation-manifest', 'path': '/api/v1/federation-manifest/{agency_id}', 'auth': 'none', 'method': 'GET'},
+    {'kind': 'epoch-checkpoint', 'path': '/api/v1/epoch-checkpoint/{agency_id}', 'auth': 'none', 'method': 'GET'},
+    {'kind': 'revocation-feed', 'path': '/api/v1/revocation-feed/{agency_id}', 'auth': 'none', 'method': 'GET'},
+    {'kind': 'federation-status-bundle', 'path': '/api/v1/federation-status-bundle/{agency_id}', 'auth': 'none', 'method': 'GET'},
+    {'kind': 'exchange-receipt', 'path': '/api/v1/exchange-receipt/{agency_id}/signed', 'auth': 'responder-signature', 'method': 'POST'},
+    {'kind': 'exchange-receipt-inclusion', 'path': '/api/v1/exchange-receipt/inclusion/{receipt_hash}', 'auth': 'none', 'method': 'GET'},
+    {'kind': 'timestamp', 'path': '/api/v1/timestamp/{agency_id}', 'auth': 'none', 'method': 'POST'},
+    {'kind': 'transparency', 'path': '/api/v1/transparency', 'auth': 'none', 'method': 'GET'},
+    {'kind': 'transparency-receipts', 'path': '/api/v1/transparency/receipts', 'auth': 'none', 'method': 'GET'},
+    {'kind': 'registry', 'path': '/api/v1/registry/{agency_id}', 'auth': 'none', 'method': 'GET'},
+]
+
+
+def _registry_statement(body):
+    """Canonical bytes the publishing authority signs. MUST match scripts/polaris-verify.py's
+    _registry_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'publisher', 'instance', 'authorities', 'contexts', 'trust',
+                  'relying_parties', 'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+@app.route('/api/v1/registry/<int:agency_id>')
+def api_v1_registry(agency_id):
+    """P8.3: the SIGNED REGISTRY. One machine-readable artifact answering what this instance
+    offers and trusts: the protocol formats and algorithms it speaks, its services and how
+    each authenticates, the federated authorities it knows (with keys), the verification
+    contexts and the proof each requires, the in-context trust graph, and the relying parties
+    it serves. Every fact is a view over Athena (v_athena_*) and the authority tables; the
+    registry adds no truth of its own. Signed by the publishing authority (which must itself be
+    among the authorities it lists) and short-lived, so a consumer verifies it offline
+    (verify_registry) and then discovers services and trust from it (registry_service,
+    registry_trusts) rather than from hardcoded knowledge. Institutional data only."""
+    publisher, err = _federated_agency(agency_id)
+    if err:
+        return err
+    authorities = query("""
+        SELECT va.agency_id, va.name, va.agency_type, va.jurisdiction, va.authorization_level,
+               ag.signing_public_key_hex
+        FROM   v_athena_agency va
+        JOIN   Agency ag ON ag.agency_id = va.agency_id
+        WHERE  ag.signing_public_key_hex IS NOT NULL
+        ORDER BY va.agency_id
+    """, primary=True)
+    contexts = query("""
+        SELECT context_id, context_type, requires_biometric, min_security_level
+        FROM   v_athena_proof_policy ORDER BY context_id
+    """, primary=True)
+    disclosure = query("SELECT disclosure_level FROM v_athena_disclosure_policy ORDER BY ordinal", primary=True)
+    trust = query("""
+        SELECT ta.attesting_agency_id, ta.attested_agency_id, ta.context_id, ta.valid_until,
+               ab.signing_public_key_hex AS attested_public_key_hex
+        FROM   v_athena_trust_agreement ta
+        JOIN   Agency ab ON ab.agency_id = ta.attested_agency_id
+        WHERE  ab.signing_public_key_hex IS NOT NULL
+        ORDER BY ta.attesting_agency_id, ta.attested_agency_id, ta.context_id
+    """, primary=True)
+    rps = query("SELECT org_name, scope FROM RelyingParty WHERE enabled = TRUE ORDER BY org_name", primary=True)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    issued_at = now.isoformat().replace('+00:00', 'Z')
+    expires_at = (now + timedelta(seconds=_REGISTRY_TTL)).isoformat().replace('+00:00', 'Z')
+    body = {
+        'format': _REGISTRY_FORMAT,
+        'publisher': {'agency_id': publisher['agency_id'], 'name': publisher['name']},
+        'instance': {
+            'protocol': {'formats': dict(_PROTOCOL_FORMATS), 'algorithms': ['ML-DSA-65'],
+                         'wire_spec': 'docs/reference/WIRE-SPEC.md', 'conformance': 'conformance/cases.json'},
+            'services': [dict(s) for s in _REGISTRY_SERVICES],
+            'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID],
+            'disclosure_levels': [d['disclosure_level'] for d in disclosure],
+        },
+        'authorities': [
+            {'agency_id': a['agency_id'], 'name': a['name'], 'agency_type': a['agency_type'],
+             'jurisdiction': a['jurisdiction'], 'authorization_level': a['authorization_level'],
+             'public_key_hex': a['signing_public_key_hex'], 'algorithm': 'ML-DSA-65', 'status': 'active'}
+            for a in authorities
+        ],
+        'contexts': [
+            {'context_id': c['context_id'], 'context_type': c['context_type'],
+             'requires_biometric': bool(c['requires_biometric']), 'min_security_level': c['min_security_level']}
+            for c in contexts
+        ],
+        'trust': [
+            {'attesting_agency_id': t['attesting_agency_id'], 'attested_agency_id': t['attested_agency_id'],
+             'attested_public_key_hex': t['attested_public_key_hex'], 'context_id': t['context_id'],
+             'valid_until': t['valid_until'].isoformat() if t['valid_until'] else None}
+            for t in trust
+        ],
+        'relying_parties': [{'org_name': r['org_name'], 'scope': r['scope']} for r in rps],
+        'issued_at': issued_at,
+        'expires_at': expires_at,
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_registry_statement(body), agency_id=agency_id)
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['max_window_seconds'] = _REGISTRY_TTL
+    body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                   'registry minus signature_hex and public_key_hex)')
+    return jsonify(body)
+
+
 # --- P3.3: the transparency log over the audit-anchor roots --------------------
 #
 # The AnchorBatch table is append-only at the database. These routes turn its ordered

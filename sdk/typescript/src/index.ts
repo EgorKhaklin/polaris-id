@@ -178,6 +178,7 @@ const ARTIFACT_KEYS: Record<string, string[]> = {
   "polaris-federation-status-bundle/1": ["format", "publisher", "members_root_hex", "member_count", "issued_at", "expires_at", "algorithm"],
   "polaris-transparency-sth/1": ["format", "log_id", "tree_size", "root_hash_hex", "timestamp"],
   "polaris-timestamp/1": ["format", "authority", "digest_hex", "digest_algorithm", "nonce", "issued_at", "algorithm"],
+  "polaris-registry/1": ["format", "publisher", "instance", "authorities", "contexts", "trust", "relying_parties", "issued_at", "expires_at", "algorithm"],
 };
 
 export type ArtifactVerdict = { authentic: boolean; fresh: boolean | null; note?: string };
@@ -224,6 +225,14 @@ export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVer
         .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
     );
     ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
+  } else if (ok && o.format === "polaris-registry/1") {
+    const pub = o.publisher && typeof o.publisher === "object" ? o.publisher : {};
+    const listed = new Set<string>(
+      (Array.isArray(o.authorities) ? o.authorities : [])
+        .filter((a: any) => a && a.agency_id === pub.agency_id && (a.status ?? "active") === "active")
+        .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
+    );
+    ok = listed.has(String(o.public_key_hex ?? "").toLowerCase());
   }
   return { authentic: ok, fresh: withinWindow(o, now) };
 }

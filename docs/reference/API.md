@@ -859,6 +859,32 @@ of the seven `mint` fields (wire spec section 3.8.1); `scripts/polaris-verify.py
 `_exchange_mint_canonical` builds them for a client. Proven over HTTP, with no session, by the
 two-instance federation drill.
 
+### `GET /api/v1/registry/<agency_id>`
+
+**Public; no auth (P8.3).** The **signed registry**: what this instance offers and trusts, as one
+machine-readable `polaris-registry/1` signed by the publishing authority -- protocol formats
+and algorithms, services (kind, path template, method, auth), transparency logs, the
+federated authorities it knows with their keys, the verification contexts and the proof each
+requires, the in-context trust graph, and the relying parties it serves (organization and
+scope only). Derived from Athena's views; institutional data only. Short-lived.
+
+```jsonc
+{ "format": "polaris-registry/1", "publisher": {...},
+  "instance": { "protocol": { "formats": { "polaris-timestamp": 1, ... }, "algorithms": ["ML-DSA-65"], ... },
+                "services": [ { "kind": "timestamp", "path": "/api/v1/timestamp/{agency_id}", "auth": "none", "method": "POST" }, ... ],
+                "transparency_logs": [...], "disclosure_levels": [...] },
+  "authorities": [ { "agency_id": 1, "name": "...", "public_key_hex": "...", "status": "active", ... } ],
+  "contexts": [ { "context_id": 1, "context_type": "BANKING", "requires_biometric": false, "min_security_level": 128 } ],
+  "trust": [ { "attesting_agency_id": 1, "attested_agency_id": 2, "attested_public_key_hex": "...", "context_id": 1, "valid_until": "..." } ],
+  "relying_parties": [ { "org_name": "...", "scope": "verify" } ],
+  "issued_at": "...", "expires_at": "...", "algorithm": "ML-DSA-65", "signature_hex": "...", "public_key_hex": "..." }
+```
+
+Verified offline with `scripts/polaris-verify.py` (`verify_registry`: signature, self-consistency --
+signed by the key it lists for its own publisher -- freshness, anchor trust), then read for
+discovery (`registry_service`, `registry_authority`, `registry_trusts`). Specified in
+[registry.md](../design/registry.md); wire spec section 3.10.
+
 ### `POST /api/v1/timestamp/<agency_id>`
 
 **Public; no session (P8.7a).** A **timestamp authority**: bind an arbitrary SHA3-256 digest to

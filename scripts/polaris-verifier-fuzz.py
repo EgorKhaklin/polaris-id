@@ -160,8 +160,24 @@ def main():
             "nonce": "client-nonce-1", "issued_at": _iso(now), "algorithm": "ML-DSA-65",
         }, V._timestamp_canonical)
 
+    def g_registry():
+        return _signed({
+            "format": "polaris-registry/1", "publisher": {"agency_id": 1, "name": "Authority A"},
+            "instance": {"protocol": {"formats": {"polaris-registry": 1}, "algorithms": ["ML-DSA-65"]},
+                         "services": [{"kind": "timestamp", "path": "/api/v1/timestamp/{agency_id}", "auth": "none", "method": "POST"}],
+                         "transparency_logs": ["polaris-audit-anchor-log"], "disclosure_levels": ["ZERO_KNOWLEDGE"]},
+            "authorities": [{"agency_id": 1, "name": "Authority A", "agency_type": "FEDERAL", "jurisdiction": "US",
+                             "authorization_level": 5, "public_key_hex": key_hex, "algorithm": "ML-DSA-65", "status": "active"}],
+            "contexts": [{"context_id": 1, "context_type": "BANKING", "requires_biometric": False, "min_security_level": 128}],
+            "trust": [], "relying_parties": [],
+            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": "ML-DSA-65",
+        }, V._registry_canonical)
+
     # spec: name, build(), verify(obj)->verdict, accept(verdict)->bool, bound_fields
     specs = [
+        ("registry", g_registry, lambda o: V.verify_registry(o),
+         lambda v: v["registry_authentic"] and v.get("fresh") is True,
+         ["format", "publisher", "instance", "authorities", "contexts", "trust", "relying_parties", "issued_at", "expires_at", "algorithm"]),
         ("timestamp", g_timestamp, lambda o: V.verify_timestamp(o),
          lambda v: v["timestamp_authentic"],
          ["format", "authority", "digest_hex", "digest_algorithm", "nonce", "issued_at", "algorithm"]),

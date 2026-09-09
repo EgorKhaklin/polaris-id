@@ -6405,17 +6405,19 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _exchange_receipt_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'requester')}\n"
         "def _exchange_mint_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'responder_agency_id')}\n"
         "def _timestamp_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'digest_hex')}\n"
+        "def _registry_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'publisher')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1\n"
         "manifest signed fields: format, authority\n"
         "receipt signed fields: format, requester\n"
         "mint signed fields: format, responder_agency_id\n"
         "timestamp signed fields: format, digest_hex\n"
+        "registry signed fields: format, publisher\n"
         "checkpoint signed fields: format, epoch\n"
         "feed signed fields: format, as_of\n"
         "assertion signed fields: format, status\n"
@@ -6464,6 +6466,69 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_registry_check_discriminates(tmp_path):
+    # v9.323 (P8.3): the signed registry -- route over Athena views, formats pinned to the spec,
+    # offline verify with self-consistency + discovery helpers, oracle/spec/conformance (both
+    # SDKs)/fuzzer, drilled in CI, discovery-driven across two instances.
+    APP = (
+        "@app.route('/api/v1/registry/<int:agency_id>')\n"
+        "def api_v1_registry(agency_id):\n"
+        "    _registry_statement(body)  # polaris-registry/1\n"
+        "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
+        "_REGISTRY_SERVICES = []\n"
+        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
+    )
+    good = {
+        'polaris_web/app.py': APP,
+        'scripts/polaris-verify.py': (
+            "import json\n"
+            "def _registry_canonical(r): return b''\n"
+            "def verify_registry(r, **k):\n    # not signed by the key it lists for its own publisher\n    return {}\n"
+            "def registry_service(r, kind): return None\n"
+            "def registry_authority(r, k): return None\n"
+            "def registry_trusts(r, k, c): return []\n"
+        ),
+        'polaris_web/test_canonical_equivalence.py': "flask_app._registry_statement\n",
+        'docs/reference/WIRE-SPEC.md': "polaris-registry/1\n",
+        'conformance/cases.json': '{"cases": [{"artifact": "registry"}]}\n',
+        'sdk/python/polaris_verify/__init__.py': '"polaris-registry/1": ["format"]\n',
+        'sdk/typescript/src/index.ts': '"polaris-registry/1": ["format"]\n',
+        'scripts/polaris-verifier-fuzz.py': "V.verify_registry(o)\n",
+        'scripts/polaris-registry-drill.py': "V.registry_service(reg, 'timestamp')\n",
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-registry-drill.py\n',
+        'scripts/polaris-federation-instances-drill.py': "V.registry_service(reg, 'timestamp'); V.registry_trusts(reg, pub_a, CONTEXT_ID)\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_registry(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_web/app.py': APP.replace("/api/v1/registry", "/api/v1/nope")})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL without the route"
+    write({'polaris_web/app.py': APP.replace("    'polaris-timestamp': 1,\n", "")})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL if a spec format is not advertised"
+    write({'polaris_web/app.py': APP.replace("    'polaris-registry': 1,\n", "    'polaris-registry': 1,\n    'polaris-made-up': 1,\n")})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL if a format the spec lacks is advertised"
+    write({'polaris_web/app.py': APP.replace("v_athena_trust_agreement", "AgencyTrustAttestation")})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL if the trust graph does not come from Athena"
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace("lists for its own publisher", "whatever")})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL without the publisher self-consistency rule"
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace("def registry_trusts", "def nope")})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL without the discovery helpers"
+    write({'conformance/cases.json': '{"cases": []}\n'})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL without conformance cases"
+    write({'sdk/python/polaris_verify/__init__.py': "# nothing\n"})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL if the Python SDK cannot verify it"
+    write({'scripts/polaris-federation-instances-drill.py': "# hardcoded paths only\n"})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL if discovery is not proven across two instances"
+    write({'.github/workflows/ci.yml': "jobs: {}\n"})
+    assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
 
 
 def test_receipt_transparency_check_discriminates(tmp_path):

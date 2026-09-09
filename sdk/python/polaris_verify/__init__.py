@@ -243,6 +243,7 @@ _ARTIFACT_KEYS = {
     "polaris-federation-status-bundle/1": ["format", "publisher", "members_root_hex", "member_count", "issued_at", "expires_at", "algorithm"],
     "polaris-transparency-sth/1": ["format", "log_id", "tree_size", "root_hash_hex", "timestamp"],
     "polaris-timestamp/1": ["format", "authority", "digest_hex", "digest_algorithm", "nonce", "issued_at", "algorithm"],
+    "polaris-registry/1": ["format", "publisher", "instance", "authorities", "contexts", "trust", "relying_parties", "issued_at", "expires_at", "algorithm"],
 }
 
 
@@ -300,6 +301,13 @@ def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
                   if isinstance(a, dict) and (a.get("status") or "active") == "active"}
         ok = str(obj.get("public_key_hex") or "").lower() in active
         note = None if ok else "the manifest is not signed by one of its own active anchors"
+    elif ok and fmt == "polaris-registry/1":
+        pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
+        listed = [str(a.get("public_key_hex") or "").lower() for a in (obj.get("authorities") or [])
+                  if isinstance(a, dict) and a.get("agency_id") == pub.get("agency_id")
+                  and (a.get("status") or "active") == "active"]
+        ok = str(obj.get("public_key_hex") or "").lower() in listed
+        note = None if ok else "the registry is not signed by the key it lists for its own publisher"
     return ArtifactVerdict(ok, _within_window(obj, now), note, ran)
 
 

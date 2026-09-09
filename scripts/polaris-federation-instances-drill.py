@@ -438,6 +438,27 @@ def main():
         checks.append(("a tampered inclusion proof does not verify",
                        V.verify_receipt_inclusion(receipt, bad_inc["proof"], bad_inc["sth"], log_key=pub_b)["included"], False))
 
+        # 6f. DISCOVERY (P8.3): B publishes a SIGNED REGISTRY. A consumer fetches it, verifies it
+        #     offline under B's key, and drives a call from a path it READ OUT OF THE REGISTRY --
+        #     never from hardcoded knowledge -- and reads B's in-context trust graph from it.
+        reg = _http_get(base_b + "/api/v1/registry/1")[1]
+        rv = V.verify_registry(reg, trusted_anchors=[pub_b])
+        checks.append(("B's fetched registry is authentic, fresh, self-consistent, and from a trusted publisher",
+                       bool(rv.get("registry_authentic") and rv.get("fresh") and rv.get("issuer_trusted")), True))
+        svc = V.registry_service(reg, "timestamp") or {}
+        disc_path = str(svc.get("path") or "").replace("{agency_id}", "1")
+        st11, _tsd = (_http_post_json(base_b + disc_path, {"digest_hex": hashlib.sha3_256(b"discovered").hexdigest()})
+                      if disc_path else (0, {}))
+        checks.append(("a service DISCOVERED from the registry (timestamp) answers at the advertised path (200)", st11, 200))
+        # (the sample data already has another agency attesting agency 2 in this context, so the
+        #  registry rightly reports every attester; the check is membership, not equality)
+        checks.append(("the registry's trust graph lists B (agency 1) among those attesting A's key in CONTEXT_ID",
+                       1 in V.registry_trusts(reg, pub_a, CONTEXT_ID), True))
+        checks.append(("the registry lists A's key as an authority B knows",
+                       V.registry_authority(reg, pub_a) is not None, True))
+        checks.append(("the registry advertises the protocol formats, including itself",
+                       "polaris-registry" in ((reg.get("instance") or {}).get("protocol") or {}).get("formats", {}), True))
+
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:
             cur.execute("UPDATE AgencyTrustAttestation SET revocation_date=CURRENT_DATE, "
@@ -446,6 +467,9 @@ def main():
             cb.commit()
         checks.append(("attestation revoked on B: re-fetched manifest rejects the credential",
                        decide(pack, CONTEXT_ID)["decision"], "reject"))
+        reg2 = _http_get(base_b + "/api/v1/registry/1")[1]
+        checks.append(("... and the re-fetched registry's trust graph no longer lists B's attestation",
+                       1 in V.registry_trusts(reg2, pub_a, CONTEXT_ID), False))
 
         print("\ncase                                                                   got        expected   ok")
         ok_all = True

@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.323 — 2026-09-09 (The signed registry: discovery over the authority layer, P8.3)
+
+A consumer should learn what an instance offers and trusts from the instance itself, signed,
+and not from configuration handed over out of band.
+
+- **`GET /api/v1/registry/<id>` and `polaris-registry/1`.** One machine-readable artifact: the
+  protocol formats and algorithms the instance speaks (the format list is pinned to the wire
+  spec's by `check_registry`, so it can neither advertise a format the spec lacks nor omit one
+  it defines), its services with path templates and how each authenticates, its transparency
+  logs, the federated authorities it knows with their keys, the verification contexts and the
+  proof each requires, the in-context trust graph, and the relying parties it serves (name and
+  scope only). Every fact is a view over Athena; the registry adds no truth of its own.
+  Institutional data, never personal.
+- **Signed by a publisher that must list itself.** `verify_registry` requires the signing key to
+  be the active key the registry lists for its own publisher, so a stranger cannot publish a
+  registry in an authority's name; freshness and anchor trust as everywhere. Then discovery:
+  `registry_service`, `registry_authority`, `registry_trusts` (non-transitive, in-context).
+- **Discovery proven, not described.** The two-instance drill fetches B's registry, verifies it
+  offline under B's key, reads the timestamp service's path out of it and calls THAT, reads B's
+  attestation of A from the trust graph, and after B revokes the attestation sees the
+  re-fetched registry drop it. `scripts/polaris-registry-drill.py` (in `pqc-real`) drives
+  authentic/discovered/impostor/tampered/expired/untrusted/hostile. Tenth oracle pair; wire
+  spec section 3.10; three conformance vectors (valid, tampered, impostor) verified by BOTH
+  SDKs, which now apply the publisher self-consistency rule; the fuzzer holds `verify_registry`
+  total. `check_registry` (#177). 177 checks, 108 routes.
+
 ## v9.322 — 2026-09-09 (The receipt set is a transparency log, P8.2c)
 
 Evidence without retention had a gap: an instance that keeps nothing can later deny a
