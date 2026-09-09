@@ -5,6 +5,29 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.314 — 2026-09-09 (Conformance beyond the pack, P8.1b)
+
+The conformance suite and both SDKs certified exactly one signed artifact, the authenticity
+pack. This generalizes the harness and certifies a second, the status assertion, so an
+implementation importing no Polaris code is held to more of the protocol.
+
+- **The harness is now typed.** A conformance case names the `artifact` it is about (default
+  `authenticity-pack`), and the runner checks every key the case's expected verdict names, so a
+  new artifact is new cases and a verifier entry point, not new plumbing. Backward compatible:
+  the existing pack cases are unchanged.
+- **The status assertion is certified end to end.** `verify_status_assertion` is now a
+  standalone function in the Python SDK and `verifyStatusAssertion` in the TypeScript SDK: each
+  recomputes the canonical statement of `{format, token_value, status, issued_at, expires_at}`,
+  verifies the ML-DSA-65 signature over its SHA3-256, and reports authentic / fresh / active
+  (with `now` pinned by the case). Three published vectors (a genuine ACTIVE assertion, a genuine
+  one evaluated past its window, and a tampered one) live under `conformance/vectors/`, and both
+  SDKs pass all ten cases. The independent TypeScript verifier accepting a status assertion the
+  Python reference signed is the proof that the wire spec's canonical construction is
+  language-agnostic.
+- **Pinned.** `check_conformance_suite` and `check_typescript_sdk` now require both SDKs to verify
+  the status assertion and the cases to certify it. Remaining (P8.1b continues): the other five
+  app-signed artifacts and the federation trust decision.
+
 ## v9.313 — 2026-09-08 (Normative wire specification, P8.1)
 
 The first step of the P8 exchange fabric: a normative wire specification so an implementation

@@ -5,25 +5,38 @@ credential. A relying party (or an SDK author) certifies its own verifier -- in
 any language -- by making it pass this suite. Passing it is what "conformant"
 means (ROADMAP P3.5).
 
-The suite covers the **offline authenticity** check: given an authenticity pack,
-decide whether the ML-DSA-65 signature is genuine, and -- when a trusted issuer
-anchor set is supplied -- whether the signing key is one a relying party trusts.
-Online authorization (is the token authoritative *now*?) is a separate call to the
-issuer's `POST /api/v1/verify` and is specified in
-[`docs/reference/API.md`](../docs/reference/API.md); it is not part of these
-offline vectors because it depends on live issuer state.
+The suite covers the **offline** checks over the protocol's signed artifacts, each
+specified normatively in [`docs/reference/WIRE-SPEC.md`](../docs/reference/WIRE-SPEC.md).
+Today it certifies the **authenticity pack** (is the ML-DSA-65 signature genuine, and
+-- with a trusted issuer anchor set -- is the signing key trusted?) and the **status
+assertion** (is a short-lived issuer-signed statement of a credential's status genuine,
+fresh, and ACTIVE?). More artifacts are added case-by-case (P8.1b). Online authorization
+(is the token authoritative *now* via a live call to `POST /api/v1/verify`) is specified
+in [`docs/reference/API.md`](../docs/reference/API.md); it is not part of these offline
+vectors because it depends on live issuer state.
 
 ## The verifier contract
 
-A verifier is a command that reads ONE case as JSON on **stdin**:
+A verifier is a command that reads ONE case as JSON on **stdin**. The case names the
+`artifact` it is about (default `authenticity-pack` when absent), and the verifier
+dispatches on it, printing its verdict as JSON on **stdout**. The runner checks every
+key the case's expected verdict names; the verifier may report additional keys.
 
 ```json
-{ "pack": { "...": "an authenticity pack (polaris-authenticity-pack/1)" },
+{ "artifact": "authenticity-pack",
+  "pack": { "...": "a polaris-authenticity-pack/1" },
   "anchors": ["<issuer public key hex>", "..."] }
+   -> { "authentic": true, "issuer_trusted": true }
+
+{ "artifact": "status-assertion",
+  "assertion": { "...": "a polaris-status-assertion/1" },
+  "now": "2026-06-01T00:00:00Z" }
+   -> { "authentic": true, "fresh": true, "active": true }
 ```
 
-`anchors` is present only when the case supplies a trusted issuer set. The verifier
-prints its verdict as JSON on **stdout**:
+`anchors` is present only when the case supplies a trusted issuer set; `now` pins the
+evaluation time for a windowed artifact (so a published vector stays verifiable). For the
+authenticity pack the verdict is:
 
 ```json
 { "authentic": true, "issuer_trusted": true }
@@ -58,6 +71,14 @@ trusted), and the verdict a conformant verifier MUST return:
 | tampered-token | false | null | genuine signature over a different token_value |
 | wrong-key | false | null | genuine signature checked against an unrelated key |
 | placeholder | false | null | the dev/CI placeholder; not authenticatable offline |
+
+Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh, active}`):
+
+| case | expects | why |
+|---|---|---|
+| status-assertion-active | authentic true, fresh true, active true | a genuine ACTIVE assertion inside its window |
+| status-assertion-expired | authentic true, fresh false | genuine, but `now` is past `expires_at` |
+| status-assertion-tampered | authentic false | one signature byte flipped; MUST fail |
 
 ## Self-certifying
 

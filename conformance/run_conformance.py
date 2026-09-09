@@ -27,19 +27,32 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 
 
+def _load_file(rel):
+    with open(os.path.join(_ROOT, rel)) as f:
+        return json.load(f)
+
+
 def _load_cases():
     with open(os.path.join(_HERE, "cases.json")) as f:
         manifest = json.load(f)
     cases = []
     for c in manifest["cases"]:
-        with open(os.path.join(_ROOT, c["pack_file"])) as pf:
-            pack = json.load(pf)
-        anchors = c.get("anchors")
-        if anchors == "self":
-            anchors = [pack["public_key_hex"]]
-        payload = {"pack": pack}
-        if anchors is not None:
-            payload["anchors"] = anchors
+        artifact = c.get("artifact", "authenticity-pack")
+        payload = {"artifact": artifact}
+        if artifact == "authenticity-pack":
+            pack = _load_file(c["pack_file"])
+            payload["pack"] = pack
+            anchors = c.get("anchors")
+            if anchors == "self":
+                anchors = [pack["public_key_hex"]]
+            if anchors is not None:
+                payload["anchors"] = anchors
+        elif artifact == "status-assertion":
+            payload["assertion"] = _load_file(c["assertion_file"])
+            if "now" in c:
+                payload["now"] = c["now"]
+        else:
+            raise ValueError("unknown artifact %r in case %r" % (artifact, c["name"]))
         cases.append((c["name"], payload, c["expect"]))
     return cases
 
@@ -84,14 +97,19 @@ def main(argv=None):
         except Exception as e:
             print("  [ERROR] %-24s verifier output not JSON: %r (%s)" % (name, proc.stdout[:120], e), file=sys.stderr)
             return 2
-        ok = (bool(got.get("authentic")) == expect["authentic"]
-              and got.get("issuer_trusted") == expect["issuer_trusted"])
+        # A verdict conforms iff it matches the case on EVERY key the case constrains; the
+        # verifier may report additional keys. `authentic` is compared as a bool.
+        def _match(k, v):
+            g = got.get(k)
+            return (bool(g) == v) if k == "authentic" else (g == v)
+        ok = all(_match(k, v) for k, v in expect.items())
         results.append({"name": name, "expect": expect, "got": got, "pass": ok})
         if not ok:
             failures += 1
-        print("  [%s] %-24s authentic=%s issuer_trusted=%s (expected authentic=%s issuer_trusted=%s)"
-              % ("PASS" if ok else "FAIL", name, got.get("authentic"), got.get("issuer_trusted"),
-                 expect["authentic"], expect["issuer_trusted"]))
+        summary = " ".join("%s=%s" % (k, got.get(k)) for k in expect)
+        print("  [%s] %-28s %s (expected %s)"
+              % ("PASS" if ok else "FAIL", name, summary,
+                 " ".join("%s=%s" % (k, v) for k, v in expect.items())))
 
     if args.json:
         print(json.dumps({"total": len(cases), "failures": failures, "results": results}))

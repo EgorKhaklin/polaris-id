@@ -96,6 +96,66 @@ export function verifyAuthenticity(pack: Pack, anchors?: string[] | null): Authe
   return { authentic: ok, issuerTrusted, algorithm: alg, note };
 }
 
+// --- Signed statements (P8.1) -----------------------------------------------
+// Every signed artifact except the authenticity pack signs SHA3-256(canonical), where
+// canonical is the sorted-keys compact JSON of its signed fields (docs/reference/WIRE-SPEC.md).
+export type StatusAssertionVerdict = {
+  authentic: boolean;
+  fresh: boolean | null;
+  active: boolean | null;
+  status?: string | null;
+  note?: string;
+};
+
+const STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"];
+
+/** The canonical bytes a signer signs: sorted-keys compact JSON of the signed fields.
+ * JSON.stringify emits compact separators, and inserting keys in sorted order gives the
+ * sorted-key ordering, matching Python's json.dumps(sort_keys=True, separators=(",",":")). */
+function canonicalBytes(obj: any, keys: string[]): Uint8Array {
+  const statement: Record<string, unknown> = {};
+  for (const k of [...keys].sort()) statement[k] = obj?.[k] ?? null;
+  return new TextEncoder().encode(JSON.stringify(statement));
+}
+
+function isoToEpoch(s: unknown): number | null {
+  if (typeof s !== "string") return null;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : t / 1000;
+}
+
+function withinWindow(obj: any, now?: string | null): boolean | null {
+  const ia = isoToEpoch(obj?.issued_at);
+  const ea = isoToEpoch(obj?.expires_at);
+  if (ia === null || ea === null) return null;
+  const n = now != null ? isoToEpoch(now) : Date.now() / 1000;
+  if (n === null) return null;
+  return ia <= n && n < ea;
+}
+
+/** Verify a Polaris status assertion OFFLINE (P3.6, wire spec section 3.5): the ML-DSA-65
+ * signature over SHA3-256(canonical statement of {format, token_value, status, issued_at,
+ * expires_at}); freshness (now within [issued_at, expires_at)); and ACTIVE status. `now` is
+ * an ISO-8601 string or null for the current time. No network. */
+export function verifyStatusAssertion(assertion: any, now?: string | null): StatusAssertionVerdict {
+  const a = assertion ?? {};
+  const status = a.status ?? null;
+  if (a.algorithm === PLACEHOLDER_LABEL || !a.public_key_hex) {
+    return { authentic: false, fresh: null, active: null, status, note: "placeholder -- not authenticatable offline" };
+  }
+  if (a.format !== "polaris-status-assertion/1") {
+    return { authentic: false, fresh: null, active: null, status, note: "not a polaris-status-assertion/1" };
+  }
+  let ok: boolean;
+  try {
+    const digest = sha3_256(canonicalBytes(a, STATUS_ASSERTION_KEYS));
+    ok = ml_dsa65.verify(hexToBytes(a.signature_hex), digest, hexToBytes(a.public_key_hex));
+  } catch (e) {
+    return { authentic: false, fresh: null, active: null, status, note: "verification error: " + (e as Error).message };
+  }
+  return { authentic: ok, fresh: withinWindow(a, now), active: status === "ACTIVE", status };
+}
+
 export type VerifierOptions = {
   issuerUrl?: string;
   clientId?: string;

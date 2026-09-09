@@ -141,6 +141,98 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
     return AuthenticityVerdict(bool(ok), trusted, alg, note=note, witnesses=ran)
 
 
+# --- Signed statements (P8.1) -------------------------------------------------
+# Every signed artifact except the authenticity pack signs SHA3-256(canonical), where
+# canonical is the sorted-keys compact JSON of its signed fields (see
+# docs/reference/WIRE-SPEC.md). This is the same construction for all of them, so one
+# helper verifies the signature and the per-artifact wrappers add their own rules.
+_STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"]
+
+
+def _canonical(obj: dict, keys) -> bytes:
+    return json.dumps({k: obj.get(k) for k in keys}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _verify_over_digest(digest, sig_hex, pk_hex):
+    """Dual-witness ML-DSA-65 verify over a digest. Returns (ok, witnesses, note); ok is
+    None when no verifier is available or the witnesses disagree."""
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        return None, [], "signature_hex/public_key_hex are not valid hex"
+    primary = _verify_cryptography(digest, sig, pk)
+    witness = _verify_liboqs(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("cryptography=%s" % ("valid" if primary else "invalid"))
+    if witness is not None:
+        ran.append("liboqs=%s" % ("valid" if witness else "invalid"))
+    if primary is None and witness is None:
+        return None, ran, "no ML-DSA-65 verifier available: pip install 'cryptography>=48'"
+    if primary is not None and witness is not None and primary != witness:
+        return None, ran, "the two witnesses DISAGREE -- treat as invalid"
+    return (primary if primary is not None else witness), ran, None
+
+
+def _iso_to_epoch(s):
+    from datetime import datetime, timezone
+    if not isinstance(s, str):
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _within_window(obj: dict, now=None):
+    """True iff now is within [issued_at, expires_at). `now` is an ISO-8601 string, or None
+    for the current time. None if the window is unparseable."""
+    ia, ea = _iso_to_epoch(obj.get("issued_at")), _iso_to_epoch(obj.get("expires_at"))
+    if ia is None or ea is None:
+        return None
+    n = _iso_to_epoch(now) if now is not None else time.time()
+    if n is None:
+        return None
+    return ia <= n < ea
+
+
+@dataclasses.dataclass
+class StatusAssertionVerdict:
+    authentic: bool
+    fresh: Optional[bool]
+    active: Optional[bool]
+    status: Optional[str]
+    note: Optional[str] = None
+    witnesses: Optional[List[str]] = None
+
+
+def verify_status_assertion(assertion: dict, now=None) -> StatusAssertionVerdict:
+    """Verify a Polaris status assertion OFFLINE (P3.6, wire spec section 3.5): the ML-DSA-65
+    signature over SHA3-256(canonical statement of {format, token_value, status, issued_at,
+    expires_at}); freshness (now within [issued_at, expires_at)); and whether the status is
+    ACTIVE. `now` is an ISO-8601 string or None for the current time. No network, no Polaris
+    code. A relying party deciding authorization offline requires authentic AND fresh AND
+    active, all bound to the presented credential's token_value."""
+    assertion = assertion if isinstance(assertion, dict) else {}
+    alg = assertion.get("algorithm")
+    status = assertion.get("status")
+    if alg == PLACEHOLDER_LABEL or not assertion.get("public_key_hex"):
+        return StatusAssertionVerdict(False, None, None, status, "placeholder -- not authenticatable offline")
+    if assertion.get("format") != "polaris-status-assertion/1":
+        return StatusAssertionVerdict(False, None, None, status, "not a polaris-status-assertion/1")
+    digest = hashlib.sha3_256(_canonical(assertion, _STATUS_ASSERTION_KEYS)).digest()
+    ok, ran, note = _verify_over_digest(digest, assertion.get("signature_hex"), assertion.get("public_key_hex"))
+    if ok is None:
+        return StatusAssertionVerdict(False, None, None, status, note, ran)
+    return StatusAssertionVerdict(bool(ok), _within_window(assertion, now), status == "ACTIVE", status,
+                                  witnesses=ran)
+
+
 class PolarisVerifier:
     def __init__(self, issuer_url=None, client_id=None, client_secret=None,
                  anchors=None, timeout=30):

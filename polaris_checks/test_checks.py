@@ -6828,7 +6828,7 @@ def test_offline_verification_check_discriminates(tmp_path):
 def test_typescript_sdk_check_discriminates(tmp_path):
     # v9.290 (P3.5b): the TypeScript verify SDK, same conformance contract, second
     # implementation, run in CI. Each perturbation removes one leg.
-    good = {'sdk/typescript/src/index.ts': "import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';\nimport { sha3_256 } from '@noble/hashes/sha3.js';\nexport function verifyAuthenticity(pack, anchors) {\n  const d = sha3_256(new TextEncoder().encode(pack.token_value));\n  return ml_dsa65.verify(pack.sig, d, pack.pk);\n}\nexport class PolarisVerifier {\n  async status() { await fetch('/api/v1/oauth/token'); await fetch('/api/v1/verify'); }\n}\n", 'sdk/typescript/src/conformance.ts': "import { verifyAuthenticity } from './index.ts';\nprocess.stdout.write(JSON.stringify({ authentic: true, issuer_trusted: null }));\n", 'sdk/typescript/package.json': '{"dependencies": {"@noble/post-quantum": "^0.7.1"}}\n', 'sdk/typescript/package-lock.json': '{"lockfileVersion": 3}\n', 'sdk/typescript/test/sdk.test.ts': "import { test } from 'node:test';\ntest('x', () => {});\n", '.github/workflows/ci.yml': 'jobs:\n  sdk-typescript:\n    steps:\n      - uses: actions/setup-node@v4\n      - run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"\n'}
+    good = {'sdk/typescript/src/index.ts': "import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';\nimport { sha3_256 } from '@noble/hashes/sha3.js';\nexport function verifyAuthenticity(pack, anchors) {\n  const d = sha3_256(new TextEncoder().encode(pack.token_value));\n  return ml_dsa65.verify(pack.sig, d, pack.pk);\n}\nexport function verifyStatusAssertion(a, now) {\n  return { authentic: true, fresh: true, active: true };\n}\nexport class PolarisVerifier {\n  async status() { await fetch('/api/v1/oauth/token'); await fetch('/api/v1/verify'); }\n}\n", 'sdk/typescript/src/conformance.ts': "import { verifyAuthenticity, verifyStatusAssertion } from './index.ts';\nprocess.stdout.write(JSON.stringify({ authentic: true, issuer_trusted: null }));\n", 'sdk/typescript/package.json': '{"dependencies": {"@noble/post-quantum": "^0.7.1"}}\n', 'sdk/typescript/package-lock.json': '{"lockfileVersion": 3}\n', 'sdk/typescript/test/sdk.test.ts': "import { test } from 'node:test';\ntest('x', () => {});\n", '.github/workflows/ci.yml': 'jobs:\n  sdk-typescript:\n    steps:\n      - uses: actions/setup-node@v4\n      - run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -6860,13 +6860,16 @@ def test_typescript_sdk_check_discriminates(tmp_path):
     # 6. the SDK tests are gone
     (tmp_path / "sdk" / "typescript" / "test" / "sdk.test.ts").unlink()
     assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL without the SDK unit tests"
+    # 7. the TS SDK no longer verifies the status assertion (P8.1b)
+    write({"sdk/typescript/src/index.ts": good["sdk/typescript/src/index.ts"].replace("verifyStatusAssertion", "nope")})
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL without TS status-assertion verification"
 
 
 def test_conformance_suite_check_discriminates(tmp_path):
     # v9.289 (P3.5): the verification conformance suite + Python reference SDK.
     # Standalone SDK (real ML-DSA + OAuth online), a language-agnostic runner, cases
     # covering authentic/not/untrusted-issuer, run in CI. Each perturbation removes a leg.
-    good = {'sdk/python/polaris_verify/__init__.py': "import hashlib, urllib.request\ndef verify_authenticity(pack, anchors=None):\n    hashlib.sha3_256(b'')\n    from cryptography.hazmat.primitives.asymmetric import mldsa\n    mldsa.MLDSA65PublicKey\nclass PolarisVerifier:\n    def _t(self):\n        return ('/api/v1/oauth/token', '/api/v1/verify')\n", 'sdk/python/polaris_verify/conformance.py': 'from . import verify_authenticity\n', 'conformance/run_conformance.py': "import argparse\nFLAGS = ('--verifier', '--self', 'issuer_trusted')\n", 'conformance/SPEC.md': '# contract\nstdin authentic issuer_trusted\n', 'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": [{"name": "a", "expect": {"authentic": true, "issuer_trusted": null}}, {"name": "b", "expect": {"authentic": true, "issuer_trusted": false}}, {"name": "c", "expect": {"authentic": false, "issuer_trusted": null}}]}', '.github/workflows/ci.yml': '      - run: python conformance/run_conformance.py --self\n', 'sdk/python/test_sdk.py': 'class ConformanceRunnerTest:\n    def t(self): pass\n'}
+    good = {'sdk/python/polaris_verify/__init__.py': "import hashlib, urllib.request\ndef verify_authenticity(pack, anchors=None):\n    hashlib.sha3_256(b'')\n    from cryptography.hazmat.primitives.asymmetric import mldsa\n    mldsa.MLDSA65PublicKey\ndef verify_status_assertion(a, now=None):\n    return None\nclass PolarisVerifier:\n    def _t(self):\n        return ('/api/v1/oauth/token', '/api/v1/verify')\n", 'sdk/python/polaris_verify/conformance.py': 'from . import verify_authenticity, verify_status_assertion\n# dispatch on the case artifact\n', 'conformance/run_conformance.py': "import argparse\nFLAGS = ('--verifier', '--self', 'issuer_trusted')\n", 'conformance/SPEC.md': '# contract\nstdin authentic issuer_trusted\n', 'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": [{"name": "a", "expect": {"authentic": true, "issuer_trusted": null}}, {"name": "b", "expect": {"authentic": true, "issuer_trusted": false}}, {"name": "c", "expect": {"authentic": false, "issuer_trusted": null}}, {"name": "sa", "artifact": "status-assertion", "expect": {"authentic": true}}]}', '.github/workflows/ci.yml': '      - run: python conformance/run_conformance.py --self\n', 'sdk/python/test_sdk.py': 'class ConformanceRunnerTest:\n    def t(self): pass\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -6897,6 +6900,14 @@ def test_conformance_suite_check_discriminates(tmp_path):
     # 6. the SDK is not tested against the suite
     write({"sdk/python/test_sdk.py": "class Other:\n    pass\n"})
     assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without the SDK conformance test"
+    # 7. the SDK no longer verifies the status assertion (P8.1b)
+    write({"sdk/python/polaris_verify/__init__.py": good["sdk/python/polaris_verify/__init__.py"].replace("def verify_status_assertion", "def _nope")})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without status-assertion verification"
+    # 8. the cases no longer certify a second artifact
+    cases2 = _json.loads(good["conformance/cases.json"])
+    cases2["cases"] = [c for c in cases2["cases"] if c.get("artifact") != "status-assertion"]
+    write({"conformance/cases.json": _json.dumps(cases2)})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without a status-assertion case"
 
 
 def test_relying_party_api_check_discriminates(tmp_path):
