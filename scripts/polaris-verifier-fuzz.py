@@ -312,8 +312,21 @@ def main():
         except Exception as e:
             fails.append(("via_bundle", label, "raised %s: %s" % (type(e).__name__, e)))
         cases += 1
+    # cross-authority ZK (P3.2d): garbage proof / checkpoint must yield a clean accept / reject
+    # / abstain, never a crash. zk_binary is forced absent so no real prover is invoked.
+    zk_cases = ([("garbage-proof:%r" % b, b, g_checkpoint()) for b in ADVERSARIAL]
+                + [("garbage-checkpoint:%r" % b, {"public_inputs": {}}, b) for b in ADVERSARIAL])
+    for label, proof, cp in zk_cases:
+        try:
+            d = V.verify_cross_authority_zk(proof, cp, 1, [g_manifest()],
+                                            zk_binary="/nonexistent/polaris-zk")
+            if not isinstance(d, dict) or d.get("decision") not in ("accept", "reject", "abstain"):
+                fails.append(("cross_authority_zk", label, "no clean decision: %r" % d))
+        except Exception as e:
+            fails.append(("cross_authority_zk", label, "raised %s: %s" % (type(e).__name__, e)))
+        cases += 1
 
-    print("verifier fuzz: %d cases across %d signed types + 2 composed decisions (seed %d)"
+    print("verifier fuzz: %d cases across %d signed types + 3 composed decisions (seed %d)"
           % (cases, len(specs), _SEED))
     if not fails:
         print("OK: the detached verifier accepted every genuine object and rejected every mutation, "

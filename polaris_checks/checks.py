@@ -6791,7 +6791,8 @@ def check_verifier_fuzz(root: pathlib.Path) -> list[Finding]:
     # Every decision function the verifier exposes must be under the fuzzer.
     for fn in ("verify_manifest", "verify_epoch_checkpoint", "verify_revocation_feed",
                "verify_status_assertion", "verify_sth", "verify_status_bundle",
-               "verify_cross_authority", "verify_cross_authority_via_bundle"):
+               "verify_cross_authority", "verify_cross_authority_via_bundle",
+               "verify_cross_authority_zk"):
         if fn not in fuzz:
             return _fail("verifier_fuzz", "the fuzzer does not exercise %s" % fn)
     # The mutation battery must include the classes that matter.
@@ -7381,6 +7382,59 @@ def check_federation_status_bundle(root: pathlib.Path) -> list[Finding]:
                "drill under real ML-DSA and tested")
 
 
+def check_cross_authority_zk(root: pathlib.Path) -> list[Finding]:
+    """P3.2d: a holder's zero-knowledge inclusion proof decided against a FOREIGN authority's
+    epoch, OFFLINE. The relying party trusts the authority's signed epoch checkpoint in-context
+    (non-transitive) to obtain the trusted epoch root, requires the proof's public inputs to
+    bind to it, and verifies the Plonky2 proof via the local polaris-zk binary. It reveals no
+    credential (zero-knowledge), and ABSTAINS rather than false-accepting when the binary is
+    absent."""
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_cross_authority_zk", "def verify_zk_against_root", "def _zk_verify_proof",
+                "polaris-zk"):
+        if sym not in v:
+            return _fail("cross_authority_zk",
+                         "scripts/polaris-verify.py must decide a cross-authority ZK proof offline (%s missing)" % sym)
+    # Trust is rooted in the SIGNED checkpoint and a trusted in-context attestation, reusing the
+    # hardened federation trust path, and it binds the proof to the trusted epoch root.
+    if "verify_epoch_checkpoint(" not in v or "verify_manifest(" not in v:
+        return _fail("cross_authority_zk",
+                     "the ZK decision must trust the checkpoint and the attestation (verify_epoch_checkpoint / verify_manifest)")
+    if "epoch_root_hex" not in v or "attested_public_key_hex" not in v:
+        return _fail("cross_authority_zk",
+                     "the proof must bind to the checkpoint's epoch root, and trust to the attested issuer key")
+    # The proof is checked by shelling to the polaris-zk binary as a LOCAL subprocess (offline),
+    # and the decision ABSTAINS when the binary is absent (never a false accept).
+    if "subprocess" not in v or "abstain" not in v:
+        return _fail("cross_authority_zk",
+                     "the proof must be checked via the local polaris-zk binary (subprocess), abstaining when it is absent")
+    # Shelling out is not importing Polaris code: the verifier stays standalone.
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("cross_authority_zk", f"the offline verifier imports {mod!r}; it must stay standalone")
+    if "--zk-proof" not in v:
+        return _fail("cross_authority_zk", "polaris-verify.py must expose a --zk-proof CLI mode for a relying party")
+    # It RUNS every release against a committed real-proof fixture, and is red on a wrong decision.
+    drill = _read(root, "scripts/polaris-cross-authority-zk-drill.py")
+    if not drill or "verify_cross_authority_zk" not in drill:
+        return _fail("cross_authority_zk",
+                     "scripts/polaris-cross-authority-zk-drill.py must run the accept/reject/abstain matrix")
+    if "abstain" not in drill:
+        return _fail("cross_authority_zk", "the drill must prove the abstain-when-no-binary case (never a false accept)")
+    if not (root / "polaris_zk" / "fixtures" / "cross-authority-zk.json").is_file():
+        return _fail("cross_authority_zk",
+                     "the committed cross-authority ZK fixture is missing (regenerate with --generate)")
+    if "polaris-cross-authority-zk-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("cross_authority_zk",
+                     "the cross-authority ZK drill must run in CI (a protocol that never runs is displacement)")
+    return _ok("cross_authority_zk",
+               "a holder's zero-knowledge inclusion proof is decided against a foreign authority's epoch OFFLINE: the "
+               "authority's signed checkpoint is trusted in-context (non-transitive) to obtain the epoch root, the "
+               "proof's public inputs bind to it, and the Plonky2 proof is checked via the local polaris-zk binary "
+               "(abstaining when absent, never false-accepting); proven every release against a committed real-proof "
+               "fixture and red on any wrong decision")
+
+
 def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
     """P3.2: the inter-authority protocol. An authority publishes a SIGNED federation
     manifest (its anchors, plus the attestations it has made); another party decides
@@ -7804,6 +7858,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_cross_authority_zk,
     check_verifier_fuzz,
     check_federation_status_bundle,
     check_lint_enforced,

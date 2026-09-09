@@ -202,6 +202,17 @@ jobs:
           rustc --version | grep -qE "nightly" || { echo "::error::pinned nightly not active"; exit 1; }
           cargo build --release --bin polaris-zk
 
+      # v9.312 (roadmap P3.2d) — offline cross-authority epoch-bound ZK. A holder's ZK
+      # inclusion proof is decided against a FOREIGN authority's epoch with NO network: the
+      # authority's signed checkpoint is trusted in-context (ML-DSA verified via the
+      # cryptography/OpenSSL witness), the proof binds to its committed root, and the Plonky2
+      # proof is checked by the polaris-zk binary built above. It verifies a committed fixture
+      # (a real proof + a real ML-DSA checkpoint, like the ML-DSA vectors), and is red on any
+      # wrong decision: accept the genuine foreign proof, reject a wrong root / forged
+      # checkpoint / untrusted issuer / wrong context / tampered proof, abstain with no binary.
+      - name: Cross-authority ZK — a foreign proof decided offline
+        run: python scripts/polaris-cross-authority-zk-drill.py
+
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
           COVERAGE_FLOOR: "72"

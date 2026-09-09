@@ -977,6 +977,160 @@ def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundl
 
 
 # ---------------------------------------------------------------------------
+# P3.2d: offline cross-authority epoch-bound zero-knowledge presentation.
+#
+# A holder proves, in ZERO KNOWLEDGE, that its credential is included in an issuing
+# authority's epoch tree -- without revealing WHICH credential. The Plonky2 circuit
+# already binds the proof to the epoch's Merkle ROOT (a public input, alongside the
+# epoch number, a context, and a nonce), and that root is exactly TokenStateEpoch's
+# committed root, which an authority also publishes SIGNED in its epoch checkpoint.
+#
+# This composes the two OFFLINE: a relying party that trusts authority B accepts a
+# holder's proof against a FOREIGN authority A's epoch iff (1) A's signed checkpoint is
+# authentic, fresh, and attested by B in the presented context -- so the epoch ROOT it
+# commits to is trusted, non-transitively; (2) the proof's public inputs BIND to that
+# trusted root, epoch number, and context; and (3) the Plonky2 proof verifies.
+#
+# Steps 1-2 are pure Python here. Step 3 is the one thing this standalone verifier
+# cannot do in pure Python -- checking a Plonky2 FRI proof -- so it shells to the
+# polaris-zk binary as a LOCAL subprocess: no network, still offline. If the binary is
+# absent the decision ABSTAINS (trust and binding established, proof unverifiable here),
+# never a false accept. The verdict reveals nothing about the credential.
+# ---------------------------------------------------------------------------
+_ZK_BINARY_ENV = "POLARIS_ZK_BINARY"
+
+
+def _zk_binary_path():
+    """Locate the standalone polaris-zk verifier binary. POLARIS_ZK_BINARY wins; otherwise
+    the default build location beside this repo. Stdlib only."""
+    import os
+    explicit = os.environ.get(_ZK_BINARY_ENV)
+    if explicit:
+        return explicit
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(here, "polaris_zk", "target", "release", "polaris-zk")
+
+
+def _zk_verify_proof(proof_bundle, zk_binary=None):
+    """Check a Plonky2 ZK proof by invoking the polaris-zk verifier binary as a LOCAL
+    subprocess (no network -- offline). Returns True/False, or None to ABSTAIN when the binary
+    is unavailable, so a relying party without it establishes trust but never false-accepts.
+    Uses only the standard library; imports no Polaris code."""
+    import os
+    import subprocess
+    binary = zk_binary or _zk_binary_path()
+    if not (isinstance(binary, str) and os.path.isfile(binary)):
+        return None
+    try:
+        proc = subprocess.run([binary, "verify"],
+                              input=json.dumps(proof_bundle).encode("utf-8"),
+                              capture_output=True, timeout=60)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return False
+    try:
+        return bool(json.loads(proc.stdout.decode("utf-8", errors="replace")).get("verified"))
+    except (ValueError, AttributeError):
+        return False
+
+
+def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
+                           expected_context_id, expected_nonce=None, zk_binary=None):
+    """The ZK half of the cross-authority decision, factored so it is testable WITHOUT ML-DSA:
+    a holder's proof is accepted against a TRUSTED epoch root iff its public inputs bind to that
+    root, epoch number, and context (and a nonce, if the verifier issued a challenge), AND the
+    Plonky2 proof verifies. Returns {bound, proof_verified, note}; proof_verified is None
+    (abstain) when the polaris-zk binary is absent. Total on hostile input."""
+    v = {"bound": False, "proof_verified": None, "note": None}
+    pi = proof_bundle.get("public_inputs") if isinstance(proof_bundle, dict) else None
+    if not isinstance(pi, dict):
+        v["note"] = "proof bundle has no public inputs"
+        return v
+    if str(pi.get("epoch_root_hex") or "").lower() != str(expected_root_hex or "").lower():
+        v["note"] = "proof is not bound to the trusted epoch root"
+        return v
+    try:
+        if int(pi.get("epoch_id", -1)) != int(expected_epoch_id):
+            v["note"] = "proof epoch number does not match the checkpoint"
+            return v
+        if int(pi.get("context_id", -1)) != int(expected_context_id):
+            v["note"] = "proof context does not match the presented context"
+            return v
+        if expected_nonce is not None and int(pi.get("nonce", -1)) != int(expected_nonce):
+            v["note"] = "proof nonce does not match the verifier challenge"
+            return v
+    except (TypeError, ValueError):
+        v["note"] = "proof public inputs are malformed"
+        return v
+    v["bound"] = True
+    v["proof_verified"] = _zk_verify_proof(proof_bundle, zk_binary=zk_binary)
+    if v["proof_verified"] is None:
+        v["note"] = ("public inputs bind to the trusted epoch, but the ZK proof cannot be checked "
+                     "here (no polaris-zk binary)")
+    elif not v["proof_verified"]:
+        v["note"] = "the ZK proof failed cryptographic verification"
+    return v
+
+
+def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, trusted_manifests,
+                              now=None, max_window_seconds=None, trusted_anchors=None,
+                              expected_nonce=None, zk_binary=None):
+    """Decide a HOLDER's zero-knowledge inclusion proof against a FOREIGN authority's epoch,
+    OFFLINE (P3.2d). Accept iff: (1) the foreign epoch checkpoint is authentic and fresh, and
+    signed by an authority a trusted manifest attests IN the presented context -- so the epoch
+    ROOT it commits to is trusted, non-transitively; (2) the proof's public inputs bind to that
+    trusted root, epoch number, and context (and a nonce, if a challenge was issued); and (3)
+    the Plonky2 proof verifies via the local polaris-zk binary. Steps 1-2 pure Python; step 3
+    shells to the binary (no network -- still offline). If the binary is absent the decision is
+    ABSTAIN, never a false accept. The verdict carries no credential: the proof is
+    zero-knowledge and nothing about which credential it is leaks."""
+    cv = verify_epoch_checkpoint(epoch_checkpoint, now=now, max_window_seconds=max_window_seconds)
+    base = {"decision": "reject",
+            "checkpoint_authentic": bool(cv["checkpoint_authentic"] and cv["fresh"]),
+            "issuer_trusted": None, "bound": None, "proof_verified": None, "via": None, "reasons": []}
+    if not (cv["checkpoint_authentic"] and cv["fresh"]):
+        return {**base, "reasons": ["the foreign epoch checkpoint is not authentic or not fresh"]}
+    cp_key = str((epoch_checkpoint or {}).get("public_key_hex") or "").lower() if isinstance(epoch_checkpoint, dict) else ""
+    if not isinstance(trusted_manifests, (list, tuple)):
+        trusted_manifests = []
+    via = None
+    for manifest in trusted_manifests:
+        mv = verify_manifest(manifest, now=now, max_window_seconds=max_window_seconds,
+                             trusted_anchors=trusted_anchors)
+        if not (mv["manifest_authentic"] and mv["fresh"]):
+            continue
+        if trusted_anchors is not None and not mv["issuer_trusted"]:
+            continue
+        for att in mv["attestations"]:
+            if not isinstance(att, dict):
+                continue
+            if (str(att.get("attested_public_key_hex") or "").lower() == cp_key
+                    and (context_id is None or att.get("context_id") == context_id)):
+                via = mv["authority"]
+                break
+        if via:
+            break
+    base["issuer_trusted"] = bool(via)
+    if not via:
+        return {**base, "reasons": ["no trusted authority attests to the checkpoint's issuer in this context"]}
+    epoch = (epoch_checkpoint.get("epoch") if isinstance(epoch_checkpoint, dict) else None) or {}
+    zk = verify_zk_against_root(proof_bundle, epoch.get("root_hex"), epoch.get("number"),
+                                context_id, expected_nonce=expected_nonce, zk_binary=zk_binary)
+    result = {**base, "via": via, "bound": zk["bound"], "proof_verified": zk["proof_verified"]}
+    if not zk["bound"]:
+        return {**result, "decision": "reject",
+                "reasons": ["the ZK proof is not bound to the trusted epoch (%s)" % zk["note"]]}
+    if zk["proof_verified"] is None:
+        return {**result, "decision": "abstain",
+                "reasons": ["trust established and the proof binds to the trusted epoch, but the ZK "
+                            "proof cannot be checked here (no polaris-zk binary); fetch it or verify online"]}
+    if not zk["proof_verified"]:
+        return {**result, "decision": "reject", "reasons": ["the ZK proof failed cryptographic verification"]}
+    return {**result, "decision": "accept", "reasons": []}
+
+
+# ---------------------------------------------------------------------------
 # P3.3: the transparency log over the audit-anchor roots.
 #
 # The audit anchor log (AnchorBatch) is append-only at the database. This turns
@@ -1404,12 +1558,40 @@ def main(argv=None):
     ap.add_argument("--verify-dir", help="re-verify every published vector in a directory")
     ap.add_argument("--selftest", action="store_true",
                     help="prove the path end-to-end with a live ML-DSA-65 round-trip (needs liboqs)")
+    ap.add_argument("--zk-proof", help="a holder's ZK inclusion proof bundle JSON (P3.2d): with "
+                    "--epoch-checkpoint and --trusted-manifest, decide a cross-authority proof OFFLINE")
+    ap.add_argument("--epoch-checkpoint", help="a foreign authority's signed epoch checkpoint JSON")
+    ap.add_argument("--trusted-manifest", action="append",
+                    help="a federation manifest the relying party trusts (repeatable)")
+    ap.add_argument("--trusted-anchor", help="an anchor public key hex the relying party trusts")
+    ap.add_argument("--context", type=int, help="the presented context id (for --zk-proof)")
+    ap.add_argument("--nonce", type=int, default=None, help="the challenge nonce the proof must carry")
     args = ap.parse_args(argv)
 
     if args.selftest:
         return selftest()
     if args.verify_dir:
         return verify_dir(args.verify_dir)
+
+    if args.zk_proof:
+        try:
+            proof = json.loads(open(args.zk_proof).read())
+            checkpoint = json.loads(open(args.epoch_checkpoint).read()) if args.epoch_checkpoint else {}
+            manifests = [json.loads(open(m).read()) for m in (args.trusted_manifest or [])]
+        except Exception as e:
+            print("could not read the ZK proof / checkpoint / manifest: %s" % e, file=sys.stderr)
+            return 3
+        verdict = verify_cross_authority_zk(
+            proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
+            trusted_anchors=([args.trusted_anchor] if args.trusted_anchor else None),
+            expected_nonce=args.nonce)
+        if args.json:
+            print(json.dumps(verdict, indent=2))
+        else:
+            print("decision: %s" % verdict["decision"])
+            for r in verdict.get("reasons", []):
+                print("  - %s" % r)
+        return {"accept": 0, "abstain": 2}.get(verdict["decision"], 1)
 
     try:
         raw = open(args.pack).read() if args.pack else sys.stdin.read()

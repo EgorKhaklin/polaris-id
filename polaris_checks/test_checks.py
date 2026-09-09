@@ -6289,6 +6289,7 @@ def test_verifier_fuzz_check_discriminates(tmp_path):
             "    verify_manifest(x); verify_epoch_checkpoint(x); verify_revocation_feed(x)\n"
             "    verify_status_assertion(x); verify_sth(x); verify_status_bundle(x)\n"
             "    verify_cross_authority(x); verify_cross_authority_via_bundle(x)\n"
+            "    verify_cross_authority_zk(x)\n"
             "    # classes: bitflip, mutate:field, cross-type, adv-object\n"
             "    # asserts a wrongly-ACCEPTED case and any raised exception is a break\n"
         ),
@@ -6325,6 +6326,68 @@ def test_verifier_fuzz_check_discriminates(tmp_path):
     # 7. the fuzzer is missing entirely
     (tmp_path / "scripts/polaris-verifier-fuzz.py").unlink()
     assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL without the fuzzer"
+
+
+def test_cross_authority_zk_check_discriminates(tmp_path):
+    # v9.312 (P3.2d): a holder's ZK inclusion proof decided against a FOREIGN authority's epoch
+    # offline -- trust the signed checkpoint in-context, bind the proof to its root, verify via
+    # the local polaris-zk binary (abstain when absent), standalone, with a CLI, a committed
+    # fixture, a drill, and CI. Each perturbation removes one leg.
+    good = {
+        'scripts/polaris-verify.py': (
+            "import json, hashlib, subprocess\n"
+            "# the polaris-zk binary is invoked as a subprocess; --zk-proof CLI mode\n"
+            "def _zk_verify_proof(b, zk_binary=None): return None  # abstain when no binary\n"
+            "def verify_zk_against_root(b, r, e, c):\n"
+            "    pi = b.get('public_inputs'); pi.get('epoch_root_hex')  # bind to the trusted root\n"
+            "def verify_epoch_checkpoint(cp): return {}\n"
+            "def verify_manifest(m): return {}\n"
+            "def verify_cross_authority_zk(p, cp, ctx, tm):\n"
+            "    verify_epoch_checkpoint(cp); verify_manifest(tm[0])  # attested_public_key_hex, in-context\n"
+            "    return {'decision': 'abstain'}\n"
+        ),
+        'scripts/polaris-cross-authority-zk-drill.py': (
+            "def main():\n    verify_cross_authority_zk(p, cp, 1, [m])  # accept/reject/abstain matrix\n"
+        ),
+        'polaris_zk/fixtures/cross-authority-zk.json': '{"proof": {}}\n',
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-cross-authority-zk-drill.py\n',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the decision function is missing
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_cross_authority_zk", "def nope")})
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without the decision function"
+    # 2. trust is not rooted in the signed checkpoint
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("verify_epoch_checkpoint(cp)", "pass")})
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without checkpoint trust"
+    # 3. the proof is not bound to the epoch root
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("epoch_root_hex", "nope_hex")})
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without root binding"
+    # 4. the proof is not checked via the local binary
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("subprocess", "notproc")})
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without the binary subprocess"
+    # 5. the verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 6. no CLI mode
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("--zk-proof", "--nope")})
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without the --zk-proof CLI"
+    # 7. the drill does not prove the abstain case
+    write({"scripts/polaris-cross-authority-zk-drill.py": "def main():\n    verify_cross_authority_zk(p, cp, 1, [m])\n"})
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without the abstain case"
+    # 8. the committed fixture is missing
+    (tmp_path / "polaris_zk/fixtures/cross-authority-zk.json").unlink()
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without the fixture"
+    # 9. the drill does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
 
 
 def test_federation_two_instances_check_discriminates(tmp_path):

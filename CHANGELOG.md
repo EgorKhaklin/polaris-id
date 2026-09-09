@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.312 — 2026-09-08 (Offline cross-authority epoch-bound ZK, P3.2d)
+
+A holder proves, in zero knowledge, that its credential is included in an issuing authority's
+epoch tree, and a relying party that trusts that authority through the federation graph accepts
+it OFFLINE, learning nothing about which credential. It composes two things that already
+existed, with zero circuit changes.
+
+- **The composition.** The Plonky2 circuit already binds a proof to the epoch's Merkle root (a
+  public input), which is exactly `TokenStateEpoch.merkle_root`; and that root already travels
+  the federation signed in the epoch checkpoint. `verify_cross_authority_zk` in
+  `scripts/polaris-verify.py` joins them: (1) TRUST the foreign checkpoint (authentic, fresh,
+  and attested in-context by a trusted authority, non-transitive, the hardened
+  `verify_cross_authority` path) to obtain the trusted epoch root; (2) BIND the proof's public
+  inputs to that root, epoch number, and context (and a challenge nonce, if issued); (3) verify
+  the Plonky2 proof.
+- **Why a binary, still offline.** Checking a Plonky2 FRI proof is the one thing the standalone
+  pure-Python verifier cannot do, so it shells to the `polaris-zk` binary as a LOCAL subprocess.
+  There is no network, so the decision stays offline. If the binary is absent the decision
+  ABSTAINS (trust and binding established, proof unverifiable here), never a false accept, and
+  the verifier stays import-standalone (a subprocess is not an import). The verdict carries no
+  credential.
+- **What runs.** Because generating a proof needs the prover and signing a checkpoint needs
+  liboqs, the artifacts are generated once and committed as a fixture
+  (`polaris_zk/fixtures/cross-authority-zk.json`), like the ML-DSA `vectors/`.
+  `scripts/polaris-cross-authority-zk-drill.py` verifies it every release in the CI test job
+  (which has the binary and the cryptography ML-DSA witness): accept the genuine foreign proof;
+  reject a wrong root, a forged checkpoint, an untrusted issuer, a wrong context, and a tampered
+  proof; abstain with no binary. A `--zk-proof` CLI mode runs the decision from the command
+  line; `check_cross_authority_zk` (#169) pins the path; the metamorphic fuzzer holds the new
+  decision total on hostile input. Spec: [cross-authority-zk.md](docs/design/cross-authority-zk.md).
+  169 checks.
+
 ## v9.311 — 2026-09-08 (ROADMAP honesty pass, and the P8 exchange-fabric arc)
 
 Docs only. The ROADMAP "Where we are" inventory had drifted: fresh agents use it to choose
