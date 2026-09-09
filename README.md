@@ -6,7 +6,7 @@
 
 **A working reference implementation of a post-quantum, issuer-unlinkable,<br>compulsion-resistant identity-token system.**
 
-Educational project; notional data only. CI builds and boots the production-profile container stack on every push, proves the post-quantum handshake and the backup round trip, and runs the disaster-recovery drill. It is a reference implementation, not a deployment.
+CI builds and boots the production-profile container stack on every push, proves the post-quantum handshake and the backup round trip, and runs the disaster-recovery drill. It is a reference implementation, not a deployment.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?label=release&color=2b5797&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
