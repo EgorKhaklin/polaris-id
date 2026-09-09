@@ -301,7 +301,12 @@ sight). A ZK proof is decided against an epoch root (section 3.2) with the prove
 JSON of the presentation))` without padding, `<digest>` is the lowercase SHA3-256 hex of the
 whole payload, and every frame names it. A receiver MAY receive frames in any order and MUST
 refuse frames naming different digests (mixed transfers), a missing index, a conflicting
-duplicate, or a reassembled payload whose SHA3-256 differs from the named digest. No frame
+duplicate, or a reassembled payload whose SHA3-256 differs from the named digest. A receiver
+MUST bound what it accepts, each bound checked before the work it guards: at most 9,999
+frames (the index is four digits), at most 512 KiB of compressed payload, and at most 2 MiB
+once inflated, inflating under an output limit so a compressible payload that would expand
+beyond the bound is refused at the limit rather than decompressed (a legitimate presentation
+is far smaller). No frame
 exceeds the emitter's frame budget (RECOMMENDED 1800 bytes). Framing is transport integrity
 only; it adds no authenticity.
 

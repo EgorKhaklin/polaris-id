@@ -66,3 +66,14 @@ interpreted; the wallet round trip (`enroll`, `present --qr --status-assertion`,
 frame decoder total. `check_wallet_presentation` pins the surface, the duress opacity, the
 wallet and CLI flags, the spec (section 3.14), the drill, and that this document records the
 boundaries above -- with a detection test.
+
+## Resource bounds (v9.335)
+
+A decoder that is total on hostile input must also be resource-bounded, since a
+compressible payload can expand a thousandfold. `decode_presentation_frames` bounds the
+frame count (the format's 9,999), the compressed payload (512 KiB) and the inflated payload
+(2 MiB), each checked before the work it guards, and inflates under an output limit so a
+decompression bomb is refused at the limit rather than decompressed. The presentation drill
+refuses a real bomb (64 MiB of zeros in some forty frames), an incompressible oversized
+payload and a flood of frames, each in well under a second. The bounds are normative in the
+wire spec.

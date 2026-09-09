@@ -5,6 +5,24 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.335 — 2026-09-09 (The QR decoder is resource-bounded)
+
+The outside review found that the QR frame decoder, total on hostile input, inflated the
+reassembled payload with no output limit: up to 9,999 frames of a highly compressible payload
+could expand far beyond the transfer, a classic decompression bomb against the detached
+verifier and the wallet.
+
+- **Three bounds, each before the work it guards.** At most 9,999 frames (the index is four
+  digits), at most 512 KiB of compressed payload, at most 2 MiB inflated; the decompressor runs
+  with an output limit and a payload that would exceed it is refused at the limit, not inflated.
+  A JSON recursion or memory error on the parsed payload is a clean refusal like any other.
+- **Drilled with a real bomb.** 64 MiB of zeros compresses into some forty frames inside the
+  compressed bound; the presentation drill shows it refused at the decompressed bound in well
+  under a second, an incompressible 1 MiB payload refused at the compressed bound before hashing,
+  and a flood of frames refused before parsing. `check_qr_resource_bounds` (#187) pins the
+  bounds, forbids an unbounded inflate, and requires the drill and the wire spec's new
+  normative bounds.
+
 ## v9.334 — 2026-09-09 (Long-term validation trusts the timestamp authority)
 
 The same outside review found a hole in long-term validation: the verifier checked that a

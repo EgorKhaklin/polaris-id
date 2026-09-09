@@ -2591,6 +2591,15 @@ def presentation_payload(presentation):
                       separators=(",", ":")).encode("utf-8")
 
 
+# v9.335: a decoder that is total on hostile input is also resource-bounded. The largest
+# legitimate presentation (an ML-DSA-87 pack, a stapled assertion, a proof bundle) is well
+# under 100 KiB; a compressible payload can expand a thousandfold, so the decompressor runs
+# with an output limit and every bound is checked before the work it guards.
+_QR_MAX_FRAMES = 9999                     # the format's four-digit index
+_QR_MAX_COMPRESSED = 512 * 1024           # bytes of compressed payload (base64 adds a third)
+_QR_MAX_DECOMPRESSED = 2 * 1024 * 1024    # bytes after inflation
+
+
 def encode_presentation_frames(presentation, frame_bytes=QR_FRAME_BYTES):
     """Split a presentation into polaris-qr/1 frames: PLRS1/<total>/<index>/<sha3-256 of the
     payload>/<chunk>, where the payload is base64url(zlib(canonical JSON)). Every frame names
@@ -2614,10 +2623,15 @@ def decode_presentation_frames(frames):
     import zlib
     if not isinstance(frames, (list, tuple)):
         return None, "frames must be a list of strings"
-    parts, total, digest = {}, None, None
+    if len(frames) > 2 * _QR_MAX_FRAMES:
+        return None, "too many frames (the format carries at most %d)" % _QR_MAX_FRAMES
+    parts, total, digest, size = {}, None, None, 0
     for f in frames:
         if not isinstance(f, str):
             return None, "a frame is not a string"
+        size += len(f)
+        if size > _QR_MAX_COMPRESSED * 4 // 3 + 128 * _QR_MAX_FRAMES:
+            return None, "payload exceeds the compressed-size bound (%d bytes)" % _QR_MAX_COMPRESSED
         bits = f.strip().split("/", 4)
         if len(bits) != 5 or bits[0] != _QR_PREFIX:
             return None, "not a %s frame" % _QR_FORMAT
@@ -2629,7 +2643,7 @@ def decode_presentation_frames(frames):
             total, digest = t, bits[3]
         if t != total or bits[3] != digest:
             return None, "frames from different transfers were mixed"
-        if not (0 < total <= 9999 and 0 <= i < total):
+        if not (0 < total <= _QR_MAX_FRAMES and 0 <= i < total):
             return None, "frame index out of range"
         if i in parts and parts[i] != bits[4]:
             return None, "conflicting duplicate frame"
@@ -2640,12 +2654,20 @@ def decode_presentation_frames(frames):
     if missing:
         return None, "missing frame(s) %s" % missing
     payload = "".join(parts[i] for i in range(total))
+    if len(payload) > _QR_MAX_COMPRESSED * 4 // 3 + 4:
+        return None, "payload exceeds the compressed-size bound (%d bytes)" % _QR_MAX_COMPRESSED
     if hashlib.sha3_256(payload.encode("ascii")).hexdigest() != digest:
         return None, "payload digest mismatch (a frame was altered)"
     try:
-        raw = zlib.decompress(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)), bufsize=1 << 16)
+        data = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+        if len(data) > _QR_MAX_COMPRESSED:
+            return None, "payload exceeds the compressed-size bound (%d bytes)" % _QR_MAX_COMPRESSED
+        d = zlib.decompressobj()
+        raw = d.decompress(data, _QR_MAX_DECOMPRESSED)
+        if d.unconsumed_tail or not d.eof:
+            return None, "payload exceeds the decompressed-size bound (%d bytes): refused before inflating further" % _QR_MAX_DECOMPRESSED
         obj = json.loads(raw.decode("utf-8"))
-    except Exception as e:  # noqa: BLE001 -- any decoding failure is a clean refusal
+    except Exception as e:  # noqa: BLE001 -- any decoding failure (incl. recursion depth) is a clean refusal
         return None, "undecodable payload: %s" % type(e).__name__
     if not isinstance(obj, dict) or obj.get("format") != _PRESENTATION_FORMAT:
         return None, "not a %s" % _PRESENTATION_FORMAT

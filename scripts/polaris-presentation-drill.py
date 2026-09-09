@@ -115,7 +115,35 @@ def main():
     except ValueError:
         cli_verdict = {}
 
+    # v9.335: resource bounds. Frames are built by hand around hostile payloads: a decompression
+    # bomb (64 MiB of zeros compresses to ~64 KiB, inside the compressed bound, so only an
+    # output-limited decompressor refuses it), an incompressible oversized payload, and a flood
+    # of frames. Each is refused with a bound named, in well under a second.
+    import base64
+    import hashlib
+    import time
+    import zlib
+
+    def hand_frames(raw_payload_bytes, chunk=1500):
+        payload = base64.urlsafe_b64encode(zlib.compress(raw_payload_bytes, 9)).rstrip(b"=").decode("ascii")
+        digest = hashlib.sha3_256(payload.encode("ascii")).hexdigest()
+        chunks = [payload[i:i + chunk] for i in range(0, len(payload), chunk)]
+        return ["PLRS1/%d/%d/%s/%s" % (len(chunks), i, digest, c) for i, c in enumerate(chunks)]
+
+    t0 = time.monotonic()
+    bomb_frames = hand_frames(b"\0" * (64 * 1024 * 1024))
+    bomb = V.decode_presentation_frames(bomb_frames)
+    bomb_seconds = time.monotonic() - t0
+    big = V.decode_presentation_frames(hand_frames(os.urandom(1024 * 1024)))
+    flood = V.decode_presentation_frames(["PLRS1/9999/0/00/x"] * 25000)
+
     checks = [
+        ("a DECOMPRESSION BOMB (64 MiB of zeros in %d frames) is refused at the decompressed-size bound" % len(bomb_frames),
+         (bomb[0], "decompressed-size bound" in (bomb[1] or "")), (None, True)),
+        ("... and refused quickly (under two seconds), the inflater stopping at the limit", bomb_seconds < 2.0, True),
+        ("an incompressible 1 MiB payload is refused at the compressed-size bound before hashing",
+         (big[0], "compressed-size bound" in (big[1] or "")), (None, True)),
+        ("a flood of frames is refused before any parsing", (flood[0], "too many frames" in (flood[1] or "")), (None, True)),
         ("the presentation is USABLE OFFLINE: credential authentic, issuer trusted, assertion bound + fresh + ACTIVE",
          vd["usable_offline"], True),
         ("it travels as several frames, each under the 1800-byte budget",

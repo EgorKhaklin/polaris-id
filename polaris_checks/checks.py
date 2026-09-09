@@ -7529,6 +7529,31 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_qr_resource_bounds(root: pathlib.Path) -> list[Finding]:
+    """v9.335: the QR decoder is resource-bounded as well as total. Frame count, compressed
+    size and decompressed size are each bounded and checked BEFORE the work they guard; the
+    decompressor runs with an output limit, so a decompression bomb (a compressible payload
+    that expands a thousandfold) is refused at the limit rather than inflated. Drilled with a
+    real bomb, an oversized payload and a frame flood; stated normatively in the wire spec."""
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("_QR_MAX_FRAMES = 9999", "_QR_MAX_COMPRESSED =", "_QR_MAX_DECOMPRESSED =", "zlib.decompressobj()",
+                "d.decompress(data, _QR_MAX_DECOMPRESSED)", "d.unconsumed_tail or not d.eof", "too many frames"):
+        if sym not in v:
+            return _fail("qr_resource_bounds", "scripts/polaris-verify.py must bound frames, compressed and decompressed sizes with an output-limited inflater (%s missing)" % sym)
+    if "zlib.decompress(" in v:
+        return _fail("qr_resource_bounds", "the QR decoder must not call an unbounded zlib.decompress")
+    drill = _read(root, "scripts/polaris-presentation-drill.py")
+    for sym in ("DECOMPRESSION BOMB", "compressed-size bound", "too many frames"):
+        if sym not in drill:
+            return _fail("qr_resource_bounds", "the presentation drill must refuse a decompression bomb, an oversized payload and a frame flood (%s)" % sym)
+    if "MUST bound" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("qr_resource_bounds", "the wire spec must state the receiver's resource bounds normatively")
+    return _ok("qr_resource_bounds",
+               "the QR decoder bounds frame count, compressed and decompressed size, inflating under an output limit so a "
+               "decompression bomb is refused at the limit; drilled with a real bomb, an oversized payload and a frame "
+               "flood; the wire spec states the bounds")
+
+
 def check_ltv_timestamp_trust(root: pathlib.Path) -> list[Finding]:
     """v9.334: long-term validation of a signed document trusts its TIME EVIDENCE only when the
     timestamp authority is one the verifier trusts (timestamp_anchors, distinct from the signer
@@ -8823,6 +8848,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_qr_resource_bounds,
     check_ltv_timestamp_trust,
     check_exchange_trust_directional,
     check_protocol_versioning,

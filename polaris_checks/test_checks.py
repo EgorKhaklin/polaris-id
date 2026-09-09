@@ -7867,3 +7867,29 @@ def test_ltv_timestamp_trust_check_discriminates(tmp_path):
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL without the negative drill cases"
     write({'docs/reference/WIRE-SPEC.md': "any authentic timestamp\n"})
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL without the normative rule"
+
+
+def test_qr_resource_bounds_check_discriminates(tmp_path):
+    # v9.335: the QR decoder is resource-bounded.
+    VER = ("_QR_MAX_FRAMES = 9999\n_QR_MAX_COMPRESSED = 1\n_QR_MAX_DECOMPRESSED = 2\n"
+           "def decode_presentation_frames(frames):\n    return None, 'too many frames'\n"
+           "    d = zlib.decompressobj()\n    raw = d.decompress(data, _QR_MAX_DECOMPRESSED)\n    if d.unconsumed_tail or not d.eof: pass\n")
+    good = {
+        'scripts/polaris-verify.py': VER,
+        'scripts/polaris-presentation-drill.py': "# DECOMPRESSION BOMB; compressed-size bound; too many frames\n",
+        'docs/reference/WIRE-SPEC.md': "A receiver MUST bound what it accepts\n",
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_qr_resource_bounds(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'scripts/polaris-verify.py': VER.replace("d.decompress(data, _QR_MAX_DECOMPRESSED)", "zlib.decompress(data)")})
+    assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL on an unbounded inflater"
+    write({'scripts/polaris-presentation-drill.py': "# happy path only\n"})
+    assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL without the bomb drill"
+    write({'docs/reference/WIRE-SPEC.md': "frames may be any size\n"})
+    assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL without the normative bounds"
