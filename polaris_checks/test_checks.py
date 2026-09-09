@@ -7929,3 +7929,31 @@ def test_broker_policy_bound_check_discriminates(tmp_path):
     assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL without the policy columns"
     write({'polaris_web/test_app.py': "def test_other(self): pass\n"})
     assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL without the tests"
+
+
+def test_roadmap_consistent_check_discriminates(tmp_path):
+    # v9.337: the roadmap cannot contradict itself.
+    n = len(checks.CHECKS)
+    ROADMAP = ("**Have, working, CI-proven:** the protocol layer (P8, complete); %d invariant\nchecks (v9.337) each with a detection test.\n\n"
+               "**Do not have:** hardware tokens; an external team's docs-only integration; and every institutional prerequisite.\n\n"
+               "| [x] P8.3 | The signed registry | M | low | P8.1 | DONE (v9.323). Discovery over the authority layer. |\n"
+               "| [x] P8.8 | Versioning | M | low | P8.3 | DONE (v9.330). |\n" % n)
+    good = {'ROADMAP.md': ROADMAP, 'polaris_web/__version__.py': '__version__: str = "9.337"\n'}
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_roadmap_consistent(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'ROADMAP.md': ROADMAP.replace("hardware tokens;", "hardware tokens; a service-and-authority registry;")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if a done subsystem sits under Do not have"
+    write({'ROADMAP.md': ROADMAP.replace("| DONE (v9.323).", "| IN PROGRESS. The primitive shipped.")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if a done row reads as in progress"
+    write({'ROADMAP.md': ROADMAP.replace("(v9.337)", "(v9.300)")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a stale stamp version"
+    write({'ROADMAP.md': ROADMAP.replace("%d invariant" % n, "%d invariant" % (n - 1))})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a wrong stamp count"
+    write({'ROADMAP.md': ROADMAP.replace("the protocol layer (P8, complete); ", "")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer once P8 is done"

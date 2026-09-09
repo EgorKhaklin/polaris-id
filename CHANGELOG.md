@@ -5,6 +5,27 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.337 — 2026-09-09 (The roadmap cannot contradict itself)
+
+The outside review's last finding: within a day of the previous drift fix, the roadmap's
+"Do not have" paragraph still listed the exchange gateway, the registry, the auth broker,
+document signing and the wire specification, all marked complete in the P8 table below it;
+its check stamp read v9.317; and the gateway's done row opened with "IN PROGRESS". A class of
+drift that returns that fast needs a gate, not a habit.
+
+- **The roadmap agrees with itself.** The "Have" paragraph names the protocol layer; "Do not
+  have" names what honestly remains there (an external team's docs-only integration, timestamp
+  transparency anchoring as a design decision, a relying-party-signed authorization request,
+  native wallet applications) and no longer the fabric that shipped; the gateway row reads done
+  with its version trail.
+- **`check_roadmap_consistent` (#189).** A subsystem whose row is done may not sit under "Do not
+  have"; a done row may not open its notes with IN PROGRESS, NEXT or TODO; the invariant-check
+  stamp must name the real count and a version within twenty minors of the tree; and with P8 done
+  the "Have" paragraph must say so. Each rule has a detection case.
+
+This closes the review-driven series (v9.333 to v9.337); every finding it made is now either a
+released fix with its own invariant or a named design decision on the roadmap.
+
 ## v9.336 — 2026-09-09 (The auth broker binds the relying party's policy and hides the code)
 
 The outside review found that the broker's step-up (`require_zk`) and enrollment requirement

@@ -7529,6 +7529,49 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
+    """v9.337: the roadmap cannot contradict itself. A subsystem whose row is marked done may
+    not still sit under "Do not have"; a done row may not open its notes with IN PROGRESS, NEXT
+    or TODO; the "N invariant checks (vX.Y)" stamp names the real count and a version within
+    twenty minors of the tree; and once the protocol phase is done the "Have" paragraph says
+    so. An outside review found all three drifts within a day of the prior drift fix, so the
+    class is now a gate, not a habit."""
+    rm = _read(root, "ROADMAP.md")
+    if not rm:
+        return _fail("roadmap_consistent", "ROADMAP.md is missing")
+    done = set(re.findall(r"^\| \[x\] ([A-Z0-9.]+) \|", rm, re.M))
+    m = re.search(r"\*\*Do not have:\*\*(.*?)\n\n", rm, re.S)
+    if not m:
+        return _fail("roadmap_consistent", "ROADMAP.md must keep a 'Do not have' paragraph")
+    not_have = m.group(1).lower()
+    built = {"P8.1": ("normative wire specification",), "P8.2": ("secure-exchange gateway", "exchange gateway"),
+             "P8.3": ("service-and-authority registry", "authority registry"), "P8.4": ("auth/sso broker", "auth broker"),
+             "P8.5": ("general document signing",), "P8.6": ("wallet protocol surface",), "P8.7": ("trust list",),
+             "P8.8": ("cross-version compatibility",)}
+    for rid, phrases in built.items():
+        if rid in done:
+            for ph in phrases:
+                if ph in not_have:
+                    return _fail("roadmap_consistent", "ROADMAP.md lists %r under 'Do not have' while row %s is marked done" % (ph, rid))
+    stale = re.search(r"^\| \[x\] (\S+) \|(?:[^|\n]*\|){4}\s*(IN PROGRESS|NEXT|TODO|PLANNED)\b", rm, re.M)
+    if stale:
+        return _fail("roadmap_consistent", "ROADMAP.md row %s is marked done but its notes open with %s" % (stale.group(1), stale.group(2)))
+    sm = re.search(r"(\d+) invariant\s+checks \(v(\d+)\.(\d+)\)", rm)
+    if not sm:
+        return _fail("roadmap_consistent", "ROADMAP.md must stamp 'N invariant checks (vX.Y)'")
+    if int(sm.group(1)) != len(CHECKS):
+        return _fail("roadmap_consistent", "ROADMAP.md stamps %s invariant checks; the layer has %d" % (sm.group(1), len(CHECKS)))
+    vm = re.search(r'__version__: str = "(\d+)\.(\d+)"', _read(root, "polaris_web/__version__.py"))
+    if vm and (int(sm.group(2)) != int(vm.group(1)) or int(vm.group(2)) - int(sm.group(3)) > 20):
+        return _fail("roadmap_consistent", "ROADMAP.md's check stamp reads v%s.%s but the tree is v%s.%s; restamp within twenty minors" % (sm.group(2), sm.group(3), vm.group(1), vm.group(2)))
+    if "P8.8" in done and "protocol layer" not in rm.split("**Do not have:**")[0].lower():
+        return _fail("roadmap_consistent", "ROADMAP.md's 'Have' paragraph must name the protocol layer once P8 is done")
+    return _ok("roadmap_consistent",
+               "the roadmap agrees with itself: nothing marked done sits under 'Do not have', no done row reads as in "
+               "progress, the check stamp names the real count and a current version, and the 'Have' paragraph names "
+               "the protocol layer")
+
+
 def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
     """v9.336 (P8.4b): the auth broker enforces the relying party's REGISTERED policy, not what
     the holder-side request says. The step-up, the enrollment requirement and the only context
@@ -8886,6 +8929,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_roadmap_consistent,
     check_broker_policy_bound,
     check_qr_resource_bounds,
     check_ltv_timestamp_trust,
