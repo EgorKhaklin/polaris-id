@@ -6776,6 +6776,51 @@ def check_witness_fuzz(root: pathlib.Path) -> list[Finding]:
                "AND cryptography independently and flag any disagreement, run via the attack suite in CI")
 
 
+def check_verifier_fuzz(root: pathlib.Path) -> list[Finding]:
+    """The detached verifier is fed hostile input by design: a relying party runs it on a
+    credential, manifest, feed, or bundle that a stranger presented. This pins the
+    metamorphic fuzzer that holds it TOTAL. For every signed type the fuzzer builds a
+    genuine, real-ML-DSA object, confirms it is accepted, then a deterministic battery
+    (signature and key bit-flips, mutation of each signature-bound field, non-hex and
+    dropped fields, adversarial values, and cross-type confusion) must ALL be rejected
+    FAIL-CLOSED, with no exception. A verifier that crashes on malformed input, or accepts
+    a mutation, is a break."""
+    fuzz = _read(root, "scripts/polaris-verifier-fuzz.py")
+    if not fuzz:
+        return _fail("verifier_fuzz", "scripts/polaris-verifier-fuzz.py is missing")
+    # Every decision function the verifier exposes must be under the fuzzer.
+    for fn in ("verify_manifest", "verify_epoch_checkpoint", "verify_revocation_feed",
+               "verify_status_assertion", "verify_sth", "verify_status_bundle",
+               "verify_cross_authority", "verify_cross_authority_via_bundle"):
+        if fn not in fuzz:
+            return _fail("verifier_fuzz", "the fuzzer does not exercise %s" % fn)
+    # The mutation battery must include the classes that matter.
+    for cls, marker in (("signature bit-flip", "bitflip"), ("signed-field mutation", "mutate:"),
+                        ("cross-type confusion", "cross-type"), ("adversarial/malformed input", "adv-object")):
+        if marker not in fuzz:
+            return _fail("verifier_fuzz", "the fuzzer is missing the %s mutation class" % cls)
+    # It must assert BOTH failure modes: a wrongly-ACCEPTED mutation, and a CRASH on hostile input.
+    if "ACCEPTED" not in fuzz or "raised" not in fuzz:
+        return _fail("verifier_fuzz",
+                     "the fuzzer must fail on a wrongly-accepted mutation AND on any exception (a crash is a break)")
+    # Deterministic, so a break reproduces.
+    if "_SEED" not in fuzz:
+        return _fail("verifier_fuzz", "the fuzzer must be deterministic (a fixed seed) so a break reproduces")
+    # It RUNS every release under real ML-DSA.
+    if "polaris-verifier-fuzz.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("verifier_fuzz",
+                     "the verifier fuzzer must run in CI (a fuzzer that never runs finds nothing)")
+    # The thing it fuzzes stays standalone.
+    v = _read(root, "scripts/polaris-verify.py")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("verifier_fuzz", f"the offline verifier imports {mod!r}; it must stay standalone")
+    return _ok("verifier_fuzz",
+               "the detached verifier is held TOTAL by a metamorphic fuzzer: across all six signed types and both "
+               "composed decisions, a genuine real-ML-DSA object is accepted and every signature/field mutation, "
+               "malformation, and cross-type confusion is rejected fail-closed with no crash, run every release")
+
+
 # ---------------------------------------------------------------------------
 # ML-DSA-65 conformance against an independent authority (Project Wycheproof).
 # The published vectors/ (PE.2) prove three implementations agree with EACH OTHER;
@@ -7750,6 +7795,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_verifier_fuzz,
     check_federation_status_bundle,
     check_lint_enforced,
     check_transparency_publication,

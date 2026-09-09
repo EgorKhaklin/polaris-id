@@ -19,6 +19,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [concurrency.md](concurrency.md) | Every race-prone path, the lock that serialises it, and the test that proves it |
 | [substrate.md](substrate.md) | Every primitive Polaris depends on, across its cryptographic, storage, network, runtime, hardware and human layers |
 | [two-witness-principle.md](two-witness-principle.md) | Why no cryptographic verdict is trusted from a single implementation |
+| [verifier-fuzz.md](verifier-fuzz.md) | How the detached verifier is held total against hostile input: the metamorphic fuzzer, what it found, and the fail-closed hardening it drove |
 | [zk-soundness.md](zk-soundness.md) | What the words proof and zero-knowledge are allowed to mean here |
 | [observability.md](observability.md) | What a running deployment tells its operator, and through which surface |
 | [rasp-rules.md](rasp-rules.md) | The runtime self-protection rules, implemented and gaps alike |

@@ -5,6 +5,34 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.309 — 2026-09-08 (Metamorphic verifier fuzzer, and the hardening it drove)
+
+The detached verifier grew a decision function per signed type across the federation and
+transparency work, plus two composed decisions. The per-type drills test hand-picked cases.
+This adds a fuzzer that generalizes them into one property, and it found real gaps.
+
+- **The property.** For every signed type (authenticity pack, manifest, epoch checkpoint,
+  revocation feed, status assertion, transparency STH, status bundle) and both composed
+  decisions, the fuzzer builds a genuine, real-ML-DSA object, confirms it is accepted, then a
+  deterministic battery (signature and key bit-flips, mutation of each signature-bound field,
+  non-hex and dropped fields, adversarial values, and cross-type confusion) must ALL be
+  rejected FAIL-CLOSED, with no exception. 670 cases, one fixed seed so a break reproduces.
+- **What it found.** The verifier is fed hostile input by design, and it crashed on some of
+  it: a non-dict object, or a field of the wrong type (a `revoked_root_hex` that is an int,
+  a `revoked_leaves` that is not a list, `anchors` or `members` that are not lists), raised an
+  `AttributeError`/`TypeError` instead of returning a clean reject verdict. A security verifier
+  must be **total** on hostile input.
+- **The hardening.** Each `verify_*` now coerces a non-dict object to a rejectable empty one,
+  and the commitment and membership helpers (`revoked_root`, `bundle_members_root`,
+  `is_revoked`) and the manifest anchor/attestation handling coerce wrong-typed fields instead
+  of raising. Behavior on genuine, well-formed input is unchanged: the canonical builders are
+  untouched, and every drill, the canonical-equivalence oracle, and the verifier self-test
+  stay green.
+- **It runs every release.** `scripts/polaris-verifier-fuzz.py` runs under real ML-DSA in the
+  pqc-real CI job; `check_verifier_fuzz` (#168) pins the coverage, the mutation classes, the
+  both-failure-modes assertion, the fixed seed, the CI wiring, and the verifier's standalone
+  constraint, with a detection test. 168 checks.
+
 ## v9.308 — 2026-09-08 (Aggregate mirrored status feed, P3.2c)
 
 P3.2b let a relying party check a foreign credential's non-revocation against the issuer's own

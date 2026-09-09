@@ -6271,6 +6271,55 @@ def test_status_bundle_check_discriminates(tmp_path):
     assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without StatusBundleTests"
 
 
+def test_verifier_fuzz_check_discriminates(tmp_path):
+    # v9.309: a metamorphic fuzzer holds the detached verifier TOTAL -- every signed type's
+    # decision function under a mutation battery, deterministic, run in CI against a
+    # standalone verifier. Each perturbation removes one leg.
+    good = {
+        'scripts/polaris-verifier-fuzz.py': (
+            "_SEED = 20260908\n"
+            "def main():\n"
+            "    verify_manifest(x); verify_epoch_checkpoint(x); verify_revocation_feed(x)\n"
+            "    verify_status_assertion(x); verify_sth(x); verify_status_bundle(x)\n"
+            "    verify_cross_authority(x); verify_cross_authority_via_bundle(x)\n"
+            "    # classes: bitflip, mutate:field, cross-type, adv-object\n"
+            "    # asserts a wrongly-ACCEPTED case and any raised exception is a break\n"
+        ),
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-verifier-fuzz.py\n',
+        'scripts/polaris-verify.py': 'import json, hashlib\n',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_verifier_fuzz(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. a decision function is not exercised
+    write({"scripts/polaris-verifier-fuzz.py": good["scripts/polaris-verifier-fuzz.py"].replace("verify_status_bundle", "nope")})
+    assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL if a verify fn is not fuzzed"
+    # 2. a mutation class is missing
+    write({"scripts/polaris-verifier-fuzz.py": good["scripts/polaris-verifier-fuzz.py"].replace("cross-type", "xxx")})
+    assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL without cross-type confusion"
+    # 3. it does not assert the crash failure mode
+    write({"scripts/polaris-verifier-fuzz.py": good["scripts/polaris-verifier-fuzz.py"].replace("raised", "swallowed")})
+    assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL if a crash is not a break"
+    # 4. it is not deterministic
+    write({"scripts/polaris-verifier-fuzz.py": good["scripts/polaris-verifier-fuzz.py"].replace("_SEED", "_NOPE")})
+    assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL without a fixed seed"
+    # 5. it does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL if the fuzzer does not run in CI"
+    # 6. the fuzzed verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n"})
+    assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 7. the fuzzer is missing entirely
+    (tmp_path / "scripts/polaris-verifier-fuzz.py").unlink()
+    assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL without the fuzzer"
+
+
 def test_federation_two_instances_check_discriminates(tmp_path):
     # v9.299 (P3.10): a drill that boots two real instances and drives the federation
     # endpoints over HTTP under real ML-DSA, run in its own CI job. Each perturbation

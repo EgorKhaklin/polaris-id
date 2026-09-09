@@ -84,7 +84,10 @@ def _verify_cryptography(digest: bytes, sig: bytes, pk: bytes):
 
 
 def verify_pack(pack: dict, anchor_keys=None) -> dict:
-    """Verify an authenticity pack. Returns a verdict dict."""
+    """Verify an authenticity pack. Returns a verdict dict. Total: hostile non-dict input
+    fails closed rather than raising."""
+    if not isinstance(pack, dict):
+        pack = {}
     tok = pack.get("token_value")
     alg = pack.get("algorithm")
     sig_hex = pack.get("signature_hex")
@@ -287,6 +290,8 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
     [issued_at, expires_at) and the window no longer than max_window_seconds, when a
     bound is given). Reports status and, with anchors, issuer trust. No network."""
     from datetime import datetime, timezone
+    if not isinstance(assertion, dict):
+        assertion = {}
     v = {"status_authentic": False, "fresh": None, "status": assertion.get("status"),
          "issued_at": assertion.get("issued_at"), "expires_at": assertion.get("expires_at"),
          "issuer_trusted": None, "witnesses": [], "note": None}
@@ -396,9 +401,15 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
     declared active anchors (self-consistency), freshness, and, with trusted_anchors,
     whether this authority is one the relying party trusts. No network."""
     from datetime import datetime, timezone
+    if not isinstance(manifest, dict):
+        manifest = {}
+    _anchors = manifest.get("anchors")
+    _atts = manifest.get("attestations")
     v = {"manifest_authentic": False, "fresh": None, "issuer_trusted": None,
-         "authority": manifest.get("authority"), "anchors": manifest.get("anchors") or [],
-         "attestations": manifest.get("attestations") or [], "witnesses": [], "note": None}
+         "authority": manifest.get("authority"),
+         "anchors": _anchors if isinstance(_anchors, list) else [],
+         "attestations": _atts if isinstance(_atts, list) else [],
+         "witnesses": [], "note": None}
     alg = manifest.get("algorithm")
     pk_hex = manifest.get("public_key_hex")
     sig_hex = manifest.get("signature_hex")
@@ -415,8 +426,8 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
         return v
     # Self-consistency: the manifest must be signed by one of the ACTIVE anchor keys
     # it declares as its own roots, so a manifest cannot be signed by a stranger key.
-    active = {a.get("public_key_hex", "").lower() for a in v["anchors"]
-              if (a.get("status") or "active") == "active"}
+    active = {str(a.get("public_key_hex", "")).lower() for a in v["anchors"]
+              if isinstance(a, dict) and (a.get("status") or "active") == "active"}
     if pk_hex.lower() not in active:
         v["note"] = "the manifest is not signed by one of its own declared active anchors"
         return v
@@ -476,6 +487,10 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
     or a listed (revoked) credential all reject. When no feed is supplied the decision is
     the P3.2 attestation decision and `revocation_checked` is False (non-revocation was
     not confirmed offline)."""
+    if not isinstance(pack, dict):
+        pack = {}
+    if not isinstance(trusted_manifests, (list, tuple)):
+        trusted_manifests = []
     a = verify_pack(pack)
     if not a["signature_valid"]:
         return {"decision": "reject", "authentic": False,
@@ -491,7 +506,9 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
         if trusted_anchors is not None and not mv["issuer_trusted"]:
             continue  # the relying party does not trust the manifest's authority
         for att in mv["attestations"]:
-            same_key = (att.get("attested_public_key_hex") or "").lower() == token_key
+            if not isinstance(att, dict):
+                continue
+            same_key = str(att.get("attested_public_key_hex") or "").lower() == token_key
             same_ctx = (context_id is None or att.get("context_id") == context_id)
             if same_key and same_ctx:
                 via = mv["authority"]
@@ -566,7 +583,10 @@ def _revocation_feed_canonical(feed):
 def revoked_root(leaves):
     """A deterministic commitment over the revoked-leaf set: SHA3-256 over the sorted,
     de-duplicated, newline-joined lowercase hex leaves. Order-independent, so anyone who
-    holds the same set computes the same root. MUST match app.py's builder."""
+    holds the same set computes the same root. MUST match app.py's builder. Total: a
+    non-list `leaves` (hostile input) commits to the empty set rather than raising."""
+    if not isinstance(leaves, (list, tuple, set)):
+        leaves = []
     uniq = sorted({str(x).lower() for x in leaves})
     return hashlib.sha3_256("\n".join(uniq).encode("utf-8")).hexdigest()
 
@@ -623,6 +643,8 @@ def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=No
     SHA3-256(canonical) with two witnesses, freshness, and (with issuer_key) that it is
     signed by the expected issuing authority's key. Returns a verdict dict. Chaining and
     fork detection between two checkpoints is check_epoch_chain."""
+    if not isinstance(cp, dict):
+        cp = {}
     v = {"checkpoint_authentic": False, "fresh": None, "issuer_matches": None,
          "authority": cp.get("authority"), "epoch": cp.get("epoch"), "prev": cp.get("prev"),
          "witnesses": [], "note": None}
@@ -705,6 +727,8 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
     matches the listed leaves, and (with issuer_key) that it is signed by the expected
     issuer. Returns a verdict dict. Membership is is_revoked; monotonicity between two
     feeds is check_revocation_progression."""
+    if not isinstance(feed, dict):
+        feed = {}
     v = {"feed_authentic": False, "fresh": None, "commitment_ok": None, "issuer_matches": None,
          "authority": feed.get("authority"), "as_of": feed.get("as_of"),
          "revoked_count": feed.get("revoked_count"), "witnesses": [], "note": None}
@@ -716,10 +740,13 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
         v["note"] = "placeholder feed -- not authenticatable offline"
         return v
     # The commitment must match the listed leaves; a feed whose root does not commit to
-    # its own members is rejected before its signature is even considered meaningful.
-    leaves = feed.get("revoked_leaves") or []
+    # its own members is rejected before its signature is even considered meaningful. A
+    # wrong-typed leaf set or root (hostile input) fails the commitment rather than raising.
+    leaves = feed.get("revoked_leaves")
+    if not isinstance(leaves, (list, tuple, set)):
+        leaves = []
     uniq = {str(x).lower() for x in leaves}
-    v["commitment_ok"] = (revoked_root(leaves) == (feed.get("revoked_root_hex") or "").lower()
+    v["commitment_ok"] = (revoked_root(leaves) == str(feed.get("revoked_root_hex") or "").lower()
                           and len(uniq) == (feed.get("revoked_count") or 0))
     try:
         sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
@@ -747,9 +774,15 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
 
 def is_revoked(feed, token_value):
     """True iff the credential's leaf is listed in the feed. Call verify_revocation_feed
-    first -- this is a membership test, not an authenticity check."""
-    leaf = revocation_leaf(token_value or "").lower()
-    return leaf in {str(x).lower() for x in (feed.get("revoked_leaves") or [])}
+    first -- this is a membership test, not an authenticity check. Total: a non-dict feed or
+    a non-list leaf set (hostile input) is treated as no-match rather than raising."""
+    if not isinstance(feed, dict):
+        return False
+    leaf = revocation_leaf(str(token_value) if token_value else "").lower()
+    leaves = feed.get("revoked_leaves")
+    if not isinstance(leaves, (list, tuple, set)):
+        return False
+    return leaf in {str(x).lower() for x in leaves}
 
 
 def check_revocation_progression(prev_feed, next_feed):
@@ -819,9 +852,11 @@ def bundle_members_root(members):
     JSON. Order-independent, so anyone assembling the same members computes the same root;
     binds the bundle to the EXACT feeds it mirrors, so adding, dropping, or swapping a
     member changes the root. MUST match app.py's _bundle_members_root."""
+    if not isinstance(members, (list, tuple)):
+        members = []
     digs = sorted(hashlib.sha3_256(
         json.dumps(m, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-        for m in (members or []))
+        for m in members)
     return hashlib.sha3_256("\n".join(digs).encode("utf-8")).hexdigest()
 
 
@@ -835,6 +870,8 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     member changes members_root and is rejected here; a forged or stale member feed is
     rejected there. The publisher is untrusted for correctness; this envelope only makes a
     member's ABSENCE current and attributable."""
+    if not isinstance(bundle, dict):
+        bundle = {}
     v = {"bundle_authentic": False, "fresh": None, "commitment_ok": None,
          "publisher_matches": None, "publisher": bundle.get("publisher"),
          "member_count": bundle.get("member_count"),
@@ -846,8 +883,11 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     if alg == _PLACEHOLDER or not pk_hex:
         v["note"] = "placeholder bundle -- not authenticatable offline"
         return v
-    members = bundle.get("members") or []
-    v["commitment_ok"] = (bundle_members_root(members) == (bundle.get("members_root_hex") or "").lower()
+    members = bundle.get("members")
+    if not isinstance(members, list):
+        members = []
+    v["members"] = members  # a coerced list, so a downstream member iteration is total
+    v["commitment_ok"] = (bundle_members_root(members) == str(bundle.get("members_root_hex") or "").lower()
                           and len(members) == (bundle.get("member_count") or 0))
     try:
         sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
@@ -891,6 +931,10 @@ def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundl
     On the accept path, `epoch_bound` reports whether the member's embedded epoch checkpoint
     is authentic, fresh, and bound to the same issuer key -- the status tied to a committed
     epoch rather than a bare point in time."""
+    if not isinstance(pack, dict):
+        pack = {}
+    if not isinstance(trusted_manifests, (list, tuple)):
+        trusted_manifests = []
     bv = verify_status_bundle(bundle, now=now, max_window_seconds=max_window_seconds,
                               publisher_key=publisher_key)
     base = {"via": None, "revocation_checked": False, "revoked": None, "in_bundle": None,
@@ -901,11 +945,15 @@ def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundl
     if publisher_key is not None and not bv["publisher_matches"]:
         return {**base, "decision": "reject", "authentic": None,
                 "reasons": ["the status bundle is not signed by the pinned publisher key"]}
-    token_key = (pack.get("public_key_hex") or "").lower()
+    token_key = str(pack.get("public_key_hex") or "").lower()
     member = None
     for m in bv["members"]:
-        feed = (m.get("revocation_feed") or {})
-        if (feed.get("public_key_hex") or "").lower() == token_key:
+        if not isinstance(m, dict):
+            continue  # a hostile bundle can commit to a non-dict member entry
+        feed = m.get("revocation_feed")
+        if not isinstance(feed, dict):
+            continue
+        if str(feed.get("public_key_hex") or "").lower() == token_key:
             member = m
             break
     if member is None:
@@ -1090,6 +1138,8 @@ def verify_sth(sth, issuer_key=None):
     with two witnesses, and (with issuer_key) that it is signed by the expected log key.
     Returns a verdict dict. Append-only consistency between two heads, and timestamp
     monotonicity, are verify_log_consistency and the monitor's concern."""
+    if not isinstance(sth, dict):
+        sth = {}
     v = {"sth_authentic": False, "tree_size": sth.get("tree_size"),
          "root_hash_hex": sth.get("root_hash_hex"), "issuer_matches": None,
          "witnesses": [], "note": None}

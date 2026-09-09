@@ -1578,6 +1578,16 @@ jobs:
       - name: Inter-authority — aggregate status bundle, aggregator cannot forge
         run: python scripts/polaris-federation-status-bundle-drill.py
 
+      # v9.309 — the metamorphic verifier fuzzer. The detached verifier is fed hostile
+      # input by design (a relying party runs it on what a stranger presented). This holds
+      # it TOTAL: for every signed type it builds a genuine real-ML-DSA object, confirms it
+      # is accepted, then a deterministic battery (signature/key bit-flips, mutation of each
+      # signed field, non-hex/dropped fields, adversarial values, cross-type confusion) must
+      # ALL be rejected fail-closed with no crash. Red on a wrongly-accepted mutation or any
+      # exception. No database.
+      - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
+        run: python scripts/polaris-verifier-fuzz.py
+
       # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
       # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
       # head and consistency proofs; the detached verifier accepts an append-only extension
