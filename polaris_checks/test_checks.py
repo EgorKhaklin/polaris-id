@@ -7835,3 +7835,35 @@ def test_exchange_trust_directional_check_discriminates(tmp_path):
     assert checks.check_exchange_trust_directional(tmp_path)[0].level == "FAIL", "must FAIL without the three-authority test"
     write({'docs/design/exchange-receipt.md': "the receipt alone proves the exchange occurred\n"})
     assert checks.check_exchange_trust_directional(tmp_path)[0].level == "FAIL", "must FAIL if a receipt is overstated"
+
+
+def test_ltv_timestamp_trust_check_discriminates(tmp_path):
+    # v9.334: long-term validity needs a trusted, independent timestamp authority.
+    VER = ("import json\ndef verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=None, trust_list=None, timestamp_anchors=None):\n"
+           "    tv = verify_timestamp(ts, anchor_keys=timestamp_anchors)\n"
+           "    L = {\"timestamp_authority_trusted\": None, \"timestamp_independent\": None}\n"
+           "    ok = L[\"timestamp_authority_trusted\"] is True and L[\"timestamp_independent\"]\n")
+    good = {
+        'scripts/polaris-verify.py': VER,
+        'polaris_web/app.py': "tid = fields.get('timestamp_agency_id')\n",
+        'scripts/polaris-document-signing-drill.py': "# SELF-issued timestamp; does NOT trust; without trusted timestamp-authority anchors\n",
+        'docs/reference/WIRE-SPEC.md': "MUST come from a timestamp authority the verifier trusts\n",
+        'docs/design/document-signing.md': "timestamp_anchors\n",
+        'docs/reference/API.md': "timestamp_agency_id\n",
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_ltv_timestamp_trust(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'scripts/polaris-verify.py': VER.replace("verify_timestamp(ts, anchor_keys=timestamp_anchors)", "verify_timestamp(ts)")})
+    assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp is verified without anchors"
+    write({'scripts/polaris-verify.py': VER.replace(' and L["timestamp_independent"]', "")})
+    assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL if a self-issued timestamp counts"
+    write({'scripts/polaris-document-signing-drill.py': "# only the happy path\n"})
+    assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL without the negative drill cases"
+    write({'docs/reference/WIRE-SPEC.md': "any authentic timestamp\n"})
+    assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL without the normative rule"

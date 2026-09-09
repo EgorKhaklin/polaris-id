@@ -42,11 +42,21 @@ container timestamped while the key was active therefore stays valid after the k
 and one whose evidence shows the key already retired at its instant does not; a re-signed
 container is not covered by the old evidence, because the timestamp binds the signature.
 `attach_ltv` lets a party add a timestamp from a *second* authority for time evidence
-independent of the signer.
+independent of the signer, and since v9.334 that is not optional for the strong claim:
+`verify_signed_document(..., timestamp_anchors=[...])` names the timestamp authorities the
+verifier trusts (a set distinct from the signer anchors), and `valid_long_term` requires the
+timestamp trusted AND signed by a key distinct from the signer's. An authentic timestamp is
+not a trusted one (anyone can sign one), and a signer's own timestamp is backdatable by whoever
+holds the key, so the embedded self-timestamp the signing route attaches by default is
+convenience evidence; `timestamp_agency_id` lets an operator take the timestamp from another
+federated agency of the instance at signing. A verifier given no timestamp anchors reports the
+facts and claims nothing.
 
-What the evidence does not yet do: the manifest is the signer's own word about its key's
-status at the instant. The trust list (P8.7b) will let a verifier check a key's status history
-against an authority other than the signer.
+What the evidence does not yet do: a timestamp authority whose own key is later compromised
+could manufacture backdated timestamps. Anchoring each timestamp's SHA3-256 in an append-only
+transparency log (with witnesses) would make that visible without logging any document; it is
+recorded on the roadmap as P8.5b, with its trade-off stated (the timestamp authority would then
+retain a digest and an instant per timestamp, which today it does not).
 
 ## What runs
 

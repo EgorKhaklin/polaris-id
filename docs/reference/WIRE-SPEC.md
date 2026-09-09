@@ -254,9 +254,13 @@ verify the timestamp and its binding to the signature material, MUST verify the 
 the timestamp's instant and require the signing key listed active in it, and, for a
 holder-authorized signature, MUST verify the feed as of that instant and require the
 credential hash absent from it. Validity is decided at the evidence's instant, never at
-verification time, which is what keeps a signature valid after its key is rotated or retired;
-a timestamp from an authority other than the signer gives time evidence independent of the
-signer.
+verification time, which is what keeps a signature valid after its key is rotated or retired.
+The time evidence MUST come from a timestamp authority the verifier trusts (a set of anchors
+distinct from the signer anchors) and MUST be signed by a key distinct from the signing key:
+an authentic timestamp is not a trusted one, since anyone can sign one, and a signer's own
+timestamp is backdatable by whoever holds the signing key, so it is convenience evidence only.
+A verifier given no timestamp-authority anchors MUST report the facts and MUST NOT claim
+long-term validity.
 
 ### 3.13 `polaris-id-token/1`
 

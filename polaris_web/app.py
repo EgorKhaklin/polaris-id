@@ -6475,8 +6475,24 @@ def _sign_document(agency, agency_id, fields, on_behalf_of):
                                   'container minus signature_hex, public_key_hex and ltv)')
     # Long-term validation: evidence at the instant of signing, outside the signed statement.
     material_digest = hashlib.sha3_256(_document_signature_material(doc)).hexdigest()
+    # v9.334: the container's embedded timestamp is convenience evidence when it is this signer's
+    # own; long-term validity needs a timestamp authority the verifier trusts AND distinct from
+    # the signer. An operator may name another federated agency of this instance to timestamp.
+    ts_agency, ts_agency_id = agency, agency_id
+    tid = fields.get('timestamp_agency_id')
+    if tid is not None:
+        try:
+            tid = int(tid)
+        except (TypeError, ValueError):
+            return None, (jsonify(error='invalid_request', error_description='timestamp_agency_id must be an integer agency id'), 400)
+        if tid == int(agency_id):
+            return None, (jsonify(error='invalid_request', error_description='timestamp_agency_id must name an agency other than the signer (independent time evidence)'), 400)
+        ts_agency, err = _federated_agency(tid)
+        if err:
+            return None, err
+        ts_agency_id = tid
     doc['ltv'] = {
-        'timestamp': _timestamp_body(agency, agency_id, material_digest, None),
+        'timestamp': _timestamp_body(ts_agency, ts_agency_id, material_digest, None),
         'manifest': _federation_manifest_body(agency, now),
         'epoch_checkpoint': _epoch_checkpoint_body(agency, now),
         'revocation_feed': _revocation_feed_body(agency, now),

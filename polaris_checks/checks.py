@@ -7529,6 +7529,39 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_ltv_timestamp_trust(root: pathlib.Path) -> list[Finding]:
+    """v9.334: long-term validation of a signed document trusts its TIME EVIDENCE only when the
+    timestamp authority is one the verifier trusts (timestamp_anchors, distinct from the signer
+    anchors) and is distinct from the signing key. An authentic timestamp is not a trusted one
+    (anyone can sign one) and a signer's own timestamp is backdatable by whoever holds the key;
+    without anchors the verdict reports the facts and claims nothing. The signing route can
+    take its timestamp from another federated agency. Drilled: untrusted, self-issued, and
+    anchorless evidence all fail to claim long-term validity."""
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("timestamp_anchors=None", "verify_timestamp(ts, anchor_keys=timestamp_anchors)",
+                '"timestamp_authority_trusted"', '"timestamp_independent"',
+                'L["timestamp_authority_trusted"] is True and L["timestamp_independent"]'):
+        if sym not in v:
+            return _fail("ltv_timestamp_trust", "scripts/polaris-verify.py must require a trusted, independent timestamp authority for long-term validity (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("ltv_timestamp_trust", f"the offline verifier imports {mod!r}; it must stay standalone")
+    if "timestamp_agency_id" not in _read(root, "polaris_web/app.py"):
+        return _fail("ltv_timestamp_trust", "the signing route must let an operator take the timestamp from another federated agency")
+    drill = _read(root, "scripts/polaris-document-signing-drill.py")
+    for sym in ("SELF-issued timestamp", "does NOT trust", "without trusted timestamp-authority anchors"):
+        if sym not in drill:
+            return _fail("ltv_timestamp_trust", "the document-signing drill must prove untrusted, self-issued and anchorless time evidence claims nothing (%s)" % sym)
+    if "timestamp authority the verifier trusts" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("ltv_timestamp_trust", "the wire spec must require a trusted, signer-independent timestamp authority for long-term validity")
+    if "timestamp_anchors" not in _read(root, "docs/design/document-signing.md") or "timestamp_agency_id" not in _read(root, "docs/reference/API.md"):
+        return _fail("ltv_timestamp_trust", "the design record and the API reference must describe the timestamp trust inputs")
+    return _ok("ltv_timestamp_trust",
+               "long-term validity of a signed document requires time evidence from a timestamp authority the verifier "
+               "trusts and that is distinct from the signer; authentic-but-untrusted, self-issued and anchorless "
+               "evidence claims nothing, drilled under real ML-DSA; the signing route can timestamp at another agency")
+
+
 def check_exchange_trust_directional(root: pathlib.Path) -> list[Finding]:
     """v9.333: the gateway's and the receipt's authorization is the RESPONDER's own attestation
     of the requester in the context. Trust is explicit, directional and non-transitive: an
@@ -8790,6 +8823,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_ltv_timestamp_trust,
     check_exchange_trust_directional,
     check_protocol_versioning,
     check_algorithm_agility,

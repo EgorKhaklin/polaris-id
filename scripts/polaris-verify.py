@@ -1743,7 +1743,7 @@ def attach_ltv(doc, timestamp=None, manifest=None, epoch_checkpoint=None, revoca
     return out
 
 
-def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=None, trust_list=None):
+def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=None, trust_list=None, timestamp_anchors=None):
     """Verify a signed document OFFLINE (P8.5): the signer's ML-DSA-65 signature over
     SHA3-256(canonical) (two witnesses); with trusted_anchors, signer trust; with
     document_bytes, that the container binds them. Then LONG-TERM VALIDATION from the embedded
@@ -1751,6 +1751,9 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     signature existed at the timestamp's instant); the signer's manifest was authentic and
     fresh AT THAT INSTANT and listed the signing key as active; and, for a holder-authorized
     signature, the signer's revocation feed at that instant did not list the credential.
+    `timestamp_anchors` (v9.334) names the timestamp authorities the verifier trusts, distinct
+    from the signer anchors: valid_long_term requires the timestamp trusted AND independent of
+    the signing key, so neither a stranger's timestamp nor a signer's own (backdatable) one counts.
     valid_long_term is the conjunction: it holds even after the key is rotated or retired,
     because it is decided at the instant the evidence fixes, not now. No network."""
     if not isinstance(doc, dict):
@@ -1760,6 +1763,7 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
          "signer": doc.get("signer"), "on_behalf_of": doc.get("on_behalf_of"),
          "digest_hex": d.get("digest_hex"), "signed_at": doc.get("signed_at"),
          "ltv": {"present": False, "timestamp_authentic": None, "timestamp_binds": None, "instant": None,
+                 "timestamp_authority_trusted": None, "timestamp_independent": None,
                  "signer_key_active_at_instant": None, "credential_unrevoked_at_instant": None,
                  "signer_key_status_per_trust_list": None},
          "valid_long_term": False, "witnesses": [], "note": None}
@@ -1814,9 +1818,17 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     L = v["ltv"]
     L["present"] = True
     ts = ltv.get("timestamp")
-    tv = verify_timestamp(ts)
+    # v9.334: a cryptographically authentic timestamp is not yet TRUSTED time evidence. Anyone
+    # can mint an ML-DSA key and sign a timestamp, and a signer's own key (or a thief holding
+    # it) can backdate one; so long-term validity requires the timestamp authority to be one
+    # the verifier trusts (timestamp_anchors, distinct from the signer anchors) AND distinct
+    # from the signing key. Without anchors the verdict reports the facts and claims nothing.
+    tv = verify_timestamp(ts, anchor_keys=timestamp_anchors)
     L["timestamp_authentic"] = bool(tv.get("timestamp_authentic"))
     L["timestamp_binds"] = bool(timestamp_binds(ts, document_signature_material(doc)))
+    L["timestamp_authority_trusted"] = tv.get("issuer_trusted")
+    ts_key = str((ts.get("public_key_hex") if isinstance(ts, dict) else "") or "").lower()
+    L["timestamp_independent"] = bool(ts_key) and ts_key != signer_key
     L["instant"] = tv.get("issued_at")
     try:
         instant = _parse_iso(tv.get("issued_at"))
@@ -1849,12 +1861,15 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         L["signer_key_status_per_trust_list"] = (key_status_at(trust_list, signer_key, instant)
                                                  if (tlv["trust_list_authentic"] and tlv["fresh"] and instant is not None) else None)
     v["valid_long_term"] = bool(v["document_authentic"] and L["timestamp_authentic"] and L["timestamp_binds"]
+                                and L["timestamp_authority_trusted"] is True and L["timestamp_independent"]
                                 and L["signer_key_active_at_instant"]
                                 and L["credential_unrevoked_at_instant"] is not False
                                 and (trust_list is None or L["signer_key_status_per_trust_list"] == "active"))
     if not v["valid_long_term"]:
         v["note"] = "long-term validation failed: " + ", ".join(
-            k for k in ("timestamp_authentic", "timestamp_binds", "signer_key_active_at_instant") if not L[k]
+            k for k in ("timestamp_authentic", "timestamp_binds", "timestamp_independent", "signer_key_active_at_instant") if not L[k]
+        ) + (", no trusted timestamp-authority anchors given" if L["timestamp_authority_trusted"] is None
+             else (", timestamp authority not trusted" if L["timestamp_authority_trusted"] is False else "")
         ) + (", credential revoked at the instant" if L["credential_unrevoked_at_instant"] is False else "")
     return v
 

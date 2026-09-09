@@ -889,10 +889,12 @@ disclosure_level, acr, enrollment, auth_time, iat, exp`). Verified offline with
 ### `POST /api/v1/sign/<agency_id>`
 
 **Operator auth (login + CSRF) (P8.5).** The institution signs a document under its registered
-key. Body `{digest_hex, digest_algorithm?, media_type?, name?, purpose?}` -- the SHA3-256 of the
-document, never the document. Returns a `polaris-signed-document/1` with long-term-validation
-evidence attached (`ltv`: this instance's timestamp over the statement and signature, the
-signer's manifest, epoch checkpoint and revocation feed at the instant). Verified offline with
+key. Body `{digest_hex, digest_algorithm?, media_type?, name?, purpose?, timestamp_agency_id?}` --
+the SHA3-256 of the document, never the document. Returns a `polaris-signed-document/1` with
+long-term-validation evidence attached (`ltv`: a timestamp over the statement and signature by
+this signer, or by the other federated agency `timestamp_agency_id` names (v9.334: a signer's
+own timestamp is convenience evidence; long-term validity needs a trusted authority distinct
+from the signer), the signer's manifest, epoch checkpoint and revocation feed at the instant). Verified offline with
 `verify_signed_document`. Specified in [document-signing.md](../design/document-signing.md);
 wire spec section 3.12.
 

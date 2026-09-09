@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.334 — 2026-09-09 (Long-term validation trusts the timestamp authority)
+
+The same outside review found a hole in long-term validation: the verifier checked that a
+document's timestamp was cryptographically authentic and bound to the signature, but never
+that the timestamp authority was one the verifier trusts, and accepted the signer's own
+timestamp. Anyone can mint a key and sign an authentic timestamp, and whoever holds a signing
+key can backdate a timestamp with it; time evidence of that kind establishes nothing against
+a stolen key.
+
+- **Two anchor sets, and independence.** `verify_signed_document` takes `timestamp_anchors`,
+  distinct from the signer anchors; `valid_long_term` now requires the timestamp authority
+  trusted per that set AND its key distinct from the signing key. Without anchors the verdict
+  reports the facts (`timestamp_authentic`, `timestamp_binds`) and claims nothing.
+- **The signing route can timestamp elsewhere.** `timestamp_agency_id` names another
+  federated agency of the instance to issue the container's timestamp; the default self-issued
+  one is stated as convenience evidence in the API reference and the design record.
+- **Drilled.** Untrusted, self-issued and anchorless time evidence each fail to claim long-term
+  validity under real ML-DSA; the retirement and holder-authorized cases pass with the trusted
+  second authority. `check_ltv_timestamp_trust` (#186) pins the verifier, the route, the drill
+  and the wire spec, which now states the rule normatively.
+- **What remains is recorded, not hidden.** A timestamp authority whose own key is compromised
+  could still manufacture backdated timestamps; anchoring each timestamp's digest in an
+  append-only log would expose that, at the cost of the authority retaining a digest and an
+  instant per timestamp, which today it deliberately does not. That is roadmap item P8.5b, a
+  design decision to take, not a change made quietly.
+
 ## v9.333 — 2026-09-09 (The gateway's trust is directional)
 
 An outside review of v9.331 found that the exchange gateway and the receipt minter authorized a

@@ -130,7 +130,9 @@ def main():
     on_behalf = container(document, on_behalf_of={"credential_hash": holder_leaf})
     on_behalf_ok = V.attach_ltv(on_behalf, timestamp=timestamp(on_behalf), manifest=manifest(), revocation_feed=feed([]))
     on_behalf_revoked = V.attach_ltv(on_behalf, timestamp=timestamp(on_behalf), manifest=manifest(), revocation_feed=feed([holder_leaf]))
-    vf = V.verify_signed_document(full, trusted_anchors=[S["key_hex"]], document_bytes=document)
+    TSA = [T["key_hex"]]   # the timestamp authorities this verifier trusts (v9.334)
+    selfed = V.attach_ltv(doc, timestamp=timestamp(doc, authority=S), manifest=manifest(), revocation_feed=feed([]))
+    vf = V.verify_signed_document(full, trusted_anchors=[S["key_hex"]], document_bytes=document, timestamp_anchors=TSA)
 
     checks = [
         ("the signed document is authentic (two witnesses) and the signer is trusted",
@@ -144,13 +146,22 @@ def main():
         ("a re-signed container is not covered by the old evidence (the timestamp binds the signature)",
          V.verify_signed_document(stale_evidence)["ltv"]["timestamp_binds"], False),
         ("KEY RETIREMENT: the same container stays valid after the key is retired (decided at the instant)",
-         V.verify_signed_document(full)["valid_long_term"], True),
+         V.verify_signed_document(full, timestamp_anchors=TSA)["valid_long_term"], True),
+        ("without trusted timestamp-authority anchors, long-term validity is NOT claimed (the facts are reported)",
+         (V.verify_signed_document(full)["valid_long_term"], V.verify_signed_document(full)["ltv"]["timestamp_authentic"],
+          "no trusted timestamp-authority anchors" in (V.verify_signed_document(full)["note"] or "")), (False, True, True)),
+        ("a timestamp from an authority the verifier does NOT trust is not long-term evidence",
+         V.verify_signed_document(full, timestamp_anchors=[S["key_hex"]])["valid_long_term"], False),
+        ("a SELF-issued timestamp (signer = timestamp authority) is not independent time evidence, even if trusted",
+         (V.verify_signed_document(selfed, timestamp_anchors=[S["key_hex"]])["ltv"]["timestamp_independent"],
+          V.verify_signed_document(selfed, timestamp_anchors=[S["key_hex"]])["valid_long_term"]), (False, False)),
         ("... but a signature whose evidence shows the key already retired at its instant is not valid",
          (V.verify_signed_document(retired)["document_authentic"], V.verify_signed_document(retired)["valid_long_term"]), (True, False)),
         ("holder-authorized: the credential was unrevoked at the instant -> valid",
-         (V.verify_signed_document(on_behalf_ok)["ltv"]["credential_unrevoked_at_instant"], V.verify_signed_document(on_behalf_ok)["valid_long_term"]), (True, True)),
+         (V.verify_signed_document(on_behalf_ok, timestamp_anchors=TSA)["ltv"]["credential_unrevoked_at_instant"],
+          V.verify_signed_document(on_behalf_ok, timestamp_anchors=TSA)["valid_long_term"]), (True, True)),
         ("holder-authorized: the credential was revoked at the instant -> not valid",
-         V.verify_signed_document(on_behalf_revoked)["valid_long_term"], False),
+         V.verify_signed_document(on_behalf_revoked, timestamp_anchors=TSA)["valid_long_term"], False),
         ("no evidence attached: authentic but not valid long term",
          (V.verify_signed_document(doc)["document_authentic"], V.verify_signed_document(doc)["valid_long_term"]), (True, False)),
         ("a tampered container is not authentic", V.verify_signed_document(tampered)["document_authentic"], False),

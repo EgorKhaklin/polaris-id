@@ -434,6 +434,22 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         self.assertEqual(bad.status_code, 400)
         self.assertEqual(bad.get_json()['error'], 'not_verifiable')
 
+    def test_timestamp_can_come_from_another_federated_agency(self):
+        # v9.334: a signer's own timestamp is convenience evidence; an operator may name another
+        # federated agency to issue the container's timestamp, never the signer itself.
+        tv, sig = self._credential()
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id IN (1, 2)", ('ab' * 16,), fetch='none')
+        base = {'token_value': tv, 'signature_hex': sig, 'digest_hex': 'ef' * 32}
+        r = self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id=2))
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        ts = r.get_json()['ltv']['timestamp']
+        self.assertEqual(ts['authority']['agency_id'], 2)
+        self.assertEqual(r.get_json()['signer']['agency_id'], 1)
+        same = self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id=1))
+        self.assertEqual((same.status_code, same.get_json()['error']), (400, 'invalid_request'))
+        self.assertEqual(self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id='x')).status_code, 400)
+        self.assertEqual(self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id=999999)).status_code, 404)
+
 
 class AuthBrokerTests(UnauthenticatedTestCase):
     """P8.4: the authorization-code + PKCE flow under the test profile (placeholder signatures):
