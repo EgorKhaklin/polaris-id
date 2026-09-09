@@ -18,7 +18,8 @@ drives it over the published cases and checks every verdict. See conformance/SPE
 import json
 import sys
 
-from . import verify_authenticity, verify_signed_artifact, verify_status_assertion
+from . import (verify_authenticity, verify_cross_authority, verify_signed_artifact,
+               verify_status_assertion)
 
 _SIGNED_ARTIFACTS = {"epoch-checkpoint", "revocation-feed", "federation-manifest",
                      "federation-status-bundle", "transparency-sth"}
@@ -45,6 +46,12 @@ def main(argv=None):
     if artifact in _SIGNED_ARTIFACTS:
         v = verify_signed_artifact(case.get("object") or {}, now=case.get("now"))
         print(json.dumps({"authentic": v.authentic, "fresh": v.fresh}))
+        return 0
+    if artifact == "cross-authority":
+        v = verify_cross_authority(case.get("pack") or {}, case.get("context_id"),
+                                   case.get("manifests") or [], trusted_anchors=case.get("trusted_anchors"),
+                                   revocation_feed=case.get("revocation_feed"), now=case.get("now"))
+        print(json.dumps({"decision": v.decision, "authentic": v.authentic, "issuer_trusted": v.issuer_trusted}))
         return 0
     print(json.dumps({"error": "unknown artifact: %s" % artifact}))
     return 2

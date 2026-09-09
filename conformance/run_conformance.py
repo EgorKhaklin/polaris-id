@@ -56,6 +56,22 @@ def _load_cases():
             payload["object"] = _load_file(c["object_file"])
             if "now" in c:
                 payload["now"] = c["now"]
+        elif artifact == "cross-authority":
+            payload["pack"] = _load_file(c["pack_file"])
+            manifests = [_load_file(f) for f in c.get("manifest_files", [])]
+            payload["manifests"] = manifests
+            payload["context_id"] = c.get("context_id")
+            anchors = c.get("trusted_anchors")
+            if anchors == "manifest":
+                # trust every active anchor the supplied manifests declare
+                anchors = sorted({a["public_key_hex"] for m in manifests
+                                  for a in m.get("anchors", [])
+                                  if (a.get("status") or "active") == "active" and a.get("public_key_hex")})
+            payload["trusted_anchors"] = anchors
+            if "feed_file" in c:
+                payload["revocation_feed"] = _load_file(c["feed_file"])
+            if "now" in c:
+                payload["now"] = c["now"]
         else:
             raise ValueError("unknown artifact %r in case %r" % (artifact, c["name"]))
         cases.append((c["name"], payload, c["expect"]))

@@ -10,7 +10,7 @@
  * See conformance/SPEC.md. This is the TypeScript counterpart of the Python SDK's
  * `python -m polaris_verify.conformance`; the same runner drives either.
  */
-import { verifyAuthenticity, verifyStatusAssertion, verifySignedArtifact, type Pack } from "./index.ts";
+import { verifyAuthenticity, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
   "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth",
@@ -39,6 +39,10 @@ process.stdin.on("end", () => {
   } else if (SIGNED_ARTIFACTS.has(artifact)) {
     const v = verifySignedArtifact(caseObj.object ?? {}, caseObj.now ?? null);
     process.stdout.write(JSON.stringify({ authentic: v.authentic, fresh: v.fresh }) + "\n");
+  } else if (artifact === "cross-authority") {
+    const v = verifyCrossAuthority(caseObj.pack ?? {}, caseObj.context_id, caseObj.manifests ?? [],
+      caseObj.trusted_anchors ?? null, caseObj.revocation_feed ?? null, caseObj.now ?? null);
+    process.stdout.write(JSON.stringify({ decision: v.decision, authentic: v.authentic, issuer_trusted: v.issuerTrusted }) + "\n");
   } else {
     process.stdout.write(JSON.stringify({ error: "unknown artifact: " + artifact }) + "\n");
     process.exit(2);

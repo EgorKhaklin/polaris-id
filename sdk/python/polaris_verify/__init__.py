@@ -302,6 +302,64 @@ def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
     return ArtifactVerdict(ok, _within_window(obj, now), note, ran)
 
 
+@dataclasses.dataclass
+class CrossAuthorityVerdict:
+    decision: str                    # "accept" | "reject"
+    authentic: bool
+    issuer_trusted: bool
+    via: Optional[str] = None
+    reason: Optional[str] = None
+
+
+def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=None,
+                           revocation_feed=None, now=None) -> CrossAuthorityVerdict:
+    """Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4).
+    Accept iff: the authenticity pack is genuine; some federation manifest the relying party
+    trusts (authentic, fresh, and signed by a trusted anchor) attests the credential's signing
+    key in the presented context, non-transitively; and, if a revocation feed is supplied, the
+    credential is not revoked (the feed authentic, fresh, and bound to the issuer's key).
+    Standalone, no network."""
+    pack = pack if isinstance(pack, dict) else {}
+    a = verify_authenticity(pack)
+    if not a.authentic:
+        return CrossAuthorityVerdict("reject", False, False, reason="credential is not authentic")
+    token_key = str(pack.get("public_key_hex") or "").lower()
+    trusted = {t.lower() for t in trusted_anchors} if trusted_anchors is not None else None
+    via = None
+    for m in (manifests or []):
+        m = m if isinstance(m, dict) else {}
+        mv = verify_signed_artifact(m, now=now)   # manifest: signature + self-consistency + freshness
+        if not (mv.authentic and mv.fresh):
+            continue
+        active = {str(x.get("public_key_hex", "")).lower() for x in (m.get("anchors") or [])
+                  if isinstance(x, dict) and (x.get("status") or "active") == "active"}
+        if trusted is not None and not (active & trusted):
+            continue   # the relying party does not trust this manifest's authority
+        for att in (m.get("attestations") or []):
+            if not isinstance(att, dict):
+                continue
+            if (str(att.get("attested_public_key_hex") or "").lower() == token_key
+                    and (context_id is None or att.get("context_id") == context_id)):
+                via = m.get("authority")
+                break
+        if via is not None:
+            break
+    if via is None:
+        return CrossAuthorityVerdict("reject", True, False,
+                                     reason="no trusted authority attests to this credential's issuer in this context")
+    if revocation_feed is not None:
+        rv = verify_signed_artifact(revocation_feed if isinstance(revocation_feed, dict) else {}, now=now)
+        bound = str((revocation_feed or {}).get("public_key_hex") or "").lower() == token_key
+        if not (rv.authentic and rv.fresh and bound):
+            return CrossAuthorityVerdict("reject", True, True, via if isinstance(via, str) else None,
+                                         "the issuer's revocation feed is not authentic, fresh, and bound to the issuer key")
+        leaf = hashlib.sha3_256(str(pack.get("token_value") or "").encode("utf-8")).hexdigest()
+        if leaf in {str(x).lower() for x in (revocation_feed.get("revoked_leaves") or [])}:
+            return CrossAuthorityVerdict("reject", True, True, via if isinstance(via, str) else None,
+                                         "credential is revoked in the issuer's published feed")
+    return CrossAuthorityVerdict("accept", True, True, via if isinstance(via, str) else None)
+
+
 class PolarisVerifier:
     def __init__(self, issuer_url=None, client_id=None, client_secret=None,
                  anchors=None, timeout=30):

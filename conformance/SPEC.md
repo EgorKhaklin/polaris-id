@@ -17,10 +17,13 @@ certifies the **authenticity** of all seven app-signed artifacts:
   check: the signature over `SHA3-256(canonical)`, freshness for a windowed artifact, and
   the artifact's own commitment (feed/bundle) or self-consistency (manifest).
 
-The composite federation **trust decision** (accepting a foreign credential across
-authorities) and online authorization (a live call to `POST /api/v1/verify`, specified in
-[`docs/reference/API.md`](../docs/reference/API.md)) are separate and are not part of these
-offline vectors.
+It also certifies the composite federation **trust decision** (`artifact: cross-authority`):
+given a foreign credential's pack, the federation manifests the relying party trusts, a
+trusted anchor set, and a presented context, decide accept or reject -- accept only when the
+credential is authentic AND a trusted manifest attests its key in that context AND (if a
+revocation feed is supplied) it is not revoked. Online authorization (a live call to
+`POST /api/v1/verify`, specified in [`docs/reference/API.md`](../docs/reference/API.md)) is
+the only check not in these offline vectors, because it depends on live issuer state.
 
 ## The verifier contract
 

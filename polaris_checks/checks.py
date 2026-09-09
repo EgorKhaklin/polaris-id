@@ -7666,10 +7666,10 @@ def check_typescript_sdk(root: pathlib.Path) -> list[Finding]:
         return _fail("typescript_sdk", "the TS SDK must expose verifyAuthenticity() and PolarisVerifier")
     # P8.1b: the TS SDK certifies the status assertion and the signed artifacts too, held to
     # the same suite (and recomputes the recursive canonical JSON to match the signer).
-    if "verifyStatusAssertion" not in sdk or "verifySignedArtifact" not in sdk:
+    if "verifyStatusAssertion" not in sdk or "verifySignedArtifact" not in sdk or "verifyCrossAuthority" not in sdk:
         return _fail("typescript_sdk",
-                     "the TS SDK must verify the status assertion and the signed artifacts offline "
-                     "(verifyStatusAssertion, verifySignedArtifact), not only the pack")
+                     "the TS SDK must verify the status assertion, the signed artifacts, and the federation "
+                     "trust decision offline (verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority)")
     if "@noble/post-quantum/ml-dsa" not in sdk or "ml_dsa65.verify" not in sdk or "sha3_256" not in sdk:
         return _fail("typescript_sdk",
                      "the TS SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value) via "
@@ -7732,6 +7732,10 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
         return _fail("conformance_suite",
                      "the SDK must verify the status assertion and the signed artifacts offline "
                      "(verify_status_assertion, verify_signed_artifact), not only the pack")
+    # P8.1 complete: the SDK also decides the composite federation trust decision.
+    if "def verify_cross_authority" not in sdk:
+        return _fail("conformance_suite",
+                     "the SDK must decide the federation trust decision offline (verify_cross_authority)")
     if "sha3_256" not in sdk or "MLDSA65PublicKey" not in sdk:
         return _fail("conformance_suite",
                      "the SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value), not trust a flag")
@@ -7774,6 +7778,9 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
         return _fail("conformance_suite",
                      "the cases must certify most of the protocol's artifacts, not one; found %d distinct "
                      "artifact types, expected at least 6" % len(artifacts))
+    if "cross-authority" not in artifacts:
+        return _fail("conformance_suite",
+                     "the cases must certify the federation trust decision too (an `artifact: cross-authority` case)")
     if "artifact" not in _read(root, "sdk/python/polaris_verify/conformance.py"):
         return _fail("conformance_suite",
                      "the verifier CLI must dispatch on the case's `artifact` (not only the authenticity pack)")

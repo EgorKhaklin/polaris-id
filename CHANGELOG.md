@@ -5,6 +5,30 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.316 — 2026-09-09 (P8.1 complete: the federation trust decision certified)
+
+The last piece of P8.1. The conformance suite now certifies the composite federation trust
+decision, so an implementation importing no Polaris code is certified against the FULL
+protocol -- every signed artifact AND the cross-authority decision -- in both Python and
+TypeScript.
+
+- **`verify_cross_authority` (Python) / `verifyCrossAuthority` (TypeScript).** Given a foreign
+  credential's authenticity pack, the federation manifests a relying party trusts, a trusted
+  anchor set, and a presented context (and an optional revocation feed), each SDK decides
+  accept or reject offline: the pack must be authentic, some trusted manifest (authentic,
+  fresh, signed by a trusted anchor) must attest the credential's key in that context
+  non-transitively, and, with a feed supplied, the credential must not be revoked (the feed
+  authentic, fresh, and bound to the issuer key).
+- **A new multi-input case shape.** `artifact: cross-authority` carries a pack, a list of
+  manifests, a trusted-anchor set (`"manifest"` resolves to the supplied manifests' own
+  anchors), a context, and an optional revocation feed. Four cases (accept, untrusted issuer,
+  wrong context, revoked), verified against committed vectors (a credential from authority A, a
+  manifest from authority B attesting A, and A's revocation feed). Both SDKs pass all
+  twenty-four conformance cases.
+- **Pinned.** `check_conformance_suite` and `check_typescript_sdk` now require both SDKs to
+  decide the trust decision and the cases to certify it. P8.1 is complete: the docs-only
+  integration path the P3 exit gate needs now exists in two languages.
+
 ## v9.315 — 2026-09-09 (All seven signed artifacts certified, P8.1b)
 
 Every app-signed artifact's authenticity is now certified by the conformance suite in both

@@ -227,6 +227,69 @@ export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVer
   return { authentic: ok, fresh: withinWindow(o, now) };
 }
 
+export type CrossAuthorityVerdict = {
+  decision: string; // "accept" | "reject"
+  authentic: boolean;
+  issuerTrusted: boolean;
+  via?: unknown;
+  reason?: string;
+};
+
+/** Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4). Accept
+ * iff the authenticity pack is genuine, some federation manifest the relying party trusts
+ * (authentic, fresh, signed by a trusted anchor) attests the credential's signing key in the
+ * presented context (non-transitive), and -- if a revocation feed is supplied -- the credential
+ * is not revoked (feed authentic, fresh, and bound to the issuer key). No network. */
+export function verifyCrossAuthority(
+  pack: any, contextId: any, manifests: any[], trustedAnchors?: string[] | null,
+  revocationFeed?: any, now?: string | null,
+): CrossAuthorityVerdict {
+  const p = pack ?? {};
+  if (!verifyAuthenticity(p).authentic) {
+    return { decision: "reject", authentic: false, issuerTrusted: false, reason: "credential is not authentic" };
+  }
+  const tokenKey = String(p.public_key_hex ?? "").toLowerCase();
+  const trusted = trustedAnchors != null ? new Set(trustedAnchors.map((t) => t.toLowerCase())) : null;
+  let via: unknown = null;
+  for (const mm of (manifests ?? []).map((m) => m ?? {})) {
+    const mv = verifySignedArtifact(mm, now);
+    if (!(mv.authentic && mv.fresh)) continue;
+    const active = new Set(
+      (Array.isArray(mm.anchors) ? mm.anchors : [])
+        .filter((x: any) => x && (x.status ?? "active") === "active")
+        .map((x: any) => String(x.public_key_hex ?? "").toLowerCase()),
+    );
+    if (trusted != null && ![...active].some((x) => trusted.has(x))) continue;
+    for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
+      if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
+          && (contextId == null || att.context_id === contextId)) {
+        via = mm.authority;
+        break;
+      }
+    }
+    if (via != null) break;
+  }
+  if (via == null) {
+    return { decision: "reject", authentic: true, issuerTrusted: false,
+             reason: "no trusted authority attests to this credential's issuer in this context" };
+  }
+  if (revocationFeed != null) {
+    const rf = revocationFeed ?? {};
+    const rv = verifySignedArtifact(rf, now);
+    const bound = String(rf.public_key_hex ?? "").toLowerCase() === tokenKey;
+    if (!(rv.authentic && rv.fresh && bound)) {
+      return { decision: "reject", authentic: true, issuerTrusted: true, via,
+               reason: "the revocation feed is not authentic, fresh, and bound to the issuer key" };
+    }
+    const leaf = bytesToHex(sha3_256(new TextEncoder().encode(String(p.token_value ?? ""))));
+    const leaves = new Set((Array.isArray(rf.revoked_leaves) ? rf.revoked_leaves : []).map((x: any) => String(x).toLowerCase()));
+    if (leaves.has(leaf)) {
+      return { decision: "reject", authentic: true, issuerTrusted: true, via, reason: "credential is revoked" };
+    }
+  }
+  return { decision: "accept", authentic: true, issuerTrusted: true, via };
+}
+
 export type VerifierOptions = {
   issuerUrl?: string;
   clientId?: string;
