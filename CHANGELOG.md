@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.321 — 2026-09-09 (The timestamp authority: time evidence for anything, P8.7a)
+
+The first piece of the trust-service lifecycle, and the time primitive document signing will
+build on.
+
+- **`POST /api/v1/timestamp/<id>` and `polaris-timestamp/1`.** An authority binds an arbitrary
+  SHA3-256 digest to an instant under its registered ML-DSA-65 key. The route accepts a digest,
+  never content, so the authority learns nothing about what it timestamps, and it keeps no
+  per-request record (a timestamp authority that logs every request is a store of who
+  timestamped what, when); the requester's nonce is echoed in the signed statement so it can tie
+  the response to its request. RFC-3161-class, in Polaris's canonical-JSON discipline.
+- **Verified offline, and bound to the data.** `verify_timestamp` confirms the signature (two
+  witnesses) and that the instant parses; `timestamp_binds(ts, data)` checks the binding against
+  data the verifier holds. With anchor keys it reports whether the authority is trusted. A
+  timestamp records a past instant and carries no freshness window.
+- **Independent time evidence.** A receipt's `occurred_at` is the responder's word. Timestamp the
+  receipt's canonical bytes at a second authority and a third party has time from a key other
+  than the responder's; the drill does exactly this, alongside tampered signature / swapped
+  digest / rewritten instant / untrusted authority / hostile input.
+- **Held to the full machinery.** The ninth pair in the canonical-equivalence oracle; wire spec
+  section 3.9; two published conformance vectors verified by BOTH SDKs (`artifact: timestamp`);
+  the metamorphic fuzzer holds `verify_timestamp` total; `scripts/polaris-timestamp-drill.py` in
+  `pqc-real`, and the two-instance federation drill exercises the route over HTTP (mint, verify offline under
+  the instance's key, bind, refuse a non-digest); `check_timestamp_authority` (#175). `_exchange_responder` is now `_federated_agency`,
+  shared by every route that signs as an agency. 175 checks, 102 routes.
+
 ## v9.320 — 2026-09-09 (Service-to-service minting: the signature is the institution, P8.2b)
 
 A gateway is worthless if only an operator can mint. The responder's own service now mints

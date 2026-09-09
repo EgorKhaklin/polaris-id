@@ -5723,9 +5723,9 @@ def _exchange_mint_statement(body):
     return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
-def _exchange_responder(agency_id):
-    """The responder agency row (must be federated: a registered signing key), or an
-    error response."""
+def _federated_agency(agency_id):
+    """A federated agency row (one with a registered signing key), or an error response.
+    Shared by every route that signs as an agency."""
     responder = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
                       (agency_id,), fetch='one', primary=True)
     if not responder:
@@ -5807,7 +5807,7 @@ def api_v1_exchange_receipt(agency_id):
     Request JSON: {requester_public_key_hex, context_id, request_hash, response_hash}. This is
     the OPERATOR path (login + CSRF); the responder's own service mints with no session at
     /signed (P8.2b, below). 403 if the requester is not authorized in the context."""
-    responder, err = _exchange_responder(agency_id)
+    responder, err = _federated_agency(agency_id)
     if err:
         return err
     return _mint_exchange_receipt(responder, agency_id, request.get_json(silent=True) or {})
@@ -5830,7 +5830,7 @@ def api_v1_exchange_receipt_signed(agency_id):
         return jsonify(error='unavailable',
                        error_description='responder-signed minting requires real ML-DSA-65 (POLARIS_USE_REAL_PQC=1 '
                                          'with liboqs and the second witness); a placeholder signature is not authentication'), 503
-    responder, err = _exchange_responder(agency_id)
+    responder, err = _federated_agency(agency_id)
     if err:
         return err
     payload = request.get_json(silent=True) or {}
@@ -5871,6 +5871,69 @@ def api_v1_exchange_receipt_signed(agency_id):
         return jsonify(error='invalid_signature',
                        error_description="the mint statement does not verify under the responder agency's registered ML-DSA-65 key"), 401
     return _mint_exchange_receipt(responder, agency_id, mint, occurred_at=str(mint['occurred_at']))
+
+
+# --- P8.7a: the timestamp authority ------------------------------------------------
+#
+# Bind an arbitrary SHA3-256 digest to an instant under an agency's registered ML-DSA-65
+# key. The authority learns and retains NOTHING: it sees a digest, never content, and keeps
+# no per-request record (a timestamp authority that logs every request is a surveillance
+# store). This is the time primitive document signing (P8.5) builds on, and it gives any
+# artifact time evidence independent of its own signer.
+_TIMESTAMP_FORMAT = 'polaris-timestamp/1'
+_TIMESTAMP_RATE_PER_MIN = 600    # per authority; the coarse velocity bound
+
+
+def _timestamp_statement(body):
+    """Canonical bytes the timestamp authority signs. MUST match scripts/polaris-verify.py's
+    _timestamp_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'authority', 'digest_hex', 'digest_algorithm', 'nonce',
+                  'issued_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+@app.route('/api/v1/timestamp/<int:agency_id>', methods=['POST'])
+def api_v1_timestamp(agency_id):
+    """P8.7a: a TIMESTAMP AUTHORITY. Bind an arbitrary SHA3-256 digest to an instant under
+    this agency's registered ML-DSA-65 key. Public and session-less: the caller sends only a
+    digest (the content itself is never sent, so the authority learns nothing and retains
+    nothing) and an optional nonce it chose, and receives a polaris-timestamp/1 an
+    independent party verifies offline (verify_timestamp) and checks against the data it
+    holds (timestamp_binds). Timestamp an exchange receipt's canonical bytes at a SECOND
+    authority and the receipt gains time evidence independent of its responder. No personal
+    data, no per-request record; bounding is a per-authority rate limit."""
+    agency, err = _federated_agency(agency_id)
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    digest_hex = str(body.get('digest_hex', '')).lower()
+    if not (len(digest_hex) == 64 and all(c in '0123456789abcdef' for c in digest_hex)):
+        return jsonify(error='invalid_request',
+                       error_description='digest_hex must be a SHA3-256 hex digest; the content itself is never sent'), 400
+    if str(body.get('digest_algorithm') or 'SHA3-256').upper() != 'SHA3-256':
+        return jsonify(error='invalid_request', error_description='digest_algorithm must be SHA3-256'), 400
+    nonce = body.get('nonce')
+    if nonce is not None and not (isinstance(nonce, str) and 0 < len(nonce) <= 128):
+        return jsonify(error='invalid_request',
+                       error_description='nonce, if present, is a string of at most 128 characters'), 400
+    if not security.rate_limiter.allow('tsa:%d' % agency_id, _TIMESTAMP_RATE_PER_MIN, 60):
+        return jsonify(error='rate_limited'), 429
+    from datetime import datetime, timezone
+    issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+    ts = {
+        'format': _TIMESTAMP_FORMAT,
+        'authority': {'agency_id': agency['agency_id'], 'name': agency['name']},
+        'digest_hex': digest_hex, 'digest_algorithm': 'SHA3-256', 'nonce': nonce,
+        'issued_at': issued_at, 'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_timestamp_statement(ts), agency_id=agency_id)
+    ts['algorithm'] = alg
+    ts['signature_hex'] = sig_bytes.hex()
+    ts['public_key_hex'] = pub
+    ts['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                 'timestamp minus signature_hex and public_key_hex)')
+    return jsonify(ts)
 
 
 # --- P3.3: the transparency log over the audit-anchor roots --------------------

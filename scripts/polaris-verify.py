@@ -1170,6 +1170,86 @@ def _exchange_mint_canonical(m):
     return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+_TIMESTAMP_FORMAT = "polaris-timestamp/1"
+
+
+def _timestamp_canonical(t):
+    """The bytes a timestamp authority signs (P8.7a). MUST match polaris_web/app.py's
+    _timestamp_statement (pinned by the canonical oracle)."""
+    if not isinstance(t, dict):
+        t = {}
+    statement = {k: t.get(k) for k in
+                 ("format", "authority", "digest_hex", "digest_algorithm", "nonce",
+                  "issued_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_timestamp(ts, now=None, anchor_keys=None):
+    """Verify a polaris-timestamp/1 OFFLINE (P8.7a): the authority's ML-DSA-65 signature over
+    SHA3-256(canonical) binding a digest to an instant. A timestamp records a past event and
+    carries no freshness window; `now` is accepted for interface symmetry and unused. With
+    anchor_keys it also reports whether the signing key is a trusted authority. No network."""
+    if not isinstance(ts, dict):
+        ts = {}
+    v = {"timestamp_authentic": False, "issuer_trusted": None, "digest_hex": ts.get("digest_hex"),
+         "digest_algorithm": ts.get("digest_algorithm"), "nonce": ts.get("nonce"),
+         "issued_at": ts.get("issued_at"), "witnesses": [], "note": None}
+    alg, pk_hex, sig_hex = ts.get("algorithm"), ts.get("public_key_hex"), ts.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder timestamp -- not authenticatable offline"
+        return v
+    if ts.get("format") != _TIMESTAMP_FORMAT:
+        v["note"] = "not a %s" % _TIMESTAMP_FORMAT
+        return v
+    try:
+        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_timestamp_canonical(ts)).digest()
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    v["witnesses"] = ran
+    if primary is None and witness is None:
+        v["note"] = "no ML-DSA-65 verifier available"
+        return v
+    if primary is not None and witness is not None and primary != witness:
+        v["note"] = "the two witnesses DISAGREE -- treat as invalid"
+        return v
+    ok = primary if primary is not None else witness
+    if not ok:
+        v["note"] = "timestamp signature is invalid"
+        return v
+    try:
+        _parse_iso(ts.get("issued_at"))
+    except Exception:
+        v["note"] = "issued_at is not a valid instant"
+        return v
+    v["timestamp_authentic"] = True
+    if anchor_keys is not None:
+        try:
+            v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in anchor_keys}
+        except TypeError:
+            v["issuer_trusted"] = False
+    return v
+
+
+def timestamp_binds(ts, data):
+    """True iff SHA3-256(data) equals the timestamp's digest, i.e. the timestamp binds THIS
+    data (an exchange receipt's canonical bytes, a document, anything); False if not; None
+    if the input is not a timestamp or names another digest algorithm. Offline, no key."""
+    if not isinstance(ts, dict) or not isinstance(data, (bytes, bytearray)):
+        return None
+    if str(ts.get("digest_algorithm") or "SHA3-256").upper() != "SHA3-256":
+        return None
+    return hashlib.sha3_256(bytes(data)).hexdigest() == str(ts.get("digest_hex") or "").lower()
+
+
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
                             request_body=None, response_body=None, max_window_seconds=None):
     """Verify an exchange receipt OFFLINE (P8.2). Establishes, WITHOUT the payload, that an

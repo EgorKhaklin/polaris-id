@@ -36,6 +36,7 @@ across the whole battery.
     python3 scripts/polaris-verifier-fuzz.py
 """
 import importlib.util
+import hashlib
 import json
 import os
 import random
@@ -152,8 +153,18 @@ def main():
         }
         return _signed(body, V._status_bundle_canonical)
 
+    def g_timestamp():
+        return _signed({
+            "format": "polaris-timestamp/1", "authority": {"agency_id": "T", "name": "Timestamp Authority T"},
+            "digest_hex": hashlib.sha3_256(b"some data").hexdigest(), "digest_algorithm": "SHA3-256",
+            "nonce": "client-nonce-1", "issued_at": _iso(now), "algorithm": "ML-DSA-65",
+        }, V._timestamp_canonical)
+
     # spec: name, build(), verify(obj)->verdict, accept(verdict)->bool, bound_fields
     specs = [
+        ("timestamp", g_timestamp, lambda o: V.verify_timestamp(o),
+         lambda v: v["timestamp_authentic"],
+         ["format", "authority", "digest_hex", "digest_algorithm", "nonce", "issued_at", "algorithm"]),
         ("manifest", g_manifest, lambda o: V.verify_manifest(o),
          lambda v: v["manifest_authentic"] and v.get("fresh") is True,
          ["format", "authority", "anchors", "attestations", "epoch", "revocation", "issued_at", "expires_at", "algorithm"]),

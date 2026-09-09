@@ -40,7 +40,7 @@ XL (multi-arc). Risk is delivery risk, not security risk.
 ## Where we are (inventory at v9.311)
 
 **Have, working, CI-proven:** a 31-table constraint-enforced schema (38 tables
-in a migrated deployment) with append-only audit; a 101-route application with
+in a migrated deployment) with append-only audit; a 102-route application with
 WebAuthn operator MFA, a server-side session registry, per-role network policy,
 per-agency quotas and the Atlas; an operator CLI; Plonky2 ZK Merkle inclusion
 with an independent Python second witness and a parameterized tree depth; real
@@ -54,7 +54,7 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 174 invariant
+release; CVE gates on dependencies and images; a coverage floor; 175 invariant
 checks (v9.317) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
@@ -412,7 +412,7 @@ metamorphic fuzzer, a real-ML-DSA drill, and a check with a detection test.
 | [ ] P8.4 | Auth/SSO broker across credential types | L | med | P3.4 | The relying-party API becomes an OIDC/OAuth authentication broker with sessions, step-up auth, multiple credential types and explicit assurance levels, with no credential-type lock-in. The protocol core (an authorization-code flow, a signed credential-bound ID token carrying only the disclosed claims plus an assurance level, step-up by fresh presentation or ZK proof) is the engine; the session/SSO product surface is wrap and follows it |
 | [ ] P8.5 | Polaris Sign: general document signing | L | med | P8.1 | Detached signing, timestamping, long-term validation and portable signed containers for ARBITRARY documents (not only identity artifacts), verifiable by an independent implementation from the spec. A Polaris-native container (no foreign container formats); timestamps from P8.7a; long-term validation = the trust chain plus epoch and revocation evidence embedded at signing time, drilled across key rotation and retirement |
 | [ ] P8.6 | Wallet protocol surface (clients follow it) | L | med | P8.1, PE.7, P8.5 | The holder-side PROTOCOL: a compact signed presentation encoding for QR/NFC and offline transfer, a browser-bridge (WebAuthn-bound presentation) specification, recovery, and wallet-initiated document signing, every one verified by the detached verifier from the spec. Native mobile and desktop clients are OUT of scope for a reference implementation and are recorded as such; a client that exists follows the protocol, never leads it |
-| [ ] P8.7 | Trust-service lifecycle as one subsystem | L | med | P3.2b | (a) A signed timestamp authority (`polaris-timestamp/1`) binding any digest to a time, verified offline; (b) a signed, versioned trust list of authority roots with status (active / retired / compromised), the root's status governing every downstream decision; a compromise-recovery drill under real ML-DSA (a root is declared compromised -> the trust list, revocation feed and epoch checkpoint update -> verifiers reject artifacts under the old root after the compromise time and accept re-issued ones -> monitors and witnesses see it); algorithm-migration compatibility proven by vectors signed under two algorithms verifying in both SDKs |
+| [>] P8.7 | Trust-service lifecycle as one subsystem | L | med | P3.2b | (a) DONE (v9.321): the timestamp authority -- `POST /api/v1/timestamp/<id>` binds any SHA3-256 digest to an instant under the agency's registered key (`polaris-timestamp/1`), digest-only and unlogged so it learns and retains nothing, verified offline by `verify_timestamp` + `timestamp_binds`, in the oracle, the wire spec, both SDKs' conformance, the fuzzer, and a real-ML-DSA drill (which also timestamps a receipt at a second authority: independent time evidence); (b) a signed, versioned trust list of authority roots with status (active / retired / compromised), the root's status governing every downstream decision; a compromise-recovery drill under real ML-DSA (a root is declared compromised -> the trust list, revocation feed and epoch checkpoint update -> verifiers reject artifacts under the old root after the compromise time and accept re-issued ones -> monitors and witnesses see it); algorithm-migration compatibility proven by vectors signed under two algorithms verifying in both SDKs |
 | [ ] P8.8 | Protocol versioning, negotiation and cross-version compatibility | M | low | P8.3 | Capability and version advertisement in the registry; a normative negotiation rule (reject an unknown major, accept a higher minor, never emit an unadvertised version); a compatibility suite run in CI that verifies the frozen v1 vectors under the current SDKs and current vectors under a pinned older verifier, old and new in both directions |
 
 Exit gate: a non-Polaris implementation interoperates from P8.1 alone; an institutional

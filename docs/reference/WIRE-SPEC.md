@@ -173,6 +173,22 @@ instance without real ML-DSA-65 MUST refuse: a placeholder signature is not auth
 The receipt it yields is section 3.8, unchanged; `request_hash` and `response_hash` obey the
 same hash-only rule.
 
+### 3.9 `polaris-timestamp/1`
+
+A timestamp authority's binding of an arbitrary digest to an instant under its registered key
+(P8.7a). The authority sees only a digest, never content, and keeps no per-request record.
+Signed fields: format, authority, digest_hex, digest_algorithm, nonce, issued_at, algorithm
+
+`digest_hex` MUST be the lowercase SHA3-256 hex of the data being timestamped and
+`digest_algorithm` MUST be `SHA3-256`; `nonce` is the requester's own value echoed unchanged
+(or null), so a requester can tie the response to its request; `issued_at` is the authority's
+instant. A verifier MUST confirm the signature and that `issued_at` parses; a timestamp records
+a past instant and carries no freshness window. A verifier that holds the data MUST check the
+binding (`SHA3-256(data) == digest_hex`) before treating the timestamp as evidence about that
+data; a timestamp over an artifact's canonical bytes (section 3 or 3.8) from an authority other
+than the artifact's signer is time evidence independent of that signer. Authority trust is a
+relying-party decision over its trusted keys.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:

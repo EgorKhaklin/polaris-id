@@ -1608,6 +1608,13 @@ jobs:
       - name: Gateway — exchange receipt, evidence without retention
         run: python scripts/polaris-exchange-receipt-drill.py
 
+      # v9.321 (roadmap P8.7a) — the timestamp authority: an arbitrary digest bound to an
+      # instant under an authority's real ML-DSA-65 key, verified offline; it binds to the data
+      # and to nothing else; tampering, a swapped digest and a rewritten instant are caught; a
+      # receipt's canonical bytes timestamped by a SECOND authority is independent time evidence.
+      - name: Timestamp authority — time evidence for anything
+        run: python scripts/polaris-timestamp-drill.py
+
       # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
       # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
       # head and consistency proofs; the detached verifier accepts an append-only extension

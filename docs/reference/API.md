@@ -859,6 +859,27 @@ of the seven `mint` fields (wire spec section 3.8.1); `scripts/polaris-verify.py
 `_exchange_mint_canonical` builds them for a client. Proven over HTTP, with no session, by the
 two-instance federation drill.
 
+### `POST /api/v1/timestamp/<agency_id>`
+
+**Public; no session (P8.7a).** A **timestamp authority**: bind an arbitrary SHA3-256 digest to
+an instant under this agency's registered ML-DSA-65 key. The caller sends only the digest (the
+content itself is never sent) and an optional nonce of its own; the authority keeps no
+per-request record. Rate-bounded per authority.
+
+```jsonc
+// request
+{ "digest_hex": "<sha3-256 hex of the data>", "nonce": "req-7f3a" }
+// response: a polaris-timestamp/1 signed by the authority
+{ "format": "polaris-timestamp/1", "authority": {...}, "digest_hex": "...",
+  "digest_algorithm": "SHA3-256", "nonce": "req-7f3a", "issued_at": "...",
+  "algorithm": "ML-DSA-65", "signature_hex": "...", "public_key_hex": "..." }
+```
+
+Verified offline with `scripts/polaris-verify.py` (`verify_timestamp`; `timestamp_binds(ts,
+data)` checks the binding against data the verifier holds). Timestamp an exchange receipt's
+canonical bytes here and the receipt gains time evidence independent of its responder.
+Specified in [timestamp-authority.md](../design/timestamp-authority.md); wire spec section 3.9.
+
 ### `GET /api/v1/transparency/sth`
 
 **Public; no auth.** The transparency log's **Signed Tree Head** (roadmap P3.3): the log's

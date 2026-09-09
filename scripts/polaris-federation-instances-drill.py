@@ -372,6 +372,20 @@ def main():
                                   "request_hash": "00" * 32, "response_hash": "00" * 32})
         checks.append(("the operator mint route with no session does not mint (not 200)", st6 != 200, True))
 
+        # 6d. TIMESTAMP AUTHORITY over HTTP (P8.7a): B binds a digest to an instant under its
+        #     registered key; verified offline, trusted under B's key, bound to the document B
+        #     never saw; a non-digest is refused at the door.
+        doc = b"a document B never sees"
+        st7, tsr = _http_post_json(base_b + "/api/v1/timestamp/1",
+                                   {"digest_hex": hashlib.sha3_256(doc).hexdigest(), "nonce": "drill-nonce"})
+        checks.append(("B's timestamp authority binds a digest to an instant over HTTP (200)", st7, 200))
+        tv = V.verify_timestamp(tsr, anchor_keys=[pub_b]) if st7 == 200 else {}
+        checks.append(("the timestamp is authentic, trusted under B's key, and binds to the document (offline)",
+                       bool(tv.get("timestamp_authentic") and tv.get("issuer_trusted") and V.timestamp_binds(tsr, doc)), True))
+        checks.append(("the nonce is echoed in the signed statement", (tsr or {}).get("nonce") == "drill-nonce", True))
+        st8, _ = _http_post_json(base_b + "/api/v1/timestamp/1", {"digest_hex": "not a digest"})
+        checks.append(("a non-digest is refused at the door (400): the content itself is never sent", st8, 400))
+
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:
             cur.execute("UPDATE AgencyTrustAttestation SET revocation_date=CURRENT_DATE, "

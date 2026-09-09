@@ -7155,6 +7155,7 @@ _WIRE_SIGNED_TYPES = {
     "polaris-federation-status-bundle/1": "_status_bundle_canonical",
     "polaris-exchange-receipt/1": "_exchange_receipt_canonical",
     "polaris-exchange-mint/1": "_exchange_mint_canonical",
+    "polaris-timestamp/1": "_timestamp_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7512,6 +7513,50 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_timestamp_authority(root: pathlib.Path) -> list[Finding]:
+    """P8.7a: the timestamp authority -- an arbitrary SHA3-256 digest bound to an instant under
+    an agency's registered ML-DSA-65 key, DIGEST-ONLY (the authority learns and retains
+    nothing), verified offline, and held to the full machinery: the canonical oracle, the wire
+    spec, conformance in BOTH SDKs, the metamorphic fuzzer, and a real-ML-DSA drill in CI. The
+    time primitive document signing builds on; independent time evidence for any artifact."""
+    app = _read(root, "polaris_web/app.py")
+    for sym, why in (("/api/v1/timestamp/<int:agency_id>", "the timestamp route"),
+                     ("_timestamp_statement", "the statement builder"),
+                     ("polaris-timestamp/1", "the format"),
+                     ("the content itself is never sent", "the digest-only rule at the door"),
+                     ("tsa:", "the per-authority rate bound")):
+        if sym not in app:
+            return _fail("timestamp_authority", "polaris_web/app.py lacks %s (%s)" % (why, sym))
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_timestamp", "_timestamp_canonical", "def timestamp_binds"):
+        if sym not in v:
+            return _fail("timestamp_authority", "scripts/polaris-verify.py must verify the timestamp offline (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("timestamp_authority", f"the offline verifier imports {mod!r}; it must stay standalone")
+    if "_timestamp_statement" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("timestamp_authority", "the timestamp must be in the canonical-equivalence oracle")
+    if "polaris-timestamp/1" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("timestamp_authority", "the timestamp must be specified in the wire spec")
+    if '"artifact": "timestamp"' not in _read(root, "conformance/cases.json"):
+        return _fail("timestamp_authority", "conformance/cases.json must carry timestamp cases (artifact: timestamp)")
+    if "polaris-timestamp/1" not in _read(root, "sdk/python/polaris_verify/__init__.py"):
+        return _fail("timestamp_authority", "the Python SDK must verify polaris-timestamp/1")
+    if "polaris-timestamp/1" not in _read(root, "sdk/typescript/src/index.ts"):
+        return _fail("timestamp_authority", "the TypeScript SDK must verify polaris-timestamp/1")
+    if "verify_timestamp" not in _read(root, "scripts/polaris-verifier-fuzz.py"):
+        return _fail("timestamp_authority", "the metamorphic fuzzer must hold verify_timestamp total")
+    drill = _read(root, "scripts/polaris-timestamp-drill.py")
+    if not drill or "timestamp_binds" not in drill:
+        return _fail("timestamp_authority", "scripts/polaris-timestamp-drill.py must prove the timestamp binds to its data and to nothing else")
+    if "polaris-timestamp-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("timestamp_authority", "the timestamp drill must run in CI (a protocol that never runs is displacement)")
+    return _ok("timestamp_authority",
+               "the timestamp authority binds any SHA3-256 digest to an instant under the agency's registered key, "
+               "digest-only so it learns and retains nothing; verified offline (verify_timestamp + timestamp_binds), "
+               "in the oracle, the wire spec, both SDKs' conformance, the fuzzer, and a real-ML-DSA drill in CI")
 
 
 def check_exchange_mint_signed_auth(root: pathlib.Path) -> list[Finding]:
@@ -8122,6 +8167,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_timestamp_authority,
     check_exchange_mint_signed_auth,
     check_no_named_reference_systems,
     check_preflight_typechecks_ts_sdk,

@@ -117,6 +117,13 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._exchange_mint_statement(b),
         "verify": lambda b: _V._exchange_mint_canonical(b),
     },
+    # polaris-timestamp/1 (P8.7a): the timestamp authority's binding of a digest to an instant.
+    "timestamp": {
+        "keys": ["format", "authority", "digest_hex", "digest_algorithm", "nonce", "issued_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._timestamp_statement(b),
+        "verify": lambda b: _V._timestamp_canonical(b),
+    },
 }
 
 
@@ -270,7 +277,7 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-federation-manifest/1", "polaris-epoch-checkpoint/1",
             "polaris-revocation-feed/1", "polaris-status-assertion/1",
             "polaris-transparency-sth/1", "polaris-federation-status-bundle/1",
-            "polaris-exchange-receipt/1", "polaris-exchange-mint/1",
+            "polaris-exchange-receipt/1", "polaris-exchange-mint/1", "polaris-timestamp/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1"}

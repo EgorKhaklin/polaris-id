@@ -6404,16 +6404,18 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _status_bundle_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'publisher')}\n"
         "def _exchange_receipt_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'requester')}\n"
         "def _exchange_mint_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'responder_agency_id')}\n"
+        "def _timestamp_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'digest_hex')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1\n"
         "manifest signed fields: format, authority\n"
         "receipt signed fields: format, requester\n"
         "mint signed fields: format, responder_agency_id\n"
+        "timestamp signed fields: format, digest_hex\n"
         "checkpoint signed fields: format, epoch\n"
         "feed signed fields: format, as_of\n"
         "assertion signed fields: format, status\n"
@@ -6462,6 +6464,63 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_timestamp_authority_check_discriminates(tmp_path):
+    # v9.321 (P8.7a): the timestamp authority -- digest-only at the door, verified offline with a
+    # binding helper, standalone, in the oracle/spec/conformance (both SDKs)/fuzzer, drilled in CI.
+    good = {
+        'polaris_web/app.py': (
+            "@app.route('/api/v1/timestamp/<int:agency_id>', methods=['POST'])\n"
+            "def api_v1_timestamp(agency_id):\n"
+            "    _timestamp_statement(ts)  # polaris-timestamp/1\n"
+            "    # the content itself is never sent\n"
+            "    security.rate_limiter.allow('tsa:%d' % agency_id, 600, 60)\n"
+        ),
+        'scripts/polaris-verify.py': (
+            "import json, hashlib\n"
+            "def _timestamp_canonical(t): return b''\n"
+            "def verify_timestamp(t, **k): return {}\n"
+            "def timestamp_binds(t, data): return True\n"
+        ),
+        'polaris_web/test_canonical_equivalence.py': "flask_app._timestamp_statement\n",
+        'docs/reference/WIRE-SPEC.md': "polaris-timestamp/1\n",
+        'conformance/cases.json': '{"cases": [{"artifact": "timestamp"}]}\n',
+        'sdk/python/polaris_verify/__init__.py': '"polaris-timestamp/1": ["format"]\n',
+        'sdk/typescript/src/index.ts': '"polaris-timestamp/1": ["format"]\n',
+        'scripts/polaris-verifier-fuzz.py': "V.verify_timestamp(o)\n",
+        'scripts/polaris-timestamp-drill.py': "V.timestamp_binds(ts, data)\n",
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-timestamp-drill.py\n',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_web/app.py': good['polaris_web/app.py'].replace("/api/v1/timestamp", "/api/v1/nope")})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL without the route"
+    write({'polaris_web/app.py': good['polaris_web/app.py'].replace("the content itself is never sent", "we accept content")})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL without the digest-only rule"
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace("def timestamp_binds", "def nope")})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL without the binding helper"
+    write({'scripts/polaris-verify.py': "import psycopg2\n" + good['scripts/polaris-verify.py']})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    write({'polaris_web/test_canonical_equivalence.py': "# nothing\n"})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL if not oracle-pinned"
+    write({'docs/reference/WIRE-SPEC.md': "# spec\n"})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL if not in the wire spec"
+    write({'conformance/cases.json': '{"cases": []}\n'})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL without conformance cases"
+    write({'sdk/typescript/src/index.ts': "// nothing\n"})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL if the TS SDK cannot verify it"
+    write({'scripts/polaris-verifier-fuzz.py': "# nothing\n"})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL if the fuzzer does not cover it"
+    write({'.github/workflows/ci.yml': "jobs: {}\n"})
+    assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
 
 
 def test_exchange_mint_signed_auth_check_discriminates(tmp_path):

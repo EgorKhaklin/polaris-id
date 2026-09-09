@@ -2,29 +2,262 @@
   "format": "polaris-conformance/1",
   "note": "The Polaris verification conformance cases. Each case names the `artifact` it is about (default `authenticity-pack`), references a published vector, and states the verdict a conformant verifier MUST return; the runner checks every key the case constrains. `anchors: \"self\"` means the pack's own public key is trusted; `now` pins the evaluation time for a windowed artifact. See SPEC.md and docs/reference/WIRE-SPEC.md.",
   "cases": [
-    {"name": "genuine-no-anchors",       "pack_file": "vectors/ml-dsa-65-valid.json",              "expect": {"authentic": true,  "issuer_trusted": null}},
-    {"name": "genuine-trusted-anchor",    "pack_file": "vectors/ml-dsa-65-valid.json", "anchors": "self",  "expect": {"authentic": true,  "issuer_trusted": true}},
-    {"name": "genuine-untrusted-anchor",  "pack_file": "vectors/ml-dsa-65-valid.json", "anchors": ["00"],  "expect": {"authentic": true,  "issuer_trusted": false}},
-    {"name": "tampered-signature",        "pack_file": "vectors/ml-dsa-65-tampered-signature.json", "expect": {"authentic": false, "issuer_trusted": null}},
-    {"name": "tampered-token",            "pack_file": "vectors/ml-dsa-65-tampered-token.json",     "expect": {"authentic": false, "issuer_trusted": null}},
-    {"name": "wrong-key",                 "pack_file": "vectors/ml-dsa-65-wrong-key.json",          "expect": {"authentic": false, "issuer_trusted": null}},
-    {"name": "placeholder",               "pack_file": "vectors/placeholder.json",                  "expect": {"authentic": false, "issuer_trusted": null}},
-    {"name": "status-assertion-active",   "artifact": "status-assertion", "assertion_file": "conformance/vectors/status-assertion-valid.json",    "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true,  "active": true}},
-    {"name": "status-assertion-expired",  "artifact": "status-assertion", "assertion_file": "conformance/vectors/status-assertion-valid.json",    "now": "2028-01-01T00:00:00Z", "expect": {"authentic": true,  "fresh": false}},
-    {"name": "status-assertion-tampered", "artifact": "status-assertion", "assertion_file": "conformance/vectors/status-assertion-tampered.json", "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
-    {"name": "epoch-checkpoint-valid",      "artifact": "epoch-checkpoint",         "object_file": "conformance/vectors/epoch-checkpoint-valid.json",         "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true}},
-    {"name": "epoch-checkpoint-tampered",   "artifact": "epoch-checkpoint",         "object_file": "conformance/vectors/epoch-checkpoint-tampered.json",      "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
-    {"name": "revocation-feed-valid",       "artifact": "revocation-feed",          "object_file": "conformance/vectors/revocation-feed-valid.json",          "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true}},
-    {"name": "revocation-feed-tampered",    "artifact": "revocation-feed",          "object_file": "conformance/vectors/revocation-feed-tampered.json",       "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
-    {"name": "manifest-valid",              "artifact": "federation-manifest",      "object_file": "conformance/vectors/federation-manifest-valid.json",      "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true}},
-    {"name": "manifest-tampered",           "artifact": "federation-manifest",      "object_file": "conformance/vectors/federation-manifest-tampered.json",   "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
-    {"name": "status-bundle-valid",         "artifact": "federation-status-bundle", "object_file": "conformance/vectors/federation-status-bundle-valid.json", "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true}},
-    {"name": "status-bundle-tampered",      "artifact": "federation-status-bundle", "object_file": "conformance/vectors/federation-status-bundle-tampered.json","now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
-    {"name": "transparency-sth-valid",      "artifact": "transparency-sth",         "object_file": "conformance/vectors/transparency-sth-valid.json",         "expect": {"authentic": true}},
-    {"name": "transparency-sth-tampered",   "artifact": "transparency-sth",         "object_file": "conformance/vectors/transparency-sth-tampered.json",      "expect": {"authentic": false}},
-    {"name": "cross-authority-accept",       "artifact": "cross-authority", "pack_file": "conformance/vectors/cross-authority-pack.json", "manifest_files": ["conformance/vectors/cross-authority-manifest.json"], "trusted_anchors": "manifest", "context_id": 1, "now": "2026-06-01T00:00:00Z", "expect": {"decision": "accept"}},
-    {"name": "cross-authority-untrusted",    "artifact": "cross-authority", "pack_file": "conformance/vectors/cross-authority-pack.json", "manifest_files": ["conformance/vectors/cross-authority-manifest.json"], "trusted_anchors": ["00"],   "context_id": 1, "now": "2026-06-01T00:00:00Z", "expect": {"decision": "reject"}},
-    {"name": "cross-authority-wrong-context","artifact": "cross-authority", "pack_file": "conformance/vectors/cross-authority-pack.json", "manifest_files": ["conformance/vectors/cross-authority-manifest.json"], "trusted_anchors": "manifest", "context_id": 2, "now": "2026-06-01T00:00:00Z", "expect": {"decision": "reject"}},
-    {"name": "cross-authority-revoked",      "artifact": "cross-authority", "pack_file": "conformance/vectors/cross-authority-pack.json", "manifest_files": ["conformance/vectors/cross-authority-manifest.json"], "trusted_anchors": "manifest", "context_id": 1, "now": "2026-06-01T00:00:00Z", "feed_file": "conformance/vectors/cross-authority-feed-revoked.json", "expect": {"decision": "reject"}}
+    {
+      "name": "genuine-no-anchors",
+      "pack_file": "vectors/ml-dsa-65-valid.json",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": null
+      }
+    },
+    {
+      "name": "genuine-trusted-anchor",
+      "pack_file": "vectors/ml-dsa-65-valid.json",
+      "anchors": "self",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      }
+    },
+    {
+      "name": "genuine-untrusted-anchor",
+      "pack_file": "vectors/ml-dsa-65-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      }
+    },
+    {
+      "name": "tampered-signature",
+      "pack_file": "vectors/ml-dsa-65-tampered-signature.json",
+      "expect": {
+        "authentic": false,
+        "issuer_trusted": null
+      }
+    },
+    {
+      "name": "tampered-token",
+      "pack_file": "vectors/ml-dsa-65-tampered-token.json",
+      "expect": {
+        "authentic": false,
+        "issuer_trusted": null
+      }
+    },
+    {
+      "name": "wrong-key",
+      "pack_file": "vectors/ml-dsa-65-wrong-key.json",
+      "expect": {
+        "authentic": false,
+        "issuer_trusted": null
+      }
+    },
+    {
+      "name": "placeholder",
+      "pack_file": "vectors/placeholder.json",
+      "expect": {
+        "authentic": false,
+        "issuer_trusted": null
+      }
+    },
+    {
+      "name": "status-assertion-active",
+      "artifact": "status-assertion",
+      "assertion_file": "conformance/vectors/status-assertion-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "active": true
+      }
+    },
+    {
+      "name": "status-assertion-expired",
+      "artifact": "status-assertion",
+      "assertion_file": "conformance/vectors/status-assertion-valid.json",
+      "now": "2028-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      }
+    },
+    {
+      "name": "status-assertion-tampered",
+      "artifact": "status-assertion",
+      "assertion_file": "conformance/vectors/status-assertion-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      }
+    },
+    {
+      "name": "epoch-checkpoint-valid",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/vectors/epoch-checkpoint-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      }
+    },
+    {
+      "name": "epoch-checkpoint-tampered",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/vectors/epoch-checkpoint-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      }
+    },
+    {
+      "name": "revocation-feed-valid",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      }
+    },
+    {
+      "name": "revocation-feed-tampered",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      }
+    },
+    {
+      "name": "manifest-valid",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/federation-manifest-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      }
+    },
+    {
+      "name": "manifest-tampered",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/federation-manifest-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      }
+    },
+    {
+      "name": "status-bundle-valid",
+      "artifact": "federation-status-bundle",
+      "object_file": "conformance/vectors/federation-status-bundle-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      }
+    },
+    {
+      "name": "status-bundle-tampered",
+      "artifact": "federation-status-bundle",
+      "object_file": "conformance/vectors/federation-status-bundle-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      }
+    },
+    {
+      "name": "transparency-sth-valid",
+      "artifact": "transparency-sth",
+      "object_file": "conformance/vectors/transparency-sth-valid.json",
+      "expect": {
+        "authentic": true
+      }
+    },
+    {
+      "name": "transparency-sth-tampered",
+      "artifact": "transparency-sth",
+      "object_file": "conformance/vectors/transparency-sth-tampered.json",
+      "expect": {
+        "authentic": false
+      }
+    },
+    {
+      "name": "cross-authority-accept",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      }
+    },
+    {
+      "name": "cross-authority-untrusted",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": [
+        "00"
+      ],
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      }
+    },
+    {
+      "name": "cross-authority-wrong-context",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 2,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      }
+    },
+    {
+      "name": "cross-authority-revoked",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "feed_file": "conformance/vectors/cross-authority-feed-revoked.json",
+      "expect": {
+        "decision": "reject"
+      }
+    },
+    {
+      "name": "timestamp-valid",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-valid.json",
+      "expect": {
+        "authentic": true
+      }
+    },
+    {
+      "name": "timestamp-tampered",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-tampered.json",
+      "expect": {
+        "authentic": false
+      }
+    }
   ]
 }
