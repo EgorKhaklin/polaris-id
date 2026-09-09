@@ -5,6 +5,17 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.339 — 2026-09-09 (The same-key timestamp guard applies to real keys)
+
+v9.336 made the signing route refuse a `timestamp_agency_id` whose key custody on the instance
+is the signer's own key. Under the test profile's placeholder signing neither side has a key,
+so the guard compared two empty values and refused a legitimate request; CI's product suite was
+red for v9.336 through v9.338 on the route test v9.334 added, while the real-PQC and
+two-instance jobs were green. The guard now applies to real keys only (under placeholders no
+independence claim exists either way); the two-instance drill still shows the refusal under
+B's real key. The full product suite (691 tests) was run locally before this release, which
+is the discipline the previous three releases skipped.
+
 ## v9.338 — 2026-09-09 (The drills catch up with the stricter verifier, and the catch-up is gated)
 
 v9.334 tightened long-term validation (a trusted, signer-independent timestamp authority is

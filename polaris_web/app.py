@@ -6492,7 +6492,8 @@ def _sign_document(agency, agency_id, fields, on_behalf_of):
             return None, err
         ts_agency_id = tid
     ts_body = _timestamp_body(ts_agency, ts_agency_id, material_digest, None)
-    if tid is not None and str(ts_body.get('public_key_hex') or '').lower() == str(pub or '').lower():
+    # Real keys only: under the placeholder profile neither side has a key, and no independence claim exists either way.
+    if tid is not None and pub and ts_body.get('public_key_hex') and str(ts_body.get('public_key_hex')).lower() == str(pub).lower():
         return None, (jsonify(error='invalid_request',
                               error_description='timestamp_agency_id names an agency whose key custody on this instance is the signer\'s own key; '
                                                 'independent time evidence needs a separately custodied key (POLARIS_AGENCY_KEYS_DIR) or another instance\'s timestamp authority'), 400)
