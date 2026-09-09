@@ -54,8 +54,8 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 169 invariant
-checks (v9.312) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
+release; CVE gates on dependencies and images; a coverage floor; 170 invariant
+checks (v9.313) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 Since the v9.236 base, and CI-proven: HA automation (Patroni with an etcd leader
@@ -396,7 +396,7 @@ protocol rather than leading it, so the wrap never runs ahead of the engine.
 
 | ID | Item | Size | Risk | Blocked by | Definition of done |
 |---|---|---|---|---|---|
-| [ ] P8.1 | Normative wire specification + conformance for independent implementations | L | med | P3 | A versioned, normative specification of the signed artifacts (authenticity pack, federation manifest, epoch checkpoint, revocation feed, status assertion, status bundle, transparency STH) and the federation trust decision, with a language-agnostic conformance suite; an implementation that imports no Polaris code passes it |
+| [>] P8.1 | Normative wire specification + conformance for independent implementations | L | med | P3 | IN PROGRESS. The normative SPEC shipped (v9.313): `docs/reference/WIRE-SPEC.md` (RFC-2119) specifies the signature envelope + the canonical-signing discipline, all seven app-signed artifacts (each with its exact signed-field list + canonical construction + verification MUSTs), the authenticity pack's special construction, the federation trust decision (non-transitive, in-context), the three transparency-infra artifacts, and the `format /N` versioning + algorithm-agility rule. `check_wire_spec_matches_code` (#170) fails CI when a documented format string or signed-field list diverges from the signer -- and closes the canonical-pinning gap the oracle left for the bundle, the pack, and the transparency-infra types (also un-vacuum-ing `_signed_statement_keys`, whose multi-line regex silently returned nothing so the oracle's static key-list pin was a no-op). REMAINING (P8.1b): extend `conformance/cases.json` + the Python/TS SDKs to certify all seven artifacts + the trust decision (today they certify only the authenticity pack), so an implementation importing no Polaris code is certified against the full protocol. |
 | [ ] P8.2 | Polaris Gateway: an evidence-without-retention service-to-service fabric | XL | high | P8.1 | Arbitrary institutions exchange authenticated, signed requests mediated by Polaris trust; each exchange yields a signed receipt plus a transparency commitment proving it occurred and was authorized, WITHOUT retaining the payload; an independent party verifies the receipt offline |
 | [ ] P8.3 | Service-and-authority registry | L | med | P8.1 | A machine-readable, signed registry of authorities, relying parties, endpoints, protocol versions, capabilities, trust roots and schemas, powered by Athena, discoverable and independently verifiable |
 | [ ] P8.4 | Auth/SSO broker across credential types | L | med | P3.4 | The relying-party API becomes an OIDC/OAuth authentication broker with sessions, step-up auth, multiple credential types and explicit assurance levels, with no credential-type lock-in |

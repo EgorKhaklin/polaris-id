@@ -5,6 +5,33 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.313 — 2026-09-08 (Normative wire specification, P8.1)
+
+The first step of the P8 exchange fabric: a normative wire specification so an implementation
+importing no Polaris code can produce and verify the protocol's artifacts and interoperate as a
+first-class peer. This is the P3 exit gate ("an external team integrates docs-only").
+
+- **The spec.** `docs/reference/WIRE-SPEC.md` (RFC-2119) specifies the signature envelope and the
+  canonical-signing discipline (SHA3-256 over sorted-keys compact JSON), then each of the seven
+  app-signed artifacts with its exact signed-field list, canonical construction, and verification
+  MUSTs; the authenticity pack's special construction (a signature over `SHA3-256(token_value)`,
+  not a JSON statement); the federation trust decision (non-transitive, in-context, revocation
+  fail-closed); the three transparency-infrastructure artifacts; and the `format /N` versioning
+  and algorithm-agility rule. The scattered per-artifact design notes are lifted into one
+  authoritative document.
+- **Pinned to the signer.** `check_wire_spec_matches_code` (#170) fails CI when a format string or
+  a signed-field list in the spec diverges from the app's canonical builders, so a from-spec
+  implementation cannot silently drift from the code. It also closes real pinning gaps: the
+  canonical-equivalence oracle statically covered five types and omitted the status bundle, and
+  covered the pack and the transparency-infra types with neither mechanism; the spec check
+  requires every protocol format string.
+- **A latent hole, closed.** `_signed_statement_keys` returned nothing on the multi-line
+  `for k in (...)` builders, so the oracle's static key-list comparison was silently vacuous; its
+  regex now matches the real code, and the static check genuinely compares the ordered key lists
+  again (both `check_canonical_equivalence` and the new spec check).
+- Extending the conformance cases and the SDKs to certify all artifacts (not just the pack) is
+  P8.1b. 170 checks.
+
 ## v9.312 — 2026-09-08 (Offline cross-authority epoch-bound ZK, P3.2d)
 
 A holder proves, in zero knowledge, that its credential is included in an issuing authority's

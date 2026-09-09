@@ -6390,6 +6390,76 @@ def test_cross_authority_zk_check_discriminates(tmp_path):
     assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
 
 
+def test_wire_spec_check_discriminates(tmp_path):
+    # v9.313 (P8.1): a normative wire spec pinned to the signer -- every protocol format string
+    # and every signed-field list in the doc must match the code's canonical builders. Each
+    # perturbation removes one leg.
+    verify_src = (
+        "import json\n"
+        "def _manifest_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'authority')}\n"
+        "def _epoch_checkpoint_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'epoch')}\n"
+        "def _revocation_feed_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'as_of')}\n"
+        "def _status_assertion_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'status')}\n"
+        "def _sth_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'tree_size')}\n"
+        "def _status_bundle_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'publisher')}\n"
+    )
+    spec = (
+        "# Polaris wire spec\nA verifier MUST check the signature.\n"
+        "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
+        "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
+        "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
+        "polaris-published-head/1\n"
+        "manifest signed fields: format, authority\n"
+        "checkpoint signed fields: format, epoch\n"
+        "feed signed fields: format, as_of\n"
+        "assertion signed fields: format, status\n"
+        "sth signed fields: format, tree_size\n"
+        "bundle signed fields: format, publisher\n"
+        "The pack signs SHA3-256(token_value), not a JSON statement.\n"
+        "canonical = json.dumps(s, sort_keys=True, separators=(',',':')).\n"
+        "Trust is non-transitive and in-context.\n"
+    )
+    good = {
+        'docs/reference/WIRE-SPEC.md': spec,
+        'scripts/polaris-verify.py': verify_src,
+        'docs/reference/README.md': "[WIRE-SPEC.md](WIRE-SPEC.md)\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the spec is missing
+    (tmp_path / "docs/reference/WIRE-SPEC.md").unlink()
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL without the spec"
+    write()
+    # 2. no normative language
+    write({"docs/reference/WIRE-SPEC.md": spec.replace("MUST", "should maybe")})
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL without RFC-2119 MUST"
+    # 3. a format string is not covered
+    write({"docs/reference/WIRE-SPEC.md": spec.replace("polaris-published-head/1", "nope/1")})
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if an artifact is uncovered"
+    # 4. a signed-field list diverges from the code
+    write({"docs/reference/WIRE-SPEC.md": spec.replace("format, publisher", "format, WRONG")})
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if a field list diverges from code"
+    # 5. the pack construction is undocumented
+    write({"docs/reference/WIRE-SPEC.md": spec.replace("SHA3-256(token_value)", "something")})
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL without the pack construction"
+    # 6. the canonical discipline is undocumented
+    write({"docs/reference/WIRE-SPEC.md": spec.replace("sort_keys", "nope")})
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL without the canonical construction"
+    # 7. the trust decision is not stated non-transitive/in-context
+    write({"docs/reference/WIRE-SPEC.md": spec.replace("non-transitive and in-context", "loose")})
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL without non-transitive/in-context trust"
+    # 8. not linked from the reference index
+    write({"docs/reference/README.md": "no link here\n"})
+    assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
 def test_federation_two_instances_check_discriminates(tmp_path):
     # v9.299 (P3.10): a drill that boots two real instances and drives the federation
     # endpoints over HTTP under real ML-DSA, run in its own CI job. Each perturbation

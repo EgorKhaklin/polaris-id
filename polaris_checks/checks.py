@@ -6982,7 +6982,7 @@ def _signed_statement_keys(src: str, fn: str):
     body = _fn_block(src, fn)
     if body is None:
         return None
-    proj = re.search(r"for k in \(([^)]*)\)", body, re.S)
+    proj = re.search(r"for k in\s*\(([^)]*)\)", body, re.S)
     if proj:
         return re.findall(r"""['"]([^'"]+)['"]""", proj.group(1))
     # Inline dict: keys are the quoted tokens immediately followed by a colon.
@@ -7144,6 +7144,66 @@ def check_transparency_log(root: pathlib.Path) -> list[Finding]:
                "append-only AnchorBatch roots, the standalone verifier proves append-only and rejects a "
                "rewrite/fork/shrink/wrong-key head, and an independent monitor daemon alerts on tampering -- "
                "proven every release by the transparency drill under real ML-DSA")
+
+
+_WIRE_SIGNED_TYPES = {
+    "polaris-federation-manifest/1": "_manifest_canonical",
+    "polaris-epoch-checkpoint/1": "_epoch_checkpoint_canonical",
+    "polaris-revocation-feed/1": "_revocation_feed_canonical",
+    "polaris-status-assertion/1": "_status_assertion_canonical",
+    "polaris-transparency-sth/1": "_sth_canonical",
+    "polaris-federation-status-bundle/1": "_status_bundle_canonical",
+}
+_WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
+    "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
+    "polaris-transparency-publication/1", "polaris-published-head/1",
+]
+
+
+def check_wire_spec_matches_code(root: pathlib.Path) -> list[Finding]:
+    """P8.1: the normative wire specification is pinned to the signer. An independent
+    implementation, importing no Polaris code, builds to docs/reference/WIRE-SPEC.md; this
+    fails CI when a format string or a signed-field list there diverges from the app's
+    canonical builders (read via the detached verifier's, which mirror them), closing the
+    drift that would silently break every from-spec implementation. It also closes the
+    canonical-pinning gap the oracle leaves for the pack and the transparency-infra types by
+    requiring every protocol format string to be specified."""
+    spec = _read(root, "docs/reference/WIRE-SPEC.md")
+    if not spec:
+        return _fail("wire_spec", "docs/reference/WIRE-SPEC.md (the normative wire spec) is missing")
+    if "MUST" not in spec:
+        return _fail("wire_spec", "the wire spec must be normative (RFC-2119 MUST/SHOULD/MAY)")
+    for fmt in _WIRE_ALL_FORMATS:
+        if fmt not in spec:
+            return _fail("wire_spec", "the wire spec does not cover the artifact %s" % fmt)
+    # Each signed statement's field list matches the code, in the code's order.
+    v = _read(root, "scripts/polaris-verify.py")
+    for fmt, fn in _WIRE_SIGNED_TYPES.items():
+        keys = _signed_statement_keys(v, fn)
+        if not keys:
+            return _fail("wire_spec", "cannot read the signed-field list for %s (%s missing)" % (fmt, fn))
+        joined = ", ".join(keys)
+        if joined not in spec:
+            return _fail("wire_spec",
+                         "the wire spec's signed-field list for %s does not match the code; expected: %s" % (fmt, joined))
+    # The authenticity pack's special construction (not a JSON statement).
+    if "SHA3-256(token_value" not in spec:
+        return _fail("wire_spec",
+                     "the wire spec must document the authenticity pack's construction (SHA3-256(token_value), not a JSON statement)")
+    # The canonical-signing discipline itself.
+    if "sort_keys" not in spec or "separators" not in spec:
+        return _fail("wire_spec",
+                     "the wire spec must document the canonical JSON construction (sort_keys + compact separators)")
+    # The federation trust decision: non-transitive, in-context.
+    if "transitive" not in spec.lower() or "context" not in spec.lower():
+        return _fail("wire_spec",
+                     "the wire spec must state the federation trust decision is non-transitive and in-context")
+    if "WIRE-SPEC.md" not in _read(root, "docs/reference/README.md"):
+        return _fail("wire_spec", "the wire spec must be linked from docs/reference/README.md")
+    return _ok("wire_spec",
+               "the normative wire specification (docs/reference/WIRE-SPEC.md) covers every protocol artifact and is "
+               "pinned to the signer: each signed-field list and format string is checked against the app's canonical "
+               "builders, so an independent implementation building to the spec cannot silently diverge from the code")
 
 
 def check_canonical_equivalence(root: pathlib.Path) -> list[Finding]:
@@ -7858,6 +7918,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_wire_spec_matches_code,
     check_cross_authority_zk,
     check_verifier_fuzz,
     check_federation_status_bundle,
