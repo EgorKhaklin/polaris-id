@@ -7847,6 +7847,7 @@ def test_ltv_timestamp_trust_check_discriminates(tmp_path):
         'scripts/polaris-verify.py': VER,
         'polaris_web/app.py': "tid = fields.get('timestamp_agency_id')\n",
         'scripts/polaris-document-signing-drill.py': "# SELF-issued timestamp; does NOT trust; without trusted timestamp-authority anchors\n",
+        'scripts/polaris-trust-lifecycle-drill.py': "V.verify_signed_document(doc, timestamp_anchors=TSA)\n",
         'docs/reference/WIRE-SPEC.md': "MUST come from a timestamp authority the verifier trusts\n",
         'docs/design/document-signing.md': "timestamp_anchors\n",
         'docs/reference/API.md': "timestamp_agency_id\n",

@@ -5,6 +5,23 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.338 — 2026-09-09 (The drills catch up with the stricter verifier, and the catch-up is gated)
+
+v9.334 tightened long-term validation (a trusted, signer-independent timestamp authority is
+required) and shipped on the document-signing drill alone. Two other drills asserted the old
+outcome: the trust-lifecycle drill ("a document timestamped before the compromise stays valid
+long term") and the two-instance drill ("valid long term from B's embedded evidence"), so CI's
+real-PQC job was red from v9.334 through v9.337 and its two-instance job from v9.334 through
+v9.335. The two-instance drill was restated in v9.336; this release restates the other.
+
+- **The trust-lifecycle drill trusts the publisher for time.** Its documents were always
+  timestamped by the publisher, a key distinct from the issuer signers; the drill now passes
+  those anchors, and every long-term verdict it asserts holds again under the stricter rule.
+- **Gated.** `check_ltv_timestamp_trust` (#186) now also requires the trust-lifecycle drill to
+  decide long-term validity with timestamp anchors, so a verifier rule change that outruns a
+  drill fails the gate locally rather than CI later.
+- Every drill CI's real-PQC job runs was re-run locally before this release.
+
 ## v9.337 — 2026-09-09 (The roadmap cannot contradict itself)
 
 The outside review's last finding: within a day of the previous drift fix, the roadmap's

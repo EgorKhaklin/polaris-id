@@ -76,6 +76,7 @@ def main():
         return sig, pk
 
     PUB, PUB_OLD, ISS_OLD, ISS_NEW, STRANGER = issuer("publisher"), issuer("publisher-old"), issuer("issuer-old"), issuer("issuer-new"), issuer("stranger")
+    TSA = [PUB["key_hex"]]   # the timestamp authority this verifier trusts for time (v9.334): the publisher, never the signer
 
     def entry(who, agency_id, name, status, reg=T_REG, ret=None, comp=None):
         return {"agency_id": agency_id, "name": name, "public_key_hex": who["key_hex"], "algorithm": "ML-DSA-65",
@@ -160,13 +161,13 @@ def main():
         ("... while a credential re-issued under the NEW key is accepted",
          V.verify_cross_authority(pack_new, 1, [manifest], trusted_anchors=[PUB["key_hex"]], trust_list=tl_after)["decision"], "accept"),
         ("a document signed and timestamped BEFORE the compromise instant stays valid long term (per the trust list)",
-         V.verify_signed_document(doc_before, trust_list=tl_after, trusted_anchors=[PUB["key_hex"]])["valid_long_term"], True),
+         V.verify_signed_document(doc_before, trust_list=tl_after, trusted_anchors=[PUB["key_hex"]], timestamp_anchors=TSA)["valid_long_term"], True),
         ("... one signed AFTER the compromise instant is not, even though its own manifest says active",
-         (V.verify_signed_document(doc_after)["valid_long_term"], V.verify_signed_document(doc_after, trust_list=tl_after, trusted_anchors=[PUB["key_hex"]])["valid_long_term"]), (True, False)),
+         (V.verify_signed_document(doc_after, timestamp_anchors=TSA)["valid_long_term"], V.verify_signed_document(doc_after, trust_list=tl_after, trusted_anchors=[PUB["key_hex"]], timestamp_anchors=TSA)["valid_long_term"]), (True, False)),
         ("a document under the NEW key is valid long term per the trust list",
-         V.verify_signed_document(doc_new, trust_list=tl_after, trusted_anchors=[PUB["key_hex"]])["valid_long_term"], True),
+         V.verify_signed_document(doc_new, trust_list=tl_after, trusted_anchors=[PUB["key_hex"]], timestamp_anchors=TSA)["valid_long_term"], True),
         ("no trust list: the decisions fall back to the issuer's own word (unchanged behaviour)",
-         (V.verify_cross_authority(pack_old, 1, [manifest], trusted_anchors=[PUB["key_hex"]])["decision"], V.verify_signed_document(doc_after)["valid_long_term"]), ("accept", True)),
+         (V.verify_cross_authority(pack_old, 1, [manifest], trusted_anchors=[PUB["key_hex"]])["decision"], V.verify_signed_document(doc_after, timestamp_anchors=TSA)["valid_long_term"]), ("accept", True)),
         ("hostile input does not crash the verifier",
          (V.verify_trust_list("nope")["trust_list_authentic"], V.key_status_at("nope", "x"), V.key_status_at(tl_after, "x", "not-a-time")), (False, None, None)),
     ]

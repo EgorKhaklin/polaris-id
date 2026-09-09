@@ -7660,6 +7660,8 @@ def check_ltv_timestamp_trust(root: pathlib.Path) -> list[Finding]:
             return _fail("ltv_timestamp_trust", "the document-signing drill must prove untrusted, self-issued and anchorless time evidence claims nothing (%s)" % sym)
     if "timestamp authority the verifier trusts" not in _read(root, "docs/reference/WIRE-SPEC.md"):
         return _fail("ltv_timestamp_trust", "the wire spec must require a trusted, signer-independent timestamp authority for long-term validity")
+    if "timestamp_anchors=" not in _read(root, "scripts/polaris-trust-lifecycle-drill.py"):
+        return _fail("ltv_timestamp_trust", "the trust-lifecycle drill must decide long-term validity with trusted timestamp anchors (its documents are timestamped by the publisher)")
     if "timestamp_anchors" not in _read(root, "docs/design/document-signing.md") or "timestamp_agency_id" not in _read(root, "docs/reference/API.md"):
         return _fail("ltv_timestamp_trust", "the design record and the API reference must describe the timestamp trust inputs")
     return _ok("ltv_timestamp_trust",
