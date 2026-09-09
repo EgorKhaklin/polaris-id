@@ -7969,6 +7969,38 @@ def test_roadmap_consistent_check_discriminates(tmp_path):
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer once P8 is done"
 
 
+def test_ship_tool_check_discriminates(tmp_path):
+    # v9.345: the ship tool's logic is pinned by known answers; the gate and the runbook must carry it; no wrapper.
+    import shutil
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(REPO / "scripts" / "polaris-ship.py", tmp_path / "scripts" / "polaris-ship.py")
+    good = {
+        'scripts/polaris-preflight.sh': "python3 scripts/polaris-ship.py plan\n",
+        'CLAUDE.md': "python3 scripts/polaris-ship.py plan\npython3 scripts/polaris-ship.py run\npython3 scripts/polaris-ship.py triage\n",
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_ship_tool(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'scripts/polaris-preflight.sh': "python3 -m polaris_checks.run\n"})
+    assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if preflight does not print the plan"
+    write({'site/regression.html': "<html></html>"})
+    assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if the viewer comes back"
+    (tmp_path / "site" / "regression.html").unlink()
+    write()
+    src = (tmp_path / "scripts" / "polaris-ship.py").read_text()
+    (tmp_path / "scripts" / "polaris-ship.py").write_text(src.replace('helpers = {n for n in changed if not now[n]["routes"]}', 'helpers = set()'))
+    assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if a changed helper no longer selects the route that calls it"
+    (tmp_path / "scripts" / "polaris-ship.py").write_text(src.replace('return ("investigate", None, None)', 'return ("flake", "any", "rerun")'))
+    assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if every failure is called a flake"
+    (tmp_path / "scripts" / "polaris-ship.py").write_text(src.replace('        if (m, c) in serial:\n', '        if False:\n'))
+    assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if the serial classes are no longer pinned to one shard"
+
+
 def test_timestamp_transparency_check_discriminates(tmp_path):
     # v9.341 (P8.5b): anchored timestamps in an append-only log; each perturbation removes one leg.
     APP = ("_TIMESTAMP_LOG_ID = 'polaris-timestamp-log'\ndef _anchor_timestamp(ts): pass\n    if body.get('anchor') is True:\n"
@@ -8016,66 +8048,3 @@ def test_timestamp_transparency_check_discriminates(tmp_path):
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the promise is not restated honestly"
 
 
-def test_regression_instrument_check_discriminates(tmp_path):
-    # v9.344: the instrument's logic is pinned by known answers; the gate and the runbook must carry it.
-    import shutil
-    (tmp_path / "scripts").mkdir()
-    shutil.copy(REPO / "scripts" / "polaris-regression.py", tmp_path / "scripts" / "polaris-regression.py")
-    good = {
-        'scripts/polaris-preflight.sh': "python3 scripts/polaris-regression.py delta\n",
-        'CLAUDE.md': "python3 scripts/polaris-regression.py delta\npython3 scripts/polaris-regression.py ci triage\n",
-        'docs/reference/REGRESSION.md': "## As a development instrument\n<!-- rules:begin -->\n**Derived from the record at v9.343.**\n<!-- rules:end -->\n",
-        'docs/reference/regression/fits.json': '{"format": "polaris-fits/1", "generated_from": "v9.343", "rules": {"derived": [{"trigger": "tables", "companion": "checks"}]}, "cost": {"n": 1}}',
-        'polaris_web/__version__.py': '__version__ = "9.344"\n',
-    }
-    def write(overrides=None):
-        files = dict(good); files.update(overrides or {})
-        for rel, content in files.items():
-            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(content, encoding="utf-8")
-    write()
-    first = checks.check_regression_instrument(tmp_path)[0]
-    assert first.level == "OK", "must PASS on the full fixture: " + first.message
-    write({'polaris_web/__version__.py': '__version__ = "9.360"\n'})
-    assert checks.check_regression_instrument(tmp_path)[0].level == "WARN", "must WARN when the record lags the version by more than six releases"
-    write({'scripts/polaris-preflight.sh': "python3 -m polaris_checks.run\n"})
-    assert checks.check_regression_instrument(tmp_path)[0].level == "FAIL", "must FAIL if preflight does not run delta"
-    write({'docs/reference/REGRESSION.md': "## As a development instrument\n<!-- rules:begin -->\n(not yet generated)\n<!-- rules:end -->\n"})
-    assert checks.check_regression_instrument(tmp_path)[0].level == "FAIL", "must FAIL on the placeholder rules table"
-    write()
-    src = (tmp_path / "scripts" / "polaris-regression.py").read_text()
-    (tmp_path / "scripts" / "polaris-regression.py").write_text(src.replace('kind = "rule" if hits == len(sel) else', 'kind = "rule" if hits >= 0 else'))
-    assert checks.check_regression_instrument(tmp_path)[0].level == "FAIL", "must FAIL if a seventy-percent companion is promoted to a rule"
-    (tmp_path / "scripts" / "polaris-regression.py").write_text(src.replace('return ("investigate", None, None)', 'return ("flake", "any", "rerun")'))
-    assert checks.check_regression_instrument(tmp_path)[0].level == "FAIL", "must FAIL if every failure is called a flake"
-    (tmp_path / "scripts" / "polaris-regression.py").write_text(src.replace('helpers = {n for n in changed if not now[n]["routes"]}', 'helpers = set()'))
-    assert checks.check_regression_instrument(tmp_path)[0].level == "FAIL", "must FAIL if a changed helper no longer selects the route that calls it"
-
-
-def test_regression_tool_check_discriminates(tmp_path):
-    # v9.343: the least squares is checked against known answers; the artifacts must agree.
-    import shutil
-    (tmp_path / "scripts").mkdir()
-    shutil.copy(REPO / "scripts" / "polaris-regression.py", tmp_path / "scripts" / "polaris-regression.py")
-    (tmp_path / "scripts" / "polaris_regression_viewer.py").write_text("def render_html(d, f, full_document=True): return ''\n")
-    good = {
-        'docs/reference/regression/dimensions.json': '{"format": "polaris-dimensions/1", "generated_from": "v9.343", "rows": [%s]}' % ",".join(['{"tag": "v"}'] * 120),
-        'docs/reference/regression/fits.json': '{"format": "polaris-fits/1", "generated_from": "v9.343", "simple": [], "multiple": []}',
-        'site/regression.html': '<script type="application/json">{"generated_from":"v9.343"}</script> not a law about identity systems',
-        'docs/reference/REGRESSION.md': "<!-- fits:begin -->\n**Fitted from 120 tagged versions.**\n<!-- fits:end -->\nnot a law about identity systems\n",
-    }
-    def write(overrides=None):
-        files = dict(good); files.update(overrides or {})
-        for rel, content in files.items():
-            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(content, encoding="utf-8")
-    write()
-    first = checks.check_regression_tool(tmp_path)[0]
-    assert first.level == "OK", "must PASS on the full fixture: " + first.message
-    write({'docs/reference/regression/fits.json': '{"format": "polaris-fits/1", "generated_from": "v9.300", "simple": [], "multiple": []}'})
-    assert checks.check_regression_tool(tmp_path)[0].level == "FAIL", "must FAIL if the fits and the dataset disagree on their tag"
-    write({'docs/reference/REGRESSION.md': "<!-- fits:begin -->\n(not yet generated)\n<!-- fits:end -->\nnot a law about identity systems\n"})
-    assert checks.check_regression_tool(tmp_path)[0].level == "FAIL", "must FAIL on the placeholder table"
-    src = (tmp_path / "scripts" / "polaris-regression.py").read_text()
-    (tmp_path / "scripts" / "polaris-regression.py").write_text(src.replace("beta = _solve(XtX, Xty)", "beta = [v * 1.01 for v in _solve(XtX, Xty)]"))
-    assert checks.check_regression_tool(tmp_path)[0].level == "FAIL", "must FAIL if the least squares is wrong by one percent"

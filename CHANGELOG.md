@@ -5,6 +5,33 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.345 — 2026-09-09 (Engine and tool only)
+
+The measurement apparatus of v9.343 and v9.344 is cut: the viewer, the fits, the dimensions,
+the cost table, the companion rules and the CI history are gone, because none of them changed
+what a developer does. What stays is one tool, `scripts/polaris-ship.py`, with the three commands
+that do.
+
+- **`run`: the product suite in 103 seconds end to end instead of 266.** The four database-backed
+  modules (673 tests) run as test classes sharded across eight processes, each against its own
+  freshly loaded database (the schema and the up migrations, as CI loads them), its own Redis and
+  its own state directory; the classes that spawn processes or bind ports run one after another
+  in a serial shard. Heaviest classes first, to the least-loaded shard: 555 seconds of test time
+  in 78 seconds of wall clock, plus the loads. The same 673 tests and the same three skips as the
+  sequential runner; the shard databases are dropped afterwards, whatever happened.
+- **`plan`, printed by preflight.** The verification a change needs: the release recipe as code,
+  selected by the paths that moved since the last tag, plus the drills that mention a route whose
+  handler changed, directly or through a helper it calls. The v9.334 lesson, a changed verdict
+  shipped without its drills, as a line of output before the ship.
+- **`triage`.** A red CI run classified against the known flake signatures (the runner's apt
+  index hash mismatch, the Go module proxy in the Caddy build): the rerun command, or the first
+  failing lines per job.
+- **Check #191 `check_ship_tool`** replaces the two regression checks: known answers for the
+  changed-route selection through a helper, the drill matching on a parameterised path, the
+  verification map, the flake classifier, the shard distribution with the serial classes pinned,
+  and the failure-block parser; preflight and CLAUDE.md must carry the commands; the viewer, the
+  regression script and its document must stay cut.
+
 ## v9.344 — 2026-09-09 (The instrument)
 
 The measurement of v9.343 pointed at the moments where a version goes wrong, after asking

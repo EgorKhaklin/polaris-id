@@ -5,7 +5,7 @@
 #
 # Three things, all fast and offline: the C1-C10 invariant layer
 # (`python3 -m polaris_checks.run`), the cross-reference check, and the working
-# tree measured against the last tag (`polaris-regression.py delta`). It then
+# plan for the change (`polaris-ship.py plan`). It then
 # reminds you to run the database-backed suites, which need Postgres and so
 # cannot run here.
 #
@@ -63,22 +63,14 @@ else
   echo "  · sdk-typescript: SKIP (node or sdk/typescript/node_modules absent)"
 fi
 
-# 4. The working tree against the last tag: what moved, and which companion the
-#    record expects to move with it (v9.344). Informational here; --strict makes a
-#    broken rule count. Skips itself where no tag is reachable (shallow clones).
-if [ -f "${ROOT}/docs/reference/regression/dimensions.json" ]; then
-  if ( cd "${ROOT}" && python3 scripts/polaris-regression.py delta $( [ "$STRICT" -eq 1 ] && echo --strict ) ) > /tmp/_polaris_delta.out 2>&1; then
-    sed 's/^/  /' /tmp/_polaris_delta.out
-  else
-    sed 's/^/  /' /tmp/_polaris_delta.out
-    echo "  ✗ delta: a rule the record supports is broken (see above)"
-    fails=$((fails+1))
-  fi
-fi
+# 4. The plan (v9.345): the verification this change needs, from the paths that
+#    moved since the last tag and the drills that mention a changed route handler.
+#    Informational; it skips itself where no tag is reachable (shallow clones).
+( cd "${ROOT}" && python3 scripts/polaris-ship.py plan ) 2>&1 | sed 's/^/  /'
 
 # 5. Reminder for the DB-backed product suites (need Postgres + the venv).
-echo "  · DB suites: confirm via 'scripts/polaris-test.sh' (test_app,"
-echo "    test_check_constraints, test_invariants_property, test_redaction_property);"
+echo "  · DB suites: 'python3 scripts/polaris-ship.py run' (test_app, test_check_constraints,"
+echo "    test_invariants_property, test_redaction_property sharded; about two minutes);"
 echo "    test_cli runs from polaris_cli/ and rides along in CI via polaris-coverage.sh"
 
 echo

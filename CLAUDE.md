@@ -57,13 +57,17 @@ cd polaris_cli && python3 -m unittest test_cli
 ./scripts/polaris-link-check.sh --ci
 ./scripts/polaris-preflight.sh          # polaris_checks + link-check; --strict to fail hard
 
-# Before a ship: the working tree against the last tag, the companions the record
-# expects (a table has always brought a check and a test), and the verification the
-# change needs: suites by moved path, drills by changed route handler. Preflight runs it.
-python3 scripts/polaris-regression.py delta
+# Before a ship: what this change needs verified (suites by moved path, drills by
+# changed route handler, helper-aware). Preflight prints it too.
+python3 scripts/polaris-ship.py plan
 
-# CI red? Known flake (apt index, Go module proxy) -> rerun; else the first failing lines per job:
-python3 scripts/polaris-regression.py ci triage [RUN_ID]
+# The product suite, fast: test classes sharded across processes, one freshly loaded
+# database, Redis and state dir per shard (process-spawning classes run serially).
+python3 scripts/polaris-ship.py run
+
+# CI red? Known flake (apt index, Go module proxy) -> the rerun command; anything
+# else -> the first failing lines per job:
+python3 scripts/polaris-ship.py triage [RUN_ID]
 ```
 
 Read first: [`MISSION.md`](MISSION.md) (constitution), [`ROADMAP.md`](ROADMAP.md)
@@ -126,8 +130,8 @@ A ship is a coherent change, verified:
 8. **CI flakes look like failures.** Two known signatures: the runner's apt index
    (`Hash Sum mismatch`, jobs die in their install step with exit code 100) and the Go
    module proxy in the Caddy build (`sum.golang.org` stream errors). `python3
-   scripts/polaris-regression.py ci triage` names them; `gh run rerun <id> --failed`
-   clears them. Anything else is real: run the verification `delta` names.
+   scripts/polaris-ship.py triage` names them; `gh run rerun <id> --failed`
+   clears them. Anything else is real: run the verification `plan` names.
 
 ---
 
