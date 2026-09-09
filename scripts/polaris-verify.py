@@ -2253,9 +2253,147 @@ def _load_anchor(path):
                      "'public_keys_hex' list")
 
 
+# --- P8.6: the wallet protocol surface -- offline presentation and QR/NFC framing ------------
+#
+# A presentation is the UNSIGNED wrapper a holder hands a verifier: the issuer-signed
+# credential (the authenticity pack), optionally a stapled issuer-signed status assertion
+# (P3.6) so authorization is decidable OFFLINE, optionally a ZK membership proof, the context
+# and disclosure level, and an opaque presentation code. Its authenticity lives in the signed
+# objects inside it, never in the wrapper. For QR/NFC transfer the wrapper is compressed,
+# base64url-encoded and split into digest-tied frames (polaris-qr/1); a receiver rejects mixed,
+# missing or altered frames before it ever parses the payload.
+_PRESENTATION_FORMAT = "polaris-presentation/1"
+_QR_FORMAT = "polaris-qr/1"
+_QR_PREFIX = "PLRS1"
+QR_FRAME_BYTES = 1800   # a QR version-40 byte-mode frame holds 2953; 1800 leaves margin for any encoder
+
+
+def presentation_payload(presentation):
+    """The canonical bytes of a presentation for transfer (sorted keys, compact)."""
+    return json.dumps(presentation if isinstance(presentation, dict) else {}, sort_keys=True,
+                      separators=(",", ":")).encode("utf-8")
+
+
+def encode_presentation_frames(presentation, frame_bytes=QR_FRAME_BYTES):
+    """Split a presentation into polaris-qr/1 frames: PLRS1/<total>/<index>/<sha3-256 of the
+    payload>/<chunk>, where the payload is base64url(zlib(canonical JSON)). Every frame names
+    the payload digest, so a receiver ties frames of one transfer together and detects any
+    altered chunk after reassembly. No frame exceeds frame_bytes."""
+    import base64
+    import zlib
+    payload = base64.urlsafe_b64encode(zlib.compress(presentation_payload(presentation), 9)).rstrip(b"=").decode("ascii")
+    digest = hashlib.sha3_256(payload.encode("ascii")).hexdigest()
+    head = len("%s/%d/%d/%s/" % (_QR_PREFIX, 9999, 9999, digest))
+    chunk = max(16, int(frame_bytes) - head)
+    chunks = [payload[i:i + chunk] for i in range(0, len(payload), chunk)] or [""]
+    return ["%s/%d/%d/%s/%s" % (_QR_PREFIX, len(chunks), i, digest, c) for i, c in enumerate(chunks)]
+
+
+def decode_presentation_frames(frames):
+    """Reassemble polaris-qr/1 frames (any order, duplicates tolerated) into a presentation.
+    Returns (presentation, None) or (None, reason). Total: hostile input yields a reason,
+    never a crash; mixed transfers, a missing frame, and an altered chunk are all refused."""
+    import base64
+    import zlib
+    if not isinstance(frames, (list, tuple)):
+        return None, "frames must be a list of strings"
+    parts, total, digest = {}, None, None
+    for f in frames:
+        if not isinstance(f, str):
+            return None, "a frame is not a string"
+        bits = f.strip().split("/", 4)
+        if len(bits) != 5 or bits[0] != _QR_PREFIX:
+            return None, "not a %s frame" % _QR_FORMAT
+        try:
+            t, i = int(bits[1]), int(bits[2])
+        except ValueError:
+            return None, "malformed frame header"
+        if total is None:
+            total, digest = t, bits[3]
+        if t != total or bits[3] != digest:
+            return None, "frames from different transfers were mixed"
+        if not (0 < total <= 9999 and 0 <= i < total):
+            return None, "frame index out of range"
+        if i in parts and parts[i] != bits[4]:
+            return None, "conflicting duplicate frame"
+        parts[i] = bits[4]
+    if total is None:
+        return None, "no frames"
+    missing = [i for i in range(total) if i not in parts]
+    if missing:
+        return None, "missing frame(s) %s" % missing
+    payload = "".join(parts[i] for i in range(total))
+    if hashlib.sha3_256(payload.encode("ascii")).hexdigest() != digest:
+        return None, "payload digest mismatch (a frame was altered)"
+    try:
+        raw = zlib.decompress(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)), bufsize=1 << 16)
+        obj = json.loads(raw.decode("utf-8"))
+    except Exception as e:  # noqa: BLE001 -- any decoding failure is a clean refusal
+        return None, "undecodable payload: %s" % type(e).__name__
+    if not isinstance(obj, dict) or obj.get("format") != _PRESENTATION_FORMAT:
+        return None, "not a %s" % _PRESENTATION_FORMAT
+    return obj, None
+
+
+def verify_presentation(presentation, anchor_keys=None, now=None, max_window_seconds=None, expected_context=None):
+    """Decide a presentation OFFLINE (P8.6): the credential's authenticity (and, with anchor
+    keys, issuer trust); the stapled status assertion's authenticity, freshness, ACTIVE status
+    and BINDING to this credential (same token, same issuer key); the context, if the verifier
+    expected one. usable_offline is the conjunction. The presentation code is reported present
+    or absent and never interpreted: a duress presentation is indistinguishable here by
+    design. A ZK proof is reported present; deciding it needs the epoch root and the polaris-zk
+    binary (verify_zk_against_root). Total on hostile input."""
+    v = {"credential_authentic": False, "issuer_trusted": None, "token_value": None,
+         "status": {"present": False, "authentic": None, "fresh": None, "active": None, "bound": None},
+         "zk_present": False, "presented_code_present": False, "context_matches": None,
+         "usable_offline": False, "note": None}
+    if not isinstance(presentation, dict) or presentation.get("format") != _PRESENTATION_FORMAT:
+        v["note"] = "not a %s" % _PRESENTATION_FORMAT
+        return v
+    cred = presentation.get("credential") if isinstance(presentation.get("credential"), dict) else {}
+    pv = verify_pack(cred, anchor_keys=anchor_keys)
+    v["credential_authentic"] = bool(pv.get("signature_valid"))
+    v["issuer_trusted"] = pv.get("issuer_trusted")
+    v["token_value"] = cred.get("token_value")
+    v["presented_code_present"] = presentation.get("presented_code") is not None   # opaque; never interpreted
+    v["zk_present"] = isinstance(presentation.get("zk_proof"), dict)
+    if expected_context is not None:
+        v["context_matches"] = (presentation.get("context_id") == expected_context)
+    sa = presentation.get("status_assertion")
+    S = v["status"]
+    if isinstance(sa, dict):
+        S["present"] = True
+        sv = verify_status_assertion(sa, now=now, max_window_seconds=max_window_seconds, anchor_keys=anchor_keys)
+        S["authentic"] = bool(sv.get("status_authentic"))
+        S["fresh"] = sv.get("fresh")
+        S["active"] = (sv.get("status") == "ACTIVE")
+        S["bound"] = (str(sa.get("token_value")) == str(cred.get("token_value"))
+                      and str(sa.get("public_key_hex") or "").lower() == str(cred.get("public_key_hex") or "").lower())
+    v["usable_offline"] = bool(v["credential_authentic"] and v["issuer_trusted"] is not False
+                               and S["present"] and S["authentic"] and S["fresh"] and S["active"] and S["bound"]
+                               and v["context_matches"] is not False)
+    if not v["usable_offline"]:
+        why = []
+        if not v["credential_authentic"]:
+            why.append("credential not authentic")
+        if v["issuer_trusted"] is False:
+            why.append("issuer not trusted")
+        if not S["present"]:
+            why.append("no status assertion stapled (authorization not decidable offline)")
+        else:
+            why += [k for k in ("authentic", "fresh", "active", "bound") if not S[k]]
+        if v["context_matches"] is False:
+            why.append("context mismatch")
+        v["note"] = "; ".join(why)
+    return v
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Detached authenticity verifier for a Polaris credential.")
     ap.add_argument("--pack", help="authenticity pack JSON file (default: stdin)")
+    ap.add_argument("--presentation", help="a polaris-presentation/1 JSON file (P8.6): the credential with a stapled status "
+                                           "assertion, decided offline")
+    ap.add_argument("--qr-frames", help="a file of polaris-qr/1 frames, one per line, as scanned from a wallet (P8.6)")
     ap.add_argument("--status-assertion",
                     help="a signed status assertion JSON file (P3.6): with --pack, decide "
                          "ACCEPT/REJECT fully OFFLINE (authenticity + fresh, bound, ACTIVE status)")
@@ -2281,6 +2419,29 @@ def main(argv=None):
     if args.verify_dir:
         return verify_dir(args.verify_dir)
 
+    if args.presentation or args.qr_frames:
+        try:
+            if args.qr_frames:
+                with open(args.qr_frames) as fh:
+                    frames = [ln for ln in fh.read().splitlines() if ln.strip()]
+                presentation, reason = decode_presentation_frames(frames)
+                if presentation is None:
+                    print("could not decode the QR frames: %s" % reason, file=sys.stderr)
+                    return 1
+            else:
+                with open(args.presentation) as fh:
+                    presentation = json.loads(fh.read())
+            anchor = _load_anchor(args.issuer_anchor) if args.issuer_anchor else None
+        except (OSError, ValueError) as e:
+            print("could not read the presentation / anchor: %s" % e, file=sys.stderr)
+            return 3
+        verdict = verify_presentation(presentation, anchor_keys=anchor, max_window_seconds=args.max_window,
+                                      expected_context=args.context)
+        if args.json:
+            print(json.dumps(verdict, indent=2))
+        else:
+            print("usable offline: %s%s" % (verdict["usable_offline"], (" (%s)" % verdict["note"]) if verdict.get("note") else ""))
+        return 0 if verdict["usable_offline"] else 1
     if args.zk_proof:
         try:
             proof = json.loads(open(args.zk_proof).read())

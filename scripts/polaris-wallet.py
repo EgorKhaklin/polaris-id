@@ -14,6 +14,7 @@ holder runs it on their own machine.
     polaris-wallet.py show
     polaris-wallet.py verify --issuer-anchor issuer.json
     polaris-wallet.py present --out presentation.json
+    polaris-wallet.py present --status-assertion status.json --qr --out frames.txt
     polaris-wallet.py prove-membership --epoch epoch.json --out proof.json
     polaris-wallet.py sign --document report.pdf --instance https://issuer.example --agency 1 --out signed.json
 
@@ -157,7 +158,25 @@ def cmd_present(args):
         "credential": pack,
         "presented_code": code,
     }
-    out = json.dumps(presentation, indent=2)
+    # P8.6: staple the issuer-signed status assertion (fetched when connected) so the relying
+    # party decides authorization OFFLINE; optionally a ZK membership proof; the context and
+    # disclosure level the holder presents under.
+    if getattr(args, "status_assertion", None):
+        with open(args.status_assertion) as f:
+            presentation["status_assertion"] = json.load(f)
+    if getattr(args, "zk_proof", None):
+        with open(args.zk_proof) as f:
+            presentation["zk_proof"] = json.load(f)
+    if getattr(args, "context", None) is not None:
+        presentation["context_id"] = args.context
+    if getattr(args, "disclosure_level", None):
+        presentation["disclosure_level"] = args.disclosure_level
+    if getattr(args, "qr", False):
+        V = _load_verifier()
+        frames = V.encode_presentation_frames(presentation, frame_bytes=args.frame_bytes)
+        out = "\n".join(frames)
+    else:
+        out = json.dumps(presentation, indent=2)
     if args.out:
         with open(args.out, "w") as f:
             f.write(out + "\n")
@@ -298,6 +317,12 @@ def main(argv=None):
     p = sub.add_parser("present", help="emit a presentation for a relying party")
     p.add_argument("--duress", action="store_true", help="present under duress (uses the stored/typed code)")
     p.add_argument("--code", help="the presentation code to include")
+    p.add_argument("--status-assertion", help="staple a fetched polaris-status-assertion/1 (authorization decidable offline)")
+    p.add_argument("--zk-proof", help="staple a ZK membership proof bundle")
+    p.add_argument("--context", type=int, help="the verification context presented under")
+    p.add_argument("--disclosure-level", help="ZERO_KNOWLEDGE, SELECTIVE or FULL")
+    p.add_argument("--qr", action="store_true", help="emit polaris-qr/1 frames (one per line) for QR/NFC transfer instead of JSON")
+    p.add_argument("--frame-bytes", type=int, default=1800, help="maximum bytes per QR frame (default 1800)")
     p.add_argument("--out", help="write to a file instead of stdout")
     p.set_defaults(fn=cmd_present)
 

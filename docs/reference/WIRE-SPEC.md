@@ -274,6 +274,28 @@ token is stateless and signed under a salt distinct from access tokens, bound to
 challenge (S256), and single-use: the broker consumes its hash in an append-only register that
 holds nothing else, so the broker keeps no record of who authenticated where.
 
+### 3.14 `polaris-presentation/1` and `polaris-qr/1` (the holder's presentation and its transfer)
+
+`polaris-presentation/1` is the UNSIGNED wrapper a holder hands a verifier (P8.6):
+`credential` (the section 3.7 authenticity pack), an optional `status_assertion` (section
+3.5) stapled so authorization is decidable offline, an optional `zk_proof` (a membership
+proof bundle), optional `context_id` and `disclosure_level`, and an opaque `presented_code`.
+Its authenticity lives entirely in the signed objects inside it. A verifier deciding it
+offline MUST verify the credential, MUST, if it requires authorization offline, verify the
+stapled assertion and require it BOUND to the credential (same `token_value`, same signing
+key) and ACTIVE and fresh, and MUST NOT interpret `presented_code` (a duress presentation is
+indistinguishable at the verifier by design; the code is matched only by the issuer, out of
+sight). A ZK proof is decided against an epoch root (section 3.2) with the prover's verifier.
+
+`polaris-qr/1` carries a presentation over QR or NFC as frames
+`PLRS1/<total>/<index>/<digest>/<chunk>`, where the payload is `base64url(zlib(canonical
+JSON of the presentation))` without padding, `<digest>` is the lowercase SHA3-256 hex of the
+whole payload, and every frame names it. A receiver MAY receive frames in any order and MUST
+refuse frames naming different digests (mixed transfers), a missing index, a conflicting
+duplicate, or a reassembled payload whose SHA3-256 differs from the named digest. No frame
+exceeds the emitter's frame budget (RECOMMENDED 1800 bytes). Framing is transport integrity
+only; it adds no authenticity.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:

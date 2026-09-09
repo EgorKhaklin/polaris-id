@@ -313,7 +313,9 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-signed-document/1", "polaris-id-token/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
-                          "polaris-transparency-publication/1", "polaris-published-head/1"}
+                          "polaris-transparency-publication/1", "polaris-published-head/1",
+                          # P8.6: the holder-side wrapper and its QR framing carry no app signature
+                          "polaris-presentation/1", "polaris-qr/1"}
         missing = formats - covered - not_app_signed
         self.assertFalse(missing, "signed formats with no canonical-equivalence oracle case: %s" % missing)
 

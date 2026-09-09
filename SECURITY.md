@@ -67,6 +67,12 @@ initial report, extended for Critical findings as the patch warrants.
   configuration included), the Helm chart and the Linux installer
 - The macOS launcher
 - The migration framework
+- The exchange fabric (P8): the exchange gateway and its replay register, the auth
+  broker and its consumed-code register, document signing with long-term validation,
+  the signed registry, the timestamp authority, the receipt transparency log, and the
+  wallet's presentation and QR framing
+- The verify SDKs (`sdk/python`, `sdk/typescript`) and the conformance suite
+  (`conformance/`), which independent implementations build to
 - The documentation, where an error would lead to an insecure deployment
 
 ### Out of scope
@@ -151,5 +157,5 @@ policy.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-08 (v9.306)*
+*Last updated: 2026-09-09 (v9.327)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

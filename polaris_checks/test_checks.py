@@ -6415,7 +6415,7 @@ def test_wire_spec_check_discriminates(tmp_path):
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1 polaris-id-token/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1 polaris-id-token/1 polaris-presentation/1 polaris-qr/1\n"
         "manifest signed fields: format, authority\n"
         "receipt signed fields: format, requester\n"
         "mint signed fields: format, responder_agency_id\n"
@@ -6472,6 +6472,46 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_wallet_presentation_check_discriminates(tmp_path):
+    # v9.327 (P8.6): the wallet protocol surface; each perturbation removes one leg.
+    VER = ("import json\n"
+           "def verify_presentation(p, **k):\n    # presented_code_present: never interpreted\n    return {'usable_offline': False, 'presented_code_present': False}\n"
+           "def encode_presentation_frames(p, frame_bytes=1800): return ['PLRS1/1/0/x/y']  # polaris-qr/1\n"
+           "def decode_presentation_frames(f): return None, 'x'  # polaris-presentation/1\n"
+           "ap.add_argument(\"--presentation\"); ap.add_argument(\"--qr-frames\")\n")
+    good = {
+        'scripts/polaris-verify.py': VER,
+        'scripts/polaris-wallet.py': 'p.add_argument("--qr"); p.add_argument("--status-assertion"); p.add_argument("--zk-proof"); V.encode_presentation_frames(p)\n',
+        'scripts/polaris-relying-party.py': 'cred = presentation.get("credential")\n',
+        'docs/reference/WIRE-SPEC.md': "polaris-presentation/1 polaris-qr/1\n",
+        'scripts/polaris-verifier-fuzz.py': "V.verify_presentation(o)\n",
+        'scripts/polaris-presentation-drill.py': "V.decode_presentation_frames(f); 'polaris-wallet.py'\n",
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-presentation-drill.py\n',
+        'docs/design/wallet-protocol.md': "# wallet\nThe browser bridge and native clients are out of scope for a reference implementation.\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'scripts/polaris-verify.py': VER.replace("def decode_presentation_frames", "def nope")})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL without the frame decoder"
+    write({'scripts/polaris-verify.py': VER.replace("never interpreted", "decoded and checked")})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the presentation code is interpreted offline"
+    write({'scripts/polaris-verify.py': "import psycopg2\n" + VER})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    write({'scripts/polaris-wallet.py': "# no qr\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the wallet cannot emit frames"
+    write({'scripts/polaris-presentation-drill.py': "V.decode_presentation_frames(f)\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not round-trip through the wallet"
+    write({'docs/design/wallet-protocol.md': "# wallet\nEverything is built.\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the boundaries are not recorded honestly"
 
 
 def test_auth_broker_check_discriminates(tmp_path):
@@ -6671,7 +6711,7 @@ def test_registry_check_discriminates(tmp_path):
         "    _registry_statement(body)  # polaris-registry/1\n"
         "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
         "_REGISTRY_SERVICES = []\n"
-        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
+        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-presentation': 1,\n    'polaris-qr': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
     )
     good = {
         'polaris_web/app.py': APP,

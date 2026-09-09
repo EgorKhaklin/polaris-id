@@ -6036,6 +6036,8 @@ _PROTOCOL_FORMATS = {
     'polaris-exchange-request': 1,
     'polaris-signed-document': 1,
     'polaris-id-token': 1,
+    'polaris-presentation': 1,
+    'polaris-qr': 1,
 }
 _REGISTRY_SERVICES = [
     {'kind': 'oauth-token', 'path': '/api/v1/oauth/token', 'auth': 'client-credentials', 'method': 'POST'},

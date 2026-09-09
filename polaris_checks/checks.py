@@ -7170,6 +7170,7 @@ _WIRE_SIGNED_TYPES = {
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
     "polaris-transparency-publication/1", "polaris-published-head/1",
+    "polaris-presentation/1", "polaris-qr/1",   # P8.6: the unsigned holder-side wrapper and its QR framing
 ]
 
 
@@ -7523,6 +7524,50 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_wallet_presentation(root: pathlib.Path) -> list[Finding]:
+    """P8.6: the wallet PROTOCOL surface. A presentation (the issuer-signed credential with a
+    stapled issuer-signed status assertion, an optional ZK proof, the context and disclosure
+    level, and an opaque presentation code) is decidable OFFLINE by the detached verifier,
+    which never interprets the code (duress indistinguishable); for QR/NFC transfer it is
+    compressed and split into digest-tied polaris-qr/1 frames a receiver reassembles in any
+    order and refuses when mixed, missing or altered. The wallet emits both; the verifier's CLI
+    accepts both; a real-ML-DSA drill round-trips through the wallet. Native clients and the
+    WebAuthn browser bridge are recorded as boundaries, not claimed."""
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_presentation", "def encode_presentation_frames", "def decode_presentation_frames",
+                "PLRS1", "polaris-presentation/1", "polaris-qr/1", "usable_offline", "presented_code_present",
+                "never interpreted", '"--presentation"', '"--qr-frames"'):
+        if sym not in v:
+            return _fail("wallet_presentation", "scripts/polaris-verify.py lacks the presentation surface (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("wallet_presentation", f"the offline verifier imports {mod!r}; it must stay standalone")
+    wal = _read(root, "scripts/polaris-wallet.py")
+    for sym in ('"--qr"', '"--status-assertion"', '"--zk-proof"', "encode_presentation_frames"):
+        if sym not in wal:
+            return _fail("wallet_presentation", "polaris-wallet.py must emit QR frames and staple a status assertion / ZK proof (%s missing)" % sym)
+    if '"credential"' not in _read(root, "scripts/polaris-relying-party.py"):
+        return _fail("wallet_presentation", "the relying-party reference must still consume the presentation's credential")
+    spec = _read(root, "docs/reference/WIRE-SPEC.md")
+    if "polaris-presentation/1" not in spec or "polaris-qr/1" not in spec:
+        return _fail("wallet_presentation", "the presentation and its QR framing must be specified in the wire spec")
+    if "verify_presentation" not in _read(root, "scripts/polaris-verifier-fuzz.py"):
+        return _fail("wallet_presentation", "the metamorphic fuzzer must hold verify_presentation and the frame decoder total")
+    drill = _read(root, "scripts/polaris-presentation-drill.py")
+    if not drill or "decode_presentation_frames" not in drill or "polaris-wallet.py" not in drill:
+        return _fail("wallet_presentation", "scripts/polaris-presentation-drill.py must round-trip frames through the wallet")
+    if "polaris-presentation-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("wallet_presentation", "the presentation drill must run in CI")
+    doc = _read(root, "docs/design/wallet-protocol.md")
+    if not doc or "browser bridge" not in doc or "out of scope" not in doc.lower():
+        return _fail("wallet_presentation", "docs/design/wallet-protocol.md must record the browser-bridge and native-client boundaries honestly")
+    return _ok("wallet_presentation",
+               "the wallet protocol surface: an offline-decidable presentation (credential + stapled status assertion, "
+               "optional ZK proof, opaque code never interpreted) and digest-tied polaris-qr/1 framing, emitted by the "
+               "wallet, decided by the detached verifier's CLI, fuzzed, specified, drilled through the wallet in CI, "
+               "with native clients and the browser bridge recorded as boundaries")
 
 
 def check_auth_broker(root: pathlib.Path) -> list[Finding]:
@@ -8496,6 +8541,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_wallet_presentation,
     check_auth_broker,
     check_document_signing,
     check_exchange_gateway,

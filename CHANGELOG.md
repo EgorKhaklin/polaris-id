@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.327 — 2026-09-09 (The wallet protocol surface: offline presentation and QR framing, P8.6)
+
+The wallet is a protocol, not a product; this ship makes the protocol complete on the
+holder's side and says plainly what is not built.
+
+- **`polaris-presentation/1`, decidable offline.** The unsigned wrapper a holder hands a
+  verifier: the issuer-signed credential, a stapled issuer-signed status assertion (fetched
+  when connected) so authorization needs no connectivity, an optional ZK proof, the context
+  and disclosure level, and an opaque presentation code. `verify_presentation` decides it:
+  credential authentic and issuer trusted; assertion authentic, fresh, ACTIVE and BOUND to this
+  credential (same token, same signing key -- a stranger's or another credential's assertion
+  buys nothing); the expected context. The presentation code is reported present or absent
+  and never interpreted: a duress presentation is indistinguishable at the verifier.
+- **`polaris-qr/1`, transfer without a key.** A credential is about ten kilobytes of JSON,
+  several QR symbols' worth; the presentation is compressed, base64url-encoded and split into
+  frames each naming the SHA3-256 of the whole payload, reassembled in any order and refused
+  before parsing when mixed, missing, duplicated inconsistently, or altered. Transport
+  integrity only, which is the point. The wallet's `present` gains `--qr --frame-bytes`,
+  `--status-assertion`, `--zk-proof`, `--context`, `--disclosure-level`; the detached
+  verifier's CLI gains `--presentation` and `--qr-frames`.
+- **Boundaries, recorded.** The WebAuthn browser bridge waits on a holder-key binding the
+  issuer-centric model deliberately lacks (which is why signing is notarial and login is by
+  possession); native clients and card middleware are product engineering, not a reference
+  implementation's. `docs/design/wallet-protocol.md` says so, and the check requires it to.
+- **Proven.** `scripts/polaris-presentation-drill.py` (in `pqc-real`, 16 cases): usable offline;
+  frames under budget, any order; missing, mixed and altered frames refused; unbound, expired,
+  revoked and stranger-signed assertions refused; no assertion not decidable; wrong context;
+  the code never interpreted; the full wallet round trip (`enroll`, `present --qr
+  --status-assertion`, decide with `--qr-frames`); hostile input. The fuzzer holds the verifier
+  and the frame decoder total. Wire spec section 3.14; the registry advertises both formats.
+  `check_wallet_presentation` (#181). 181 checks.
+
 ## v9.326 — 2026-09-09 (The auth broker: log in with a credential, no login record, P8.4)
 
 The one constitutional question of the P8 arc, answered in the open. The relying-party layer

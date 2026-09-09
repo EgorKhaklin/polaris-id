@@ -1632,6 +1632,12 @@ jobs:
       - name: Auth broker — the relying party's ID-token contract
         run: python scripts/polaris-auth-broker-drill.py
 
+      # v9.327 (roadmap P8.6) — the wallet protocol surface: an offline-decidable presentation
+      # (credential + stapled status assertion) and digest-tied QR framing, round-tripped
+      # through the wallet and the detached verifier's CLI.
+      - name: Wallet — presentation and QR framing
+        run: python scripts/polaris-presentation-drill.py
+
       # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
       # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
       # head and consistency proofs; the detached verifier accepts an append-only extension

@@ -347,6 +347,29 @@ def main():
             must_reject(name, "cross-type:%s" % other, verify_fn, accept_fn, obj)
             cases += 1
 
+    # 6b. P8.6: verify_presentation / decode_presentation_frames on garbage must yield a clean
+    #     verdict or reason, never a crash (the wrapper is unsigned; its inner types are fuzzed above).
+    for label, obj in (("none", None), ("str", "x"), ("list", [1, 2]), ("empty", {}),
+                       ("cred-garbage", {"format": "polaris-presentation/1", "credential": 5, "status_assertion": "no"}),
+                       ("cred-dict-garbage", {"format": "polaris-presentation/1", "credential": {"signature_hex": 1}})):
+        try:
+            d = V.verify_presentation(obj)
+            if not isinstance(d, dict) or "usable_offline" not in d or d["usable_offline"] is not False:
+                fails.append(("presentation", label, "no clean verdict: %r" % (d,)))
+        except Exception as e:  # noqa: BLE001
+            fails.append(("presentation", label, "raised %s: %s" % (type(e).__name__, e)))
+        cases += 1
+    for label, frames in (("not-list", "PLRS1/1/0/x/y"), ("ints", [1]), ("bad-prefix", ["NOPE/1/0/x/y"]),
+                          ("bad-header", ["PLRS1/a/b/c/d"]), ("mixed", ["PLRS1/2/0/aa/x", "PLRS1/2/1/bb/y"]),
+                          ("missing", ["PLRS1/2/0/aa/x"]), ("garbage-payload", ["PLRS1/1/0/%s/!!!!" % ("0" * 64)])):
+        try:
+            obj, reason = V.decode_presentation_frames(frames)
+            if obj is not None or not reason:
+                fails.append(("qr-frames", label, "accepted garbage frames"))
+        except Exception as e:  # noqa: BLE001
+            fails.append(("qr-frames", label, "raised %s: %s" % (type(e).__name__, e)))
+        cases += 1
+
     # 7. composed-decision robustness: garbage into verify_cross_authority /
     #    verify_cross_authority_via_bundle must produce a clean reject, never a crash.
     os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = kf
