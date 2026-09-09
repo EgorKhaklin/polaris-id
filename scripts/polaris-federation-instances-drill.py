@@ -26,7 +26,9 @@ tears them down. Exit 3 if a precondition is missing (skip).
 """
 import contextlib
 import importlib.util
+import hashlib
 import json
+from datetime import datetime, timezone, timedelta
 import os
 import signal
 import socket
@@ -68,6 +70,32 @@ def _free_port():
 def _conn(dbname):
     import psycopg2
     return psycopg2.connect(host=DB_HOST, port=DB_PORT, user=DB_USER, dbname=dbname)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect IS a verdict here (the operator route sends a session-less caller to
+    /login); do not follow it, report the 3xx."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _http_post_json(url, obj):
+    """POST a JSON body with NO cookie or session; returns (status, parsed json or {}).
+    Redirects are not followed and a non-JSON body reads as an empty dict."""
+    data = json.dumps(obj).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with _NO_REDIRECT_OPENER.open(req, timeout=10) as r:
+            status, raw = r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, (e.read().decode("utf-8", "replace") if e.fp else "")
+    try:
+        return status, json.loads(raw or "{}")
+    except ValueError:
+        return status, {}
 
 
 def _http_get(url):
@@ -300,6 +328,50 @@ def main():
         checks.append(("A omitted from the bundle: A's credential is fail-closed (not verifiable)",
                        decide_bundle(pack, omit_a_bundle)["decision"], "reject"))
 
+        # 6c. SERVICE-TO-SERVICE MINTING (P8.2b): B's OWN service mints an exchange receipt on
+        #     instance B with NO session -- it authenticates by SIGNING the mint statement under
+        #     B's registered ML-DSA-65 key (agency 1 on B = pub_b). The requester is A's key,
+        #     which B attests in CONTEXT_ID, so the receipt is authorized. All over HTTP; the
+        #     receipt is then verified OFFLINE against B's fetched manifest.
+        def mint_request(requester_key, when, responder_id=1):
+            return {"format": "polaris-exchange-mint/1", "requester_public_key_hex": requester_key,
+                    "context_id": CONTEXT_ID,
+                    "request_hash": hashlib.sha3_256(b"the request body, never sent").hexdigest(),
+                    "response_hash": hashlib.sha3_256(b"the response body, never sent").hexdigest(),
+                    "responder_agency_id": responder_id, "occurred_at": when}
+
+        def signed_mint(mint, key_file):
+            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_file
+            sig, _alg, _pk = pqc_signing.signature_over_message(V._exchange_mint_canonical(mint))
+            return {"mint": mint, "signature_hex": sig.hex()}
+
+        now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        stale_iso = (datetime.now(timezone.utc) - timedelta(minutes=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        mint_url = base_b + "/api/v1/exchange-receipt/1/signed"
+        st, receipt = _http_post_json(mint_url, signed_mint(mint_request(pub_a, now_iso), key_b))
+        checks.append(("B's service mints a receipt with NO session, authenticated by its signature (200)", st, 200))
+        rv = (V.verify_exchange_receipt(receipt, trusted_manifests=[b_manifest()], responder_key=pub_b)
+              if st == 200 else {})
+        checks.append(("the minted receipt is authentic, responder-bound, and the requester (A) is authorized, OFFLINE",
+                       bool(rv.get("receipt_authentic") and rv.get("responder_matches") and rv.get("requester_authorized")), True))
+        checks.append(("the receipt carries the SIGNED occurred_at (a replay can only duplicate, never re-time)",
+                       (receipt or {}).get("occurred_at") == now_iso, True))
+        st2, _ = _http_post_json(mint_url, signed_mint(mint_request(pub_a, now_iso), key_a))
+        checks.append(("signed under the WRONG key (A's, not the responder's registered key) rejects (401)", st2, 401))
+        bad = signed_mint(mint_request(pub_a, now_iso), key_b)
+        bb2 = bytearray.fromhex(bad["signature_hex"]); bb2[0] ^= 0x01; bad["signature_hex"] = bb2.hex()
+        st3, _ = _http_post_json(mint_url, bad)
+        checks.append(("a tampered signature rejects (401)", st3, 401))
+        st4, _ = _http_post_json(mint_url, signed_mint(mint_request(pub_a, stale_iso), key_b))
+        checks.append(("a STALE signed time (30 min) rejects (401): the freshness window bounds replay", st4, 401))
+        _kf_s, pub_stranger = keypair("stranger")
+        st5, _ = _http_post_json(mint_url, signed_mint(mint_request(pub_stranger, now_iso), key_b))
+        checks.append(("an UNATTESTED requester is not authorized: 403 even under a valid responder signature", st5, 403))
+        st6, _ = _http_post_json(base_b + "/api/v1/exchange-receipt/1",
+                                 {"requester_public_key_hex": pub_a, "context_id": CONTEXT_ID,
+                                  "request_hash": "00" * 32, "response_hash": "00" * 32})
+        checks.append(("the operator mint route with no session does not mint (not 200)", st6 != 200, True))
+
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:
             cur.execute("UPDATE AgencyTrustAttestation SET revocation_date=CURRENT_DATE, "
@@ -318,7 +390,8 @@ def main():
         if ok_all:
             print("\nOK: two independent instances federate over HTTP -- a foreign credential is accepted from "
                   "trust data pulled over the wire; a hub aggregates a peer's FETCHED, already-signed feed into a "
-                  "status bundle it signs with only its OWN key (holding no peer key), and the decision flips as "
+                  "status bundle it signs with only its OWN key (holding no peer key), B's own service mints an exchange "
+                  "receipt with no session by signing under its registered key, and the decision flips as "
                   "attestations and revocations change on the running instances, with real ML-DSA throughout.")
             return 0
         print("\nFAIL: a two-instance federation decision was wrong.", file=sys.stderr)

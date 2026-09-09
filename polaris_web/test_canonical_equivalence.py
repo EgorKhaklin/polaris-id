@@ -108,6 +108,15 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._exchange_receipt_statement(b),
         "verify": lambda b: _V._exchange_receipt_canonical(b),
     },
+    # polaris-exchange-mint/1 (P8.2b): CLIENT-built, INSTANCE-verified -- the same byte
+    # equality matters in the other direction, so it is held to the same oracle.
+    "exchange-mint": {
+        "keys": ["format", "requester_public_key_hex", "context_id", "request_hash",
+                 "response_hash", "responder_agency_id", "occurred_at"],
+        "fixed": {},
+        "app": lambda b: flask_app._exchange_mint_statement(b),
+        "verify": lambda b: _V._exchange_mint_canonical(b),
+    },
 }
 
 
@@ -261,7 +270,7 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-federation-manifest/1", "polaris-epoch-checkpoint/1",
             "polaris-revocation-feed/1", "polaris-status-assertion/1",
             "polaris-transparency-sth/1", "polaris-federation-status-bundle/1",
-            "polaris-exchange-receipt/1",
+            "polaris-exchange-receipt/1", "polaris-exchange-mint/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1"}

@@ -7154,6 +7154,7 @@ _WIRE_SIGNED_TYPES = {
     "polaris-transparency-sth/1": "_sth_canonical",
     "polaris-federation-status-bundle/1": "_status_bundle_canonical",
     "polaris-exchange-receipt/1": "_exchange_receipt_canonical",
+    "polaris-exchange-mint/1": "_exchange_mint_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7511,6 +7512,50 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_exchange_mint_signed_auth(root: pathlib.Path) -> list[Finding]:
+    """P8.2b: service-to-service minting of the exchange receipt is authenticated by the
+    responder's SIGNATURE under its registered ML-DSA-65 key -- post-quantum institutional
+    auth with no shared secret and no nonce store -- and it fails CLOSED. Pins the signed
+    route, the two-witness verify under the registered key, the refusal without real PQC
+    (a placeholder signature is not authentication), the freshness window that bounds
+    replay to an identical receipt, the per-responder rate bound, the client-side canonical
+    builder in the detached verifier (held byte-equal by the oracle), the wire spec, the
+    HTTP proof in the two-instance drill, and the fail-closed unit test."""
+    app = _read(root, "polaris_web/app.py")
+    for sym, why in (("/api/v1/exchange-receipt/<int:agency_id>/signed", "the signed mint route"),
+                     ("_exchange_mint_statement", "the mint statement builder"),
+                     ("polaris-exchange-mint/1", "the mint format"),
+                     ("verify_both(", "two-witness verification of the caller's signature"),
+                     ("require_witness=True", "the second witness is REQUIRED for an auth decision"),
+                     ("is_enabled()", "the real-PQC gate"),
+                     ("placeholder signature is not authentication", "the fail-closed refusal"),
+                     ("_EXCHANGE_MINT_WINDOW", "the freshness window"),
+                     ("exmint:", "the per-responder rate bound"),
+                     ("responder_agency_id", "binding the statement to the addressed agency")):
+        if sym not in app:
+            return _fail("exchange_mint_signed_auth", "polaris_web/app.py lacks %s (%s)" % (why, sym))
+    if "_exchange_mint_canonical" not in _read(root, "scripts/polaris-verify.py"):
+        return _fail("exchange_mint_signed_auth",
+                     "scripts/polaris-verify.py must carry the client-side canonical builder _exchange_mint_canonical")
+    if "_exchange_mint_statement" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("exchange_mint_signed_auth", "the mint statement must be held byte-equal by the canonical oracle")
+    if "polaris-exchange-mint/1" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("exchange_mint_signed_auth", "the mint request must be specified in the wire spec")
+    drill = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if "/signed" not in drill or "no session" not in drill.lower():
+        return _fail("exchange_mint_signed_auth",
+                     "the two-instance drill must mint over HTTP with NO session via the signed route (the accept path needs a DB and real ML-DSA)")
+    tests = _read(root, "polaris_web/test_app.py")
+    if "exchange-receipt/1/signed" not in tests or "503" not in tests:
+        return _fail("exchange_mint_signed_auth",
+                     "polaris_web/test_app.py must prove the signed route fails CLOSED (503) without real PQC")
+    return _ok("exchange_mint_signed_auth",
+               "service-to-service minting is authenticated by the responder's ML-DSA-65 signature under its "
+               "registered key (two-witness, fail-closed without real PQC), bound to the addressed agency and a "
+               "freshness window so a replay can only duplicate a receipt; the client builder is oracle-pinned, "
+               "the request is in the wire spec, and the path is proven over HTTP by the two-instance drill")
 
 
 def check_no_named_reference_systems(root: pathlib.Path) -> list[Finding]:
@@ -8077,6 +8122,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_exchange_mint_signed_auth,
     check_no_named_reference_systems,
     check_preflight_typechecks_ts_sdk,
     check_exchange_receipt,

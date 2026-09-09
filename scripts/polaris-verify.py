@@ -1154,6 +1154,22 @@ def _exchange_receipt_canonical(receipt):
     return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+_EXCHANGE_MINT_FORMAT = "polaris-exchange-mint/1"
+
+
+def _exchange_mint_canonical(m):
+    """The bytes a RESPONDER's service signs to mint a receipt with no operator session
+    (P8.2b). A client builds exactly these bytes; the instance rebuilds them and verifies
+    the signature under the responder agency's registered key. MUST match
+    polaris_web/app.py's _exchange_mint_statement (pinned by the canonical oracle)."""
+    if not isinstance(m, dict):
+        m = {}
+    statement = {k: m.get(k) for k in
+                 ("format", "requester_public_key_hex", "context_id", "request_hash",
+                  "response_hash", "responder_agency_id", "occurred_at")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
                             request_body=None, response_body=None, max_window_seconds=None):
     """Verify an exchange receipt OFFLINE (P8.2). Establishes, WITHOUT the payload, that an

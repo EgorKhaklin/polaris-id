@@ -157,6 +157,22 @@ binds (`request_hash == SHA3-256(request)`); a verifier that does not still obta
 the exchange occurred and was authorized, with no access to the payload. A receipt records a
 past event and does not carry a freshness window.
 
+#### 3.8.1 `polaris-exchange-mint/1` (the responder-signed mint request)
+
+The statement a responder's own service signs to mint a receipt with no operator session
+(P8.2b). It is signed by the RESPONDER under its registered key, so an instance authenticates
+the caller by the signature alone: no shared secret, no server-side nonce store.
+Signed fields: format, requester_public_key_hex, context_id, request_hash, response_hash, responder_agency_id, occurred_at
+
+The instance MUST verify the signature under the responder agency's registered key (two-witness
+where a second implementation is available), MUST reject a `responder_agency_id` that differs
+from the addressed agency, MUST reject an `occurred_at` outside a freshness window (RECOMMENDED
+300 seconds), and MUST carry the signed `occurred_at` into the receipt unchanged, so that a
+captured request can only re-mint an identical receipt and never re-time the exchange. An
+instance without real ML-DSA-65 MUST refuse: a placeholder signature is not authentication.
+The receipt it yields is section 3.8, unchanged; `request_hash` and `response_hash` obey the
+same hash-only rule.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:

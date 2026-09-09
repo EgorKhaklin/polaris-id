@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.320 — 2026-09-09 (Service-to-service minting: the signature is the institution, P8.2b)
+
+A gateway is worthless if only an operator can mint. The responder's own service now mints
+an exchange receipt with no session.
+
+- **`POST /api/v1/exchange-receipt/<id>/signed`.** The caller signs a `polaris-exchange-mint/1`
+  statement (the receipt's hash-only fields plus its own agency id and the time) under the
+  responder agency's REGISTERED ML-DSA-65 key; the instance rebuilds the canonical bytes and
+  verifies the signature two-witness under that key. Post-quantum institutional auth with no
+  shared secret, no schema change, and no nonce store: the statement is bound to the addressed
+  agency and a 300-second freshness window, and the signed `occurred_at` is carried into the
+  receipt unchanged, so a captured request can only re-mint an identical receipt, never re-time
+  the exchange. Without real ML-DSA-65 the route refuses (`503`): a placeholder signature is not
+  authentication. Chosen over an OAuth bearer deliberately -- an institution in the fabric
+  already holds a key the trust graph knows, and this is the signed-envelope pattern the
+  mediating gateway (P8.2d) generalizes.
+- **Held to the same machinery.** The client-side builder `_exchange_mint_canonical` lives in the
+  detached verifier and the canonical-equivalence oracle holds it byte-equal to the instance's
+  `_exchange_mint_statement` (the oracle's eighth pair, this one client-built and
+  instance-verified); wire spec section 3.8.1; the two-instance federation drill now mints over
+  HTTP with no session under real ML-DSA and drives accept / wrong key / tampered signature /
+  stale time / unattested requester; a DB-backed unit test proves the fail-closed refusal.
+  `check_exchange_mint_signed_auth` (#174) pins all of it. 174 checks, 101 routes.
+- The operator path (login + CSRF) is unchanged; the mint core is factored so both paths share
+  one validation and one signer.
+
 ## v9.319 — 2026-09-09 (P8 on its own terms: a positioning invariant and the build plan)
 
 Two things, both about how Polaris describes itself and what it builds next.

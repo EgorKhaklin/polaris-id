@@ -5709,35 +5709,41 @@ def _exchange_receipt_statement(body):
     return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
-@app.route('/api/v1/exchange-receipt/<int:agency_id>', methods=['POST'])
-@security.login_required
-@security.csrf_protect
-def api_v1_exchange_receipt(agency_id):
-    """P8.2: mint an EXCHANGE RECEIPT -- signed evidence that this authority (the responder,
-    agency_id) served an authenticated, authorized request from another party, WITHOUT
-    retaining the payload. The caller submits only the SHA3-256 of the request and of the
-    response (never the bodies), the requester's public key, and the context. The responder
-    mints a receipt only if the requester is authorized (some AgencyTrustAttestation attests
-    the requester's key in that context) and signs it with its own key, committing to the
-    hashes, the parties, the time, and which attestation authorized it. A third party later
-    proves the exchange occurred and was authorized from the receipt alone, with no personal
-    data: evidence without retention.
+_EXCHANGE_MINT_FORMAT = 'polaris-exchange-mint/1'
+_EXCHANGE_MINT_WINDOW = 300          # seconds a responder-signed mint request stays fresh
+_EXCHANGE_MINT_RATE_PER_MIN = 120    # per responder agency; the coarse velocity bound
 
-    Request JSON: {requester_public_key_hex, context_id, request_hash, response_hash}. Auth is
-    operator (login + CSRF) for v1; service-to-service OAuth is P8.2b. 403 if the requester is
-    not authorized in the context."""
+
+def _exchange_mint_statement(body):
+    """Canonical bytes a RESPONDER's service signs to mint a receipt with no operator
+    session (P8.2b). MUST match scripts/polaris-verify.py's _exchange_mint_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'requester_public_key_hex', 'context_id', 'request_hash',
+                  'response_hash', 'responder_agency_id', 'occurred_at')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _exchange_responder(agency_id):
+    """The responder agency row (must be federated: a registered signing key), or an
+    error response."""
     responder = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
                       (agency_id,), fetch='one', primary=True)
     if not responder:
-        return jsonify(error='no such agency'), 404
+        return None, (jsonify(error='no such agency'), 404)
     if not responder['signing_public_key_hex']:
-        return jsonify(error='agency is not federated (no registered signing key)'), 404
-    payload = request.get_json(silent=True) or {}
+        return None, (jsonify(error='agency is not federated (no registered signing key)'), 404)
+    return responder, None
+
+
+def _mint_exchange_receipt(responder, agency_id, fields, occurred_at=None):
+    """The receipt itself: validate the hash-only fields, confirm the requester is
+    authorized in the context, sign. `occurred_at` is the server clock for the operator
+    path and the SIGNED time for the service-to-service path."""
     try:
-        req_key = str(payload['requester_public_key_hex']).lower()
-        context_id = int(payload['context_id'])
-        request_hash = str(payload['request_hash']).lower()
-        response_hash = str(payload['response_hash']).lower()
+        req_key = str(fields['requester_public_key_hex']).lower()
+        context_id = int(fields['context_id'])
+        request_hash = str(fields['request_hash']).lower()
+        response_hash = str(fields['response_hash']).lower()
     except (KeyError, ValueError, TypeError) as e:
         return jsonify(error=f'required fields: requester_public_key_hex, context_id, request_hash, response_hash ({e})'), 400
     # Hashes only: a 64-char SHA3-256 hex digest, never a payload. This is the retention rule
@@ -5760,8 +5766,9 @@ def api_v1_exchange_receipt(agency_id):
     """, (req_key, context_id), fetch='one', primary=True)
     if not att:
         return jsonify(error='the requester is not authorized in this context (no valid attestation)'), 403
-    from datetime import datetime, timezone
-    occurred_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+    if occurred_at is None:
+        from datetime import datetime, timezone
+        occurred_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
     body = {
         'format': _EXCHANGE_RECEIPT_FORMAT,
         'requester': {'public_key_hex': req_key},
@@ -5781,6 +5788,89 @@ def api_v1_exchange_receipt(agency_id):
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                    'receipt minus signature_hex and public_key_hex)')
     return jsonify(body)
+
+
+@app.route('/api/v1/exchange-receipt/<int:agency_id>', methods=['POST'])
+@security.login_required
+@security.csrf_protect
+def api_v1_exchange_receipt(agency_id):
+    """P8.2: mint an EXCHANGE RECEIPT -- signed evidence that this authority (the responder,
+    agency_id) served an authenticated, authorized request from another party, WITHOUT
+    retaining the payload. The caller submits only the SHA3-256 of the request and of the
+    response (never the bodies), the requester's public key, and the context. The responder
+    mints a receipt only if the requester is authorized (some AgencyTrustAttestation attests
+    the requester's key in that context) and signs it with its own key, committing to the
+    hashes, the parties, the time, and which attestation authorized it. A third party later
+    proves the exchange occurred and was authorized from the receipt alone, with no personal
+    data: evidence without retention.
+
+    Request JSON: {requester_public_key_hex, context_id, request_hash, response_hash}. This is
+    the OPERATOR path (login + CSRF); the responder's own service mints with no session at
+    /signed (P8.2b, below). 403 if the requester is not authorized in the context."""
+    responder, err = _exchange_responder(agency_id)
+    if err:
+        return err
+    return _mint_exchange_receipt(responder, agency_id, request.get_json(silent=True) or {})
+
+
+@app.route('/api/v1/exchange-receipt/<int:agency_id>/signed', methods=['POST'])
+def api_v1_exchange_receipt_signed(agency_id):
+    """P8.2b: SERVICE-TO-SERVICE minting. The responder's own service mints a receipt with
+    no operator session, authenticating by SIGNING a polaris-exchange-mint/1 statement under
+    the responder agency's registered ML-DSA-65 key: post-quantum institutional auth with no
+    shared secret and no server-side nonce store. The instance rebuilds the canonical bytes
+    (the same construction as the detached verifier's _exchange_mint_canonical) and verifies
+    the signature two-witness under the REGISTERED key; the statement is bound to this URL's
+    agency and to a freshness window, and the SIGNED occurred_at is carried into the receipt
+    unchanged, so a captured request can only re-mint an identical receipt, never re-time
+    the exchange. Without real ML-DSA-65 the route refuses: a placeholder signature is not
+    authentication. The receipt is otherwise the v1 receipt (hashes only, requester
+    attested in-context, no personal data)."""
+    if not pqc_signing.is_enabled():
+        return jsonify(error='unavailable',
+                       error_description='responder-signed minting requires real ML-DSA-65 (POLARIS_USE_REAL_PQC=1 '
+                                         'with liboqs and the second witness); a placeholder signature is not authentication'), 503
+    responder, err = _exchange_responder(agency_id)
+    if err:
+        return err
+    payload = request.get_json(silent=True) or {}
+    mint = payload.get('mint')
+    sig_hex = payload.get('signature_hex')
+    if not isinstance(mint, dict) or not isinstance(sig_hex, str) or not sig_hex:
+        return jsonify(error='invalid_request',
+                       error_description='a polaris-exchange-mint/1 statement under "mint" and its "signature_hex" are required'), 400
+    if mint.get('format') != _EXCHANGE_MINT_FORMAT:
+        return jsonify(error='invalid_request', error_description='mint.format must be %s' % _EXCHANGE_MINT_FORMAT), 400
+    try:
+        if int(mint.get('responder_agency_id')) != int(agency_id):
+            raise ValueError('responder mismatch')
+    except (TypeError, ValueError):
+        return jsonify(error='invalid_request', error_description='mint.responder_agency_id must equal the addressed agency'), 400
+    # Freshness: the signed time must sit inside the window. A replayed request therefore
+    # re-mints an IDENTICAL receipt (same signed occurred_at) or is rejected; it can never
+    # move the exchange in time, which is why no nonce store is needed.
+    from datetime import datetime, timezone
+    try:
+        when = datetime.fromisoformat(str(mint.get('occurred_at', '')).replace('Z', '+00:00'))
+        if when.tzinfo is None:
+            raise ValueError('naive')
+    except ValueError:
+        return jsonify(error='invalid_request', error_description='mint.occurred_at must be an ISO-8601 UTC timestamp'), 400
+    if abs((datetime.now(timezone.utc) - when).total_seconds()) > _EXCHANGE_MINT_WINDOW:
+        return jsonify(error='stale',
+                       error_description='mint.occurred_at is outside the %d-second freshness window' % _EXCHANGE_MINT_WINDOW), 401
+    if not security.rate_limiter.allow('exmint:%d' % agency_id, _EXCHANGE_MINT_RATE_PER_MIN, 60):
+        return jsonify(error='rate_limited'), 429
+    # Authentication: the statement verifies, two-witness, under the responder's REGISTERED key.
+    try:
+        ok = pqc_signing.verify_both(_exchange_mint_statement(mint), sig_hex,
+                                     responder['signing_public_key_hex'], require_witness=True)
+    except pqc_signing.PQCUnavailableError:
+        ok = False
+    if not ok:
+        return jsonify(error='invalid_signature',
+                       error_description="the mint statement does not verify under the responder agency's registered ML-DSA-65 key"), 401
+    return _mint_exchange_receipt(responder, agency_id, mint, occurred_at=str(mint['occurred_at']))
 
 
 # --- P3.3: the transparency log over the audit-anchor roots --------------------

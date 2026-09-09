@@ -66,6 +66,27 @@ which ties the receipt to a specific exchange; a party that does not still obtai
 proof of occurrence and authorization. That is the whole point: the evidence is
 separable from the data.
 
+## Service-to-service minting (P8.2b)
+
+A gateway is worthless if only an operator can mint. Since v9.320 the responder's own
+service mints with no session at `POST /api/v1/exchange-receipt/<id>/signed`: it signs a
+`polaris-exchange-mint/1` statement (the same hash-only fields it wants in the receipt, plus
+its own agency id and the time) under its **registered ML-DSA-65 key**, and the instance
+authenticates the caller by that signature alone. This was a deliberate choice over an OAuth
+bearer: an institution in the fabric already holds a post-quantum key the trust graph knows,
+so the signature IS the institutional identity; there is no shared secret to leak, no
+schema change, and it is the same signed-envelope pattern the mediating gateway (P8.2d)
+generalizes to every request.
+
+Replay needs no nonce store. The statement is bound to the addressed agency and to a
+freshness window (300 seconds), and the signed `occurred_at` is carried into the receipt
+unchanged, so a captured request can only re-mint an *identical* receipt inside the window
+and can never move the exchange in time. The signature is verified two-witness under the
+registered key, and an instance without real ML-DSA-65 refuses outright: a placeholder
+signature is not authentication. The client builds the exact bytes with the detached
+verifier's `_exchange_mint_canonical`, which the canonical-equivalence oracle holds
+byte-equal to the instance's builder.
+
 ## What runs
 
 `scripts/polaris-exchange-receipt-drill.py` stands up a requester, a responder, and an
@@ -75,13 +96,17 @@ the requester is authorized through a trusted attestation; occurrence and author
 are proven **without** the payload and the commitment binds **with** it; and a wrong
 body, a tampered receipt, or an unauthorized requester is caught. `check_exchange_receipt`
 pins the endpoint, the offline verify, the hashes-only rule, the oracle coverage, the
-wire-spec entry, and the drill, with a detection test. The app builder and the verifier
+wire-spec entry, and the drill, with a detection test. The service-to-service path is proven
+over HTTP with no session by `scripts/polaris-federation-instances-drill.py` (accept, wrong
+key, tampered signature, stale time, unattested requester) and pinned by
+`check_exchange_mint_signed_auth`. The app builder and the verifier
 produce byte-identical signed bytes, pinned by the canonical-equivalence oracle.
 
 ## Boundaries and what's next
 
-- **Auth.** v1 mints under operator auth (login + CSRF). Service-to-service auth for
-  an institutional caller (OAuth, the relying-party path) is P8.2b.
+- **Auth.** Two paths: an operator session (login + CSRF), and, since v9.320 (P8.2b),
+  the responder's own service with no session at `/signed`, authenticated by its ML-DSA-65
+  signature over the mint statement (the section above).
 - **Anchoring.** A receipt's hash can be committed to the transparency log so the set
   of receipts is itself append-only and monitorable; wiring that is a follow-on.
 - **The fabric.** This is the evidence primitive, not the mediation layer. A gateway

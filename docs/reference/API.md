@@ -810,7 +810,7 @@ the decision equals what the issuer's own feed would give. Specified in
 
 ### `POST /api/v1/exchange-receipt/<agency_id>`
 
-**Operator auth (login + CSRF); service-to-service OAuth is P8.2b.** Mint an **exchange
+**Operator auth (login + CSRF); the service-to-service variant is `/signed`, below (P8.2b).** Mint an **exchange
 receipt** (roadmap P8.2): signed evidence that this authority (the responder) served an
 authenticated, authorized request from another party, WITHOUT retaining the payload. The
 caller submits only the SHA3-256 of the request and of the response, the requester's public
@@ -832,6 +832,32 @@ The responder mints a receipt only if the requester is authorized (some
 party later proves the exchange occurred and was authorized from the receipt alone, with no
 personal data, verifying it offline with `scripts/polaris-verify.py` (`verify_exchange_receipt`).
 Specified in [exchange-receipt.md](../design/exchange-receipt.md).
+
+### `POST /api/v1/exchange-receipt/<agency_id>/signed`
+
+**Service-to-service; no session (P8.2b).** The same receipt, minted by the responder's OWN
+service: the caller authenticates by SIGNING a `polaris-exchange-mint/1` statement under the
+responder agency's registered ML-DSA-65 key. No operator session, no shared secret, no
+server-side nonce store. Requires real ML-DSA-65 on the instance (`503` otherwise: a
+placeholder signature is not authentication).
+
+```jsonc
+// request
+{ "mint": { "format": "polaris-exchange-mint/1", "requester_public_key_hex": "<hex>",
+            "context_id": 1, "request_hash": "<sha3-256 hex>", "response_hash": "<sha3-256 hex>",
+            "responder_agency_id": <agency_id>, "occurred_at": "2026-09-09T12:00:00Z" },
+  "signature_hex": "<ML-DSA-65 over SHA3-256(canonical(mint))>" }
+// response: the polaris-exchange-receipt/1, whose occurred_at is the SIGNED time
+```
+
+`mint.responder_agency_id` must equal the URL agency (`400`); `mint.occurred_at` must lie within
+a 300-second freshness window (`401 stale`), so a captured request can only re-mint an identical
+receipt, never re-time the exchange; the signature must verify two-witness under the registered
+key (`401 invalid_signature`); the requester must be attested in the context (`403`); a
+per-responder rate bound applies (`429`). The statement bytes are the sorted-keys compact JSON
+of the seven `mint` fields (wire spec section 3.8.1); `scripts/polaris-verify.py`
+`_exchange_mint_canonical` builds them for a client. Proven over HTTP, with no session, by the
+two-instance federation drill.
 
 ### `GET /api/v1/transparency/sth`
 

@@ -249,6 +249,33 @@ class UnauthenticatedTestCase(PolarisTestCase):
 # DASHBOARD TESTS
 # ============================================================================
 
+class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
+    """P8.2b: service-to-service minting is authenticated by a responder signature under its
+    registered ML-DSA-65 key. Under the test profile (placeholder PQC) the signed route must
+    FAIL CLOSED -- a placeholder 'signature' is not authentication -- and the operator route
+    must not mint without a session. The accept path needs real ML-DSA and a database and is
+    proven over HTTP by scripts/polaris-federation-instances-drill.py."""
+
+    def test_signed_mint_fails_closed_without_real_pqc(self):
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {'POLARIS_USE_REAL_PQC': '0'}):
+            r = self.client.post('/api/v1/exchange-receipt/1/signed', json={
+                'mint': {'format': 'polaris-exchange-mint/1', 'requester_public_key_hex': 'ab' * 16,
+                         'context_id': 1, 'request_hash': '00' * 32, 'response_hash': '11' * 32,
+                         'responder_agency_id': 1, 'occurred_at': '2026-01-01T00:00:00Z'},
+                'signature_hex': 'ff' * 8})
+        self.assertEqual(r.status_code, 503)
+        self.assertIn('placeholder signature is not authentication', r.get_json().get('error_description', ''))
+
+    def test_operator_mint_requires_a_session(self):
+        r = self.client.post('/api/v1/exchange-receipt/1', json={
+            'requester_public_key_hex': 'ab' * 16, 'context_id': 1,
+            'request_hash': '00' * 32, 'response_hash': '11' * 32})
+        self.assertNotEqual(r.status_code, 200)
+        self.assertIn(r.status_code, (302, 401, 403))
+
+
 class DashboardTests(PolarisTestCase):
     """v9.238: the operations page reports state an operator acts on. It no
     longer prints schema row counts or a token roster; those assertions moved

@@ -6403,15 +6403,17 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _sth_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'tree_size')}\n"
         "def _status_bundle_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'publisher')}\n"
         "def _exchange_receipt_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'requester')}\n"
+        "def _exchange_mint_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'responder_agency_id')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1 polaris-exchange-receipt/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1\n"
         "manifest signed fields: format, authority\n"
         "receipt signed fields: format, requester\n"
+        "mint signed fields: format, responder_agency_id\n"
         "checkpoint signed fields: format, epoch\n"
         "feed signed fields: format, as_of\n"
         "assertion signed fields: format, status\n"
@@ -6460,6 +6462,60 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_exchange_mint_signed_auth_check_discriminates(tmp_path):
+    # v9.320 (P8.2b): service-to-service minting authenticated by the responder's ML-DSA-65
+    # signature under its registered key, fail-closed, freshness-bounded, rate-bounded,
+    # oracle-pinned, specified, proven over HTTP, unit-tested for the refusal. Each
+    # perturbation removes one leg.
+    APP = (
+        "@app.route('/api/v1/exchange-receipt/<int:agency_id>/signed', methods=['POST'])\n"
+        "def api_v1_exchange_receipt_signed(agency_id):\n"
+        "    if not pqc_signing.is_enabled(): return 'placeholder signature is not authentication', 503\n"
+        "    if int(mint.get('responder_agency_id')) != agency_id: return 400\n"
+        "    if abs(dt) > _EXCHANGE_MINT_WINDOW: return 401\n"
+        "    security.rate_limiter.allow('exmint:%d' % agency_id, 120, 60)\n"
+        "    ok = pqc_signing.verify_both(_exchange_mint_statement(mint), sig, key, require_witness=True)\n"
+        "    # polaris-exchange-mint/1\n"
+    )
+    good = {
+        'polaris_web/app.py': APP,
+        'scripts/polaris-verify.py': "def _exchange_mint_canonical(m): return b''\n",
+        'polaris_web/test_canonical_equivalence.py': "flask_app._exchange_mint_statement\n",
+        'docs/reference/WIRE-SPEC.md': "polaris-exchange-mint/1\n",
+        'scripts/polaris-federation-instances-drill.py': "base_b + '/api/v1/exchange-receipt/1/signed'  # NO session\n",
+        'polaris_web/test_app.py': "self.client.post('/api/v1/exchange-receipt/1/signed'); assertEqual(r.status_code, 503)\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_web/app.py': APP.replace("/signed", "/nope")})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the signed route"
+    write({'polaris_web/app.py': APP.replace("require_witness=True", "require_witness=False")})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if the second witness is optional for auth"
+    write({'polaris_web/app.py': APP.replace("placeholder signature is not authentication", "ok anyway")})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if it does not fail closed without real PQC"
+    write({'polaris_web/app.py': APP.replace("_EXCHANGE_MINT_WINDOW", "forever")})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the freshness window"
+    write({'polaris_web/app.py': APP.replace("exmint:", "nolimit:")})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the per-responder rate bound"
+    write({'scripts/polaris-verify.py': "# nothing\n"})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the client-side canonical builder"
+    write({'polaris_web/test_canonical_equivalence.py': "# nothing\n"})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if the statement is not oracle-pinned"
+    write({'docs/reference/WIRE-SPEC.md': "# spec\n"})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if not in the wire spec"
+    write({'scripts/polaris-federation-instances-drill.py': "# no minting here\n"})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not prove it over HTTP"
+    write({'polaris_web/test_app.py': "# no refusal test\n"})
+    assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the fail-closed unit test"
 
 
 def test_no_named_reference_systems_check_discriminates(tmp_path):
