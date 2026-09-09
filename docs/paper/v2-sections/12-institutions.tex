@@ -1,0 +1,110 @@
+% 12-institutions.tex: the exchange fabric.
+\section{Institutions: exchange, time and signatures without a message log}
+\label{sec:institutions}
+
+\subsection{The inversion}
+
+A conventional exchange fabric between institutions makes an exchange provable by logging the
+exchanged messages: a mediating node signs and timestamps the traffic so that a receipt can later be
+shown to a third party. The evidence is real, and so is its cost: a store of who asked what about
+whom, which is exactly the population-scale record the vocation forbids. The Polaris exchange fabric
+is the inversion. It proves the same three things a message log proves, that an exchange occurred,
+between these parties, and was authorized, while retaining none of the payload, by committing to the
+request and the response by hash and never by content. Every primitive in it, signatures, the
+detached verifier, the transparency logs, the trust graph, already existed; the fabric composes them.
+\sImpl
+
+\subsection{The registry: discovery, not configuration}
+
+A consumer learns what an instance offers and trusts from one signed artifact: the protocol formats
+and versions it speaks and its accepted algorithms, each service's kind, path template and
+authentication, the transparency logs, every federated authority with its key register, the
+contexts and the proof each requires, the in-context trust graph, and the relying parties by name
+and scope only. Every fact is a view over the authority layer; the registry adds no truth of its own.
+It must be signed by the active key it lists for its own publisher, so an impostor cannot publish one
+in an authority's name, and it is non-transitive: it describes its publisher's instance, never
+another's. The two-instance drill reads a service's path out of a fetched registry and calls it. No
+token, no holder, no verification record appears: a map of the institutions, never of the people.
+\sImpl
+
+\subsection{The gateway and the receipt}
+
+\figfile{gateway}{An institutional exchange through the gateway. The requester signs an envelope
+under its registered key; the responder's own instance authenticates it by a key it already knows,
+authorizes it through its own attestation in the envelope's context before anything leaves the
+process, consumes the nonce in an append-only replay register, forwards the body only to an upstream
+the operator configured, and returns the response with a signed receipt. Nothing but the receipt's
+hash and the consumed nonce is written. The evidence of the exchange is the pair of envelope and
+receipt, verifiable offline by a third party with no body.}{fig:gateway}
+
+The receipt commits to the requester's key, the responder, the context, the two body hashes, which
+attestation authorized the requester, and the instant. The mint endpoint accepts only hashes, so the
+application cannot retain what it is never given. A third party verifies offline that the receipt is
+authentic and that the requester was authorized in that context, given the manifests it trusts. A
+party that holds a body can confirm the hash binds; a party that does not still holds the
+responder's signed account. One correction from the outside review belongs here: a receipt alone
+cannot prove the requester took part, because a dishonest responder can sign any receipt it likes;
+the requester's own signed envelope beside it can, and the wire specification names the pair as the
+evidence. The set of receipts is itself a transparency log, so an institution cannot later deny a
+receipt existed and anyone can see how many it minted, while each receipt stays in the hands of its
+parties. \sImpl
+
+Authorization at the gateway is directional. Since \code{v9.333} the responding agency itself must
+attest the requester's key in the envelope's context; an attestation by any other agency on the
+instance authorizes nothing there. Before that fix the gateway accepted an attestation from anyone
+on the instance, which was the transitive trust the federation layer refuses, reappearing one layer
+up. \sImpl
+
+\subsection{Time that learns nothing}
+
+The timestamp authority binds an arbitrary SHA3-256 digest to an instant under an authority's
+registered key. It accepts a digest, never content, and keeps no per-request record, because a
+timestamp authority that logs every request is a store of who timestamped what and when. The
+evidence is the signed statement in the requester's hands. Since \code{v9.341} a caller may choose
+to anchor: the timestamp's own hash joins an append-only, witnessed log and the inclusion evidence
+comes back stapled, so that a timestamp backdated under a stolen authority key is one absent from
+every witnessed head of its claimed era. What the authority then retains is one digest and one
+instant, a record of volume and timing, never of content, and the default request still leaves
+nothing. \sImpl
+
+\subsection{Signing a document so that it outlives the key}
+
+\figfile{signing-chain}{A signed document and its long-term evidence. The document never leaves its
+holder; its digest is signed by an institution, or by the holder's issuing authority on the
+holder's behalf after a possession proof, recorded by credential hash. Evidence fixed at the instant
+of signing, a timestamp from a distinct key, the signer's manifest, checkpoint and feed, together
+with the verifier's own trust list, lets a verifier decide validity at that instant long after the
+signing key has been retired. A signature whose instant falls after a compromise is refused even
+though its embedded manifest says the key was active.}{fig:signing-chain}
+
+A holder in Polaris holds a credential, not a signing key, so the model is notarial: the issuing
+authority signs on behalf of a holder who has just proved possession, exactly as it asserts status
+for one, and records who by hash. The authority's signature says that a holder of this credential,
+active at this instant, asked it to sign this digest, and the embedded evidence lets anyone check
+that claim later. \sImpl
+
+Long-term validation is where the outside review and the repository's own drills sharpened the
+claim. An authentic timestamp is not a trusted one, since anyone can sign one, and a signer's own
+timestamp is backdatable by whoever holds the key. So the strong claim requires the timestamp to be
+trusted by the verifier, from a key distinct from the signer's, active at the instant per the trust
+list, and, if the verifier asks, anchored in a witnessed log or corroborated by a quorum of
+independent authorities. A verifier given no timestamp anchors reports the facts and claims nothing.
+\sImpl{} for the verifier; \sFut{} for anchor verification in the SDKs, which today only the detached
+verifier performs.
+
+\begin{layercard}{Layer card: institutions}
+\qa{What it is}{The signed registry, the exchange gateway, the exchange receipt and its log, the timestamp authority with optional anchoring, document signing with long-term validation, the trust list.}
+\qa{Why it exists}{Real software ecosystems need discovery, mediated requests, signatures and time. Each of those is conventionally built on a log of content, and the vocation forbids that log.}
+\qa{What it trusts}{Registered institutional keys; the in-context trust graph; the verifier's own timestamp anchors and trust list.}
+\qa{What it refuses}{A body at the mint endpoint; a URL named by a request; a replayed nonce; an attestation not made by the responder itself; a timestamp from the signer's own key as the strong evidence; a placeholder signature as authentication.}
+\qa{What it can see}{Digests, keys, contexts, instants.}
+\qa{What it cannot see}{The exchanged messages, the timestamped content, the signed document: none are ever given to it.}
+\qa{If it fails}{A forged receipt fails the responder's signature; a dishonest responder's receipt is contradicted by the missing envelope; a stolen timestamp key is caught by the witnessed anchor or the quorum; a compromised signer key invalidates only what it signed after the instant.}
+\qa{Checked by}{\code{check\_registry}, \code{check\_exchange\_gateway}, \code{check\_exchange\_receipt}, \code{check\_timestamp\_authority}, \code{check\_document\_signing}, \code{check\_ltv\_timestamp\_trust}, \code{check\_broker\_policy\_bound}.}
+\qa{Now or later}{Now, between two instances. Real institutions are later.}
+\qa{Inside and outside}{Inside: transparency, which watches the receipt and timestamp logs. Outside: the operations that keep all of it running.}
+\end{layercard}
+
+\nextlayer{Every layer so far is a claim about correctness. None of it matters if the system falls
+over under load, loses a database, or cannot be deployed by anyone but its author. The next layer is
+survival.}

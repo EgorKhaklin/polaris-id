@@ -1,0 +1,26 @@
+% v2-figures/layer-ladder.tex: the metacognitive ladder, zooming from the person
+% to the future environment. Each rung names what the layer knows and what it
+% refuses to trust from the rung below.
+\begin{tikzpicture}
+  \foreach \i/\name/\knows/\refuses/\style in {
+    0/{L0 \ Human subject}/{exists outside the software}/{the software's description of the person}/humanbox,
+    1/{L1 \ Credential core}/{one active token, one signature, one person}/{any state the schema cannot represent}/corebox,
+    2/{L2 \ Structural constraints}/{which states may exist at all}/{application code promising to behave}/layerbox,
+    3/{L3 \ Cryptographic evidence}/{who signed what, checkable by anyone}/{a single implementation's verdict}/layerbox,
+    4/{L4 \ Verification and status}/{authentic, and authoritative right now}/{authenticity as if it were authorization}/layerbox,
+    5/{L5 \ Privacy and disclosure}/{what a verifier is allowed to learn}/{the client's claim about its own disclosure level}/layerbox,
+    6/{L6 \ Federation}/{whom an authority explicitly trusts, in which context}/{transitive trust, a central authority}/layerbox,
+    7/{L7 \ Transparency}/{that history was not rewritten or forked}/{a single observer's view of the log}/layerbox,
+    8/{L8 \ Institutional services}/{that an exchange happened and was authorized}/{keeping the message to prove it}/layerbox,
+    9/{L9 \ Operations}/{that the system survives failure and load}/{a claim that was not drilled}/layerbox,
+    10/{L10 \ System cognition}/{what the system is doing and how power is structured}/{anything about a person}/softbox,
+    11/{L11 \ Societal boundary}/{what Polaris refuses to become}/{money, scoring, a required doorway}/softbox,
+    12/{L12 \ Agent and web environment}/{what kind of actor is acting, under whose authority}/{a stable handle shown to everyone (open problem)}/futbox} {
+    \node[\style, anchor=west, minimum width=5.6cm, text width=5.3cm] (r\i) at (0, -1.1*\i) {\name};
+    \node[anchor=west, font=\scriptsize, text=navydark, text width=5.0cm, align=left] at (6.0, -1.1*\i) {\knows};
+    \node[anchor=west, font=\scriptsize, text=classmark, text width=5.2cm, align=left] at (11.4, -1.1*\i) {\refuses};
+  }
+  \node[kicker, anchor=west] at (6.0, 1.0) {what the layer knows};
+  \node[kicker, anchor=west] at (11.4, 1.0) {what it refuses to take on faith};
+  \node[kicker, anchor=west] at (0, -14.2) {zoom: atom, organ, organism, town, federation, ecosystem};
+\end{tikzpicture}

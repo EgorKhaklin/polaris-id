@@ -1,0 +1,101 @@
+% 18-research.tex: future engineering and research.
+\section{Future research and engineering}
+\label{sec:research}
+
+Everything in this section is marked \sFut{} unless stated otherwise. Items are ordered by how
+directly they bear on the future environment of Section~\ref{sec:agents}.
+
+\subsection{Presentation technologies that would remove the correlator}
+
+The stable credential value in a presentation is the one property that separates Polaris from a
+privacy-preserving proof of personhood. Five families of technique would address it, each with a
+cost the repository would have to accept.
+
+\begin{description}
+  \item[Pairwise identifiers.] A different handle per relying party, derived from a holder secret
+    and the party's identity, so that two parties cannot join their logs. Needs a holder-side secret
+    and a rule for how the issuer's status artifacts bind to a derived handle.
+  \item[Blinded or derived presentations.] The holder proves possession of a signature over
+    attributes without revealing the signature itself, so a reused signature is not a correlator.
+    The classical constructions rely on pairing-based assumptions that a quantum computer breaks;
+    post-quantum equivalents are an open research area, and Polaris's post-quantum posture would
+    have to be preserved.
+  \item[One-time presentation tokens.] Single-use artifacts minted per presentation, at the cost of
+    issuer contact or a pre-fetched batch, which trades against offline availability and issuer
+    non-observation exactly as the status assertion does.
+  \item[Anonymous credentials with selective disclosure.] Revealing that an attribute satisfies a
+    predicate without revealing the attribute. Polaris's disclosure levels are recorded at the
+    issuer; a presentation-layer selective disclosure would be new machinery, and the repository
+    explicitly says it does not claim to be one.
+  \item[Zero-knowledge uniqueness.] The scoped nullifier of Section~\ref{sec:agents}: one added
+    public input to the existing circuit, per relying party and per epoch, never global.
+\end{description}
+
+\subsection{The holder-side key}
+
+Every item above, the browser bridge, agent delegation, and on-device proving share one missing
+piece: a key the holder controls, registered against the credential at enrolment. The current model
+is issuer-centric on purpose, to keep key custody, rotation and recovery from becoming a per-person
+problem, and the notarial signing and possession-based login follow from it. A holder key would be a
+credential extension with its own recovery ceremony, and the recovery layer of
+Section~\ref{sec:core} is the obvious place it would attach. The sibling-path witness optimisation,
+already named in the roadmap, would let a holder prove membership against a national-scale tree
+without reconstructing it, which on-device proving requires.
+
+\subsection{Metis: learning the system, never the people}
+
+The assessment the roadmap requires before any code would have to falsify the central hypothesis
+(that a model can infer properties of the system without inferring the rights of people) against a
+synthetic-nation ground truth, compare every model to a deterministic rule, and design the
+constitutional invariant that would forbid the prohibited uses structurally, in the manner of
+Athena's five checks. The candidate uses, infrastructure anomalies, capacity forecasts with
+uncertainty, regression and release-risk detection, chaos learning, root-cause ranking over Athena's
+dependency graph, and aggregate institutional anomalies, are all about Polaris and institutions,
+never about citizens.
+
+\subsection{Myrmex: stigmergic debugging as an outside observer}
+
+The observers of Section~\ref{sec:senses} all live inside the repository and inherit its
+assumptions. This paper proposes, under the provisional name Myrmex, a debugging system that would
+live outside Polaris and attack it independently, inspired by how an ant colony coordinates without
+a central plan.
+
+\figfile{stigmergy}{The proposed colony. Small specialised agents traverse the code and the
+architecture and leave machine-readable pheromones on a persistent evidence landscape: suspicion, a
+trust-boundary anomaly, an unusual state transition, a cryptographic assumption, a missing edge, an
+inconsistent claim, an area repeatedly associated with failure. Pheromones strengthen under
+independent evidence and decay unsupported; agents follow reinforced trails. An orchestrator allocates
+work and aggregates evidence and decides nothing. Confidence comes only from external evidence, never
+from agreement between models. What survives reproduction enters Polaris's own loop as a test and an
+invariant.}{fig:stigmergy}
+
+The roles would be specialised: scouts that map surfaces; trust-boundary agents that look for a
+claim crossing a boundary without its proof; cryptographic agents that test each verdict against
+the two-witness rule and the canonical discipline; privacy agents that hunt for a person-level
+handle or an unbounded read; state-transition agents that try to reach a state the schema should
+refuse; concurrency agents that race the advisory locks; protocol agents that mutate every signed
+artifact the way the fuzzer does but with intent; and refutation agents whose only job is to
+disprove what the others suspect. The queen, or orchestrator, allocates work and merges evidence
+and is deliberately not an omniscient authority deciding truth.
+
+Confidence would come primarily from external evidence: a failing test, a runtime trace, a fuzz
+case, a static finding, a formal counterexample, an independent reproduction. Several language
+models agreeing is not evidence, and the design would treat it as none. The lifecycle then joins the
+loop the repository already runs: the colony finds suspicion; the system attempts reproduction; a
+reproducible failure becomes a test; the fix becomes an invariant; the former bug becomes a permanent
+new sense. The reason to keep it outside Polaris is the reason for the second witness: another
+observer, not another subsystem that inherits the assumptions it is meant to check. The repository's
+history contains a caution about this idea: at \code{v9.55} an earlier swarm apparatus that lived
+inside the tree and asserted claims about itself was deleted as scaffolding. Myrmex would be held to
+the opposite discipline, outside and adversarial, or not built.
+
+\subsection{Engineering items the roadmap already names}
+
+A hash-based signer (SLH-DSA) behind the same custody interface, for a rotation away from lattice
+assumptions; the evaluation of a newer proof toolkit against the shipped one, gated on its
+stabilising and on the epoch pipeline justifying a rewrite; the epoch pipeline at scale with
+incremental Merkle maintenance and parallel proving; status distribution at content-delivery scale;
+anchor verification in the SDKs; multi-region disaster recovery; the mobile-licence and verifiable-credential
+format bridges, explicitly as formats and not trust models; the physical token and enrolment kit;
+and the external gates that are not the repository's to supply: a penetration test, a cryptographic
+audit, pilots with consenting users, certification, and institutionally independent witnesses.

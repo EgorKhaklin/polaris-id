@@ -1,0 +1,63 @@
+% v2-figures/lifecycle.tex: the token lifecycle state machine, carried over from
+% Version 1 UNCHANGED. ACTIVE at the centre; the five other states on the
+% pentagon. At HEAD the transitions are enforced by a database trigger
+% (trg_token_state_machine), which Version 1 recommended and Version 2 confirms.
+\begin{tikzpicture}[
+  scale=0.78, font=\small,
+  state/.style={draw=navymid, line width=1pt, rounded corners=2pt, minimum width=1.7cm, minimum height=0.85cm,
+    fill=navydark, text=white, font=\bfseries\small, align=center},
+  centerstate/.style={draw=accent, line width=1.2pt, rounded corners=2pt, minimum width=2.0cm, minimum height=0.85cm,
+    fill=accent, text=white, font=\bfseries\small, align=center},
+  termstate/.style={draw=steelgray, line width=1pt, rounded corners=2pt, minimum width=1.7cm, minimum height=0.85cm,
+    fill=steelgray!85, text=white, font=\bfseries\small, align=center},
+  trans/.style={->, draw=navymid, line width=1pt, >={Stealth[length=2.5mm]}},
+  termtrans/.style={->, draw=accent, line width=1pt, >={Stealth[length=2.5mm]}, dash pattern=on 4pt off 2.5pt},
+  lbl/.style={font=\scriptsize\itshape\color{navydark}, inner sep=1pt},
+  leader/.style={draw=steelgray, line width=0.4pt, opacity=0.55, shorten >=1pt, shorten <=1pt},
+]
+\begin{scope}[on background layer]
+  \coordinate (P1) at (90:4);
+  \coordinate (P2) at (162:4);
+  \coordinate (P3) at (234:4);
+  \coordinate (P4) at (306:4);
+  \coordinate (P5) at (18:4);
+  \draw[steelgray, line width=0.4pt, opacity=0.06] (P1) -- (P2) -- (P3) -- (P4) -- (P5) -- cycle;
+  \draw[steelgray, line width=0.3pt, opacity=0.04] (P1) -- (P3) -- (P5) -- (P2) -- (P4) -- cycle;
+  \draw[steelgray, line width=0.4pt, opacity=0.05] (0,0) circle (4);
+  \draw[steelgray, line width=0.3pt, opacity=0.04] (0,0) circle (1.53);
+\end{scope}
+\node[state] (reserve)  at (90:4)  {RESERVE};
+\node[termstate] (expired) at (162:4) {EXPIRED};
+\node[termstate] (lost)    at (234:4) {LOST};
+\node[termstate] (revoked) at (306:4) {REVOKED};
+\node[state] (dormant)  at (18:4)  {DORMANT};
+\node[centerstate] (active) at (0,0) {ACTIVE};
+\draw[trans] (reserve) -- (active);
+\draw[trans] (active)  -- (dormant);
+\draw[termtrans] (active) -- (revoked);
+\draw[termtrans] (active) -- (lost);
+\draw[termtrans] (active) -- (expired);
+\draw[trans] ($(reserve)+(0,1.2)$) -- (reserve) node[lbl, midway, right=2pt] {ISSUED};
+\coordinate (lblActivated)    at (54:2.6);
+\coordinate (lblDeactivated)  at (342:2.6);
+\coordinate (lblRevoked)      at (270:2.4);
+\coordinate (lblLost)         at (198:2.6);
+\coordinate (lblExpired)      at (126:2.6);
+\coordinate (midActivated)    at (90:2.0);
+\coordinate (midDeactivated)  at (18:2.0);
+\coordinate (midRevoked)      at (306:2.0);
+\coordinate (midLost)         at (234:2.0);
+\coordinate (midExpired)      at (162:2.0);
+\node[lbl] (nodeActivated)   at (lblActivated)   {ACTIVATED};
+\node[lbl] (nodeDeactivated) at (lblDeactivated) {DEACTIVATED};
+\node[lbl] (nodeRevoked)     at (lblRevoked)     {REVOKED};
+\node[lbl] (nodeLost)        at (lblLost)        {LOST};
+\node[lbl] (nodeExpired)     at (lblExpired)     {EXPIRED};
+\begin{scope}[on background layer]
+  \draw[leader] (nodeActivated.west)   -- (midActivated);
+  \draw[leader] (nodeDeactivated.west) -- (midDeactivated);
+  \draw[leader] (nodeRevoked.north)    -- (midRevoked);
+  \draw[leader] (nodeLost.east)        -- (midLost);
+  \draw[leader] (nodeExpired.east)     -- (midExpired);
+\end{scope}
+\end{tikzpicture}

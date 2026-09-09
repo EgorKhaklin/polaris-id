@@ -1,0 +1,55 @@
+% v2-figures/town-map.tex: the walled-town plan, with the real component beside
+% every civic name. The analogy describes structure, not political centralism:
+% the second town to the right is another authority with its own hall and its
+% own wall, joined by a road that runs one way.
+\begin{tikzpicture}[
+  wall/.style={draw=navydark, line width=2.2pt, fill=tabstripe},
+  district/.style={draw=navymid, line width=0.7pt, rounded corners=2pt, fill=white, font=\scriptsize, align=center, inner sep=3pt, text width=2.8cm},
+  hall/.style={draw=accent, line width=1.4pt, rounded corners=2pt, fill=accent, text=white, font=\bfseries\scriptsize, align=center, inner sep=4pt},
+  gate/.style={draw=navydark, line width=1pt, fill=gold, font=\tiny\bfseries, align=center, inner sep=2pt},
+  tower/.style={draw=navydark, line width=1pt, fill=navydark, text=white, font=\tiny\bfseries, align=center, inner sep=2.5pt, circle},
+  law/.style={draw=classmark, line width=0.8pt, fill=white, text=classmark, font=\scriptsize\bfseries, align=center, inner sep=4pt, text width=10.4cm},
+  road/.style={draw=steelgray, line width=3pt, double=white, double distance=1pt},
+  civic/.style={font=\tiny\scshape\color{gold}, inner sep=1pt},
+]
+% The laws above the town.
+\node[law] (law) at (0,6.6) {The laws above the town: the vocation and C1--C10 (MISSION.md), enforced in the schema, pinned by 191 checks};
+\draw[flowfaint] (law.south) -- (0,5.5);
+% The wall (schema constraints).
+\draw[wall] (-5.4,-4.8) rectangle (5.4,5.0);
+\node[civic, anchor=south east] at (-1.5,5.15) {the wall: triggers, checks, unique indexes};
+% Districts.
+\node[hall, minimum width=3.2cm] (hall) at (0,1.2) {town hall record\\IdentityToken + TokenSignature};
+\node[district] (work) at (-3.3,3.3) {workshops\\epochs, permissions,\\recovery, duress};
+\node[district] (council) at (3.3,3.3) {council chamber\\{\tiny AgencyAlgorithmAuth,}\\{\tiny IssuerDiscretionPolicy, quotas}};
+\node[district] (arch) at (-3.3,-1.5) {archives\\{\tiny append-only event logs,}\\{\tiny RetentionPolicy}};
+\node[district] (reg) at (3.3,-1.5) {registry office\\Athena views,\\the signed registry,\\the trust list};
+\node[district, text width=3.4cm] (court) at (0,-3.5) {court records\\{\tiny AuditAccessLog, DuressEvent,}\\{\tiny LifecycleArchiveCheckpoint}};
+% Gates on the wall.
+\node[gate] (g1) at (0,5.0) {issuance gate\\uc1\_issue, signing};
+\node[gate] (g2) at (5.4,1.2) {verification gate\\/api/v1/verify};
+\node[gate] (g3) at (0,-4.8) {exchange gate\\/api/v1/exchange};
+\node[gate] (g4) at (-5.4,1.2) {login gate\\auth broker, PKCE};
+% Watchtowers at the corners.
+\node[tower] (t1) at (-5.4,5.0) {W};
+\node[tower] (t2) at (5.4,5.0) {W};
+\node[tower] (t3) at (-5.4,-4.8) {W};
+\node[tower] (t4) at (5.4,-4.8) {W};
+\node[civic, anchor=north west] at (-5.4,-5.2) {W: watchtowers, the transparency logs};
+% Watchers outside the wall.
+\node[extbox, minimum width=2.6cm] (wit) at (-8.5,-3.4) {independent witnesses\\[-1pt]{\tiny cosign heads, gossip,}\\{\tiny refuse a fork}};
+\draw[sees] (wit.east) -- (t3.west);
+\draw[sees] (wit.north east) -- (t1.south west);
+\node[extbox, minimum width=2.6cm] (rp) at (8.5,1.2) {relying party\\[-1pt]{\tiny verifies offline with}\\{\tiny the detached verifier}};
+\draw[flow] (g2.east) -- (rp.west);
+% The second town: another authority, joined by a one-way road.
+\draw[wall, fill=white] (7.2,-4.6) rectangle (10.8,-2.2);
+\node[hall, minimum width=2.4cm, font=\bfseries\tiny] at (9.0,-3.4) {another authority\\its own hall, its own key};
+\draw[road] (5.4,-3.4) -- (7.2,-3.4);
+\node[civic, anchor=south, align=center] at (6.3,-3.1) {road:\\attestation};
+\node[font=\tiny\itshape\color{steelgray}, anchor=north, align=center] at (6.3,-3.7) {one way,\\one context};
+% The holder outside.
+\node[humanbox, minimum width=2.4cm] (holder) at (-8.5,1.2) {holder\\[-1pt]{\tiny wallet file, presentation}};
+\draw[flow] (holder.east) -- (g4.west);
+\node[font=\tiny\itshape\color{steelgray}, anchor=north, text width=3.0cm, align=center] at (-8.5,0.3) {enters by possession; a duress code looks like consent to the coercer};
+\end{tikzpicture}

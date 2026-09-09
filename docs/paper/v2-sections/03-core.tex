@@ -1,0 +1,124 @@
+% 03-core.tex: the credential core.
+\section{The core: one credential, one signature, one person}
+\label{sec:core}
+
+\subsection{What the credential is}
+
+At the centre of Polaris is one row of the table \entity{IdentityToken} and at least one row of
+\entity{TokenSignature}. The token row records a unique \code{token\_value}, a physical serial, the
+person it belongs to, the agency that issued it, the algorithm it was issued under, its predecessor if
+it replaced an earlier token, and its status. The signature row records the issuing agency's ML-DSA
+signature over the SHA3-256 digest of the token value, together with the public key that produced
+it, so that verification is self-contained and survives the retirement of the signing key. A token
+without a signature row cannot exist: a database trigger refuses any write that would leave one
+without a non-deprecated signature. The credential is therefore not a document but a signed claim:
+\emph{this authority issued this token to this person.} \sImpl
+
+What the holder holds is the authenticity pack: the token value, the signature and the issuer's
+public key, exported by the application and kept as a file by the reference wallet
+(\code{scripts/polaris-wallet.py}). Anyone can check the pack with a standard ML-DSA library and no
+Polaris code (Section~\ref{sec:verifiers}). The physical token that Version 1 modelled, a hardware
+card with on-device biometric binding, remains modelled and not manufactured: the schema carries the
+serial, the binding type and the device bindings, and no card exists. \sFut{} for the hardware;
+\sImpl{} for the record.
+
+\subsection{What the credential is not}
+
+The constitution's tenth constraint, C10, states that identity attestation never carries spending
+authority: there is no monetary claim in the schema, and a check fails the build if one appears. The
+reason is stated as a failure mode, not a preference. A credential that is also money inherits
+programmability: every constraint anyone wants to place on spending accretes onto the identity token,
+until an administrative paperwork error becomes an existential bank-balance error, and until the
+system can be told that a person may not buy fuel. The same refusal covers reputation, behaviour and
+profiles. Polaris answers one question, \emph{is this token valid for this context right now}, and
+it declines to answer \emph{should this person be allowed to do X}. That second question belongs to
+the relying party, outside the boundary. \sImpl
+
+\subsection{One active token per person}
+
+\figfile{nucleus}{The core entity geometry, unchanged from Version 1. Seven entities around
+\entity{IdentityToken}: the person who holds it, the agency that issues it, the algorithm that signs
+it, the contexts it may be verified in, and the two append-only event logs it generates. The
+many-to-many relationships resolve to the junction tables \entity{AgencyAlgorithmAuth} and
+\entity{TokenPermission}. This geometry is the constant of the paper: Section~\ref{sec:walls} draws
+the other twenty-nine tables as rings around it.}{fig:nucleus}
+
+A person may hold several provisioned tokens but only one may be \code{ACTIVE}. Two active tokens for
+one person would let one token authorise a transaction and the other repudiate it. The rule is C3,
+and it is enforced by a partial unique index, \code{uq\_one\_active\_per\_person}, on the person's
+identifier where the status is active. Two operators activating two reserve tokens for the same
+holder at the same moment find that exactly one of them succeeds, and the test that proves it runs
+with real threads against a live database (C9). \sImpl
+
+\subsection{The lifecycle}
+
+\figfile{lifecycle}{The token lifecycle machine, unchanged from Version 1. \code{ACTIVE} is the only
+operational state. A token enters at \code{RESERVE}, is activated, and leaves through one of three
+terminal states or into \code{DORMANT} when a successor takes over. At \code{v9.345} the legal
+transitions are enforced by the trigger \code{trg\_token\_state\_machine}, and every transition
+writes a lifecycle event automatically.}{fig:lifecycle}
+
+Version 1 recommended enforcing the transitions in a trigger and left it as future work. At HEAD the
+trigger exists, and a second trigger writes a \entity{TokenLifecycleEvent} row for every status
+change, including a change made by hand from a database shell. Succession is by reference, never by
+overwrite: a replacement token points at its predecessor and the old token stays in the database in
+its terminal state. Lost tokens stay lost, and their data is not erased. \sImpl
+
+\subsection{Entering, leaving and returning}
+
+Three mechanisms surround the core so that the schema cannot be turned against the holder at the
+edges of the lifecycle.
+
+\begin{description}
+  \item[Entering: tiered enrolment.] Every person has an enrolment status drawn from five values,
+    and \code{EXEMPT} is a first-class one: a recognised way to take part in civic life without a
+    token, whether for biometric incompatibility, religious exemption or an alternative path. The
+    asymmetry is deliberate. Recording an exemption is one row; enumerating the not-enrolled is
+    possible but unhelped by any function, and it is audited when done. Nothing is derived from token
+    state, so an administrative revocation never silently becomes a person leaving civic life.
+    \sImpl
+  \item[Leaving: issuer discretion.] The worst failure of an identity system is not a forged token
+    but an authority revoking a population's tokens at scale. A trigger bounds how fast one agency can
+    revoke its own tokens (five percent of its outstanding base in thirty days by default) and above
+    that a co-signer from a different agency is required, recorded in the audit trail. The bound
+    converts a surprise into a trend that reporting can see. It does not stop slow abuse under the
+    ceiling, and says so. \sImpl
+  \item[Returning: the recovery ceremony.] A fire takes the wallet and the reserve together. Recovery
+    is mandatory and is also an impersonation path, so it is made expensive without being made
+    impossible: a two-phase ceremony with a 48-hour cool-down, three independent out-of-band channels,
+    an approver who cannot be the requester, and admin-only completion, each encoded as a check
+    constraint on \entity{RecoveryRequest}. The holder is without identity for the cool-down; the
+    substitute credential a production system would want for that window is not built. \sImpl{}
+    for the ceremony, \sFut{} for the interim credential.
+\end{description}
+
+\subsection{Compulsion: the duress code}
+
+The vocation above the ten constraints is anti-coercion: no person may be compelled to renounce,
+transfer or surrender their identity against their will. The mechanism that gives that sentence
+something to stand on is old and comes from banking: a second secret that looks exactly like
+success to whoever is watching, while an alert goes out through a channel the watcher cannot see.
+A holder may enrol a duress code. When it is presented, the verification proceeds identically on
+every operator-visible surface, the same page, the same flash message, the same event row, and a
+\entity{DuressEvent} row is appended to a table the operator's screens never join, from which a
+pager fires at the highest severity. The comparison is constant-time and the work is paid on both
+paths. \sImpl{} as a tested property of the modelled flow; \sExt{} as a side-channel guarantee,
+because no external party has measured it.
+
+\begin{layercard}{Layer card: the credential core}
+\qa{What it is}{One \entity{IdentityToken} row and its \entity{TokenSignature} rows: a signed claim that an authority issued this token to this person, in a lifecycle with one active state.}
+\qa{Why it exists}{Every other structure in Polaris organises itself around this claim. It is kept as small as possible so that the rest can be bounded.}
+\qa{What it trusts}{The issuing agency's signing key, held behind a custody interface (Section~\ref{sec:signatures}); the schema's constraints.}
+\qa{What it refuses}{Application code as a source of truth: the state machine, uniqueness and audit are decided by the database. Money, reputation and profiles: C10.}
+\qa{What it can see}{The holder's legal name, date of birth and country; the issuing agency; the algorithm; the lifecycle.}
+\qa{What it cannot see}{A biometric template (never stored), a verification graph (Section~\ref{sec:privacy}), a spending history (never modelled).}
+\qa{If it fails}{A forged core is a forged signature, which the two-witness verification and the detached verifier refuse; a duplicated core is refused by the unique index; a rewritten core is refused by the append-only triggers.}
+\qa{Checked by}{\code{check\_c1c10\_objects\_resolve}, the C3 property tests, the concurrency suite, the attack suite's forgery and tamper cases.}
+\qa{Now or later}{Now. It is the part of Polaris that has existed since Version 1.}
+\qa{Inside and outside}{Inside: the person, who exists outside the software. Outside: the wall of constraints (Section~\ref{sec:walls}).}
+\end{layercard}
+
+\analogy{The town hall keeps one register. Each entry says who a person is, which official entered
+it, and under which seal. The register cannot be edited, only appended to; a second entry for the
+same person is refused at the desk; and the seal is one that every reader can check against the
+official's published mark without asking the hall.}

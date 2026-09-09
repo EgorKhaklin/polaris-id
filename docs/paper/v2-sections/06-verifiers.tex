@@ -1,0 +1,73 @@
+% 06-verifiers.tex: independent verification.
+\section{Verification without the issuer: the detached verifier, the SDKs and the conformance contract}
+\label{sec:verifiers}
+
+\subsection{The detached verifier}
+
+\code{scripts/polaris-verify.py} verifies a credential's authenticity pack with only a standard
+ML-DSA library: no Polaris code, no database, no network. It is the one Polaris component whose
+input is chosen by an adversary, because a relying party runs it on whatever a stranger presented,
+and it is the component through which every later protocol artifact is checked: manifests, epoch
+checkpoints, revocation feeds, status bundles, status assertions, transparency heads, receipts,
+timestamps, signed documents, registries, trust lists, presentations. Three independent ML-DSA
+implementations agree on the published vectors: a lattice library, OpenSSL, and a third in the
+TypeScript SDK. \sImpl
+
+The verifier is held \emph{total} against hostile input by a metamorphic fuzzer: for every signed
+type it builds a genuine object, confirms acceptance, then flips bits in the signature and key,
+mutates and drops every signed field, substitutes adversarial values, and feeds each object to every
+other type's verifier, asserting a clean fail-closed rejection with no exception. The fuzzer found
+that the verifier crashed on several classes of malformed input, an integer where a list was
+expected, a hex field of the wrong type, and the fix was a totality contract that converts every
+would-be crash into the reject the verifier already intended. A verifier that raises pushes the
+fail-closed decision onto a caller who may not catch it. \sImpl
+
+An attack suite runs beside it: executable adversaries that try to forge a signature with an
+attacker key, tamper a byte, present a signature against a different token, relabel the placeholder
+as real, or present a revoked token, against the real code. An attack succeeds when a defence fails,
+and the build goes red if any succeeds. A grep proves a line exists; an attack proves a defence holds.
+\sImpl
+
+\subsection{The SDKs and the conformance contract}
+
+A relying party installs one of two verify SDKs, a Python reference and a TypeScript implementation,
+each answering one narrow question about a presented credential, is it authentic and is it
+authoritative right now, and never returning a person's data. Both are held to a language-agnostic
+conformance suite: a runner drives any verifier over standard input and output through the published
+cases, forty-eight at \code{v9.345} across sixteen artifact types, including the composite federation
+trust decision. Passing the suite is what \emph{conformant} means, and the normative wire
+specification (RFC 2119 language, twenty format strings, the exact signed-field list of every
+artifact) is what an implementation importing no Polaris code would build against. \sImpl
+
+That last sentence is the honest boundary of this layer. The specification, the cases and two SDKs
+exist, and a check pins the specification to the signer so a documented field list cannot drift from
+the code. An actual implementation by an external team, from the documents alone, has not happened;
+the roadmap marks it as blocked on an external actor. The conformance suite is the contract. The
+integration is unproven. \sExt
+
+\subsection{Versioning, and the frozen version 1}
+
+Protocol majors live in the format string (\code{polaris-registry/1}), minors are advertised by the
+registry and are never needed to verify, and the negotiation rule is normative: reject an unknown
+major, accept any minor, never emit an unadvertised version, answer an unsupported one with a
+specific error and the supported list. Version 1 of the protocol is frozen under checksums, with the
+detached verifier of \code{v9.317} vendored beside it, and a compatibility suite runs both directions
+on every push: today's verifiers must accept everything version 1 published, and the pinned older
+verifier must never accept what today's suite rejects. \sImpl
+
+\begin{layercard}{Layer card: independent verification}
+\qa{What it is}{A standalone verifier, two SDKs, a conformance runner over published cases, a normative wire specification, a frozen version-1 set with a cross-version suite, a fuzzer and an attack suite.}
+\qa{Why it exists}{A verification the issuer performs asks the relying party to trust the issuer's server. Authenticity has to be decidable by anyone, anywhere, with the network off.}
+\qa{What it trusts}{The published issuer keys the relying party chose to trust (its anchor set); a standard ML-DSA library.}
+\qa{What it refuses}{Any Polaris code or database; any input it cannot parse; any object presented to the wrong type's verifier; any version it was not told about.}
+\qa{What it can see}{The artifact and the anchor set. Nothing else.}
+\qa{What it cannot see}{Whether the credential is still authorized, unless a status artifact is presented with it.}
+\qa{If it fails}{A wrongly accepted mutation fails the fuzzer; a defence that no longer holds fails the attack suite; a drift between specification and signer fails \code{check\_wire\_spec\_matches\_code}; a frozen case that stops verifying fails the compatibility suite.}
+\qa{Checked by}{\code{check\_detached\_verifier}, \code{check\_conformance\_suite}, \code{check\_typescript\_sdk}, \code{check\_verifier\_fuzz}, \code{check\_attacks\_run}, \code{check\_frozen\_v1}.}
+\qa{Now or later}{Now, for the software. The external implementation is later and not ours to do.}
+\qa{Inside and outside}{Inside: the signatures. Outside: the status layer, which answers the question a signature cannot.}
+\end{layercard}
+
+\nextlayer{Signing a credential proves who signed it. It does not prove whether that credential is
+still authorized: the seal on a revoked passport is as genuine as the seal on a valid one. Polaris
+therefore needs status.}

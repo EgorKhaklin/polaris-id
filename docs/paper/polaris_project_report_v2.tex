@@ -1,0 +1,253 @@
+% ============================================================================
+% POLARIS, VERSION 2: THE MAP OF THE SYSTEM
+% A human-readable account of the reference implementation at v9.345.
+% Author: Egor Khaklin
+%
+% Version 1 (polaris_project_report.tex) is the historical database-design
+% report and is preserved unchanged beside this file. Version 2 builds on it:
+% the token-centred geometry, the lifecycle machine and the substrate argument
+% are kept; everything the system has grown since is described from the tree
+% at HEAD, with every capability marked by its actual status.
+%
+% Build: cd docs/paper && pdflatex polaris_project_report_v2.tex (three passes
+% for the table of contents), then restamp rendered-from.txt.
+% ============================================================================
+\RequirePackage{fix-cm}
+\documentclass[11pt,letterpaper]{article}
+
+% === ENCODING & TYPOGRAPHY ===
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{textcomp}
+\renewcommand{\ttdefault}{lmtt}
+\usepackage[expansion=false]{microtype}
+
+% === MATH ===
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% === PAGE GEOMETRY ===
+\usepackage[letterpaper, top=0.85in, bottom=0.85in, left=1.05in, right=1.05in,
+  headheight=13pt, headsep=16pt, footskip=28pt]{geometry}
+
+% === COLORS (the Version 1 palette, unchanged) ===
+\usepackage[dvipsnames,svgnames,table]{xcolor}
+\definecolor{navydark}{HTML}{0C1B2E}
+\definecolor{navymid}{HTML}{1B3A5C}
+\definecolor{navylight}{HTML}{2D5F8A}
+\definecolor{accent}{HTML}{C45B28}
+\definecolor{accentlight}{HTML}{E8793F}
+\definecolor{steelgray}{HTML}{4A5568}
+\definecolor{tabheader}{HTML}{0F1F33}
+\definecolor{tabstripe}{HTML}{F0F4F8}
+\definecolor{classmark}{HTML}{8B0000}
+\definecolor{gold}{HTML}{B8860B}
+\definecolor{goldlight}{HTML}{D4AF37}
+\definecolor{futfill}{HTML}{FBF6E8}
+
+% === HEADERS & FOOTERS ===
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.2pt}
+\fancyhead[L]{\small\color{steelgray}\textsc{Khaklin\,|\,Polaris, Version 2}}
+\fancyhead[R]{\small\color{steelgray}\textsc{v9.345}}
+\fancyfoot[C]{\small\color{steelgray}Page \thepage}
+
+% === SECTION STYLING ===
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{navydark}}{\thesection}{1em}{}[\vspace{-4pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
+\titleformat{\subsection}{\large\bfseries\color{navymid}}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{navymid}}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{13pt}{8pt}
+\titlespacing*{\subsection}{0pt}{8pt}{5pt}
+\titlespacing*{\subsubsection}{0pt}{6pt}{3pt}
+
+% === TABLES, LISTS, FLOATS ===
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xltabular}
+\usepackage[section]{placeins}
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage{float}
+% Floats go to the top or bottom of a text page, never to a float page of their own.
+\renewcommand{\topfraction}{0.9}\renewcommand{\bottomfraction}{0.7}
+\renewcommand{\textfraction}{0.07}\renewcommand{\floatpagefraction}{0.85}
+\usepackage{ragged2e}
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.6em, itemsep=2pt, parsep=1pt, topsep=4pt}
+\setlist[itemize,1]{label=\color{accent}\textbullet}
+\setlist[enumerate]{leftmargin=1.8em, itemsep=2pt, parsep=1pt, topsep=4pt}
+\setlist[description]{itemsep=2pt, parsep=1pt, topsep=4pt, font=\normalfont\bfseries\color{navymid}}
+\usepackage{needspace}
+% A heading never sits alone at the foot of a page: require room for it and a few lines.
+\let\polarisSectionRaw\section
+\renewcommand{\section}{\Needspace{8\baselineskip}\polarisSectionRaw}
+\let\polarisSubsectionRaw\subsection
+\renewcommand{\subsection}{\Needspace{5\baselineskip}\polarisSubsectionRaw}
+\usepackage{adjustbox}
+
+% === LINE- AND PAGE-BREAKING QUALITY ===
+\tolerance=2500
+\setlength{\emergencystretch}{3em}
+\hbadness=2500
+\clubpenalty=10000
+\widowpenalty=10000
+\displaywidowpenalty=10000
+\raggedbottom
+
+% === TIKZ ===
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,backgrounds,fit,shapes.geometric,shapes.misc,decorations.pathreplacing}
+\input{v2-figures/styles}
+
+% === HYPERLINKS ===
+\usepackage[colorlinks=true, linkcolor=navymid, urlcolor=navylight, linktoc=all, hypertexnames=false,
+  pdfauthor={Egor Khaklin},
+  pdftitle={Polaris, Version 2: The Map of the System},
+  pdfsubject={A reference implementation of a post-quantum, issuer-unlinkable, compulsion-resistant identity-token system, described layer by layer},
+  pdfkeywords={identity, post-quantum cryptography, zero-knowledge, federation, transparency logs, database constraints, AI agents, proof of personhood}]{hyperref}
+
+% === CAPTIONS ===
+\usepackage{caption}
+\captionsetup{font={small}, labelfont={bf,color=navymid}, textfont={color=steelgray}, skip=6pt}
+
+% === CODE LISTINGS ===
+\usepackage{listings}
+\usepackage{graphicx}
+\lstset{basicstyle=\ttfamily\footnotesize, columns=fullflexible, keepspaces=true, upquote=true, breaklines=true,
+  breakatwhitespace=true, postbreak=\mbox{{\color{steelgray}\scriptsize$\hookrightarrow$}\enspace}, frame=single,
+  rulecolor=\color{navylight}, framesep=4pt, backgroundcolor=\color{tabstripe}, keywordstyle=\color{navymid}\bfseries,
+  commentstyle=\color{steelgray}\itshape, stringstyle=\color{accent}, showstringspaces=false, tabsize=2,
+  aboveskip=8pt plus 2pt, belowskip=8pt plus 2pt}
+
+% === TABLE OF CONTENTS ===
+\usepackage{tocloft}
+\renewcommand{\cftsecfont}{\bfseries\color{navydark}}
+\renewcommand{\cftsubsecfont}{\color{navymid}}
+\renewcommand{\cftsecpagefont}{\bfseries\color{navymid}}
+\renewcommand{\cftsubsecpagefont}{\color{steelgray}}
+\setlength{\cftbeforesecskip}{1pt}
+\setlength{\cftbeforesubsecskip}{0pt}
+\setcounter{tocdepth}{1}
+\setlength{\cftbeforetoctitleskip}{-\baselineskip}
+\setlength{\cftaftertoctitleskip}{2pt}
+
+% === THE VERSION 2 VOCABULARY ===
+% Status marks. Every capability in this paper carries one of the four, so a
+% reader never has to guess whether a sentence describes code that runs today.
+\newcommand{\statusmark}[3]{{\fboxsep=1.5pt\fboxrule=0.5pt\fcolorbox{#1}{#2}{\scriptsize\scshape\color{#3}\strut}}}
+\newcommand{\sImpl}{{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navydark}{navydark}{\scriptsize\scshape\color{white}implemented}}}
+\newcommand{\sExp}{{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{accent}{accent}{\scriptsize\scshape\color{white}experimental}}}
+\newcommand{\sExt}{{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{white}{\scriptsize\scshape\color{gold}external validation required}}}
+\newcommand{\sFut}{{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{futfill}{\scriptsize\scshape\color{navydark}proposed}}}
+% A name in the code.
+% Code names may break after an underscore, so a long check name never overflows a narrow column.
+\DeclareRobustCommand{\code}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
+\DeclareRobustCommand{\entity}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
+% The town analogy, always returned from.
+\newcommand{\analogy}[1]{\par\vspace{4pt}\noindent{\fboxsep=6pt\colorbox{tabstripe}{\parbox{\dimexpr\textwidth-12pt}{\small{\scshape\color{gold}in the town}\enspace #1}}}\par\vspace{4pt}}
+% Why the next layer exists: the causal step.
+\newcommand{\nextlayer}[1]{\par\vspace{4pt}\noindent{\color{accent}\rule[-3pt]{2.5pt}{13pt}}\hspace{7pt}\parbox[t]{\dimexpr\textwidth-12pt}{\small\itshape #1}\par\vspace{4pt}}
+% A layer card: the same questions asked of every component.
+\newenvironment{layercard}[1]{%
+  \par\vspace{6pt}%
+  \noindent{\color{navydark}\bfseries\small #1}\par\vspace{2pt}\nopagebreak%
+  \footnotesize\rowcolors{1}{tabstripe}{white}%
+  \setlength{\LTleft}{0pt}\setlength{\LTright}{0pt}\setlength{\LTpre}{2pt}\setlength{\LTpost}{6pt}%
+  \begin{longtable}{>{\bfseries\color{navymid}\RaggedRight\arraybackslash}p{1.35in} >{\RaggedRight\arraybackslash}p{\dimexpr\textwidth-1.35in-4\tabcolsep-2pt}}
+  \toprule\endfirsthead
+  \toprule\endhead
+  \endfoot
+  \bottomrule\endlastfoot}{\end{longtable}\normalsize}
+\newcommand{\qa}[2]{#1 & #2 \\}
+% A figure from the v2-figures directory, never wider than the text.
+\newcommand{\figfile}[3]{\begin{figure}[!htb]\centering\adjustbox{max width=\textwidth,center}{\input{v2-figures/#1}}\caption{#2}\label{#3}\end{figure}}
+\newcommand{\thead}[1]{\textbf{\color{white}\small #1}}
+
+% ============================================================================
+\begin{document}
+
+% ---------------------------------------------------------------- TITLE PAGE
+\begin{titlepage}
+\thispagestyle{empty}
+\begin{center}
+\vspace*{0.8in}
+{\footnotesize\scshape\color{steelgray} The Identity Token System \enspace$\cdot$\enspace Version 2}
+\vspace{0.55in}
+
+\includegraphics[height=7.2cm]{../../site/polaris_logo_clean.png}
+\vspace{0.55in}
+
+{\fontsize{56}{60}\selectfont\scshape\color{navydark} Polaris}
+\vspace{0.18in}
+
+{\fontsize{12}{16}\selectfont\itshape\color{navymid} Fixus inter mutabilia}
+\vspace{0.35in}
+
+{\fontsize{13}{17}\selectfont\color{navydark} The map of the system}
+\vspace{0.12in}
+
+{\small\color{steelgray} A reference implementation of a post-quantum, issuer-unlinkable, compulsion-resistant identity-token system,\\ read from the centre outward, at version 9.345}
+\vspace{0.5in}
+
+{\color{gold}\rule{0.85in}{0.5pt}}
+\vspace{0.28in}
+
+{\fontsize{16}{19}\selectfont\color{navydark} Egor Khaklin}
+\vfill
+{\footnotesize\scshape\color{steelgray} Seton Hill University \enspace$\cdot$\enspace September 2026}
+\vspace{0.6in}
+\end{center}
+\end{titlepage}
+
+% ---------------------------------------------------------------- FRONT MATTER
+\pagenumbering{roman}
+\setcounter{page}{1}
+\input{v2-sections/00-about}
+\newpage
+{\color{navydark}\Large\bfseries Contents}\\[2pt]
+{\color{navymid}\rule{\textwidth}{0.8pt}}
+\vspace{4pt}
+\renewcommand{\contentsname}{}
+\tableofcontents
+\newpage
+
+% ---------------------------------------------------------------- BODY
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{v2-sections/01-problem}
+\input{v2-sections/02-reading}
+\input{v2-sections/03-core}
+\input{v2-sections/04-walls}
+\input{v2-sections/05-signatures}
+\input{v2-sections/06-verifiers}
+\input{v2-sections/07-authorization}
+\input{v2-sections/08-privacy}
+\input{v2-sections/09-use}
+\input{v2-sections/10-federation}
+\input{v2-sections/11-transparency}
+\input{v2-sections/12-institutions}
+\input{v2-sections/13-operations}
+\input{v2-sections/14-cognition}
+\input{v2-sections/15-senses}
+\input{v2-sections/16-boundaries}
+\input{v2-sections/17-agents}
+\input{v2-sections/18-research}
+\input{v2-sections/19-limitations}
+\input{v2-sections/20-conclusion}
+
+% ---------------------------------------------------------------- APPENDICES
+\appendix
+\renewcommand{\thesection}{\Alph{section}}
+\titleformat{\section}{\Large\bfseries\color{navydark}}{Appendix \thesection}{1em}{}[\vspace{-4pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
+\input{v2-sections/A-status}
+\input{v2-sections/B-layers}
+\input{v2-sections/C-counts}
+\input{v2-sections/D-glossary}
+\input{v2-sections/E-from-v1}
+
+\end{document}

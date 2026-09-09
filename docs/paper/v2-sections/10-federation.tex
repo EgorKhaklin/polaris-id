@@ -1,0 +1,96 @@
+% 10-federation.tex: independent authorities.
+\section{Federation: independent authorities that recognise one another}
+\label{sec:federation}
+
+\subsection{Why there is no centre}
+
+Two shapes were possible. A central instance holds every person's identity and every agency's
+tokens under one trust root, with agencies as tenants. A federated shape gives each issuing
+authority its own instance and its own signing key, records cross-authority trust explicitly, and
+lets a relying party verify against published keys with no central service in the path. The
+decision record chooses the second and states that it is not a free choice: the constitution names
+the federation trust graph as load-bearing, says no agency holds a monopoly, and refuses
+population-scale aggregation structurally. A central instance is a monopoly by construction and a
+single store to seize, subpoena or mine. The federated shape is deliberately the more expensive one;
+its cost is the inter-authority protocol, and the cost is accepted. \sImpl
+
+\subsection{Trust is a row, not a chain}
+
+An attestation is one row of \entity{AgencyTrustAttestation}: \emph{verifying agency V accepts
+issuing agency I in context C, until a date}. Verification across agencies succeeds if and only if
+exactly one active row matches the verifier, the issuer and the context. The lookup is a single
+non-recursive query. It never computes a closure, so V trusting I never implies V trusts what I
+trusts; cycles cannot arise because nothing walks the graph; and an operator who wants multi-hop
+trust declares every hop, so the audit trail holds every decision rather than the inputs to an
+inference. Self-attestation is refused by a check constraint. Revocation sets a date and a reason
+together, once, and looks forward: events recorded while the edge was active are not invalidated.
+\sImpl
+
+One limit is named rather than glossed. The row records which Polaris operator created the
+attestation; it is not a cryptographic signature from the attesting agency. Agency-level signing of
+attestations is a migration the schema is shaped for and a key-management problem the readiness
+ledger assigns to a deploying organisation. \sExt
+
+\figfile{federation}{Two authorities and one directional attestation. B attests A's key in one
+context; a relying party that trusts B accepts A's credential in that context, offline, from B's
+manifest and A's revocation feed. A also trusts C, and that gives B nothing: trust is never a
+closure. In CI this runs as two independent instances over HTTP under a mixed pair of parameter
+sets.}{fig:federation}
+
+\subsection{The three signed objects an authority publishes}
+
+A relying party needs three things from a foreign authority, and all three are signed views over
+append-only tables, published at short-lived endpoints and consumed offline by the detached
+verifier. The federation manifest carries the authority's own anchors, every key it has ever used
+with its real status, and the attestations it has made, each with the attested key. The epoch
+checkpoint is its commitment to the latest point on its epoch chain. The revocation feed is the set
+of revoked leaves. A manifest must be self-consistent, signed by one of the active anchors it
+declares, so a stranger's key cannot sign one; authentic, under two witnesses; fresh, within a window
+the consumer caps; and trusted, from an authority whose anchor the relying party chose. The
+cross-authority decision then reads: accept if and only if the credential's signature is genuine,
+the trusted manifest attests to that signing key in the presented context, and the issuer's feed,
+fail-closed, does not list the credential. \sImpl
+
+A holder can also prove membership in a foreign authority's epoch in zero knowledge. The proof
+already carries the epoch root as a public input; the root already travels the federation signed in
+the checkpoint. The decision composes the two: trust the foreign checkpoint through the graph to
+obtain a trusted root, require the proof to bind to that root, epoch and context, then check the
+proof by shelling to the prover binary as a local subprocess, with no network. If the binary is
+absent the verifier abstains, which is never a false accept. The verdict names an authority and a
+decision, never a token. \sImpl
+
+\subsection{Two instances, and what they prove}
+
+A dedicated CI job boots two independent instances as two authorities, each with its own database
+and its own real ML-DSA root, talking only over HTTP, and drives the whole matrix: cross-verification
+from a fetched manifest, attestation revocation flipping the decision, epoch checkpoints and
+revocation feeds fetched and verified over the wire, a key compromise recorded on one side reversing
+the other's acceptance, the exchange gateway, the timestamp service read out of a fetched registry,
+the broker's login, document signing through the wallet, and a mixed pair of parameter sets
+(ML-DSA-87 on one side, ML-DSA-65 on the other). It is red on any wrong decision. \sImpl
+
+What the job proves is that the protocol works between two instances of this code base run by one
+author on one machine. It does not prove institutional independence, and it does not prove that an
+independent implementation, written by someone else from the specification, interoperates. The
+first requires deployment by institutions that are not the author. The second requires an external
+team, and has not happened. The repository draws this line itself: protocol independence,
+independently operated institutions and independent third-party implementations are three different
+claims, and only the first is demonstrated. \sExt
+
+\begin{layercard}{Layer card: federation}
+\qa{What it is}{Per-authority roots, directional per-context attestations, the signed manifest, epoch checkpoint and revocation feed, the aggregate status bundle, cross-authority zero-knowledge membership, and the two-instance drill.}
+\qa{Why it exists}{No agency may hold a monopoly, and no single store of every person may exist; yet a relying party must be able to accept a credential issued elsewhere.}
+\qa{What it trusts}{The anchors the relying party itself chose; the append-only tables the signed objects are views over.}
+\qa{What it refuses}{Transitive trust; a central service in the verification path; a manifest not signed by its own declared anchor; an aggregator's word for a member's status; a callback the issuer could log.}
+\qa{What it can see}{Published trust data: keys, attestations, epoch roots, revoked leaves. No person.}
+\qa{What it cannot see}{The active population of any authority; who verified whom.}
+\qa{If it fails}{A forged manifest fails self-consistency; a forked epoch chain or a rolled-back feed is non-repudiable evidence; a compromised issuer key is retired from an instant by a trust list the issuer does not control.}
+\qa{Checked by}{\code{check\_federation\_topology}, \code{check\_inter\_authority\_protocol}, \code{check\_epoch\_revocation\_propagation}, \code{check\_cross\_authority\_zk}, \code{check\_federation\_two\_instances}, \code{check\_exchange\_trust\_directional}.}
+\qa{Now or later}{Now, as a protocol between instances. Independent institutions and implementations are later, and are not ours to supply.}
+\qa{Inside and outside}{Inside: use. Outside: transparency, because a signed history can still be told differently to different people.}
+\end{layercard}
+
+\nextlayer{Signed federation objects prove what an authority said. A dishonest authority can still
+say different things to different observers, publishing one epoch chain to an auditor and another to
+a relying party. Polaris therefore needs transparency: a way for observers to prove that history only
+ever grew, and to compare notes.}

@@ -1,0 +1,72 @@
+% 19-limitations.tex: current limitations and what external validation is required.
+\section{Current limitations and the external validation still required}
+\label{sec:limitations}
+
+The repository's readiness ledger opens with one line, and this paper repeats it as its own bound:
+at \code{v9.345} Polaris is not production-ready for real identity data. Every engineering gap the
+ledger enumerated is closed and pinned by a check; what remains is not buildable in the repository.
+The list below separates what has not been done from what cannot be done by the author.
+
+\subsection{Decisions only a deploying organisation can make}
+
+Nine decisions must be recorded for a named deployment before real data could be held: a legal
+basis, impact assessment and regulator approval; the signing-key custody driver and who holds the
+key; the high-availability topology and its hosts; encryption at rest and its key custodian; the
+off-site backup target and schedule; the alerting backend, the on-call rotation and who receives the
+duress page; the right-to-erasure policy; the retention schedule per class, with the counsel who says
+the number satisfies the statute; and an independent penetration test with a threat-model sign-off.
+Polaris records each decision and its justification; it does not know the law. \sExt
+
+\subsection{What is not built}
+
+\begin{itemize}
+  \item The physical token is modelled, not manufactured; the enrolment kit, the card profile and
+    the verifier device are roadmap rows.
+  \item No hardware security module has been used; the PKCS\#11 driver is proven against a software
+    token, and the lattice library is not FIPS-validated.
+  \item The profile is single-region; multi-region recovery, status distribution at content-delivery
+    scale, and the epoch pipeline at national scale are not built.
+  \item A hash-based signer is registered and not wired. Two internal transport hops, the
+    certificate signatures and today's operator authenticators remain classical.
+  \item The membership prover runs on the host; there is no holder-side key, no on-device proving,
+    no scoped nullifier, no pairwise or blinded presentation. The interim credential during a
+    recovery cool-down is not built. Attestations are recorded by an operator, not cryptographically
+    signed by the attesting agency.
+  \item Anchor verification for timestamps lives in the detached verifier only; the SDKs verify a
+    timestamp and its head as artifacts and not its inclusion or witnessing.
+  \item The one audit-of-record instance not fully enforced at the schema, \entity{RecoveryRequest},
+    rests on procedure discipline.
+\end{itemize}
+
+\subsection{What has not been validated by anyone else}
+
+\begin{itemize}
+  \item No external penetration test, cryptographic audit, red team, bug bounty or certification
+    has occurred. The scope document for the engagement exists; no engagement has been commissioned.
+  \item No pilot with consenting users has run; the data has always been notional.
+  \item No external team has implemented the protocol from the specification and conformance suite
+    alone; the suite is the contract and the integration has not happened.
+  \item No institutionally independent witness watches any log; the witnesses in the record are
+    processes in a drill. Two federated instances are two instances of one code base run by one
+    author.
+  \item The circuit over the proof library has had no external review, and the concrete bit
+    security of the shipped proof configuration has not been independently derived.
+  \item The duress path is a tested property of the modelled flow, not an audited side-channel
+    guarantee; long-run frequency analysis is an accepted residual.
+  \item The repository's own thesis, that a stranger can read it cold and correctly infer what it
+    needs, was never tested by a stranger before its deadline and is recorded as inconclusive, with
+    the strong claim retired.
+\end{itemize}
+
+\subsection{What the numbers are}
+
+Every performance number in this paper is single-node on one laptop, or a simulation at a stated
+scale factor, or a projection that the repository labels as one. No production cluster has been
+measured. The national planning targets are targets.
+
+\subsection{Documentation that lags the code}
+
+Researching this version found a few places where the repository's own prose is behind its code
+or its history; they are recorded in the author's notes that accompany this version rather than
+fixed silently. Where this paper and any repository document disagree, the paper followed the code
+at \code{v9.345} and says so in the note.

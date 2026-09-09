@@ -1,0 +1,45 @@
+% C-counts.tex: the numbers, and how each was measured.
+\section{Counts at v9.345, and how they were measured}
+\label{app:counts}
+
+Every count in this paper was taken from the tree at tag \code{v9.345} (commit \code{c20a3d4},
+9 September 2026) by the command beside it, not copied from an earlier document. Where the
+repository's own stamped number differs in kind (a test count measured at an earlier version), the
+difference is stated.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash}p{2.1in} >{\raggedleft\arraybackslash}p{0.6in} >{\RaggedRight\arraybackslash}X}
+\caption{Counts at HEAD and their method.}\label{tab:counts}\\
+\toprule
+\rowcolor{tabheader}\thead{Quantity} & \thead{Count} & \thead{Method} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Quantity} & \thead{Count} & \thead{Method} \\
+\midrule
+\endhead
+\multicolumn{3}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+Canonical tables in \code{01\_schema.sql} & 36 & The file declares 40 \code{CREATE TABLE} statements, of which four are the default partition children of the four partitioned event tables. A migrated deployment holds 43 tables. \\
+Triggers in \code{06\_triggers.sql} & 26 & \code{grep -c 'CREATE TRIGGER'} \\
+Audit-of-record instances & 13 & The table in \code{docs/design/audit-of-record.md}, plus the partially enforced \entity{RecoveryRequest} \\
+Invariant checks & 191 & \code{grep -c '\^{}def check\_' polaris\_checks/checks.py}; each has a detection test in \code{test\_checks.py} \\
+Application routes & 119 & \code{grep -c '\^{}@app.route(' polaris\_web/app.py} \\
+CI jobs in \code{ci.yml} & 18 & The job keys of the workflow; two more workflows run monthly and weekly \\
+Signed wire formats in the specification & 20 & Distinct \code{polaris-*/1} strings in \code{docs/reference/WIRE-SPEC.md} \\
+Conformance cases & 48 & \code{len(cases)} in \code{conformance/cases.json}; the frozen version-1 set holds 44 \\
+Drill scripts & 35 & Files matching \code{scripts/polaris-*drill.*} \\
+Tagged versions & 292 & \code{git tag}, from \code{v9.30} (16 May 2026) to \code{v9.345} (9 September 2026) \\
+Test functions defined & 1,048 & \code{grep -c 'def test\_'} across the product, CLI, check-layer and SDK suites; a definition count, not a run count \\
+Product tests passing, as stamped by the README & 755 & Measured at \code{v9.332} on the reference machine; 15 skip without optional backends \\
+Crypto witness tests, as stamped & 84 of 89 & Measured at \code{v9.332}; 5 need a PKCS\#11 token or a KMS key and run in CI \\
+\end{xltabular}
+}
+
+The paper's performance numbers are those of Table~\ref{tab:perf}, each with the version that
+measured it. The reference machine throughout the repository is an Apple Silicon laptop with eight
+cores and sixteen gigabytes of memory.

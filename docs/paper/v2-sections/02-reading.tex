@@ -1,0 +1,53 @@
+% 02-reading.tex: how to read the map.
+\section{How to read this map}
+\label{sec:reading}
+
+Polaris is not one enormous table or one enormous server. It is a very small credential core with
+deliberately bounded structures arranged around it, each of which constrains, protects, observes,
+verifies, records or limits something about the structure inside it. The paper reads outward from
+the core, ring by ring (Figure~\ref{fig:core-to-shell}), and the reader should be able to zoom:
+from the person, to the credential, to the cryptography that authenticates it, to the schema rules
+that bound it, to the authority that issued it, to the parties that rely on it, to the federation of
+authorities, to the witnesses that watch them, to institutional exchange, to the operations that
+keep it alive, to the society it sits inside, and to the environment of software agents it is
+preparing for.
+
+\figfile{core-to-shell}{The concentric map of Polaris. The core is one credential record and its
+signature. Each ring names the actual components on it, and the reading order of the paper follows
+the rings outward. The outermost ring is dashed because part of it does not yet exist: cognition
+and boundaries are present, the agent environment is a proposal.}{fig:core-to-shell}
+
+\subsection{The questions asked of every layer}
+
+For each major component the paper answers the same questions, in a card of the form used
+throughout. What is this? Why does it exist? What problem does it solve? What does it trust? What
+does it refuse to trust? What can it see? What is it deliberately prevented from seeing? What happens
+if it fails? What part of Polaris checks it? Is it needed now, or is it preparation for a future
+environment? How does it connect to the layer inside it and the layer outside it? A reader who can
+answer those questions for every ring has the mental model this paper exists to build.
+
+\subsection{The town}
+
+\analogy{The credential record is the register kept in the town hall: one entry per person, the
+claim that everything else is organised around. The wall is the schema: triggers, check constraints
+and unique indexes that decide which states may exist at all, and which bind every visitor, every
+official and every restore from backup alike. The gates are the endpoints through which a claim
+enters or leaves: issuance, verification, login, exchange. The watchtowers are the transparency logs,
+and the witnesses stand outside the wall, cosigning what the towers publish and shouting when two
+towers disagree. Other towns are other authorities, each with its own hall and its own key, joined by
+roads that run in one direction and for one purpose. Above everything stand laws that the town itself
+cannot repeal by a vote of its officials.}
+
+The map of the town, with the technical name beside every civic one, is Figure~\ref{fig:town-map}
+in Section~\ref{sec:walls}. The analogy will recur in a shaded box like the one above, and every
+recurrence is followed by the mechanism it stands for.
+
+\subsection{Trust and refusal}
+
+The most useful habit for reading Polaris is to ask, of every layer, what it refuses to take on
+faith from the layer below. The schema refuses to trust the application. The detached verifier
+refuses to trust the issuer's server. The second witness refuses to trust the first implementation.
+The relying party refuses to trust a transitive chain of authorities. The witness refuses to trust
+the log's own head. The check layer refuses to trust a check that cannot detect its own violation.
+Appendix~\ref{app:layers} tabulates the refusals as a ladder; Sections~\ref{sec:core} through
+\ref{sec:operations} explain each one.

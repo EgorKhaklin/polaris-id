@@ -1,0 +1,65 @@
+% A-status.tex: every major capability with its status mark and the check that pins it.
+\section{Capability status at v9.345}
+\label{app:status}
+
+The table answers, for every major subsystem, whether it runs, what limits it, and which invariant
+check fails the build if it stops being true. The marks are those of the front matter.
+
+{\scriptsize
+\setlength{\tabcolsep}{3.5pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash}p{1.55in} >{\RaggedRight\arraybackslash}p{1.75in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.3in}}
+\caption{Capability status. A row carrying two marks runs today and still requires external validation for the stronger claim.}\label{tab:status}\\
+\toprule
+\rowcolor{tabheader}\thead{Capability} & \thead{Status} & \thead{Limit stated by the repository} & \thead{Pinned by} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Capability} & \thead{Status} & \thead{Limit stated by the repository} & \thead{Pinned by} \\
+\midrule
+\endhead
+\midrule\multicolumn{4}{r}{\scriptsize\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+Schema constraints, C1--C10 & \sImpl & The database owner is outside the threat model & \code{check\_c1c10\_objects\_resolve} \\
+Append-only audit of record (13 instances) & \sImpl & \entity{RecoveryRequest} rests on procedure discipline & \code{check\_aor\_append\_only\_triggers} \\
+Retention as data with a 365-day floor & \sImpl & Archive and purge remain deliberate operator steps & \code{check\_retention\_engine} \\
+ML-DSA-65 and ML-DSA-87 signing & \sImpl & Placeholder profile in development; SLH-DSA registered, not wired & \code{check\_pqc\_signing\_wired} \\
+Two-witness verification, sampled at use & \sImpl & Catches divergence, not a shared misreading & \code{check\_pqc\_second\_witness}, \code{check\_verify\_witness\_sampling} \\
+Key custody: file, PKCS\#11, KMS & \sImpl{} \sExt & Software token in CI, no hardware module & \code{check\_key\_custody\_abstraction} \\
+Key register and signed trust list & \sImpl & Rotation of a live key file or slot is an operator ceremony & \code{check\_trust\_lifecycle} \\
+Detached verifier, fuzzed and attacked & \sImpl & Needs the prover binary for the zero-knowledge path only & \code{check\_detached\_verifier}, \code{check\_verifier\_fuzz}, \code{check\_attacks\_run} \\
+Python and TypeScript SDKs, conformance suite & \sImpl{} \sExt & No external implementation from the specification & \code{check\_conformance\_suite}, \code{check\_typescript\_sdk} \\
+Frozen version 1, cross-version suite & \sImpl & & \code{check\_frozen\_v1} \\
+Relying-party verify API & \sImpl & Client-credentials only; mutual TLS deferred & \code{check\_relying\_party\_api} \\
+Signed status assertion, offline authorization & \sImpl & The revoked-but-valid window is the cost & \code{check\_offline\_verification} \\
+Epoch checkpoints, revocation feeds, status bundle & \sImpl & Distribution at content-delivery scale not built & \code{check\_epoch\_revocation\_propagation}, \code{check\_federation\_status\_bundle} \\
+Zero-knowledge membership proof, second witness & \sImpl{} \sExt & No external audit; prover on the host; no nullifier & \code{check\_zk\_tree\_depth\_synced}, the witness differential \\
+Issuer-side unlinkable verification records & \sImpl & Scoped to zero-knowledge mode & the C2 CHECK, the redaction suite \\
+Cross-verifier unlinkability & not implemented & A permanent, documented property & the README states it \\
+Wallet protocol, presentations, QR framing & \sImpl & No native clients, no browser bridge & \code{check\_wallet\_presentation} \\
+Auth broker with registered policy & \sImpl & No session product, no consent screen & \code{check\_auth\_broker}, \code{check\_broker\_policy\_bound} \\
+Federation: roots, attestations, manifests & \sImpl{} \sExt & Attestations operator-recorded; two instances by one author & \code{check\_federation\_topology}, \code{check\_federation\_two\_instances} \\
+Cross-authority zero-knowledge & \sImpl & Abstains without the binary; issuer bound by root & \code{check\_cross\_authority\_zk} \\
+Transparency logs, monitor & \sImpl & A monitor alone cannot see a split view & \code{check\_transparency\_log} \\
+Witnesses, gossip, equivocation proof & \sImpl{} \sExt & Witnesses are drill processes; independence is a deployment & \code{check\_transparency\_gossip} \\
+External-ledger publication & \sImpl{} \sFut & File backend only; chain drivers declared & \code{check\_transparency\_publication} \\
+Signed registry & \sImpl & & \code{check\_registry} \\
+Exchange gateway and receipts & \sImpl & JSON bodies; no streaming; the responder's own instance only & \code{check\_exchange\_gateway}, \code{check\_exchange\_receipt} \\
+Timestamp authority, optional anchoring & \sImpl & Anchor verification not in the SDKs & \code{check\_timestamp\_authority}, \code{check\_timestamp\_transparency} \\
+Document signing, long-term validation & \sImpl & Notarial model; no holder key & \code{check\_document\_signing}, \code{check\_ltv\_timestamp\_trust} \\
+Protocol versioning, algorithm agility & \sImpl & PKCS\#11 and KMS drivers ML-DSA-65 only & \code{check\_protocol\_versioning}, \code{check\_algorithm\_migration} \\
+HA, replicas, partitioning, DR, chaos, rolling deploys & \sImpl & Ephemeral CI hosts; single region & \code{check\_ha\_automation} and its siblings \\
+Post-quantum TLS edge & \sImpl & Opportunistic; internal hops classical & \code{check\_edge\_pq\_kex} \\
+Abuse controls, session and origin hardening, WebAuthn MFA & \sImpl & Authenticators classical until hardware ships & \code{check\_abuse\_controls}, \code{check\_session\_origin\_hardening} \\
+Atlas & \sImpl & & \code{check\_atlas\_console}, the C8 caps \\
+Athena & \sImpl & Read-only; no person node by five checks & \code{check\_athena\_no\_person} \\
+Metis (learning the system) & \sFut & Assessment required before code & \\
+Myrmex (stigmergic debugging) & \sFut & Proposed in this paper & \\
+Proof of personhood, agent delegation & \sFut & Needs a nullifier, a holder key, a new presentation layer & \\
+Hardware token, enrolment kit & \sFut & Roadmap phase & \\
+Pilots, certification, external audit & \sExt & External actors & \\
+\end{xltabular}
+}
+

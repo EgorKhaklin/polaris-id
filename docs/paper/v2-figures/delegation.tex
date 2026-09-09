@@ -1,0 +1,23 @@
+% v2-figures/delegation.tex: a PROPOSED delegation chain from a human to an AI
+% agent to a service. Nothing in this figure exists in the repository today;
+% it is drawn in the future style (dashed gold) except the one box that exists.
+\begin{tikzpicture}
+  \node[humanbox, minimum width=3.4cm] (h) at (0,0) {Human\\[-1pt]{\mdseries\scriptsize holds the foundational credential}};
+  \node[corebox, minimum width=3.4cm] (c) at (0,-2.1) {Polaris credential\\[-1pt]{\mdseries\scriptsize exists today: ML-DSA-signed, one active per person}};
+  \node[futbox, minimum width=3.8cm, text width=3.5cm] (g) at (6.0,-1.05) {Scoped grant (proposed)\\[-1pt]{\scriptsize signed by the holder's key: actions, limits, expiry, revocation handle}};
+  \node[futbox, minimum width=3.4cm] (a) at (11.6,-1.05) {AI agent (proposed)\\[-1pt]{\scriptsize acts only within the grant}};
+  \node[extbox, minimum width=3.6cm] (s) at (11.6,-3.9) {Service\\[-1pt]{\scriptsize verifies the chain offline}};
+  \draw[flow] (h) -- (c);
+  \draw[flowfut] (c.east) -- node[faint, below, sloped] {issues} (g.west);
+  \draw[flowfut] (g) -- node[faint, above] {presents} (a);
+  \draw[flowfut] (a) -- node[faint, right] {acts} (s);
+  \node[anchor=north west, font=\scriptsize, text=navydark, text width=8.0cm, align=left] at (-1.7,-3.3) {
+    \textbf{What the service must be able to check:}\\
+    1. the agent's grant is genuine and unexpired;\\
+    2. the grant was issued by a valid principal, without learning who;\\
+    3. this exact action is inside the delegated scope;\\
+    4. the grant has not been revoked, without the human's credential being revoked;\\
+    5. it learns nothing more than the four answers above.};
+  \node[anchor=north west, font=\scriptsize, text=classmark, text width=5.6cm, align=left] at (7.8,-5.0) {
+    Open problems the repository does not solve: a holder-side key (the model is issuer-centric), a per-service pairwise handle, and a revocation path scoped to the grant.};
+\end{tikzpicture}

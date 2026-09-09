@@ -1,0 +1,90 @@
+% 11-transparency.tex: watching the watchers.
+\section{Watching the watchers: logs, witnesses and the split view}
+\label{sec:transparency}
+
+\subsection{The gap after anchoring}
+
+Polaris periodically commits a batch of audit rows to a Merkle root and records the root in an
+append-only table, so that an outside verifier can prove that the history under a root has not been
+revised since. That leaves one gap. A single root proves the rows under it; it does not prove that
+the operator did not later discard a root and publish a different one in its place. A transparency
+log closes the gap by committing to the whole sequence of roots and letting anyone prove that the
+sequence only ever grew. \sImpl
+
+\subsection{The log}
+
+The log's entries are the anchor roots in append order; nothing new is stored, because the
+underlying table is already append-only. Over those entries the application builds a Merkle tree in
+the style of Certificate Transparency (RFC 6962), with SHA3-256 and distinct prefixes for leaves and
+interior nodes so that one can never be presented as the other. It publishes a signed tree head,
+the log's commitment to its entire history at a size; a consistency proof that the size-$m$ tree is
+a prefix of the size-$n$ tree, which exists only if the first $m$ entries were never reordered,
+rewritten or dropped; an inclusion proof for any entry; and the entries themselves, so that a
+monitor can replicate the log and recompute everything. The same machinery publishes two more logs:
+the hashes of minted exchange receipts, and the hashes of anchored timestamps. There is no personal
+data in any of it. \sImpl
+
+\subsection{The monitor, and what it cannot see}
+
+A monitor is a standalone program anyone runs. It keeps one piece of state, the last head it
+accepted; each cycle it fetches the current head, verifies the signature against a key it was given
+out of band, fetches a consistency proof from its last head to the new one, and either records the
+new head or alerts on a rewritten entry, a fork, a shrunken tree, a head signed by the wrong key, or
+a timestamp that went backwards. What it proves is consistency: the operator cannot rewrite history
+without every monitor that saw the old head detecting it. What it cannot prove on its own is that
+two monitors were shown the same head at the same size. A log can show one observer a private fork
+of history. \sImpl
+
+\figfile{transparency}{The log, the monitor, the witnesses, the gossip pool and the equivocation
+proof. The log publishes a signed head and proofs. A monitor proves the log only appended. Witnesses
+cosign heads they found consistent, a relying party requires a threshold of them on the exact head,
+and witnesses gossip the heads they were shown; two log-signed heads of the same size with different
+roots are a non-repudiable proof that the log lied. Heads can also be published into an external
+append-only ledger that returns a receipt.}{fig:transparency}
+
+\subsection{Witnesses, gossip and the equivocation proof}
+
+A witness is a monitor that does two more things. It cosigns a head with its own key, only when the
+head is an append-only extension of the last one it cosigned, and it gossips the log-signed head it
+saw into a shared pool. Two uses follow, both verified offline. A witnessed checkpoint is a head
+carrying cosignatures from at least $K$ distinct trusted witnesses, so a split view needs $K$
+independent witnesses to equivocate, not just the log. An equivocation proof is two heads for one
+log, both validly signed by the log's key, at the same size with different roots; the log signed
+both, so it cannot repudiate the lie, and two gossiping witnesses produce the proof the moment they
+compare notes. A witness that is itself shown a second head at a size it already cosigned refuses
+and writes the proof. \sImpl
+
+An external ledger completes the picture: the log publishes each head into an independent
+append-only ledger and receives a receipt, the ledger's own signed head plus an inclusion proof, so
+the log cannot use a head it has not publicly committed and the ledger cannot later drop it. A
+ledger is itself an append-only log, so this reuses the same machinery and is monitored the same
+way. The file-backed ledger is implemented and tested; the chain-backed drivers are declared and wait
+on their interfaces. \sImpl{} for the file backend; \sFut{} for a chain.
+
+\subsection{Who runs the witnesses}
+
+The strength of this defence in practice is exactly the independence of whoever runs the
+witnesses. What is built is the protocol: the cosignature format, the threshold rule, the
+equivocation proof, and a witness daemon anyone can run, all drilled under real signatures every
+release with three witnesses catching a fork two ways. What cannot exist until deployment is a set
+of institutionally independent witnesses, a bank, a civil-society group, another authority,
+actually running it. Today the witnesses are three processes in a drill. The repository states that
+this is not a software deficiency but the absence of a deployment, and this paper repeats it,
+because a transparency layer with witnesses run by the party it watches is not one. \sExt
+
+\begin{layercard}{Layer card: transparency}
+\qa{What it is}{Three RFC-6962-style logs over append-only tables; signed heads; consistency and inclusion proofs; a monitor; witnesses with cosignatures, a threshold and gossip; the equivocation proof; external-ledger publication with receipts.}
+\qa{Why it exists}{A signed object proves what was said; only a watched sequence proves that what was said was not later unsaid, and only compared notes prove it was said the same way to everyone.}
+\qa{What it trusts}{The log's key for the head; the witnesses' keys and their independence, which is a deployment fact.}
+\qa{What it refuses}{A head with no consistency proof from the last one; a head not cosigned by the threshold; a receipt the ledger did not record; a second head at a size already seen.}
+\qa{What it can see}{Roots and hashes. Never a person, never a payload.}
+\qa{What it cannot see}{On its own, a split view: that is what the witnesses are for.}
+\qa{If it fails}{A rewrite fails every monitor; a fork is a non-repudiable proof; a dishonest witness is one of $K$; a dropped published head fails the ledger's own consistency.}
+\qa{Checked by}{\code{check\_transparency\_log}, \code{check\_transparency\_gossip}, \code{check\_transparency\_publication}, \code{check\_timestamp\_transparency}, the canonical-equivalence oracle for the signed head.}
+\qa{Now or later}{Now, as a protocol with a drill. Independent witnesses are a deployment, later.}
+\qa{Inside and outside}{Inside: federation. Outside: the institutions that exchange, sign and timestamp under this watch.}
+\end{layercard}
+
+\nextlayer{With authority, status and history checkable by strangers, institutions can build on the
+credential: exchange requests, sign documents, attach time. The danger is that an exchange fabric
+becomes the very message log the vocation forbids. The next layer is built as its inversion.}

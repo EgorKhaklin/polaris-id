@@ -1,0 +1,34 @@
+% v2-figures/styles.tex: the shared TikZ vocabulary of the Version 2 figures.
+% Every figure in this directory loads these styles so that the same kind of
+% thing looks the same on every page: the credential core is always accent,
+% a schema-level structure is always navy, an external party is always
+% steel grey, a proposed or future element is always dashed gold.
+\tikzset{
+  % Boxes
+  corebox/.style={draw=accent, line width=1.2pt, rounded corners=2pt, fill=accent, text=white,
+                  font=\bfseries\small, align=center, inner sep=4pt, minimum height=0.8cm},
+  layerbox/.style={draw=navymid, line width=1pt, rounded corners=2pt, fill=navydark, text=white,
+                   font=\bfseries\footnotesize, align=center, inner sep=4pt, minimum height=0.75cm},
+  softbox/.style={draw=navymid, line width=0.8pt, rounded corners=2pt, fill=tabstripe, text=navydark,
+                  font=\footnotesize, align=center, inner sep=4pt, minimum height=0.7cm},
+  extbox/.style={draw=steelgray, line width=0.9pt, rounded corners=2pt, fill=white, text=navydark,
+                 font=\footnotesize, align=center, inner sep=4pt, minimum height=0.7cm},
+  futbox/.style={draw=gold, line width=0.9pt, rounded corners=2pt, dash pattern=on 3pt off 2pt,
+                 fill=white, text=navydark, font=\footnotesize, align=center, inner sep=4pt, minimum height=0.7cm},
+  humanbox/.style={draw=navydark, line width=1pt, rounded corners=6pt, fill=white, text=navydark,
+                   font=\bfseries\footnotesize, align=center, inner sep=4pt, minimum height=0.75cm},
+  % Text
+  lbl/.style={font=\scriptsize\color{navydark}, align=center, inner sep=1pt},
+  faint/.style={font=\scriptsize\itshape\color{steelgray}, align=center, inner sep=1pt},
+  kicker/.style={font=\scriptsize\scshape\color{gold}, inner sep=1pt},
+  % Arrows
+  flow/.style={->, draw=navymid, line width=1pt, >={Stealth[length=2.4mm]}},
+  flowfaint/.style={->, draw=steelgray, line width=0.7pt, >={Stealth[length=2mm]}},
+  flowfut/.style={->, draw=gold, line width=0.9pt, dash pattern=on 3pt off 2pt, >={Stealth[length=2.2mm]}},
+  refuse/.style={-, draw=classmark, line width=1pt},
+  sees/.style={->, draw=accent, line width=0.9pt, >={Stealth[length=2.2mm]}},
+  % Rings
+  ring/.style={draw=navymid, line width=0.6pt, fill=none},
+  ringfut/.style={draw=gold, line width=0.7pt, dash pattern=on 3pt off 2pt, fill=none},
+  ringfill/.style={draw=none},
+}

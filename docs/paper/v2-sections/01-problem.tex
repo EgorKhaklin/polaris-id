@@ -1,0 +1,69 @@
+% 01-problem.tex: the problem Polaris is trying to solve.
+\section{The problem}
+\label{sec:problem}
+
+A person in the United States carries six to eight credentials that do not talk to each other:
+a driver's licence, a passport, a Social Security card, a Real ID, a voter registration, an
+insurance card. Each is a separate artifact, signed by a separate authority to a separate standard,
+with no shared revocation path and no shared audit trail. Version 1 of this report set out to model
+their consolidation into one active credential record per person, verified through context-scoped
+events. That is the easy half of the problem, and it is still the problem's shape.
+
+The hard half is what happens when the system works. An identity system that succeeds becomes the
+doorway to everything, and a doorway is a place where power concentrates. Three failure modes
+follow, and every layer of Polaris exists to answer one of them.
+
+\begin{description}
+  \item[The system lies about the past.] An operator, or an insider with database access,
+    revokes a token and later erases the record; issues a credential under procedures the public
+    was never told of; or shows one history to an auditor and another to a court. A national
+    identity system cannot be allowed to retroactively rewrite what it did.
+  \item[The system watches.] Every verification is a fact about where a person was and what they
+    were doing. A log of those facts is a surveillance backbone whether or not anyone intended one,
+    and it stays one after the operator's intentions change.
+  \item[The system coerces.] A holder can be compelled: a border officer, an employer, or a
+    thief can force a credential to be presented, and a doorway that every service requires can
+    force a population to enrol. An identity system is also the most efficient instrument of
+    exclusion ever built, if the list of who is not in it can be produced on demand.
+\end{description}
+
+The conventional answer to all three is policy: rules about retention, access, audit and consent,
+enforced by the people who run the system. Polaris's constitution (\code{MISSION.md}) takes the
+position that policy is worthless as the only thing holding a promise up, because the people who
+run the system are exactly the ones the promise is meant to bind. The promise has to be enforced
+where it cannot be talked around: in the schema, in triggers, in unique indexes, in check
+constraints, in signatures that anyone can verify without asking the system, and in logs that other
+people watch. The application is not the security boundary. The database is, and the layers around
+the database exist to make even the database's claims checkable by strangers.
+
+\subsection{Why post-quantum from the first day}
+
+Version 1 argued, through Mosca's inequality, that identity data has a secrecy horizon measured in
+generations, that migration of a national system takes a decade, and that a credential system
+deployed on classical cryptography in 2026 is therefore a deferred compromise rather than a working
+system. That argument is unchanged and is summarised in Appendix~\ref{app:from-v1}. At \code{v9.345}
+the default signing algorithm is ML-DSA-65 (FIPS 204), ML-DSA-87 is accepted beside it, the zero-knowledge
+proof system is hash-based with no trusted setup, and the public TLS edge negotiates a hybrid
+post-quantum key exchange with modern clients. Which surfaces remain classical is stated plainly in
+Section~\ref{sec:operations} and in the repository's posture ledger.
+
+\subsection{The progression this paper follows}
+
+Each of the following sentences names a layer, and each is true of the layer before it.
+
+\begin{itemize}
+  \item A credential's authenticity is not its current authorization. A signature stays genuine
+    forever; the authority under it can be withdrawn this afternoon.
+  \item Current authorization is not privacy. A verifier can learn that a credential is valid and
+    still learn far more than it needed to.
+  \item Privacy is not freedom from coercion. A system can know almost nothing about a person and
+    still be the doorway every service demands.
+  \item Federation is not institutional independence. Two instances of the same code run by the
+    same author prove that the protocol works, not that independent institutions run it.
+  \item A transparency log is not protection from a split view. One observer can be shown a private
+    fork of history and never know.
+  \item A green test is not proof that the test asked the right question.
+\end{itemize}
+
+The last sentence is the one the project has learned most expensively, and Section~\ref{sec:senses}
+is about it.

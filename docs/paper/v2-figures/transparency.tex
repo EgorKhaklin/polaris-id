@@ -1,0 +1,30 @@
+% v2-figures/transparency.tex: the log, the monitor, the witnesses, the gossip
+% pool and the equivocation proof. Left to right: what the authority publishes,
+% who watches it, and what catches a split view.
+\begin{tikzpicture}
+  % The authority's log
+  \node[layerbox, minimum width=3.4cm, text width=3.1cm] (log) at (0,4.2) {The log\\[-1pt]{\mdseries\scriptsize an append-only table of roots (anchor batches, receipt hashes, or anchored timestamps), hashed into a Merkle tree}};
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (sth) at (0,1.0) {Signed tree head\\[-1pt]{\scriptsize log id, tree size, root hash, time; signed by the log's key}};
+  \draw[flow] (log) -- (sth);
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (proofs) at (0,-2.4) {Proofs\\[-1pt]{\scriptsize consistency: size $m$ is a prefix of size $n$; inclusion: entry $i$ is in the tree}};
+  \draw[flowfaint] (sth) -- (proofs);
+  % The monitor
+  \node[extbox, minimum width=3.6cm, text width=3.3cm] (mon) at (5.6,4.0) {Monitor\\[-1pt]{\scriptsize anyone runs it; keeps one thing: the last head it accepted. Alerts on a rewrite, a fork, a shrink, a wrong key, time going backwards.}\\[2pt]{\scriptsize\bfseries\color{classmark}cannot see whether another observer was shown a different head}};
+  \draw[flow] (sth.north east) to[out=60, in=180] node[faint, sloped, above, pos=0.5] {head + consistency proof} (mon.west);
+  % Witnesses
+  \node[extbox, minimum width=2.4cm] (w1) at (10.4,2.0) {witness 1};
+  \node[extbox, minimum width=2.4cm] (w2) at (10.4,1.0) {witness 2};
+  \node[extbox, minimum width=2.4cm] (w3) at (10.4,0.0) {witness 3};
+  \foreach \w in {w1,w2,w3} { \draw[flowfaint] (sth.east) -- (\w.west); }
+  \node[softbox, minimum width=2.6cm, text width=2.4cm] (cosig) at (14.2,1.0) {cosignatures\\[-1pt]{\scriptsize a relying party requires $K$ distinct trusted witnesses on the exact head}};
+  \foreach \w in {w1,w2,w3} { \draw[flow] (\w.east) -- (cosig.west); }
+  % Gossip and equivocation
+  \node[softbox, minimum width=2.6cm, text width=2.4cm] (pool) at (10.4,-2.4) {gossip pool\\[-1pt]{\scriptsize each witness posts the head it was shown}};
+  \draw[flowfaint] (w3.south) -- (pool.north);
+  \node[corebox, minimum width=2.8cm, text width=2.6cm] (eq) at (14.2,-2.4) {equivocation proof\\[-1pt]{\mdseries\scriptsize two heads, same size, different roots, both signed by the log: non-repudiable}};
+  \draw[flow] (pool.east) -- (eq.west);
+  % External ledger
+  \node[extbox, minimum width=3.6cm, text width=3.3cm] (ledger) at (5.6,-3.2) {External ledger\\[-1pt]{\scriptsize an append-only log of heads; returns a receipt with its own head and an inclusion proof (file backend today; chain drivers declared)}};
+  \draw[flow] (sth.south east) to[out=-30, in=180] node[faint, below, sloped, pos=0.5] {publishes each head} (ledger.west);
+  \node[faint, text width=6.6cm, anchor=north] at (12.3,-4.2) {The protocol for independent witnesses is built and drilled under real signatures. Institutionally independent witnesses, a bank, a civil-society group, another authority, exist only once the system is deployed; today the witnesses are three processes in a drill.};
+\end{tikzpicture}

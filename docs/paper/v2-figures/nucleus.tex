@@ -1,0 +1,83 @@
+% v2-figures/nucleus.tex: the core entity geometry, carried over from Version 1
+% UNCHANGED. Seven entities around IdentityToken on a hexagonal lattice, the
+% two many-to-many relationships resolved to junction tables in the schema.
+% This geometry is the constant of the paper: the rings of Version 2 are drawn
+% around it, never through it.
+\begin{tikzpicture}[
+  scale=0.72, every node/.append style={transform shape},
+  font=\small,
+  entbox/.style={draw=navymid, line width=1pt, rounded corners=2pt, minimum width=3.0cm, minimum height=1cm,
+    fill=navydark, text=white, font=\bfseries\small, align=center},
+  reldiamond/.style={draw=accent, line width=0.9pt, diamond, aspect=2.4, minimum width=2.6cm, minimum height=1cm,
+    fill=white, text=accent, font=\scriptsize\bfseries, align=center, inner sep=1pt},
+  link/.style={draw=steelgray, line width=1.1pt},
+  card/.style={font=\scriptsize\bfseries\color{navymid}, fill=white, inner sep=1.5pt},
+]
+% === BACKGROUND GEOMETRY (unchanged from Version 1) ===
+\begin{scope}[on background layer]
+  \foreach \pos in {(0,0), (0,6.8), (-6.8,3.4), (6.8,3.4), (-6.8,-3.4), (6.8,-3.4), (0,-6.8)} {
+    \draw[steelgray, line width=0.4pt, opacity=0.05] \pos circle (1.8);
+  }
+  \foreach \pos in {(0,3.4), (-3.4,1.7), (3.4,1.7), (-3.4,-1.7), (3.4,-1.7), (0,-3.4)} {
+    \draw[steelgray, line width=0.3pt, opacity=0.03] \pos circle (1.2);
+  }
+  \draw[steelgray, line width=0.4pt, opacity=0.04]
+    (0,6.8) -- (-6.8,3.4) -- (-6.8,-3.4) -- (0,-6.8) -- (6.8,-3.4) -- (6.8,3.4) -- cycle;
+  \draw[steelgray, line width=0.3pt, opacity=0.03]
+    (0,3.4) -- (-3.4,1.7) -- (-3.4,-1.7) -- (0,-3.4) -- (3.4,-1.7) -- (3.4,1.7) -- cycle;
+  \draw[steelgray, line width=0.3pt, opacity=0.025] (0,6.8) -- (-6.8,-3.4) -- (6.8,-3.4) -- cycle;
+  \draw[steelgray, line width=0.3pt, opacity=0.025] (0,-6.8) -- (-6.8,3.4) -- (6.8,3.4) -- cycle;
+\end{scope}
+% === CENTER ===
+\node[entbox] (tok) at (0, 0) {IdentityToken};
+% === UPPER TRIANGLE ===
+\node[entbox] (ind) at (0, 6.8)       {Individual};
+\node[entbox] (tle) at (-6.8, 3.4)    {TokenLifecycle\\Event};
+\node[entbox] (ctx) at (6.8, 3.4)     {Verification\\Context};
+% === LOWER TRIANGLE ===
+\node[entbox] (agy) at (-6.8, -3.4)   {Agency};
+\node[entbox] (alg) at (6.8, -3.4)    {Cryptographic\\Algorithm};
+\node[entbox] (ve)  at (0, -6.8)      {Verification\\Event};
+% --- HOLDS ---
+\node[reldiamond] (rel_holds) at (0, 3.4) {HOLDS};
+\draw[link] (ind.south) -- (rel_holds.north);
+\draw[link] (rel_holds.south) -- (tok.north);
+\node[card, right=2pt] at ($(ind.south)!0.5!(rel_holds.north)$) {1};
+\node[card, right=2pt] at ($(rel_holds.south)!0.5!(tok.north)$) {N};
+% --- GENERATES ---
+\node[reldiamond] (rel_gen) at (-3.4, 1.7) {GENERATES};
+\draw[link] (tok.north west) -- (rel_gen.south east);
+\draw[link] (rel_gen.north west) -- (tle.south east);
+\node[card, above=1pt] at ($(tok.north west)!0.5!(rel_gen.south east)$) {1};
+\node[card, above=1pt] at ($(rel_gen.north west)!0.5!(tle.south east)$) {N};
+% --- PERMITTED ---
+\node[reldiamond] (rel_perm) at (3.4, 1.7) {PERMITTED};
+\draw[link] (tok.north east) -- (rel_perm.south west);
+\draw[link] (rel_perm.north east) -- (ctx.south west);
+\node[card, above=1pt] at ($(tok.north east)!0.5!(rel_perm.south west)$) {M};
+\node[card, above=1pt] at ($(rel_perm.north east)!0.5!(ctx.south west)$) {N};
+% --- ISSUES ---
+\node[reldiamond] (rel_iss) at (-3.4, -1.7) {ISSUES};
+\draw[link] (agy.north east) -- (rel_iss.south west);
+\draw[link] (rel_iss.north east) -- (tok.south west);
+\node[card, above=1pt] at ($(agy.north east)!0.5!(rel_iss.south west)$) {1};
+\node[card, above=1pt] at ($(rel_iss.north east)!0.5!(tok.south west)$) {N};
+% --- SIGNS ---
+\node[reldiamond] (rel_signs) at (3.4, -1.7) {SIGNS};
+\draw[link] (alg.north west) -- (rel_signs.south east);
+\draw[link] (rel_signs.north west) -- (tok.south east);
+\node[card, above=1pt] at ($(alg.north west)!0.5!(rel_signs.south east)$) {1};
+\node[card, above=1pt] at ($(rel_signs.north west)!0.5!(tok.south east)$) {N};
+% --- VERIFIED ---
+\node[reldiamond] (rel_ver) at (0, -3.4) {VERIFIED};
+\draw[link] (tok.south) -- (rel_ver.north);
+\draw[link] (rel_ver.south) -- (ve.north);
+\node[card, right=2pt] at ($(tok.south)!0.5!(rel_ver.north)$) {1};
+\node[card, right=2pt] at ($(rel_ver.south)!0.5!(ve.north)$) {N};
+% --- AUTHORIZED ---
+\node[reldiamond] (rel_auth) at (0, -8.5) {AUTHORIZED};
+\draw[link] (agy.south) to[out=-90, in=180] (rel_auth.west);
+\draw[link] (rel_auth.east) to[out=0, in=-90] (alg.south);
+\node[card] at (-4.8, -7.2) {M};
+\node[card] at (4.8, -7.2) {N};
+\end{tikzpicture}

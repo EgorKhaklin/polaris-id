@@ -1,0 +1,33 @@
+% v2-figures/present-future.tex: the present system beside the future
+% ecosystem it is preparation for. Solid navy is what runs at HEAD; dashed
+% gold is what does not exist. The two panels share the same core.
+\begin{tikzpicture}
+  % Left panel: present.
+  \node[kicker, anchor=west] at (-0.6,4.3) {present (v9.345, runs in ci)};
+  \node[corebox, minimum width=2.6cm] (c1) at (2.4,2.8) {credential};
+  \node[layerbox, minimum width=2.6cm] (iss) at (0.0,1.0) {issuing authority};
+  \node[layerbox, minimum width=2.6cm] (rp)  at (4.8,1.0) {relying party};
+  \node[layerbox, minimum width=2.7cm, text width=2.4cm] (fed) at (0.0,-1.0) {second authority\\[-1pt]{\mdseries\scriptsize another Polaris instance}};
+  \node[layerbox, minimum width=2.7cm, text width=2.4cm] (wit) at (4.8,-1.0) {witnesses, monitor\\[-1pt]{\mdseries\scriptsize processes in a drill}};
+  \node[layerbox, minimum width=5.6cm, text width=5.3cm] (inst) at (2.4,-3.1) {registry, gateway, receipts, timestamps, signed documents};
+  \draw[flow] (iss) -- (c1); \draw[flow] (c1) -- (rp);
+  \draw[flow] (iss) -- node[faint, left] {attests} (fed);
+  \draw[flow] (rp) -- node[faint, right] {checks heads} (wit);
+  \draw[flow] (fed.south) -- (inst.north -| fed.south); \draw[flow] (wit.south) -- (inst.north -| wit.south);
+  % Divider.
+  \draw[steelgray, line width=0.4pt, dash pattern=on 2pt off 2pt] (7.6,4.4) -- (7.6,-4.6);
+  % Right panel: future.
+  \node[kicker, anchor=west] at (8.4,4.3) {future environment (proposed; not implemented)};
+  \node[corebox, minimum width=2.6cm] (c2) at (11.6,2.8) {credential};
+  \node[humanbox, minimum width=2.6cm] (hum) at (9.2,1.0) {human};
+  \node[futbox, minimum width=2.7cm, text width=2.4cm] (agent) at (14.0,1.0) {AI agent\\[-1pt]{\scriptsize scoped grant}};
+  \node[futbox, minimum width=2.7cm, text width=2.4cm] (pp) at (9.2,-1.0) {proof of personhood\\[-1pt]{\scriptsize one human, once, here}};
+  \node[futbox, minimum width=2.7cm, text width=2.4cm] (svc) at (14.0,-1.0) {services, networks\\[-1pt]{\scriptsize verify without learning more}};
+  \node[futbox, minimum width=5.6cm, text width=5.3cm] (inst2) at (11.6,-3.1) {independently operated authorities, witnesses and implementations};
+  \draw[flow] (hum) -- (c2);
+  \draw[flowfut] (c2) -- (agent);
+  \draw[flowfut] (hum) -- (pp);
+  \draw[flowfut] (agent) -- (svc);
+  \draw[flowfut] (pp.south) -- (inst2.north -| pp.south); \draw[flowfut] (svc.south) -- (inst2.north -| svc.south);
+  \node[faint, text width=5.6cm, anchor=north] at (11.6,-3.9) {needs: a holder-side key, pairwise or blinded presentations, a scoped nullifier, and institutions that are not the author};
+\end{tikzpicture}

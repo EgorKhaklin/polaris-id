@@ -1,0 +1,28 @@
+% v2-figures/stigmergy.tex: the PROPOSED stigmergic debugging colony ("Myrmex",
+% a provisional name). Not a Polaris component; a separate observer that
+% would attack the repository from outside.
+\begin{tikzpicture}[scale=0.9, every node/.append style={transform shape}]
+  % The evidence landscape.
+  \node[futbox, minimum width=6.2cm, minimum height=1.6cm, text width=5.8cm] (land) at (5.4,0)
+    {Evidence landscape (persistent, machine-readable)\\[-1pt]{\scriptsize pheromones: suspicion, trust-boundary anomalies, odd state transitions, cryptographic assumptions, missing edges; they strengthen under independent evidence and decay unsupported}};
+  % Agents around it.
+  \node[futbox, minimum width=2.3cm] (scout)  at (0,2.4)   {scout};
+  \node[futbox, minimum width=2.3cm] (trust)  at (3.6,2.4) {trust boundary};
+  \node[futbox, minimum width=2.3cm] (crypto) at (7.2,2.4) {cryptographic};
+  \node[futbox, minimum width=2.3cm] (priv)   at (10.8,2.4){privacy};
+  \node[futbox, minimum width=2.3cm] (state)  at (0,-2.4)  {state transition};
+  \node[futbox, minimum width=2.3cm] (conc)   at (3.6,-2.4){concurrency};
+  \node[futbox, minimum width=2.3cm] (proto)  at (7.2,-2.4){protocol};
+  \node[futbox, minimum width=2.3cm] (adv)    at (10.8,-2.4){refutation};
+  \foreach \a in {scout,trust,crypto,priv,state,conc,proto,adv} { \draw[flowfut, <->] (\a) -- (land); }
+  % The orchestrator, deliberately not omniscient.
+  \node[futbox, minimum width=2.6cm] (queen) at (13.6,0) {orchestrator\\[-1pt]{\scriptsize allocates work,}\\{\scriptsize aggregates evidence,}\\{\scriptsize decides nothing}};
+  \draw[flowfut, <->] (queen) -- (land);
+  % External evidence: the only source of confidence.
+  \node[extbox, minimum width=6.2cm, text width=5.8cm] (ext) at (5.4,-4.6)
+    {Confidence comes only from external evidence: a failing test, a runtime trace, a fuzz case, a static finding, a formal counterexample, an independent reproduction. Agreement between models is not evidence.};
+  \draw[flow] (ext) -- (land);
+  % Into Polaris's own loop.
+  \node[corebox, minimum width=3.2cm, text width=3.0cm] (pol) at (13.6,-4.6) {Polaris\\[-1pt]{\mdseries\scriptsize reproducible failure, test, invariant, new sense}};
+  \draw[flow] (ext) -- node[faint, above] {reproduced} (pol);
+\end{tikzpicture}

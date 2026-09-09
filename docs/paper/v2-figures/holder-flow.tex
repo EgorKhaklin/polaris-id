@@ -1,0 +1,21 @@
+% v2-figures/holder-flow.tex: holder, relying party and issuer, with what each
+% sees and what each is prevented from seeing. The one red edge is the
+% documented limitation: the relying party sees a stable credential value.
+\begin{tikzpicture}
+  % columns
+  \node[humanbox, minimum width=3.6cm, text width=3.3cm] (h) at (0,4.0) {Holder\\[-1pt]{\mdseries\scriptsize the wallet holds a file: token value, signature, issuer key; optionally a stapled status assertion, a membership proof, a presentation code}};
+  \node[extbox, minimum width=3.6cm, text width=3.3cm] (rp) at (6.2,4.0) {Relying party\\[-1pt]{\scriptsize runs the detached verifier or an SDK, offline; or calls the issuer as itself}};
+  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (iss) at (12.4,4.0) {Issuing authority\\[-1pt]{\mdseries\scriptsize the schema, the signing key, the epoch roots, the status}};
+  % flows
+  \draw[flow] (h.east) -- node[faint, above, text width=2.4cm] {presents (QR, NFC, file)} (rp.west);
+  \draw[flow] (rp.east) -- node[faint, above, text width=2.6cm] {status check as an organisation, no person named} (iss.west);
+  % what each decides / sees
+  \node[softbox, anchor=north, text width=3.4cm] (hs) at (0,1.9) {\textbf{sees:} its own credential.\\\textbf{decides:} the disclosure level it presents under.\\\textbf{cannot:} upgrade what the server will record (C6).};
+  \node[softbox, anchor=north, text width=3.4cm] (rs) at (6.2,1.9) {\textbf{checks, offline:} authentic; issuer trusted; assertion bound, fresh, ACTIVE; context.\\\textbf{learns:} a valid credential exists; the credential value.\\\textbf{cannot:} reach the person's record; verify authorization fresher than the assertion.};
+  \node[softbox, anchor=north, text width=3.4cm] (is) at (12.4,1.9) {\textbf{records, zero-knowledge mode:} an event with no token identifier (C2).\\\textbf{records, online status check:} no who-verified-whom row.\\\textbf{cannot:} rebuild the zero-knowledge verification graph from its own database.};
+  % the assertion fetched by possession, routed over the top of the three parties
+  \draw[flowfaint] (iss.north) to[out=110, in=70, looseness=0.6] node[faint, above, text width=6.0cm, pos=0.5] {status assertion fetched by possession; no record of who asked} (h.north);
+  % the limitation
+  \draw[refuse, dash pattern=on 3pt off 2pt] (rs.south) -- (6.2,-3.2);
+  \node[anchor=north, font=\scriptsize\bfseries\color{classmark}, text width=9.0cm, align=center] at (6.2,-3.3) {The stated limitation: a full-credential presentation carries a stable \code{token\_value} (and the login token's subject is the credential hash), so two relying parties can join their logs by it. Unlinkability is issuer-side and scoped to zero-knowledge mode; cross-verifier unlinkability is not implemented, by design.};
+\end{tikzpicture}

@@ -1,0 +1,56 @@
+% E-from-v1.tex: what Version 2 kept from Version 1, and what it corrected.
+\section{From Version 1 to Version 2}
+\label{app:from-v1}
+
+Version 1 remains the historical report and is not edited. This appendix records what Version 2
+kept, what it corrected, and what it retired, so that a reader of both can reconcile them.
+
+\subsection*{Kept}
+
+\begin{itemize}
+  \item The token-centred entity geometry (Figure~\ref{fig:nucleus}), reproduced from Version 1
+    without change and used as the nucleus of every map in this paper.
+  \item The lifecycle state machine (Figure~\ref{fig:lifecycle}), reproduced without change.
+  \item The disclosure-level argument: that the level is a persisted property of the verification
+    record, enforced by a check constraint, and that this is what prevents the verification log from
+    functioning as a surveillance database.
+  \item The argument that post-quantum signing belongs on the first day, through the secrecy
+    horizon of identity data and Mosca's inequality, and the substrate argument that every higher
+    property of an identity system is derivative of its cryptographic primitives. Both are summarised
+    here and stand in Version 1 in full.
+  \item The comparison of design properties against deployed systems, which Version 2 does not
+    repeat; the repository's front page carries the current table and marks Polaris as neither
+    deployed nor issuing at national scale.
+  \item The threat-model frame (STRIDE), which the repository's design record now carries with every
+    threat mapped to a control or an explicit acceptance.
+\end{itemize}
+
+\subsection*{Corrected}
+
+\begin{itemize}
+  \item Twelve tables became thirty-six. The three subsidiary entities of Version 1 (device
+    bindings, ledger anchors, the revocation list) remain; the rest of the growth is described ring by
+    ring in Section~\ref{sec:walls}.
+  \item Version 1 stated that the audit tables were append-only by convention and tooling and that
+    the state machine would be enforced by a trigger in a production deployment. Both are now
+    enforced by triggers, and a check fails the build if either stops being.
+  \item Version 1 described the ledger anchor as an optional decentralised-identifier path. The
+    off-chain batch commitment exists and is monitored as a transparency log; publication to an
+    external chain remains an operator action with declared drivers and no live integration.
+  \item Version 1 modelled seven verification contexts with per-context biometric requirements and a
+    physical token with on-device biometric binding. The contexts remain; the physical token remains
+    modelled and not manufactured, and this paper marks it as a proposal.
+  \item The two speculative binding horizons of Version 1's final appendix (genomic and
+    quantum-observer binding) are not carried forward as design. The repository's readiness pass
+    quarantined the speculative schema behind a check that it cannot return, and this paper treats
+    the holder-side key, not a new biometric, as the extension that the future environment needs.
+\end{itemize}
+
+\subsection*{Added}
+
+Everything from Section~\ref{sec:signatures} onward describes machinery that did not exist when
+Version 1 was written: real signing and custody, the two witnesses, the detached verifier and the
+conformance contract, status and offline authorization, the membership proof and its second witness,
+the wallet protocol and the broker, federation, transparency, the exchange fabric, the operational
+drills, Atlas and Athena, the history of self-correction, the societal boundaries, and the
+future-facing sections on agents, personhood, delegation and outside observers.

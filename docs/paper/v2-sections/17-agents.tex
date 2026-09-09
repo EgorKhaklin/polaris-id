@@ -1,0 +1,131 @@
+% 17-agents.tex: AI agents, proof of personhood, and the future internet.
+\section{AI agents, proof of personhood and the future internet}
+\label{sec:agents}
+
+Nothing in this section is solved. It is the environment Polaris is preparing for, stated as a
+problem, with what exists today marked apart from what would have to be built.
+
+\subsection{The problem that is arriving}
+
+When software agents can generate unlimited accounts, content, transactions, messages and apparent
+participants, the cheap signal that a request came from a person stops being available for free.
+Many digital systems will need to distinguish, without learning more than they must, between one
+accountable human; one authorized agent acting for that human or for an institution; anonymous
+machine activity; duplicated or synthetic identities; and organisational agents acting under an
+institution's authority. Every naive way of obtaining that signal leaks identity: accounts, phone
+numbers, payment instruments, biometrics. The identity question changes shape. It is no longer only
+\emph{who are you}, but \emph{what kind of actor are you, whose authority are you exercising, what
+are you allowed to do, and how can I verify all of that without learning anything else}. That is
+the future-facing question this paper considers the most important one Polaris's core could be
+extended to answer.
+
+\subsection{What exists today that points this way}
+
+Three ingredients of a privacy-preserving proof of personhood already run.
+
+\begin{itemize}
+  \item \textbf{Uniqueness at issuance.} C3, one active token per person, is a partial unique index
+    in the database. That is the root of Sybil resistance: a human can hold one active credential, and
+    no application code can bypass the constraint. \sImpl
+  \item \textbf{Membership without identity.} The epoch membership proof proves that a valid token
+    exists in an authority's committed set with public inputs of only the root, the epoch, a context
+    and a nonce; a zero-knowledge verification records no token at all; the anonymity set is a full
+    epoch. \sImpl
+  \item \textbf{Revocation without naming.} A revoked token drops out of the next epoch root, so a
+    membership proof expires with the epoch and no relying party learns who was revoked. \sImpl
+\end{itemize}
+
+\subsection{What is missing, precisely}
+
+Polaris is not a proof-of-personhood system today, and the gap is specific. The membership proof
+stops replay of one proof, but it does not stop the same person from producing a thousand fresh proofs
+to the same site and registering a thousand accounts. \emph{One human, once, here} needs a scoped
+nullifier: one more public input, a hash of the holder's secret, the relying party's scope and the
+epoch, so that a site can refuse a second proof from the same person while two sites cannot link
+their nullifiers. The leaf derivation already mixes in a context, which is part of the way there;
+exposing a nullifier is a circuit change, small and well bounded, and not built. \sFut
+
+Two more gaps sit outside the circuit. The prover runs on the Polaris host, and a personhood
+credential needs the holder to prove on their own device from a Merkle path obtained from the
+published tree. And the presentation layer is full-credential: a stable value shown to every
+verifier is the correlator that defeats the purpose. The pairwise, blinded and one-time presentation
+technologies that would remove it are surveyed in Section~\ref{sec:research}; none is
+implemented. \sFut
+
+Two conditions the vocation imposes on any future version deserve stating before the design. The
+nullifier's scope must be per relying party and per epoch, never global, because a global nullifier
+is a persistent identifier and therefore the surveillance outcome the constitution refuses. And a
+relying party must not be able to demand full disclosure as a precaution; the broker's registered
+policy already lets a party be held to the zero-knowledge level, and that has to remain the default
+posture of any personhood extension.
+
+\subsection{Delegating authority to an agent}
+
+\figfile{delegation}{A proposed delegation chain. The human holds the foundational credential,
+which exists. Everything else is dashed: a scoped grant signed by a holder-side key, an agent that
+acts only within it, and a service that verifies the chain offline and learns nothing beyond the five
+answers listed. The repository has no holder-side key, no pairwise handle and no grant-scoped
+revocation; each is named as an open problem.}{fig:delegation}
+
+The relationship this paper proposes is a chain. A human possesses a foundational credential. The
+human grants a narrowly scoped cryptographic authority to an agent: named actions, limits, an
+expiry, a revocation handle. The agent can perform only the specified actions. A service verifies,
+offline, that the agent's grant is genuine and unexpired; that it was issued by a valid principal,
+without learning who; that this exact action is inside the delegated scope; that the grant has not
+been revoked, without the human's own credential being revoked; and it learns nothing more than
+those answers. Revoking an agent's authority must not destroy the human's underlying identity, which
+is why the grant needs its own revocation path, separate from the credential's.
+
+Polaris's existing machinery maps onto the chain more closely than one might expect. The grant is a
+signed statement in the same canonical discipline as every other artifact; the service is a relying
+party with the detached verifier; the expiry and revocation handle are the status assertion and
+revocation feed applied to a grant rather than a credential; and the trust graph decides which
+principals a service accepts. What the chain needs and the repository lacks is a holder-side key,
+since the model is issuer-centric on purpose and the holder holds a credential rather than a key
+pair. That is the same missing piece that blocks the browser bridge, and the repository records it as
+a future credential extension. \sFut
+
+\subsection{The future internet, concretely}
+
+The term Web3 is used here in one narrow sense, and it has nothing to do with currency: an internet
+in which people, autonomous agents, institutions, wallets, distributed services and independently
+operated networks need portable cryptographic trust that does not route through one company or one
+state. Against that environment the following table marks what Polaris could provide and what each
+item's status is today.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash}p{1.85in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.8in}}
+\caption{What a future environment would ask of Polaris, and the status of each at \code{v9.345}.}\label{tab:web3}\\
+\toprule
+\rowcolor{tabheader}\thead{The environment asks for} & \thead{What Polaris has} & \thead{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{The environment asks for} & \thead{What Polaris has} & \thead{Status} \\
+\midrule
+\endhead
+\multicolumn{3}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+Portable credentials & A signed file any standard library verifies & \sImpl \\
+Independently verifiable proofs & The detached verifier, two SDKs, a conformance suite & \sImpl{} \sExt \\
+Institutional federation & Per-authority roots, directional attestations, published feeds & \sImpl{} \sExt \\
+Service discovery & The signed registry & \sImpl \\
+Document signatures with long-term validity & Signed containers with evidence fixed at the instant & \sImpl \\
+Transparent authority behaviour & Three logs, witnesses, equivocation proofs & \sImpl{} \sExt \\
+Offline verification & Status assertions stapled to presentations & \sImpl \\
+Post-quantum trust & ML-DSA, hash-based proofs, a hybrid edge; classical remainders named & \sImpl \\
+Human, account and agent authorization relationships & The broker's credential-bound login token; no agent grant & \sFut \\
+Privacy-preserving uniqueness & Membership proofs; no scoped nullifier & \sFut \\
+Delegation to agents with bounded scope & Nothing; needs a holder-side key & \sFut \\
+Revoking an agent without destroying the human's identity & Nothing; needs grant-scoped revocation & \sFut \\
+\end{xltabular}
+}
+
+\figfile{present-future}{The present system beside the future environment it is preparation for.
+Solid navy is what runs at \code{v9.345}; dashed gold is what does not exist. The two panels share the
+same core, which is the point: the extensions are proposed on the credential and its verifiers, not
+on a new system.}{fig:present-future}

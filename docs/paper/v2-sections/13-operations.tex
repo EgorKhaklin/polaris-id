@@ -1,0 +1,140 @@
+% 13-operations.tex: surviving operational reality.
+\section{Surviving reality: the stack, failure, load and the standing witness}
+\label{sec:operations}
+
+\subsection{The stack}
+
+The production topology is five services: a self-built TLS edge that negotiates a hybrid
+post-quantum key exchange with modern clients, the application under gunicorn, a connection pooler,
+PostgreSQL with continuous archiving, and Redis for the shared rate limiter. Every service runs as a
+non-root user with every capability dropped, third-party images are pinned by digest, and every
+production container drops the test framework. Four deployment paths share one secrets discipline,
+one backup path and one threat model: a laptop launcher, a single-host compose profile with a
+blue-green rolling deploy, a scripted Linux install under systemd exercised on two distributions,
+and a Helm reference profile with default-deny network policies and the restricted pod security
+standard, booted in CI on a one-node cluster. \sImpl
+
+\subsection{Failure, drilled and measured}
+
+The repository's rule is to exercise rather than read: ten of ten defects found in one sweep were
+invisible to reading. Every operational claim below is a drill that runs in CI and commits a number.
+
+\begin{description}
+  \item[High availability.] The database runs under Patroni with a leader lease in a three-member
+    etcd and role-based routing. Under a live write stream the drill loses the leader (the replica
+    promoted after the 20-second lease, in-flight queries failing fast and retried, none lost), cuts
+    the leader off from the lease store (it stood down in 7 seconds), performs a planned switchover
+    (3.3 seconds, no insert failed), and crashes an etcd member (a 0.3-second stall). The Kubernetes
+    profile runs the same members with the cluster's API as the lease store and deletes the leader
+    pod. \sImpl
+  \item[Read replicas.] Read-only surfaces route to a streaming replica under an explicit
+    staleness contract, at most ten seconds behind by default, falling back to the primary beyond
+    it, with every routed response naming its source and lag. Correctness-critical reads stay on
+    the primary, and the authorization half of a verification verdict is pinned there
+    (Section~\ref{sec:authorization}). \sImpl
+  \item[Partitioning.] The four append-only event tables are monthly range-partitioned, and a
+    drill proves that the append-only trigger holds across a partition, an attach and a detach,
+    because the archives' carve-out must not become a rewrite path. A benchmark found that the
+    Atlas roll-ups defeated partition pruning under the generic plan and scanned every month of
+    history; the fix is pinned by a check. \sImpl
+  \item[Disaster recovery.] Backups are encrypted and a restore fails closed without the key.
+    A monthly drill kills the primary, restores it from the archive and commits the measured numbers
+    against the targets of 300 seconds of data loss and four hours to recover: the last recorded
+    rows show 36 to 42 seconds of loss and under five seconds to service, on the drill's ephemeral
+    host, not production hardware. \sImpl
+  \item[Chaos.] A weekly drill boots the blue-green stack under traffic, kills one colour with zero
+    dropped requests, stops both until the outage page reaches a real alert manager and webhook,
+    kills Redis and PostgreSQL, partitions the pooler, and commits every recovery time against a
+    ceiling. Findings become checks. \sImpl
+  \item[Rolling deploys.] A deploy under traffic drops zero requests; edge and database recreation
+    are window operations measured on every push against ceilings (0.3 seconds for the edge on a
+    single host, 0.6 seconds for a database crash), and the readiness ledger carries the remaining
+    edge half openly. \sImpl
+\end{description}
+
+\subsection{Load: what was measured and what was projected}
+
+Three kinds of number appear in the repository, and the paper keeps them apart. \emph{Measured}
+numbers come from a named machine, an Apple Silicon laptop with eight cores, and carry a version
+stamp. \emph{Simulated} numbers come from the national simulation harness, a synthetic country
+driven through the real procedures at a stated scale factor. \emph{Projected} numbers are arithmetic
+over measured ones and are labelled as such by the repository itself. No production cluster has
+been measured.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.25in} >{\RaggedRight\arraybackslash}p{0.95in} >{\RaggedRight\arraybackslash}p{1.1in}}
+\caption{Performance numbers at the versions that measured them. Every row is single-node on the reference laptop unless marked as a projection. The event-ingestion rate and the cryptographic verification rate differ by about 35 times, a gap the repository's own history once hid (Section~\ref{sec:senses}).}\label{tab:perf}\\
+\toprule
+\rowcolor{tabheader}\thead{Quantity} & \thead{Number} & \thead{Kind} & \thead{Source} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Quantity} & \thead{Number} & \thead{Kind} & \thead{Source} \\
+\midrule
+\endhead
+\multicolumn{4}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+ML-DSA-65 sign, one core & about 2,110 per second & measured & dyno, \code{v9.278} \\
+ML-DSA-65 verify, single witness, one core & about 7,840 per second & measured & dyno, \code{v9.278} \\
+ML-DSA-65 verify, two witnesses, one core & about 740 per second & measured & dyno, \code{v9.278} \\
+Membership proof, depth 14 & about 35 ms to prove, 13 ms to verify, 76 KB & measured & dyno and the soundness ledger \\
+Issuance through the application & 40 per second sustained, p95 28 ms & measured & baseline, \code{v9.191} \\
+Verification event through the application & 80 per second sustained, p95 18.5 ms & measured & baseline, \code{v9.191} \\
+Enrolment with real signing, bulk pipeline & about 372 tokens per second & simulated, 1:10,000 & national simulation, \code{v9.257} \\
+Verification-event ingestion (audit writes, no signature check) & about 25,970 per second & simulated, 1:10,000 & national simulation \\
+Atlas at ten million events: a street block; the whole world; the whole world from a roll-up & 2.6 ms; 2.9 s; 0.04 ms & measured, \code{v9.150} & scaling ledger \\
+Single-witness verification across an eight-core node & about 62,800 per second & projection & benchmark arithmetic \\
+\end{xltabular}
+}
+
+The roadmap's planning targets (ten million persons for a state; 350 million, five thousand
+sustained and fifty thousand peak verifications per second nationally) are targets to be validated,
+stated in the repository as such and not asserted. A national workload has been simulated at a
+scale factor and driven through the real constraints; it has not been run. \sExp
+
+\subsection{Abuse, secrets and supply chain}
+
+Per-agency quotas on issuance, revocation and verification are opt-in rows enforced by a trigger on
+every write path, exact under concurrency by an advisory lock, refused loudly on every surface, and
+keyed by agency identifiers, never by a person. Velocity alerts compare each agency to its own
+trailing week. The per-IP rate limiter shares one Redis bucket across workers. Operators
+authenticate with WebAuthn as a second factor after an enrolment deadline, sessions are registered
+server-side with per-role caps and origin checks, and a per-role network policy applies. Secrets are
+file-mounted, sealed and rotated through one lifecycle; the application refuses to boot in
+production on a default key. Every release ships bills of materials with signed provenance, and CVE
+scans of the dependency surface and of every self-built image gate the build. \sImpl
+
+\subsection{The standing witness}
+
+Eighteen CI jobs run on every push, and most carry a comment naming the past failure they exist to
+prevent. They build and boot the images; boot the five-service stack end to end and assert health
+through the TLS edge; round-trip an encrypted backup and an off-site copy; kill and restore the
+primary; roll a deploy under traffic; install the Linux profile on two distributions; boot the
+Kubernetes profile; page a duress alert through a real alert manager; prove the post-quantum
+handshake against a real certificate; sign and verify with real ML-DSA both in the production image
+and inside a software PKCS\#11 module; run every protocol drill under real signatures; federate two
+instances over HTTP; type-check, test and conform the TypeScript SDK; fail the HA profile's leader,
+lease store and etcd member under a live write stream; and gate on CVE scans. The pattern behind
+them is the one Section~\ref{sec:senses} describes: every defect class found by running the system
+gets a permanent gate. \sImpl
+
+\begin{layercard}{Layer card: operations}
+\qa{What it is}{The five-service stack on four substrates; HA, replicas, partitioning, backup and disaster recovery, chaos, rolling deploys; abuse controls, secrets, supply-chain gates; eighteen CI jobs and two scheduled drills.}
+\qa{Why it exists}{A correct system that cannot survive a lost disk, a bad deploy or a hostile client is not infrastructure.}
+\qa{What it trusts}{The drills' ephemeral hosts as a lower bound on production behaviour; the operator's placement of hosts and the custody choice.}
+\qa{What it refuses}{A claim without a drill; a number without a stamp; a root-running container; an unpinned image; a fixable critical CVE.}
+\qa{What it can see}{Metrics, traces and alerts about the system. The correlation id on every request never touches the audit of record.}
+\qa{What it cannot see}{A person: quotas, alerts and metrics are keyed by agency, route and worker.}
+\qa{If it fails}{A drill that misses its ceiling fails the build; a chaos or DR finding becomes a check; a production incident is what the readiness ledger's nine operator decisions exist to prepare for.}
+\qa{Checked by}{\code{check\_ha\_automation}, \code{check\_read\_replica\_routing}, \code{check\_event\_table\_partitioning}, \code{check\_dr\_drill\_scheduled}, \code{check\_chaos\_program}, \code{check\_zero\_downtime\_deploy}, \code{check\_abuse\_controls}, \code{check\_container\_hardening}, \code{check\_cve\_scanning}.}
+\qa{Now or later}{Now, on drills. Multi-region, a hardware module, and production hardware are later.}
+\qa{Inside and outside}{Inside: everything above. Outside: the system's view of itself, which an operator needs without a view of people.}
+\end{layercard}
+
+\nextlayer{An operator running all of this needs to see what the system is doing and to understand
+where authority comes from, and must be able to do both without the system becoming a map of its
+people. The next layer is how Polaris observes and understands itself.}

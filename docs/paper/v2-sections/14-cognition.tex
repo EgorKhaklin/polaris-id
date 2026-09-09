@@ -1,0 +1,99 @@
+% 14-cognition.tex: Atlas, Athena, and the layers that must never model a person.
+\section{How Polaris observes and understands itself}
+\label{sec:cognition}
+
+Two cognitive layers exist, two are proposed, and one line separates all of them from the people
+the system serves. The design rule is stated in the repository in one sentence: make power legible,
+not people.
+
+\figfile{cognition}{The cognitive layers. Atlas sees what the system is doing; Athena understands
+the structure of authority; Metis, proposed, would learn the behaviour of Polaris itself; Myrmex,
+proposed in this paper, would attack it from outside. The constitution constrains all of them. The
+red line is the person-prohibition: nothing above it models a natural person, and five checks fail
+the build if a person-level column or traversal appears in the authority layer.}{fig:cognition}
+
+\subsection{Atlas sees}
+
+The Atlas is the operator's investigation surface: an analytical console that opens on a bounded,
+non-geographic overview, a volume time-series with failures overlaid, top-K breakdowns by context,
+agency, disclosure and outcome, a two-dimensional pivot, a records grid, and a map kept as a tab for
+what a map is good at, one region's drill or one subject's journey. Every view is a bounded
+server-side aggregate, never the raw events: at most a few hundred cluster summaries for a viewport,
+at most 240 time buckets, at most fifty categories, keyset pagination so that a deep page stays
+cheap. A zero-knowledge verification is counted in volume and in the disclosure tallies and is never
+located, because it carries no token to attribute it by. The single-entity investigation pages are
+built to refuse cross-individual link analysis, and every read of an audit surface is itself
+recorded. A live-simulation mode is driven in a headless browser in CI and the console is asserted to
+actually stream. \sImpl
+
+\subsection{Athena understands structure}
+
+Athena is a read-only semantic and provenance layer over the authority tables: agencies,
+algorithms, contexts, trust attestations and retention policies, as ten object views and eight edge
+views, with four functions that answer the governance questions the tree could otherwise answer only
+by hand. Why may this agency issue under this algorithm? What proof and disclosure policy bounds
+this context? If this algorithm is deprecated, who is affected? Which mechanism enforces this
+constitutional rule? The constitution itself is data: C1 to C10 and the vocation are rows, and a
+table maps each rule to the exact live mechanism that enforces it, a trigger, a partial unique index,
+a named check constraint, a check function or a procedure. A check fails the build if any named
+mechanism no longer exists, and a database test proves each is present in the running catalogue,
+which closes the drift between prose and code that the constraint lattice alone could not. The
+signed registry of Section~\ref{sec:institutions} is a view over Athena, so the map of the
+institutions that an outsider fetches is the same map the operator inspects. \sImpl
+
+Athena is safe to exist only because person-legibility is made structurally impossible, not merely
+discouraged. Five invariants gate it, each with an adversarial detection test: no Athena view,
+function or table references a natural-person table or column, and no column is a stable per-person
+surrogate; every function is read-only, so \emph{the graph says revoke, therefore revoked} is
+impossible; every function bounds its output; every authority edge resolves to an existing authority
+table, and the current views exclude revoked authority, so Athena describes and never owns; and every
+rule maps to a mechanism that exists. The same ship that created Athena removed the earlier
+person-aggregating views. If the prohibition ever obstructs a feature, the repository's own
+assessment says that is the signal to stop, not to relax it. \sImpl
+
+\subsection{What must never be built here}
+
+No person, household or relationship object. No subject handle, opaque or otherwise, stable across
+contexts. No traversal from a zero-knowledge event to a subject. No population segmentation or
+scoring. No action: the layer reads and never writes. Those are the kill criteria of the design
+study that endorsed a constrained Athena, and they are the boundary any future cognitive layer
+inherits.
+
+\subsection{Metis and Themis, named carefully}
+
+The roadmap carries a captured brief for a future, advisory-only learning subsystem that would learn
+Polaris itself: infrastructure anomaly detection, capacity forecasting with uncertainty, regression
+and release-risk intelligence, chaos learning that proposes experiments and never injects them,
+root-cause assistance over Athena's dependency graph, and aggregate institutional anomalies of the
+form \emph{this agency normally revokes 0.8 percent a month and now revokes 4.9}. Its central
+hypothesis is to be falsified before any code: machine learning may infer properties of the system
+and must never infer, rank, score or predict the rights of natural persons, and renaming a person
+to a subject does not satisfy that if the data stays linkable. Its design law is advisory only:
+observe, model, predict, explain, recommend, and never predict then revoke, deny, issue or change a
+constitution or a production configuration. The brief proposes the name Metis, because the obvious
+alternative collides with the metrics stack, and records that a rule that works as well as a model
+should be preferred to the model. Nothing of it is built; the brief calls for a full assessment
+first. \sFut
+
+This paper uses the name Themis for the constitution's constraining role over all four layers, and
+the repository's own brief uses it in the same sentence: Atlas sees, Athena understands structure,
+Metis learns system behaviour, Themis constrains them all. Themis is not a component. It is the
+vocation and C1 to C10 as enforced in the schema and pinned by the checks, which already exist. The
+name is a reading aid and nothing in the code carries it.
+
+\begin{layercard}{Layer card: system cognition}
+\qa{What it is}{Atlas, the bounded operational console; Athena, the read-only authority-and-constitution layer; and two proposals, Metis and Myrmex.}
+\qa{Why it exists}{An operator must see what the system is doing and understand where authority comes from; a system this large cannot be governed by hand.}
+\qa{What it trusts}{The append-only events and the authority tables it reads.}
+\qa{What it refuses}{Any person-level object, handle, traversal, score or action; an unbounded read; a model where a rule would do.}
+\qa{What it can see}{Aggregates of events and the structure of authority, keys, contexts, trust and rules.}
+\qa{What it cannot see}{A person. The single-entity investigation page exists outside these layers, gated by role and audited on every read.}
+\qa{If it fails}{A person reference in Athena fails five checks; an unbounded aggregate fails C8; a learning system that scored people would violate the vocation and is refused before it is designed.}
+\qa{Checked by}{\code{check\_athena\_no\_person}, \code{check\_athena\_read\_only}, \code{check\_athena\_functions\_bounded}, \code{check\_athena\_non\_sovereign}, \code{check\_athena\_rule\_enforcement\_resolves}, \code{check\_atlas\_console}, the C8 caps.}
+\qa{Now or later}{Atlas and Athena now. Metis after an assessment; Myrmex is a proposal in this paper.}
+\qa{Inside and outside}{Inside: operations. Outside: the loop by which the system corrects its own understanding.}
+\end{layercard}
+
+\nextlayer{A system that can observe itself still has to learn from what it observes, and the
+hardest lesson Polaris has learned is that its own instruments can be green while measuring the
+wrong thing. The next section is that lesson.}

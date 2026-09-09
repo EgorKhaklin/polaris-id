@@ -1,0 +1,54 @@
+% v2-figures/districts.tex: the 36 canonical tables of 01_schema.sql at v9.345,
+% arranged as rings around the Version 1 nucleus. The nucleus geometry (the
+% hexagonal lattice of Version 1) is drawn faintly at the centre with the same
+% proportions; the three outer rings are the tables the system grew. Every
+% name is a real table. The ring numbers at the bottom match the caption.
+\begin{tikzpicture}[scale=1.0,
+  tbl/.style={draw=navymid, line width=0.6pt, rounded corners=1.5pt, fill=white, text=navydark,
+              font=\tiny\ttfamily, inner sep=2.2pt, minimum width=2.0cm, minimum height=0.4cm, align=center},
+  tblcore/.style={tbl, fill=navydark, text=white, font=\tiny\bfseries\sffamily},
+  tblhub/.style={tbl, fill=accent, draw=accent, text=white, font=\scriptsize\bfseries\sffamily, minimum width=2.4cm, minimum height=0.55cm},
+  ringnum/.style={font=\bfseries\scriptsize, text=gold, fill=white, draw=gold, line width=0.5pt, circle, inner sep=1.4pt},
+]
+\def\R{2.35}
+\begin{scope}[on background layer]
+  \foreach \a in {90,150,210,270,330,30} { \draw[steelgray, line width=0.4pt, opacity=0.10] (\a:\R) circle (0.62); }
+  \draw[steelgray, line width=0.4pt, opacity=0.10] (0,0) circle (0.62);
+  \foreach \a in {90,150,210,270,330,30} { \draw[steelgray, line width=0.3pt, opacity=0.07] (\a:{\R/2}) circle (0.42); }
+  \draw[steelgray, line width=0.4pt, opacity=0.09] (90:\R) -- (150:\R) -- (210:\R) -- (270:\R) -- (330:\R) -- (30:\R) -- cycle;
+  \draw[steelgray, line width=0.3pt, opacity=0.07] (90:{\R/2}) -- (150:{\R/2}) -- (210:{\R/2}) -- (270:{\R/2}) -- (330:{\R/2}) -- (30:{\R/2}) -- cycle;
+  \draw[steelgray, line width=0.3pt, opacity=0.06] (90:\R) -- (210:\R) -- (330:\R) -- cycle;
+  \draw[steelgray, line width=0.3pt, opacity=0.06] (270:\R) -- (30:\R) -- (150:\R) -- cycle;
+  \draw[ring, opacity=0.55] (0,0) ellipse (4.9 and 5.6);
+  \draw[ring, opacity=0.55] (0,0) ellipse (6.9 and 7.7);
+  \draw[ring, opacity=0.55] (0,0) ellipse (8.5 and 9.5);
+\end{scope}
+% --- ring 1: the nucleus (Version 1's seven entities)
+\node[tblhub] at (0,0) {IdentityToken};
+\node[tblcore] at (90:\R)  {Individual};
+\node[tblcore] at (150:\R) {TokenLifecycleEvent};
+\node[tblcore] at (30:\R)  {VerificationContext};
+\node[tblcore] at (210:\R) {Agency};
+\node[tblcore] at (330:\R) {CryptographicAlgorithm};
+\node[tblcore] at (270:\R) {VerificationEvent};
+% --- ring 2: the credential machinery (11)
+\foreach \a/\n in {90/TokenSignature, 122.7/TokenPermission, 155.5/DeviceBinding, 188.2/RevocationList, 220.9/RecoveryRequest,
+                   253.6/DuressEvent, 286.4/EnrollmentStatusEvent, 319.1/TokenStateEpoch, 351.8/TokenStateEpochLeaf, 24.5/ZkVerificationNonce, 57.3/BlockchainAnchor} {
+  \node[tbl] at ({4.9*cos(\a)},{5.6*sin(\a)}) {\n};
+}
+% --- ring 3: authority, trust and policy (9)
+\foreach \a/\n in {90/AgencyAlgorithmAuth, 130/AgencyTrustAttestation, 170/AuthorityKeyEvent, 205/IssuerDiscretionPolicy, 245/AgencyQuota,
+                   285/RelyingParty, 325/AuthCodeConsumed, 10/ExchangeNonce, 50/AppUser} {
+  \node[tbl] at ({6.9*cos(\a)},{7.7*sin(\a)}) {\n};
+}
+% --- ring 4: archives, logs and the retention record (9)
+\foreach \a/\n in {90/AnchorBatch, 130/ExchangeReceiptLog, 170/TimestampLog, 210/AuthAuditLog, 250/IndividualErasureEvent,
+                   290/LifecycleArchiveCheckpoint, 330/RetentionPolicy, 10/BulkEnrollmentBatch, 50/BulkEnrollmentStaging} {
+  \node[tbl] at ({8.5*cos(\a)},{9.5*sin(\a)}) {\n};
+}
+% --- ring numbers on the bottom axis, in the gaps between boxes
+\node[ringnum] at (0,-3.15) {1};
+\node[ringnum] at (0,-5.6) {2};
+\node[ringnum] at (0,-7.7) {3};
+\node[ringnum] at (0,-9.5) {4};
+\end{tikzpicture}

@@ -1,0 +1,59 @@
+% 00-about.tex: what this document is, and how to read its marks.
+\section*{About this version}
+\addcontentsline{toc}{section}{About this version}
+
+Version 1 of this report (\code{polaris\_project\_report.pdf}, preserved unchanged beside this
+file) described Polaris as a database-design project: twelve tables around one credential, an
+entity-relationship model, a lifecycle state machine, and the argument that identity data must be
+post-quantum from the first day. That description remains the historical record. Since then the
+repository has grown from twelve tables to thirty-six, from one
+application to a federation protocol, a transparency layer and an institutional exchange fabric,
+and from zero machine-checked invariants to 191. Version 2 describes the system as it stands at
+tag \code{v9.345} (9 September 2026), and it is written for a reader who has never opened the
+repository.
+
+The paper keeps what Version 1 got right: the token-centred geometry of the schema, used here as
+the centre of every map, and the lifecycle machine, with one correction, since the trigger Version 1
+recommended for enforcing it now exists.
+The post-quantum argument is kept, as Appendix~\ref{app:from-v1} summarises. Everything else is
+written fresh from the tree.
+
+\subsection*{Four marks}
+
+Every capability carries one of four marks, so that code that runs is never confused with an
+intention.
+
+\begin{description}
+  \item[\sImpl] A path that runs at \code{v9.345}, exercised by a test or a drill in continuous
+    integration, and pinned by an invariant check that fails the build if it stops being true.
+  \item[\sExp] A path that runs but is limited in a way the repository itself names: not covered by
+    CI, notional in scale, or dependent on a backend that CI simulates.
+  \item[\sExt] A property the repository implements and tests internally but that no external
+    party has yet audited, attacked, deployed or independently re-implemented: no penetration
+    test, cryptographic audit, pilot or third-party implementation has occurred.
+  \item[\sFut] A proposal: a roadmap row, a design note, or an idea that exists only in this paper.
+    It is not code.
+\end{description}
+
+Numbers were measured on the tree at \code{v9.345} by the methods in Appendix~\ref{app:counts},
+not copied from earlier documents. Where the repository's own documents disagree with its code, the
+code wins and the disagreement is recorded in the author's notes that accompany this version.
+
+\subsection*{The analogy, and its limit}
+
+The paper explains Polaris through one sustained analogy: a walled town. The credential record is
+the town hall's register; the constraints are the wall; the endpoints are gates; the transparency
+logs are watchtowers; independent witnesses stand outside the wall watching the towers; other
+authorities are other towns, joined by roads that run one way; and above the whole town stand laws
+that bind even the town itself. The analogy describes arrangement and sight lines, not political
+centralisation: Polaris is federated per authority, with no central database, root or verification
+service, and every recurrence of the analogy returns to the actual mechanism by its real name.
+
+\subsection*{One thesis}
+
+The system is an attempt to build identity infrastructure in which important claims do not have to
+be trusted merely because a central application says they are true. Authority, state, history,
+privacy boundaries and the system's own behaviour are progressively exposed to independent
+verification and constrained by layers that do not share each other's assumptions. Each layer exists
+because the layer inside it could be entirely correct and still fail to prove what a society needs
+to know. That progression is the spine of the paper.

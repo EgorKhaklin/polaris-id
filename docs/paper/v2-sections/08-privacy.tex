@@ -1,0 +1,105 @@
+% 08-privacy.tex: the privacy boundary, stated exactly.
+\section{The privacy boundary: what a verifier is allowed to learn}
+\label{sec:privacy}
+
+Two things in Polaris use zero knowledge, one thing deliberately does not exist, and the distinction
+between them is the most important sentence in this section.
+
+\subsection{Three disclosure levels}
+
+Every verification event is recorded at one of three levels. \code{ZERO\_KNOWLEDGE} proves that a
+valid token exists without recording which: the event's token identifier is null, and a check
+constraint refuses any row that says otherwise (C2). \code{SELECTIVE} records named attributes only.
+\code{FULL} records the identity and is logged and rate-limited. The level is decided by the server
+and cannot be upgraded by the client (C6): a relying party cannot turn a zero-knowledge check into a
+full one by asking differently, and the Atlas redacts a zero-knowledge event's location server-side.
+The default level is zero-knowledge. \sImpl
+
+\subsection{Issuer-side unlinkable verification records}
+
+The first use of zero knowledge is a property of the issuer's database. A default-mode verification
+stores no token identifier, so the verification graph, who was verified where and when, cannot be
+reconstructed from the database even by someone holding all of it. This is a structural claim, not a
+promise: the repository carries a redaction proof that the redacted field is non-derivable under a
+stated adversary model, and property tests exercise every read path. The claim is scoped precisely.
+It covers zero-knowledge-mode events. Selective and full events do carry a token identifier, because
+that is what those levels mean. \sImpl
+
+\subsection{The membership proof}
+
+The second use of zero knowledge is a proof object. A Merkle tree behaves like a cryptographic
+fingerprint of an entire set: instead of handing a verifier the whole set, one can hand it a short
+proof that a particular item belongs to the set with the committed fingerprint. Polaris commits, per
+epoch, a Merkle root over the active-token set, and a holder can produce a Plonky2 proof that its
+token is a leaf under that root, bound to the epoch, a context and a nonce, without revealing which
+leaf. The verifier sees the proof bytes and four public inputs and cannot recover the leaf; that is
+the proof system's property, not an API rule. The setup is transparent, with no ceremony, and the
+commitments are hash-based, which is why it is comfortable in a post-quantum threat model. The
+default tree depth of fourteen covers the schema's ten-thousand-leaf epoch cap, so the anonymity set
+is a full epoch. On the reference machine a proof takes about 35~ms to make and about 13~ms to
+check, and the verdict is two-witnessed at the statement level. \sImpl
+
+What the proof does not do is stated with the same care. It proves membership and binding, nothing
+else: whether a token is active, permitted for the context and unrevoked is decided when the epoch is
+composed, not inside the circuit. The nonce prevents substituting a captured proof into another
+context; online, a single-use nonce store refuses a replayed bundle, and offline the verifier keeps no
+state, so a relying party that needs single use issues a challenge. There is no per-verifier
+nullifier, so the proof cannot by itself enforce \emph{one human, once} (Section~\ref{sec:agents}).
+The prover runs on the Polaris host, not on the holder's device. And the circuit over the proof
+library has had no external cryptographic audit; the repository's soundness ledger says not to
+protect real identities with it as shipped. \sExt
+
+The strongest attack on the proof is not on the proof. It is correlation: matching zero-knowledge
+events with selective or full ones across contexts and timestamps to rebuild the graph the proof was
+hiding. What answers it is everything around the circuit, the redaction of the graph from every
+operator surface, the bounded result sets on every read path, and the threat model's accepted
+residual that a sufficiently resourced adversary with many data sources may still deanonymise by
+traffic analysis.
+
+\subsection{The thing that does not exist}
+
+Polaris is a full-credential presentation system. A presentation carries a stable \code{token\_value},
+and the login token's subject is the credential's hash. Two relying parties who both see a credential
+can therefore join their logs by that value, with no name required, and nothing in C2 or C6 stops
+them. Even without the value, any stable handle shown to every verifier, a reused public key, a
+reused membership proof, is the same correlator. Polaris does not implement pairwise or per-verifier
+identifiers, blinded or derived presentations, one-time presentation tokens, or anonymous
+credentials, and the repository records this as a permanent, documented property rather than a
+pending feature. \emph{Unlinkable by default} means the issuer's zero-knowledge-mode records. It
+does not mean cross-verifier presentation. The future presentation technologies that would change
+this are discussed in Section~\ref{sec:research}; none is built. \sImpl{} as a stated limitation.
+
+\figfile{holder-flow}{Holder, relying party and issuer, with what each sees and what each is
+prevented from seeing. The holder presents a file; the relying party decides offline with the
+detached verifier or an SDK and learns that a valid credential exists and its value; the issuer
+records, in zero-knowledge mode, an event with no token identifier, and keeps no who-verified-whom
+row for the online status check. The red edge is the stated limitation: the credential value is a
+stable handle across the verifiers it is shown to.}{fig:holder-flow}
+
+\subsection{Bounded surfaces}
+
+The remaining privacy mechanisms bound what a surface can return rather than what is stored. Every
+map and API aggregate is hard-capped (C8), so the whole population cannot be extracted through the
+operator's atlas, and a request for six and a half million cluster bins returns at most five
+thousand. The single-entity investigation pages are built to refuse cross-individual link analysis
+and are audited: a meta-audit table records who read which audit surface, with what filter, and how
+many rows came back, and it is append-only. The authority-structure layer, Athena, is forbidden by
+five checks from referencing any natural-person table or column (Section~\ref{sec:cognition}). And
+timestamps, the timestamp authority and the exchange gateway are built to learn nothing about what
+they touch, which Section~\ref{sec:institutions} describes. \sImpl
+
+\begin{layercard}{Layer card: the privacy boundary}
+\qa{What it is}{Three disclosure levels with a CHECK behind the default; server-side enforcement; the redaction proof; the epoch membership proof and its second witness; bounded aggregates; an audited single-entity investigation surface.}
+\qa{Why it exists}{A verification log is a surveillance backbone unless it is structurally unable to be one.}
+\qa{What it trusts}{The C2 constraint; the proof library's soundness; the redaction proof's adversary model.}
+\qa{What it refuses}{A client's claim about its own disclosure level; a token identifier on a zero-knowledge row; an unbounded read; a person node in the authority layer.}
+\qa{What it can see}{At zero knowledge: that a valid token was verified at a time in a context. At full: the identity, logged.}
+\qa{What it cannot see}{Which token, in zero-knowledge mode, even from the whole database.}
+\qa{If it fails}{An identifier on a zero-knowledge row is unstorable; a cap removed fails the build; a person reference in Athena fails five checks. Cross-verifier correlation is not a failure; it is the documented boundary.}
+\qa{Checked by}{The C2 CHECK, \code{check\_c6\_atlas\_redacts\_zk\_location}, the redaction property suite, the ZK second-witness differential, \code{check\_athena\_no\_person}.}
+\qa{Now or later}{Now. Linkability-resistant presentation is a different system and later.}
+\qa{Inside and outside}{Inside: status. Outside: the holders and relying parties who use the credential.}
+\end{layercard}
+
+\nextlayer{A credential bounded in what it reveals still has to be used: held, presented, accepted
+and logged in with. The next layer is where the credential meets software that is not the issuer's.}

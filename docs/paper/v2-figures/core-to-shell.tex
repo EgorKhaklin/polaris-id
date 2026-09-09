@@ -1,0 +1,37 @@
+% v2-figures/core-to-shell.tex: the concentric map of Polaris.
+% Nine rings around a very small core. Ring coordinates are scaled; the legend
+% text is not, so it stays legible at page width.
+\begin{tikzpicture}[scale=0.5]
+  % Rings, outermost first so the fills stack correctly.
+  \foreach \r/\shade in {9/2, 8/4, 7/6, 6/8, 5/10, 4/13, 3/16, 2/20, 1/26} {
+    \fill[navymid!\shade!white] (0,0) circle (\r);
+  }
+  \foreach \r in {1,...,8} { \draw[ring] (0,0) circle (\r); }
+  \draw[ringfut] (0,0) circle (9);
+  % The core's leader line is drawn first so that the core covers its start.
+  \draw[steelgray, line width=0.4pt, opacity=0.7] (0,0) -- (10.3,9.9);
+  \fill[accent] (0,0) circle (0.55);
+  % Ring numbers on the upper-left diagonal.
+  \foreach \r/\n in {1/1, 2/2, 3/3, 4/4, 5/5, 6/6, 7/7, 8/8, 9/9} {
+    \node[font=\bfseries\scriptsize, text=navydark, fill=white, inner sep=1pt, circle] at ({135:\r-0.5}) {\n};
+  }
+  % The core's legend row.
+  \node[anchor=west, font=\bfseries\small, text=accent] at (10.6,9.9) {Core};
+  \node[anchor=north west, font=\scriptsize, text=steelgray, text width=7.8cm, align=left] at (10.6,9.55) {one \code{IdentityToken} row and its \code{TokenSignature}: a signed claim};
+  % The legend column on the right, one row per ring, with leader lines.
+  \foreach \r/\y/\name/\what in {
+    1/7.7/{1 \ Schema walls}/{triggers, CHECK constraints, the partial unique index; C1--C10},
+    2/5.5/{2 \ Cryptographic evidence}/{ML-DSA signatures, custody, two witnesses, canonical signing},
+    3/3.3/{3 \ Verification and status}/{detached verifier, SDKs, conformance, status assertions, epochs},
+    4/1.1/{4 \ Privacy boundary}/{disclosure levels, unlinkable records, membership proofs},
+    5/-1.1/{5 \ Use}/{wallet, presentations, relying-party API, auth broker},
+    6/-3.3/{6 \ Federation}/{per-authority roots, manifests, directional attestations, feeds},
+    7/-5.5/{7 \ Transparency}/{logs, signed heads, witnesses, gossip, equivocation proofs},
+    8/-7.7/{8 \ Institutions and operations}/{registry, gateway, receipts, timestamps, signing; HA, DR, chaos, CI},
+    9/-9.9/{9 \ Cognition, boundaries, future}/{Atlas, Athena; what is refused; agents and personhood (proposed)}} {
+    \node[anchor=west, font=\bfseries\small, text=navydark] at (10.6,\y) {\name};
+    \node[anchor=north west, font=\scriptsize, text=steelgray, text width=7.8cm, align=left] at (10.6,\y-0.35) {\what};
+    \draw[steelgray, line width=0.4pt, opacity=0.7] ({atan(\y/10.6)}:{max(\r-0.5,0.8)}) -- (10.3,\y);
+  }
+  \node[kicker, anchor=west, text width=7.8cm, align=left] at (10.6,11.6) {read outward: each ring exists because the one inside it was not enough};
+\end{tikzpicture}

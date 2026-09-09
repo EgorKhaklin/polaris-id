@@ -1,0 +1,14 @@
+% v2-figures/senses-loop.tex: how an error becomes a permanent new sense.
+\begin{tikzpicture}
+  \node[layerbox, minimum width=3.2cm, text width=2.9cm] (obs)  at (0,0)    {Observation\\[-1pt]{\mdseries\scriptsize run the system, not read it}};
+  \node[layerbox, minimum width=3.2cm, text width=2.9cm] (fail) at (4.6,0)  {Failure\\[-1pt]{\mdseries\scriptsize a green check proved the wrong thing}};
+  \node[layerbox, minimum width=3.2cm, text width=2.9cm] (mod)  at (9.2,0)  {Model correction\\[-1pt]{\mdseries\scriptsize what the mechanism really proves}};
+  \node[corebox,  minimum width=3.2cm, text width=2.9cm] (inv)  at (13.8,0) {New invariant\\[-1pt]{\mdseries\scriptsize a check with a detection test}};
+  \node[softbox,  minimum width=7.6cm, text width=7.3cm] (sense) at (6.9,-2.6) {A permanent new sense: the failure class cannot recur unseen. Continuous integration carries it on every push.};
+  \draw[flow] (obs) -- (fail);
+  \draw[flow] (fail) -- (mod);
+  \draw[flow] (mod) -- (inv);
+  \draw[flow] (inv.south) |- (sense.east);
+  \draw[flow] (sense.west) -| (obs.south);
+  \node[faint, text width=9cm] at (6.9,-3.9) {the loop runs again on the next observation; the invariants accumulate, they are never deleted};
+\end{tikzpicture}

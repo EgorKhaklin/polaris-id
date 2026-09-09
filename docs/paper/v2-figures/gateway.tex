@@ -1,0 +1,21 @@
+% v2-figures/gateway.tex: an institutional exchange through the gateway, and
+% what is left behind. The bodies exist for the life of the request; the
+% evidence is the signed envelope and the signed receipt.
+\begin{tikzpicture}
+  \node[extbox, minimum width=3.2cm, text width=2.9cm] (req) at (-0.4,3.6) {Requesting institution\\[-1pt]{\scriptsize signs an envelope under its registered key: body hash, target, kind, context, nonce, time}};
+  \node[layerbox, minimum width=6.8cm, text width=6.5cm] (gw) at (7.0,3.6) {The gateway (the responder's own instance)\\[-1pt]{\mdseries\scriptsize 1 refuses without real signing. 2 checks form, address, freshness, binding. 3 authenticates by a known key, two witnesses. 4 authorizes: the responder itself attests the requester in this context. 5 consumes the nonce. 6 forwards to the operator-configured upstream. 7 signs a receipt. 8 returns response + receipt.}};
+  \node[extbox, minimum width=2.8cm, text width=2.5cm] (up) at (14.2,3.6) {Upstream service\\[-1pt]{\scriptsize configured by the operator; never named by a request}};
+  \draw[flow] ([yshift=4mm]req.east) -- node[faint, above, text width=2.2cm] {envelope + body} ([yshift=4mm]gw.west);
+  \draw[flowfaint] ([yshift=-4mm]gw.west) -- node[faint, below, text width=2.2cm] {response + receipt} ([yshift=-4mm]req.east);
+  \draw[flow] ([yshift=4mm]gw.east) -- node[faint, above] {body} ([yshift=4mm]up.west);
+  \draw[flowfaint] ([yshift=-4mm]up.west) -- node[faint, below] {response} ([yshift=-4mm]gw.east);
+  % what is written
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (nonce) at (4.6,0.3) {\code{ExchangeNonce}\\[-1pt]{\scriptsize (key hash, nonce): a replay is refused (409)}};
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (rlog) at (9.4,0.3) {\code{ExchangeReceiptLog}\\[-1pt]{\scriptsize the receipt's SHA3-256, published as a transparency log}};
+  \draw[flowfaint] (gw.south -| nonce.north) -- (nonce.north);
+  \draw[flowfaint] (gw.south -| rlog.north) -- (rlog.north);
+  \node[font=\scriptsize\bfseries\color{classmark}, text width=9.0cm, align=center, anchor=north] at (7.0,-0.75) {nothing else is written: no body, no log line with a body, no record of who asked what about whom};
+  % the evidence
+  \node[corebox, minimum width=6.4cm, text width=6.1cm, anchor=north] (ev) at (4.6,-2.1) {The evidence: (envelope, receipt)\\[-1pt]{\mdseries\scriptsize the requester's signed intent and the responder's signed account agree on the key, the context, the request hash and the instant; a third party verifies both offline with no body; a party holding a body confirms the hash binds}};
+  \node[faint, text width=4.6cm, anchor=north west] at (8.4,-2.1) {A receipt alone proves the responder's account; the requester's participation is proven by the envelope. The pair is the evidence.};
+\end{tikzpicture}

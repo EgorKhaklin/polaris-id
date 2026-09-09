@@ -1,0 +1,64 @@
+% D-glossary.tex: terms, defined the way the paper uses them.
+\section{Glossary}
+\label{app:glossary}
+
+\begin{description}
+  \item[Anchor set.] The published issuer keys a relying party has chosen to trust. Trust in Polaris
+    is always membership in the verifier's own anchor set, never a decision the issuer makes for it.
+  \item[Append-only.] A table on which UPDATE and DELETE are refused by a database trigger, so history
+    can only be added to. The audit of record is the named pattern of applying this per table.
+  \item[Attestation.] A directional, per-context statement that one agency accepts another's
+    credentials, recorded as a row. Never transitive.
+  \item[Authenticity pack.] A credential as a file: the token value, its signature and the issuer's
+    public key. What a holder holds and a stranger verifies.
+  \item[Canonicalisation.] Turning a structure into one exact sequence of bytes (sorted keys, no
+    whitespace) so that a signature made on one machine can be checked on another that rebuilds the
+    same bytes.
+  \item[Consistency proof.] A short proof that a smaller Merkle tree is a prefix of a larger one, so
+    that a log only appended between two heads.
+  \item[Detached verifier.] A program that checks Polaris artifacts with no Polaris code, no database
+    and no network: \code{scripts/polaris-verify.py}.
+  \item[Disclosure level.] What a verification records: zero-knowledge (no token identifier),
+    selective (named attributes), or full (the identity, logged).
+  \item[Epoch.] A closed, immutable commitment to the active-token set at a moment, as a Merkle root,
+    against which membership proofs are made.
+  \item[Equivocation.] A log telling two observers two different histories. The proof of it is two
+    signed heads of the same size with different roots.
+  \item[Federation.] Independent authorities, each its own root, recognising one another through
+    explicit attestations, with no central service.
+  \item[Gossip.] Witnesses sharing the log heads they were shown so that a split view is detected by
+    comparison.
+  \item[High availability.] A database that survives the loss of its leader by promoting a replica
+    under a lease, drilled and measured.
+  \item[Inclusion proof.] A short proof that one entry is in a Merkle tree with a given root.
+  \item[Long-term validation.] Deciding that a signature was valid at the instant it was made, from
+    evidence fixed at that instant, so that the decision survives the key's later retirement.
+  \item[Merkle tree.] A cryptographic fingerprint of a whole set, built by hashing pairs upward to one
+    root, that lets a small proof show one item belongs to the set.
+  \item[ML-DSA.] The lattice-based post-quantum signature scheme standardised as FIPS 204;
+    parameter sets 65 and 87 are accepted.
+  \item[Nullifier.] In a zero-knowledge system, a value derived from a secret and a scope that lets a
+    verifier detect a second use without linking uses across scopes. Not implemented in Polaris.
+  \item[Pairwise identifier.] A different handle for each relying party, so that two parties cannot
+    join their logs. Not implemented in Polaris.
+  \item[Partition.] A table split into monthly pieces by timestamp, transparent to queries, so that
+    old months can be detached to the archive.
+  \item[PKCE.] A proof-of-possession extension to the authorization-code login flow, so that an
+    intercepted code cannot be exchanged by an attacker.
+  \item[Post-quantum.] Cryptography whose security does not rest on problems a quantum computer
+    solves efficiently.
+  \item[Replica.] A copy of the database that follows the primary with some lag; safe for reading
+    immutable material, unsafe for deciding current authorization.
+  \item[Revocation feed.] A signed list of the hashes of revoked credentials an authority issued,
+    consumed offline.
+  \item[Signed tree head.] A log's signed commitment to its whole history at a size.
+  \item[Status assertion.] A short-lived, issuer-signed statement of a credential's current status,
+    stapled to a presentation so that authorization is decidable offline.
+  \item[Trust list.] A signed statement of every key an instance knows, with each key's status and
+    the instants those statuses took effect.
+  \item[Two-witness principle.] No cryptographic verdict is trusted from a single implementation; a
+    second, independently written one must agree or abstain explicitly.
+  \item[Witness.] An independent party that cosigns log heads it found consistent and refuses a fork.
+  \item[Zero-knowledge proof.] A proof that a statement is true which reveals nothing beyond the
+    statement's truth; in Polaris, membership of a token in an epoch.
+\end{description}

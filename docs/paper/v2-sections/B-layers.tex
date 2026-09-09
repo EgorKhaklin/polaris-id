@@ -1,0 +1,46 @@
+% B-layers.tex: the metacognitive map.
+\section{The metacognitive map}
+\label{app:layers}
+
+The ladder below is the paper's answer to the request for an explicit map of Polaris as layers of
+knowledge and scepticism. Each rung states what the layer knows and what it refuses to take on faith
+from the rung below. The layers are not exactly the rings of Figure~\ref{fig:core-to-shell}, because
+some rings hold two kinds of knowledge; the rungs follow the implementation.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\bfseries}p{0.35in} >{\RaggedRight\arraybackslash}p{1.35in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.0in}}
+\caption{The layers, what checks each, and whether each is needed now or is preparation.}\label{tab:layers}\\
+\toprule
+\rowcolor{tabheader}\thead{Layer} & \thead{Name} & \thead{Checked by} & \thead{Now or later} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Layer} & \thead{Name} & \thead{Checked by} & \thead{Now or later} \\
+\midrule
+\endhead
+\multicolumn{4}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+L0 & Human subject & Nothing in the software; the enrolment tiers keep non-enrolment a named state & Now \\
+L1 & Credential core & C3, the signature triggers, the lifecycle trigger & Now \\
+L2 & Structural constraints & The audit-of-record and cascade checks, the CHECK-constraint suite & Now \\
+L3 & Cryptographic evidence & The two-witness checks, the canonical oracle, the attack suite & Now \\
+L4 & Verification and status & The detached-verifier, conformance, offline-verification and status checks & Now \\
+L5 & Privacy and disclosure & The C2 CHECK, the redaction suite, the Athena person checks & Now \\
+L6 & Federation & The topology, manifest, feed and two-instance checks & Now as protocol; later as institutions \\
+L7 & Transparency & The log, gossip and publication checks & Now as protocol; later as independent witnesses \\
+L8 & Institutional services & The registry, gateway, receipt, timestamp and signing checks & Now between instances \\
+L9 & Operations & The HA, replica, partition, DR, chaos and hardening checks & Now on drills; later on production hardware \\
+L10 & System cognition & The Atlas caps, the five Athena checks & Atlas and Athena now; Metis, Myrmex later \\
+L11 & Societal boundary & C10's structural absence, the non-goals, the vocation & Now, and permanent \\
+L12 & Agent and web environment & Nothing yet & Later \\
+\end{xltabular}
+}
+
+\figfile{layer-ladder}{The ladder. From the person, who exists outside the software, to the
+environment of agents the system is preparing for. The right-hand column is the refusal each layer
+makes of the layer below it; the last rung's refusal is an open problem rather than a
+mechanism.}{fig:layer-ladder}

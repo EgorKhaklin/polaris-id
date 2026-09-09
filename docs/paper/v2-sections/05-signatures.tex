@@ -1,0 +1,118 @@
+% 05-signatures.tex: cryptographic evidence.
+\section{Authenticating truth: signatures, custody and two witnesses}
+\label{sec:signatures}
+
+\subsection{What a signature is for}
+
+A digital signature is a seal that only the holder of a private key can make and that anyone with
+the matching public key can check. Polaris signs the SHA3-256 digest of a token value under the
+issuing agency's ML-DSA key and stores the signature beside the public key that made it. The claim
+a signature carries is narrow and permanent: \emph{this key signed these bytes.} It says nothing
+about whether the token is still authorized, which is the next section's problem, and nothing about
+who holds the key, which is custody's problem. \sImpl
+
+The algorithm is ML-DSA-65 (FIPS 204, security category 3) by default and ML-DSA-87 (category 5)
+beside it; ML-DSA-44 is refused everywhere as below the floor. No signed body hardcodes its
+algorithm: the custodied key decides it before signing, because \code{algorithm} is itself a signed
+field, and the registry advertises the accepted set. SLH-DSA, the hash-based alternative that does
+not rest on lattice assumptions, is registered in the algorithm table so that a rotation away from
+lattices is a row update, and no SLH-DSA signer is wired; the seed token filed under it can never
+be re-signed, and the posture ledger carries the gap. \sImpl{} for ML-DSA; \sFut{} for a hash-based
+signer.
+
+\subsection{Custody}
+
+The private key never sits in application code. It sits behind a custody interface with three
+drivers: a file (development), PKCS\#11 (a hardware security module or a software token; the key is
+generated inside the token and never leaves it), and a cloud key-management service. Continuous
+integration exercises the PKCS\#11 driver against a software token that implements ML-DSA, not a
+hardware module, and rotates a key inside it: a token signed under the old in-token key still
+verifies after the switch while the new key signs. One production profile makes the module the sole
+signer: the application refuses to boot if a file key is present or real signing is unavailable.
+Which driver, which module, and who holds the key are decisions the readiness ledger assigns to a
+deploying organisation. \sImpl{} for the drivers and the drill; \sExt{} for hardware custody, since
+no hardware module has been used.
+
+The placeholder deserves a paragraph, because it is where an honest system is most easily
+misread. Without the real-signing flag and a lattice library present, the signing module produces a
+deterministic SHA3-256 binding labelled \code{DETERMINISTIC-PLACEHOLDER-SHA3-256}, so that a
+developer without the library still exercises every structural invariant. It is not a signature and
+cannot be mistaken for one, because the label is checked. Since \code{v9.280} a production boot
+fails closed unless real signing is actually available, and the placeholder is a named development
+profile that warns loudly when used unnamed. The repository's own history records why: at
+\code{v9.58} the headline post-quantum claim was, at the data level, a hardcoded string, and the
+real signing module was an unused island until it was wired into issuance. \sImpl
+
+\subsection{Two witnesses at issuance, one at use, sampled}
+
+The two-witness principle states that any cryptographic verdict Polaris ships must be checkable by
+a second, independent implementation, written separately, differently represented, sharing no code,
+and agreeing on the verdict or abstaining explicitly. A verifier that agrees with itself has
+established nothing. At issuance the signature just produced is verified by two independent FIPS 204
+implementations, a lattice library and an OpenSSL-backed one, and is refused persistence unless both
+accept it; a missing witness at issuance is a refusal, not a downgrade. \sImpl
+
+Verification at use runs one witness, because a stored signature is already known to verify under
+both, and one witness detects tampering at about ten times the rate: on the reference machine
+roughly 7,800 verifications per second per core against roughly 740 two-witness. The fast path
+earns its speed by being continuously checked: a mandatory random fraction of successful checks is
+replayed through the second witness, a disagreement increments a counter and pages at the highest
+severity, and every response names which witness set ran. Two witnesses that are optional would be
+one witness with extra documentation. \sImpl
+
+The same principle governs the zero-knowledge verdict (Section~\ref{sec:privacy}): a Python
+re-implementation with plain integers modulo a prime, sharing no code with the Rust prover,
+re-derives the membership statement and must agree, and it abstains, in the open, on the one axis it
+cannot model, the integrity of the proof bytes. What the principle catches is implementation
+divergence. What it does not catch is a shared misreading of the specification, and the repository
+says so beside every two-witness claim.
+
+\subsection{Canonical signing: the same bytes on both sides}
+
+Every signed artifact in Polaris is a JSON statement with sorted keys and no whitespace, digested
+with SHA3-256, then signed. The application builds the statement; the detached verifier
+(Section~\ref{sec:verifiers}) rebuilds it from the artifact to check the signature. The two
+constructions must be byte-identical or a genuine artifact fails to verify, and a test, the
+canonical-equivalence oracle, pins every signed type on both sides. The one bug the oracle is there
+to catch was found in review: an artifact whose \code{algorithm} field was set after signing carried
+a signed field the signature did not cover. \sImpl
+
+\subsection{Keys have a lifecycle}
+
+Before \code{v9.328} an authority had one current key and every surface said active. The key
+register is now an append-only table of events, registered, retired, or compromised from an instant
+that may predate the discovery, from which a signed trust list is published. A verifier holding a
+trust list decides a key's status at any instant, so a credential under a compromised issuer key is
+rejected independently of the issuer's own manifest, which a thief holding the key could forge, and
+a document signed and timestamped before the compromise stays valid while one signed after does not.
+The two-instance drill records a compromise on one authority and watches the other's decision flip
+over the wire, with no cooperation from the compromised party. Algorithm migration is a key event:
+register the ML-DSA-87 key, retire the ML-DSA-65 one from an instant. \sImpl
+
+\subsection{What remains classical}
+
+The token signature, the digests, the Merkle commitments, the zero-knowledge proof and the
+client-to-edge key exchange for modern clients are post-quantum. The two internal transport hops
+inside the deployment, the certificate signatures, and the operator's WebAuthn credentials remain
+classical, each gated on a third party (an OpenSSL version in two container images, the public
+certificate ecosystem, authenticator hardware) and each stated in the posture ledger with its
+threat and its exposure. The relying-party side already offers ML-DSA-65 first for WebAuthn so
+that the day an authenticator implements it, enrolment is post-quantum with no change. None of the
+lattice library, the proof system or the circuit has had an external cryptographic audit. \sExt
+
+\begin{layercard}{Layer card: cryptographic evidence}
+\qa{What it is}{ML-DSA signatures over SHA3-256 digests, stored with their public keys; a custody interface with file, PKCS\#11 and KMS drivers; two independent verifying implementations; a canonical statement format; an append-only key register and a signed trust list.}
+\qa{Why it exists}{A claim that leaves the database needs to carry its own proof, and a proof only one program can check is a promise.}
+\qa{What it trusts}{FIPS 204 and 202 as standardised; the two libraries not sharing a bug; the custody backend the operator chose.}
+\qa{What it refuses}{A verdict from a single implementation at issuance; an algorithm named in code rather than by the key; a signature stored without its key; a placeholder passing as a signature.}
+\qa{What it can see}{The bytes it signs, which are digests: the signing path never sees a person.}
+\qa{What it cannot see}{Whether the signed claim is still authorized (Section~\ref{sec:authorization}).}
+\qa{If it fails}{A forged signature fails both witnesses; a compromised key is retired from an instant by the register and every verifier holding the trust list rejects what it signed afterwards; a library bug that one witness shares with nobody is caught by the sampled disagreement.}
+\qa{Checked by}{\code{check\_pqc\_signing\_wired}, \code{check\_pqc\_second\_witness}, \code{check\_verify\_witness\_sampling}, \code{check\_real\_pqc\_default\_boot}, \code{check\_key\_rotation\_drilled}, \code{check\_trust\_lifecycle}, the canonical-equivalence oracle, the attack suite.}
+\qa{Now or later}{Now. The hardware module and the external audit are later, and belong to a deploying organisation.}
+\qa{Inside and outside}{Inside: the schema, which stores the signature rows. Outside: the independent verifiers that check them without the issuer.}
+\end{layercard}
+
+\nextlayer{A signature the issuer's own server checks proves nothing to a stranger, because the
+stranger has to trust the server. The next layer takes the verification out of the issuer's hands
+entirely.}

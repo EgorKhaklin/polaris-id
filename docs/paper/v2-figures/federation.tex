@@ -1,0 +1,23 @@
+% v2-figures/federation.tex: two authorities, one directional attestation, and
+% a relying party deciding offline. The dashed red edge is the transitive
+% trust the model refuses: an attestation is never a closure.
+\begin{tikzpicture}
+  % Authorities in one row: A, B and the third party C that only A trusts.
+  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (A) at (0,3.0) {Authority A\\[-1pt]{\mdseries\scriptsize its own database, its own ML-DSA-87 root; publishes manifest, epoch checkpoint, revocation feed}};
+  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (B) at (7.4,3.0) {Authority B\\[-1pt]{\mdseries\scriptsize its own database, its own ML-DSA-65 root; publishes the same three objects}};
+  \node[layerbox, minimum width=3.0cm, text width=2.7cm, fill=steelgray!85, draw=steelgray] (C) at (13.6,3.0) {Authority C\\[-1pt]{\mdseries\scriptsize trusted by A, not by B}};
+  % The attestation edge (B accepts A in context 3)
+  \draw[flow, line width=1.4pt] (B.west) -- node[lbl, above, text width=3.4cm] {B attests A's key in context 3, until a date (\code{AgencyTrustAttestation})} (A.east);
+  % A trusts C, drawn over the top so that it visibly bypasses B
+  \draw[flowfaint] (A.north) to[out=60, in=120, looseness=0.5] node[faint, above, pos=0.5] {A attests C, in some context} (C.north);
+  % The refused transitive edge
+  \draw[refuse, dash pattern=on 4pt off 3pt] (B.east) -- (C.west);
+  \node[font=\scriptsize\bfseries\color{classmark}, anchor=north, text width=2.6cm, align=center] at (10.6,2.7) {no closure: B trusting A never implies B trusts C};
+  % The holder and the relying party
+  \node[humanbox, minimum width=2.8cm] (h) at (0,0.0) {holder of an A credential};
+  \draw[flowfaint] (A.south) -- (h.north);
+  \node[extbox, minimum width=4.0cm, text width=3.7cm] (rp) at (0,-3.4) {Relying party that trusts B\\[-1pt]{\scriptsize decides offline: A's credential is genuine, B's manifest is authentic, fresh and trusted, it attests A's key in context 3, and A's feed does not list the credential}};
+  \draw[flow] (h.south) -- node[faint, right] {presents in context 3} (rp.north);
+  \draw[flowfaint] (B.south) to[out=270, in=0] node[faint, below, sloped, pos=0.55] {fetches B's manifest} (rp.east);
+  \node[faint, text width=8.6cm, anchor=north] at (5.2,-5.5) {In CI this runs as two independent instances over HTTP, each with its own database and real key, under a mixed pair of parameter sets. Two instances of one code base, run by one author, prove the protocol; they do not prove institutional independence.};
+\end{tikzpicture}

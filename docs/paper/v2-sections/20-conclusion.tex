@@ -1,0 +1,75 @@
+% 20-conclusion.tex: the complete mental model, answered.
+\section{Conclusion: the whole organism}
+\label{sec:conclusion}
+
+A reader who has followed the rings outward should now be able to answer the questions this paper
+set out to make answerable. Each answer below is one sentence, and each points back to the section
+that carries the mechanism.
+
+\begin{description}
+  \item[What the central credential is.] One signed claim, \emph{this authority issued this token to
+    this person}, held as a file the holder controls, in a lifecycle with exactly one active state
+    (Section~\ref{sec:core}).
+  \item[Why the schema surrounds it.] Because a promise enforced only by the people who run the
+    system is not a promise; triggers, check constraints and unique indexes bind every client and
+    every restore (Section~\ref{sec:walls}).
+  \item[How cryptographic trust works.] Post-quantum signatures over digests, checked by two
+    independent implementations at issuance and sampled at use, with keys that have a recorded
+    lifecycle (Section~\ref{sec:signatures}).
+  \item[How verification differs from authorization.] Authenticity is permanent and cacheable;
+    authorization is fresh and revocable, decided on the primary or by a short-lived signed assertion
+    whose window is the honest cost of going offline (Sections~\ref{sec:verifiers}
+    and~\ref{sec:authorization}).
+  \item[How privacy is bounded.] By what is stored, not by who may read it: no token identifier on
+    a zero-knowledge event, a membership proof that reveals nothing but membership, bounded reads,
+    and a stated limitation on cross-verifier correlation (Section~\ref{sec:privacy}).
+  \item[How relying parties use credentials.] Through a wallet protocol, a detached verifier, two
+    SDKs and a login broker that keeps no record of who logged in where (Section~\ref{sec:use}).
+  \item[How authorities federate.] Each with its own key and no central store, by directional
+    per-context attestations that never form a chain, and by signed feeds a relying party decides
+    on offline (Section~\ref{sec:federation}).
+  \item[How transparency constrains authority.] Append-only logs with signed heads, monitors that
+    prove history only grew, and witnesses that cosign, gossip, and produce a non-repudiable proof
+    when a log tells two stories (Section~\ref{sec:transparency}).
+  \item[How institutional exchange works.] Through a signed registry, a gateway that authenticates
+    by key and authorizes by the responder's own attestation, receipts that commit to hashes and never
+    bodies, a timestamp authority that learns nothing, and signatures that outlive their keys
+    (Section~\ref{sec:institutions}).
+  \item[How Polaris survives failures.] By drilling them: failover, replicas, partitions, backup
+    and restore, chaos and rolling deploys, each with a measured number and a ceiling, on every push
+    (Section~\ref{sec:operations}).
+  \item[What Atlas and Athena do.] Atlas sees what the system is doing in bounded aggregates;
+    Athena understands the structure of authority and the constitution as data; neither may model a
+    person (Section~\ref{sec:cognition}).
+  \item[Why AI agents change the identity problem.] Because the question becomes what kind of actor
+    is acting, under whose authority, within what scope, verifiable without learning anything else
+    (Section~\ref{sec:agents}).
+  \item[How privacy-preserving proof of personhood might fit.] On the existing uniqueness constraint
+    and membership proof, with a scoped nullifier, a holder-side key and a presentation that carries no
+    stable handle, none of which is built (Sections~\ref{sec:agents} and~\ref{sec:research}).
+  \item[How delegated agent authority might work.] As a signed, scoped, expiring, separately revocable
+    grant from a human's credential to an agent, verified by a service that learns only the five
+    answers it needs (Section~\ref{sec:agents}).
+  \item[How stigmergic debugging could help.] As an outside colony of specialised agents leaving
+    evidence on a shared landscape, with confidence drawn only from reproductions, feeding the loop by
+    which a reproducible failure becomes a permanent invariant (Section~\ref{sec:research}).
+  \item[What Polaris can do today.] Issue, sign, verify, revoke, present, federate, log, witness,
+    exchange, timestamp and sign documents, all on notional data, all drilled in continuous
+    integration, between instances of one code base (Appendix~\ref{app:status}).
+  \item[What it cannot do today.] Hold real identity data, run on hardware tokens or a hardware
+    module, prove independence of institutions or implementations, prevent cross-verifier
+    correlation, or claim any property no outside party has tested (Section~\ref{sec:limitations}).
+  \item[What it is ultimately trying to become.] Identity infrastructure in which no important claim
+    has to be taken on the word of a central application, because authority, state, history, privacy
+    and the system's own behaviour are exposed to independent verification and constrained by layers
+    that do not share each other's assumptions.
+\end{description}
+
+The town's register is small. The walls around it are what make it safe to keep. And the reason the
+system has so many rings is not that its builders enjoyed rings: each one was added when the ring
+inside it was found to be correct and still unable to prove what a society would need to know.
+Credential authenticity is not current authorization. Current authorization is not privacy. Privacy
+is not freedom from coercion. Federation is not institutional independence. A transparency log is not
+protection from a split view. And a green test is not proof that the test asked the right question.
+Polaris is the accumulation of those sentences into mechanisms, and the honest map of where the
+accumulation stands at version 9.345.

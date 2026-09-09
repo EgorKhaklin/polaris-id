@@ -1,0 +1,29 @@
+% v2-figures/signing-chain.tex: a signed document, the evidence fixed at the
+% instant of signing, and how a verifier decides validity after the key is gone.
+\begin{tikzpicture}
+  \node[extbox, minimum width=2.6cm] (doc) at (0,5.6) {document\\[-1pt]{\scriptsize never leaves its holder}};
+  \node[softbox, minimum width=2.6cm] (dig) at (3.6,5.6) {SHA3-256 digest};
+  \draw[flow] (doc) -- (dig);
+  \node[layerbox, minimum width=6.4cm, text width=6.1cm] (sig) at (9.2,5.6) {signed container\\[-1pt]{\mdseries\scriptsize the institution signs its own digest; or the holder's issuing authority signs on behalf of a holder who proved possession, recorded by credential hash}};
+  \draw[flow] (dig) -- (sig);
+  % LTV evidence, fed from the container through one horizontal bus
+  \node[softbox, minimum width=2.9cm, text width=2.6cm] (ts) at (1.6,1.9) {timestamp\\[-1pt]{\scriptsize from a second authority, a key distinct from the signer's; over statement and signature}};
+  \node[softbox, minimum width=2.9cm, text width=2.6cm] (man) at (5.0,1.9) {manifest\\[-1pt]{\scriptsize the signer's anchors and their statuses at the instant}};
+  \node[softbox, minimum width=2.9cm, text width=2.6cm] (chk) at (8.4,1.9) {epoch checkpoint\\[-1pt]{\scriptsize the signer's chain at the instant}};
+  \node[softbox, minimum width=2.9cm, text width=2.6cm] (feed) at (11.8,1.9) {revocation feed\\[-1pt]{\scriptsize the credential hash must be absent, for a holder signature}};
+  \draw[flowfaint, -] (sig.south) -- (9.2,3.55);
+  \draw[flowfaint, -] (1.6,3.55) -- (11.8,3.55);
+  \foreach \n in {ts,man,chk,feed} { \draw[flowfaint] (\n.north |- 0,3.55) -- (\n.north); }
+  \node[kicker, anchor=south west] at (0.2,3.65) {evidence attached at signing, outside the signed statement};
+  % Trust list and the decision
+  \node[extbox, minimum width=3.0cm, text width=2.7cm] (tl) at (1.6,-1.9) {trust list\\[-1pt]{\scriptsize the verifier's own; key status at any instant}};
+  \node[corebox, minimum width=8.6cm, text width=8.3cm] (dec) at (8.4,-1.9) {\texttt{verify\_signed\_document}\\[-1pt]{\mdseries\scriptsize valid long-term iff: the timestamp is authentic, trusted, and from a key distinct from the signer's; the signer key was active at the instant per the manifest and per the trust list; the timestamp key was active per the trust list; the feed at the instant does not list the holder; optionally, the timestamp is anchored in a witnessed log, and a quorum of independent timestamp authorities agrees}};
+  \draw[flow] (tl.east) -- (dec.west);
+  \foreach \n in {man,chk,feed} { \draw[flowfaint] (\n.south) -- (dec.north -| \n.south); }
+  \draw[flowfaint] (ts.south) -- (tl.north);
+  % Timeline of key events
+  \draw[flow, line width=1.1pt] (0,-5.6) -- (13.8,-5.6) node[anchor=west, font=\scriptsize\color{steelgray}] {time};
+  \foreach \x/\l in {2.0/{signed and timestamped}, 6.6/{key retired}, 10.6/{key compromised (effective earlier)}} { \draw[navydark, line width=1pt] (\x,-5.45) -- (\x,-5.75); \node[font=\scriptsize, anchor=north, align=center, text width=3.2cm] at (\x,-5.85) {\l}; }
+  \node[font=\scriptsize\bfseries\color{navydark}, anchor=south] at (4.3,-5.4) {still valid after retirement};
+  \node[font=\scriptsize\bfseries\color{classmark}, anchor=south, text width=4.2cm, align=center] at (11.6,-5.4) {invalid if the instant falls after the compromise};
+\end{tikzpicture}

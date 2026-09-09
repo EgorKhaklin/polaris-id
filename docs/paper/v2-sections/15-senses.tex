@@ -1,0 +1,85 @@
+% 15-senses.tex: errors become new senses.
+\section{Errors become new senses: the history of self-correction}
+\label{sec:senses}
+
+\subsection{Formal truth is not intended truth}
+
+A check can be perfectly green while proving the wrong proposition. A signature can exist without
+ever being verified. A benchmark can report thousands of verifications per second while counting
+database writes. A two-witness guarantee can be certified on the strength of one witness that
+happened to be absent. Every one of those sentences describes a state Polaris was actually in, at a
+version the changelog names, and every one was found by running the system rather than reading it,
+or by an outside reader who did not share the author's assumptions. The project's method for this is
+a loop: an observation, a failure, a correction of the model of what the mechanism really proves, a
+new invariant with a detection test, and a permanent new sense that the failure class cannot recur
+unseen. Invariants accumulate and are never deleted. At \code{v9.345} there are 191 of them.
+
+\figfile{senses-loop}{The loop by which an error becomes a permanent sense. Observation is
+running the system, not reading it; the failure is a green check that proved the wrong thing; the
+correction is a new statement of what the mechanism proves; the invariant is a check with a detection
+test; and continuous integration carries it on every push from then on.}{fig:senses-loop}
+
+\subsection{Selected corrections, from the record}
+
+Each row is a mechanism that was technically valid and did not prove what was intended, the version
+that found it, and the sense it left behind. None of these is embarrassing; each is the method
+working.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\bfseries}p{0.5in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.45in}}
+\caption{Corrections recorded in the changelog. The right-hand column names the check or test that now fails if the original condition returns.}\label{tab:corrections}\\
+\toprule
+\rowcolor{tabheader}\thead{Version} & \thead{What was believed} & \thead{What was true, and what changed} & \thead{The new sense} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Version} & \thead{What was believed} & \thead{What was true, and what changed} & \thead{The new sense} \\
+\midrule
+\endhead
+\midrule\multicolumn{4}{r}{\scriptsize\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+v9.58 & Tokens were post-quantum signed & The procedure wrote a placeholder string and the signing module was an unused island; signing was wired into issuance & \code{check\_pqc\_signing\_wired} \\
+v9.113 & Signatures were verified & Nothing on a live path ever called verify; issuance now self-verifies and a use-path primitive exists & \code{check\_verify\_enforced} \\
+v9.133 & A verdict from one library was a verdict & One library could silently accept a forgery; a second, independent implementation must agree & \code{check\_pqc\_second\_witness} \\
+v9.257 & The benchmark measured verifications per second; bulk-issued tokens were signed & It measured audit-row ingestion, about 35 times faster than cryptographic verification; bulk rows carried a placeholder literal. Three numbers are now reported separately and bulk issuance refuses an unsigned row & \code{signatures\_cryptographically\_verify}, \code{check\_national\_simulation} \\
+v9.264 & Every stored signature was two-witnessed; \code{usable} was current & A missing witness at issuance degraded silently to one; \code{usable} could be decided on a stale replica. Issuance now requires the witness and status is pinned to the primary & \code{check\_pqc\_signing\_wired} (extended) \\
+v9.272 & The single-witness fast path was sound & It was sound only while the fast witness stayed trustworthy, which nothing checked; sampling through the second witness is now mandatory and a disagreement pages & \code{check\_verify\_witness\_sampling} \\
+v9.302 & A transparency monitor caught a lying log & It caught a rewrite and not a split view; witnesses, gossip and the equivocation proof were added & \code{check\_transparency\_gossip} \\
+v9.309 & The detached verifier rejected hostile input & It crashed on several classes of it; a totality contract converts every crash into the intended reject & \code{check\_verifier\_fuzz} \\
+v9.313 & The canonical oracle pinned every signed field list & Its static key-list pin used a regex that silently matched nothing; the wire specification is now checked against the signer & \code{check\_wire\_spec\_matches\_code} \\
+v9.333 & The exchange gateway authorized by the trust graph & It accepted an attestation from any agency on the instance, transitive trust one layer up; the responder itself must attest & \code{check\_exchange\_trust\_directional} \\
+v9.334 & Long-term validation trusted a timestamp & It trusted any authentic timestamp, including the signer's own, which the signer can backdate; the verifier now names distinct trusted timestamp authorities & \code{check\_ltv\_timestamp\_trust} \\
+v9.335 & A receipt alone proved an exchange & A dishonest responder can sign any receipt; the requester's envelope beside it is the evidence. A QR decoder with no bound was also made resource-bounded & \code{check\_qr\_resource\_bounds} \\
+v9.336 & The broker enforced a relying party's step-up & The demand arrived only in the holder's request; it is now registered on the relying party's row, and the code is encrypted & \code{check\_broker\_policy\_bound} \\
+v9.341 & Anchored time evidence survived a stolen key & A thief could mint a backdated timestamp; anchoring into a witnessed log makes a forgery one absent from every witnessed head & \code{check\_timestamp\_transparency} \\
+v9.345 & The maintainer would remember which drills a change touches & A changed verdict shipped without its drills and CI was red for four versions; a tool now names the verification a change needs from the paths and route handlers that moved & \code{check\_ship\_tool} \\
+\end{xltabular}
+}
+
+
+Two corrections in the record are about the project's own posture rather than a mechanism. At
+\code{v9.55} the repository deleted eighteen thousand lines of self-monitoring apparatus and some
+nine hundred invariants that asserted the apparatus's claims about itself, on the finding that the
+thesis was always the product and the scaffolding was never load-bearing; the constitution now says
+that no deeper apparatus governs the ten constraints. At \code{v9.332} and in the readiness pass
+before it, the front door was restated: the phrase \emph{zero-knowledge identity system} was split
+into three claims, unlinkable verification records, a membership proof, and selective disclosure
+not implemented; every number was labelled measured, simulated or projected; and an extrapolation
+stopped being called a certification.
+
+\subsection{Multiple observers of one claim}
+
+The pattern behind the table is that Polaris increasingly refuses to let one observer decide
+whether a claim holds. A cryptographic verdict has two implementations. A check has a detection
+test that proves it can see its own violation. A drill runs the path instead of reading it. An
+attack tries to break the defence with the real code. A fuzzer explores the input space the drills
+hand-picked. An outside review, at \code{v9.331}, found six things the author's own instruments had
+not, and five of them became invariants within eight versions. Continuous integration carries all of
+it on every push. None of these observers shares the others' assumptions, and that is the point: a
+green test is not proof that the test asked the right question, but six differently-built
+observers agreeing is much harder to fool than one. Section~\ref{sec:research} proposes a seventh
+observer that would live outside the repository altogether.

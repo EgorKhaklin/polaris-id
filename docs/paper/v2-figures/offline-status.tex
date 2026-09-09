@@ -1,0 +1,33 @@
+% v2-figures/offline-status.tex: the freshness trade-off of the signed status
+% assertion, drawn as a timeline. The shaded window is the honest cost of
+% offline authorization: a revoked credential's last ACTIVE assertion stays
+% valid until it expires, bounded by the TTL the issuer set and the max_age
+% the verifier accepts.
+\begin{tikzpicture}
+  % axis
+  \draw[flow, line width=1.2pt] (0,0) -- (14.2,0) node[anchor=west, font=\scriptsize\color{steelgray}] {time};
+  % the assertion's window
+  \fill[navymid!12!white] (1.0,-0.28) rectangle (9.0,0.28);
+  \draw[navymid, line width=0.8pt] (1.0,-0.28) rectangle (9.0,0.28);
+  \node[font=\scriptsize\color{navydark}, anchor=south] at (5.0,0.32) {the assertion is valid: \code{issued\_at} to \code{expires\_at} (TTL, 3600 s by default; the verifier caps it with \code{max\_window})};
+  % the revoked-but-valid window
+  \fill[classmark!15!white] (6.2,-0.28) rectangle (9.0,0.28);
+  \draw[classmark, line width=0.8pt, dash pattern=on 2pt off 2pt] (6.2,-0.28) rectangle (9.0,0.28);
+  % events
+  \foreach \x in {1.0, 3.0, 4.6, 6.2, 9.0, 11.4} { \draw[navydark, line width=1pt] (\x,-0.15) -- (\x,0.15); }
+  \node[font=\scriptsize, anchor=south, align=center] at (1.0,1.1) {issuer signs\\\code{status = ACTIVE}};
+  \node[font=\scriptsize, anchor=north, align=center] at (3.0,-0.45) {holder staples it\\to a presentation};
+  \node[font=\scriptsize, anchor=south, align=center] at (4.6,1.1) {relying party A,\\offline: accept};
+  \node[font=\scriptsize\bfseries\color{classmark}, anchor=north, align=center] at (6.2,-0.45) {issuer revokes\\the token};
+  \node[font=\scriptsize, anchor=south, align=center] at (9.0,1.1) {assertion expires;\\only a \code{REVOKED} one\\can be minted now};
+  \node[font=\scriptsize, anchor=north, align=center] at (11.4,-0.45) {relying party B,\\offline: reject};
+  \foreach \x/\y in {1.0/1.05, 4.6/1.05, 9.0/1.05} { \draw[steelgray, line width=0.4pt, opacity=0.6] (\x,0.3) -- (\x,\y); }
+  % the window's meaning, below the event labels
+  \draw[classmark, line width=0.6pt, dash pattern=on 2pt off 2pt] (6.2,-1.35) -- (6.2,-1.9);
+  \draw[classmark, line width=0.6pt, dash pattern=on 2pt off 2pt] (9.0,-0.32) -- (9.0,-1.9);
+  \draw[classmark, line width=0.6pt, <->, >={Stealth[length=1.8mm]}] (6.2,-1.9) -- (9.0,-1.9);
+  \node[font=\scriptsize\bfseries\color{classmark}, anchor=north, text width=6.8cm, align=center] at (7.6,-2.0) {revoked, assertion still valid: an offline verifier inside this window cannot know};
+  % the two remedies
+  \node[softbox, anchor=west, text width=5.8cm] at (0,-4.2) {\textbf{Tighten it:} a verifier imposes its own shorter \code{max\_age}; a high-risk party demands seconds, or goes online.};
+  \node[softbox, anchor=west, text width=7.0cm] at (6.6,-4.2) {\textbf{The trade:} issuer non-observation, offline availability and revocation freshness cannot all be maximised. The window is a policy number, not a law.};
+\end{tikzpicture}
