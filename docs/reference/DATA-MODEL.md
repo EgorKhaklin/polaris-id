@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **31 tables** in `01_schema.sql` (v9.288), organized
-into six functional groups. A migrated deployment holds **38 tables**: those,
+The Polaris schema is **32 tables** in `01_schema.sql` (v9.322), organized
+into six functional groups. A migrated deployment holds **39 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -227,6 +227,18 @@ Every verification attempt.
 raises `insufficient_privilege`. Constraint C1.
 
 ---
+
+### `ExchangeReceiptLog` (constraint C1: append-only; roadmap P8.2c)
+
+The exchange-receipt transparency log. A receipt itself is never retained
+(evidence without retention); at mint time only its SHA3-256, a commitment
+that reveals nothing, is appended here (`seq`, `receipt_hash`, `minted_at`;
+`chk_receipt_log_hash` admits nothing but a 64-hex digest). The app publishes
+the sequence as a second RFC-6962 log (`/api/v1/transparency/receipts/*`) with
+per-receipt inclusion evidence (`/api/v1/exchange-receipt/inclusion/<hash>`), so
+the SET of receipts is provably append-only and independently monitorable.
+Strictly append-only by trigger (`trg_receipt_log_append_only`, no carve-out)
+and by privilege (`polaris_app` may INSERT, never UPDATE or DELETE).
 
 ## Operational tables
 

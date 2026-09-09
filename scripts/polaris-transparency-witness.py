@@ -94,8 +94,9 @@ def _gossip_pool_heads(gossip_dir, log_id):
 
 
 def poll(args, V):
+    prefix = "/api/v1/transparency" + ("/receipts" if getattr(args, "log", "anchors") == "receipts" else "")
     try:
-        sth = _get(args.url, "/api/v1/transparency/sth")
+        sth = _get(args.url, prefix + "/sth")
     except (urllib.error.URLError, ValueError, OSError) as e:
         print("could not fetch the STH: %s" % e, file=sys.stderr)
         return 3
@@ -119,7 +120,7 @@ def poll(args, V):
             _write_equivocation(args, old, sth)
             return _alert("the log presented a different root at tree_size %d than it did before" % m)
         try:
-            cons = _get(args.url, "/api/v1/transparency/consistency/%d/%d" % (m, n))
+            cons = _get(args.url, prefix + "/consistency/%d/%d" % (m, n))
             cv = V.verify_log_consistency(old, sth, cons.get("proof_hex", []), issuer_key=args.anchor)
         except (urllib.error.URLError, ValueError, OSError) as e:
             print("could not fetch/verify the consistency proof: %s" % e, file=sys.stderr)
@@ -168,6 +169,8 @@ def main(argv=None):
     ap.add_argument("--state", required=True, help="directory for this witness's state")
     ap.add_argument("--gossip", help="a shared directory where witnesses publish observed heads")
     ap.add_argument("--once", action="store_true", help="poll once and exit (the default in v1)")
+    ap.add_argument("--log", choices=("anchors", "receipts"), default="anchors",
+                    help="which log to witness: the audit-anchor log (default) or the P8.2c receipt log")
     args = ap.parse_args(argv)
     return poll(args, _load_verifier())
 

@@ -213,6 +213,35 @@ COMMENT ON FUNCTION reject_checkpoint_modification IS
     'set, because the checkpoint chain IS the audit-of-record for the '
     'carve-out itself.';
 
+-- P8.2c (v9.322): the exchange-receipt transparency log is strictly append-only.
+-- No GUC carve-out: a transparency log that can be rewritten is not a
+-- transparency log. The monitor and witnesses would detect a rewrite; the
+-- trigger makes it impossible from inside the database as well.
+CREATE OR REPLACE FUNCTION reject_receipt_log_modification()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION
+        '% on ExchangeReceiptLog is forbidden: '
+        'the receipt log is an append-only transparency log and must never be rewritten.',
+        TG_OP
+        USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_receipt_log_append_only ON ExchangeReceiptLog;
+CREATE TRIGGER trg_receipt_log_append_only
+    BEFORE UPDATE OR DELETE ON ExchangeReceiptLog
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_receipt_log_modification();
+
+COMMENT ON FUNCTION reject_receipt_log_modification IS
+    'Strict append-only enforcement for ExchangeReceiptLog (P8.2c). No carve-out: '
+    'the receipt log is published as an RFC-6962 transparency log and a rewrite '
+    'would be a fork the monitor and witnesses alert on; the trigger forbids it at '
+    'the database as well.';
+
 COMMENT ON FUNCTION reject_audit_modification IS
   'Blocks UPDATE and DELETE on append-only audit tables (TokenLifecycleEvent, '
   'VerificationEvent, EnrollmentStatusEvent, AnchorBatch). Realizes NFR-4 at '

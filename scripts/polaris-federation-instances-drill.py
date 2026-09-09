@@ -98,6 +98,15 @@ def _http_post_json(url, obj):
         return status, {}
 
 
+def _http_get_soft(url):
+    """GET returning (status, json-or-{}) without raising on 4xx."""
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return r.status, json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+
+
 def _http_get(url):
     with urllib.request.urlopen(url, timeout=10) as r:
         return r.status, json.loads(r.read().decode("utf-8"))
@@ -385,6 +394,49 @@ def main():
         checks.append(("the nonce is echoed in the signed statement", (tsr or {}).get("nonce") == "drill-nonce", True))
         st8, _ = _http_post_json(base_b + "/api/v1/timestamp/1", {"digest_hex": "not a digest"})
         checks.append(("a non-digest is refused at the door (400): the content itself is never sent", st8, 400))
+
+        # 6e. RECEIPT TRANSPARENCY (P8.2c): the SET of receipts is an append-only log while no
+        #     receipt is retained. The minted receipt's hash is in B's receipt log; inclusion is
+        #     verified OFFLINE against a head signed by B; a second mint grows the log by one and
+        #     the earlier head is a prefix of the later (append-only); a fabricated hash is not in
+        #     the log; a tampered proof fails; the independent monitor, pointed at the RECEIPT
+        #     log, accepts the head and then its consistent extension.
+        rh = V.receipt_hash(receipt) if st == 200 else "00" * 32
+        st9, inc = _http_get_soft(base_b + "/api/v1/exchange-receipt/inclusion/" + rh)
+        checks.append(("the minted receipt's hash is in B's receipt log: inclusion evidence served (200)", st9, 200))
+        iv = (V.verify_receipt_inclusion(receipt, inc.get("proof", {}), inc.get("sth", {}), log_key=pub_b)
+              if st9 == 200 else {})
+        checks.append(("inclusion verified OFFLINE: the proof reconstructs a head signed by B's key",
+                       bool(iv.get("included") and iv.get("sth_authentic") and iv.get("log_matches")), True))
+        sth1 = inc.get("sth", {})
+        mon_state = os.path.join(tmp, "receipt-monitor")
+        mon_cmd = [sys.executable, os.path.join(_ROOT, "scripts", "polaris-transparency-monitor.py"),
+                   "--url", base_b, "--anchor", pub_b, "--state", mon_state, "--log", "receipts", "--once"]
+        mon1 = subprocess.run(mon_cmd, capture_output=True, text=True)
+        checks.append(("the independent monitor, pointed at the RECEIPT log, accepts its head (exit 0)", mon1.returncode, 0))
+        second = dict(mint_request(pub_a, now_iso)); second["request_hash"] = hashlib.sha3_256(b"a second request").hexdigest()
+        st10, _receipt2 = _http_post_json(mint_url, signed_mint(second, key_b))
+        sth2 = _http_get(base_b + "/api/v1/transparency/receipts/sth")[1]
+        checks.append(("a second minted receipt grows the receipt log by exactly one",
+                       (st10, sth2.get("tree_size")), (200, (sth1.get("tree_size") or 0) + 1)))
+        cons = _http_get(base_b + "/api/v1/transparency/receipts/consistency/%d/%d"
+                         % (sth1.get("tree_size") or 0, sth2.get("tree_size") or 0))[1]
+        try:
+            consistent = V.verify_consistency(cons["first_size"], cons["second_size"],
+                                              bytes.fromhex(cons["first_root_hex"]), bytes.fromhex(cons["second_root_hex"]),
+                                              [bytes.fromhex(p) for p in cons["proof_hex"]]) \
+                and cons["second_root_hex"] == sth2.get("root_hash_hex") and cons["first_root_hex"] == sth1.get("root_hash_hex")
+        except Exception as e:  # noqa: BLE001 -- a malformed proof is a wrong verdict, not a crash
+            consistent = "error: %s" % e
+        checks.append(("the earlier head is a prefix of the later one: append-only, verified offline", consistent, True))
+        mon2 = subprocess.run(mon_cmd, capture_output=True, text=True)
+        checks.append(("the monitor accepts the grown log as a consistent extension (exit 0)", mon2.returncode, 0))
+        checks.append(("a fabricated receipt hash is not in the log (404)",
+                       _http_get_soft(base_b + "/api/v1/exchange-receipt/inclusion/" + "ab" * 32)[0], 404))
+        bad_inc = json.loads(json.dumps(inc)) if st9 == 200 else {"proof": {}, "sth": {}}
+        bad_inc["proof"]["index"] = int(bad_inc["proof"].get("index", 0)) + 1
+        checks.append(("a tampered inclusion proof does not verify",
+                       V.verify_receipt_inclusion(receipt, bad_inc["proof"], bad_inc["sth"], log_key=pub_b)["included"], False))
 
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:

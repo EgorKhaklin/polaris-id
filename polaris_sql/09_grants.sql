@@ -106,7 +106,11 @@ DECLARE
         -- uc_apply_retention_template, which is SECURITY DEFINER and
         -- admin-gated. A role that could UPDATE this table directly could
         -- retire a retention decision without recording who did it.
-        'retentionpolicy'
+        'retentionpolicy',
+        -- P8.2c: the exchange-receipt transparency log. polaris_app appends a
+        -- receipt's hash at mint time; a role that could UPDATE/DELETE could
+        -- rewrite the log, which the trigger also forbids.
+        'exchangereceiptlog'
     ];
 BEGIN
     FOREACH v_tbl IN ARRAY v_append_only_tables LOOP

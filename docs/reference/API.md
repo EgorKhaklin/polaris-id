@@ -880,6 +880,40 @@ data)` checks the binding against data the verifier holds). Timestamp an exchang
 canonical bytes here and the receipt gains time evidence independent of its responder.
 Specified in [timestamp-authority.md](../design/timestamp-authority.md); wire spec section 3.9.
 
+### `GET /api/v1/exchange-receipt/inclusion/<receipt_hash>`
+
+**Public; no auth (P8.2c).** Inclusion evidence that a receipt is in this instance's
+append-only **receipt transparency log**: `{log_id, proof, sth}` -- the RFC-6962 inclusion
+proof for the receipt's SHA3-256 (its canonical statement's hash) plus the current signed
+head of the receipt log. A third party verifies offline with `scripts/polaris-verify.py`
+(`verify_receipt_inclusion(receipt, proof, sth, log_key)`) that the receipt it holds was
+minted here and cannot have been quietly dropped. The caller already holds the receipt (it
+computes the hash), so nothing is disclosed to one who does not; an unknown hash is `404`.
+Every minted receipt carries `log_id` and `log_index` (advisory, unsigned).
+
+### `GET /api/v1/transparency/receipts/sth`
+
+**Public; no auth (P8.2c).** The **receipt log's** Signed Tree Head: the receipt set as a second
+RFC-6962 transparency log (`log_id` `polaris-exchange-receipt-log`), same shape as the anchor
+log's head below, over the append-only sequence of receipt hashes. The independent monitor and
+witness daemons watch it with `--log receipts`. No receipt is retained anywhere; the entries
+are hashes.
+
+### `GET /api/v1/transparency/receipts/consistency/<m>/<n>`
+
+**Public; no auth (P8.2c).** An RFC-6962 consistency proof between two sizes of the receipt
+log: the append-only evidence, same shape as the anchor log's.
+
+### `GET /api/v1/transparency/receipts/proof/<index>`
+
+**Public; no auth (P8.2c).** An RFC-6962 inclusion proof for the receipt-log entry at `index`,
+same shape as the anchor log's.
+
+### `GET /api/v1/transparency/receipts/entries`
+
+**Public; no auth (P8.2c).** The receipt-log entries (receipt hashes) in `[start, end)` for a
+monitor or mirror to replicate; C8-bounded like the anchor log's.
+
 ### `GET /api/v1/transparency/sth`
 
 **Public; no auth.** The transparency log's **Signed Tree Head** (roadmap P3.3): the log's

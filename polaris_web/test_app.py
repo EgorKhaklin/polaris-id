@@ -276,6 +276,35 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
         self.assertIn(r.status_code, (302, 401, 403))
 
 
+class ExchangeReceiptLogTests(PolarisTestCase):
+    """P8.2c: the receipt transparency log's public surface -- a signed head, RFC-6962
+    proofs, and inclusion evidence for a receipt hash; an unknown hash is not in the log.
+    The mint->log wiring under real ML-DSA is proven over HTTP by the two-instance drill."""
+
+    def test_receipt_log_head_proof_and_inclusion(self):
+        import hashlib
+        h = hashlib.sha3_256(b"a receipt's canonical bytes").hexdigest()
+        flask_app.query("INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s) ON CONFLICT DO NOTHING",
+                        (h,), fetch='none')
+        sth = self.client.get('/api/v1/transparency/receipts/sth').get_json()
+        self.assertEqual(sth['format'], 'polaris-transparency-sth/1')
+        self.assertEqual(sth['log_id'], 'polaris-exchange-receipt-log')
+        self.assertGreaterEqual(sth['tree_size'], 1)
+        r = self.client.get('/api/v1/exchange-receipt/inclusion/' + h)
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body['proof']['entry_hex'], h)
+        self.assertEqual(body['proof']['tree_size'], body['sth']['tree_size'])
+        self.assertEqual(body['proof']['root_hash_hex'], body['sth']['root_hash_hex'])
+        entries = self.client.get('/api/v1/transparency/receipts/entries').get_json()
+        self.assertIn(h, entries['entries'])
+
+    def test_unknown_receipt_hash_is_not_in_the_log(self):
+        r = self.client.get('/api/v1/exchange-receipt/inclusion/' + 'ef' * 32)
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(self.client.get('/api/v1/exchange-receipt/inclusion/not-a-hash').status_code, 400)
+
+
 class DashboardTests(PolarisTestCase):
     """v9.238: the operations page reports state an operator acts on. It no
     longer prints schema row counts or a token roster; those assertions moved

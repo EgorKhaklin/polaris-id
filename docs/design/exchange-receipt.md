@@ -87,6 +87,21 @@ signature is not authentication. The client builds the exact bytes with the deta
 verifier's `_exchange_mint_canonical`, which the canonical-equivalence oracle holds
 byte-equal to the instance's builder.
 
+## The receipt set is a transparency log (P8.2c)
+
+Evidence without retention has a gap: if the instance keeps nothing, nothing stops it from
+later denying a receipt existed, and nothing lets a third party see how many receipts an
+institution minted. Since v9.322 every minted receipt's SHA3-256 -- never the receipt -- is
+appended to `ExchangeReceiptLog`, strictly append-only by trigger (no carve-out) and by
+privilege, and the app publishes that sequence as a second RFC-6962 log
+(`/api/v1/transparency/receipts/*`). `GET /api/v1/exchange-receipt/inclusion/<hash>` returns
+the inclusion proof plus the current signed head, and `verify_receipt_inclusion` proves
+offline that the receipt a party holds is in the log. The independent monitor and witness
+daemons watch the receipt log with `--log receipts`, so a dropped or rewritten receipt is a
+fork they alert on. The SET of receipts is transparent; each receipt stays in the hands of
+its parties. The log serves inclusion from the full entry list, as the anchor log does; a
+persisted Merkle tree is the obvious optimization when the log grows large.
+
 ## What runs
 
 `scripts/polaris-exchange-receipt-drill.py` stands up a requester, a responder, and an

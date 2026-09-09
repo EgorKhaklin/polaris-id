@@ -86,6 +86,7 @@ DROP TABLE IF EXISTS TokenLifecycleEvent    CASCADE;
 DROP TABLE IF EXISTS IdentityToken          CASCADE;
 DROP TABLE IF EXISTS AuthAuditLog           CASCADE;
 DROP TABLE IF EXISTS RelyingParty           CASCADE;
+DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
 DROP TABLE IF EXISTS AppUser                CASCADE;
 DROP TABLE IF EXISTS VerificationContext    CASCADE;
 DROP TABLE IF EXISTS CryptographicAlgorithm CASCADE;
@@ -251,6 +252,25 @@ COMMENT ON TABLE RelyingParty IS
   'secret). No who-verified-whom log is kept; bounding is rate limit + metrics.';
 
 CREATE INDEX idx_relyingparty_client_id ON RelyingParty(client_id);
+
+-- P8.2c (v9.322): the exchange-receipt TRANSPARENCY LOG. A receipt itself is never
+-- retained (evidence without retention); only its SHA3-256 -- a commitment that
+-- reveals nothing -- joins this append-only sequence, which the app publishes as a
+-- second RFC-6962 log (/api/v1/transparency/receipts/*). The SET of receipts is
+-- therefore provably append-only and independently monitorable while no receipt
+-- is stored. Strictly append-only (trg_receipt_log_append_only, no carve-out) and
+-- polaris_app holds INSERT but not UPDATE/DELETE (09_grants.sql).
+CREATE TABLE ExchangeReceiptLog (
+    seq            BIGSERIAL    PRIMARY KEY,
+    receipt_hash   CHAR(64)     NOT NULL UNIQUE
+        CONSTRAINT chk_receipt_log_hash CHECK (receipt_hash ~ '^[0-9a-f]{64}$'),
+    minted_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE ExchangeReceiptLog IS
+  'P8.2c append-only transparency log over exchange receipts: one row per minted '
+  'receipt holding ONLY its SHA3-256 (the receipt is never retained). Published as '
+  'an RFC-6962 log; strictly append-only by trigger and by privilege.';
 
 -- coverage:exempt — C1 AoR enforced by tg_authauditlog_append_only; schema_watcher verifies the trigger exists
 CREATE TABLE AuthAuditLog (

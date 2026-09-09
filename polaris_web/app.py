@@ -5787,6 +5787,10 @@ def _mint_exchange_receipt(responder, agency_id, fields, occurred_at=None):
     body['public_key_hex'] = pub
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                    'receipt minus signature_hex and public_key_hex)')
+    # P8.2c: the receipt's hash joins the append-only receipt log, so the SET of receipts is
+    # transparent (provably append-only, independently monitorable) while no receipt is kept.
+    body['log_id'] = _RECEIPT_LOG_ID
+    body['log_index'] = _receipt_log_append(hashlib.sha3_256(_exchange_receipt_statement(body)).hexdigest())
     return jsonify(body)
 
 
@@ -5959,24 +5963,28 @@ def _sth_statement(body):
     return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
-def _transparency_entries():
-    """The log entries: every AnchorBatch Merkle root, in append order (batch_id)."""
+_RECEIPT_LOG_ID = 'polaris-exchange-receipt-log'
+
+
+def _transparency_entries(log='anchors'):
+    """The log entries in append order. 'anchors': every AnchorBatch Merkle root (batch_id
+    order). 'receipts' (P8.2c): every minted exchange receipt's SHA3-256 (seq order) from
+    the append-only ExchangeReceiptLog -- the receipt itself is never retained."""
+    if log == 'receipts':
+        rows = query("SELECT receipt_hash FROM ExchangeReceiptLog ORDER BY seq", primary=True)
+        return [r['receipt_hash'] for r in rows]
     rows = query("SELECT merkle_root FROM AnchorBatch ORDER BY batch_id", primary=True)
     return [r['merkle_root'] for r in rows]
 
 
-@app.route('/api/v1/transparency/sth')
-def api_v1_transparency_sth():
-    """P3.3: the log's Signed Tree Head over the append-only AnchorBatch root sequence.
-    A monitor caches this and later proves each newer STH is a consistent (append-only)
-    extension via /consistency. Signed with the instance's own key over SHA3-256(canonical)."""
-    entries = _transparency_entries()
+def _sth_body(log_id, entries):
+    """A Signed Tree Head over `entries` for the log `log_id`, signed with the instance key."""
     root_hex = anchoring.log_tree_head(entries).hex()
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).replace(microsecond=0)
     body = {
         'format': _STH_FORMAT,
-        'log_id': _LOG_ID,
+        'log_id': log_id,
         'tree_size': len(entries),
         'root_hash_hex': root_hex,
         'timestamp': now.isoformat().replace('+00:00', 'Z'),
@@ -5987,63 +5995,145 @@ def api_v1_transparency_sth():
     body['public_key_hex'] = pub
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of '
                                    '{format,log_id,tree_size,root_hash_hex,timestamp})')
-    return jsonify(body)
+    return body
+
+
+def _consistency_body(log_id, entries, m, n):
+    size = len(entries)
+    if m < 0 or n < m or n > size:
+        return None, (jsonify(error='invalid range', log_size=size), 400)
+    proof = anchoring.log_consistency_proof(m, entries[:n]) if 0 < m < n else []
+    return {
+        'log_id': log_id,
+        'first_size': m, 'second_size': n,
+        'first_root_hex': anchoring.log_tree_head(entries[:m]).hex(),
+        'second_root_hex': anchoring.log_tree_head(entries[:n]).hex(),
+        'proof_hex': proof,
+    }, None
+
+
+def _proof_body(log_id, entries, index):
+    return {
+        'log_id': log_id,
+        'index': index,
+        'tree_size': len(entries),
+        'entry_hex': entries[index],
+        'leaf_hash_hex': anchoring.log_leaf_hash(entries[index]).hex(),
+        'proof_hex': anchoring.log_inclusion_proof(index, entries),
+        'root_hash_hex': anchoring.log_tree_head(entries).hex(),
+    }
+
+
+def _entries_body(log_id, entries):
+    size = len(entries)
+    start = request.args.get('start', 0, type=int)
+    end = request.args.get('end', size, type=int)
+    if start is None or end is None or start < 0 or end < start:
+        return None, (jsonify(error='invalid range', log_size=size), 400)
+    end = min(end, size, start + _TRANSPARENCY_ENTRIES_CAP)
+    return {'log_id': log_id, 'tree_size': size, 'start': start, 'end': end,
+            'entries': entries[start:end]}, None
+
+
+@app.route('/api/v1/transparency/sth')
+def api_v1_transparency_sth():
+    """P3.3: the log's Signed Tree Head over the append-only AnchorBatch root sequence.
+    A monitor caches this and later proves each newer STH is a consistent (append-only)
+    extension via /consistency. Signed with the instance's own key over SHA3-256(canonical)."""
+    return jsonify(_sth_body(_LOG_ID, _transparency_entries()))
 
 
 @app.route('/api/v1/transparency/consistency/<int:m>/<int:n>')
 def api_v1_transparency_consistency(m, n):
     """P3.3: an RFC-6962 consistency proof that the size-m tree is a prefix of the size-n
     tree -- the cryptographic evidence the log only appended between those two heads."""
-    entries = _transparency_entries()
-    size = len(entries)
-    if m < 0 or n < m or n > size:
-        return jsonify(error='invalid range', log_size=size), 400
-    proof = anchoring.log_consistency_proof(m, entries[:n]) if 0 < m < n else []
-    return jsonify({
-        'log_id': _LOG_ID,
-        'first_size': m, 'second_size': n,
-        'first_root_hex': anchoring.log_tree_head(entries[:m]).hex(),
-        'second_root_hex': anchoring.log_tree_head(entries[:n]).hex(),
-        'proof_hex': proof,
-    })
+    body, err = _consistency_body(_LOG_ID, _transparency_entries(), m, n)
+    return err if err else jsonify(body)
 
 
 @app.route('/api/v1/transparency/proof/<int:index>')
 def api_v1_transparency_proof(index):
     """P3.3: an RFC-6962 inclusion proof that the entry at `index` is in the current log."""
     entries = _transparency_entries()
-    size = len(entries)
-    if index < 0 or index >= size:
-        return jsonify(error='index out of range', log_size=size), 400
-    return jsonify({
-        'log_id': _LOG_ID,
-        'index': index,
-        'tree_size': size,
-        'entry_hex': entries[index],
-        'leaf_hash_hex': anchoring.log_leaf_hash(entries[index]).hex(),
-        'proof_hex': anchoring.log_inclusion_proof(index, entries),
-        'root_hash_hex': anchoring.log_tree_head(entries).hex(),
-    })
+    if index < 0 or index >= len(entries):
+        return jsonify(error='index out of range', log_size=len(entries)), 400
+    return jsonify(_proof_body(_LOG_ID, entries, index))
 
 
 @app.route('/api/v1/transparency/entries')
 def api_v1_transparency_entries():
     """P3.3: the log entries (anchor roots) in [start, end), for a monitor or mirror to
     replicate. Bounded result set (C8): at most POLARIS_TRANSPARENCY_ENTRIES_CAP per call."""
-    entries = _transparency_entries()
-    size = len(entries)
-    start = request.args.get('start', 0, type=int)
-    end = request.args.get('end', size, type=int)
-    if start is None or end is None or start < 0 or end < start:
-        return jsonify(error='invalid range', log_size=size), 400
-    end = min(end, size, start + _TRANSPARENCY_ENTRIES_CAP)
-    return jsonify({
-        'log_id': _LOG_ID,
-        'tree_size': size,
-        'start': start,
-        'end': end,
-        'entries': entries[start:end],
-    })
+    body, err = _entries_body(_LOG_ID, _transparency_entries())
+    return err if err else jsonify(body)
+
+
+# --- P8.2c: the RECEIPT log -- a second transparency log, same machinery ----------------
+#
+# Every exchange receipt's SHA3-256 (never the receipt) is appended to ExchangeReceiptLog,
+# strictly append-only at the database. These routes publish that sequence as a second
+# RFC-6962 log (log_id polaris-exchange-receipt-log): the SET of receipts is provably
+# append-only and independently monitorable while no receipt is retained. The same monitor
+# and witness daemons watch it (--log receipts).
+
+@app.route('/api/v1/transparency/receipts/sth')
+def api_v1_receipt_log_sth():
+    """P8.2c: the receipt log's Signed Tree Head."""
+    return jsonify(_sth_body(_RECEIPT_LOG_ID, _transparency_entries('receipts')))
+
+
+@app.route('/api/v1/transparency/receipts/consistency/<int:m>/<int:n>')
+def api_v1_receipt_log_consistency(m, n):
+    """P8.2c: an RFC-6962 consistency proof between two sizes of the receipt log."""
+    body, err = _consistency_body(_RECEIPT_LOG_ID, _transparency_entries('receipts'), m, n)
+    return err if err else jsonify(body)
+
+
+@app.route('/api/v1/transparency/receipts/proof/<int:index>')
+def api_v1_receipt_log_proof(index):
+    """P8.2c: an RFC-6962 inclusion proof for the receipt-log entry at `index`."""
+    entries = _transparency_entries('receipts')
+    if index < 0 or index >= len(entries):
+        return jsonify(error='index out of range', log_size=len(entries)), 400
+    return jsonify(_proof_body(_RECEIPT_LOG_ID, entries, index))
+
+
+@app.route('/api/v1/transparency/receipts/entries')
+def api_v1_receipt_log_entries():
+    """P8.2c: the receipt-log entries (receipt hashes) in [start, end); C8-bounded."""
+    body, err = _entries_body(_RECEIPT_LOG_ID, _transparency_entries('receipts'))
+    return err if err else jsonify(body)
+
+
+def _receipt_log_append(receipt_hash):
+    """Append a receipt's SHA3-256 to the append-only receipt log (idempotent: a re-minted
+    identical receipt maps to its existing entry) and return its 0-based log index."""
+    query("INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s) ON CONFLICT (receipt_hash) DO NOTHING",
+          (receipt_hash,), fetch='none')
+    row = query("SELECT (SELECT count(*) FROM ExchangeReceiptLog b WHERE b.seq < a.seq) AS idx "
+                "FROM ExchangeReceiptLog a WHERE a.receipt_hash = %s",
+                (receipt_hash,), fetch='one', primary=True)
+    return int(row['idx']) if row else None
+
+
+@app.route('/api/v1/exchange-receipt/inclusion/<receipt_hash>')
+def api_v1_exchange_receipt_inclusion(receipt_hash):
+    """P8.2c: inclusion evidence that a receipt is in this instance's append-only receipt
+    log -- the RFC-6962 inclusion proof for its hash plus the current signed head, so a
+    third party verifies offline (verify_receipt_inclusion) that the receipt it holds was
+    minted here and cannot have been quietly dropped. Public; the caller already holds the
+    receipt (it computes the hash), so nothing is disclosed to one who does not."""
+    h = str(receipt_hash).lower()
+    if not (len(h) == 64 and all(c in '0123456789abcdef' for c in h)):
+        return jsonify(error='invalid_request', error_description='a SHA3-256 hex receipt hash is required'), 400
+    entries = _transparency_entries('receipts')
+    try:
+        index = entries.index(h)
+    except ValueError:
+        return jsonify(error='not_in_log', error_description='no receipt with that hash is in this log'), 404
+    return jsonify({'log_id': _RECEIPT_LOG_ID,
+                    'proof': _proof_body(_RECEIPT_LOG_ID, entries, index),
+                    'sth': _sth_body(_RECEIPT_LOG_ID, entries)})
 
 
 # ============================================================================

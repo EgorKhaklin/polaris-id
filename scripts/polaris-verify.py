@@ -1250,6 +1250,62 @@ def timestamp_binds(ts, data):
     return hashlib.sha3_256(bytes(data)).hexdigest() == str(ts.get("digest_hex") or "").lower()
 
 
+_RECEIPT_LOG_ID = "polaris-exchange-receipt-log"
+
+
+def receipt_hash(receipt):
+    """A receipt's entry in the receipt transparency log: the SHA3-256 hex of its canonical
+    statement (the same bytes its signature covers)."""
+    return hashlib.sha3_256(_exchange_receipt_canonical(receipt)).hexdigest()
+
+
+def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
+    """Verify OFFLINE (P8.2c) that a receipt is in an append-only receipt log: the receipt's
+    hash is the proof's entry; the RFC-6962 inclusion proof reconstructs the head; the head
+    is an authentic Signed Tree Head of the RECEIPT log (with log_key: signed by the expected
+    log); and proof and head describe the same tree. No network."""
+    v = {"included": False, "sth_authentic": False, "log_matches": None, "receipt_hash": None,
+         "index": None, "tree_size": None, "note": None}
+    if not isinstance(receipt, dict) or not isinstance(proof, dict) or not isinstance(sth, dict):
+        v["note"] = "receipt, proof and sth must be objects"
+        return v
+    h = receipt_hash(receipt)
+    v["receipt_hash"] = h
+    if str(proof.get("entry_hex") or "").lower() != h:
+        v["note"] = "the proof is not for this receipt"
+        return v
+    sv = verify_sth(sth, issuer_key=log_key)
+    v["sth_authentic"] = bool(sv.get("sth_authentic"))
+    if log_key is not None:
+        v["log_matches"] = sv.get("issuer_matches")
+    if sth.get("log_id") != _RECEIPT_LOG_ID:
+        v["note"] = "the head is not a %s head" % _RECEIPT_LOG_ID
+        return v
+    try:
+        idx, size = int(proof.get("index")), int(proof.get("tree_size"))
+        root = bytes.fromhex(str(sth.get("root_hash_hex")))
+        path = [bytes.fromhex(str(p)) for p in (proof.get("proof_hex") or [])]
+    except (TypeError, ValueError):
+        v["note"] = "malformed proof"
+        return v
+    v["index"], v["tree_size"] = idx, size
+    if size != sth.get("tree_size") or \
+            str(proof.get("root_hash_hex") or "").lower() != str(sth.get("root_hash_hex") or "").lower():
+        v["note"] = "the proof and the head describe different trees"
+        return v
+    if not v["sth_authentic"]:
+        v["note"] = sv.get("note") or "the head is not authentic"
+        return v
+    if log_key is not None and not v["log_matches"]:
+        v["note"] = "the head is not signed by the expected log key"
+        return v
+    ok = verify_inclusion(idx, size, _lh(h), root, path)
+    v["included"] = bool(ok)
+    if not ok:
+        v["note"] = "the inclusion proof does not reconstruct the head"
+    return v
+
+
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
                             request_body=None, response_body=None, max_window_seconds=None):
     """Verify an exchange receipt OFFLINE (P8.2). Establishes, WITHOUT the payload, that an

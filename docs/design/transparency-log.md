@@ -135,3 +135,11 @@ publication: the actual ledger records a log's heads and emits receipts, the ver
 confirms each, a forged or wrong-key or unrecorded-head receipt is rejected, and the ledger
 itself cannot drop a head it recorded without the inconsistency being caught. It runs every
 release in `pqc-real`, pinned by `check_transparency_publication`.
+
+## A second log: the receipt set (P8.2c, v9.322)
+
+The same machinery publishes a second log. `ExchangeReceiptLog` holds every minted exchange
+receipt's SHA3-256 (never the receipt) and the app exposes it at
+`/api/v1/transparency/receipts/*` as `log_id polaris-exchange-receipt-log`, with per-receipt
+inclusion evidence at `/api/v1/exchange-receipt/inclusion/<hash>`. The monitor and witness
+take `--log receipts`. See [exchange-receipt.md](exchange-receipt.md).

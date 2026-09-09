@@ -65,10 +65,12 @@ def _alert(msg):
     return 2
 
 
-def poll(base, anchor, state_dir, verifier):
+def poll(base, anchor, state_dir, verifier, log="anchors"):
+    """One monitor cycle over the chosen log (anchors, or the P8.2c receipt log). Returns an exit code."""
+    prefix = "/api/v1/transparency" + ("/receipts" if log == "receipts" else "")
     """One monitor cycle. Returns an exit code."""
     try:
-        sth = _get(base, "/api/v1/transparency/sth")
+        sth = _get(base, prefix + "/sth")
     except (urllib.error.URLError, ValueError, OSError) as e:
         print("could not fetch the STH: %s" % e, file=sys.stderr)
         return 3
@@ -89,7 +91,7 @@ def poll(base, anchor, state_dir, verifier):
             return _alert("the log_id changed from %r to %r" % (old.get("log_id"), sth.get("log_id")))
         m, n = old["tree_size"], sth["tree_size"]
         try:
-            cons = _get(base, "/api/v1/transparency/consistency/%d/%d" % (m, n))
+            cons = _get(base, prefix + "/consistency/%d/%d" % (m, n))
         except (urllib.error.URLError, ValueError, OSError) as e:
             print("could not fetch the consistency proof: %s" % e, file=sys.stderr)
             return 3
@@ -104,7 +106,7 @@ def poll(base, anchor, state_dir, verifier):
     # Verified. Mirror the entries and record this head as the new baseline.
     os.makedirs(state_dir, exist_ok=True)
     try:
-        entries = _get(base, "/api/v1/transparency/entries")
+        entries = _get(base, prefix + "/entries")
         with open(os.path.join(state_dir, "entries.json"), "w") as f:
             json.dump(entries, f)
     except (urllib.error.URLError, ValueError, OSError):
@@ -126,13 +128,15 @@ def main(argv=None):
     ap.add_argument("--anchor", required=True, help="the log's trusted public key (hex, or a file)")
     ap.add_argument("--state", required=True, help="directory for the monitor's cached STH and mirror")
     ap.add_argument("--once", action="store_true", help="poll once and exit (the default and only mode in v1)")
+    ap.add_argument("--log", choices=("anchors", "receipts"), default="anchors",
+                    help="which log to monitor: the audit-anchor log (default) or the P8.2c receipt log")
     args = ap.parse_args(argv)
     try:
         anchor = _read_anchor(args.anchor)
     except Exception as e:
         print("could not read the trust anchor: %s" % e, file=sys.stderr)
         return 3
-    return poll(args.url, anchor, args.state, _load_verifier())
+    return poll(args.url, anchor, args.state, _load_verifier(), log=args.log)
 
 
 if __name__ == "__main__":

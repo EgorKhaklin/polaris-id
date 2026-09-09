@@ -884,6 +884,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "AuditAccessLog",
         # v9.234: a retention decision is an audit of record like any other.
         "RetentionPolicy",
+        # v9.322 (P8.2c): the exchange-receipt transparency log.
+        "ExchangeReceiptLog",
     )
 
     def _app_conn(self):
@@ -928,6 +930,27 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertFalse(row["del"], f"polaris_app must not hold DELETE on {tbl}")
             self.assertTrue(row["ins"], f"append-only is insert-allowed: polaris_app needs INSERT on {tbl}")
             conn.rollback()
+
+    def test_receipt_log_is_hash_only_and_strictly_append_only(self):
+        """P8.2c: ExchangeReceiptLog holds ONLY a SHA3-256 hex (chk_receipt_log_hash) and is
+        strictly append-only -- INSERT works for polaris_app, UPDATE/DELETE are refused."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation):
+                cur.execute("INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES ('not-a-hash')")
+        conn.rollback()
+        good = "ab" * 32
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s) RETURNING seq", (good,))
+            self.assertIsNotNone(cur.fetchone()["seq"])
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("UPDATE ExchangeReceiptLog SET receipt_hash = %s WHERE receipt_hash = %s", ("cd" * 32, good))
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s)", (good,))
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("DELETE FROM ExchangeReceiptLog WHERE receipt_hash = %s", (good,))
+        conn.rollback()
 
     def test_app_role_can_still_append_audit_rows(self):
         conn = self._app_conn()

@@ -5,6 +5,35 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.322 — 2026-09-09 (The receipt set is a transparency log, P8.2c)
+
+Evidence without retention had a gap: an instance that keeps nothing can later deny a
+receipt existed, and no one can see how many receipts an institution minted. Now the SET of
+receipts is transparent while every receipt stays in the hands of its parties.
+
+- **`ExchangeReceiptLog`.** At mint time only the receipt's SHA3-256 -- a commitment that
+  reveals nothing -- is appended (`seq, receipt_hash, minted_at`; `chk_receipt_log_hash` admits
+  nothing but a 64-hex digest). Strictly append-only by trigger (`trg_receipt_log_append_only`,
+  no GUC carve-out: a transparency log that can be rewritten is not one) and by privilege
+  (`polaris_app` may INSERT, never UPDATE or DELETE; the C1 privilege-boundary check and tests
+  cover it). Canonical in `01_schema.sql`, reversible migration for deployed databases. 32
+  tables (39 migrated).
+- **A second RFC-6962 log, same machinery.** `/api/v1/transparency/receipts/{sth,consistency,
+  proof,entries}` publish the sequence as `log_id polaris-exchange-receipt-log`; the anchor
+  log's routes are unchanged and both now share one set of helpers. Every minted receipt
+  carries its `log_index`; `GET /api/v1/exchange-receipt/inclusion/<hash>` returns the
+  inclusion proof plus the current signed head, and the detached verifier's
+  `verify_receipt_inclusion` proves offline that a held receipt is in the log (entry matches,
+  proof reconstructs the head, head authentic and signed by the expected log, proof and head
+  describe the same tree). The monitor and witness daemons watch the receipt log with
+  `--log receipts`, so a dropped or rewritten receipt is a fork they alert on.
+- **Proven.** The two-instance drill mints, fetches inclusion evidence, verifies it offline
+  under B's key, mints again and proves the earlier head is a prefix of the later (append-only,
+  offline), runs the independent monitor against the receipt log before and after, and shows a
+  fabricated hash is not in the log and a tampered proof fails. DB tests cover the hash-only
+  CHECK, the strict trigger, the privilege boundary, and the public surface.
+  `check_receipt_transparency` (#176). 176 checks, 107 routes.
+
 ## v9.321 — 2026-09-09 (The timestamp authority: time evidence for anything, P8.7a)
 
 The first piece of the trust-service lifecycle, and the time primitive document signing will

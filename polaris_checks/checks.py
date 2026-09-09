@@ -115,6 +115,8 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         # v9.125: the right-to-erasure log is append-only (the record that an
         # erasure happened must not be editable or removable).
         "individualerasureevent",
+        # v9.322 (P8.2c): the exchange-receipt transparency log.
+        "exchangereceiptlog",
     ]
     if not re.search(r"REVOKE\s+UPDATE\s*,\s*DELETE", grants, re.I):
         return _fail("c1_aor_priv",
@@ -7515,6 +7517,57 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_receipt_transparency(root: pathlib.Path) -> list[Finding]:
+    """P8.2c: the SET of exchange receipts is an append-only transparency log while no
+    receipt is retained. Every minted receipt's SHA3-256 joins ExchangeReceiptLog (strictly
+    append-only by trigger AND by privilege), the app publishes that sequence as a second
+    RFC-6962 log with inclusion evidence per receipt, the detached verifier proves inclusion
+    offline against a signed head, the monitor and witness can watch the receipt log, and
+    the two-instance drill proves it over HTTP under real ML-DSA."""
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if "CREATE TABLE ExchangeReceiptLog" not in schema or "chk_receipt_log_hash" not in schema:
+        return _fail("receipt_transparency", "01_schema.sql must define ExchangeReceiptLog holding ONLY a SHA3-256 hex (chk_receipt_log_hash)")
+    trig = _read(root, "polaris_sql/06_triggers.sql")
+    if "trg_receipt_log_append_only" not in trig or "reject_receipt_log_modification" not in trig:
+        return _fail("receipt_transparency", "06_triggers.sql must make ExchangeReceiptLog strictly append-only (trg_receipt_log_append_only)")
+    if "exchangereceiptlog" not in _read(root, "polaris_sql/09_grants.sql").lower():
+        return _fail("receipt_transparency", "09_grants.sql must REVOKE UPDATE, DELETE on ExchangeReceiptLog from polaris_app (C1 is a privilege boundary too)")
+    mig = root / "polaris_sql" / "migrations"
+    ups = list(mig.glob("*exchange-receipt-log.up.sql")) if mig.is_dir() else []
+    downs = list(mig.glob("*exchange-receipt-log.down.sql")) if mig.is_dir() else []
+    if not ups or not downs:
+        return _fail("receipt_transparency", "a reversible migration pair must bring a deployed database the receipt log")
+    app = _read(root, "polaris_web/app.py")
+    for sym, why in (("_RECEIPT_LOG_ID", "the receipt log id"),
+                     ("/api/v1/transparency/receipts/sth", "the receipt log's signed head"),
+                     ("/api/v1/transparency/receipts/consistency", "consistency proofs over the receipt log"),
+                     ("/api/v1/exchange-receipt/inclusion/", "per-receipt inclusion evidence"),
+                     ("_receipt_log_append", "the mint->log hook"),
+                     ("INSERT INTO ExchangeReceiptLog", "appending the receipt hash at mint time")):
+        if sym not in app:
+            return _fail("receipt_transparency", "polaris_web/app.py lacks %s (%s)" % (why, sym))
+    v = _read(root, "scripts/polaris-verify.py")
+    if "def verify_receipt_inclusion" not in v or "def receipt_hash" not in v:
+        return _fail("receipt_transparency", "scripts/polaris-verify.py must prove receipt inclusion offline (verify_receipt_inclusion, receipt_hash)")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("receipt_transparency", f"the offline verifier imports {mod!r}; it must stay standalone")
+    if '"receipts"' not in _read(root, "scripts/polaris-transparency-monitor.py"):
+        return _fail("receipt_transparency", "the independent monitor must be able to watch the receipt log (--log receipts)")
+    drill = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if "verify_receipt_inclusion" not in drill or "--log" not in drill:
+        return _fail("receipt_transparency", "the two-instance drill must prove inclusion over HTTP and run the monitor against the receipt log")
+    if "ExchangeReceiptLogTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("receipt_transparency", "polaris_web/test_app.py must exercise the receipt log's public surface")
+    if "ExchangeReceiptLog" not in _read(root, "docs/reference/DATA-MODEL.md"):
+        return _fail("receipt_transparency", "docs/reference/DATA-MODEL.md must document ExchangeReceiptLog")
+    return _ok("receipt_transparency",
+               "the set of exchange receipts is an append-only transparency log (hash-only, strictly append-only by "
+               "trigger and privilege, migrated reversibly) published as a second RFC-6962 log with per-receipt "
+               "inclusion evidence, proven offline by the detached verifier, watchable by the monitor, and driven "
+               "over HTTP by the two-instance drill")
+
+
 def check_timestamp_authority(root: pathlib.Path) -> list[Finding]:
     """P8.7a: the timestamp authority -- an arbitrary SHA3-256 digest bound to an instant under
     an agency's registered ML-DSA-65 key, DIGEST-ONLY (the authority learns and retains
@@ -8167,6 +8220,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_receipt_transparency,
     check_timestamp_authority,
     check_exchange_mint_signed_auth,
     check_no_named_reference_systems,

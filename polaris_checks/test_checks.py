@@ -567,7 +567,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     mig.mkdir(parents=True)
     base_tables = ("tokenlifecycleevent verificationevent enrollmentstatusevent "
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
-                   "individualerasureevent")
+                   "individualerasureevent", "exchangereceiptlog")
 
     def write(grants, mig_revoke, proc_definer):
         (sql / "09_grants.sql").write_text(grants)
@@ -6464,6 +6464,64 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_receipt_transparency_check_discriminates(tmp_path):
+    # v9.322 (P8.2c): the receipt set as an append-only transparency log -- hash-only table,
+    # strict trigger, privilege REVOKE, reversible migration, a second RFC-6962 log with
+    # inclusion evidence, offline proof, monitor support, drilled over HTTP, unit-tested,
+    # documented. Each perturbation removes one leg.
+    good = {
+        'polaris_sql/01_schema.sql': "CREATE TABLE ExchangeReceiptLog (receipt_hash CHAR(64) CONSTRAINT chk_receipt_log_hash CHECK (x));\n",
+        'polaris_sql/06_triggers.sql': "CREATE TRIGGER trg_receipt_log_append_only BEFORE UPDATE OR DELETE ON ExchangeReceiptLog EXECUTE FUNCTION reject_receipt_log_modification();\n",
+        'polaris_sql/09_grants.sql': "'exchangereceiptlog'\n",
+        'polaris_sql/migrations/2026-09-09-001-exchange-receipt-log.up.sql': "CREATE TABLE IF NOT EXISTS ExchangeReceiptLog ();\n",
+        'polaris_sql/migrations/2026-09-09-001-exchange-receipt-log.down.sql': "DROP TABLE IF EXISTS ExchangeReceiptLog;\n",
+        'polaris_web/app.py': (
+            "_RECEIPT_LOG_ID = 'polaris-exchange-receipt-log'\n"
+            "@app.route('/api/v1/transparency/receipts/sth')\n"
+            "@app.route('/api/v1/transparency/receipts/consistency/<int:m>/<int:n>')\n"
+            "@app.route('/api/v1/exchange-receipt/inclusion/<receipt_hash>')\n"
+            "def _receipt_log_append(h): query('INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s)')\n"
+        ),
+        'scripts/polaris-verify.py': "import json\ndef receipt_hash(r): return ''\ndef verify_receipt_inclusion(r, p, s, log_key=None): return {}\n",
+        'scripts/polaris-transparency-monitor.py': 'ap.add_argument("--log", choices=("anchors", "receipts"))\n',
+        'scripts/polaris-federation-instances-drill.py': 'V.verify_receipt_inclusion(receipt, p, s)  # "--log", "receipts"\n',
+        'polaris_web/test_app.py': "class ExchangeReceiptLogTests(PolarisTestCase): pass\n",
+        'docs/reference/DATA-MODEL.md': "### `ExchangeReceiptLog`\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            if body is None:
+                f.unlink(missing_ok=True)
+            else:
+                f.write_text(body)
+
+    write()
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_sql/01_schema.sql': "CREATE TABLE ExchangeReceiptLog (receipt_body TEXT);\n"})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the log is not hash-only"
+    write({'polaris_sql/06_triggers.sql': "-- no trigger\n"})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL without the strict append-only trigger"
+    write({'polaris_sql/09_grants.sql': "-- nothing revoked\n"})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL without the privilege REVOKE"
+    write({'polaris_sql/migrations/2026-09-09-001-exchange-receipt-log.down.sql': None})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL without a reversible migration"
+    write({'polaris_web/app.py': good['polaris_web/app.py'].replace("/api/v1/exchange-receipt/inclusion/", "/nope/")})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL without per-receipt inclusion evidence"
+    write({'polaris_web/app.py': good['polaris_web/app.py'].replace("INSERT INTO ExchangeReceiptLog", "SELECT 1")})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if minting does not append to the log"
+    write({'scripts/polaris-verify.py': "import psycopg2\n" + good['scripts/polaris-verify.py']})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    write({'scripts/polaris-transparency-monitor.py': "# anchors only\n"})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the monitor cannot watch the receipt log"
+    write({'scripts/polaris-federation-instances-drill.py': "# no inclusion here\n"})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if not proven over HTTP"
+    write({'docs/reference/DATA-MODEL.md': "# nothing\n"})
+    assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the table is undocumented"
 
 
 def test_timestamp_authority_check_discriminates(tmp_path):
