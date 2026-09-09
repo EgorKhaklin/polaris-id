@@ -35,6 +35,7 @@ drift from what the program accepts):
     retention-set      Record a retention decision, or adopt a named template
     audit-log          Tail the authentication audit log
     rp-register        Register a relying-party org for the /api/v1 verification API
+    rp-policy          Set a relying party's registered auth-broker policy (step-up, enrollment, context)
     key-register       Register an authority signing key (P8.7b): it becomes the agency's current key
     key-retire         Retire an authority key: an orderly rotation, effective from an instant
     key-compromise     Declare an authority key compromised, untrusted from an instant
@@ -1687,6 +1688,19 @@ def build_parser():
                       help='Max verifications per minute for this relying party (default 120)')
     p_rp.add_argument('--scope', choices=['verify', 'authenticate', 'verify authenticate'], default='verify',
                       help="'verify' (the verification API), 'authenticate' (the P8.4 auth broker), or both")
+    p_rp.add_argument('--require-zk', action='store_true', help='Registered policy: every login needs the ZK step-up (P8.4b)')
+    p_rp.add_argument('--required-enrollment', choices=['PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT'], default=None,
+                      help='Registered policy: the enrollment status a holder must have')
+    p_rp.add_argument('--required-context', type=int, default=None, help='Registered policy: the only context this relying party may authenticate in')
+
+    # rp-policy (P8.4b, v9.336): the registered auth-broker policy after registration
+    p_rpp = sub.add_parser('rp-policy', help="Set a relying party's registered auth-broker policy (step-up, enrollment, context)")
+    p_rpp.add_argument('client_id', help='The relying party (client_id)')
+    p_rpp.add_argument('--require-zk', dest='require_zk', action='store_true', default=None, help='Require the ZK step-up on every login')
+    p_rpp.add_argument('--no-require-zk', dest='require_zk', action='store_false', help='Drop the step-up requirement')
+    p_rpp.add_argument('--required-enrollment', choices=['PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT', 'none'], default=None,
+                       help="The enrollment status a holder must have, or 'none'")
+    p_rpp.add_argument('--required-context', default=None, help="The only context to authenticate in (an id), or 'none'")
 
     # authority key lifecycle (roadmap P8.7b)
     for name, help_ in (('key-register', 'Register an authority signing key (it becomes the agency\'s current key)'),
@@ -1799,6 +1813,42 @@ def cmd_key_compromise(args):
     return _cmd_key_event(args, 'compromised')
 
 
+def cmd_rp_policy(args):
+    """Set a relying party's REGISTERED auth-broker policy (P8.4b, v9.336): the step-up, the
+    enrollment a holder must have, the only context to authenticate in. The authorize route
+    applies the stored policy; a holder-side request may add a requirement, never remove one."""
+    sets, vals = [], []
+    if args.require_zk is not None:
+        sets.append("require_zk = %s"); vals.append(bool(args.require_zk))
+    if args.required_enrollment is not None:
+        sets.append("required_enrollment = %s"); vals.append(None if args.required_enrollment == 'none' else args.required_enrollment)
+    if args.required_context is not None:
+        if args.required_context == 'none':
+            sets.append("required_context_id = %s"); vals.append(None)
+        else:
+            try:
+                sets.append("required_context_id = %s"); vals.append(int(args.required_context))
+            except ValueError:
+                print(red("--required-context must be a context id or 'none'")); return 1
+    if not sets:
+        print(red("nothing to set: give --require-zk/--no-require-zk, --required-enrollment or --required-context")); return 1
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE RelyingParty SET " + ", ".join(sets) + " WHERE client_id = %s RETURNING rp_id, require_zk, required_enrollment, required_context_id",
+                        tuple(vals) + (args.client_id,))
+            row = cur.fetchone()
+            if not row:
+                conn.rollback(); print(red(f"no relying party with client_id {args.client_id}")); return 1
+            conn.commit()
+        print(green(f"\u2713 Policy for relying party #{row['rp_id']}: require_zk={row['require_zk']} required_enrollment={row['required_enrollment']} required_context_id={row['required_context_id']}"))
+        return 0
+    except Exception as e:
+        conn.rollback(); print(red(f"rp-policy failed: {e}")); return 1
+    finally:
+        conn.close()
+
+
 def cmd_rp_register(args):
     """Register a relying-party organization for the /api/v1 verification API
     (roadmap P3.4). Generates a client_id and a client_secret, stores only the
@@ -1815,10 +1865,13 @@ def cmd_rp_register(args):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, rate_limit_per_min, scope)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, rate_limit_per_min, scope,
+                                          require_zk, required_enrollment, required_context_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING rp_id
-            """, (client_id, secret_hash, args.org_name, args.rate_limit_per_min, args.scope))
+            """, (client_id, secret_hash, args.org_name, args.rate_limit_per_min, args.scope,
+                  bool(getattr(args, 'require_zk', False)), getattr(args, 'required_enrollment', None),
+                  getattr(args, 'required_context', None)))
             rp_id = cur.fetchone()['rp_id']
             conn.commit()
         print(green(f"\u2713 Registered relying party #{rp_id}: {args.org_name}"))
@@ -1863,6 +1916,7 @@ HANDLERS = {
     'retention-set':    cmd_retention_set,
     'audit-log':        cmd_audit_log,
     'rp-register':      cmd_rp_register,
+    'rp-policy':        cmd_rp_policy,
     'key-register':     cmd_key_register,
     'key-retire':       cmd_key_retire,
     'key-compromise':   cmd_key_compromise,

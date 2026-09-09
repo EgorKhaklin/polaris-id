@@ -870,9 +870,12 @@ signature_hex, presented_code?, require_zk?, zk?: {epoch_id, nonce, proof_bundle
 required_enrollment?}`. The relying party must hold the `authenticate` scope (uniform `401
 invalid_client` otherwise); the credential must be ACTIVE (`403`); a wrong or unknown
 credential is the uniform `400 not_verifiable`; an unmet step-up is `403
-insufficient_assurance`; a duress code is served identically and recorded silently. Returns
-`{code, expires_in, acr}`: a signed, stateless, 60-second authorization code bound to the PKCE
-challenge. Nothing is written. The wallet's `login` command drives this route.
+insufficient_assurance`; a duress code is served identically and recorded silently. The relying
+party's REGISTERED policy binds (v9.336): its `require_zk`, `required_enrollment` and
+`required_context_id` apply whatever the request says, a request may only add a requirement,
+and a context other than the registered one is `403 policy_violation`. Returns
+`{code, expires_in, acr}`: an encrypted, opaque, stateless, 60-second authorization code bound to
+the PKCE challenge. Nothing is written. The wallet's `login` command drives this route.
 
 ### `POST /api/v1/auth/token`
 

@@ -7529,6 +7529,44 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
+    """v9.336 (P8.4b): the auth broker enforces the relying party's REGISTERED policy, not what
+    the holder-side request says. The step-up, the enrollment requirement and the only context
+    are columns on the relying party (a reversible migration), the authorize route applies them
+    and lets a request add a requirement but never remove one, and the authorization code is
+    encrypted rather than merely signed, so a bearer learns nothing from it."""
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    for sym in ("require_zk          BOOLEAN", "required_enrollment VARCHAR(20)", "required_context_id INTEGER"):
+        if sym not in schema:
+            return _fail("broker_policy_bound", "01_schema.sql must hold the relying party's registered policy (%s)" % sym)
+    if not (root / "polaris_sql" / "migrations" / "2026-09-09-006-relying-party-policy.up.sql").is_file() \
+            or not (root / "polaris_sql" / "migrations" / "2026-09-09-006-relying-party-policy.down.sql").is_file():
+        return _fail("broker_policy_bound", "the policy columns must ship as a reversible migration (006)")
+    app = _read(root, "polaris_web/app.py")
+    for sym in ("rp['required_context_id'] is not None and context_id != int(rp['required_context_id'])",
+                "required = rp['required_enrollment'] or body.get('required_enrollment')",
+                "if rp['require_zk'] or body.get('require_zk'):", "policy_violation"):
+        if sym not in app:
+            return _fail("broker_policy_bound", "the authorize route must apply the stored policy and let a request only add to it (%s missing)" % sym)
+    ra = _read(root, "polaris_web/rp_auth.py")
+    if "from cryptography.fernet import Fernet" not in ra or "_code_serializer" in ra or "URLSafeTimedSerializer(secret_key, salt=_CODE_SALT)" in ra:
+        return _fail("broker_policy_bound", "the authorization code must be encrypted (Fernet), not a decodable signed blob")
+    tests = _read(root, "polaris_web/test_app.py")
+    for name in ("test_registered_policy_binds_the_holder_request", "test_authorization_code_is_opaque"):
+        if name not in tests:
+            return _fail("broker_policy_bound", "the broker tests must prove the stored policy binds and the code is opaque (%s)" % name)
+    if "rp-policy" not in _read(root, "polaris_cli/polaris.py"):
+        return _fail("broker_policy_bound", "the CLI must let an operator set a relying party's registered policy (rp-policy)")
+    if "registered policy" not in _read(root, "docs/design/auth-broker.md") or "policy_violation" not in _read(root, "docs/reference/API.md"):
+        return _fail("broker_policy_bound", "the design record and the API reference must describe the registered policy")
+    if "required_context_id" not in _read(root, "docs/reference/DATA-MODEL.md"):
+        return _fail("broker_policy_bound", "docs/reference/DATA-MODEL.md must document the policy columns")
+    return _ok("broker_policy_bound",
+               "the auth broker applies the relying party's registered policy (step-up, enrollment, context) over the "
+               "holder-side request, which may add a requirement but never remove one; the authorization code is encrypted "
+               "and opaque; migration 006, the route, the CLI, the tests and the docs are pinned")
+
+
 def check_qr_resource_bounds(root: pathlib.Path) -> list[Finding]:
     """v9.335: the QR decoder is resource-bounded as well as total. Frame count, compressed
     size and decompressed size are each bounded and checked BEFORE the work they guard; the
@@ -8848,6 +8886,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_broker_policy_bound,
     check_qr_resource_bounds,
     check_ltv_timestamp_trust,
     check_exchange_trust_directional,

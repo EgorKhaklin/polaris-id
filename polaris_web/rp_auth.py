@@ -19,6 +19,10 @@ limit + aggregate metrics, never a who-verified-whom log.
 Pure functions only (no Flask, no DB): the route does the DB lookup and the
 constant-time secret check; this module signs, validates, and parses.
 """
+import base64
+import hashlib
+import json
+
 import itsdangerous
 
 TOKEN_TTL = 300                      # seconds — short-lived access token
@@ -26,7 +30,7 @@ SCOPE_VERIFY = "verify"
 SCOPE_AUTHENTICATE = "authenticate"   # P8.4: may use the auth broker (authorization code + PKCE)
 _SALT = "polaris-rp-access-token-v1"  # distinct from the session cookie signer
 CODE_TTL = 60                        # seconds an authorization code lives
-_CODE_SALT = "polaris-auth-code-v1"   # distinct again: a code can never pass as an access token
+_CODE_SALT = "polaris-auth-code-v2"   # distinct again: a code can never pass as an access token (v2: encrypted)
 
 
 def has_scope(scope_value, needed):
@@ -34,8 +38,15 @@ def has_scope(scope_value, needed):
     return needed in str(scope_value or "").split()
 
 
-def _code_serializer(secret_key):
-    return itsdangerous.URLSafeTimedSerializer(secret_key, salt=_CODE_SALT)
+def _code_fernet(secret_key):
+    """The authorization code is ENCRYPTED, not merely signed (v9.336): its payload names the
+    subject (a credential hash), the relying party, the context, the assurance reached and the
+    instant, none of which a bearer of the code needs to read. Fernet (AES-128-CBC + HMAC-SHA256,
+    timestamped) under a key derived from the instance secret and a salt distinct from every
+    other signer, so a code can never pass as an access token and an access token never as a code."""
+    from cryptography.fernet import Fernet
+    key = base64.urlsafe_b64encode(hashlib.sha3_256(("%s:%s" % (_CODE_SALT, secret_key)).encode("utf-8")).digest())
+    return Fernet(key)
 
 
 def issue_auth_code(secret_key, payload):
@@ -44,16 +55,17 @@ def issue_auth_code(secret_key, payload):
     credential hash), the context and disclosure level, the assurance reached, the RP's nonce
     and the PKCE challenge. Nothing is stored; single use is enforced at exchange time by
     consuming the code's hash."""
-    return _code_serializer(secret_key).dumps(dict(payload))
+    return _code_fernet(secret_key).encrypt(json.dumps(dict(payload), separators=(",", ":")).encode("utf-8")).decode("ascii")
 
 
 def validate_auth_code(secret_key, code, max_age=CODE_TTL):
-    """Return the code's payload if the signature is ours and it is within max_age, else None."""
-    if not code:
+    """Return the code's payload if it decrypts under our key and is within max_age, else None."""
+    if not code or not isinstance(code, str):
         return None
     try:
-        payload = _code_serializer(secret_key).loads(code, max_age=max_age)
-    except itsdangerous.BadData:
+        raw = _code_fernet(secret_key).decrypt(code.encode("ascii"), ttl=max_age)
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:  # noqa: BLE001 -- a wrong key, a tamper, an expiry or a malformation are all "not ours"
         return None
     return payload if isinstance(payload, dict) else None
 

@@ -6491,8 +6491,13 @@ def _sign_document(agency, agency_id, fields, on_behalf_of):
         if err:
             return None, err
         ts_agency_id = tid
+    ts_body = _timestamp_body(ts_agency, ts_agency_id, material_digest, None)
+    if tid is not None and str(ts_body.get('public_key_hex') or '').lower() == str(pub or '').lower():
+        return None, (jsonify(error='invalid_request',
+                              error_description='timestamp_agency_id names an agency whose key custody on this instance is the signer\'s own key; '
+                                                'independent time evidence needs a separately custodied key (POLARIS_AGENCY_KEYS_DIR) or another instance\'s timestamp authority'), 400)
     doc['ltv'] = {
-        'timestamp': _timestamp_body(ts_agency, ts_agency_id, material_digest, None),
+        'timestamp': ts_body,
         'manifest': _federation_manifest_body(agency, now),
         'epoch_checkpoint': _epoch_checkpoint_body(agency, now),
         'revocation_feed': _revocation_feed_body(agency, now),
@@ -6589,11 +6594,13 @@ def api_v1_auth_authorize():
     authenticated, no session. Refuses a relying party without the 'authenticate' scope
     (uniform invalid_client), a credential that is not ACTIVE, an enrollment below the RP's
     requirement, and a step-up the holder cannot meet; a duress code is served identically and
-    recorded silently. Returns a signed, stateless authorization code bound to the PKCE
-    challenge. Nothing is written."""
+    recorded silently. The relying party's REGISTERED policy (require_zk, required_enrollment,
+    required_context_id) binds; the request may only add to it. Returns an encrypted, opaque,
+    stateless authorization code bound to the PKCE challenge. Nothing is written."""
     body = request.get_json(silent=True) or {}
     client_id = body.get('client_id')
-    rp = query("SELECT rp_id, client_id, scope, enabled FROM RelyingParty WHERE client_id = %s",
+    rp = query("SELECT rp_id, client_id, scope, enabled, require_zk, required_enrollment, required_context_id "
+               "FROM RelyingParty WHERE client_id = %s",
                (client_id,), fetch='one', primary=True) if isinstance(client_id, str) else None
     if not rp or not rp['enabled'] or not rp_auth.has_scope(rp['scope'], rp_auth.SCOPE_AUTHENTICATE):
         return jsonify(error='invalid_client'), 401
@@ -6605,6 +6612,11 @@ def api_v1_auth_authorize():
         context_id = int(body.get('context_id'))
     except (TypeError, ValueError):
         return jsonify(error='invalid_request', error_description='context_id must be an integer'), 400
+    # P8.4b (v9.336): the relying party's REGISTERED policy binds. The holder-side request may add
+    # a requirement (a stricter ask), never remove one; the context it registered is the only one.
+    if rp['required_context_id'] is not None and context_id != int(rp['required_context_id']):
+        return jsonify(error='policy_violation',
+                       error_description="the relying party's registered policy binds authentication to context %d" % int(rp['required_context_id'])), 403
     disclosure_level = str(body.get('disclosure_level') or 'ZERO_KNOWLEDGE').upper()
     if disclosure_level not in ('ZERO_KNOWLEDGE', 'SELECTIVE', 'FULL'):
         return jsonify(error='invalid_request', error_description='disclosure_level must be ZERO_KNOWLEDGE, SELECTIVE or FULL'), 400
@@ -6627,11 +6639,11 @@ def api_v1_auth_authorize():
     enr = query("SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = %s",
                 (row['individual_id'],), fetch='one', primary=True)
     enrollment = enr['current_status'] if enr else 'NOT_ENROLLED'
-    required = body.get('required_enrollment')
+    required = rp['required_enrollment'] or body.get('required_enrollment')
     if isinstance(required, str) and required and enrollment != required.upper():
         return jsonify(error='insufficient_enrollment', error_description='the holder is not %s' % required.upper()), 403
     acr = _AUTH_ACR_POSSESSION
-    if body.get('require_zk'):
+    if rp['require_zk'] or body.get('require_zk'):
         zk_req = body.get('zk') if isinstance(body.get('zk'), dict) else None
         try:
             ok, reason, _status = _zk_verify_and_consume(int(zk_req['epoch_id']), context_id, int(zk_req['nonce']), zk_req['proof_bundle']) \

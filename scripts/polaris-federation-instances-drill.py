@@ -633,8 +633,24 @@ def main():
         checks.append(("the container is B-signed, trusted, binds the document, and records the holder by credential HASH",
                        bool(sv.get("document_authentic") and sv.get("signer_trusted") and sv.get("binds")
                             and (sdoc.get("on_behalf_of") or {}).get("credential_hash") == V.revocation_leaf(b_tok_value)), True))
-        checks.append(("it is VALID LONG TERM from B's embedded evidence (timestamp over statement+signature, manifest, feed at the instant)",
-                       bool(sv.get("valid_long_term")), True))
+        # v9.334: B's own embedded timestamp is convenience evidence. Long-term validity needs time
+        # evidence from a timestamp authority the verifier trusts AND distinct from the signer, so
+        # the container becomes valid long term only once A's timestamp (over HTTP, on the
+        # signature material, never the document) is attached and A is trusted for time.
+        checks.append(("B's own embedded timestamp is convenience evidence: authentic, but NOT valid long term on its own (v9.334)",
+                       (bool((sv.get("ltv") or {}).get("timestamp_authentic")), bool(sv.get("valid_long_term"))), (True, False)))
+        material_digest = hashlib.sha3_256(V.document_signature_material(sdoc)).hexdigest() if st20 == 200 else "00" * 32
+        st20b, ts_a = _http_post_json(base_a + "/api/v1/timestamp/1", {"digest_hex": material_digest, "nonce": "ltv-b-doc"})
+        strong = V.attach_ltv(sdoc, timestamp=ts_a) if st20 == 200 and st20b == 200 else {}
+        checks.append(("A timestamps B's signature material over HTTP (200) and, with A trusted for time, the container is VALID LONG TERM",
+                       (st20b, bool(V.verify_signed_document(strong, trusted_anchors=[pub_b], document_bytes=the_doc, timestamp_anchors=[pub_a]).get("valid_long_term"))),
+                       (200, True)))
+        checks.append(("... but not with B as the only trusted timestamp authority: A's timestamp is not B's word, and B's own is not independent",
+                       bool(V.verify_signed_document(strong, trusted_anchors=[pub_b], document_bytes=the_doc, timestamp_anchors=[pub_b]).get("valid_long_term")), False))
+        st20c, _ = _http_post_json(base_b + "/api/v1/sign/1/holder",
+                                   {"token_value": b_tok_value, "signature_hex": b_sig.hex(), "digest_hex": hashlib.sha3_256(the_doc).hexdigest(),
+                                    "timestamp_agency_id": 2})
+        checks.append(("asking B to timestamp under an agency whose custody on B is B's own key is refused (400): one key gives no independent evidence", st20c, 400))
         checks.append(("the token value appears nowhere in the container", b_tok_value not in json.dumps(sdoc), True))
         st21, _ = _http_post_json(base_b + "/api/v1/sign/1/holder",
                                   {"token_value": b_tok_value, "signature_hex": "00" * 64, "digest_hex": "ab" * 32})
@@ -655,8 +671,14 @@ def main():
         wdoc = json.load(open(out_path)) if signed.returncode == 0 and os.path.isfile(out_path) else {}
         checks.append(("the WALLET enrolls the credential and signs the document through B (exit 0)",
                        (enroll.returncode, signed.returncode), (0, 0)))
-        checks.append(("the wallet-signed container verifies offline and is valid long term",
-                       bool(V.verify_signed_document(wdoc, trusted_anchors=[pub_b], document_bytes=the_doc).get("valid_long_term")), True))
+        wv = V.verify_signed_document(wdoc, trusted_anchors=[pub_b], document_bytes=the_doc)
+        w_material = hashlib.sha3_256(V.document_signature_material(wdoc)).hexdigest() if wdoc else "00" * 32
+        st_w, ts_w = _http_post_json(base_a + "/api/v1/timestamp/1", {"digest_hex": w_material, "nonce": "ltv-wallet-doc"})
+        w_strong = V.attach_ltv(wdoc, timestamp=ts_w) if wdoc and st_w == 200 else {}
+        checks.append(("the wallet-signed container verifies offline (B-signed, binds the document); with A's timestamp attached it is valid long term",
+                       (bool(wv.get("document_authentic") and wv.get("binds")),
+                        bool(V.verify_signed_document(w_strong, trusted_anchors=[pub_b], document_bytes=the_doc, timestamp_anchors=[pub_a]).get("valid_long_term"))),
+                       (True, True)))
 
         # 6i. THE AUTH BROKER (P8.4) over HTTP: a relying party registered on B with the
         #     'authenticate' scope starts a login (nonce + PKCE); the holder of B's real-signed

@@ -248,7 +248,13 @@ CREATE TABLE RelyingParty (
     created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_used_at       TIMESTAMP,
     rate_limit_per_min INTEGER      NOT NULL DEFAULT 120
-        CONSTRAINT chk_rp_rate_limit CHECK (rate_limit_per_min > 0)
+        CONSTRAINT chk_rp_rate_limit CHECK (rate_limit_per_min > 0),
+    -- P8.4b (v9.336): the relying party's REGISTERED policy for the auth broker. A holder's
+    -- authorize request may add a requirement, never remove one: the stored policy binds.
+    require_zk          BOOLEAN      NOT NULL DEFAULT FALSE,
+    required_enrollment VARCHAR(20)
+        CONSTRAINT chk_rp_required_enrollment CHECK (required_enrollment IS NULL OR required_enrollment IN ('PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT')),
+    required_context_id INTEGER      REFERENCES VerificationContext(context_id)
 );
 
 COMMENT ON TABLE RelyingParty IS

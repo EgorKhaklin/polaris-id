@@ -5,6 +5,33 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.336 — 2026-09-09 (The auth broker binds the relying party's policy and hides the code)
+
+The outside review found that the broker's step-up (`require_zk`) and enrollment requirement
+arrived only in the holder-side authorize request, so nothing bound the authorization server
+to what the relying party actually demands; and that the authorization code, signed but not
+encrypted, let any bearer read the subject hash, the relying party, the context and the
+assurance inside it.
+
+- **The registered policy binds.** `RelyingParty` gains `require_zk`, `required_enrollment`
+  (CHECK-constrained) and `required_context_id` (reversible migration 006). The authorize
+  route applies the stored policy first; a request may add a requirement, never remove one;
+  a context other than the registered one is `403 policy_violation`. `polaris rp-register`
+  takes the policy flags and `polaris rp-policy` sets them later.
+- **The code is opaque.** Fernet encryption under a key derived from the instance secret and a
+  code-only salt replaces the decodable signed blob; a wrong key, a tamper, an expiry or a
+  malformation are all "not ours". Tests prove the stored policy overrides the request in all
+  three dimensions and that a code reveals nothing and opens under no other key.
+- `check_broker_policy_bound` (#188) pins the columns, the migration, the route's three rules,
+  the encryption, the tests, the CLI and the docs; the design record states what is not built
+  (a relying-party-signed authorization request).
+- **The two-instance drill catches up with v9.334.** Its document cases now state B's own
+  embedded timestamp as authentic but not long-term valid, attach A's timestamp over HTTP to
+  make the container valid with A trusted for time, and show the signing route refusing a
+  `timestamp_agency_id` whose custody on the instance is the signer's own key (the route now
+  guards that). v9.334 and v9.335 shipped without this drill re-run; their two-instance CI
+  job was red for that reason and is green from here.
+
 ## v9.335 — 2026-09-09 (The QR decoder is resource-bounded)
 
 The outside review found that the QR frame decoder, total on hostile input, inflated the

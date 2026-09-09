@@ -524,6 +524,41 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         self.assertEqual(self._authorize(cid, tv, '00' * 64, challenge).status_code, 400)
         self.assertEqual(self._authorize(cid, tv, sig, challenge, require_zk=True).status_code, 403)
 
+    def test_registered_policy_binds_the_holder_request(self):
+        # v9.336: the relying party's stored policy applies whatever the holder-side request says;
+        # a request may add a requirement, never remove one.
+        cid, _secret = self._rp('authenticate')
+        _tid, tv, sig = self._credential()
+        _verifier, challenge = self._pkce()
+        flask_app.query("UPDATE RelyingParty SET require_zk = TRUE WHERE client_id = %s", (cid,), fetch='none')
+        r = self._authorize(cid, tv, sig, challenge)
+        self.assertEqual((r.status_code, r.get_json()['error']), (403, 'insufficient_assurance'))
+        flask_app.query("UPDATE RelyingParty SET require_zk = FALSE, required_enrollment = 'EXEMPT' WHERE client_id = %s", (cid,), fetch='none')
+        r = self._authorize(cid, tv, sig, challenge, required_enrollment='ENROLLED')
+        self.assertEqual((r.status_code, r.get_json()['error']), (403, 'insufficient_enrollment'))
+        flask_app.query("UPDATE RelyingParty SET required_enrollment = NULL, required_context_id = 2 WHERE client_id = %s", (cid,), fetch='none')
+        r = self._authorize(cid, tv, sig, challenge)
+        self.assertEqual((r.status_code, r.get_json()['error']), (403, 'policy_violation'))
+        r = self._authorize(cid, tv, sig, challenge, context_id=2)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+
+    def test_authorization_code_is_opaque(self):
+        # v9.336: the code is encrypted; a bearer learns nothing from it and another key opens nothing.
+        import base64
+        import hashlib
+        import rp_auth
+        cid, _secret = self._rp('authenticate')
+        _tid, tv, sig = self._credential()
+        _verifier, challenge = self._pkce()
+        code = self._authorize(cid, tv, sig, challenge).get_json()['code']
+        sub = hashlib.sha3_256(tv.encode()).hexdigest()
+        self.assertNotIn(sub, code); self.assertNotIn(cid, code)
+        blob = base64.urlsafe_b64decode(code + '=' * (-len(code) % 4))
+        self.assertNotIn(b'"sub"', blob); self.assertNotIn(cid.encode(), blob); self.assertNotIn(sub.encode(), blob)
+        self.assertIsNone(rp_auth.validate_auth_code('another-secret', code))
+        self.assertEqual(rp_auth.validate_auth_code(flask_app.app.secret_key, code)['cid'], cid)
+        self.assertIsNone(rp_auth.validate_auth_code(flask_app.app.secret_key, code[:-4] + 'AAAA'))
+
     def test_duress_is_served_identically_and_recorded_silently(self):
         import time
         cid, _secret = self._rp('authenticate')

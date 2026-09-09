@@ -7893,3 +7893,39 @@ def test_qr_resource_bounds_check_discriminates(tmp_path):
     assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL without the bomb drill"
     write({'docs/reference/WIRE-SPEC.md': "frames may be any size\n"})
     assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL without the normative bounds"
+
+
+def test_broker_policy_bound_check_discriminates(tmp_path):
+    # v9.336: the relying party's registered policy binds; the code is opaque.
+    APP = ("    if rp['required_context_id'] is not None and context_id != int(rp['required_context_id']):\n"
+           "        return jsonify(error='policy_violation'), 403\n"
+           "    required = rp['required_enrollment'] or body.get('required_enrollment')\n"
+           "    if rp['require_zk'] or body.get('require_zk'):\n        pass\n")
+    good = {
+        'polaris_sql/01_schema.sql': "    require_zk          BOOLEAN      NOT NULL DEFAULT FALSE,\n    required_enrollment VARCHAR(20)\n    required_context_id INTEGER      REFERENCES VerificationContext(context_id)\n",
+        'polaris_sql/migrations/2026-09-09-006-relying-party-policy.up.sql': "ALTER TABLE RelyingParty ADD COLUMN IF NOT EXISTS require_zk BOOLEAN;\n",
+        'polaris_sql/migrations/2026-09-09-006-relying-party-policy.down.sql': "ALTER TABLE RelyingParty DROP COLUMN IF EXISTS require_zk;\n",
+        'polaris_web/app.py': APP,
+        'polaris_web/rp_auth.py': "from cryptography.fernet import Fernet\ndef issue_auth_code(k, p): return Fernet(k).encrypt(b'x')\n",
+        'polaris_web/test_app.py': "def test_registered_policy_binds_the_holder_request(self): pass\ndef test_authorization_code_is_opaque(self): pass\n",
+        'polaris_cli/polaris.py': "sub.add_parser('rp-policy')\n",
+        'docs/design/auth-broker.md': "the registered policy binds\n",
+        'docs/reference/API.md': "403 policy_violation\n",
+        'docs/reference/DATA-MODEL.md': "require_zk, required_enrollment, required_context_id\n",
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_broker_policy_bound(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'polaris_web/app.py': APP.replace("rp['require_zk'] or body.get('require_zk')", "body.get('require_zk')")})
+    assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL if the holder request alone decides the step-up"
+    write({'polaris_web/rp_auth.py': "import itsdangerous\ndef _code_serializer(k): return itsdangerous.URLSafeTimedSerializer(secret_key, salt=_CODE_SALT)\n"})
+    assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL if the code is a decodable signed blob"
+    write({'polaris_sql/01_schema.sql': "    scope VARCHAR(40)\n"})
+    assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL without the policy columns"
+    write({'polaris_web/test_app.py': "def test_other(self): pass\n"})
+    assert checks.check_broker_policy_bound(tmp_path)[0].level == "FAIL", "must FAIL without the tests"

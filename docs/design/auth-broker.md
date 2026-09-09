@@ -46,12 +46,29 @@ verifies offline: signature, audience, nonce, freshness, issuer trust.
 - **Fresh possession every time.** There is no session at the authority: each login is a
   new presentation. A relying party may keep its own session; that is its business.
 
-## Step-up
+## Step-up, and the registered policy that binds it
 
 `require_zk` makes the holder present a ZK membership proof for the context, verified and
 its nonce consumed through the same path as `/api/zk/verify`; the token then carries
-`acr = polaris:possession+zk`. `required_enrollment` lets a relying party demand a current
-enrollment status (for example `ENROLLED`).
+`acr = polaris:possession+zk`. `required_enrollment` demands a current enrollment status
+(for example `ENROLLED`).
+
+Until v9.336 both arrived only in the holder-side authorize request, so nothing bound the
+authorization server to what the relying party actually demands: a holder could say "I am
+logging into X, and X requires nothing." An outside review named it. The relying party's
+demand is now REGISTERED on its row (`require_zk`, `required_enrollment`,
+`required_context_id`; `polaris rp-register --require-zk --required-enrollment ENROLLED
+--required-context 1`, or `rp-policy` later), and the route applies the registered policy
+first: a request may add a requirement (a stricter ask), never remove one, and a context
+other than the registered one is `403 policy_violation`. The token still reports the
+assurance actually reached (`acr`, `enrollment`), so a relying party can also inspect it.
+A relying-party-signed authorization request (the other way to bind the demand, without a
+stored policy) is not built.
+
+The authorization code is encrypted, not merely signed (Fernet under a key derived from the
+instance secret and a code-only salt): its payload names the subject hash, the relying party,
+the context, the assurance and the instant, none of which a bearer needs to read, and before
+this flow is ever used through a browser rather than the wallet, an opaque code is the floor.
 
 ## What runs
 

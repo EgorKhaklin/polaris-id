@@ -259,6 +259,11 @@ key: `invalid_grant`). Only the code hash is kept -- no subject, no relying
 party, no instant -- so the broker holds no record of who authenticated where.
 Strictly append-only by trigger (`trg_auth_code_append_only`) and by privilege.
 
+The relying party's registered auth-broker policy (v9.336, migration 006) lives on
+`RelyingParty` as `require_zk`, `required_enrollment` (CHECK-constrained to the enrollment
+vocabulary) and `required_context_id` (a foreign key to `VerificationContext`): the authorize
+route applies it and lets a holder-side request add a requirement, never remove one.
+
 ### `AuthorityKeyEvent` (constraint C1: append-only; roadmap P8.7b)
 
 The authority key register. Every event in an authority key's life is an
