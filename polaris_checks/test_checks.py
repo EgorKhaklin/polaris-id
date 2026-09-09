@@ -6227,6 +6227,10 @@ def test_status_bundle_check_discriminates(tmp_path):
         'scripts/polaris-federation-status-bundle-drill.py': (
             "def main():\n    verify_cross_authority_via_bundle(p, 1, [m], b)  # aggregator cannot forge\n"
         ),
+        'scripts/polaris-federation-instances-drill.py': (
+            "def main():\n    b = hub_bundle(members); _status_bundle_canonical(b)\n"
+            "    verify_cross_authority_via_bundle(pack, ctx, [m], b)  # hub holds no peer key\n"
+        ),
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-federation-status-bundle-drill.py\n',
         'polaris_web/test_app.py': 'class StatusBundleTests:\n    def t(self): pass\n',
     }
@@ -6269,6 +6273,9 @@ def test_status_bundle_check_discriminates(tmp_path):
     # 10. the endpoint test is gone
     write({"polaris_web/test_app.py": "class Other:\n    pass\n"})
     assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without StatusBundleTests"
+    # 11. the two-instance drill does not prove correct aggregation (hub holds no peer key)
+    write({"scripts/polaris-federation-instances-drill.py": "def main():\n    pass\n"})
+    assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without cross-instance aggregation"
 
 
 def test_verifier_fuzz_check_discriminates(tmp_path):

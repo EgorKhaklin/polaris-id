@@ -5598,16 +5598,21 @@ def api_v1_revocation_feed(agency_id):
 
 # --- P3.2c: the aggregate mirrored status feed (a federation status bundle) -----
 #
-# One short-lived, signed artifact that MIRRORS the revocation feed and epoch checkpoint of
-# the publisher and every authority it federates with, so a relying party fetches ONE
-# artifact and checks any member's credential OFFLINE. The publisher is UNTRUSTED for
-# correctness: every member feed is embedded VERBATIM, signed by that member's own key, so
-# the bundle cannot forge a status; the publisher's own signature is only a freshness +
-# set-integrity envelope (a member's absence is made current and attributable), and the
-# member set is committed by members_root_hex so it cannot be tampered after signing. No new
-# mutation path: a bundle is a view assembled from the per-authority views over the
-# append-only tables. Consumed OFFLINE by scripts/polaris-verify.py
-# (verify_status_bundle / verify_cross_authority_via_bundle).
+# One short-lived, signed artifact that MIRRORS the revocation feed and epoch checkpoint of a
+# set of authorities, so a relying party fetches ONE artifact and checks any member's
+# credential OFFLINE. Every member feed is embedded VERBATIM under that MEMBER's own signature,
+# so the aggregator cannot forge a status; the aggregator's own signature is only a freshness +
+# set-integrity envelope (a member's absence is made current and attributable), and the member
+# set is committed by members_root_hex so it cannot be tampered after signing.
+#
+# The aggregator holds NO member's private key. It obtains each member's feed as an
+# ALREADY-SIGNED artifact -- for a single instance, its own; for a real federation, fetched
+# from each authority's own endpoint and VERIFIED against that authority's public key -- and
+# preserves it unchanged. It never re-signs a partner's feed. The single-instance endpoint
+# below therefore mirrors only its own authority; the cross-authority fetch/verify/preserve
+# aggregation is the two-instance federation drill. No new mutation path: a bundle is a view
+# over the per-authority views over the append-only tables. Consumed OFFLINE by
+# scripts/polaris-verify.py (verify_status_bundle / verify_cross_authority_via_bundle).
 def _status_bundle_statement(body):
     """Canonical bytes the publisher signs. MUST match scripts/polaris-verify.py's
     _status_bundle_canonical. The member set is committed by members_root_hex, so the signed
@@ -5630,50 +5635,38 @@ def _bundle_members_root(members):
 
 @app.route('/api/v1/federation-status-bundle/<int:agency_id>')
 def api_v1_federation_status_bundle(agency_id):
-    """P3.2c: publish an aggregate STATUS BUNDLE -- one short-lived, signed artifact that
-    MIRRORS the revocation feed and epoch checkpoint of the publisher and every authority it
-    federates with, so a relying party fetches ONE artifact and checks any member's
-    credential OFFLINE (scripts/polaris-verify.py verify_status_bundle /
-    verify_cross_authority_via_bundle). The publisher is UNTRUSTED for correctness: every
-    member feed is embedded VERBATIM, signed by that member's own key, so the bundle cannot
-    forge a status; its own signature is only a freshness + set-integrity envelope, and an
-    omitted authority is fail-closed (not verifiable) rather than silently trusted. Public
-    trust data, no personal content."""
+    """P3.2c: an authority publishes its own status in aggregate STATUS BUNDLE form -- its
+    revocation feed and epoch checkpoint, wrapped in a short-lived envelope it signs with its
+    own key. A relying party consumes it OFFLINE (scripts/polaris-verify.py verify_status_bundle
+    / verify_cross_authority_via_bundle).
+
+    The publisher signs ONLY its own member feed and the outer envelope; it never holds or
+    signs another authority's key. Aggregating MANY authorities is a HUB operation that FETCHES
+    each authority's already-signed feed and checkpoint from that authority's own endpoint,
+    VERIFIES them against the authority's registered public key, and embeds them VERBATIM under
+    the hub's outer signature -- the hub holds no member key, and a member it cannot fetch is
+    simply absent (fail-closed for a verifier), never forged. That fetch / verify / preserve
+    aggregation across INDEPENDENT authorities is exercised end to end by the two-instance
+    federation drill; a single instance can only vouch for itself, which is what this endpoint
+    does. Public trust data, no personal content."""
     publisher = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
                       (agency_id,), fetch='one', primary=True)
     if not publisher:
         return jsonify(error='no such agency'), 404
     if not publisher['signing_public_key_hex']:
         return jsonify(error='agency is not federated (no registered signing key)'), 404
-    # The member set: the publisher, plus every authority it actively attests to that has a
-    # registered signing key. Each member's feed is signed by that member's own key.
-    partners = query("""
-        SELECT DISTINCT ag2.agency_id, ag2.name, ag2.signing_public_key_hex
-        FROM   AgencyTrustAttestation att
-        JOIN   Agency ag2 ON ag2.agency_id = att.attested_agency_id
-        WHERE  att.attesting_agency_id = %s
-          AND  att.revocation_date IS NULL
-          AND  att.valid_until >= CURRENT_DATE
-          AND  ag2.signing_public_key_hex IS NOT NULL
-        ORDER BY ag2.agency_id
-    """, (agency_id,), primary=True)
-    member_rows = [publisher] + [p for p in partners if p['agency_id'] != publisher['agency_id']]
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    members = []
-    for ag in member_rows:
-        try:
-            entry = {
-                'authority_id': ag['agency_id'],
-                'revocation_feed': _revocation_feed_body(ag, now),
-                'epoch_checkpoint': _epoch_checkpoint_body(ag, now),
-            }
-        except Exception:
-            # A member whose feed cannot be authentically signed (its key is not held by this
-            # instance) is left OUT rather than embedded unsigned: the bundle carries only
-            # authority-signed members, and an absence is fail-closed for a verifier.
-            continue
-        members.append(entry)
+    # A single instance signs only for itself: the one member is the publisher's OWN authority,
+    # its feed and checkpoint signed with the publisher's own key. This endpoint never signs a
+    # partner's feed -- that would require holding the partner's private key, which a real
+    # aggregator does not have. Aggregating other authorities is the hub's fetch/verify/preserve
+    # path (the two-instance federation drill), not a per-agency re-signing loop.
+    members = [{
+        'authority_id': publisher['agency_id'],
+        'revocation_feed': _revocation_feed_body(publisher, now),
+        'epoch_checkpoint': _epoch_checkpoint_body(publisher, now),
+    }]
     issued_at = now.isoformat().replace('+00:00', 'Z')
     expires_at = (now + timedelta(seconds=_STATUS_BUNDLE_TTL)).isoformat().replace('+00:00', 'Z')
     body = {

@@ -99,6 +99,30 @@ feed's own signature, verified in its own right.
   missing or stale bundle and fails closed, and can fetch the per-authority feeds
   directly as it did before P3.2c.
 
+### How the aggregator obtains member feeds
+
+The property above rests on one operational rule: **the aggregator holds no member's
+private key.** It obtains each member's feed as an artifact that member already
+signed, and preserves it byte for byte. It never builds or re-signs a partner's
+feed, because doing so would require a key it must not have, and it would collapse
+the whole guarantee (a party that can sign a member's feed can forge that member's
+status).
+
+Concretely, a federation hub **fetches** each authority's revocation feed and epoch
+checkpoint from that authority's own endpoint (`GET /api/v1/revocation-feed/<id>`,
+`GET /api/v1/epoch-checkpoint/<id>`), **verifies** each against that authority's
+registered public key, embeds it **verbatim**, and signs only the outer envelope
+with its own key. A member it cannot fetch is simply absent, which is fail-closed
+for a verifier, never fabricated.
+
+A single Polaris instance can therefore only vouch for itself: its
+`GET /api/v1/federation-status-bundle/<id>` endpoint mirrors exactly the publishing
+authority's own feed and checkpoint, under the publisher's own signature, and
+mirrors no one else. The cross-authority case, where a hub aggregates a **peer's**
+fetched-and-verified feed and signs only its envelope while holding no peer key, is
+exercised end to end across two independent instances over real HTTP by
+`scripts/polaris-federation-instances-drill.py`.
+
 ## Verification
 
 Two functions in the standalone verifier, no Polaris code, no database, no network.

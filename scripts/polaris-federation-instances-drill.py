@@ -251,6 +251,55 @@ def main():
                        decide(pack, CONTEXT_ID, feed=feed)["decision"], "accept"))
         checks.append(("revoked credential rejected offline via A's feed",
                        decide(pack_revoked, CONTEXT_ID, feed=feed)["decision"], "reject"))
+
+        # 6b. AGGREGATION (P3.2c, the correct architecture): B is a HUB. It FETCHES A's
+        #     already-signed feed and checkpoint over HTTP (it holds NO A key), verifies them
+        #     against A's public key, and embeds them VERBATIM in a status bundle alongside its
+        #     own fetched feed. B signs ONLY the outer envelope, with its own key. A relying
+        #     party that trusts B then checks A's credential against the SINGLE bundle, offline.
+        #     This is fetch / verify / preserve / sign-the-envelope -- never re-sign a partner.
+        b_feed = _http_get(base_b + "/api/v1/revocation-feed/1")[1]
+        b_cp = _http_get(base_b + "/api/v1/epoch-checkpoint/1")[1]
+        member_a = {"authority_id": 2, "revocation_feed": feed, "epoch_checkpoint": cp}
+        member_b = {"authority_id": 1, "revocation_feed": b_feed, "epoch_checkpoint": b_cp}
+
+        def hub_bundle(member_list):
+            import datetime as _dt
+            n = _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0)
+            body = {
+                "format": "polaris-federation-status-bundle/1",
+                "publisher": {"agency_id": 1, "name": "Instance B (hub)"},
+                "members": member_list,
+                "members_root_hex": V.bundle_members_root(member_list),
+                "member_count": len(member_list),
+                "issued_at": n.isoformat().replace("+00:00", "Z"),
+                "expires_at": (n + _dt.timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+                "algorithm": "ML-DSA-65",
+            }
+            # B signs ONLY the envelope, with B's own key. A's embedded feed keeps A's signature.
+            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_b
+            s, _a, p = pqc_signing.signature_over_message(V._status_bundle_canonical(body))
+            body["signature_hex"], body["public_key_hex"] = s.hex(), p
+            return body
+
+        def decide_bundle(pk_pack, bundle):
+            return V.verify_cross_authority_via_bundle(pk_pack, CONTEXT_ID, [b_manifest()], bundle,
+                                                       trusted_anchors=[pub_b], publisher_key=pub_b)
+
+        full_bundle = hub_bundle([member_a, member_b])
+        omit_a_bundle = hub_bundle([member_b])
+        checks.append(("A's embedded feed is signed by A, not the hub (aggregator holds no A key)",
+                       bool((feed.get("public_key_hex") or "").lower() == pub_a.lower()
+                            and (feed.get("public_key_hex") or "").lower() != pub_b.lower()), True))
+        checks.append(("the hub bundle envelope is signed by B (the aggregator)",
+                       (full_bundle["public_key_hex"] or "").lower() == pub_b.lower(), True))
+        checks.append(("A's ACTIVE credential accepted via B's fetched-and-bundled status (offline)",
+                       decide_bundle(pack, full_bundle)["decision"], "accept"))
+        checks.append(("A's REVOKED credential rejected via the same bundle (offline)",
+                       decide_bundle(pack_revoked, full_bundle)["decision"], "reject"))
+        checks.append(("A omitted from the bundle: A's credential is fail-closed (not verifiable)",
+                       decide_bundle(pack, omit_a_bundle)["decision"], "reject"))
+
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:
             cur.execute("UPDATE AgencyTrustAttestation SET revocation_date=CURRENT_DATE, "
@@ -268,8 +317,9 @@ def main():
             print("  %-66s %-10s %-10s %s" % (label, str(got), str(expected), "OK" if ok else "WRONG"))
         if ok_all:
             print("\nOK: two independent instances federate over HTTP -- a foreign credential is accepted from "
-                  "trust data pulled over the wire, and the decision flips as attestations and revocations change "
-                  "on the running instances, with real ML-DSA throughout.")
+                  "trust data pulled over the wire; a hub aggregates a peer's FETCHED, already-signed feed into a "
+                  "status bundle it signs with only its OWN key (holding no peer key), and the decision flips as "
+                  "attestations and revocations change on the running instances, with real ML-DSA throughout.")
             return 0
         print("\nFAIL: a two-instance federation decision was wrong.", file=sys.stderr)
         return 1

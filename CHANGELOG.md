@@ -5,6 +5,28 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.310 — 2026-09-08 (Federation status bundle: the aggregator holds no member key)
+
+The P3.2c status-bundle endpoint modeled federation aggregation wrongly. It built each
+partner's feed by signing with that partner's key, which only works when one instance holds
+every hosted agency's private key. A real aggregator has no partner's key; making it look
+like it does inverts the whole point of the design, which is that the aggregator is untrusted.
+
+- **The fix.** `GET /api/v1/federation-status-bundle/<id>` now mirrors exactly the publishing
+  authority's OWN feed and checkpoint, under the publisher's own signature, and mirrors no one
+  else. It never signs a partner's feed. `StatusBundleTests` pins the self-only behavior.
+- **The correct aggregation, proven across independent instances.** A federation hub aggregates
+  many authorities by FETCHING each one's already-signed feed and checkpoint from that
+  authority's own endpoint, VERIFYING them against the authority's public key, embedding them
+  VERBATIM, and signing only the outer envelope with its own key. The two-instance federation
+  drill now does exactly this over real HTTP under real ML-DSA: instance B (holding no key of
+  A's) fetches A's signed feed, bundles it, and a relying party accepts A's active credential
+  and rejects a revoked one through the single bundle, with an omitted authority fail-closed.
+- **Pinned.** `check_federation_status_bundle` now requires the cross-instance aggregation to
+  run every release. The spec ([federation-status-bundle.md](docs/design/federation-status-bundle.md))
+  gains a section on how the aggregator obtains member feeds (fetch, verify, preserve, never
+  re-sign). The verify side was already correct; this only corrects how feeds are produced.
+
 ## v9.309 — 2026-09-08 (Metamorphic verifier fuzzer, and the hardening it drove)
 
 The detached verifier grew a decision function per signed type across the federation and

@@ -10216,11 +10216,13 @@ class StatusBundleTests(PolarisTestCase):
                   'signature_hex', 'public_key_hex', 'algorithm', 'max_window_seconds'):
             self.assertIn(f, bundle)
         self.assertGreater(bundle['expires_at'], bundle['issued_at'])
-        # the publisher mirrors at least itself
-        self.assertGreaterEqual(bundle['member_count'], 1)
+        # A single instance signs only for itself: the bundle mirrors exactly the publisher's
+        # own authority, never a partner's feed (which would require holding the partner's key).
         self.assertEqual(bundle['member_count'], len(bundle['members']))
-        self.assertIn(1, [m['authority_id'] for m in bundle['members']],
-                      "the publisher must mirror its own feed")
+        self.assertEqual(bundle['member_count'], 1, "a single instance mirrors only its own authority")
+        self.assertEqual(bundle['members'][0]['authority_id'], 1, "the sole member is the publisher")
+        self.assertEqual(bundle['members'][0]['revocation_feed']['authority']['agency_id'], 1,
+                         "the member feed is the publisher's own, signed by the publisher's key")
         # each member carries its OWN signed revocation feed (trust roots in the member, not
         # the aggregator); the epoch checkpoint may be present or null.
         for m in bundle['members']:

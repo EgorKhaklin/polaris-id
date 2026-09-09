@@ -7363,6 +7363,15 @@ def check_federation_status_bundle(root: pathlib.Path) -> list[Finding]:
                      "the status-bundle drill must run in CI (a protocol that never runs is displacement)")
     if "StatusBundleTests" not in _read(root, "polaris_web/test_app.py"):
         return _fail("status_bundle", "test_app.py must carry StatusBundleTests for the published endpoint")
+    # The aggregator holds NO member key. A single instance mirrors only its own authority; the
+    # app endpoint must never sign a partner's feed. The CORRECT cross-authority aggregation (a
+    # hub FETCHES a peer's already-signed feed over HTTP, verifies it, embeds it VERBATIM, and
+    # signs only its OWN outer envelope) runs across two independent instances every release.
+    inst = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if "verify_cross_authority_via_bundle" not in inst or "_status_bundle_canonical" not in inst:
+        return _fail("status_bundle",
+                     "the two-instance federation drill must prove correct aggregation: a hub fetches a peer's "
+                     "signed feed over HTTP and bundles it under its OWN envelope, holding no peer key")
     return _ok("status_bundle",
                "the aggregate status bundle mirrors many authorities in one short-lived signed artifact: a relying "
                "party fetches GET /api/v1/federation-status-bundle once and checks any member's credential OFFLINE, "
