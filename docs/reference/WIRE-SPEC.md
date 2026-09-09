@@ -208,6 +208,25 @@ verified a registry MAY discover services from `instance.services` (substituting
 path parameters) and MAY read the in-context trust graph from `trust`; both are non-transitive:
 a registry describes its publisher's instance and attestations, never another authority's.
 
+### 3.11 `polaris-exchange-request/1` (the requester-signed exchange envelope)
+
+The statement a requesting institution signs to send a request through the exchange gateway
+(P8.2d), under its registered key.
+Signed fields: format, requester, target, context_id, request_hash, nonce, issued_at, algorithm
+
+`request_hash` MUST be the lowercase SHA3-256 hex of the request body's canonical JSON
+(sorted keys, compact separators); `target` names the addressed agency and the service kind;
+`nonce` is a requester-chosen string of 1 to 64 characters a requester MUST NOT reuse. A
+gateway MUST refuse without real ML-DSA-65, MUST authenticate the requester by a key it
+already knows, MUST verify the signature under that key, MUST authorize the requester
+through its in-context trust graph BEFORE forwarding, MUST consume `(requester key, nonce)`
+in an append-only register and refuse a replay, MUST forward only to an operator-configured
+upstream, MUST bound `issued_at` to a freshness window (RECOMMENDED 300 seconds), and MUST
+carry the signed `issued_at` into the receipt as `occurred_at`. The response is the
+upstream's body together with a section 3.8 receipt whose `request_hash` equals the
+envelope's: the pair (envelope, receipt) is the evidence of the exchange, and a third party
+verifies both sides offline with no access to either body. A gateway MUST NOT persist a body.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:

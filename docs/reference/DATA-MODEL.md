@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **32 tables** in `01_schema.sql` (v9.322), organized
-into six functional groups. A migrated deployment holds **39 tables**: those,
+The Polaris schema is **33 tables** in `01_schema.sql` (v9.324), organized
+into six functional groups. A migrated deployment holds **40 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -239,6 +239,16 @@ per-receipt inclusion evidence (`/api/v1/exchange-receipt/inclusion/<hash>`), so
 the SET of receipts is provably append-only and independently monitorable.
 Strictly append-only by trigger (`trg_receipt_log_append_only`, no carve-out)
 and by privilege (`polaris_app` may INSERT, never UPDATE or DELETE).
+
+### `ExchangeNonce` (constraint C1: append-only; roadmap P8.2d)
+
+The exchange gateway's replay register. Before forwarding a signed exchange
+envelope, the gateway consumes `(requester_key_hash, nonce)` here -- the
+SHA3-256 of the requester's key and the nonce the envelope carries -- so an
+identical envelope replayed to any worker hits the primary key and is refused
+(`409`), and a request is never delivered twice. No body, no person. Strictly
+append-only by trigger (`trg_exchange_nonce_append_only`: a consumed nonce must
+never be un-consumed) and by privilege, exactly like `ZkVerificationNonce`.
 
 ## Operational tables
 

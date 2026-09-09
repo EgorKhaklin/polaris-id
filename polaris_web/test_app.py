@@ -326,6 +326,30 @@ class RegistryTests(PolarisTestCase):
         self.assertNotIn('client_id', json.dumps(reg))
 
 
+class ExchangeGatewayTests(UnauthenticatedTestCase):
+    """P8.2d: the exchange gateway fails CLOSED without real ML-DSA (a placeholder signature is
+    not authentication) and refuses a malformed request before touching anything. The mediated
+    exchange itself needs real ML-DSA, two instances and an upstream, and is proven over HTTP by
+    scripts/polaris-federation-instances-drill.py."""
+
+    def test_gateway_fails_closed_without_real_pqc(self):
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {'POLARIS_USE_REAL_PQC': '0'}):
+            r = self.client.post('/api/v1/exchange/1', json={'envelope': {'format': 'polaris-exchange-request/1',
+                                                                          'signature_hex': 'ff' * 8}, 'body': {}})
+        self.assertEqual(r.status_code, 503)
+        self.assertIn('placeholder signature is not authentication', r.get_json().get('error_description', ''))
+
+    def test_nonce_is_consumed_exactly_once(self):
+        """The replay register through the app's own helper: the first consume commits, the
+        second is refused, and a different nonce for the same requester is a new exchange."""
+        self.assertTrue(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-1'))
+        self.assertFalse(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-1'))
+        self.assertTrue(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-2'))
+        self.assertTrue(flask_app._consume_exchange_nonce('cd' * 16, 'nonce-1'))
+
+
 class DashboardTests(PolarisTestCase):
     """v9.238: the operations page reports state an operator acts on. It no
     longer prints schema row counts or a token roster; those assertions moved

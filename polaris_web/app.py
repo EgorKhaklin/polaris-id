@@ -5735,25 +5735,11 @@ def _federated_agency(agency_id):
     return responder, None
 
 
-def _mint_exchange_receipt(responder, agency_id, fields, occurred_at=None):
-    """The receipt itself: validate the hash-only fields, confirm the requester is
-    authorized in the context, sign. `occurred_at` is the server clock for the operator
-    path and the SIGNED time for the service-to-service path."""
-    try:
-        req_key = str(fields['requester_public_key_hex']).lower()
-        context_id = int(fields['context_id'])
-        request_hash = str(fields['request_hash']).lower()
-        response_hash = str(fields['response_hash']).lower()
-    except (KeyError, ValueError, TypeError) as e:
-        return jsonify(error=f'required fields: requester_public_key_hex, context_id, request_hash, response_hash ({e})'), 400
-    # Hashes only: a 64-char SHA3-256 hex digest, never a payload. This is the retention rule
-    # enforced at the door -- the app cannot retain a body it is never given.
-    def _is_sha3(h):
-        return isinstance(h, str) and len(h) == 64 and all(c in '0123456789abcdef' for c in h)
-    if not (_is_sha3(request_hash) and _is_sha3(response_hash)):
-        return jsonify(error='request_hash and response_hash must each be a SHA3-256 hex digest; the payload is never sent'), 400
-    # Authorization: some attestation must attest the requester's key in this context.
-    att = query("""
+def _exchange_attestation(req_key, context_id):
+    """The authority whose valid attestation authorizes `req_key` in `context_id` (the
+    non-transitive, in-context rule), or None. Shared by the receipt and the gateway, which
+    checks it BEFORE forwarding anything."""
+    return query("""
         SELECT ag.agency_id AS authority_id, ag.name AS authority_name
         FROM   AgencyTrustAttestation att
         JOIN   Agency ag2 ON ag2.agency_id = att.attested_agency_id
@@ -5764,8 +5750,31 @@ def _mint_exchange_receipt(responder, agency_id, fields, occurred_at=None):
           AND  att.valid_until >= CURRENT_DATE
         ORDER BY att.attesting_agency_id LIMIT 1
     """, (req_key, context_id), fetch='one', primary=True)
+
+
+def _is_sha3_hex(h):
+    return isinstance(h, str) and len(h) == 64 and all(c in '0123456789abcdef' for c in h)
+
+
+def _build_exchange_receipt(responder, agency_id, fields, occurred_at=None):
+    """The receipt itself: validate the hash-only fields, confirm the requester is
+    authorized in the context, sign, and append the hash to the receipt log. Returns
+    (receipt, None) or (None, error_response). `occurred_at` is the server clock for the
+    operator path and the SIGNED time for the service-to-service and gateway paths."""
+    try:
+        req_key = str(fields['requester_public_key_hex']).lower()
+        context_id = int(fields['context_id'])
+        request_hash = str(fields['request_hash']).lower()
+        response_hash = str(fields['response_hash']).lower()
+    except (KeyError, ValueError, TypeError) as e:
+        return None, (jsonify(error=f'required fields: requester_public_key_hex, context_id, request_hash, response_hash ({e})'), 400)
+    # Hashes only: a 64-char SHA3-256 hex digest, never a payload. This is the retention rule
+    # enforced at the door -- the app cannot retain a body it is never given.
+    if not (_is_sha3_hex(request_hash) and _is_sha3_hex(response_hash)):
+        return None, (jsonify(error='request_hash and response_hash must each be a SHA3-256 hex digest; the payload is never sent'), 400)
+    att = _exchange_attestation(req_key, context_id)
     if not att:
-        return jsonify(error='the requester is not authorized in this context (no valid attestation)'), 403
+        return None, (jsonify(error='the requester is not authorized in this context (no valid attestation)'), 403)
     if occurred_at is None:
         from datetime import datetime, timezone
         occurred_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
@@ -5791,7 +5800,12 @@ def _mint_exchange_receipt(responder, agency_id, fields, occurred_at=None):
     # transparent (provably append-only, independently monitorable) while no receipt is kept.
     body['log_id'] = _RECEIPT_LOG_ID
     body['log_index'] = _receipt_log_append(hashlib.sha3_256(_exchange_receipt_statement(body)).hexdigest())
-    return jsonify(body)
+    return body, None
+
+
+def _mint_exchange_receipt(responder, agency_id, fields, occurred_at=None):
+    body, err = _build_exchange_receipt(responder, agency_id, fields, occurred_at)
+    return err if err else jsonify(body)
 
 
 @app.route('/api/v1/exchange-receipt/<int:agency_id>', methods=['POST'])
@@ -5970,6 +5984,7 @@ _PROTOCOL_FORMATS = {
     'polaris-exchange-mint': 1,
     'polaris-timestamp': 1,
     'polaris-registry': 1,
+    'polaris-exchange-request': 1,
 }
 _REGISTRY_SERVICES = [
     {'kind': 'oauth-token', 'path': '/api/v1/oauth/token', 'auth': 'client-credentials', 'method': 'POST'},
@@ -5985,6 +6000,7 @@ _REGISTRY_SERVICES = [
     {'kind': 'transparency', 'path': '/api/v1/transparency', 'auth': 'none', 'method': 'GET'},
     {'kind': 'transparency-receipts', 'path': '/api/v1/transparency/receipts', 'auth': 'none', 'method': 'GET'},
     {'kind': 'registry', 'path': '/api/v1/registry/{agency_id}', 'auth': 'none', 'method': 'GET'},
+    {'kind': 'exchange', 'path': '/api/v1/exchange/{agency_id}', 'auth': 'requester-signature', 'method': 'POST'},
 ]
 
 
@@ -6046,6 +6062,8 @@ def api_v1_registry(agency_id):
             'services': [dict(s) for s in _REGISTRY_SERVICES],
             'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID],
             'disclosure_levels': [d['disclosure_level'] for d in disclosure],
+            # P8.2d: the service kinds the exchange gateway forwards to (operator-configured).
+            'exchange_kinds': sorted(_exchange_upstreams().keys()),
         },
         'authorities': [
             {'agency_id': a['agency_id'], 'name': a['name'], 'agency_type': a['agency_type'],
@@ -6077,6 +6095,160 @@ def api_v1_registry(agency_id):
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                    'registry minus signature_hex and public_key_hex)')
     return jsonify(body)
+
+
+# --- P8.2d: the EXCHANGE GATEWAY -- institution-to-institution exchange, mediated -----------
+#
+# The flagship of the exchange fabric. A requesting institution signs an exchange envelope
+# (polaris-exchange-request/1) binding the SHA3-256 of its request body, the target, the
+# context, a nonce and the time under its registered ML-DSA-65 key, and posts envelope + body
+# to the TARGET's instance. The gateway authenticates the requester by its KNOWN key,
+# authorizes it through the in-context trust graph BEFORE anything is forwarded, consumes the
+# nonce in the append-only replay register, forwards the body to an OPERATOR-CONFIGURED
+# upstream (never a URL from the request), and returns the upstream's response together with
+# a signed receipt whose occurred_at is the envelope's signed time. The receipt IS the
+# response envelope; its hash joins the receipt log. Neither body is ever stored: the
+# evidence is the pair (envelope, receipt), which a third party verifies offline.
+_EXCHANGE_REQUEST_FORMAT = 'polaris-exchange-request/1'
+_EXCHANGE_WINDOW = 300               # seconds a signed envelope stays fresh
+_EXCHANGE_RATE_PER_MIN = 120         # per requester key; the coarse velocity bound
+_EXCHANGE_UPSTREAM_TIMEOUT = 10      # seconds
+
+
+def _exchange_request_statement(body):
+    """Canonical bytes a REQUESTER signs for an exchange envelope. MUST match
+    scripts/polaris-verify.py's _exchange_request_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'requester', 'target', 'context_id', 'request_hash', 'nonce',
+                  'issued_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _exchange_upstreams():
+    """The service kinds this instance forwards to, from OPERATOR configuration only:
+    POLARIS_EXCHANGE_UPSTREAMS is a JSON object {kind: url}. A URL never comes from a request."""
+    raw = os.environ.get('POLARIS_EXCHANGE_UPSTREAMS', '') or ''
+    try:
+        m = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return {str(k): str(v) for k, v in m.items()} if isinstance(m, dict) else {}
+
+
+def _canonical_body_hash(obj):
+    """SHA3-256 hex of a JSON body in canonical form (sorted keys, compact): the form both
+    parties hash, so request_hash binds the body independently of whitespace or key order."""
+    return hashlib.sha3_256(json.dumps(obj, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+def _consume_exchange_nonce(requester_key_hex, nonce):
+    """Consume (requester key hash, nonce) in the append-only replay register; False if it was
+    already consumed (a replay), so a request is never delivered twice."""
+    kh = hashlib.sha3_256(requester_key_hex.lower().encode('utf-8')).hexdigest()
+    # A plain INSERT that COMMITS (fetch='none'); the primary key arbitrates a race between two
+    # workers handed the same envelope, so exactly one of them proceeds.
+    try:
+        query("INSERT INTO ExchangeNonce (requester_key_hash, nonce) VALUES (%s, %s)", (kh, nonce), fetch='none')
+    except Exception as e:  # noqa: BLE001 -- the driver's UniqueViolation is the replay signal
+        if type(e).__name__ == 'UniqueViolation' or 'duplicate key' in str(e).lower():
+            return False
+        raise
+    return True
+
+
+@app.route('/api/v1/exchange/<int:target_agency_id>', methods=['POST'])
+def api_v1_exchange(target_agency_id):
+    """P8.2d: the exchange gateway. Body: {envelope: polaris-exchange-request/1 (+ signature_hex),
+    body: <the request payload, JSON>}. Order of operations is the security argument:
+    real PQC required (503) -> target federated (404) -> envelope well-formed and bound to this
+    target (400) -> the service kind is one this instance forwards to (404) -> fresh (401) ->
+    request_hash binds the body (400) -> requester key KNOWN here (401) -> signature verifies
+    two-witness under that key (401) -> rate bound (429) -> requester AUTHORIZED in the context
+    by the trust graph (403) -> nonce consumed (409 on replay) -> forward to the configured
+    upstream (502 on failure) -> receipt minted with the envelope's signed time and logged.
+    Nothing but the receipt's hash and the consumed nonce is ever written; the bodies exist
+    only for the life of the request."""
+    if not pqc_signing.is_enabled():
+        return jsonify(error='unavailable',
+                       error_description='the exchange gateway requires real ML-DSA-65 (POLARIS_USE_REAL_PQC=1 with liboqs '
+                                         'and the second witness); a placeholder signature is not authentication'), 503
+    target, err = _federated_agency(target_agency_id)
+    if err:
+        return err
+    payload = request.get_json(silent=True) or {}
+    env = payload.get('envelope')
+    body = payload.get('body')
+    sig_hex = env.get('signature_hex') if isinstance(env, dict) else None
+    if not isinstance(env, dict) or not isinstance(sig_hex, str) or not sig_hex or 'body' not in payload:
+        return jsonify(error='invalid_request',
+                       error_description='an envelope (polaris-exchange-request/1 with signature_hex) and a body are required'), 400
+    if env.get('format') != _EXCHANGE_REQUEST_FORMAT:
+        return jsonify(error='invalid_request', error_description='envelope.format must be %s' % _EXCHANGE_REQUEST_FORMAT), 400
+    tgt = env.get('target') if isinstance(env.get('target'), dict) else {}
+    try:
+        if int(tgt.get('agency_id')) != int(target_agency_id):
+            raise ValueError('target mismatch')
+        context_id = int(env.get('context_id'))
+    except (TypeError, ValueError):
+        return jsonify(error='invalid_request', error_description='envelope.target.agency_id must equal the addressed agency and context_id must be an integer'), 400
+    kind = str(tgt.get('kind') or '')
+    upstreams = _exchange_upstreams()
+    if kind not in upstreams:
+        return jsonify(error='no_such_service', error_description='this instance forwards no service of that kind'), 404
+    nonce = env.get('nonce')
+    if not (isinstance(nonce, str) and 0 < len(nonce) <= 64):
+        return jsonify(error='invalid_request', error_description='envelope.nonce must be a string of 1 to 64 characters'), 400
+    from datetime import datetime, timezone
+    try:
+        when = datetime.fromisoformat(str(env.get('issued_at', '')).replace('Z', '+00:00'))
+        if when.tzinfo is None:
+            raise ValueError('naive')
+    except ValueError:
+        return jsonify(error='invalid_request', error_description='envelope.issued_at must be an ISO-8601 UTC timestamp'), 400
+    if abs((datetime.now(timezone.utc) - when).total_seconds()) > _EXCHANGE_WINDOW:
+        return jsonify(error='stale', error_description='envelope.issued_at is outside the %d-second freshness window' % _EXCHANGE_WINDOW), 401
+    request_hash = str(env.get('request_hash') or '').lower()
+    if not _is_sha3_hex(request_hash) or request_hash != _canonical_body_hash(body):
+        return jsonify(error='invalid_request', error_description='envelope.request_hash does not bind the body (SHA3-256 of its canonical JSON)'), 400
+    req = env.get('requester') if isinstance(env.get('requester'), dict) else {}
+    req_key = str(req.get('public_key_hex') or '').lower()
+    known = query("SELECT agency_id FROM Agency WHERE lower(signing_public_key_hex) = %s", (req_key,),
+                  fetch='one', primary=True) if req_key else None
+    if not known:
+        return jsonify(error='unknown_requester', error_description='the requester key is not a registered authority on this instance'), 401
+    try:
+        ok = pqc_signing.verify_both(_exchange_request_statement(env), sig_hex, req_key, require_witness=True)
+    except pqc_signing.PQCUnavailableError:
+        ok = False
+    if not ok:
+        return jsonify(error='invalid_signature', error_description="the envelope does not verify under the requester's registered ML-DSA-65 key"), 401
+    if not security.rate_limiter.allow('exch:%s' % req_key[:16], _EXCHANGE_RATE_PER_MIN, 60):
+        return jsonify(error='rate_limited'), 429
+    # AUTHORIZE before anything leaves this process: the trust graph, in-context, non-transitive.
+    if not _exchange_attestation(req_key, context_id):
+        return jsonify(error='forbidden', error_description='the requester is not authorized in this context (no valid attestation)'), 403
+    if not _consume_exchange_nonce(req_key, nonce):
+        return jsonify(error='replay', error_description='this envelope (requester, nonce) was already exchanged; a retry needs a new nonce'), 409
+    # Forward to the operator-configured upstream. The body exists only here, in memory.
+    import urllib.request
+    import urllib.error
+    data = json.dumps(body, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    up = urllib.request.Request(upstreams[kind], data=data, method='POST',
+                                headers={'Content-Type': 'application/json',
+                                         'X-Polaris-Requester': req_key, 'X-Polaris-Context': str(context_id)})
+    try:
+        with urllib.request.urlopen(up, timeout=_EXCHANGE_UPSTREAM_TIMEOUT) as r:
+            raw = r.read().decode('utf-8')
+        response_body = json.loads(raw) if raw else None
+    except (urllib.error.URLError, ValueError, OSError) as e:
+        return jsonify(error='upstream_unavailable', error_description='the service did not answer (%s); the nonce is consumed, retry with a new one' % type(e).__name__), 502
+    receipt, err = _build_exchange_receipt(target, target_agency_id, {
+        'requester_public_key_hex': req_key, 'context_id': context_id,
+        'request_hash': request_hash, 'response_hash': _canonical_body_hash(response_body),
+    }, occurred_at=str(env.get('issued_at')))
+    if err:
+        return err
+    return jsonify({'receipt': receipt, 'response_body': response_body})
 
 
 # --- P3.3: the transparency log over the audit-anchor roots --------------------

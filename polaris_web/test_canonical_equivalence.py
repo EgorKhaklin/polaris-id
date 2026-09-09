@@ -132,6 +132,14 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._registry_statement(b),
         "verify": lambda b: _V._registry_canonical(b),
     },
+    # polaris-exchange-request/1 (P8.2d): CLIENT-built, GATEWAY-verified -- held to the oracle
+    # in the other direction, like the mint request.
+    "exchange-request": {
+        "keys": ["format", "requester", "target", "context_id", "request_hash", "nonce", "issued_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._exchange_request_statement(b),
+        "verify": lambda b: _V._exchange_request_canonical(b),
+    },
 }
 
 
@@ -286,7 +294,7 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-revocation-feed/1", "polaris-status-assertion/1",
             "polaris-transparency-sth/1", "polaris-federation-status-bundle/1",
             "polaris-exchange-receipt/1", "polaris-exchange-mint/1", "polaris-timestamp/1",
-            "polaris-registry/1",
+            "polaris-registry/1", "polaris-exchange-request/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1"}

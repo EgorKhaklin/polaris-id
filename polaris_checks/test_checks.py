@@ -567,7 +567,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     mig.mkdir(parents=True)
     base_tables = ("tokenlifecycleevent verificationevent enrollmentstatusevent "
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
-                   "individualerasureevent", "exchangereceiptlog")
+                   "individualerasureevent", "exchangereceiptlog", "exchangenonce")
 
     def write(grants, mig_revoke, proc_definer):
         (sql / "09_grants.sql").write_text(grants)
@@ -6406,18 +6406,20 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _exchange_mint_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'responder_agency_id')}\n"
         "def _timestamp_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'digest_hex')}\n"
         "def _registry_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'publisher')}\n"
+        "def _exchange_request_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'nonce')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1\n"
         "manifest signed fields: format, authority\n"
         "receipt signed fields: format, requester\n"
         "mint signed fields: format, responder_agency_id\n"
         "timestamp signed fields: format, digest_hex\n"
         "registry signed fields: format, publisher\n"
+        "envelope signed fields: format, nonce\n"
         "checkpoint signed fields: format, epoch\n"
         "feed signed fields: format, as_of\n"
         "assertion signed fields: format, status\n"
@@ -6468,6 +6470,70 @@ def test_wire_spec_check_discriminates(tmp_path):
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
 
 
+def test_exchange_gateway_check_discriminates(tmp_path):
+    # v9.324 (P8.2d): the gateway's order of operations IS the security argument; each
+    # perturbation removes one leg.
+    APP = (
+        "@app.route('/api/v1/exchange/<int:target_agency_id>', methods=['POST'])\n"
+        "def api_v1_exchange(target_agency_id):\n"
+        "    # polaris-exchange-request/1 ; placeholder signature is not authentication\n"
+        "    # the requester key is not a registered authority on this instance\n"
+        "    ok = pqc_signing.verify_both(_exchange_request_statement(env), sig, key)\n"
+        "    if not _exchange_attestation(req_key, context_id):\n        return jsonify(error='forbidden'), 403\n"
+        "    _consume_exchange_nonce(k, n)  # INSERT INTO ExchangeNonce\n"
+        "    up = _exchange_upstreams()[kind]  # POLARIS_EXCHANGE_UPSTREAMS; A URL never comes from a request\n"
+        "    urllib.request.urlopen(up)\n"
+        "    _build_exchange_receipt(target, target_agency_id, f, occurred_at=str(env.get('issued_at')))\n"
+        "_REGISTRY_SERVICES = [{'kind': 'exchange'}]\n'exchange_kinds'\n"
+    )
+    good = {
+        'polaris_web/app.py': APP,
+        'polaris_sql/01_schema.sql': "CREATE TABLE ExchangeNonce (nonce VARCHAR(64));\n",
+        'polaris_sql/06_triggers.sql': "CREATE TRIGGER trg_exchange_nonce_append_only BEFORE UPDATE OR DELETE ON ExchangeNonce EXECUTE FUNCTION f();\n",
+        'polaris_sql/09_grants.sql': "'exchangenonce'\n",
+        'scripts/polaris-verify.py': ("import json\ndef _exchange_request_canonical(e): return b''\ndef canonical_body_hash(o): return ''\n"
+                                      "def verify_exchange_request(e, **k): return {}\ndef exchange_evidence(e, r): return True\n"),
+        'polaris_web/test_canonical_equivalence.py': "flask_app._exchange_request_statement\n",
+        'docs/reference/WIRE-SPEC.md': "polaris-exchange-request/1\n",
+        'conformance/cases.json': '{"cases": [{"artifact": "exchange-request"}]}\n',
+        'sdk/python/polaris_verify/__init__.py': '"polaris-exchange-request/1": ["format"]\n',
+        'sdk/typescript/src/index.ts': '"polaris-exchange-request/1": ["format"]\n',
+        'scripts/polaris-verifier-fuzz.py': "V.verify_exchange_request(o)\n",
+        'scripts/polaris-federation-instances-drill.py': "base_b + '/api/v1/exchange/1'; V.exchange_evidence(env, rcpt); 'POLARIS_EXCHANGE_UPSTREAMS'; 409\n",
+        'polaris_web/test_app.py': "class ExchangeGatewayTests(PolarisTestCase): pass\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_web/app.py': APP.replace("/api/v1/exchange/", "/api/v1/nope/")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the gateway route"
+    # forward BEFORE authorize -> FAIL (swap the two lines)
+    swapped = APP.replace("    if not _exchange_attestation(req_key, context_id):\n        return jsonify(error='forbidden'), 403\n", "").replace(
+        "    urllib.request.urlopen(up)\n", "    urllib.request.urlopen(up)\n    if not _exchange_attestation(req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
+    write({'polaris_web/app.py': swapped})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the upstream is called before authorization"
+    write({'polaris_web/app.py': APP.replace("A URL never comes from a request", "url = payload['url']")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if a forwarding URL could come from the request"
+    write({'polaris_web/app.py': APP + "    query('INSERT INTO ExchangeLog (body) VALUES (%s)', (body,))\n"})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if a body is persisted"
+    write({'polaris_web/app.py': APP.replace("occurred_at=str(env.get('issued_at'))", "occurred_at=None")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the receipt does not carry the signed time"
+    write({'polaris_sql/06_triggers.sql': "-- no trigger\n"})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the replay register is not append-only"
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace("def exchange_evidence", "def nope")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the offline evidence chain"
+    write({'scripts/polaris-federation-instances-drill.py': "# no exchange\n"})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if not driven across two instances"
+    write({'polaris_web/test_app.py': "# nothing\n"})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the fail-closed test"
+
+
 def test_registry_check_discriminates(tmp_path):
     # v9.323 (P8.3): the signed registry -- route over Athena views, formats pinned to the spec,
     # offline verify with self-consistency + discovery helpers, oracle/spec/conformance (both
@@ -6478,7 +6544,7 @@ def test_registry_check_discriminates(tmp_path):
         "    _registry_statement(body)  # polaris-registry/1\n"
         "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
         "_REGISTRY_SERVICES = []\n"
-        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
+        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
     )
     good = {
         'polaris_web/app.py': APP,

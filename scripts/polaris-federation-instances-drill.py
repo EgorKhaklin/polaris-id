@@ -28,6 +28,7 @@ import contextlib
 import importlib.util
 import hashlib
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone, timedelta
 import os
 import signal
@@ -35,6 +36,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -98,6 +100,28 @@ def _http_post_json(url, obj):
         return status, {}
 
 
+class _EchoUpstream(BaseHTTPRequestHandler):
+    """The institution's own service behind B's gateway: echoes the request it was handed and
+    names the requester the gateway authenticated. It never sees an envelope or a key."""
+    def do_POST(self):  # noqa: N802 -- http.server's naming
+        n = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(n) if n else b""
+        try:
+            req = json.loads(raw.decode("utf-8") or "null")
+        except ValueError:
+            req = None
+        out = json.dumps({"echo": req, "served_by": "echo-upstream",
+                          "requester": self.headers.get("X-Polaris-Requester")}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):  # quiet
+        pass
+
+
 def _http_get_soft(url):
     """GET returning (status, json-or-{}) without raising on 4xx."""
     try:
@@ -129,7 +153,7 @@ def _wait_health(port, log_path, name, tries=60):
     return False
 
 
-def _launch(dbname, port, key_file, log_path):
+def _launch(dbname, port, key_file, log_path, extra_env=None):
     env = dict(os.environ)
     env.update({
         "POLARIS_DB_HOST": DB_HOST, "POLARIS_DB_PORT": DB_PORT, "POLARIS_DB_USER": DB_USER,
@@ -137,6 +161,7 @@ def _launch(dbname, port, key_file, log_path):
         "POLARIS_PQC_SIGNING_KEY_FILE": key_file,
         "POLARIS_SECRET_KEY": env.get("POLARIS_SECRET_KEY", "fed_drill_secret_" + "0" * 40),
     })
+    env.update(extra_env or {})
     log = open(log_path, "w")
     proc = subprocess.Popen(
         [sys.executable, "-m", "gunicorn", "-w", "1", "-b", "127.0.0.1:%d" % port,
@@ -239,7 +264,12 @@ def main():
     proc_a = proc_b = None
     try:
         proc_a = _launch(A_DB, port_a, key_a, log_a)
-        proc_b = _launch(B_DB, port_b, key_b, log_b)
+        # P8.2d: B's gateway forwards service kind "echo" to an upstream the DRILL runs (the
+        # institution's own service); the mapping is operator configuration, never a request.
+        echo_srv = ThreadingHTTPServer(("127.0.0.1", 0), _EchoUpstream)
+        threading.Thread(target=echo_srv.serve_forever, daemon=True).start()
+        echo_url = "http://127.0.0.1:%d/" % echo_srv.server_address[1]
+        proc_b = _launch(B_DB, port_b, key_b, log_b, extra_env={"POLARIS_EXCHANGE_UPSTREAMS": json.dumps({"echo": echo_url})})
         if not (_wait_health(port_a, log_a, "A") and _wait_health(port_b, log_b, "B")):
             return 1
         base_a = "http://127.0.0.1:%d" % port_a
@@ -458,6 +488,73 @@ def main():
                        V.registry_authority(reg, pub_a) is not None, True))
         checks.append(("the registry advertises the protocol formats, including itself",
                        "polaris-registry" in ((reg.get("instance") or {}).get("protocol") or {}).get("formats", {}), True))
+
+        # 6g. THE GATEWAY (P8.2d): A's service sends a signed exchange envelope + body to B's
+        #     gateway for B's "echo" service. B authenticates A by its known key, authorizes it
+        #     through the trust graph, consumes the nonce, forwards to the echo upstream, and
+        #     returns the response with a signed receipt. The evidence (envelope + receipt)
+        #     verifies offline with no body; replay, strangers, mismatched bodies, tampering,
+        #     unknown kinds and stale envelopes are all refused; no body is ever stored or logged.
+        def envelope(requester_key, key_file, body, nonce, kind="echo", when=None, target_id=1):
+            env = {"format": "polaris-exchange-request/1", "requester": {"public_key_hex": requester_key},
+                   "target": {"agency_id": target_id, "kind": kind}, "context_id": CONTEXT_ID,
+                   "request_hash": V.canonical_body_hash(body), "nonce": nonce,
+                   "issued_at": when or now_iso, "algorithm": "ML-DSA-65"}
+            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_file
+            sig, _alg, pk = pqc_signing.signature_over_message(V._exchange_request_canonical(env))
+            env["signature_hex"], env["public_key_hex"] = sig.hex(), pk
+            return env
+
+        gw = base_b + "/api/v1/exchange/1"
+        ask = {"ask": "balance", "account": "notional-42"}
+        env1 = envelope(pub_a, key_a, ask, "nonce-1")
+        st12, ex = _http_post_json(gw, {"envelope": env1, "body": ask})
+        rcpt = (ex or {}).get("receipt") or {}
+        resp_body = (ex or {}).get("response_body")
+        checks.append(("A's signed exchange is mediated by B's gateway to B's echo service (200)", st12, 200))
+        checks.append(("the upstream answered the request and saw the authenticated requester",
+                       (resp_body or {}).get("echo") == ask and (resp_body or {}).get("requester") == pub_a, True))
+        rv2 = V.verify_exchange_receipt(rcpt, trusted_manifests=[b_manifest()], responder_key=pub_b,
+                                        request_body=json.dumps(ask, sort_keys=True, separators=(",", ":")).encode(),
+                                        response_body=json.dumps(resp_body, sort_keys=True, separators=(",", ":")).encode())
+        checks.append(("the receipt is authentic, B-signed, requester authorized, and binds BOTH bodies",
+                       bool(rv2.get("receipt_authentic") and rv2.get("responder_matches") and rv2.get("requester_authorized")
+                            and rv2.get("request_bound") and rv2.get("response_bound")), True))
+        ev = V.verify_exchange_request(env1, requester_key=pub_a, trusted_manifests=[b_manifest()], body=ask)
+        checks.append(("the envelope verifies offline: A-signed, authorized in-context, bound to the body",
+                       bool(ev.get("request_authentic") and ev.get("requester_matches") and ev.get("requester_authorized") and ev.get("body_bound")), True))
+        checks.append(("envelope + receipt form one consistent evidence chain (same requester, context, hash, instant)",
+                       V.exchange_evidence(env1, rcpt), True))
+        checks.append(("the receipt's occurred_at is the envelope's SIGNED time", rcpt.get("occurred_at") == env1["issued_at"], True))
+        checks.append(("the exchange's receipt is in B's receipt log (inclusion evidence served)",
+                       _http_get_soft(base_b + "/api/v1/exchange-receipt/inclusion/" + V.receipt_hash(rcpt))[0] if rcpt else 0, 200))
+        st13, _ = _http_post_json(gw, {"envelope": env1, "body": ask})
+        checks.append(("the SAME envelope replayed is refused (409): the nonce was consumed", st13, 409))
+        st14, _ = _http_post_json(gw, {"envelope": envelope(pub_a, key_a, ask, "nonce-2"), "body": ask})
+        checks.append(("the same request with a NEW nonce is a new exchange (200)", st14, 200))
+        _kf_x, pub_x = keypair("stranger-x")
+        st15, _ = _http_post_json(gw, {"envelope": envelope(pub_x, _kf_x, ask, "nonce-3"), "body": ask})
+        checks.append(("a requester whose key B does not know is refused (401)", st15, 401))
+        st16, _ = _http_post_json(gw, {"envelope": envelope(pub_a, key_a, ask, "nonce-4"), "body": {"ask": "something else"}})
+        checks.append(("a body the envelope does not bind is refused (400)", st16, 400))
+        bad_env = envelope(pub_a, key_a, ask, "nonce-5"); bb3 = bytearray.fromhex(bad_env["signature_hex"]); bb3[0] ^= 0x01; bad_env["signature_hex"] = bb3.hex()
+        st17, _ = _http_post_json(gw, {"envelope": bad_env, "body": ask})
+        checks.append(("a tampered envelope signature is refused (401)", st17, 401))
+        st18, _ = _http_post_json(gw, {"envelope": envelope(pub_a, key_a, ask, "nonce-6", kind="teleport"), "body": ask})
+        checks.append(("a service kind B does not forward to is refused (404): upstreams are operator configuration", st18, 404))
+        st19, _ = _http_post_json(gw, {"envelope": envelope(pub_a, key_a, ask, "nonce-7", when=stale_iso), "body": ask})
+        checks.append(("a stale envelope is refused (401): the freshness window", st19, 401))
+        reg_g = _http_get(base_b + "/api/v1/registry/1")[1]
+        checks.append(("B's registry advertises the gateway and the 'echo' exchange kind",
+                       bool(V.registry_service(reg_g, "exchange")) and "echo" in ((reg_g.get("instance") or {}).get("exchange_kinds") or []), True))
+        with open(log_b) as fh:
+            b_log = fh.read()
+        checks.append(("no request or response body appears anywhere in B's process log",
+                       "notional-42" not in b_log and "echo-upstream" not in b_log, True))
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("SELECT count(*) FROM ExchangeNonce")
+            n_nonce = cur.fetchone()[0]
+        checks.append(("B's replay register holds exactly the consumed nonces (2 delivered exchanges)", n_nonce, 2))
 
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:

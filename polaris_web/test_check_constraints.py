@@ -886,6 +886,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "RetentionPolicy",
         # v9.322 (P8.2c): the exchange-receipt transparency log.
         "ExchangeReceiptLog",
+        # v9.324 (P8.2d): the exchange gateway's replay register.
+        "ExchangeNonce",
     )
 
     def _app_conn(self):
@@ -950,6 +952,27 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             cur.execute("INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s)", (good,))
             with self.assertRaises(pg_errors.InsufficientPrivilege):
                 cur.execute("DELETE FROM ExchangeReceiptLog WHERE receipt_hash = %s", (good,))
+        conn.rollback()
+
+    def test_exchange_nonce_is_consumed_once_and_never_unconsumed(self):
+        """P8.2d: ExchangeNonce consumes (requester key hash, nonce) once -- a second INSERT of
+        the same pair is a replay (UniqueViolation) -- and polaris_app can never UPDATE/DELETE
+        it (chk_exchange_nonce_key / chk_exchange_nonce_len bound the columns)."""
+        conn = self._app_conn()
+        kh, nonce = "ab" * 32, "req-nonce-1"
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO ExchangeNonce (requester_key_hash, nonce) VALUES (%s, %s)", (kh, nonce))
+            with self.assertRaises(pg_errors.UniqueViolation):
+                cur.execute("INSERT INTO ExchangeNonce (requester_key_hash, nonce) VALUES (%s, %s)", (kh, nonce))
+        conn.rollback()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation):
+                cur.execute("INSERT INTO ExchangeNonce (requester_key_hash, nonce) VALUES ('not-a-key-hash', %s)", (nonce,))
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO ExchangeNonce (requester_key_hash, nonce) VALUES (%s, %s)", (kh, nonce))
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("DELETE FROM ExchangeNonce WHERE requester_key_hash = %s", (kh,))
         conn.rollback()
 
     def test_app_role_can_still_append_audit_rows(self):

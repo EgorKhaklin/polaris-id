@@ -87,6 +87,7 @@ DROP TABLE IF EXISTS IdentityToken          CASCADE;
 DROP TABLE IF EXISTS AuthAuditLog           CASCADE;
 DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
+DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
 DROP TABLE IF EXISTS AppUser                CASCADE;
 DROP TABLE IF EXISTS VerificationContext    CASCADE;
 DROP TABLE IF EXISTS CryptographicAlgorithm CASCADE;
@@ -271,6 +272,26 @@ COMMENT ON TABLE ExchangeReceiptLog IS
   'P8.2c append-only transparency log over exchange receipts: one row per minted '
   'receipt holding ONLY its SHA3-256 (the receipt is never retained). Published as '
   'an RFC-6962 log; strictly append-only by trigger and by privilege.';
+
+-- P8.2d (v9.324): the exchange gateway's REPLAY REGISTER. A requester's signed exchange
+-- envelope carries a nonce; the gateway consumes (requester key, nonce) here BEFORE
+-- forwarding, so an identical envelope replayed to any worker is refused (409) and a
+-- request is never delivered twice. Institutional identity (a key hash) and a nonce only:
+-- no body, no person. Append-only (a consumed nonce must never be un-consumed) by trigger
+-- and by privilege, exactly like ZkVerificationNonce.
+CREATE TABLE ExchangeNonce (
+    requester_key_hash CHAR(64)     NOT NULL
+        CONSTRAINT chk_exchange_nonce_key CHECK (requester_key_hash ~ '^[0-9a-f]{64}$'),
+    nonce              VARCHAR(64)  NOT NULL
+        CONSTRAINT chk_exchange_nonce_len CHECK (char_length(nonce) BETWEEN 1 AND 64),
+    consumed_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (requester_key_hash, nonce)
+);
+
+COMMENT ON TABLE ExchangeNonce IS
+  'P8.2d exchange-gateway replay register: (SHA3-256 of the requester key, nonce) consumed '
+  'before an exchange is forwarded; a replay hits the primary key and is refused. No body, '
+  'no person. Append-only by trigger and by privilege.';
 
 -- coverage:exempt — C1 AoR enforced by tg_authauditlog_append_only; schema_watcher verifies the trigger exists
 CREATE TABLE AuthAuditLog (

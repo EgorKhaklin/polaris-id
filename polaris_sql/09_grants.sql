@@ -110,7 +110,10 @@ DECLARE
         -- P8.2c: the exchange-receipt transparency log. polaris_app appends a
         -- receipt's hash at mint time; a role that could UPDATE/DELETE could
         -- rewrite the log, which the trigger also forbids.
-        'exchangereceiptlog'
+        'exchangereceiptlog',
+        -- P8.2d: the exchange gateway's replay register. polaris_app consumes a
+        -- nonce (INSERT); un-consuming one (UPDATE/DELETE) would re-open replay.
+        'exchangenonce'
     ];
 BEGIN
     FOREACH v_tbl IN ARRAY v_append_only_tables LOOP

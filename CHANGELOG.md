@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.324 — 2026-09-09 (The exchange gateway: institutions exchange through Polaris trust, P8.2d)
+
+The flagship of the exchange fabric, and the completion of P8.2. Two institutions exchange a
+request through Polaris trust, with evidence and without retention.
+
+- **`POST /api/v1/exchange/<id>`.** A requesting institution signs a `polaris-exchange-request/1`
+  envelope under its registered ML-DSA-65 key -- the SHA3-256 of the body's canonical JSON, the
+  target agency and service kind, the context, a never-reused nonce, the time -- and posts it
+  with the body to the target's instance. The order of operations is the security argument, and
+  `check_exchange_gateway` pins it: real ML-DSA required; envelope bound to this target and to
+  the body; the kind one this instance forwards to; fresh; requester authenticated by a key the
+  instance already KNOWS and verified two-witness; **authorized through the in-context trust
+  graph before anything is forwarded**; nonce consumed in the append-only replay register
+  `ExchangeNonce` (409 on replay, any worker; a failed upstream still consumes it, so a retry
+  needs a new nonce); forwarded only to an operator-configured upstream
+  (`POLARIS_EXCHANGE_UPSTREAMS`, a JSON map of kind to URL -- a URL never comes from a request);
+  the response returned with a receipt carrying the envelope's signed time as `occurred_at`,
+  its hash logged. The receipt IS the response envelope. No body is ever persisted or logged.
+- **Evidence without retention, completed.** (envelope, receipt) is the evidence of one
+  exchange: `verify_exchange_request` proves the requester's signed intent (authentic, expected
+  requester, authorized in-context, bound to a body it holds), `verify_exchange_receipt` the
+  responder's account, and `exchange_evidence` that they agree on requester, context, hash and
+  instant -- all offline, with no access to either body.
+- **Proven across two instances.** The drill runs an echo upstream behind B, launches B with it
+  configured, and from A: a mediated exchange whose receipt is B-signed, requester-authorized
+  and binds both bodies; the envelope verified offline; one consistent chain; the receipt in
+  B's log; the same envelope replayed (409); a new nonce (200); an unknown requester (401); an
+  unbound body (400); a tampered signature (401); an unknown kind (404); a stale envelope
+  (401); the registry advertising the gateway and its kinds; no body in B's process log; the
+  replay register holding exactly the delivered nonces. Eleventh oracle pair; wire spec 3.11;
+  two conformance vectors in BOTH SDKs; the fuzzer holds `verify_exchange_request` total; a
+  DB test proves the gateway fails closed; C1 tests cover `ExchangeNonce`. 178 checks, 109
+  routes, 33 tables (40 migrated). **P8.2 complete.**
+
 ## v9.323 — 2026-09-09 (The signed registry: discovery over the authority layer, P8.3)
 
 A consumer should learn what an instance offers and trusts from the instance itself, signed,

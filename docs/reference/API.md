@@ -859,6 +859,23 @@ of the seven `mint` fields (wire spec section 3.8.1); `scripts/polaris-verify.py
 `_exchange_mint_canonical` builds them for a client. Proven over HTTP, with no session, by the
 two-instance federation drill.
 
+### `POST /api/v1/exchange/<target_agency_id>`
+
+**Service-to-service; no session (P8.2d).** The **exchange gateway**: a requesting institution
+posts `{envelope, body}` -- a `polaris-exchange-request/1` signed under its registered
+ML-DSA-65 key (binding the SHA3-256 of the body's canonical JSON, the target agency and
+service kind, the context, a never-reused nonce, and the time) plus the JSON body -- and
+receives `{receipt, response_body}`. In order: real ML-DSA required (`503`); target
+federated (`404`); envelope well-formed and bound to this target (`400`); the kind is one this
+instance forwards to (`404`); fresh within 300 s (`401 stale`); `request_hash` binds the body
+(`400`); requester key known here (`401 unknown_requester`); signature two-witness (`401
+invalid_signature`); rate bound (`429`); requester authorized in the context by the trust graph
+(`403`) **before** forwarding; nonce consumed (`409 replay`); forwarded to the operator-configured
+upstream (`502` if it does not answer; the nonce stays consumed); receipt minted with the
+envelope's signed time and logged. No body is ever persisted. Verified offline with
+`verify_exchange_request` + `verify_exchange_receipt` + `exchange_evidence`. Specified in
+[exchange-gateway.md](../design/exchange-gateway.md); wire spec section 3.11.
+
 ### `GET /api/v1/registry/<agency_id>`
 
 **Public; no auth (P8.3).** The **signed registry**: what this instance offers and trusts, as one

@@ -173,8 +173,19 @@ def main():
             "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": "ML-DSA-65",
         }, V._registry_canonical)
 
+    def g_exchange_request():
+        return _signed({
+            "format": "polaris-exchange-request/1", "requester": {"public_key_hex": key_hex},
+            "target": {"agency_id": 1, "kind": "echo"}, "context_id": 1,
+            "request_hash": hashlib.sha3_256(b'{"ask":"x"}').hexdigest(), "nonce": "n-1",
+            "issued_at": _iso(now), "algorithm": "ML-DSA-65",
+        }, V._exchange_request_canonical)
+
     # spec: name, build(), verify(obj)->verdict, accept(verdict)->bool, bound_fields
     specs = [
+        ("exchange-request", g_exchange_request, lambda o: V.verify_exchange_request(o),
+         lambda v: v["request_authentic"],
+         ["format", "requester", "target", "context_id", "request_hash", "nonce", "issued_at", "algorithm"]),
         ("registry", g_registry, lambda o: V.verify_registry(o),
          lambda v: v["registry_authentic"] and v.get("fresh") is True,
          ["format", "publisher", "instance", "authorities", "contexts", "trust", "relying_parties", "issued_at", "expires_at", "algorithm"]),

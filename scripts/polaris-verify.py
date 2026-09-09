@@ -1429,6 +1429,113 @@ def registry_trusts(reg, attested_public_key_hex, context_id):
     return sorted(x for x in out if x is not None)
 
 
+_EXCHANGE_REQUEST_FORMAT = "polaris-exchange-request/1"
+
+
+def _exchange_request_canonical(e):
+    """The bytes a REQUESTER signs for an exchange envelope (P8.2d): the SHA3-256 of its
+    request body (canonical JSON), the target, the context, a nonce and the time. A client
+    builds exactly these bytes; the gateway rebuilds them and verifies under the requester's
+    registered key. MUST match polaris_web/app.py's _exchange_request_statement."""
+    if not isinstance(e, dict):
+        e = {}
+    statement = {k: e.get(k) for k in
+                 ("format", "requester", "target", "context_id", "request_hash", "nonce",
+                  "issued_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def canonical_body_hash(obj):
+    """SHA3-256 hex of a JSON body in canonical form (sorted keys, compact) -- what an exchange
+    envelope's request_hash and a receipt's response_hash bind."""
+    return hashlib.sha3_256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None, body=None):
+    """Verify a requester's signed exchange envelope OFFLINE (P8.2d): the ML-DSA-65 signature
+    over SHA3-256(canonical) under the key the envelope names (with requester_key: that it is
+    the expected requester); with trusted_manifests, that the requester is attested in the
+    envelope's context by an authority the verifier trusts (the section 4 rule); with body,
+    that request_hash binds it. A third party holding the envelope and the matching receipt
+    (exchange_evidence) proves both sides of an exchange with no access to either body."""
+    if not isinstance(envelope, dict):
+        envelope = {}
+    req = envelope.get("requester") if isinstance(envelope.get("requester"), dict) else {}
+    claimed = str(req.get("public_key_hex") or "").lower()
+    pk_hex = str(envelope.get("public_key_hex") or "").lower()
+    v = {"request_authentic": False, "requester_matches": None, "requester_authorized": None,
+         "body_bound": None, "requester": envelope.get("requester"), "target": envelope.get("target"),
+         "context_id": envelope.get("context_id"), "request_hash": envelope.get("request_hash"),
+         "nonce": envelope.get("nonce"), "issued_at": envelope.get("issued_at"), "witnesses": [], "note": None}
+    if envelope.get("format") != _EXCHANGE_REQUEST_FORMAT:
+        v["note"] = "not a %s" % _EXCHANGE_REQUEST_FORMAT
+        return v
+    if envelope.get("algorithm") == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder envelope -- not authenticatable offline"
+        return v
+    # The signature envelope's key is the verification key (as for every artifact); it MUST be
+    # the key the signed statement claims for the requester, or the envelope lies about itself.
+    if pk_hex != claimed:
+        v["note"] = "the envelope's public_key_hex does not match the signed requester key"
+        return v
+    try:
+        sig, pk = bytes.fromhex(str(envelope.get("signature_hex"))), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_exchange_request_canonical(envelope)).digest()
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    v["witnesses"] = ran
+    if primary is None and witness is None:
+        v["note"] = "no ML-DSA-65 verifier available"
+        return v
+    if primary is not None and witness is not None and primary != witness:
+        v["note"] = "the two witnesses DISAGREE -- treat as invalid"
+        return v
+    ok = primary if primary is not None else witness
+    v["request_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "envelope signature is invalid"
+        return v
+    if requester_key is not None:
+        v["requester_matches"] = (pk_hex == str(requester_key).lower())
+    if trusted_manifests is not None:
+        ctx = envelope.get("context_id")
+        authorized = False
+        for m in (trusted_manifests if isinstance(trusted_manifests, (list, tuple)) else []):
+            mv = verify_manifest(m)
+            if not (mv.get("manifest_authentic") and mv.get("fresh")):
+                continue
+            for att in mv.get("attestations") or []:
+                if isinstance(att, dict) and str(att.get("attested_public_key_hex") or "").lower() == pk_hex \
+                        and att.get("context_id") == ctx:
+                    authorized = True
+        v["requester_authorized"] = authorized
+    if body is not None:
+        v["body_bound"] = (canonical_body_hash(body) == str(envelope.get("request_hash") or "").lower())
+    return v
+
+
+def exchange_evidence(envelope, receipt):
+    """The evidentiary chain of one exchange (P8.2d): the requester-signed envelope and the
+    responder-signed receipt agree on the requester key, the context, the request hash and the
+    instant. Neither carries a body. True/False; None on malformed input."""
+    if not isinstance(envelope, dict) or not isinstance(receipt, dict):
+        return None
+    req_e = envelope.get("requester") if isinstance(envelope.get("requester"), dict) else {}
+    req_r = receipt.get("requester") if isinstance(receipt.get("requester"), dict) else {}
+    return (str(req_e.get("public_key_hex") or "").lower() == str(req_r.get("public_key_hex") or "").lower()
+            and envelope.get("context_id") == receipt.get("context_id")
+            and str(envelope.get("request_hash") or "").lower() == str(receipt.get("request_hash") or "").lower()
+            and envelope.get("issued_at") == receipt.get("occurred_at"))
+
+
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
                             request_body=None, response_body=None, max_window_seconds=None):
     """Verify an exchange receipt OFFLINE (P8.2). Establishes, WITHOUT the payload, that an

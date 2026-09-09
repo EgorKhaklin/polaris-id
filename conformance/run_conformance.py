@@ -52,7 +52,7 @@ def _load_cases():
             if "now" in c:
                 payload["now"] = c["now"]
         elif artifact in ("epoch-checkpoint", "revocation-feed", "federation-manifest",
-                          "federation-status-bundle", "transparency-sth", "timestamp", "registry"):
+                          "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request"):
             payload["object"] = _load_file(c["object_file"])
             if "now" in c:
                 payload["now"] = c["now"]

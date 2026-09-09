@@ -117,6 +117,8 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         "individualerasureevent",
         # v9.322 (P8.2c): the exchange-receipt transparency log.
         "exchangereceiptlog",
+        # v9.324 (P8.2d): the exchange gateway's replay register.
+        "exchangenonce",
     ]
     if not re.search(r"REVOKE\s+UPDATE\s*,\s*DELETE", grants, re.I):
         return _fail("c1_aor_priv",
@@ -7159,6 +7161,7 @@ _WIRE_SIGNED_TYPES = {
     "polaris-exchange-mint/1": "_exchange_mint_canonical",
     "polaris-timestamp/1": "_timestamp_canonical",
     "polaris-registry/1": "_registry_canonical",
+    "polaris-exchange-request/1": "_exchange_request_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7516,6 +7519,76 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
+    """P8.2d: the exchange gateway -- institution-to-institution exchange mediated by Polaris
+    trust with evidence and without retention. Pins the order of operations that IS the
+    security argument (real PQC; requester KNOWN by key; signature two-witness under that key;
+    AUTHORIZED through the in-context trust graph BEFORE forwarding; nonce consumed in the
+    append-only replay register; forwarded only to an OPERATOR-CONFIGURED upstream, never a URL
+    from the request; receipt minted with the envelope's signed time and logged; no body ever
+    persisted), the client-side envelope builder in the detached verifier (oracle-pinned), the
+    third-party evidence chain, the replay register's schema, the wire spec, conformance in
+    both SDKs, the fuzzer, the registry advertising the gateway, and the two-instance drill."""
+    app = _read(root, "polaris_web/app.py")
+    for sym, why in (("/api/v1/exchange/<int:target_agency_id>", "the gateway route"),
+                     ("_exchange_request_statement", "the envelope statement builder"),
+                     ("polaris-exchange-request/1", "the envelope format"),
+                     ("placeholder signature is not authentication", "fail-closed without real PQC"),
+                     ("the requester key is not a registered authority on this instance", "requester KNOWN by key"),
+                     ("verify_both(_exchange_request_statement(env)", "two-witness verify under the requester key"),
+                     ("_exchange_attestation(req_key, context_id)", "in-context authorization"),
+                     ("_consume_exchange_nonce", "the replay register"),
+                     ("INSERT INTO ExchangeNonce", "consuming the nonce"),
+                     ("_exchange_upstreams()", "operator-configured upstreams"),
+                     ("POLARIS_EXCHANGE_UPSTREAMS", "the upstream configuration"),
+                     ("A URL never comes from a request", "no request-supplied forwarding target"),
+                     ("_build_exchange_receipt(target, target_agency_id", "the receipt minted for the exchange"),
+                     ("occurred_at=str(env.get('issued_at'))", "the receipt carries the envelope's signed time"),
+                     ("'exchange_kinds'", "the registry advertises the exchange kinds"),
+                     ("'kind': 'exchange'", "the registry advertises the gateway")):
+        if sym not in app:
+            return _fail("exchange_gateway", "polaris_web/app.py lacks %s (%s)" % (why, sym))
+    # AUTHORIZE before FORWARD: the attestation check must precede the upstream call.
+    i_auth, i_fwd = app.find("_exchange_attestation(req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("urllib.request.urlopen(up")
+    if i_auth < 0 or i_fwd < 0 or i_auth > i_fwd:
+        return _fail("exchange_gateway", "the gateway must authorize the requester (trust graph, in-context) BEFORE forwarding to the upstream")
+    if re.search(r"INSERT INTO \w+ \([^)]*\bbody\b", app, re.I):
+        return _fail("exchange_gateway", "no persistence path may take a request or response body (evidence without retention)")
+    if "CREATE TABLE ExchangeNonce" not in _read(root, "polaris_sql/01_schema.sql") or "trg_exchange_nonce_append_only" not in _read(root, "polaris_sql/06_triggers.sql"):
+        return _fail("exchange_gateway", "the replay register ExchangeNonce must exist and be strictly append-only")
+    if "exchangenonce" not in _read(root, "polaris_sql/09_grants.sql").lower():
+        return _fail("exchange_gateway", "09_grants.sql must REVOKE UPDATE, DELETE on ExchangeNonce from polaris_app")
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_exchange_request", "_exchange_request_canonical", "def exchange_evidence", "def canonical_body_hash"):
+        if sym not in v:
+            return _fail("exchange_gateway", "scripts/polaris-verify.py must verify the envelope and the evidence chain offline (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("exchange_gateway", f"the offline verifier imports {mod!r}; it must stay standalone")
+    if "_exchange_request_statement" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("exchange_gateway", "the envelope statement must be held byte-equal by the canonical oracle")
+    if "polaris-exchange-request/1" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("exchange_gateway", "the envelope must be specified in the wire spec")
+    if '"artifact": "exchange-request"' not in _read(root, "conformance/cases.json"):
+        return _fail("exchange_gateway", "conformance/cases.json must carry exchange-request cases")
+    if "polaris-exchange-request/1" not in _read(root, "sdk/python/polaris_verify/__init__.py") or "polaris-exchange-request/1" not in _read(root, "sdk/typescript/src/index.ts"):
+        return _fail("exchange_gateway", "both SDKs must verify polaris-exchange-request/1")
+    if "verify_exchange_request" not in _read(root, "scripts/polaris-verifier-fuzz.py"):
+        return _fail("exchange_gateway", "the metamorphic fuzzer must hold verify_exchange_request total")
+    fed = _read(root, "scripts/polaris-federation-instances-drill.py")
+    for sym in ("/api/v1/exchange/", "exchange_evidence", "POLARIS_EXCHANGE_UPSTREAMS", "409"):
+        if sym not in fed:
+            return _fail("exchange_gateway", "the two-instance drill must run a mediated exchange over HTTP with replay refused (%s missing)" % sym)
+    if "ExchangeGatewayTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("exchange_gateway", "polaris_web/test_app.py must prove the gateway fails closed")
+    return _ok("exchange_gateway",
+               "the exchange gateway mediates institution-to-institution requests: requester known by key and "
+               "verified two-witness, authorized in-context BEFORE forwarding, nonce consumed in an append-only "
+               "replay register, forwarded only to operator-configured upstreams, receipted with the signed time and "
+               "logged, no body ever persisted; envelope oracle-pinned, specified, conformant in both SDKs, fuzzed, "
+               "advertised in the registry, and driven over HTTP across two instances")
 
 
 def check_registry(root: pathlib.Path) -> list[Finding]:
@@ -8281,6 +8354,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_exchange_gateway,
     check_registry,
     check_receipt_transparency,
     check_timestamp_authority,

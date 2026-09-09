@@ -286,6 +286,22 @@
       "expect": {
         "authentic": false
       }
+    },
+    {
+      "name": "exchange-request-valid",
+      "artifact": "exchange-request",
+      "object_file": "conformance/vectors/exchange-request-valid.json",
+      "expect": {
+        "authentic": true
+      }
+    },
+    {
+      "name": "exchange-request-tampered",
+      "artifact": "exchange-request",
+      "object_file": "conformance/vectors/exchange-request-tampered.json",
+      "expect": {
+        "authentic": false
+      }
     }
   ]
 }
