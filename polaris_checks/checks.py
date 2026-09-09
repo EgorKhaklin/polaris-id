@@ -7664,10 +7664,12 @@ def check_typescript_sdk(root: pathlib.Path) -> list[Finding]:
         return _fail("typescript_sdk", "sdk/typescript/src/index.ts is missing")
     if "verifyAuthenticity" not in sdk or "class PolarisVerifier" not in sdk:
         return _fail("typescript_sdk", "the TS SDK must expose verifyAuthenticity() and PolarisVerifier")
-    # P8.1b: the TS SDK certifies the status assertion too, held to the same suite.
-    if "verifyStatusAssertion" not in sdk:
+    # P8.1b: the TS SDK certifies the status assertion and the signed artifacts too, held to
+    # the same suite (and recomputes the recursive canonical JSON to match the signer).
+    if "verifyStatusAssertion" not in sdk or "verifySignedArtifact" not in sdk:
         return _fail("typescript_sdk",
-                     "the TS SDK must verify the status assertion offline (verifyStatusAssertion), not only the pack")
+                     "the TS SDK must verify the status assertion and the signed artifacts offline "
+                     "(verifyStatusAssertion, verifySignedArtifact), not only the pack")
     if "@noble/post-quantum/ml-dsa" not in sdk or "ml_dsa65.verify" not in sdk or "sha3_256" not in sdk:
         return _fail("typescript_sdk",
                      "the TS SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value) via "
@@ -7724,10 +7726,12 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
     if "def verify_authenticity" not in sdk or "class PolarisVerifier" not in sdk:
         return _fail("conformance_suite", "the SDK must expose verify_authenticity() and PolarisVerifier")
     # P8.1b: the SDK certifies more than the authenticity pack. The status assertion (offline
-    # authorization) is the first additional artifact; its verify is standalone too.
-    if "def verify_status_assertion" not in sdk:
+    # authorization) and the signed statements (checkpoint, feed, manifest, bundle, STH) are
+    # verified standalone too.
+    if "def verify_status_assertion" not in sdk or "def verify_signed_artifact" not in sdk:
         return _fail("conformance_suite",
-                     "the SDK must verify the status assertion offline (verify_status_assertion), not only the pack")
+                     "the SDK must verify the status assertion and the signed artifacts offline "
+                     "(verify_status_assertion, verify_signed_artifact), not only the pack")
     if "sha3_256" not in sdk or "MLDSA65PublicKey" not in sdk:
         return _fail("conformance_suite",
                      "the SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value), not trust a flag")
@@ -7759,11 +7763,17 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
         return _fail("conformance_suite",
                      "the cases must cover a genuine signature by an UNTRUSTED issuer (authentic but issuer_trusted "
                      "false) -- a valid signature by an untrusted key must be rejectable")
-    # P8.1b: the suite certifies more than one artifact. A status-assertion case must be
-    # present (the runner and both SDKs dispatch on the case's `artifact`).
-    if not any(c.get("artifact") == "status-assertion" for c in manifest.get("cases", [])):
+    # P8.1b: the suite certifies most of the protocol, not one artifact. The cases must cover
+    # several distinct artifact types (the runner and both SDKs dispatch on the case's
+    # `artifact`), including the status assertion.
+    artifacts = {c.get("artifact", "authenticity-pack") for c in manifest.get("cases", [])}
+    if "status-assertion" not in artifacts:
         return _fail("conformance_suite",
                      "the cases must certify the status assertion too (an `artifact: status-assertion` case)")
+    if len(artifacts) < 6:
+        return _fail("conformance_suite",
+                     "the cases must certify most of the protocol's artifacts, not one; found %d distinct "
+                     "artifact types, expected at least 6" % len(artifacts))
     if "artifact" not in _read(root, "sdk/python/polaris_verify/conformance.py"):
         return _fail("conformance_suite",
                      "the verifier CLI must dispatch on the case's `artifact` (not only the authenticity pack)")

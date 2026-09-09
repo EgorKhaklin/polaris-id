@@ -109,13 +109,28 @@ export type StatusAssertionVerdict = {
 
 const STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"];
 
-/** The canonical bytes a signer signs: sorted-keys compact JSON of the signed fields.
- * JSON.stringify emits compact separators, and inserting keys in sorted order gives the
- * sorted-key ordering, matching Python's json.dumps(sort_keys=True, separators=(",",":")). */
+/** Recursive canonical JSON: sorted keys at every level, compact separators. Matches
+ * Python's json.dumps(value, sort_keys=True, separators=(",",":")) byte for byte, which is
+ * what the signer used. JSON.stringify alone would NOT sort nested object keys, so a signed
+ * statement with nested values (epoch, anchors, members) needs this. */
+function canonicalJson(value: any): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
+  const keys = Object.keys(value).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalJson(value[k])).join(",") + "}";
+}
+
+/** The canonical bytes a signer signs: the sorted-keys compact JSON of the signed fields. */
 function canonicalBytes(obj: any, keys: string[]): Uint8Array {
   const statement: Record<string, unknown> = {};
-  for (const k of [...keys].sort()) statement[k] = obj?.[k] ?? null;
-  return new TextEncoder().encode(JSON.stringify(statement));
+  for (const k of keys) statement[k] = obj?.[k] ?? null;
+  return new TextEncoder().encode(canonicalJson(statement));
+}
+
+function bytesToHex(b: Uint8Array): string {
+  let s = "";
+  for (const x of b) s += x.toString(16).padStart(2, "0");
+  return s;
 }
 
 function isoToEpoch(s: unknown): number | null {
@@ -154,6 +169,62 @@ export function verifyStatusAssertion(assertion: any, now?: string | null): Stat
     return { authentic: false, fresh: null, active: null, status, note: "verification error: " + (e as Error).message };
   }
   return { authentic: ok, fresh: withinWindow(a, now), active: status === "ACTIVE", status };
+}
+
+const ARTIFACT_KEYS: Record<string, string[]> = {
+  "polaris-epoch-checkpoint/1": ["format", "authority", "epoch", "prev", "as_of", "issued_at", "expires_at", "algorithm"],
+  "polaris-revocation-feed/1": ["format", "authority", "epoch_number", "as_of", "revoked_root_hex", "revoked_count", "revoked_leaves", "issued_at", "expires_at", "algorithm"],
+  "polaris-federation-manifest/1": ["format", "authority", "anchors", "attestations", "epoch", "revocation", "issued_at", "expires_at", "algorithm"],
+  "polaris-federation-status-bundle/1": ["format", "publisher", "members_root_hex", "member_count", "issued_at", "expires_at", "algorithm"],
+  "polaris-transparency-sth/1": ["format", "log_id", "tree_size", "root_hash_hex", "timestamp"],
+};
+
+export type ArtifactVerdict = { authentic: boolean; fresh: boolean | null; note?: string };
+
+function revokedRoot(leaves: any): string {
+  const arr: string[] = Array.isArray(leaves) ? leaves.map((x) => String(x).toLowerCase()) : [];
+  const uniq = [...new Set(arr)].sort();
+  return bytesToHex(sha3_256(new TextEncoder().encode(uniq.join("\n"))));
+}
+
+function membersRoot(members: any): string {
+  const arr = Array.isArray(members) ? members : [];
+  const digs = arr.map((m) => bytesToHex(sha3_256(new TextEncoder().encode(canonicalJson(m))))).sort();
+  return bytesToHex(sha3_256(new TextEncoder().encode(digs.join("\n"))));
+}
+
+/** Verify a Polaris signed artifact's AUTHENTICITY OFFLINE (P8.1, wire spec section 3): for the
+ * epoch checkpoint, revocation feed, federation manifest, status bundle, or transparency STH,
+ * recompute the canonical statement for its `format`, verify the ML-DSA-65 signature over its
+ * SHA3-256, check freshness for a windowed artifact, and check the commitment (feed/bundle) or
+ * self-consistency (manifest). The federation TRUST decision is a separate composite check. */
+export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVerdict {
+  const o = obj ?? {};
+  const keys = ARTIFACT_KEYS[o.format];
+  if (!keys) return { authentic: false, fresh: null, note: "unknown or unsupported artifact: " + o.format };
+  if (o.algorithm === PLACEHOLDER_LABEL || !o.public_key_hex) {
+    return { authentic: false, fresh: null, note: "placeholder -- not authenticatable offline" };
+  }
+  let ok: boolean;
+  try {
+    const digest = sha3_256(canonicalBytes(o, keys));
+    ok = ml_dsa65.verify(hexToBytes(o.signature_hex), digest, hexToBytes(o.public_key_hex));
+  } catch (e) {
+    return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
+  }
+  if (ok && o.format === "polaris-revocation-feed/1") {
+    ok = revokedRoot(o.revoked_leaves) === String(o.revoked_root_hex ?? "").toLowerCase();
+  } else if (ok && o.format === "polaris-federation-status-bundle/1") {
+    ok = membersRoot(o.members) === String(o.members_root_hex ?? "").toLowerCase();
+  } else if (ok && o.format === "polaris-federation-manifest/1") {
+    const active = new Set(
+      (Array.isArray(o.anchors) ? o.anchors : [])
+        .filter((a: any) => a && (a.status ?? "active") === "active")
+        .map((a: any) => String(a.public_key_hex ?? "").toLowerCase()),
+    );
+    ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
+  }
+  return { authentic: ok, fresh: withinWindow(o, now) };
 }
 
 export type VerifierOptions = {

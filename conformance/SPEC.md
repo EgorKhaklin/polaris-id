@@ -6,14 +6,21 @@ any language -- by making it pass this suite. Passing it is what "conformant"
 means (ROADMAP P3.5).
 
 The suite covers the **offline** checks over the protocol's signed artifacts, each
-specified normatively in [`docs/reference/WIRE-SPEC.md`](../docs/reference/WIRE-SPEC.md).
-Today it certifies the **authenticity pack** (is the ML-DSA-65 signature genuine, and
--- with a trusted issuer anchor set -- is the signing key trusted?) and the **status
-assertion** (is a short-lived issuer-signed statement of a credential's status genuine,
-fresh, and ACTIVE?). More artifacts are added case-by-case (P8.1b). Online authorization
-(is the token authoritative *now* via a live call to `POST /api/v1/verify`) is specified
-in [`docs/reference/API.md`](../docs/reference/API.md); it is not part of these offline
-vectors because it depends on live issuer state.
+specified normatively in [`docs/reference/WIRE-SPEC.md`](../docs/reference/WIRE-SPEC.md). It
+certifies the **authenticity** of all seven app-signed artifacts:
+
+- the **authenticity pack** (is the ML-DSA-65 signature genuine, and -- with a trusted
+  issuer anchor set -- is the signing key trusted?);
+- the **status assertion** (genuine, fresh, and ACTIVE?);
+- and the **epoch checkpoint**, **revocation feed**, **federation manifest**, **status
+  bundle**, and **transparency STH**, each verified through one generic signed-statement
+  check: the signature over `SHA3-256(canonical)`, freshness for a windowed artifact, and
+  the artifact's own commitment (feed/bundle) or self-consistency (manifest).
+
+The composite federation **trust decision** (accepting a foreign credential across
+authorities) and online authorization (a live call to `POST /api/v1/verify`, specified in
+[`docs/reference/API.md`](../docs/reference/API.md)) are separate and are not part of these
+offline vectors.
 
 ## The verifier contract
 

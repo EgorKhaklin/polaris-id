@@ -51,6 +51,11 @@ def _load_cases():
             payload["assertion"] = _load_file(c["assertion_file"])
             if "now" in c:
                 payload["now"] = c["now"]
+        elif artifact in ("epoch-checkpoint", "revocation-feed", "federation-manifest",
+                          "federation-status-bundle", "transparency-sth"):
+            payload["object"] = _load_file(c["object_file"])
+            if "now" in c:
+                payload["now"] = c["now"]
         else:
             raise ValueError("unknown artifact %r in case %r" % (artifact, c["name"]))
         cases.append((c["name"], payload, c["expect"]))

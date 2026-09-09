@@ -233,6 +233,75 @@ def verify_status_assertion(assertion: dict, now=None) -> StatusAssertionVerdict
                                   witnesses=ran)
 
 
+# The signed-field list per artifact format (wire spec section 3). One generic verifier covers
+# every signed statement; the pack (section 3.7) and the status assertion have their own
+# entry points because their verdicts differ.
+_ARTIFACT_KEYS = {
+    "polaris-epoch-checkpoint/1": ["format", "authority", "epoch", "prev", "as_of", "issued_at", "expires_at", "algorithm"],
+    "polaris-revocation-feed/1": ["format", "authority", "epoch_number", "as_of", "revoked_root_hex", "revoked_count", "revoked_leaves", "issued_at", "expires_at", "algorithm"],
+    "polaris-federation-manifest/1": ["format", "authority", "anchors", "attestations", "epoch", "revocation", "issued_at", "expires_at", "algorithm"],
+    "polaris-federation-status-bundle/1": ["format", "publisher", "members_root_hex", "member_count", "issued_at", "expires_at", "algorithm"],
+    "polaris-transparency-sth/1": ["format", "log_id", "tree_size", "root_hash_hex", "timestamp"],
+}
+
+
+@dataclasses.dataclass
+class ArtifactVerdict:
+    authentic: bool
+    fresh: Optional[bool]
+    note: Optional[str] = None
+    witnesses: Optional[List[str]] = None
+
+
+def _revoked_root(leaves) -> str:
+    if not isinstance(leaves, (list, tuple)):
+        leaves = []
+    uniq = sorted({str(x).lower() for x in leaves})
+    return hashlib.sha3_256("\n".join(uniq).encode("utf-8")).hexdigest()
+
+
+def _members_root(members) -> str:
+    if not isinstance(members, list):
+        members = []
+    digs = sorted(hashlib.sha3_256(json.dumps(m, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+                  for m in members)
+    return hashlib.sha3_256("\n".join(digs).encode("utf-8")).hexdigest()
+
+
+def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
+    """Verify a Polaris signed artifact's AUTHENTICITY offline (P8.1, wire spec section 3): for
+    the epoch checkpoint, revocation feed, federation manifest, status bundle, or transparency
+    STH, recompute the canonical statement for its `format`, verify the ML-DSA-65 signature over
+    its SHA3-256, check freshness for a windowed artifact, and check the artifact's commitment
+    (feed/bundle) or self-consistency (manifest). Standalone. Reports authentic + fresh. The
+    federation TRUST decision (accepting a foreign credential across authorities) is a separate,
+    composite check, not this per-artifact authenticity."""
+    obj = obj if isinstance(obj, dict) else {}
+    fmt = obj.get("format")
+    keys = _ARTIFACT_KEYS.get(fmt)
+    if keys is None:
+        return ArtifactVerdict(False, None, "unknown or unsupported artifact: %s" % fmt)
+    if obj.get("algorithm") == PLACEHOLDER_LABEL or not obj.get("public_key_hex"):
+        return ArtifactVerdict(False, None, "placeholder -- not authenticatable offline")
+    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(obj, keys)).digest(),
+                                        obj.get("signature_hex"), obj.get("public_key_hex"))
+    if ok is None:
+        return ArtifactVerdict(False, None, note, ran)
+    ok = bool(ok)
+    if ok and fmt == "polaris-revocation-feed/1":
+        ok = _revoked_root(obj.get("revoked_leaves")) == str(obj.get("revoked_root_hex") or "").lower()
+        note = None if ok else "the revocation feed's commitment does not match its leaves"
+    elif ok and fmt == "polaris-federation-status-bundle/1":
+        ok = _members_root(obj.get("members")) == str(obj.get("members_root_hex") or "").lower()
+        note = None if ok else "the status bundle's members_root does not match its members"
+    elif ok and fmt == "polaris-federation-manifest/1":
+        active = {str(a.get("public_key_hex", "")).lower() for a in (obj.get("anchors") or [])
+                  if isinstance(a, dict) and (a.get("status") or "active") == "active"}
+        ok = str(obj.get("public_key_hex") or "").lower() in active
+        note = None if ok else "the manifest is not signed by one of its own active anchors"
+    return ArtifactVerdict(ok, _within_window(obj, now), note, ran)
+
+
 class PolarisVerifier:
     def __init__(self, issuer_url=None, client_id=None, client_secret=None,
                  anchors=None, timeout=30):

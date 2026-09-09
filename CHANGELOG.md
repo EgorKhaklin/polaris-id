@@ -5,6 +5,30 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.315 — 2026-09-09 (All seven signed artifacts certified, P8.1b)
+
+Every app-signed artifact's authenticity is now certified by the conformance suite in both
+SDKs, not just the pack and the status assertion.
+
+- **One generic verifier for the signed statements.** `verify_signed_artifact` (Python) and
+  `verifySignedArtifact` (TypeScript) verify the epoch checkpoint, revocation feed, federation
+  manifest, status bundle, and transparency STH through one path: look up the signed-field list
+  for the artifact's `format`, verify the ML-DSA-65 signature over `SHA3-256(canonical)`, check
+  freshness for a windowed artifact, and check the artifact's own commitment (the feed's
+  `revoked_root`, the bundle's `members_root`) or self-consistency (the manifest signed by one of
+  its own active anchors).
+- **The TypeScript proof gets stronger.** These artifacts carry NESTED values (an epoch object,
+  an anchors array, a members list), which `JSON.stringify` does not sort recursively. The TS SDK
+  now builds the canonical JSON with a recursive sorted-key serializer, and an independent TS
+  verifier accepting a Python-signed manifest, checkpoint, feed, and bundle confirms it is
+  byte-identical to Python's `json.dumps(sort_keys=True)`.
+- **Certified end to end.** Twelve published vectors under `conformance/vectors/` (a valid and a
+  tampered one per artifact), and both SDKs pass all twenty conformance cases. `check_conformance_suite`
+  and `check_typescript_sdk` now require the generic verifier and that the cases certify at least
+  six distinct artifact types.
+- Remaining for P8.1: the composite federation trust decision (a foreign credential accepted
+  across authorities), which is a multi-input case rather than a single artifact.
+
 ## v9.314 — 2026-09-09 (Conformance beyond the pack, P8.1b)
 
 The conformance suite and both SDKs certified exactly one signed artifact, the authenticity

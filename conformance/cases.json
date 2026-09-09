@@ -11,6 +11,16 @@
     {"name": "placeholder",               "pack_file": "vectors/placeholder.json",                  "expect": {"authentic": false, "issuer_trusted": null}},
     {"name": "status-assertion-active",   "artifact": "status-assertion", "assertion_file": "conformance/vectors/status-assertion-valid.json",    "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true,  "active": true}},
     {"name": "status-assertion-expired",  "artifact": "status-assertion", "assertion_file": "conformance/vectors/status-assertion-valid.json",    "now": "2028-01-01T00:00:00Z", "expect": {"authentic": true,  "fresh": false}},
-    {"name": "status-assertion-tampered", "artifact": "status-assertion", "assertion_file": "conformance/vectors/status-assertion-tampered.json", "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}}
+    {"name": "status-assertion-tampered", "artifact": "status-assertion", "assertion_file": "conformance/vectors/status-assertion-tampered.json", "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
+    {"name": "epoch-checkpoint-valid",      "artifact": "epoch-checkpoint",         "object_file": "conformance/vectors/epoch-checkpoint-valid.json",         "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true}},
+    {"name": "epoch-checkpoint-tampered",   "artifact": "epoch-checkpoint",         "object_file": "conformance/vectors/epoch-checkpoint-tampered.json",      "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
+    {"name": "revocation-feed-valid",       "artifact": "revocation-feed",          "object_file": "conformance/vectors/revocation-feed-valid.json",          "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true}},
+    {"name": "revocation-feed-tampered",    "artifact": "revocation-feed",          "object_file": "conformance/vectors/revocation-feed-tampered.json",       "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
+    {"name": "manifest-valid",              "artifact": "federation-manifest",      "object_file": "conformance/vectors/federation-manifest-valid.json",      "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true}},
+    {"name": "manifest-tampered",           "artifact": "federation-manifest",      "object_file": "conformance/vectors/federation-manifest-tampered.json",   "now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
+    {"name": "status-bundle-valid",         "artifact": "federation-status-bundle", "object_file": "conformance/vectors/federation-status-bundle-valid.json", "now": "2026-06-01T00:00:00Z", "expect": {"authentic": true,  "fresh": true}},
+    {"name": "status-bundle-tampered",      "artifact": "federation-status-bundle", "object_file": "conformance/vectors/federation-status-bundle-tampered.json","now": "2026-06-01T00:00:00Z", "expect": {"authentic": false}},
+    {"name": "transparency-sth-valid",      "artifact": "transparency-sth",         "object_file": "conformance/vectors/transparency-sth-valid.json",         "expect": {"authentic": true}},
+    {"name": "transparency-sth-tampered",   "artifact": "transparency-sth",         "object_file": "conformance/vectors/transparency-sth-tampered.json",      "expect": {"authentic": false}}
   ]
 }
