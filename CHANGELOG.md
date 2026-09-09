@@ -5,6 +5,28 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.333 — 2026-09-09 (The gateway's trust is directional)
+
+An outside review of v9.331 found that the exchange gateway and the receipt minter authorized a
+requester by ANY valid attestation of its key in the context, whichever agency on the instance
+had made it. On a multi-agency instance that let agency C's attestation of M authorize M at
+agency B, which B never trusted: transitive in effect, against the federation principle.
+
+- **The responder's own attestation, and nothing else.** `_exchange_attestation` now takes the
+  responding agency and constrains `attesting_agency_id` to it; the receipt builder and the
+  gateway both pass the agency that answers. The refusal says why (trust is directional).
+  Proven by a three-authority database test (C attests M, B does not: M at B refused; B attests
+  M: allowed, by B's attestation and no other; a revoked attestation authorizes nothing) and by
+  the two-instance drill over HTTP under real ML-DSA (a third authority's attestation of X does
+  not authorize X at B, 403; once B attests X, 200 via B). `check_exchange_trust_directional`
+  (#185) pins the query, both call sites, the test and the drill.
+- **A receipt is stated for what it is.** The same review noted the claim "the receipt alone
+  proves the exchange occurred" was too strong: a receipt is signed by the responder alone, so
+  it proves the responder's attestation; the requester-signed envelope beside it proves the
+  requester's side, and `exchange_evidence` checks the pair. The verifier, the app, the check,
+  the drill, the design record and the API reference now say exactly that.
+- The roadmap's check stamp read v9.317; it is re-stamped with the count it states.
+
 ## v9.332 — 2026-09-09 (The front door restated)
 
 What an outside observer sees, brought to the tree it describes, without a new claim.

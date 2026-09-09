@@ -5833,21 +5833,24 @@ def _federated_agency(agency_id):
     return responder, None
 
 
-def _exchange_attestation(req_key, context_id):
-    """The authority whose valid attestation authorizes `req_key` in `context_id` (the
-    non-transitive, in-context rule), or None. Shared by the receipt and the gateway, which
-    checks it BEFORE forwarding anything."""
+def _exchange_attestation(responder_agency_id, req_key, context_id):
+    """The RESPONDER's own valid attestation of `req_key` in `context_id`, or None. Trust is
+    explicit, directional and non-transitive (v9.333): only the agency that answers decides who
+    may ask it, so an attestation by ANY OTHER agency on this instance authorizes nothing here,
+    exactly as a relying party trusts only the manifests it chose. Shared by the receipt and
+    the gateway, which checks it BEFORE forwarding anything."""
     return query("""
         SELECT ag.agency_id AS authority_id, ag.name AS authority_name
         FROM   AgencyTrustAttestation att
         JOIN   Agency ag2 ON ag2.agency_id = att.attested_agency_id
         JOIN   Agency ag  ON ag.agency_id  = att.attesting_agency_id
-        WHERE  lower(ag2.signing_public_key_hex) = %s
+        WHERE  att.attesting_agency_id = %s
+          AND  lower(ag2.signing_public_key_hex) = %s
           AND  att.context_id = %s
           AND  att.revocation_date IS NULL
           AND  att.valid_until >= CURRENT_DATE
-        ORDER BY att.attesting_agency_id LIMIT 1
-    """, (req_key, context_id), fetch='one', primary=True)
+        ORDER BY att.attestation_id LIMIT 1
+    """, (int(responder_agency_id), req_key, context_id), fetch='one', primary=True)
 
 
 def _is_sha3_hex(h):
@@ -5870,9 +5873,9 @@ def _build_exchange_receipt(responder, agency_id, fields, occurred_at=None):
     # enforced at the door -- the app cannot retain a body it is never given.
     if not (_is_sha3_hex(request_hash) and _is_sha3_hex(response_hash)):
         return None, (jsonify(error='request_hash and response_hash must each be a SHA3-256 hex digest; the payload is never sent'), 400)
-    att = _exchange_attestation(req_key, context_id)
+    att = _exchange_attestation(agency_id, req_key, context_id)
     if not att:
-        return None, (jsonify(error='the requester is not authorized in this context (no valid attestation)'), 403)
+        return None, (jsonify(error='the requester is not authorized in this context: this responder holds no valid attestation of its key (trust is directional)'), 403)
     if occurred_at is None:
         from datetime import datetime, timezone
         occurred_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
@@ -5917,7 +5920,8 @@ def api_v1_exchange_receipt(agency_id):
     mints a receipt only if the requester is authorized (some AgencyTrustAttestation attests
     the requester's key in that context) and signs it with its own key, committing to the
     hashes, the parties, the time, and which attestation authorized it. A third party later
-    proves the exchange occurred and was authorized from the receipt alone, with no personal
+    proves, from the receipt alone, that the RESPONDER attests an authorized exchange occurred (the
+    requester-signed envelope plus the receipt proves both sides), with no personal
     data: evidence without retention.
 
     Request JSON: {requester_public_key_hex, context_id, request_hash, response_hash}. This is
@@ -6378,8 +6382,8 @@ def api_v1_exchange(target_agency_id):
     if not security.rate_limiter.allow('exch:%s' % req_key[:16], _EXCHANGE_RATE_PER_MIN, 60):
         return jsonify(error='rate_limited'), 429
     # AUTHORIZE before anything leaves this process: the trust graph, in-context, non-transitive.
-    if not _exchange_attestation(req_key, context_id):
-        return jsonify(error='forbidden', error_description='the requester is not authorized in this context (no valid attestation)'), 403
+    if not _exchange_attestation(target_agency_id, req_key, context_id):
+        return jsonify(error='forbidden', error_description='the requester is not authorized in this context: this responder holds no valid attestation of its key (trust is directional)'), 403
     if not _consume_exchange_nonce(req_key, nonce):
         return jsonify(error='replay', error_description='this envelope (requester, nonce) was already exchanged; a retry needs a new nonce'), 409
     # Forward to the operator-configured upstream. The body exists only here, in memory.

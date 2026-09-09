@@ -827,10 +827,13 @@ key, and the context; the body itself is never sent.
   "signature_hex": "...", "public_key_hex": "..." }
 ```
 
-The responder mints a receipt only if the requester is authorized (some
-`AgencyTrustAttestation` attests the requester's key in the context); `403` otherwise. A third
-party later proves the exchange occurred and was authorized from the receipt alone, with no
-personal data, verifying it offline with `scripts/polaris-verify.py` (`verify_exchange_receipt`).
+The responder mints a receipt only if it has itself attested the requester's key in the
+context (its own valid `AgencyTrustAttestation`; an attestation by another agency on the same
+instance authorizes nothing here, trust being explicit, directional and non-transitive); `403`
+otherwise. A third party later proves, from the receipt alone, the responder's signed attestation
+that an authorized exchange occurred, and with the requester-signed envelope beside it proves
+both sides, with no personal data, verifying offline with `scripts/polaris-verify.py`
+(`verify_exchange_receipt`, `exchange_evidence`).
 Specified in [exchange-receipt.md](../design/exchange-receipt.md).
 
 ### `POST /api/v1/exchange-receipt/<agency_id>/signed`

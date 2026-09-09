@@ -21,8 +21,10 @@ institution's Polaris instance. The gateway there:
    instance forwards to, is fresh, and that `request_hash` binds the body;
 3. **authenticates** the requester by a key it already knows (a registered authority) and
    verifies the signature two-witness under that key;
-4. **authorizes** it through the in-context trust graph -- some authority on this instance
-   attests the requester's key in the envelope's context -- *before anything leaves the
+4. **authorizes** it through the in-context trust graph -- the RESPONDING agency itself
+   attests the requester's key in the envelope's context (v9.333: an attestation by any
+   other agency on the instance authorizes nothing here; trust is explicit, directional
+   and non-transitive, as a relying party trusts only the manifests it chose) -- *before anything leaves the
    process*;
 5. **consumes the nonce** in the append-only replay register `ExchangeNonce`: an identical
    envelope replayed to any worker is refused, and a request is never delivered twice;

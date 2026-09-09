@@ -332,6 +332,34 @@ class ExchangeGatewayTests(UnauthenticatedTestCase):
     exchange itself needs real ML-DSA, two instances and an upstream, and is proven over HTTP by
     scripts/polaris-federation-instances-drill.py."""
 
+    def test_exchange_authorization_is_the_responders_own_attestation(self):
+        # v9.333: three authorities. C (agency 5) attests M (agency 3) in a context; B (agency 1)
+        # does not. M asking B is refused; C's attestation authorizes M only at C; once B attests
+        # M itself, M asking B is authorized, by B's attestation and no other. The contexts are
+        # chosen at run time as ones holding no active attestation of M (the seed has some).
+        free = flask_app.query("SELECT context_id FROM VerificationContext WHERE context_id NOT IN "
+                               "(SELECT context_id FROM AgencyTrustAttestation WHERE attested_agency_id = 3 AND revocation_date IS NULL) "
+                               "ORDER BY context_id", fetch='all')
+        if len(free) < 2:
+            self.skipTest("the seed leaves fewer than two contexts without an attestation of agency 3")
+        ctx, other = int(free[0]['context_id']), int(free[1]['context_id'])
+        run = os.urandom(8).hex()
+        key_m = os.urandom(32).hex() * 2
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 3", (key_m,), fetch='none')
+        ins = ("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, valid_until, signed_by) "
+               "VALUES (%s, 3, %s, CURRENT_DATE + INTERVAL '30 days', 1)")
+        flask_app.query(ins, (5, ctx), fetch='none')
+        try:
+            self.assertIsNone(flask_app._exchange_attestation(1, key_m, ctx), "B holds no attestation of M: C's must not authorize M at B")
+            self.assertEqual(flask_app._exchange_attestation(5, key_m, ctx)['authority_id'], 5, "C's attestation authorizes M at C")
+            flask_app.query(ins, (1, ctx), fetch='none')
+            self.assertEqual(flask_app._exchange_attestation(1, key_m, ctx)['authority_id'], 1, "B's own attestation authorizes M at B")
+            self.assertIsNone(flask_app._exchange_attestation(1, key_m, other), "an attestation is in-context only")
+        finally:
+            flask_app.query("UPDATE AgencyTrustAttestation SET revocation_date = CURRENT_TIMESTAMP, revocation_reason = %s "
+                            "WHERE attested_agency_id = 3 AND context_id = %s AND revocation_date IS NULL", ('test ' + run, ctx), fetch='none')
+        self.assertIsNone(flask_app._exchange_attestation(1, key_m, ctx), "a revoked attestation authorizes nothing")
+
     def test_unadvertised_format_version_is_refused_not_guessed(self):
         # P8.8b: a known format at another major is unsupported_format_version with the supported
         # list; a wrong name, a non-string, or a missing format is an invalid request.

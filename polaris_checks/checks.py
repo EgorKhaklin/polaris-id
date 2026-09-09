@@ -7529,6 +7529,37 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_exchange_trust_directional(root: pathlib.Path) -> list[Finding]:
+    """v9.333: the gateway's and the receipt's authorization is the RESPONDER's own attestation
+    of the requester in the context. Trust is explicit, directional and non-transitive: an
+    attestation by any other agency on the same instance authorizes nothing at this responder,
+    exactly as a relying party trusts only the manifests it chose. Pinned in the query, proven
+    by a three-authority test and drilled over HTTP across two instances. A receipt is stated
+    for what it is: the responder's signed attestation; the envelope proves the requester."""
+    app = _read(root, "polaris_web/app.py")
+    m = re.search(r"def _exchange_attestation\(responder_agency_id, req_key, context_id\):(.*?)\n\n\n", app, re.S)
+    if not m or "att.attesting_agency_id = %s" not in m.group(1):
+        return _fail("exchange_trust_directional", "_exchange_attestation must take the responder agency and constrain attesting_agency_id to it")
+    if len(re.findall(r"_exchange_attestation\((agency_id|target_agency_id), req_key, context_id\)", app)) < 2:
+        return _fail("exchange_trust_directional", "both the receipt builder and the gateway must authorize against the responding agency")
+    if "trust is directional" not in app:
+        return _fail("exchange_trust_directional", "the refusal must say why: the responder holds no attestation of the requester")
+    if "test_exchange_authorization_is_the_responders_own_attestation" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("exchange_trust_directional", "the three-authority test must exist (C attests M, B does not, M asks B: refused; B attests: allowed)")
+    if "trust is directional, not transitive" not in _read(root, "scripts/polaris-federation-instances-drill.py"):
+        return _fail("exchange_trust_directional", "the two-instance drill must refuse a third authority's attestation over HTTP")
+    for fn, sym in (("polaris_web/app.py", "the RESPONDER attests an authorized exchange occurred"),
+                    ("scripts/polaris-verify.py", "participation is proven by the envelope it signed"),
+                    ("docs/design/exchange-receipt.md", "A receipt alone cannot prove\nthe requester took part"),
+                    ("docs/reference/API.md", "its own valid `AgencyTrustAttestation`")):
+        if sym not in _read(root, fn):
+            return _fail("exchange_trust_directional", "%s must state a receipt as the responder's attestation and the envelope as the requester's proof" % fn)
+    return _ok("exchange_trust_directional",
+               "exchange authorization is the responder's own in-context attestation of the requester (directional, "
+               "non-transitive), pinned in the query, proven with three authorities and drilled across two instances; "
+               "a receipt is stated as the responder's signed attestation, the envelope beside it as the requester's proof")
+
+
 def check_protocol_versioning(root: pathlib.Path) -> list[Finding]:
     """P8.8b (v9.330): protocol versioning, negotiation and cross-version compatibility. Every
     format's major lives in its format string and its minor is advertised by the registry; a
@@ -7934,7 +7965,7 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
                      ("placeholder signature is not authentication", "fail-closed without real PQC"),
                      ("the requester key is not a registered authority on this instance", "requester KNOWN by key"),
                      ("verify_both(_exchange_request_statement(env)", "two-witness verify under the requester key"),
-                     ("_exchange_attestation(req_key, context_id)", "in-context authorization"),
+                     ("_exchange_attestation(target_agency_id, req_key, context_id)", "in-context authorization by the responder"),
                      ("_consume_exchange_nonce", "the replay register"),
                      ("INSERT INTO ExchangeNonce", "consuming the nonce"),
                      ("_exchange_upstreams()", "operator-configured upstreams"),
@@ -7947,7 +7978,7 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
         if sym not in app:
             return _fail("exchange_gateway", "polaris_web/app.py lacks %s (%s)" % (why, sym))
     # AUTHORIZE before FORWARD: the attestation check must precede the upstream call.
-    i_auth, i_fwd = app.find("_exchange_attestation(req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("urllib.request.urlopen(up")
+    i_auth, i_fwd = app.find("_exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("urllib.request.urlopen(up")
     if i_auth < 0 or i_fwd < 0 or i_auth > i_fwd:
         return _fail("exchange_gateway", "the gateway must authorize the requester (trust graph, in-context) BEFORE forwarding to the upstream")
     if re.search(r"INSERT INTO \w+ \([^)]*\bbody\b", app, re.I):
@@ -8248,8 +8279,9 @@ def check_exchange_receipt(root: pathlib.Path) -> list[Finding]:
     """P8.2: the exchange receipt, the gateway's evidence-without-retention primitive and the
     anti-surveillance inversion of a message log. A responder signs evidence that it served an
     authenticated, authorized request, committing to the SHA3-256 of the request and response --
-    never the bodies. A third party proves, from the receipt alone, that the exchange occurred
-    and was authorized, with no access to the payload."""
+    never the bodies. A third party proves, from the receipt alone, that the responder attests an
+    authorized exchange occurred (the requester-signed envelope beside it proves the requester's
+    side), with no access to the payload."""
     v = _read(root, "scripts/polaris-verify.py")
     for sym in ("def verify_exchange_receipt", "_exchange_receipt_canonical", "polaris-exchange-receipt/1"):
         if sym not in v:
@@ -8287,8 +8319,8 @@ def check_exchange_receipt(root: pathlib.Path) -> list[Finding]:
     return _ok("exchange_receipt",
                "the exchange receipt is the gateway's evidence-without-retention primitive: a responder signs a "
                "commitment to the SHA3-256 of the request and response (never the bodies) plus who, when, and which "
-               "attestation authorized the requester; the detached verifier proves the exchange occurred and was "
-               "authorized from the receipt alone with no payload, and a holder of a body confirms the commitment "
+               "attestation authorized the requester; the detached verifier proves, from the receipt alone, the responder's "
+               "signed attestation of an authorized exchange (the envelope beside it proves the requester's side), and a holder of a body confirms the commitment "
                "binds -- minted at POST /api/v1/exchange-receipt, in the wire spec and the oracle, proven every "
                "release by the drill under real ML-DSA")
 
@@ -8758,6 +8790,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_exchange_trust_directional,
     check_protocol_versioning,
     check_algorithm_agility,
     check_trust_lifecycle,

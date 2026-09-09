@@ -6706,7 +6706,7 @@ def test_exchange_gateway_check_discriminates(tmp_path):
         "    # polaris-exchange-request/1 ; placeholder signature is not authentication\n"
         "    # the requester key is not a registered authority on this instance\n"
         "    ok = pqc_signing.verify_both(_exchange_request_statement(env), sig, key)\n"
-        "    if not _exchange_attestation(req_key, context_id):\n        return jsonify(error='forbidden'), 403\n"
+        "    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n"
         "    _consume_exchange_nonce(k, n)  # INSERT INTO ExchangeNonce\n"
         "    up = _exchange_upstreams()[kind]  # POLARIS_EXCHANGE_UPSTREAMS; A URL never comes from a request\n"
         "    urllib.request.urlopen(up)\n"
@@ -6741,8 +6741,8 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     write({'polaris_web/app.py': APP.replace("/api/v1/exchange/", "/api/v1/nope/")})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the gateway route"
     # forward BEFORE authorize -> FAIL (swap the two lines)
-    swapped = APP.replace("    if not _exchange_attestation(req_key, context_id):\n        return jsonify(error='forbidden'), 403\n", "").replace(
-        "    urllib.request.urlopen(up)\n", "    urllib.request.urlopen(up)\n    if not _exchange_attestation(req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
+    swapped = APP.replace("    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n", "").replace(
+        "    urllib.request.urlopen(up)\n", "    urllib.request.urlopen(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
     write({'polaris_web/app.py': swapped})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the upstream is called before authorization"
     write({'polaris_web/app.py': APP.replace("A URL never comes from a request", "url = payload['url']")})
@@ -7801,3 +7801,37 @@ def test_protocol_versioning_check_discriminates(tmp_path):
     assert checks.check_protocol_versioning(tmp_path)[0].level == "FAIL", "must FAIL if the compatibility suite does not run in CI"
     write({'docs/reference/WIRE-SPEC.md': "versions are implied\n"})
     assert checks.check_protocol_versioning(tmp_path)[0].level == "FAIL", "must FAIL without the normative negotiation rule"
+
+
+def test_exchange_trust_directional_check_discriminates(tmp_path):
+    # v9.333: the responder's own attestation authorizes; each perturbation removes one leg.
+    APP = ("def _exchange_attestation(responder_agency_id, req_key, context_id):\n"
+           "    return query('WHERE att.attesting_agency_id = %s AND x = %s AND y = %s', (responder_agency_id, req_key, context_id))\n\n\n"
+           "def a():\n    att = _exchange_attestation(agency_id, req_key, context_id)\n"
+           "    if not _exchange_attestation(target_agency_id, req_key, context_id):\n"
+           "        return 'trust is directional'\n"
+           "# the RESPONDER attests an authorized exchange occurred\n")
+    good = {
+        'polaris_web/app.py': APP,
+        'polaris_web/test_app.py': "def test_exchange_authorization_is_the_responders_own_attestation(self): pass\n",
+        'scripts/polaris-federation-instances-drill.py': "# trust is directional, not transitive\n",
+        'scripts/polaris-verify.py': "# participation is proven by the envelope it signed\n",
+        'docs/design/exchange-receipt.md': "A receipt alone cannot prove\nthe requester took part\n",
+        'docs/reference/API.md': "its own valid `AgencyTrustAttestation`\n",
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_exchange_trust_directional(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'polaris_web/app.py': APP.replace("att.attesting_agency_id = %s AND ", "")})
+    assert checks.check_exchange_trust_directional(tmp_path)[0].level == "FAIL", "must FAIL if any agency's attestation authorizes"
+    write({'polaris_web/app.py': APP.replace("_exchange_attestation(target_agency_id, req_key, context_id)", "_exchange_attestation(req_key, context_id)")})
+    assert checks.check_exchange_trust_directional(tmp_path)[0].level == "FAIL", "must FAIL if the gateway does not authorize against the responder"
+    write({'polaris_web/test_app.py': "def test_other(self): pass\n"})
+    assert checks.check_exchange_trust_directional(tmp_path)[0].level == "FAIL", "must FAIL without the three-authority test"
+    write({'docs/design/exchange-receipt.md': "the receipt alone proves the exchange occurred\n"})
+    assert checks.check_exchange_trust_directional(tmp_path)[0].level == "FAIL", "must FAIL if a receipt is overstated"

@@ -1193,7 +1193,8 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
 # responder signs a RECEIPT that commits to the SHA3-256 of the request and of the response --
 # never the bodies -- alongside who requested, who responded, in what context, and which
 # authority's attestation authorized the requester. A third party can later prove, from the
-# receipt alone, that the exchange occurred and was authorized, WITHOUT ever seeing the personal
+# receipt alone, that the RESPONDER attests an authorized exchange occurred (the requester-signed
+# envelope beside it proves the requester's side), WITHOUT ever seeing the personal
 # data that passed. A party that holds the bodies can additionally confirm the commitment binds
 # to them (request_hash == SHA3-256(request)); a party that does not still gets the proof of
 # occurrence and authorization. Evidence without retention.
@@ -2074,7 +2075,9 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     attests the REQUESTER's key in the receipt's context -- the same non-transitive trust as a
     foreign credential. A party that also holds the request and/or response body may pass it to
     confirm the commitment binds (request_hash == SHA3-256(body)); a party that does not still
-    obtains the proof of occurrence and authorization. Returns a verdict dict; reveals nothing
+    obtains the responder's signed attestation of occurrence and authorization; a receipt is signed
+    by the responder alone, so the REQUESTER'S participation is proven by the envelope it signed
+    (exchange_evidence checks the pair). Returns a verdict dict; reveals nothing
     about the payload."""
     if not isinstance(receipt, dict):
         receipt = {}

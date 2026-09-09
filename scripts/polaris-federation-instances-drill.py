@@ -571,6 +571,25 @@ def main():
         _kf_x, pub_x = keypair("stranger-x")
         st15, _ = _http_post_json(gw, {"envelope": envelope(pub_x, _kf_x, ask, "nonce-3"), "body": ask})
         checks.append(("a requester whose key B does not know is refused (401)", st15, 401))
+        # v9.333: trust is DIRECTIONAL. A third authority (agency 5 on B) attests X in the context
+        # (the seed already holds that row for context 1; the insert tolerates it); B (agency 1) does not. X is KNOWN to B (registered as agency 3) but B must refuse, since B
+        # holds no attestation of X itself; once B attests X, the same exchange is authorized.
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("UPDATE Agency SET signing_public_key_hex=%s WHERE agency_id=3", (pub_x,))
+            cur.execute("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, attested_date, valid_until, signed_by) "
+                        "VALUES (5, 3, %s, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year', 1) "
+                        "ON CONFLICT (attesting_agency_id, attested_agency_id, context_id) WHERE revocation_date IS NULL DO NOTHING", (CONTEXT_ID,))
+            cb.commit()
+        st15b, body15b = _http_post_json(gw, {"envelope": envelope(pub_x, _kf_x, ask, "nonce-3b"), "body": ask})
+        checks.append(("a THIRD authority's attestation of X does not authorize X at B (403): trust is directional, not transitive",
+                       (st15b, "directional" in ((body15b or {}).get("error_description") or "")), (403, True)))
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, attested_date, valid_until, signed_by) "
+                        "VALUES (1, 3, %s, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year', 1)", (CONTEXT_ID,))
+            cb.commit()
+        st15c, ex15c = _http_post_json(gw, {"envelope": envelope(pub_x, _kf_x, ask, "nonce-3c"), "body": ask})
+        checks.append(("once B itself attests X, the same exchange is authorized (200) via B's attestation and no other",
+                       (st15c, (((ex15c or {}).get("receipt") or {}).get("authorized_via") or {}).get("authority", {}).get("agency_id")), (200, 1)))
         st16, _ = _http_post_json(gw, {"envelope": envelope(pub_a, key_a, ask, "nonce-4"), "body": {"ask": "something else"}})
         checks.append(("a body the envelope does not bind is refused (400)", st16, 400))
         bad_env = envelope(pub_a, key_a, ask, "nonce-5"); bb3 = bytearray.fromhex(bad_env["signature_hex"]); bb3[0] ^= 0x01; bad_env["signature_hex"] = bb3.hex()
@@ -590,7 +609,7 @@ def main():
         with _conn(B_DB) as cb, cb.cursor() as cur:
             cur.execute("SELECT count(*) FROM ExchangeNonce")
             n_nonce = cur.fetchone()[0]
-        checks.append(("B's replay register holds exactly the consumed nonces (2 delivered exchanges)", n_nonce, 2))
+        checks.append(("B's replay register holds exactly the consumed nonces (3 delivered exchanges)", n_nonce, 3))
 
         # 6h. HOLDER-AUTHORIZED DOCUMENT SIGNING (P8.5c) over HTTP: give one of B's issued
         #     credentials a REAL ML-DSA-65 signature (a new TokenSignature row under key_b), have

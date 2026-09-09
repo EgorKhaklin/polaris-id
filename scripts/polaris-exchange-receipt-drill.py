@@ -4,7 +4,7 @@ polaris-exchange-receipt-drill.py -- the exchange receipt, run (P8.2).
 
 The gateway's core primitive and the anti-surveillance inversion of an evidentiary message log.
 A responder signs a RECEIPT committing to the SHA3-256 of a request and a response -- never
-the bodies -- so a third party can prove, from the receipt alone, that an authorized exchange
+the bodies -- so a third party can prove, from the receipt alone, that the responder attests an authorized exchange
 occurred, without ever seeing the payload. This drill stands up a requester, a responder, and
 an attester with distinct real ML-DSA-65 roots, mints a receipt, and drives the matrix:
 
@@ -144,7 +144,7 @@ def main():
         ok_all = ok_all and ok
         print("  %-72s %-10s %-10s %s" % (label, str(got), str(expected), "OK" if ok else "WRONG"))
     if ok_all:
-        print("\nOK: an exchange receipt proves an authorized exchange occurred OFFLINE, committing only to the "
+        print("\nOK: an exchange receipt proves the responder's attestation of an authorized exchange OFFLINE, committing only to the "
               "SHA3-256 of the request and response -- a third party confirms occurrence and authorization with no "
               "access to the payload, a holder of a body confirms the commitment binds to it, and a tampered receipt "
               "or an unauthorized requester is caught. Evidence without retention.")

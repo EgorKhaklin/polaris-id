@@ -51,7 +51,9 @@ attests the requester's key in the presented context -- and records which author
 attestation authorized it.
 
 `verify_exchange_receipt` then decides, offline, two things a third party can check
-from the receipt alone:
+from the receipt alone (what a receipt is: the RESPONDER's signed attestation; the
+requester's own participation is proven by the envelope it signed, and
+`exchange_evidence` checks the pair as one chain):
 
 1. **It is authentic** -- the responder's ML-DSA-65 signature verifies under the
    two-witness rule (and, with a pinned responder key, that the expected responder
@@ -63,8 +65,10 @@ from the receipt alone:
 Neither check needs the payload. A party that *does* hold the request or response
 body may pass it to confirm the commitment binds (`request_hash == SHA3-256(request)`),
 which ties the receipt to a specific exchange; a party that does not still obtains the
-proof of occurrence and authorization. That is the whole point: the evidence is
-separable from the data.
+responder's signed attestation of occurrence and authorization. A receipt alone cannot prove
+the requester took part (a dishonest responder can sign any receipt it likes); the
+requester-signed envelope beside it can, and the wire spec names the pair as the evidence.
+That is the whole point: the evidence is separable from the data.
 
 ## Service-to-service minting (P8.2b)
 
