@@ -1599,6 +1599,15 @@ jobs:
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py
 
+      # v9.317 (roadmap P8.2) — the exchange receipt, the gateway's evidence-without-retention
+      # primitive. A responder signs a receipt committing to the SHA3-256 of a request and a
+      # response, never the bodies; a third party proves the exchange occurred and was
+      # authorized from the receipt alone, with no payload, and a holder of a body confirms the
+      # commitment binds. Red on any wrong verdict (unauthorized requester, tampered receipt,
+      # wrong body). No database.
+      - name: Gateway — exchange receipt, evidence without retention
+        run: python scripts/polaris-exchange-receipt-drill.py
+
       # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
       # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
       # head and consistency proofs; the detached verifier accepts an append-only extension

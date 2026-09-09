@@ -43,6 +43,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [inter-authority-protocol.md](inter-authority-protocol.md) | The inter-authority protocol v1 (P3.2): the signed federation manifest (anchor cross-publication + attestation exchange), how a relying party accepts a foreign credential offline, and what is deferred |
 | [federation-status-bundle.md](federation-status-bundle.md) | The aggregate mirrored status feed (P3.2c): one short-lived signed artifact mirroring many authorities' feeds, why the aggregator is untrusted for correctness, and how a lying aggregator is defeated |
 | [cross-authority-zk.md](cross-authority-zk.md) | Offline cross-authority epoch-bound ZK (P3.2d): a holder's zero-knowledge inclusion proof decided against a foreign authority's epoch through the trust graph, why the verifier shells to the polaris-zk binary, and why it abstains rather than false-accepts |
+| [exchange-receipt.md](exchange-receipt.md) | The exchange receipt (P8.2): signed evidence that an authorized institutional exchange occurred, committing to request/response by hash not content, why it is the anti-surveillance inversion of a message log, and how a third party verifies it without the payload |
 | [issuer-discretion.md](issuer-discretion.md) | The ceiling on what an issuing agency can do at scale |
 | [multi-sig-migration.md](multi-sig-migration.md) | Moving a token to a new signature algorithm with no gap |
 | [token-signature.md](token-signature.md) | How a signature is produced, stored, and verified across rotation |

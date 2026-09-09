@@ -254,12 +254,12 @@ export function verifyCrossAuthority(
   for (const mm of (manifests ?? []).map((m) => m ?? {})) {
     const mv = verifySignedArtifact(mm, now);
     if (!(mv.authentic && mv.fresh)) continue;
-    const active = new Set(
+    const active = new Set<string>(
       (Array.isArray(mm.anchors) ? mm.anchors : [])
         .filter((x: any) => x && (x.status ?? "active") === "active")
         .map((x: any) => String(x.public_key_hex ?? "").toLowerCase()),
     );
-    if (trusted != null && ![...active].some((x) => trusted.has(x))) continue;
+    if (trusted != null && ![...active].some((x: string) => trusted!.has(x))) continue;
     for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
       if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
           && (contextId == null || att.context_id === contextId)) {

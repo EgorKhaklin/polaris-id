@@ -1131,6 +1131,102 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
 
 
 # ---------------------------------------------------------------------------
+# P8.2: the exchange receipt -- evidence of an authorized exchange, without the payload.
+#
+# The gateway's core primitive, and the anti-surveillance inversion of X-Road's message
+# logging. When one institution serves an authenticated, authorized request from another, the
+# responder signs a RECEIPT that commits to the SHA3-256 of the request and of the response --
+# never the bodies -- alongside who requested, who responded, in what context, and which
+# authority's attestation authorized the requester. A third party can later prove, from the
+# receipt alone, that the exchange occurred and was authorized, WITHOUT ever seeing the personal
+# data that passed. A party that holds the bodies can additionally confirm the commitment binds
+# to them (request_hash == SHA3-256(request)); a party that does not still gets the proof of
+# occurrence and authorization. Evidence without retention.
+# ---------------------------------------------------------------------------
+_EXCHANGE_RECEIPT_FORMAT = "polaris-exchange-receipt/1"
+
+
+def _exchange_receipt_canonical(receipt):
+    """Canonical bytes the responder signs. MUST match app.py's _exchange_receipt_statement."""
+    statement = {k: receipt.get(k) for k in
+                 ("format", "requester", "responder", "context_id", "request_hash",
+                  "response_hash", "authorized_via", "occurred_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
+                            request_body=None, response_body=None, max_window_seconds=None):
+    """Verify an exchange receipt OFFLINE (P8.2). Establishes, WITHOUT the payload, that an
+    exchange occurred and was authorized: the responder's ML-DSA-65 signature over
+    SHA3-256(canonical) with two witnesses; (with responder_key) that the expected responder
+    signed it; and (with trusted_manifests) that some authority the relying party trusts
+    attests the REQUESTER's key in the receipt's context -- the same non-transitive trust as a
+    foreign credential. A party that also holds the request and/or response body may pass it to
+    confirm the commitment binds (request_hash == SHA3-256(body)); a party that does not still
+    obtains the proof of occurrence and authorization. Returns a verdict dict; reveals nothing
+    about the payload."""
+    if not isinstance(receipt, dict):
+        receipt = {}
+    v = {"receipt_authentic": False, "responder_matches": None, "requester_authorized": None,
+         "request_bound": None, "response_bound": None, "via": None,
+         "requester": receipt.get("requester"), "responder": receipt.get("responder"),
+         "context_id": receipt.get("context_id"), "occurred_at": receipt.get("occurred_at"),
+         "witnesses": [], "note": None}
+    if receipt.get("format") != _EXCHANGE_RECEIPT_FORMAT:
+        v["note"] = "not a %s" % _EXCHANGE_RECEIPT_FORMAT
+        return v
+    alg, pk_hex, sig_hex = receipt.get("algorithm"), receipt.get("public_key_hex"), receipt.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder receipt -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_exchange_receipt_canonical(receipt)).digest()
+    ok, ran, note = _two_witness_verify(digest, sig, pk)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    if not ok:
+        v["note"] = "receipt signature is invalid"
+        return v
+    v["receipt_authentic"] = True
+    if responder_key is not None:
+        v["responder_matches"] = (pk_hex.lower() == responder_key.lower())
+    # Payload binding, only for a party that holds the bodies: the commitment must match.
+    if request_body is not None:
+        h = hashlib.sha3_256(request_body if isinstance(request_body, bytes) else str(request_body).encode("utf-8")).hexdigest()
+        v["request_bound"] = (h == str(receipt.get("request_hash") or "").lower())
+    if response_body is not None:
+        h = hashlib.sha3_256(response_body if isinstance(response_body, bytes) else str(response_body).encode("utf-8")).hexdigest()
+        v["response_bound"] = (h == str(receipt.get("response_hash") or "").lower())
+    # Authorization: some trusted manifest attests the REQUESTER's key in the receipt's context.
+    if trusted_manifests is not None:
+        req_key = str((receipt.get("requester") or {}).get("public_key_hex") or "").lower() if isinstance(receipt.get("requester"), dict) else ""
+        ctx = receipt.get("context_id")
+        via = None
+        for manifest in (trusted_manifests if isinstance(trusted_manifests, (list, tuple)) else []):
+            mv = verify_manifest(manifest, now=now, max_window_seconds=max_window_seconds)
+            if not (mv["manifest_authentic"] and mv["fresh"]):
+                continue
+            for att in mv["attestations"]:
+                if not isinstance(att, dict):
+                    continue
+                if str(att.get("attested_public_key_hex") or "").lower() == req_key and \
+                   (ctx is None or att.get("context_id") == ctx):
+                    via = mv["authority"]
+                    break
+            if via:
+                break
+        v["requester_authorized"] = bool(via)
+        v["via"] = via
+    return v
+
+
+# ---------------------------------------------------------------------------
 # P3.3: the transparency log over the audit-anchor roots.
 #
 # The audit anchor log (AnchorBatch) is append-only at the database. This turns

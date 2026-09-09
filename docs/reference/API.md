@@ -808,6 +808,31 @@ an omitted authority is **fail-closed** (not verifiable), a stale bundle proves 
 the decision equals what the issuer's own feed would give. Specified in
 [federation-status-bundle.md](../design/federation-status-bundle.md).
 
+### `POST /api/v1/exchange-receipt/<agency_id>`
+
+**Operator auth (login + CSRF); service-to-service OAuth is P8.2b.** Mint an **exchange
+receipt** (roadmap P8.2): signed evidence that this authority (the responder) served an
+authenticated, authorized request from another party, WITHOUT retaining the payload. The
+caller submits only the SHA3-256 of the request and of the response, the requester's public
+key, and the context; the body itself is never sent.
+
+```jsonc
+// request
+{ "requester_public_key_hex": "<hex>", "context_id": 1,
+  "request_hash": "<sha3-256 hex>", "response_hash": "<sha3-256 hex>" }
+// response: a polaris-exchange-receipt/1 signed by the responder
+{ "format": "polaris-exchange-receipt/1", "requester": {...}, "responder": {...},
+  "context_id": 1, "request_hash": "...", "response_hash": "...",
+  "authorized_via": {...}, "occurred_at": "...", "algorithm": "ML-DSA-65",
+  "signature_hex": "...", "public_key_hex": "..." }
+```
+
+The responder mints a receipt only if the requester is authorized (some
+`AgencyTrustAttestation` attests the requester's key in the context); `403` otherwise. A third
+party later proves the exchange occurred and was authorized from the receipt alone, with no
+personal data, verifying it offline with `scripts/polaris-verify.py` (`verify_exchange_receipt`).
+Specified in [exchange-receipt.md](../design/exchange-receipt.md).
+
 ### `GET /api/v1/transparency/sth`
 
 **Public; no auth.** The transparency log's **Signed Tree Head** (roadmap P3.3): the log's

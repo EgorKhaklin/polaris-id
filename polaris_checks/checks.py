@@ -7153,6 +7153,7 @@ _WIRE_SIGNED_TYPES = {
     "polaris-status-assertion/1": "_status_assertion_canonical",
     "polaris-transparency-sth/1": "_sth_canonical",
     "polaris-federation-status-bundle/1": "_status_bundle_canonical",
+    "polaris-exchange-receipt/1": "_exchange_receipt_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7493,6 +7494,55 @@ def check_cross_authority_zk(root: pathlib.Path) -> list[Finding]:
                "proof's public inputs bind to it, and the Plonky2 proof is checked via the local polaris-zk binary "
                "(abstaining when absent, never false-accepting); proven every release against a committed real-proof "
                "fixture and red on any wrong decision")
+
+
+def check_exchange_receipt(root: pathlib.Path) -> list[Finding]:
+    """P8.2: the exchange receipt, the gateway's evidence-without-retention primitive and the
+    anti-surveillance inversion of a message log. A responder signs evidence that it served an
+    authenticated, authorized request, committing to the SHA3-256 of the request and response --
+    never the bodies. A third party proves, from the receipt alone, that the exchange occurred
+    and was authorized, with no access to the payload."""
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_exchange_receipt", "_exchange_receipt_canonical", "polaris-exchange-receipt/1"):
+        if sym not in v:
+            return _fail("exchange_receipt", "scripts/polaris-verify.py must verify the receipt offline (%s missing)" % sym)
+    # Evidence WITHOUT retention: the receipt commits to HASHES, and authorization is the
+    # trust-graph attestation of the requester's key; the payload never appears.
+    if "request_hash" not in v or "response_hash" not in v:
+        return _fail("exchange_receipt", "the receipt must commit to the request and response by HASH, not by content")
+    if "requester_authorized" not in v or "attested_public_key_hex" not in v:
+        return _fail("exchange_receipt",
+                     "the receipt verify must confirm the requester was authorized (a trusted attestation in-context)")
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("exchange_receipt", f"the offline verifier imports {mod!r}; it must stay standalone")
+    app = _read(root, "polaris_web/app.py")
+    for sym in ("/api/v1/exchange-receipt", "_exchange_receipt_statement", "AgencyTrustAttestation",
+                "signature_over_message"):
+        if sym not in app:
+            return _fail("exchange_receipt", "app.py must mint the receipt (%s missing)" % sym)
+    # The mint endpoint takes only hashes -- the retention rule enforced at the door.
+    if "the payload is never sent" not in app:
+        return _fail("exchange_receipt",
+                     "the mint endpoint must accept only SHA3-256 hashes; the payload is never sent to the app")
+    if "polaris-exchange-receipt/1" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("exchange_receipt", "the receipt must be in the canonical-equivalence oracle (app and verifier bytes must match)")
+    if "polaris-exchange-receipt/1" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("exchange_receipt", "the receipt must be specified in the normative wire spec")
+    drill = _read(root, "scripts/polaris-exchange-receipt-drill.py")
+    if not drill or "verify_exchange_receipt" not in drill:
+        return _fail("exchange_receipt", "scripts/polaris-exchange-receipt-drill.py must run the receipt accept/reject matrix")
+    if "without" not in drill.lower() or "retention" not in drill.lower():
+        return _fail("exchange_receipt", "the drill must prove the evidence-without-retention property (occurrence + authorization without the payload)")
+    if "polaris-exchange-receipt-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("exchange_receipt", "the exchange-receipt drill must run in CI (a protocol that never runs is displacement)")
+    return _ok("exchange_receipt",
+               "the exchange receipt is the gateway's evidence-without-retention primitive: a responder signs a "
+               "commitment to the SHA3-256 of the request and response (never the bodies) plus who, when, and which "
+               "attestation authorized the requester; the detached verifier proves the exchange occurred and was "
+               "authorized from the receipt alone with no payload, and a holder of a body confirms the commitment "
+               "binds -- minted at POST /api/v1/exchange-receipt, in the wire spec and the oracle, proven every "
+               "release by the drill under real ML-DSA")
 
 
 def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
@@ -7952,6 +8002,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_exchange_receipt,
     check_wire_spec_matches_code,
     check_cross_authority_zk,
     check_verifier_fuzz,

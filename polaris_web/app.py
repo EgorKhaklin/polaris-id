@@ -5690,6 +5690,99 @@ def api_v1_federation_status_bundle(agency_id):
     return jsonify(body)
 
 
+# --- P8.2: the exchange receipt (evidence without retention) -------------------
+#
+# The gateway's core primitive and the anti-surveillance inversion of X-Road's message log.
+# A responder mints signed evidence that it served an authenticated, authorized request from
+# another party -- committing to the SHA3-256 of the request and of the response, NEVER the
+# bodies -- so a third party can later prove the exchange occurred and was authorized with no
+# personal data. Verified offline by scripts/polaris-verify.py (verify_exchange_receipt).
+_EXCHANGE_RECEIPT_FORMAT = 'polaris-exchange-receipt/1'
+
+
+def _exchange_receipt_statement(body):
+    """Canonical bytes the responder signs. MUST match scripts/polaris-verify.py's
+    _exchange_receipt_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'requester', 'responder', 'context_id', 'request_hash',
+                  'response_hash', 'authorized_via', 'occurred_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+@app.route('/api/v1/exchange-receipt/<int:agency_id>', methods=['POST'])
+@security.login_required
+@security.csrf_protect
+def api_v1_exchange_receipt(agency_id):
+    """P8.2: mint an EXCHANGE RECEIPT -- signed evidence that this authority (the responder,
+    agency_id) served an authenticated, authorized request from another party, WITHOUT
+    retaining the payload. The caller submits only the SHA3-256 of the request and of the
+    response (never the bodies), the requester's public key, and the context. The responder
+    mints a receipt only if the requester is authorized (some AgencyTrustAttestation attests
+    the requester's key in that context) and signs it with its own key, committing to the
+    hashes, the parties, the time, and which attestation authorized it. A third party later
+    proves the exchange occurred and was authorized from the receipt alone, with no personal
+    data: evidence without retention.
+
+    Request JSON: {requester_public_key_hex, context_id, request_hash, response_hash}. Auth is
+    operator (login + CSRF) for v1; service-to-service OAuth is P8.2b. 403 if the requester is
+    not authorized in the context."""
+    responder = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
+                      (agency_id,), fetch='one', primary=True)
+    if not responder:
+        return jsonify(error='no such agency'), 404
+    if not responder['signing_public_key_hex']:
+        return jsonify(error='agency is not federated (no registered signing key)'), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        req_key = str(payload['requester_public_key_hex']).lower()
+        context_id = int(payload['context_id'])
+        request_hash = str(payload['request_hash']).lower()
+        response_hash = str(payload['response_hash']).lower()
+    except (KeyError, ValueError, TypeError) as e:
+        return jsonify(error=f'required fields: requester_public_key_hex, context_id, request_hash, response_hash ({e})'), 400
+    # Hashes only: a 64-char SHA3-256 hex digest, never a payload. This is the retention rule
+    # enforced at the door -- the app cannot retain a body it is never given.
+    def _is_sha3(h):
+        return isinstance(h, str) and len(h) == 64 and all(c in '0123456789abcdef' for c in h)
+    if not (_is_sha3(request_hash) and _is_sha3(response_hash)):
+        return jsonify(error='request_hash and response_hash must each be a SHA3-256 hex digest; the payload is never sent'), 400
+    # Authorization: some attestation must attest the requester's key in this context.
+    att = query("""
+        SELECT ag.agency_id AS authority_id, ag.name AS authority_name
+        FROM   AgencyTrustAttestation att
+        JOIN   Agency ag2 ON ag2.agency_id = att.attested_agency_id
+        JOIN   Agency ag  ON ag.agency_id  = att.attesting_agency_id
+        WHERE  lower(ag2.signing_public_key_hex) = %s
+          AND  att.context_id = %s
+          AND  att.revocation_date IS NULL
+          AND  att.valid_until >= CURRENT_DATE
+        ORDER BY att.attesting_agency_id LIMIT 1
+    """, (req_key, context_id), fetch='one', primary=True)
+    if not att:
+        return jsonify(error='the requester is not authorized in this context (no valid attestation)'), 403
+    from datetime import datetime, timezone
+    occurred_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+    body = {
+        'format': _EXCHANGE_RECEIPT_FORMAT,
+        'requester': {'public_key_hex': req_key},
+        'responder': {'agency_id': responder['agency_id'], 'name': responder['name']},
+        'context_id': context_id,
+        'request_hash': request_hash,
+        'response_hash': response_hash,
+        'authorized_via': {'authority': {'agency_id': att['authority_id'], 'name': att['authority_name']},
+                           'context_id': context_id},
+        'occurred_at': occurred_at,
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_exchange_receipt_statement(body), agency_id=agency_id)
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                   'receipt minus signature_hex and public_key_hex)')
+    return jsonify(body)
+
+
 # --- P3.3: the transparency log over the audit-anchor roots --------------------
 #
 # The AnchorBatch table is append-only at the database. These routes turn its ordered

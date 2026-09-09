@@ -6402,14 +6402,16 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _status_assertion_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'status')}\n"
         "def _sth_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'tree_size')}\n"
         "def _status_bundle_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'publisher')}\n"
+        "def _exchange_receipt_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'requester')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1\n"
         "manifest signed fields: format, authority\n"
+        "receipt signed fields: format, requester\n"
         "checkpoint signed fields: format, epoch\n"
         "feed signed fields: format, as_of\n"
         "assertion signed fields: format, status\n"
@@ -6458,6 +6460,76 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_exchange_receipt_check_discriminates(tmp_path):
+    # v9.317 (P8.2): the exchange receipt, evidence without retention -- commit to request/
+    # response HASHES not bodies, verified offline (standalone), authorization via a trusted
+    # attestation, minted at an endpoint that takes only hashes, in the oracle + wire spec, run
+    # in CI. Each perturbation removes one leg.
+    good = {
+        'scripts/polaris-verify.py': (
+            "import json, hashlib\n"
+            "# polaris-exchange-receipt/1\n"
+            "def _exchange_receipt_canonical(r): return b''\n"
+            "def verify_exchange_receipt(r, **k):\n"
+            "    r.get('request_hash'); r.get('response_hash')  # commit by hash, not content\n"
+            "    # attested_public_key_hex in a trusted manifest -> requester_authorized\n"
+            "    return {'requester_authorized': None}\n"
+        ),
+        'polaris_web/app.py': (
+            "@app.route('/api/v1/exchange-receipt/<int:agency_id>', methods=['POST'])\n"
+            "def api_v1_exchange_receipt(agency_id):\n"
+            "    _exchange_receipt_statement(body)  # AgencyTrustAttestation authorizes the requester\n"
+            "    pqc_signing.signature_over_message(stmt)\n"
+            "    # hashes only: the payload is never sent\n"
+        ),
+        'polaris_web/test_canonical_equivalence.py': "# polaris-exchange-receipt/1\n",
+        'docs/reference/WIRE-SPEC.md': "# spec\nMUST ... polaris-exchange-receipt/1\n",
+        'scripts/polaris-exchange-receipt-drill.py': (
+            "def main():\n    verify_exchange_receipt(r)  # evidence without retention\n"
+        ),
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-exchange-receipt-drill.py\n',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the verify function is missing
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_exchange_receipt", "def nope")})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL without the verify function"
+    # 2. the receipt does not commit by hash
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("request_hash", "request_body")})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL if it does not commit by hash"
+    # 3. authorization is not confirmed
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("requester_authorized", "whatever")})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL without authorization"
+    # 4. the verifier is not standalone
+    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
+    # 5. the mint endpoint is missing
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("/api/v1/exchange-receipt", "/api/v1/nope")})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL without the mint endpoint"
+    # 6. the endpoint does not enforce hashes-only
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("the payload is never sent", "we keep the body")})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL if the payload could be retained"
+    # 7. not in the oracle
+    write({"polaris_web/test_canonical_equivalence.py": "# nothing\n"})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL if not pinned by the oracle"
+    # 8. not in the wire spec
+    write({"docs/reference/WIRE-SPEC.md": "# spec\nMUST\n"})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL if not in the wire spec"
+    # 9. the drill does not prove evidence-without-retention
+    write({"scripts/polaris-exchange-receipt-drill.py": "def main():\n    verify_exchange_receipt(r)\n"})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL without the without-retention property"
+    # 10. the drill does not run in CI
+    write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
+    assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
 
 
 def test_federation_two_instances_check_discriminates(tmp_path):

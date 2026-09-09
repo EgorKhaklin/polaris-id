@@ -5,6 +5,35 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.317 — 2026-09-09 (The exchange receipt: evidence without retention, P8.2)
+
+The first primitive of the P8 exchange fabric, and its defining idea: a way to prove an
+institutional exchange occurred and was authorized without becoming the message log a
+surveillance system would keep.
+
+- **`polaris-exchange-receipt/1`.** When a responder serves an authenticated, authorized
+  request, it signs a receipt committing to the `SHA3-256` of the request and of the response,
+  the parties, the context, the time, and which attestation authorized the requester. The
+  bodies never appear. Minted at `POST /api/v1/exchange-receipt/<id>`, which accepts ONLY the
+  hashes (each a 64-char SHA3-256 hex digest) and mints only if the requester is authorized (an
+  `AgencyTrustAttestation` attests its key in the context), else 403. The app cannot retain a
+  body it is never given.
+- **Evidence without retention.** `verify_exchange_receipt` (detached, standalone) proves,
+  from the receipt alone, that the exchange occurred (the responder's ML-DSA-65 signature) and
+  that the requester was authorized (a trusted manifest attests its key in-context, the same
+  non-transitive trust as a foreign credential) -- with no access to the payload. A party that
+  holds a body may confirm the commitment binds (`request_hash == SHA3-256(request)`); a party
+  that does not still gets the proof. This is the anti-surveillance inversion of X-Road's
+  message log.
+- **Pinned and proven.** The receipt is in the normative wire spec (section 3.8) and the
+  canonical-equivalence oracle (the seventh app-signed type, app and verifier byte-identical);
+  `scripts/polaris-exchange-receipt-drill.py` drives the accept/reject/without-payload/binding
+  matrix under real ML-DSA every release; `check_exchange_receipt` (#171) pins the whole path.
+  171 checks, 100 routes.
+- **Also greens `sdk-typescript`.** The v9.315 `verifyCrossAuthority` addition left a `tsc --noEmit` error that turned the `sdk-typescript` CI job red at v9.315-v9.316: an anchor-set element inferred as `unknown` was passed to a `Set<string>` membership test. Pinned that set's element type to `string`. The SDK's unit tests and all 24 conformance cases were already green; only the type-check gate failed.
+- P8.2 continues: transparency-anchoring the receipt set, service-to-service mint auth, and the
+  mediation layer that produces a receipt per exchange.
+
 ## v9.316 — 2026-09-09 (P8.1 complete: the federation trust decision certified)
 
 The last piece of P8.1. The conformance suite now certifies the composite federation trust

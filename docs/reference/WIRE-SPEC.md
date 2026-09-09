@@ -142,6 +142,21 @@ signature over `SHA3-256(token_value)` under `public_key_hex`; with a set of tru
 issuer keys it MAY additionally report whether the issuer is trusted, but authenticity
 and issuer-trust are distinct results and MUST be reported separately.
 
+### 3.8 `polaris-exchange-receipt/1`
+
+Signed evidence that a responder served an authenticated, authorized request from another
+party, committing to the request and response by hash, never by content (P8.2).
+Signed fields: format, requester, responder, context_id, request_hash, response_hash, authorized_via, occurred_at, algorithm
+
+`request_hash` and `response_hash` MUST each be the lowercase `SHA3-256` hex of the
+respective body; the body itself MUST NOT appear in the receipt. The receipt is signed by
+the responder. A verifier MUST confirm the signature; with the requester's trusted manifests,
+it MUST confirm the requester's key is attested in the receipt's context (the section 4 trust
+decision applied to the requester). A verifier that holds a body MAY confirm the commitment
+binds (`request_hash == SHA3-256(request)`); a verifier that does not still obtains proof that
+the exchange occurred and was authorized, with no access to the payload. A receipt records a
+past event and does not carry a freshness window.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:
