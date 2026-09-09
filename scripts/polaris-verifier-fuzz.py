@@ -181,8 +181,20 @@ def main():
             "issued_at": _iso(now), "algorithm": "ML-DSA-65",
         }, V._exchange_request_canonical)
 
+    def g_signed_document():
+        return _signed({
+            "format": "polaris-signed-document/1",
+            "document": {"digest_hex": hashlib.sha3_256(b"doc").hexdigest(), "digest_algorithm": "SHA3-256",
+                         "media_type": "text/plain", "name": "doc.txt"},
+            "signer": {"agency_id": 1, "name": "Authority A"}, "on_behalf_of": None, "purpose": "fuzz",
+            "signed_at": _iso(now), "algorithm": "ML-DSA-65",
+        }, V._signed_document_canonical)
+
     # spec: name, build(), verify(obj)->verdict, accept(verdict)->bool, bound_fields
     specs = [
+        ("signed-document", g_signed_document, lambda o: V.verify_signed_document(o),
+         lambda v: v["document_authentic"],
+         ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"]),
         ("exchange-request", g_exchange_request, lambda o: V.verify_exchange_request(o),
          lambda v: v["request_authentic"],
          ["format", "requester", "target", "context_id", "request_hash", "nonce", "issued_at", "algorithm"]),
@@ -293,6 +305,8 @@ def main():
         #    digest_construction) are not asserted here: dropping them does not, and should
         #    not, invalidate an otherwise-authentic object.
         for fld in bound + ["signature_hex", "public_key_hex"]:
+            if fld in bound and genuine.get(fld) is None:
+                continue  # a field the genuine object carries as null: dropping it is a no-op for a .get() canonical
             o = json.loads(json.dumps(genuine))
             o.pop(fld, None)
             must_reject(name, "drop:%s" % fld, verify_fn, accept_fn, o)

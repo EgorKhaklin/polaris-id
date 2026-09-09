@@ -227,6 +227,32 @@ upstream's body together with a section 3.8 receipt whose `request_hash` equals 
 envelope's: the pair (envelope, receipt) is the evidence of the exchange, and a third party
 verifies both sides offline with no access to either body. A gateway MUST NOT persist a body.
 
+### 3.12 `polaris-signed-document/1`
+
+A portable, digest-bound signature over an ARBITRARY document (P8.5), signed by an agency
+key: the institution itself, or -- on behalf of a holder who proved possession of an issued
+credential -- the holder's issuing authority, which records the holder as
+`on_behalf_of.credential_hash` (the SHA3-256 of the token value, the same leaf a revocation
+feed lists) and never the token.
+Signed fields: format, document, signer, on_behalf_of, purpose, signed_at, algorithm
+
+`document.digest_hex` MUST be the lowercase SHA3-256 hex of the document bytes and
+`document.digest_algorithm` MUST be `SHA3-256`; the document itself never appears. A verifier
+MUST confirm the signature and, holding the document, MUST check the binding.
+
+**Long-term validation.** The container MAY carry an unsigned `ltv` object of evidence fixed at
+the instant of signing: `timestamp` (section 3.9) over the *signature material* -- the
+canonical statement, a newline (0x0a), and the lowercase `signature_hex` -- so the timestamp
+proves the SIGNATURE existed at its instant; the signer's `manifest` (3.1), `epoch_checkpoint`
+(3.2) and `revocation_feed` (3.3) at that instant. A verifier deciding long-term validity MUST
+verify the timestamp and its binding to the signature material, MUST verify the manifest as of
+the timestamp's instant and require the signing key listed active in it, and, for a
+holder-authorized signature, MUST verify the feed as of that instant and require the
+credential hash absent from it. Validity is decided at the evidence's instant, never at
+verification time, which is what keeps a signature valid after its key is rotated or retired;
+a timestamp from an authority other than the signer gives time evidence independent of the
+signer.
+
 ## 4. The federation trust decision
 
 A relying party decides a FOREIGN credential offline, non-transitively and in-context:

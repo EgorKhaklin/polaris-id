@@ -5,6 +5,42 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.325 — 2026-09-09 (Document signing with long-term validation, P8.5)
+
+Polaris signed identity artifacts; now it signs anything, and the signature stays valid after
+the key that made it is gone.
+
+- **`polaris-signed-document/1`.** A digest-bound, portable container: the document's SHA3-256
+  (never the document), a media type, a name, a purpose and the instant, signed under an
+  agency's registered ML-DSA-65 key. Two signers: the institution itself
+  (`POST /api/v1/sign/<id>`, operator path), or -- on behalf of a holder who proved possession
+  of an issued, ACTIVE credential exactly as a status assertion requires -- the holder's issuing
+  authority (`/sign/<id>/holder`, no session), which records the holder as
+  `on_behalf_of.credential_hash` (the SHA3-256 of the token value, the same leaf a revocation
+  feed lists) and never the token. The wallet's new `sign` command hashes the file locally and
+  drives that route: the document never leaves the wallet. A Polaris-native container, no
+  foreign formats.
+- **Long-term validation.** At signing the container gains evidence fixed at that instant,
+  outside the signed statement: this instance's timestamp over the statement AND the signature
+  (so the signature provably existed then), and the signer's manifest, epoch checkpoint and
+  revocation feed as of then. `verify_signed_document` decides `valid_long_term` at that
+  instant -- timestamp authentic and binding the signature material; manifest authentic and
+  fresh at the instant and listing the key active; for a holder-authorized signature, the feed
+  at the instant not listing the credential -- so a container timestamped while the key was
+  active stays valid after the key is retired, and one whose evidence shows the key already
+  retired does not. `attach_ltv` adds a second authority's timestamp for time independent of
+  the signer. The possession proof, the manifest builder and the timestamp builder are now
+  shared functions.
+- **Proven.** `scripts/polaris-document-signing-drill.py` (in `pqc-real`, 15 cases): authentic,
+  binds its bytes and nothing else, valid long term; a re-signed container is not covered by
+  the old evidence; key retirement in both directions; holder-authorized with an unrevoked and
+  a revoked credential; no evidence; tampered; hostile input. The two-instance drill gives one
+  of B's credentials a real signature, has the holder sign through B by possession, verifies
+  the container offline with B's embedded evidence, refuses a wrong presentation, and signs
+  again through the wallet. Twelfth oracle pair; wire spec 3.12; two conformance vectors in
+  BOTH SDKs; the fuzzer holds `verify_signed_document` total; a DB test covers the holder
+  route. `check_document_signing` (#179). 179 checks, 111 routes.
+
 ## v9.324 — 2026-09-09 (The exchange gateway: institutions exchange through Polaris trust, P8.2d)
 
 The flagship of the exchange fabric, and the completion of P8.2. Two institutions exchange a

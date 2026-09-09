@@ -140,6 +140,13 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._exchange_request_statement(b),
         "verify": lambda b: _V._exchange_request_canonical(b),
     },
+    # polaris-signed-document/1 (P8.5): the portable document container.
+    "signed-document": {
+        "keys": ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._signed_document_statement(b),
+        "verify": lambda b: _V._signed_document_canonical(b),
+    },
 }
 
 
@@ -295,6 +302,7 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-transparency-sth/1", "polaris-federation-status-bundle/1",
             "polaris-exchange-receipt/1", "polaris-exchange-mint/1", "polaris-timestamp/1",
             "polaris-registry/1", "polaris-exchange-request/1",
+            "polaris-signed-document/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1"}

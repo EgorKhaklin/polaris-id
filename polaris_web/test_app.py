@@ -344,10 +344,51 @@ class ExchangeGatewayTests(UnauthenticatedTestCase):
     def test_nonce_is_consumed_exactly_once(self):
         """The replay register through the app's own helper: the first consume commits, the
         second is refused, and a different nonce for the same requester is a new exchange."""
-        self.assertTrue(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-1'))
-        self.assertFalse(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-1'))
-        self.assertTrue(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-2'))
-        self.assertTrue(flask_app._consume_exchange_nonce('cd' * 16, 'nonce-1'))
+        import os
+        run = os.urandom(4).hex()   # the register is append-only, so each run consumes fresh nonces
+        self.assertTrue(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-1-' + run))
+        self.assertFalse(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-1-' + run))
+        self.assertTrue(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-2-' + run))
+        self.assertTrue(flask_app._consume_exchange_nonce('cd' * 16, 'nonce-1-' + run))
+
+
+class DocumentSigningTests(UnauthenticatedTestCase):
+    """P8.5c: holder-authorized signing is possession-authenticated (no session), records the
+    holder by credential hash, refuses a wrong presentation uniformly, and attaches long-term-
+    validation evidence. Under the test profile the credential signature is the placeholder;
+    real-ML-DSA possession and offline validation are proven by the two-instance drill."""
+
+    def _credential(self):
+        """An ACTIVE credential issued by agency 1 carrying a signature the test profile's
+        possession check accepts: under the placeholder profile that is SHA3-256(token_value)
+        with no key, so give the token a fresh such row (newest non-deprecated wins)."""
+        import hashlib
+        import psycopg2
+        row = flask_app.query("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
+                              "AND status = 'ACTIVE' ORDER BY token_id LIMIT 1", fetch='one', primary=True)
+        placeholder = hashlib.sha3_256(row['token_value'].encode('utf-8')).digest()
+        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) "
+                        "VALUES (%s, 1, %s, NULL)", (row['token_id'], psycopg2.Binary(placeholder)), fetch='none')
+        return row['token_value'], placeholder.hex()
+
+    def test_holder_signing_by_possession(self):
+        import hashlib
+        tv, sig = self._credential()
+        r = self.client.post('/api/v1/sign/1/holder', json={'token_value': tv, 'signature_hex': sig, 'digest_hex': 'cd' * 32})
+        self.assertEqual(r.status_code, 404)   # agency 1 is not federated until it has a key
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
+        r = self.client.post('/api/v1/sign/1/holder', json={'token_value': tv, 'signature_hex': sig,
+                                                            'digest_hex': 'cd' * 32, 'name': 'report.txt', 'purpose': 'test'})
+        self.assertEqual(r.status_code, 200)
+        doc = r.get_json()
+        self.assertEqual(doc['format'], 'polaris-signed-document/1')
+        self.assertEqual(doc['on_behalf_of']['credential_hash'], hashlib.sha3_256(tv.encode()).hexdigest())
+        self.assertNotIn(tv, json.dumps(doc))
+        self.assertIn('timestamp', doc['ltv']); self.assertIn('manifest', doc['ltv']); self.assertIn('revocation_feed', doc['ltv'])
+        self.assertEqual(doc['document']['digest_hex'], 'cd' * 32)
+        bad = self.client.post('/api/v1/sign/1/holder', json={'token_value': tv, 'signature_hex': '00' * 64, 'digest_hex': 'cd' * 32})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(bad.get_json()['error'], 'not_verifiable')
 
 
 class DashboardTests(PolarisTestCase):

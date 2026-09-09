@@ -1536,6 +1536,159 @@ def exchange_evidence(envelope, receipt):
             and envelope.get("issued_at") == receipt.get("occurred_at"))
 
 
+_SIGNED_DOCUMENT_FORMAT = "polaris-signed-document/1"
+
+
+def _signed_document_canonical(d):
+    """The bytes a signer signs for a document container (P8.5). MUST match
+    polaris_web/app.py's _signed_document_statement (pinned by the canonical oracle)."""
+    if not isinstance(d, dict):
+        d = {}
+    statement = {k: d.get(k) for k in
+                 ("format", "document", "signer", "on_behalf_of", "purpose", "signed_at",
+                  "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def document_signature_material(doc):
+    """What a long-term-validation timestamp over a signed document binds: the canonical
+    statement AND the signature, so the timestamp proves the SIGNATURE existed at its instant.
+    MUST match polaris_web/app.py's _document_signature_material."""
+    if not isinstance(doc, dict):
+        return b""
+    return _signed_document_canonical(doc) + b"\n" + str(doc.get("signature_hex") or "").lower().encode("utf-8")
+
+
+def is_revoked_leaf(feed, leaf_hex):
+    """True iff the given leaf (SHA3-256(token_value) hex -- the same value a signed document
+    records as credential_hash) is listed in the feed. Membership only; verify the feed first."""
+    if not isinstance(feed, dict):
+        return False
+    leaves = feed.get("revoked_leaves")
+    if not isinstance(leaves, (list, tuple, set)):
+        return False
+    return str(leaf_hex or "").lower() in {str(x).lower() for x in leaves}
+
+
+def attach_ltv(doc, timestamp=None, manifest=None, epoch_checkpoint=None, revocation_feed=None):
+    """Attach long-term-validation evidence to a signed document (outside the signed
+    statement): a timestamp over document_signature_material(doc) -- from a second authority
+    if you want time independent of the signer -- and the signer's manifest, epoch checkpoint
+    and revocation feed at that instant. Returns a new container."""
+    out = dict(doc) if isinstance(doc, dict) else {}
+    ltv = dict(out.get("ltv") or {}) if isinstance(out.get("ltv"), dict) else {}
+    for k, val in (("timestamp", timestamp), ("manifest", manifest),
+                   ("epoch_checkpoint", epoch_checkpoint), ("revocation_feed", revocation_feed)):
+        if val is not None:
+            ltv[k] = val
+    out["ltv"] = ltv
+    return out
+
+
+def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=None):
+    """Verify a signed document OFFLINE (P8.5): the signer's ML-DSA-65 signature over
+    SHA3-256(canonical) (two witnesses); with trusted_anchors, signer trust; with
+    document_bytes, that the container binds them. Then LONG-TERM VALIDATION from the embedded
+    evidence: the timestamp is authentic and binds the statement AND signature (so the
+    signature existed at the timestamp's instant); the signer's manifest was authentic and
+    fresh AT THAT INSTANT and listed the signing key as active; and, for a holder-authorized
+    signature, the signer's revocation feed at that instant did not list the credential.
+    valid_long_term is the conjunction: it holds even after the key is rotated or retired,
+    because it is decided at the instant the evidence fixes, not now. No network."""
+    if not isinstance(doc, dict):
+        doc = {}
+    d = doc.get("document") if isinstance(doc.get("document"), dict) else {}
+    v = {"document_authentic": False, "signer_trusted": None, "binds": None,
+         "signer": doc.get("signer"), "on_behalf_of": doc.get("on_behalf_of"),
+         "digest_hex": d.get("digest_hex"), "signed_at": doc.get("signed_at"),
+         "ltv": {"present": False, "timestamp_authentic": None, "timestamp_binds": None, "instant": None,
+                 "signer_key_active_at_instant": None, "credential_unrevoked_at_instant": None},
+         "valid_long_term": False, "witnesses": [], "note": None}
+    alg, pk_hex, sig_hex = doc.get("algorithm"), doc.get("public_key_hex"), doc.get("signature_hex")
+    if doc.get("format") != _SIGNED_DOCUMENT_FORMAT:
+        v["note"] = "not a %s" % _SIGNED_DOCUMENT_FORMAT
+        return v
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder signature -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(str(sig_hex)), bytes.fromhex(str(pk_hex))
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    digest = hashlib.sha3_256(_signed_document_canonical(doc)).digest()
+    primary = _verify_liboqs(digest, sig, pk)
+    witness = _verify_cryptography(digest, sig, pk)
+    ran = []
+    if primary is not None:
+        ran.append("liboqs=%s" % ("valid" if primary else "INVALID"))
+    if witness is not None:
+        ran.append("cryptography=%s" % ("valid" if witness else "INVALID"))
+    v["witnesses"] = ran
+    if primary is None and witness is None:
+        v["note"] = "no ML-DSA-65 verifier available"
+        return v
+    if primary is not None and witness is not None and primary != witness:
+        v["note"] = "the two witnesses DISAGREE -- treat as invalid"
+        return v
+    ok = primary if primary is not None else witness
+    v["document_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "document signature is invalid"
+        return v
+    signer_key = str(pk_hex).lower()
+    if trusted_anchors is not None:
+        try:
+            v["signer_trusted"] = signer_key in {str(k).lower() for k in trusted_anchors}
+        except TypeError:
+            v["signer_trusted"] = False
+    if document_bytes is not None:
+        v["binds"] = (isinstance(document_bytes, (bytes, bytearray))
+                      and hashlib.sha3_256(bytes(document_bytes)).hexdigest() == str(d.get("digest_hex") or "").lower())
+    ltv = doc.get("ltv") if isinstance(doc.get("ltv"), dict) else None
+    if not ltv:
+        v["note"] = "no long-term-validation evidence attached"
+        return v
+    L = v["ltv"]
+    L["present"] = True
+    ts = ltv.get("timestamp")
+    tv = verify_timestamp(ts)
+    L["timestamp_authentic"] = bool(tv.get("timestamp_authentic"))
+    L["timestamp_binds"] = bool(timestamp_binds(ts, document_signature_material(doc)))
+    L["instant"] = tv.get("issued_at")
+    try:
+        instant = _parse_iso(tv.get("issued_at"))
+    except Exception:
+        instant = None
+    manifest = ltv.get("manifest")
+    if instant is not None and isinstance(manifest, dict):
+        mv = verify_manifest(manifest, now=instant)
+        active = any(isinstance(a, dict) and str(a.get("public_key_hex") or "").lower() == signer_key
+                     and (a.get("status") or "active") == "active" for a in mv.get("anchors") or [])
+        L["signer_key_active_at_instant"] = bool(mv.get("manifest_authentic") and mv.get("fresh")
+                                                 and str(manifest.get("public_key_hex") or "").lower() == signer_key and active)
+    else:
+        L["signer_key_active_at_instant"] = False
+    obo = doc.get("on_behalf_of") if isinstance(doc.get("on_behalf_of"), dict) else None
+    if obo and obo.get("credential_hash"):
+        feed = ltv.get("revocation_feed")
+        if instant is not None and isinstance(feed, dict):
+            fv = verify_revocation_feed(feed, now=instant, issuer_key=signer_key)
+            L["credential_unrevoked_at_instant"] = bool(fv.get("feed_authentic") and fv.get("fresh")
+                                                        and fv.get("issuer_matches") is not False
+                                                        and not is_revoked_leaf(feed, obo["credential_hash"]))
+        else:
+            L["credential_unrevoked_at_instant"] = False
+    v["valid_long_term"] = bool(v["document_authentic"] and L["timestamp_authentic"] and L["timestamp_binds"]
+                                and L["signer_key_active_at_instant"]
+                                and L["credential_unrevoked_at_instant"] is not False)
+    if not v["valid_long_term"]:
+        v["note"] = "long-term validation failed: " + ", ".join(
+            k for k in ("timestamp_authentic", "timestamp_binds", "signer_key_active_at_instant") if not L[k]
+        ) + (", credential revoked at the instant" if L["credential_unrevoked_at_instant"] is False else "")
+    return v
+
+
 def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder_key=None,
                             request_body=None, response_body=None, max_window_seconds=None):
     """Verify an exchange receipt OFFLINE (P8.2). Establishes, WITHOUT the payload, that an

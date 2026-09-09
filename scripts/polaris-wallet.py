@@ -15,6 +15,7 @@ holder runs it on their own machine.
     polaris-wallet.py verify --issuer-anchor issuer.json
     polaris-wallet.py present --out presentation.json
     polaris-wallet.py prove-membership --epoch epoch.json --out proof.json
+    polaris-wallet.py sign --document report.pdf --instance https://issuer.example --agency 1 --out signed.json
 
 The wallet is a directory (default ~/.polaris-wallet, override with --wallet). It
 holds the credential (an authenticity pack from GET /api/tokens/<id>/authenticity-pack)
@@ -170,6 +171,36 @@ def _zk_binary(args):
             or os.path.join(_ROOT, "polaris_zk", "target", "release", "polaris-zk"))
 
 
+def cmd_sign(args):
+    """Sign a document on the holder's behalf (P8.5c): hash the file HERE -- the document never
+    leaves the wallet -- present the held credential to the issuing authority's instance, and
+    receive a portable signed container with long-term-validation evidence attached."""
+    import urllib.error
+    import urllib.request
+    wallet = _wallet_dir(args)
+    pack = _load_credential(wallet)
+    with open(args.document, "rb") as f:
+        data = f.read()
+    body = {"token_value": pack.get("token_value"), "signature_hex": pack.get("signature_hex"),
+            "digest_hex": hashlib.sha3_256(data).hexdigest(), "digest_algorithm": "SHA3-256",
+            "name": os.path.basename(args.document), "purpose": args.purpose}
+    req = urllib.request.Request(args.instance.rstrip("/") + "/api/v1/sign/%d/holder" % args.agency,
+                                 data=json.dumps(body).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            doc = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise SystemExit("signing refused: HTTP %d %s" % (e.code, e.read().decode("utf-8", "replace")[:200]))
+    out = json.dumps(doc, indent=2)
+    if args.out:
+        with open(args.out, "w") as f:
+            f.write(out + "\n")
+    else:
+        sys.stdout.write(out + "\n")
+    return 0
+
+
 def cmd_prove_membership(args):
     """Produce a zero-knowledge proof that the held credential's token is in a
     published epoch, without revealing WHICH member it is. The epoch bundle is
@@ -250,6 +281,14 @@ def main(argv=None):
     p.add_argument("--zk-binary", help="path to the polaris-zk binary")
     p.add_argument("--out", help="write the proof to a file instead of stdout")
     p.set_defaults(fn=cmd_prove_membership)
+
+    p = sub.add_parser("sign", help="sign a document on your behalf via your issuing authority (the document never leaves the wallet)")
+    p.add_argument("--document", required=True, help="the file to sign (hashed locally; only its SHA3-256 is sent)")
+    p.add_argument("--instance", required=True, help="base URL of the issuing authority's instance")
+    p.add_argument("--agency", type=int, required=True, help="the issuing agency id on that instance")
+    p.add_argument("--purpose", help="a short statement of purpose recorded in the signed container")
+    p.add_argument("--out", help="write the signed container to a file instead of stdout")
+    p.set_defaults(fn=cmd_sign)
 
     args = ap.parse_args(argv)
     return args.fn(args)

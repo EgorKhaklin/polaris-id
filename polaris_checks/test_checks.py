@@ -6407,19 +6407,21 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _timestamp_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'digest_hex')}\n"
         "def _registry_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'publisher')}\n"
         "def _exchange_request_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'nonce')}\n"
+        "def _signed_document_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'document')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
-        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1\n"
+        "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1\n"
         "manifest signed fields: format, authority\n"
         "receipt signed fields: format, requester\n"
         "mint signed fields: format, responder_agency_id\n"
         "timestamp signed fields: format, digest_hex\n"
         "registry signed fields: format, publisher\n"
         "envelope signed fields: format, nonce\n"
+        "container signed fields: format, document\n"
         "checkpoint signed fields: format, epoch\n"
         "feed signed fields: format, as_of\n"
         "assertion signed fields: format, status\n"
@@ -6468,6 +6470,66 @@ def test_wire_spec_check_discriminates(tmp_path):
     # 8. not linked from the reference index
     write({"docs/reference/README.md": "no link here\n"})
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
+
+
+def test_document_signing_check_discriminates(tmp_path):
+    # v9.325 (P8.5): document signing with long-term validation; each perturbation removes one leg.
+    APP = (
+        "@app.route('/api/v1/sign/<int:agency_id>', methods=['POST'])\n"
+        "@app.route('/api/v1/sign/<int:agency_id>/holder', methods=['POST'])\n"
+        "def api_v1_sign_holder(agency_id):\n"
+        "    _signed_document_statement(doc)  # polaris-signed-document/1 ; the document itself is never sent\n"
+        "    row = _possession_authenticated(token_value, presented)\n"
+        "    if row['status'] != 'ACTIVE': return 403\n"
+        "    on_behalf_of = {'credential_hash': hashlib.sha3_256(token_value.encode()).hexdigest()}\n"
+        "    doc['ltv'] = {'timestamp': _timestamp_body(a, i, sha3(_document_signature_material(doc)), None),\n"
+        "                  'manifest': _federation_manifest_body(agency, now), 'revocation_feed': _revocation_feed_body(agency, now)}\n"
+    )
+    VER = ("import json\ndef _signed_document_canonical(d): return b''\ndef document_signature_material(d): return b''\n"
+           "def attach_ltv(d, **k): return d\ndef is_revoked_leaf(f, l): return False\n"
+           "def verify_signed_document(d, **k): return {'valid_long_term': False, 'ltv': {'signer_key_active_at_instant': None, 'credential_unrevoked_at_instant': None}}\n")
+    good = {
+        'polaris_web/app.py': APP,
+        'scripts/polaris-verify.py': VER,
+        'scripts/polaris-wallet.py': "def cmd_sign(args): pass\n",
+        'polaris_web/test_canonical_equivalence.py': "flask_app._signed_document_statement\n",
+        'docs/reference/WIRE-SPEC.md': "polaris-signed-document/1\n",
+        'conformance/cases.json': '{"cases": [{"artifact": "signed-document"}]}\n',
+        'sdk/python/polaris_verify/__init__.py': '"polaris-signed-document/1": ["format"]\n',
+        'sdk/typescript/src/index.ts': '"polaris-signed-document/1": ["format"]\n',
+        'scripts/polaris-verifier-fuzz.py': "V.verify_signed_document(o)\n",
+        'scripts/polaris-document-signing-drill.py': "# KEY RETIREMENT\nV.attach_ltv(doc)\n",
+        '.github/workflows/ci.yml': '      - run: python scripts/polaris-document-signing-drill.py\n',
+        'scripts/polaris-federation-instances-drill.py': "base_b + '/api/v1/sign/1/holder'; 'polaris-wallet.py'\n",
+        'polaris_web/test_app.py': "class DocumentSigningTests(PolarisTestCase): pass\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_document_signing(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    write({'polaris_web/app.py': APP.replace("/api/v1/sign/<int:agency_id>/holder", "/api/v1/nope")})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL without the holder route"
+    write({'polaris_web/app.py': APP.replace("'credential_hash': hashlib.sha3_256(token_value", "'token_value': token_value")})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if the holder is recorded by token, not hash"
+    write({'polaris_web/app.py': APP.replace("row['status'] != 'ACTIVE'", "True")})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if an inactive credential could sign"
+    write({'polaris_web/app.py': APP.replace("_document_signature_material", "_signed_document_statement")})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp does not bind the signature"
+    write({'scripts/polaris-verify.py': VER.replace("valid_long_term", "valid")})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL without long-term validity in the verifier"
+    write({'scripts/polaris-wallet.py': "# no sign\n"})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if the wallet cannot sign"
+    write({'scripts/polaris-document-signing-drill.py': "V.attach_ltv(doc)\n"})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if key retirement is not drilled"
+    write({'sdk/typescript/src/index.ts': "// nothing\n"})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if the TS SDK cannot verify it"
+    write({'scripts/polaris-federation-instances-drill.py': "# no signing\n"})
+    assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if not proven over HTTP"
 
 
 def test_exchange_gateway_check_discriminates(tmp_path):
@@ -6544,7 +6606,7 @@ def test_registry_check_discriminates(tmp_path):
         "    _registry_statement(body)  # polaris-registry/1\n"
         "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
         "_REGISTRY_SERVICES = []\n"
-        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
+        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
     )
     good = {
         'polaris_web/app.py': APP,

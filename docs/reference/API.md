@@ -859,6 +859,26 @@ of the seven `mint` fields (wire spec section 3.8.1); `scripts/polaris-verify.py
 `_exchange_mint_canonical` builds them for a client. Proven over HTTP, with no session, by the
 two-instance federation drill.
 
+### `POST /api/v1/sign/<agency_id>`
+
+**Operator auth (login + CSRF) (P8.5).** The institution signs a document under its registered
+key. Body `{digest_hex, digest_algorithm?, media_type?, name?, purpose?}` -- the SHA3-256 of the
+document, never the document. Returns a `polaris-signed-document/1` with long-term-validation
+evidence attached (`ltv`: this instance's timestamp over the statement and signature, the
+signer's manifest, epoch checkpoint and revocation feed at the instant). Verified offline with
+`verify_signed_document`. Specified in [document-signing.md](../design/document-signing.md);
+wire spec section 3.12.
+
+### `POST /api/v1/sign/<agency_id>/holder`
+
+**Possession-authenticated; no session (P8.5c).** The issuing authority signs a document on
+behalf of a holder: body `{token_value, signature_hex}` (the presented credential, as for a
+status assertion) plus the digest fields above. The credential must have been issued by this
+authority and be ACTIVE (`403` otherwise); a wrong or unknown credential gets the uniform
+`400 not_verifiable`. The container records the holder as `on_behalf_of.credential_hash`
+(SHA3-256 of the token value) and never the token. The wallet's `sign` command drives this
+route with the document hashed locally.
+
 ### `POST /api/v1/exchange/<target_agency_id>`
 
 **Service-to-service; no session (P8.2d).** The **exchange gateway**: a requesting institution

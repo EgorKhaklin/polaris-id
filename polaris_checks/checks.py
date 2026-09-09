@@ -7162,6 +7162,7 @@ _WIRE_SIGNED_TYPES = {
     "polaris-timestamp/1": "_timestamp_canonical",
     "polaris-registry/1": "_registry_canonical",
     "polaris-exchange-request/1": "_exchange_request_canonical",
+    "polaris-signed-document/1": "_signed_document_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7519,6 +7520,70 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_document_signing(root: pathlib.Path) -> list[Finding]:
+    """P8.5: general document signing with long-term validation. A digest-bound, portable
+    container signed by an agency key -- the institution itself, or its issuing authority on
+    behalf of a holder who proved possession (recorded by credential HASH, never token) -- with
+    long-term-validation evidence attached at signing (a timestamp over statement AND
+    signature; the signer's manifest, checkpoint and feed at that instant), so a verifier
+    decides validity at the instant the evidence fixes and the signature survives key
+    retirement. Pins the routes, the digest-only and hash-only rules, possession auth, the
+    ACTIVE requirement, the evidence, the offline verifier, the wallet path, the oracle, spec,
+    conformance in both SDKs, the fuzzer, the drill, and the two-instance HTTP proof."""
+    app = _read(root, "polaris_web/app.py")
+    for sym, why in (("/api/v1/sign/<int:agency_id>", "the operator signing route"),
+                     ("/api/v1/sign/<int:agency_id>/holder", "the holder-authorized route"),
+                     ("_signed_document_statement", "the statement builder"),
+                     ("polaris-signed-document/1", "the format"),
+                     ("the document itself is never sent", "the digest-only rule"),
+                     ("_possession_authenticated(token_value, presented)", "possession authentication of the holder"),
+                     ("'credential_hash': hashlib.sha3_256(token_value", "the holder recorded by credential hash"),
+                     ("row['status'] != 'ACTIVE'", "an inactive credential cannot sign"),
+                     ("_document_signature_material", "the timestamp binds statement AND signature"),
+                     ("doc['ltv'] = {", "long-term-validation evidence attached at signing"),
+                     ("_federation_manifest_body(agency, now)", "the signer's manifest at the instant"),
+                     ("_revocation_feed_body(agency, now)", "the signer's feed at the instant")):
+        if sym not in app:
+            return _fail("document_signing", "polaris_web/app.py lacks %s (%s)" % (why, sym))
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def verify_signed_document", "_signed_document_canonical", "def document_signature_material",
+                "def attach_ltv", "def is_revoked_leaf", "valid_long_term", "signer_key_active_at_instant",
+                "credential_unrevoked_at_instant"):
+        if sym not in v:
+            return _fail("document_signing", "scripts/polaris-verify.py must decide long-term validity offline (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("document_signing", f"the offline verifier imports {mod!r}; it must stay standalone")
+    if "def cmd_sign" not in _read(root, "scripts/polaris-wallet.py"):
+        return _fail("document_signing", "the holder wallet must be able to sign a document (polaris-wallet.py sign)")
+    if "_signed_document_statement" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
+        return _fail("document_signing", "the container must be in the canonical-equivalence oracle")
+    if "polaris-signed-document/1" not in _read(root, "docs/reference/WIRE-SPEC.md"):
+        return _fail("document_signing", "the container must be specified in the wire spec")
+    if '"artifact": "signed-document"' not in _read(root, "conformance/cases.json"):
+        return _fail("document_signing", "conformance/cases.json must carry signed-document cases")
+    if "polaris-signed-document/1" not in _read(root, "sdk/python/polaris_verify/__init__.py") or "polaris-signed-document/1" not in _read(root, "sdk/typescript/src/index.ts"):
+        return _fail("document_signing", "both SDKs must verify polaris-signed-document/1")
+    if "verify_signed_document" not in _read(root, "scripts/polaris-verifier-fuzz.py"):
+        return _fail("document_signing", "the metamorphic fuzzer must hold verify_signed_document total")
+    drill = _read(root, "scripts/polaris-document-signing-drill.py")
+    if not drill or "KEY RETIREMENT" not in drill or "attach_ltv" not in drill:
+        return _fail("document_signing", "scripts/polaris-document-signing-drill.py must prove validity survives key retirement")
+    if "polaris-document-signing-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("document_signing", "the document-signing drill must run in CI")
+    fed = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if "/api/v1/sign/" not in fed or "polaris-wallet.py" not in fed:
+        return _fail("document_signing", "the two-instance drill must sign over HTTP by possession and through the wallet")
+    if "DocumentSigningTests" not in _read(root, "polaris_web/test_app.py"):
+        return _fail("document_signing", "polaris_web/test_app.py must exercise holder-authorized signing")
+    return _ok("document_signing",
+               "arbitrary documents are signed into a portable, digest-bound container -- by the institution or, on behalf "
+               "of a possession-authenticated ACTIVE holder recorded by credential hash, by its issuing authority -- with "
+               "long-term-validation evidence attached at signing; the detached verifier decides validity at that instant "
+               "so it survives key retirement; wallet-initiated, oracle-pinned, specified, conformant in both SDKs, "
+               "fuzzed, drilled, and proven over HTTP across two instances")
 
 
 def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
@@ -8354,6 +8419,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_document_signing,
     check_exchange_gateway,
     check_registry,
     check_receipt_transparency,

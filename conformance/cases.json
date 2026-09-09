@@ -302,6 +302,22 @@
       "expect": {
         "authentic": false
       }
+    },
+    {
+      "name": "signed-document-valid",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-valid.json",
+      "expect": {
+        "authentic": true
+      }
+    },
+    {
+      "name": "signed-document-tampered",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-tampered.json",
+      "expect": {
+        "authentic": false
+      }
     }
   ]
 }

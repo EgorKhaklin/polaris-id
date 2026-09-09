@@ -5284,6 +5284,36 @@ def _status_assertion_statement(token_value, status, issued_at, expires_at):
     }, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
+def _possession_authenticated(token_value, presented_sig_hex):
+    """The holder proves POSSESSION of an issued credential by presenting its token_value
+    and the genuine issued signature: the row for that credential if the presented signature
+    equals the stored one (constant time) and verifies against the stored issuer key, else
+    None -- and every failure looks the same, so this is never an existence oracle. Shared by
+    the status assertion (P3.6) and holder-authorized document signing (P8.5)."""
+    row = query("""
+        SELECT it.token_value, it.status, it.issuing_agency_id,
+               ts.signature_bytes, ts.signing_public_key_hex
+        FROM   IdentityToken it
+        JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
+        WHERE  it.token_value = %s
+        ORDER BY ts.signed_at DESC
+    """, (token_value,), fetch='one', primary=True)
+    if not row:
+        return None
+    stored_raw = row['signature_bytes']
+    stored_sig = bytes(stored_raw) if stored_raw is not None else b''
+    try:
+        presented_sig = bytes.fromhex(presented_sig_hex)
+    except (ValueError, TypeError):
+        return None
+    if not stored_sig or not hmac.compare_digest(presented_sig, stored_sig):
+        return None
+    if not pqc_signing.verify_stored_signature(
+            token_value, stored_sig, row['signing_public_key_hex'], witnesses='single'):
+        return None
+    return row
+
+
 @app.route('/api/v1/status-assertion', methods=['POST'])
 def api_v1_status_assertion():
     """P3.6: mint a short-lived, issuer-signed status assertion. A holder fetches it
@@ -5309,26 +5339,8 @@ def api_v1_status_assertion():
         return jsonify(error='not_verifiable',
                        error_description='present the genuine issued credential (token_value + signature_hex)'), 400
 
-    row = query("""
-        SELECT it.token_value, it.status, it.issuing_agency_id,
-               ts.signature_bytes, ts.signing_public_key_hex
-        FROM   IdentityToken it
-        JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
-        WHERE  it.token_value = %s
-        ORDER BY ts.signed_at DESC
-    """, (token_value,), fetch='one', primary=True)
-    if not row:
-        return _not_verifiable()
-    stored_raw = row['signature_bytes']
-    stored_sig = bytes(stored_raw) if stored_raw is not None else b''
-    try:
-        presented_sig = bytes.fromhex(presented_sig_hex)
-    except (ValueError, TypeError):
-        return _not_verifiable()
-    if not stored_sig or not hmac.compare_digest(presented_sig, stored_sig):
-        return _not_verifiable()
-    if not pqc_signing.verify_stored_signature(
-            token_value, stored_sig, row['signing_public_key_hex'], witnesses='single'):
+    row = _possession_authenticated(token_value, presented_sig_hex)
+    if row is None:
         return _not_verifiable()
 
     # Sign a status assertion reflecting the CURRENT status, with the issuing
@@ -5371,21 +5383,11 @@ def _manifest_statement(body):
     return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
-@app.route('/api/v1/federation-manifest/<int:agency_id>')
-def api_v1_federation_manifest(agency_id):
-    """P3.2: an authority publishes a signed FEDERATION MANIFEST -- its own anchors
-    (its trust roots) and the attestations it has made (who it accepts, per context).
-    Another authority or a relying party consumes it OFFLINE (scripts/polaris-verify.py
-    verify_manifest / verify_cross_authority) to decide cross-authority trust against
-    published keys, with no central service. Public: this is published trust data, not
-    a secret, and carries no personal data. Signed with the agency's own key, short-lived
-    so anchors and attestations do not go stale."""
-    ag = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
-               (agency_id,), fetch='one', primary=True)
-    if not ag:
-        return jsonify(error='no such agency'), 404
-    if not ag['signing_public_key_hex']:
-        return jsonify(error='agency is not federated (no registered signing key)'), 404
+def _federation_manifest_body(ag, now):
+    """Build and sign one agency's federation manifest (P3.2) at instant `now`. Shared by the
+    /federation-manifest endpoint and, since P8.5, the long-term-validation evidence attached
+    to a signed document (the signer's anchors at the instant of signing)."""
+    agency_id = ag['agency_id']
     atts = query("""
         SELECT att.attested_agency_id, att.context_id, att.valid_until,
                ag2.signing_public_key_hex AS attested_public_key_hex
@@ -5398,8 +5400,7 @@ def api_v1_federation_manifest(agency_id):
     """, (agency_id,), primary=True)
     epoch = query("SELECT epoch_id, merkle_root FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
                   fetch='one', primary=True)
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    from datetime import timedelta
     issued_at = now.isoformat().replace('+00:00', 'Z')
     expires_at = (now + timedelta(seconds=_FEDERATION_MANIFEST_TTL)).isoformat().replace('+00:00', 'Z')
     body = {
@@ -5428,7 +5429,26 @@ def api_v1_federation_manifest(agency_id):
     body['max_window_seconds'] = _FEDERATION_MANIFEST_TTL
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                    'manifest minus signature_hex and public_key_hex)')
-    return jsonify(body)
+    return body
+
+
+@app.route('/api/v1/federation-manifest/<int:agency_id>')
+def api_v1_federation_manifest(agency_id):
+    """P3.2: an authority publishes a signed FEDERATION MANIFEST -- its own anchors
+    (its trust roots) and the attestations it has made (who it accepts, per context).
+    Another authority or a relying party consumes it OFFLINE (scripts/polaris-verify.py
+    verify_manifest / verify_cross_authority) to decide cross-authority trust against
+    published keys, with no central service. Public: this is published trust data, not
+    a secret, and carries no personal data. Signed with the agency's own key, short-lived
+    so anchors and attestations do not go stale."""
+    ag = query("SELECT agency_id, name, signing_public_key_hex FROM Agency WHERE agency_id = %s",
+               (agency_id,), fetch='one', primary=True)
+    if not ag:
+        return jsonify(error='no such agency'), 404
+    if not ag['signing_public_key_hex']:
+        return jsonify(error='agency is not federated (no registered signing key)'), 404
+    from datetime import datetime, timezone
+    return jsonify(_federation_manifest_body(ag, datetime.now(timezone.utc).replace(microsecond=0)))
 
 
 # --- P3.2b: epoch alignment + revocation propagation across authorities --------
@@ -5911,6 +5931,27 @@ def _timestamp_statement(body):
     return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
+def _timestamp_body(agency, agency_id, digest_hex, nonce):
+    """Build and sign one timestamp (P8.7a) binding `digest_hex` to now under the agency key.
+    Shared by the /timestamp endpoint and the long-term-validation evidence a signed document
+    carries (P8.5), where the digest is over the document statement AND its signature."""
+    from datetime import datetime, timezone
+    issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+    ts = {
+        'format': _TIMESTAMP_FORMAT,
+        'authority': {'agency_id': agency['agency_id'], 'name': agency['name']},
+        'digest_hex': digest_hex, 'digest_algorithm': 'SHA3-256', 'nonce': nonce,
+        'issued_at': issued_at, 'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_timestamp_statement(ts), agency_id=agency_id)
+    ts['algorithm'] = alg
+    ts['signature_hex'] = sig_bytes.hex()
+    ts['public_key_hex'] = pub
+    ts['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                 'timestamp minus signature_hex and public_key_hex)')
+    return ts
+
+
 @app.route('/api/v1/timestamp/<int:agency_id>', methods=['POST'])
 def api_v1_timestamp(agency_id):
     """P8.7a: a TIMESTAMP AUTHORITY. Bind an arbitrary SHA3-256 digest to an instant under
@@ -5937,21 +5978,7 @@ def api_v1_timestamp(agency_id):
                        error_description='nonce, if present, is a string of at most 128 characters'), 400
     if not security.rate_limiter.allow('tsa:%d' % agency_id, _TIMESTAMP_RATE_PER_MIN, 60):
         return jsonify(error='rate_limited'), 429
-    from datetime import datetime, timezone
-    issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-    ts = {
-        'format': _TIMESTAMP_FORMAT,
-        'authority': {'agency_id': agency['agency_id'], 'name': agency['name']},
-        'digest_hex': digest_hex, 'digest_algorithm': 'SHA3-256', 'nonce': nonce,
-        'issued_at': issued_at, 'algorithm': 'ML-DSA-65',
-    }
-    sig_bytes, alg, pub = pqc_signing.signature_over_message(_timestamp_statement(ts), agency_id=agency_id)
-    ts['algorithm'] = alg
-    ts['signature_hex'] = sig_bytes.hex()
-    ts['public_key_hex'] = pub
-    ts['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
-                                 'timestamp minus signature_hex and public_key_hex)')
-    return jsonify(ts)
+    return jsonify(_timestamp_body(agency, agency_id, digest_hex, nonce))
 
 
 # --- P8.3: the signed registry -- discovery over the Athena authority layer ---------------
@@ -5985,6 +6012,7 @@ _PROTOCOL_FORMATS = {
     'polaris-timestamp': 1,
     'polaris-registry': 1,
     'polaris-exchange-request': 1,
+    'polaris-signed-document': 1,
 }
 _REGISTRY_SERVICES = [
     {'kind': 'oauth-token', 'path': '/api/v1/oauth/token', 'auth': 'client-credentials', 'method': 'POST'},
@@ -6001,6 +6029,8 @@ _REGISTRY_SERVICES = [
     {'kind': 'transparency-receipts', 'path': '/api/v1/transparency/receipts', 'auth': 'none', 'method': 'GET'},
     {'kind': 'registry', 'path': '/api/v1/registry/{agency_id}', 'auth': 'none', 'method': 'GET'},
     {'kind': 'exchange', 'path': '/api/v1/exchange/{agency_id}', 'auth': 'requester-signature', 'method': 'POST'},
+    {'kind': 'sign', 'path': '/api/v1/sign/{agency_id}', 'auth': 'operator', 'method': 'POST'},
+    {'kind': 'sign-holder', 'path': '/api/v1/sign/{agency_id}/holder', 'auth': 'possession', 'method': 'POST'},
 ]
 
 
@@ -6249,6 +6279,130 @@ def api_v1_exchange(target_agency_id):
     if err:
         return err
     return jsonify({'receipt': receipt, 'response_body': response_body})
+
+
+# --- P8.5: DOCUMENT SIGNING with long-term validation -------------------------------------
+#
+# A portable, digest-bound signed container an independent party verifies offline, for
+# ARBITRARY documents. The signer is an agency key: either the institution itself (operator
+# path) or, on behalf of a holder who proved possession of an issued credential, the holder's
+# issuing authority (the notary path), which records the holder by credential HASH, never by
+# token. The document itself is never sent -- only its SHA3-256. At signing the container
+# gains long-term-validation evidence: this instance's timestamp over the statement AND the
+# signature (so the signature provably existed at that instant), and the signer's manifest,
+# epoch checkpoint and revocation feed at that instant, so a verifier can later confirm the
+# key was active and the credential unrevoked WHEN the signature was made -- which is what
+# keeps a signature valid after the key is rotated or retired.
+_SIGNED_DOCUMENT_FORMAT = 'polaris-signed-document/1'
+_SIGN_TEXT_MAX = 200
+
+
+def _signed_document_statement(body):
+    """Canonical bytes the signer signs. MUST match scripts/polaris-verify.py's
+    _signed_document_canonical."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'document', 'signer', 'on_behalf_of', 'purpose', 'signed_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _document_signature_material(doc):
+    """What the long-term-validation timestamp binds: the canonical statement AND the
+    signature, so the timestamp proves the SIGNATURE existed at its instant. MUST match
+    scripts/polaris-verify.py's document_signature_material."""
+    return _signed_document_statement(doc) + b'\n' + str(doc.get('signature_hex') or '').lower().encode('utf-8')
+
+
+def _sign_document(agency, agency_id, fields, on_behalf_of):
+    """Validate the digest-only fields, sign the container with the agency key, and attach
+    long-term-validation evidence from this instance. Returns (container, None) or
+    (None, error_response)."""
+    digest_hex = str(fields.get('digest_hex', '')).lower()
+    if not _is_sha3_hex(digest_hex):
+        return None, (jsonify(error='invalid_request',
+                              error_description='digest_hex must be a SHA3-256 hex digest; the document itself is never sent'), 400)
+    if str(fields.get('digest_algorithm') or 'SHA3-256').upper() != 'SHA3-256':
+        return None, (jsonify(error='invalid_request', error_description='digest_algorithm must be SHA3-256'), 400)
+    meta = {}
+    for k in ('media_type', 'name', 'purpose'):
+        val = fields.get(k)
+        if val is not None and not (isinstance(val, str) and 0 < len(val) <= _SIGN_TEXT_MAX):
+            return None, (jsonify(error='invalid_request', error_description='%s, if present, is a string of at most %d characters' % (k, _SIGN_TEXT_MAX)), 400)
+        meta[k] = val
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    doc = {
+        'format': _SIGNED_DOCUMENT_FORMAT,
+        'document': {'digest_hex': digest_hex, 'digest_algorithm': 'SHA3-256',
+                     'media_type': meta['media_type'], 'name': meta['name']},
+        'signer': {'agency_id': agency['agency_id'], 'name': agency['name']},
+        'on_behalf_of': on_behalf_of,
+        'purpose': meta['purpose'],
+        'signed_at': now.isoformat().replace('+00:00', 'Z'),
+        'algorithm': 'ML-DSA-65',
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(_signed_document_statement(doc), agency_id=agency_id)
+    doc['algorithm'] = alg
+    doc['signature_hex'] = sig_bytes.hex()
+    doc['public_key_hex'] = pub
+    doc['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
+                                  'container minus signature_hex, public_key_hex and ltv)')
+    # Long-term validation: evidence at the instant of signing, outside the signed statement.
+    material_digest = hashlib.sha3_256(_document_signature_material(doc)).hexdigest()
+    doc['ltv'] = {
+        'timestamp': _timestamp_body(agency, agency_id, material_digest, None),
+        'manifest': _federation_manifest_body(agency, now),
+        'epoch_checkpoint': _epoch_checkpoint_body(agency, now),
+        'revocation_feed': _revocation_feed_body(agency, now),
+    }
+    return doc, None
+
+
+@app.route('/api/v1/sign/<int:agency_id>', methods=['POST'])
+@security.login_required
+@security.csrf_protect
+def api_v1_sign(agency_id):
+    """P8.5: the institution signs a document under its registered key (operator path). Body:
+    {digest_hex, digest_algorithm?, media_type?, name?, purpose?}. Returns a
+    polaris-signed-document/1 with long-term-validation evidence attached. The document itself
+    is never sent."""
+    agency, err = _federated_agency(agency_id)
+    if err:
+        return err
+    doc, err = _sign_document(agency, agency_id, request.get_json(silent=True) or {}, None)
+    return err if err else jsonify(doc)
+
+
+@app.route('/api/v1/sign/<int:agency_id>/holder', methods=['POST'])
+def api_v1_sign_holder(agency_id):
+    """P8.5c: HOLDER-AUTHORIZED signing (the notary path), possession-authenticated, no session.
+    The holder presents its issued credential (token_value + the genuine issued signature, as
+    for a status assertion) plus the document digest; if the credential was issued by THIS
+    authority and is ACTIVE, the authority signs the container on the holder's behalf,
+    recording the holder by credential HASH (SHA3-256 of the token value, the same leaf the
+    revocation feed uses) -- never the token. A verifier later confirms, from the embedded
+    feed, that the credential was unrevoked at the instant of signing. No personal data; a
+    wrong or unknown credential gets the uniform 'not verifiable'."""
+    agency, err = _federated_agency(agency_id)
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    token_value, presented = body.get('token_value'), body.get('signature_hex')
+    if not isinstance(token_value, str) or not isinstance(presented, str):
+        return jsonify(error='invalid_request', error_description='token_value and signature_hex (the presented credential) are required'), 400
+    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
+    if not security.rate_limiter.allow('sign:%s' % _tk, 10, 60):
+        return jsonify(error='rate_limited'), 429
+    row = _possession_authenticated(token_value, presented)
+    if row is None:
+        return jsonify(error='not_verifiable',
+                       error_description='present the genuine issued credential (token_value + signature_hex)'), 400
+    if int(row['issuing_agency_id']) != int(agency_id):
+        return jsonify(error='forbidden', error_description='this authority did not issue the presented credential'), 403
+    if row['status'] != 'ACTIVE':
+        return jsonify(error='forbidden', error_description='the presented credential is not ACTIVE'), 403
+    on_behalf_of = {'credential_hash': hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()}
+    doc, err = _sign_document(agency, agency_id, body, on_behalf_of)
+    return err if err else jsonify(doc)
 
 
 # --- P3.3: the transparency log over the audit-anchor roots --------------------

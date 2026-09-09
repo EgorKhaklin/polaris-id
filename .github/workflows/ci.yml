@@ -1621,6 +1621,12 @@ jobs:
       - name: Registry — signed discovery
         run: python scripts/polaris-registry-drill.py
 
+      # v9.325 (roadmap P8.5) — document signing with long-term validation: a digest-bound
+      # container verified offline; validity decided at the instant the embedded evidence fixes,
+      # so it survives key retirement; re-signed, retired-at-instant, revoked, tampered all fail.
+      - name: Document signing — long-term validation
+        run: python scripts/polaris-document-signing-drill.py
+
       # v9.301 (roadmap P3.3) — the transparency log and its monitor, under attack. An
       # RFC-6962-style append-only log over the AnchorBatch roots publishes a signed tree
       # head and consistency proofs; the detached verifier accepts an append-only extension

@@ -556,6 +556,53 @@ def main():
             n_nonce = cur.fetchone()[0]
         checks.append(("B's replay register holds exactly the consumed nonces (2 delivered exchanges)", n_nonce, 2))
 
+        # 6h. HOLDER-AUTHORIZED DOCUMENT SIGNING (P8.5c) over HTTP: give one of B's issued
+        #     credentials a REAL ML-DSA-65 signature (a new TokenSignature row under key_b), have
+        #     the holder prove possession and sign a document via B; verify the container offline
+        #     with the evidence B embedded; then do the same through the WALLET's `sign` command.
+        import psycopg2
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("SELECT token_id, token_value FROM IdentityToken WHERE issuing_agency_id=1 AND status='ACTIVE' ORDER BY token_id LIMIT 1")
+            b_tok_id, b_tok_value = cur.fetchone()
+            os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_b
+            b_sig, _alg_b, b_pk = pqc_signing.signature_with_key_for_token(b_tok_value)
+            cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, signing_public_key_hex) VALUES (%s, 1, %s, %s)",
+                        (b_tok_id, psycopg2.Binary(b_sig), b_pk))
+            cb.commit()
+        the_doc = b"the holder's document; it never leaves the holder"
+        st20, sdoc = _http_post_json(base_b + "/api/v1/sign/1/holder",
+                                     {"token_value": b_tok_value, "signature_hex": b_sig.hex(),
+                                      "digest_hex": hashlib.sha3_256(the_doc).hexdigest(), "name": "report.txt", "purpose": "drill"})
+        checks.append(("a holder who proves possession of B's credential gets a document signed by B (200)", st20, 200))
+        sv = V.verify_signed_document(sdoc, trusted_anchors=[pub_b], document_bytes=the_doc) if st20 == 200 else {"ltv": {}}
+        checks.append(("the container is B-signed, trusted, binds the document, and records the holder by credential HASH",
+                       bool(sv.get("document_authentic") and sv.get("signer_trusted") and sv.get("binds")
+                            and (sdoc.get("on_behalf_of") or {}).get("credential_hash") == V.revocation_leaf(b_tok_value)), True))
+        checks.append(("it is VALID LONG TERM from B's embedded evidence (timestamp over statement+signature, manifest, feed at the instant)",
+                       bool(sv.get("valid_long_term")), True))
+        checks.append(("the token value appears nowhere in the container", b_tok_value not in json.dumps(sdoc), True))
+        st21, _ = _http_post_json(base_b + "/api/v1/sign/1/holder",
+                                  {"token_value": b_tok_value, "signature_hex": "00" * 64, "digest_hex": "ab" * 32})
+        checks.append(("a wrong presented signature is uniformly 'not verifiable' (400)", st21, 400))
+        wdir = os.path.join(tmp, "wallet"); os.makedirs(wdir)
+        pack_path = os.path.join(tmp, "b-pack.json")
+        with open(pack_path, "w") as fh:
+            json.dump({"format": "polaris-authenticity-pack/1", "token_value": b_tok_value, "algorithm": "ML-DSA-65",
+                       "signature_hex": b_sig.hex(), "public_key_hex": b_pk}, fh)
+        doc_path = os.path.join(tmp, "report.txt")
+        with open(doc_path, "wb") as fh:
+            fh.write(the_doc)
+        wallet = [sys.executable, os.path.join(_ROOT, "scripts", "polaris-wallet.py"), "--wallet", wdir]
+        enroll = subprocess.run(wallet + ["enroll", "--pack", pack_path], capture_output=True, text=True)
+        out_path = os.path.join(tmp, "signed.json")
+        signed = subprocess.run(wallet + ["sign", "--document", doc_path, "--instance", base_b, "--agency", "1", "--out", out_path],
+                                capture_output=True, text=True)
+        wdoc = json.load(open(out_path)) if signed.returncode == 0 and os.path.isfile(out_path) else {}
+        checks.append(("the WALLET enrolls the credential and signs the document through B (exit 0)",
+                       (enroll.returncode, signed.returncode), (0, 0)))
+        checks.append(("the wallet-signed container verifies offline and is valid long term",
+                       bool(V.verify_signed_document(wdoc, trusted_anchors=[pub_b], document_bytes=the_doc).get("valid_long_term")), True))
+
         # 7. attestation revocation on B: re-fetched manifest no longer accepts A.
         with _conn(B_DB) as cb, cb.cursor() as cur:
             cur.execute("UPDATE AgencyTrustAttestation SET revocation_date=CURRENT_DATE, "
