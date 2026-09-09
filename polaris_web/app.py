@@ -5692,7 +5692,7 @@ def api_v1_federation_status_bundle(agency_id):
 
 # --- P8.2: the exchange receipt (evidence without retention) -------------------
 #
-# The gateway's core primitive and the anti-surveillance inversion of X-Road's message log.
+# The gateway's core primitive and the anti-surveillance inversion of an evidentiary message log.
 # A responder mints signed evidence that it served an authenticated, authorized request from
 # another party -- committing to the SHA3-256 of the request and of the response, NEVER the
 # bodies -- so a third party can later prove the exchange occurred and was authorized with no

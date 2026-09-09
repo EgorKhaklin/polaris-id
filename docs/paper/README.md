@@ -17,7 +17,7 @@ metadata, and provenance is in [NOTICE](../../NOTICE).
 ## Editing it
 
 ```bash
-cd docs/paper
+cd docs/paper                            # the cover logo is ../../site/polaris_logo_clean.png (single source)
 pdflatex polaris_project_report.tex     # twice, if cross-references changed
 shasum -a 256 *.tex > rendered-from.txt
 ```

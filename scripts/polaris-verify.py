@@ -1133,7 +1133,7 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
 # ---------------------------------------------------------------------------
 # P8.2: the exchange receipt -- evidence of an authorized exchange, without the payload.
 #
-# The gateway's core primitive, and the anti-surveillance inversion of X-Road's message
+# The gateway's core primitive, and the anti-surveillance inversion of evidentiary message
 # logging. When one institution serves an authenticated, authorized request from another, the
 # responder signs a RECEIPT that commits to the SHA3-256 of the request and of the response --
 # never the bodies -- alongside who requested, who responded, in what context, and which

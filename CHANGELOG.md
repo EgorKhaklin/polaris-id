@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.319 — 2026-09-09 (P8 on its own terms: a positioning invariant and the build plan)
+
+Two things, both about how Polaris describes itself and what it builds next.
+
+- **A positioning invariant.** The tree now describes the CLASS of any system Polaris relates
+  itself to, never a named country or its digital-state products: "a federated national eID",
+  "an exchange-fabric-class system", "an evidentiary message log". The P8 arc was informed by a
+  gap analysis against a mature national digital-identity ecosystem, and Polaris must stand on
+  its own terms rather than read as a derivative -- the same discipline as the rule against
+  naming external models. Every prior mention (the roadmap, a design record, three code
+  comments, the README comparison row, the paper's prior-art section, and this changelog) is
+  restated as the class. `check_no_named_reference_systems` (#173) scans every text file in the
+  tree and fails CI on the first named reference, with the short acronyms matched as whole words
+  and the spellings word-bounded so ordinary words ("sixteen", "criteria") cannot trip it.
+  Residue in git history is fine; the working tree is clean.
+- **The P8 build plan, fixed.** ROADMAP.md's P8 section now carries the order and its
+  dependencies: P8.2b/c (service-to-service auth and a transparency anchor for the receipt) ->
+  P8.7a (a timestamp authority, which signing needs and which gives every receipt independent
+  time evidence) -> P8.3 (the signed registry the gateway routes through) -> P8.2d (the mediating
+  gateway, the flagship) -> P8.5 (document signing) -> P8.4 (the auth broker's protocol core) ->
+  P8.6 (the wallet PROTOCOL surface) -> P8.7b (trust-service lifecycle: trust list, compromise
+  recovery, algorithm migration) -> P8.8 (versioning and cross-version compatibility). Two scope
+  decisions are recorded: the wallet ships as a protocol the detached verifier checks, not as
+  native clients; the operator control-plane console is wrap that stays behind the engine. P8.7
+  and P8.8 are new rows; P8.6 is rescoped. 173 checks.
+
 ## v9.318 — 2026-09-09 (The local gate type-checks the TypeScript SDK)
 
 v9.316 shipped with the `sdk-typescript` CI job red: a type-only regression the local pre-ship
@@ -41,7 +67,7 @@ surveillance system would keep.
   that the requester was authorized (a trusted manifest attests its key in-context, the same
   non-transitive trust as a foreign credential) -- with no access to the payload. A party that
   holds a body may confirm the commitment binds (`request_hash == SHA3-256(request)`); a party
-  that does not still gets the proof. This is the anti-surveillance inversion of X-Road's
+  that does not still gets the proof. This is the anti-surveillance inversion of an evidentiary
   message log.
 - **Pinned and proven.** The receipt is in the normative wire spec (section 3.8) and the
   canonical-equivalence oracle (the seventh app-signed type, app and verifier byte-identical);
@@ -194,9 +220,9 @@ what to build, and it still listed shipped work as missing.
   and the fuzzer-hardened detached verifier all move from "Do not have" to "Have". The header
   and the invariant-count stamp are restamped current.
 - **Phase P8 added: the exchange fabric, the Polaris way.** The largest code-level gap between
-  Polaris and an X-Road/eID-class ecosystem is not more identity crypto; it is the general
+  Polaris and a mature national digital-identity ecosystem is not more identity crypto; it is the general
   service-to-service exchange layer around the identity core. P8 records it, built as the
-  anti-surveillance INVERSION of X-Road: an exchange is provable to a third party WITHOUT
+  anti-surveillance INVERSION of an evidentiary message log: an exchange is provable to a third party WITHOUT
   retaining the payload (a signed receipt plus a transparency commitment, not a logged message
   body). Six items ordered by leverage: P8.1 a normative wire spec plus conformance for
   independent, non-Polaris implementations (the keystone, and exactly the standing P3 exit
@@ -6079,7 +6105,7 @@ educational, notional-data framing in the header, not buried at the bottom),
 the ten guarantees as a table (the constitution was previously never shown as
 C1-C10 on the README at all), the six adversarial hard parts, the architecture,
 the cryptography, what CI actually proves, how to run it, where it sits against
-Real ID / mDL / Aadhaar / e-Estonia / DIDs, a by-audience documentation index,
+Real ID / mDL / Aadhaar / a federated national eID / DIDs, a by-audience documentation index,
 and an honest scope section.
 
 **Removed as insider-facing or stale:** the double nav of internal links above

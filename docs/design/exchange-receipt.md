@@ -10,8 +10,8 @@ verified offline by `scripts/polaris-verify.py` (`verify_exchange_receipt`).
 
 ## Why not a message log
 
-An X-Road-class fabric mediates requests between institutions and, for evidentiary
-value, can log the exchanged messages: a security server signs and timestamps the
+An exchange-fabric-class system mediates requests between institutions and, for evidentiary
+value, can log the exchanged messages: a mediating node signs and timestamps the
 traffic so a receipt can later be proven to a third party. That evidence is real,
 and so is its cost: a store of who asked what about whom, which is exactly the
 population-scale record Polaris's vocation forbids.
@@ -85,6 +85,6 @@ produce byte-identical signed bytes, pinned by the canonical-equivalence oracle.
 - **Anchoring.** A receipt's hash can be committed to the transparency log so the set
   of receipts is itself append-only and monitorable; wiring that is a follow-on.
 - **The fabric.** This is the evidence primitive, not the mediation layer. A gateway
-  that routes and mediates requests between institutions (the X-Road security-server
-  analogue), producing a receipt per exchange, is the larger P8.2 build; the receipt
+  that routes and mediates requests between institutions (the mediating gateway
+  node), producing a receipt per exchange, is the larger P8.2 build; the receipt
   is the part that makes it anti-surveillance by construction.

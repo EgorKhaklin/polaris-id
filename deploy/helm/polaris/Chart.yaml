@@ -7,7 +7,7 @@ description: >-
   Docker Compose remains the single-node path.
 type: application
 version: 0.1.0
-appVersion: "9.318"
+appVersion: "9.319"
 kubeVersion: ">=1.29.0-0"
 icon: https://egorkhaklin.github.io/polaris-id/polaris_logo_clean.png
 home: https://egorkhaklin.github.io/polaris-id/

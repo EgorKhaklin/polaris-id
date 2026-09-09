@@ -2,7 +2,7 @@
 """
 polaris-exchange-receipt-drill.py -- the exchange receipt, run (P8.2).
 
-The gateway's core primitive and the anti-surveillance inversion of X-Road's message log.
+The gateway's core primitive and the anti-surveillance inversion of an evidentiary message log.
 A responder signs a RECEIPT committing to the SHA3-256 of a request and a response -- never
 the bodies -- so a third party can prove, from the receipt alone, that an authorized exchange
 occurred, without ever seeing the payload. This drill stands up a requester, a responder, and

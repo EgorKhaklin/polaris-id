@@ -6462,6 +6462,33 @@ def test_wire_spec_check_discriminates(tmp_path):
     assert checks.check_wire_spec_matches_code(tmp_path)[0].level == "FAIL", "must FAIL if not linked from the index"
 
 
+def test_no_named_reference_systems_check_discriminates(tmp_path):
+    (tmp_path / "docs").mkdir()
+    doc = tmp_path / "docs" / "a.md"
+    doc.write_text("Polaris describes the class: a mature national digital-identity ecosystem.\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "OK", "must PASS on a clean tree"
+    doc.write_text("Polaris is the anti-surveillance inversion of X-Road.\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "FAIL", "must FAIL on a named product"
+    doc.write_text("clean\n")
+    (tmp_path / "app.py").write_text("# modelled on Estonia's card\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a named country in a code comment"
+    (tmp_path / "app.py").write_text("# an acronym: the TARA broker\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a whole-word product acronym"
+    (tmp_path / "app.py").write_text("# tara is an ordinary lowercase word; sixteen findings at the crossroad; criteria too\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "OK", \
+        "lowercase ordinary words and embedded letters must NOT trip the acronym patterns"
+    (tmp_path / "polaris_checks").mkdir()
+    (tmp_path / "polaris_checks" / "checks.py").write_text("_PATTERNS = ('estonia', 'x-road')\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "OK", \
+        "the pattern list in the check module itself is exempt"
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "vendor.md").write_text("X-Road\n")
+    assert checks.check_no_named_reference_systems(tmp_path)[0].level == "OK", \
+        "vendored and build directories are skipped"
+
+
 def test_preflight_ts_typecheck_discriminates(tmp_path):
     (tmp_path / "scripts").mkdir()
     good = (

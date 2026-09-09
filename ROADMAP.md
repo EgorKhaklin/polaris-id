@@ -54,7 +54,7 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 172 invariant
+release; CVE gates on dependencies and images; a coverage floor; 173 invariant
 checks (v9.317) each with a detection test; eighteen operator runbooks and ledgers; and the bound on
 every claim in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
@@ -81,7 +81,7 @@ proven against a software token); certified cryptography (liboqs is not
 FIPS-validated); published registry images and image signing (deferred from P0.6
 until images are published); accessibility conformance; any external audit, pen
 test, or pilot; **the digital-society fabric around the identity core** -- a
-general secure-exchange gateway (an X-Road-class but evidence-without-retention
+general secure-exchange gateway (an exchange-fabric-class but evidence-without-retention
 service-to-service fabric), a service-and-authority registry, an auth/SSO broker,
 general document signing, and a normative wire specification that lets software
 which is not Polaris interoperate as a first-class peer (this is **Phase P8**
@@ -116,9 +116,9 @@ Phase E is COMPLETE (v9.280): all of PE.1-PE.8 shipped. The engine was built bef
 more deployment machinery was wrapped around it; the numbered phases below resume as
 the active work. P4 runs in parallel from P1 onward.
 P8 is a SOFTWARE arc, buildable now: it extends P3's federation and relying-party work
-into the "digital society" layer (the X-Road-class piece Polaris lacks), and it is NOT
+into the "digital society" layer (the exchange-fabric piece Polaris lacks), and it is NOT
 gated on the P4-P7 deployment or institutional phases. Its defining constraint is the
-anti-surveillance inversion of X-Road: evidence that an exchange occurred and was
+anti-surveillance inversion of an evidentiary message log: evidence that an exchange occurred and was
 authorized, without retaining the underlying personal data.
 P5-P7 are gated on external actors; the buildable machinery for each is listed so
 no external gate is ever waiting on us.
@@ -378,36 +378,49 @@ of the reference implementation.
 ## P8 - The exchange fabric, the Polaris way [SOFTWARE ARC, BUILDABLE NOW]
 
 Objective: the "digital society" layer around the identity core, which is the
-X-Road-class piece Polaris lacks. This is not more identity crypto; it is a general
+exchange-fabric piece Polaris lacks. This is not more identity crypto; it is a general
 authenticated, signed, evidenced exchange between ARBITRARY institutions, built as the
-anti-surveillance INVERSION of X-Road: an exchange is provable to a third party WITHOUT
+anti-surveillance INVERSION of an evidentiary message log: an exchange is provable to a third party WITHOUT
 retaining the underlying personal data (a signed cryptographic receipt plus a
 transparency commitment, not a logged message body). Every primitive already exists (the
 detached verifier, the transparency log with witnesses, status bundles, ML-DSA signing,
 ZK inclusion); P8 composes them into the fabric. It is buildable now, extends P3, and is
 not gated on the P4-P7 deployment or institutional phases.
 
-Order by leverage: P8.1 (the normative spec + conformance) is the keystone and comes
-first. It is what turns everything already built into a substrate that independent
-implementations can target, and it is exactly the P3 exit gate ("an external team
-integrates docs-only"). The gateway (P8.2) is the flagship differentiator; the rest
-follow the specs they implement, and the polished end-user clients (P8.6) follow the
-protocol rather than leading it, so the wrap never runs ahead of the engine.
+Order by leverage and dependency (the build plan, fixed at v9.319). P8.1 (the normative
+spec + conformance) came first and is done: it is what makes everything already built a
+substrate that independent implementations can target, and it is exactly the P3 exit gate
+("an external team integrates docs-only"). Then, in order: P8.2b/c (the receipt gains
+service-to-service auth and a transparency anchor) -> P8.7a (a timestamp authority, which
+signing needs and which gives every receipt independent time evidence) -> P8.3 (the signed
+registry the gateway routes through) -> P8.2d (the mediating gateway, the flagship) -> P8.5
+(document signing, on timestamps) -> P8.4 (the auth broker's protocol core) -> P8.6 (the
+wallet PROTOCOL surface) -> P8.7b (trust-service lifecycle: trust list, compromise recovery,
+algorithm migration) -> P8.8 (versioning and cross-version compatibility). Two scope
+decisions are deliberate: the wallet ships as a protocol the detached verifier checks, not
+as native mobile or desktop clients (a product mountain, not a reference-implementation
+concern), and a unified operator control-plane console is wrap that stays behind the
+engine. Every new signed artifact enters through the same machinery: the
+canonical-equivalence oracle, the wire spec, conformance vectors in both SDKs, the
+metamorphic fuzzer, a real-ML-DSA drill, and a check with a detection test.
 
 | ID | Item | Size | Risk | Blocked by | Definition of done |
 |---|---|---|---|---|---|
 | [x] P8.1 | Normative wire specification + conformance for independent implementations | L | med | P3 | DONE (v9.313 spec, v9.314-v9.316 conformance). An implementation importing NO Polaris code is now certified against the FULL protocol -- all seven signed artifacts AND the federation trust decision -- in both Python and TypeScript. The normative SPEC shipped (v9.313): `docs/reference/WIRE-SPEC.md` (RFC-2119) specifies the signature envelope + the canonical-signing discipline, all seven app-signed artifacts (each with its exact signed-field list + canonical construction + verification MUSTs), the authenticity pack's special construction, the federation trust decision (non-transitive, in-context), the three transparency-infra artifacts, and the `format /N` versioning + algorithm-agility rule. `check_wire_spec_matches_code` (#170) fails CI when a documented format string or signed-field list diverges from the signer -- and closes the canonical-pinning gap the oracle left for the bundle, the pack, and the transparency-infra types (also un-vacuum-ing `_signed_statement_keys`, whose multi-line regex silently returned nothing so the oracle's static key-list pin was a no-op). P8.1b IN PROGRESS (v9.314 status assertion; v9.315 the rest): the conformance harness is typed (a case names its `artifact`; the runner checks every constrained key), and the AUTHENTICITY of ALL SEVEN app-signed artifacts is now certified end to end in BOTH SDKs -- the pack, the status assertion, and (through one generic `verify_signed_artifact` / `verifySignedArtifact`) the epoch checkpoint, revocation feed, federation manifest, status bundle, and transparency STH, each with signature + freshness + commitment/self-consistency. Twelve published vectors under `conformance/vectors/`; both SDKs pass all twenty cases, incl. an independent TS verifier accepting Python-signed NESTED-object artifacts (the recursive canonical JSON matches byte-for-byte). v9.316 added the composite federation TRUST DECISION (`artifact: cross-authority`): pack + trusted manifests + trusted anchors + context (+ optional revocation feed) -> accept/reject, via `verify_cross_authority` / `verifyCrossAuthority` in both SDKs; four cases (accept / untrusted issuer / wrong context / revoked) and both SDKs pass all TWENTY-FOUR cases. `check_conformance_suite` + `check_typescript_sdk` require every artifact type + the trust decision. P8.1 COMPLETE: the docs-only integration path the P3 exit gate's second clause needs now exists (spec + full conformance in two languages); an ACTUAL external-team integration remains `[EXT]`. Next in P8: P8.2 (the evidence-without-retention gateway). |
-| [>] P8.2 | Polaris Gateway: an evidence-without-retention service-to-service fabric | XL | high | P8.1 | IN PROGRESS. The EVIDENCE PRIMITIVE shipped (v9.317): the exchange receipt (`polaris-exchange-receipt/1` at `POST /api/v1/exchange-receipt/<id>`) -- a responder signs a commitment to the SHA3-256 of the request and response (never the bodies), the parties, the context, and which attestation authorized the requester. The mint endpoint accepts ONLY hashes (the retention rule at the door). `scripts/polaris-verify.py` `verify_exchange_receipt` proves offline, from the receipt alone, that the exchange occurred and the requester was authorized (a trusted manifest attests its key in-context), WITHOUT the payload; a party holding a body confirms the commitment binds. In the wire spec, the canonical-equivalence oracle, and a real-ML-DSA drill (`scripts/polaris-exchange-receipt-drill.py`); `check_exchange_receipt`. This is the anti-surveillance inversion of X-Road's message log. REMAINING: transparency-anchoring the receipt set; service-to-service (OAuth) mint auth (P8.2b); and the mediation/routing layer that produces a receipt per exchange (the security-server analogue). Definition of done: arbitrary institutions exchange authenticated signed requests mediated by Polaris trust, each yielding a receipt an independent party verifies offline, WITHOUT retaining the payload. |
+| [>] P8.2 | Polaris Gateway: an evidence-without-retention service-to-service fabric | XL | high | P8.1 | IN PROGRESS. The EVIDENCE PRIMITIVE shipped (v9.317): the exchange receipt (`polaris-exchange-receipt/1` at `POST /api/v1/exchange-receipt/<id>`) -- a responder signs a commitment to the SHA3-256 of the request and response (never the bodies), the parties, the context, and which attestation authorized the requester. The mint endpoint accepts ONLY hashes (the retention rule at the door). `scripts/polaris-verify.py` `verify_exchange_receipt` proves offline, from the receipt alone, that the exchange occurred and the requester was authorized (a trusted manifest attests its key in-context), WITHOUT the payload; a party holding a body confirms the commitment binds. In the wire spec, the canonical-equivalence oracle, and a real-ML-DSA drill (`scripts/polaris-exchange-receipt-drill.py`); `check_exchange_receipt`. This is the anti-surveillance inversion of an evidentiary message log. REMAINING, in build order: P8.2b service-to-service mint auth (a relying-party bearer mints, no operator session); P8.2c transparency-anchoring the receipt set (append-only and monitorable, inclusion proofs verified offline); P8.2d the mediation layer -- signed exchange envelopes and a mediating gateway that authenticates the calling institution, resolves the target through the P8.3 registry, authorizes through the trust graph, forwards, mints a receipt and anchors it, and never stores a body, proven across two independent instances. Definition of done: arbitrary institutions exchange authenticated signed requests mediated by Polaris trust, each yielding a receipt an independent party verifies offline, WITHOUT retaining the payload. |
 | [ ] P8.3 | Service-and-authority registry | L | med | P8.1 | A machine-readable, signed registry of authorities, relying parties, endpoints, protocol versions, capabilities, trust roots and schemas, powered by Athena, discoverable and independently verifiable |
-| [ ] P8.4 | Auth/SSO broker across credential types | L | med | P3.4 | The relying-party API becomes an OIDC/OAuth authentication broker with sessions, step-up auth, multiple credential types and explicit assurance levels, with no credential-type lock-in |
-| [ ] P8.5 | Polaris Sign: general document signing | L | med | P8.1 | Detached signing, timestamping, long-term validation and portable signed containers for ARBITRARY documents (not only identity artifacts), verifiable by an independent implementation from the spec |
-| [ ] P8.6 | Wallet client platform | XL | med | P8.1, PE.7 | Cross-platform holder software (mobile, desktop, browser/WebAuthn bridge, card/NFC, QR and offline presentation, recovery, document signing) built to the spec; the clients follow the protocol, never lead it |
+| [ ] P8.4 | Auth/SSO broker across credential types | L | med | P3.4 | The relying-party API becomes an OIDC/OAuth authentication broker with sessions, step-up auth, multiple credential types and explicit assurance levels, with no credential-type lock-in. The protocol core (an authorization-code flow, a signed credential-bound ID token carrying only the disclosed claims plus an assurance level, step-up by fresh presentation or ZK proof) is the engine; the session/SSO product surface is wrap and follows it |
+| [ ] P8.5 | Polaris Sign: general document signing | L | med | P8.1 | Detached signing, timestamping, long-term validation and portable signed containers for ARBITRARY documents (not only identity artifacts), verifiable by an independent implementation from the spec. A Polaris-native container (no foreign container formats); timestamps from P8.7a; long-term validation = the trust chain plus epoch and revocation evidence embedded at signing time, drilled across key rotation and retirement |
+| [ ] P8.6 | Wallet protocol surface (clients follow it) | L | med | P8.1, PE.7, P8.5 | The holder-side PROTOCOL: a compact signed presentation encoding for QR/NFC and offline transfer, a browser-bridge (WebAuthn-bound presentation) specification, recovery, and wallet-initiated document signing, every one verified by the detached verifier from the spec. Native mobile and desktop clients are OUT of scope for a reference implementation and are recorded as such; a client that exists follows the protocol, never leads it |
+| [ ] P8.7 | Trust-service lifecycle as one subsystem | L | med | P3.2b | (a) A signed timestamp authority (`polaris-timestamp/1`) binding any digest to a time, verified offline; (b) a signed, versioned trust list of authority roots with status (active / retired / compromised), the root's status governing every downstream decision; a compromise-recovery drill under real ML-DSA (a root is declared compromised -> the trust list, revocation feed and epoch checkpoint update -> verifiers reject artifacts under the old root after the compromise time and accept re-issued ones -> monitors and witnesses see it); algorithm-migration compatibility proven by vectors signed under two algorithms verifying in both SDKs |
+| [ ] P8.8 | Protocol versioning, negotiation and cross-version compatibility | M | low | P8.3 | Capability and version advertisement in the registry; a normative negotiation rule (reject an unknown major, accept a higher minor, never emit an unadvertised version); a compatibility suite run in CI that verifies the frozen v1 vectors under the current SDKs and current vectors under a pinned older verifier, old and new in both directions |
 
 Exit gate: a non-Polaris implementation interoperates from P8.1 alone; an institutional
 exchange over P8.2 is provable to a third party with the payload never retained. This
-phase is where Polaris's architecture reaches the same broad class as an X-Road/eID
-ecosystem while keeping a stronger privacy and post-quantum posture; it deliberately does
-not reproduce X-Road's message-body logging, which the vocation forbids.
+phase is where Polaris's architecture reaches the same broad class as a mature national
+digital-identity and exchange ecosystem while keeping a stronger privacy and post-quantum
+posture; it deliberately does not reproduce an exchange fabric's message-body logging,
+which the vocation forbids.
 
 ---
 

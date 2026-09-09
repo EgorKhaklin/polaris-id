@@ -7496,6 +7496,53 @@ def check_cross_authority_zk(root: pathlib.Path) -> list[Finding]:
                "fixture and red on any wrong decision")
 
 
+# Positioning rule (VANTA, 2026-09-09): the tree describes the CLASS of a system it relates
+# to, never a named country or its digital-state products. The P8 exchange-fabric arc was
+# informed by a gap analysis against a mature national digital-identity ecosystem; Polaris
+# must stand on its own terms rather than read as a derivative. Same discipline as the
+# no-external-model-names rule. Residue in git history is fine; the working tree is clean.
+_NAMED_REFERENCE_SYSTEMS = (
+    ("i", r"estonia"), ("i", r"\bx-?road\b"), ("i", r"\bx-?tee\b"),
+    ("i", r"digidoc"), ("i", r"govsso"), ("i", r"e-residency"), ("i", r"mobile-id"),
+    ("i", r"smart-id"), ("i", r"web[ -]eid"),
+    ("s", r"\bTARA\b"), ("s", r"\bSiVa\b"), ("s", r"\bRIA\b"),   # short acronyms: exact case, whole word
+)
+_NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", ".css", ".yml", ".yaml",
+                   ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
+_NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
+_NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_no_named_reference_systems(root: pathlib.Path) -> list[Finding]:
+    """The tree names the CLASS of a system, never a specific country or product.
+
+    Polaris relates itself to prior systems by their properties (a federated national
+    eID, an exchange-fabric-class system, an evidentiary message log), not by name, so
+    the project stands on its own terms rather than reading as a derivative. Scans every
+    text file in the tree (skipping vendored and build directories and the two check
+    files that carry the pattern list) and fails on the first named reference."""
+    pats = [re.compile(x, re.I) if mode == "i" else re.compile(x) for mode, x in _NAMED_REFERENCE_SYSTEMS]
+    for f in sorted(root.rglob("*")):
+        if not f.is_file() or f.suffix.lower() not in _NAMED_REF_EXTS:
+            continue
+        parts = f.relative_to(root).parts
+        rel = "/".join(parts)
+        if any(d in _NAMED_REF_SKIP_DIRS for d in parts) or rel in _NAMED_REF_EXEMPT:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            for pat in pats:
+                if pat.search(line):
+                    return _fail("no_named_reference_systems",
+                                 f"{rel}:{i} names a reference system (pattern {pat.pattern!r}); describe the "
+                                 "class, not the country or product")
+    return _ok("no_named_reference_systems",
+               "no named reference system (country or product) appears in the tree; the class is described instead")
+
+
 def check_preflight_typechecks_ts_sdk(root: pathlib.Path) -> list[Finding]:
     """The local pre-ship gate type-checks the TypeScript SDK.
 
@@ -8030,6 +8077,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_no_named_reference_systems,
     check_preflight_typechecks_ts_sdk,
     check_exchange_receipt,
     check_wire_spec_matches_code,
