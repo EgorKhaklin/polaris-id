@@ -7529,6 +7529,72 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_protocol_versioning(root: pathlib.Path) -> list[Finding]:
+    """P8.8b (v9.330): protocol versioning, negotiation and cross-version compatibility. Every
+    format's major lives in its format string and its minor is advertised by the registry; a
+    minor may only add what a verifier ignores. The interactive routes refuse an unadvertised
+    major as unsupported_format_version (listing the supported versions) rather than guessing,
+    and the detached verifier decides, from a registry, what an instance speaks. Version 1 is
+    FROZEN (cases, vectors, and a pinned older verifier) under SHA256SUMS this check recomputes,
+    and the compatibility suite proves both directions in CI: the current verifiers hold every
+    frozen case and the pinned older verifier never accepts what the current suite rejects."""
+    app = _read(root, "polaris_web/app.py")
+    for sym in ("_PROTOCOL_MINORS", "def _protocol_versions", "'versions': _protocol_versions()", "def _format_check",
+                "unsupported_format_version", "advertised_in="):
+        if sym not in app:
+            return _fail("protocol_versioning", "polaris_web/app.py must advertise major.minor and negotiate formats (%s missing)" % sym)
+    if app.count("_format_check(") < 3 or re.search(r"\.get\('format'\)\s*!=\s*_[A-Z_]+_FORMAT", app):
+        return _fail("protocol_versioning", "every interactive route must negotiate its format through _format_check, not an ad-hoc comparison")
+    v = _read(root, "scripts/polaris-verify.py")
+    if "_VERIFIER_VERSION" not in v or "def registry_speaks" not in v:
+        return _fail("protocol_versioning", "scripts/polaris-verify.py must self-identify its release and decide what a registry speaks")
+    frozen = root / "conformance" / "frozen" / "v1"
+    sums = _read(root, "conformance/frozen/v1/SHA256SUMS")
+    if not sums or not (frozen / "FREEZE.md").is_file() or not (frozen / "cases.json").is_file():
+        return _fail("protocol_versioning", "conformance/frozen/v1 must hold the frozen version-1 set with SHA256SUMS and FREEZE.md")
+    listed = set()
+    for line in sums.splitlines():
+        if not line.strip():
+            continue
+        digest, rel = line.split("  ", 1)
+        listed.add(rel)
+        f = frozen / rel
+        if not f.is_file() or hashlib.sha256(f.read_bytes()).hexdigest() != digest:
+            return _fail("protocol_versioning", "the frozen version-1 set changed: %s does not match SHA256SUMS (a protocol change is a new major with its own frozen set)" % rel)
+    for f in frozen.rglob("*"):
+        if f.is_file() and f.name != "SHA256SUMS" and "__pycache__" not in f.parts and f.relative_to(frozen).as_posix() not in listed:
+            return _fail("protocol_versioning", "unpinned file in the frozen set: %s" % f.relative_to(frozen).as_posix())
+    if not any(rel.startswith("verifiers/") for rel in listed):
+        return _fail("protocol_versioning", "the frozen set must vendor a pinned older detached verifier")
+    if '"since"' not in _read(root, "conformance/frozen/v1/cases.json"):
+        return _fail("protocol_versioning", "the frozen cases must carry `since`")
+    cases = _read(root, "conformance/cases.json")
+    try:
+        parsed = json.loads(cases)["cases"]
+    except Exception:
+        parsed = []
+    if not parsed or any("since" not in c for c in parsed):
+        return _fail("protocol_versioning", "every current conformance case must carry `since` (the release that introduced it)")
+    suite = _read(root, "scripts/polaris-compat-suite.py")
+    for sym in ("predated", "fail-closed", "SHA256SUMS", "def decide"):
+        if sym not in suite:
+            return _fail("protocol_versioning", "scripts/polaris-compat-suite.py must prove both directions under the cross-version rule (%s missing)" % sym)
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-compat-suite.py" not in ci:
+        return _fail("protocol_versioning", "the compatibility suite must run in CI")
+    spec = _read(root, "docs/reference/WIRE-SPEC.md")
+    for sym in ("unsupported_format_version", "MUST NOT emit", "major.minor"):
+        if sym not in spec:
+            return _fail("protocol_versioning", "the wire spec must carry the versioning and negotiation rule (%s missing)" % sym)
+    if not _read(root, "docs/design/protocol-versioning.md"):
+        return _fail("protocol_versioning", "docs/design/protocol-versioning.md must record the design")
+    return _ok("protocol_versioning",
+               "protocol versioning is explicit: majors in the format string, minors advertised by the registry and never "
+               "needed to verify, unadvertised versions refused as unsupported_format_version rather than guessed, version 1 "
+               "frozen under recomputed checksums with a pinned older verifier, and the compatibility suite proving both "
+               "directions in CI")
+
+
 def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
     """P8.8a (v9.329): algorithm agility and migration. Two FIPS 204 parameter sets are accepted
     everywhere (ML-DSA-65 the default, ML-DSA-87), ML-DSA-44 is refused as below the floor, and
@@ -8688,6 +8754,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_protocol_versioning,
     check_algorithm_agility,
     check_trust_lifecycle,
     check_wallet_presentation,

@@ -40,6 +40,9 @@ A pull request is ready when all of these hold:
 - The SQL self-tests in `polaris_sql/08_tests.sql` pass; they run when the
   database container initializes.
 - `./scripts/polaris-link-check.sh --ci` resolves every reference.
+- A change to a signed artifact keeps the frozen version-1 set passing:
+  `python3 scripts/polaris-compat-suite.py` (the current verifiers must hold every
+  frozen case, and a pinned older verifier must never accept what the suite rejects).
 - `./scripts/polaris-preflight.sh` reports READY; it runs the checks and the link
   checker as the pre-ship gate.
 - New behaviour carries a test that fails without it. A new invariant carries
@@ -120,4 +123,4 @@ system is encouraged, provided the constitutional constraints are not weakened
 in the derivative; documenting a derivative to the same audit-of-record
 standard is asked for, not required by the license.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-09-08 (v9.309).*
+*Maintainer: Egor Khaklin. Last updated: 2026-09-09 (v9.330).*

@@ -1683,6 +1683,14 @@ jobs:
       # on any mismatch.
       - name: Conformance suite — Python reference SDK
         run: python conformance/run_conformance.py --self
+
+      # v9.330 (P8.8b) — cross-version compatibility, both directions: the frozen version-1
+      # set (cases + vectors pinned by SHA256SUMS, a vendored v9.317 verifier) under the CURRENT
+      # detached verifier and Python SDK, and the CURRENT cases under the PINNED older verifier
+      # (agree at or before its release, never accept what a later case rejects, decline only
+      # what it predates). Red on a changed frozen file or any violation. No database.
+      - name: Cross-version compatibility suite (frozen v1 in both directions)
+        run: python scripts/polaris-compat-suite.py
       - name: SDK unit tests (polaris-verify)
         run: cd sdk/python && python -m unittest test_sdk
 
@@ -1831,6 +1839,11 @@ jobs:
         run: cd sdk/typescript && node --test
       - name: Conformance suite — TypeScript SDK (the same runner as the Python SDK)
         run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"
+
+      # v9.330 (P8.8b) — the frozen version-1 cases under the CURRENT TypeScript SDK (immutability
+      # checked first); the Python side of the suite runs in the pqc-real job.
+      - name: Cross-version compatibility (frozen v1 under the TypeScript SDK)
+        run: python3 scripts/polaris-compat-suite.py --typescript-only
   # --------------------------------------------------------------------------
   # Dependency CVE scan. The dependency surface was pinned but never audited —
   # a known CVE in a pinned package would ship silently. This GATES on the

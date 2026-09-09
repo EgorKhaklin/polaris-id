@@ -534,6 +534,17 @@ def main():
         ask = {"ask": "balance", "account": "notional-42"}
         env1 = envelope(pub_a, key_a, ask, "nonce-1")
         st12, ex = _http_post_json(gw, {"envelope": env1, "body": ask})
+        # P8.8b: negotiation. An unadvertised major is refused with the supported list, never
+        # guessed at (the format check precedes nonce consumption, so the consumed nonce is moot);
+        # the consumer-side rule reads what B speaks from B's registry.
+        st_v2, body_v2 = _http_post_json(gw, {"envelope": dict(env1, format="polaris-exchange-request/2"), "body": ask})
+        checks.append(("an unadvertised format version is refused as unsupported_format_version (400) listing the supported one",
+                       (st_v2, (body_v2 or {}).get("error"), (body_v2 or {}).get("supported")),
+                       (400, "unsupported_format_version", ["polaris-exchange-request/1"])))
+        checks.append(("B's registry says what B speaks, major.minor per format (registry_speaks: the consumer-side rule)",
+                       (V.registry_speaks(reg, "polaris-exchange-request/1"), V.registry_speaks(reg, "polaris-exchange-request/2"),
+                        V.registry_speaks(reg, "polaris-nothing/1"), reg["instance"]["protocol"]["versions"]["polaris-registry"].split(".")[0]),
+                       (True, False, False, "1")))
         rcpt = (ex or {}).get("receipt") or {}
         resp_body = (ex or {}).get("response_body")
         checks.append(("A's signed exchange is mediated by B's gateway to B's echo service (200)", st12, 200))

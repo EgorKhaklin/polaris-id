@@ -1,6 +1,6 @@
 {
   "format": "polaris-conformance/1",
-  "note": "The Polaris verification conformance cases. Each case names the `artifact` it is about (default `authenticity-pack`), references a published vector, and states the verdict a conformant verifier MUST return; the runner checks every key the case constrains. `anchors: \"self\"` means the pack's own public key is trusted; `now` pins the evaluation time for a windowed artifact. See SPEC.md and docs/reference/WIRE-SPEC.md.",
+  "note": "The Polaris verification conformance cases. Each case names the `artifact` it is about (default `authenticity-pack`), references a published vector, and states the verdict a conformant verifier MUST return; the runner checks every key the case constrains. `anchors: \"self\"` means the pack's own public key is trusted; `now` pins the evaluation time for a windowed artifact. See SPEC.md and docs/reference/WIRE-SPEC.md. Each case carries `since`, the protocol release that introduced it: a verifier pinned at an older release MUST agree on every case at or before its release and MUST NOT accept anything a later case expects rejected (the cross-version rule, wire spec section 6).",
   "cases": [
     {
       "name": "genuine-no-anchors",
@@ -8,7 +8,8 @@
       "expect": {
         "authentic": true,
         "issuer_trusted": null
-      }
+      },
+      "since": "9.274"
     },
     {
       "name": "genuine-trusted-anchor",
@@ -17,7 +18,8 @@
       "expect": {
         "authentic": true,
         "issuer_trusted": true
-      }
+      },
+      "since": "9.274"
     },
     {
       "name": "genuine-untrusted-anchor",
@@ -28,7 +30,8 @@
       "expect": {
         "authentic": true,
         "issuer_trusted": false
-      }
+      },
+      "since": "9.274"
     },
     {
       "name": "tampered-signature",
@@ -36,7 +39,8 @@
       "expect": {
         "authentic": false,
         "issuer_trusted": null
-      }
+      },
+      "since": "9.274"
     },
     {
       "name": "tampered-token",
@@ -44,7 +48,8 @@
       "expect": {
         "authentic": false,
         "issuer_trusted": null
-      }
+      },
+      "since": "9.274"
     },
     {
       "name": "wrong-key",
@@ -52,7 +57,8 @@
       "expect": {
         "authentic": false,
         "issuer_trusted": null
-      }
+      },
+      "since": "9.274"
     },
     {
       "name": "placeholder",
@@ -60,7 +66,8 @@
       "expect": {
         "authentic": false,
         "issuer_trusted": null
-      }
+      },
+      "since": "9.274"
     },
     {
       "name": "status-assertion-active",
@@ -71,7 +78,8 @@
         "authentic": true,
         "fresh": true,
         "active": true
-      }
+      },
+      "since": "9.314"
     },
     {
       "name": "status-assertion-expired",
@@ -81,7 +89,8 @@
       "expect": {
         "authentic": true,
         "fresh": false
-      }
+      },
+      "since": "9.314"
     },
     {
       "name": "status-assertion-tampered",
@@ -90,7 +99,8 @@
       "now": "2026-06-01T00:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.314"
     },
     {
       "name": "epoch-checkpoint-valid",
@@ -100,7 +110,8 @@
       "expect": {
         "authentic": true,
         "fresh": true
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "epoch-checkpoint-tampered",
@@ -109,7 +120,8 @@
       "now": "2026-06-01T00:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "revocation-feed-valid",
@@ -119,7 +131,8 @@
       "expect": {
         "authentic": true,
         "fresh": true
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "revocation-feed-tampered",
@@ -128,7 +141,8 @@
       "now": "2026-06-01T00:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "manifest-valid",
@@ -138,7 +152,8 @@
       "expect": {
         "authentic": true,
         "fresh": true
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "manifest-tampered",
@@ -147,7 +162,8 @@
       "now": "2026-06-01T00:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "status-bundle-valid",
@@ -157,7 +173,8 @@
       "expect": {
         "authentic": true,
         "fresh": true
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "status-bundle-tampered",
@@ -166,7 +183,8 @@
       "now": "2026-06-01T00:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "transparency-sth-valid",
@@ -174,7 +192,8 @@
       "object_file": "conformance/vectors/transparency-sth-valid.json",
       "expect": {
         "authentic": true
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "transparency-sth-tampered",
@@ -182,7 +201,8 @@
       "object_file": "conformance/vectors/transparency-sth-tampered.json",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.315"
     },
     {
       "name": "cross-authority-accept",
@@ -196,7 +216,8 @@
       "now": "2026-06-01T00:00:00Z",
       "expect": {
         "decision": "accept"
-      }
+      },
+      "since": "9.316"
     },
     {
       "name": "cross-authority-untrusted",
@@ -212,7 +233,8 @@
       "now": "2026-06-01T00:00:00Z",
       "expect": {
         "decision": "reject"
-      }
+      },
+      "since": "9.316"
     },
     {
       "name": "cross-authority-wrong-context",
@@ -226,7 +248,8 @@
       "now": "2026-06-01T00:00:00Z",
       "expect": {
         "decision": "reject"
-      }
+      },
+      "since": "9.316"
     },
     {
       "name": "cross-authority-revoked",
@@ -241,7 +264,8 @@
       "feed_file": "conformance/vectors/cross-authority-feed-revoked.json",
       "expect": {
         "decision": "reject"
-      }
+      },
+      "since": "9.316"
     },
     {
       "name": "timestamp-valid",
@@ -249,7 +273,8 @@
       "object_file": "conformance/vectors/timestamp-valid.json",
       "expect": {
         "authentic": true
-      }
+      },
+      "since": "9.321"
     },
     {
       "name": "timestamp-tampered",
@@ -257,7 +282,8 @@
       "object_file": "conformance/vectors/timestamp-tampered.json",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.321"
     },
     {
       "name": "registry-valid",
@@ -267,7 +293,8 @@
       "expect": {
         "authentic": true,
         "fresh": true
-      }
+      },
+      "since": "9.323"
     },
     {
       "name": "registry-tampered",
@@ -276,7 +303,8 @@
       "now": "2026-05-01T12:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.323"
     },
     {
       "name": "registry-impostor",
@@ -285,7 +313,8 @@
       "now": "2026-05-01T12:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.323"
     },
     {
       "name": "exchange-request-valid",
@@ -293,7 +322,8 @@
       "object_file": "conformance/vectors/exchange-request-valid.json",
       "expect": {
         "authentic": true
-      }
+      },
+      "since": "9.324"
     },
     {
       "name": "exchange-request-tampered",
@@ -301,7 +331,8 @@
       "object_file": "conformance/vectors/exchange-request-tampered.json",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.324"
     },
     {
       "name": "signed-document-valid",
@@ -309,7 +340,8 @@
       "object_file": "conformance/vectors/signed-document-valid.json",
       "expect": {
         "authentic": true
-      }
+      },
+      "since": "9.325"
     },
     {
       "name": "signed-document-tampered",
@@ -317,7 +349,8 @@
       "object_file": "conformance/vectors/signed-document-tampered.json",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.325"
     },
     {
       "name": "id-token-valid",
@@ -325,7 +358,8 @@
       "object_file": "conformance/vectors/id-token-valid.json",
       "expect": {
         "authentic": true
-      }
+      },
+      "since": "9.326"
     },
     {
       "name": "id-token-tampered",
@@ -333,7 +367,8 @@
       "object_file": "conformance/vectors/id-token-tampered.json",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.326"
     },
     {
       "name": "trust-list-valid",
@@ -343,7 +378,8 @@
       "expect": {
         "authentic": true,
         "fresh": true
-      }
+      },
+      "since": "9.328"
     },
     {
       "name": "trust-list-tampered",
@@ -352,7 +388,8 @@
       "now": "2026-05-01T12:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.328"
     },
     {
       "name": "trust-list-impostor",
@@ -361,7 +398,8 @@
       "now": "2026-05-01T12:00:00Z",
       "expect": {
         "authentic": false
-      }
+      },
+      "since": "9.328"
     },
     {
       "name": "pack-mldsa87-valid",
@@ -370,7 +408,8 @@
       "expect": {
         "authentic": true
       },
-      "note": "P8.8a: a genuine ML-DSA-87 pack verifies; an accepted parameter set beside the default."
+      "note": "P8.8a: a genuine ML-DSA-87 pack verifies; an accepted parameter set beside the default.",
+      "since": "9.329"
     },
     {
       "name": "pack-mldsa87-tampered",
@@ -379,7 +418,8 @@
       "expect": {
         "authentic": false
       },
-      "note": "P8.8a: one flipped signature byte under ML-DSA-87."
+      "note": "P8.8a: one flipped signature byte under ML-DSA-87.",
+      "since": "9.329"
     },
     {
       "name": "pack-mldsa44-unaccepted",
@@ -388,7 +428,8 @@
       "expect": {
         "authentic": false
       },
-      "note": "P8.8a: a GENUINE ML-DSA-44 signature MUST be refused: the parameter set is below the floor (wire spec section 6)."
+      "note": "P8.8a: a GENUINE ML-DSA-44 signature MUST be refused: the parameter set is below the floor (wire spec section 6).",
+      "since": "9.329"
     },
     {
       "name": "status-assertion-mldsa87-active",
@@ -400,7 +441,8 @@
         "fresh": true,
         "active": true
       },
-      "note": "P8.8a: the status assertion under ML-DSA-87."
+      "note": "P8.8a: the status assertion under ML-DSA-87.",
+      "since": "9.329"
     },
     {
       "name": "trust-list-migration",
@@ -411,7 +453,8 @@
         "authentic": true,
         "fresh": true
       },
-      "note": "P8.8a: an algorithm migration recorded in a trust list: the ML-DSA-65 key retired, the ML-DSA-87 key active and signing."
+      "note": "P8.8a: an algorithm migration recorded in a trust list: the ML-DSA-65 key retired, the ML-DSA-87 key active and signing.",
+      "since": "9.329"
     },
     {
       "name": "trust-list-migration-retired-signer",
@@ -421,7 +464,8 @@
       "expect": {
         "authentic": false
       },
-      "note": "P8.8a: the same list signed by the RETIRED ML-DSA-65 key is refused: a publisher signs only under a key it lists active."
+      "note": "P8.8a: the same list signed by the RETIRED ML-DSA-65 key is refused: a publisher signs only under a key it lists active.",
+      "since": "9.329"
     }
   ]
 }

@@ -112,3 +112,15 @@ integration is conformant exactly when it passes the same cases.
 within a format version (a new case is a stricter contract, never a looser one);
 a breaking change to the verdict schema or an existing expectation bumps the
 format version. The `vectors/` a case references are frozen once published.
+
+## Cross-version compatibility (P8.8b)
+
+Every case carries `since`, the protocol release that introduced it. Version 1 is frozen
+under [`frozen/v1`](frozen/v1/FREEZE.md): the cases and vectors as published, pinned by
+`SHA256SUMS`, with a pinned older detached verifier vendored beside them.
+`scripts/polaris-compat-suite.py` runs on every CI push and proves both directions: the
+current detached verifier and both SDKs hold every frozen case, and the pinned older
+verifier agrees on every current case at or before its release, never accepts what a later
+case expects rejected, and may only decline what it predates. A protocol change that would
+require changing the frozen set is a new major with its own frozen set.
+

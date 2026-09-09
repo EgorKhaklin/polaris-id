@@ -1,0 +1,471 @@
+{
+  "format": "polaris-conformance/1",
+  "note": "FROZEN at v9.330 (P8.8b): the protocol-version-1 conformance cases and vectors as published. This set MUST NOT change; a protocol change that would require changing it is a new major (/2) with its own frozen set. Immutability is enforced by SHA256SUMS in CI.",
+  "cases": [
+    {
+      "name": "genuine-no-anchors",
+      "pack_file": "conformance/frozen/v1/packs/ml-dsa-65-valid.json",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": null
+      },
+      "since": "9.274"
+    },
+    {
+      "name": "genuine-trusted-anchor",
+      "pack_file": "conformance/frozen/v1/packs/ml-dsa-65-valid.json",
+      "anchors": "self",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "9.274"
+    },
+    {
+      "name": "genuine-untrusted-anchor",
+      "pack_file": "conformance/frozen/v1/packs/ml-dsa-65-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      },
+      "since": "9.274"
+    },
+    {
+      "name": "tampered-signature",
+      "pack_file": "conformance/frozen/v1/packs/ml-dsa-65-tampered-signature.json",
+      "expect": {
+        "authentic": false,
+        "issuer_trusted": null
+      },
+      "since": "9.274"
+    },
+    {
+      "name": "tampered-token",
+      "pack_file": "conformance/frozen/v1/packs/ml-dsa-65-tampered-token.json",
+      "expect": {
+        "authentic": false,
+        "issuer_trusted": null
+      },
+      "since": "9.274"
+    },
+    {
+      "name": "wrong-key",
+      "pack_file": "conformance/frozen/v1/packs/ml-dsa-65-wrong-key.json",
+      "expect": {
+        "authentic": false,
+        "issuer_trusted": null
+      },
+      "since": "9.274"
+    },
+    {
+      "name": "placeholder",
+      "pack_file": "conformance/frozen/v1/packs/placeholder.json",
+      "expect": {
+        "authentic": false,
+        "issuer_trusted": null
+      },
+      "since": "9.274"
+    },
+    {
+      "name": "status-assertion-active",
+      "artifact": "status-assertion",
+      "assertion_file": "conformance/frozen/v1/vectors/status-assertion-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "active": true
+      },
+      "since": "9.314"
+    },
+    {
+      "name": "status-assertion-expired",
+      "artifact": "status-assertion",
+      "assertion_file": "conformance/frozen/v1/vectors/status-assertion-valid.json",
+      "now": "2028-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.314"
+    },
+    {
+      "name": "status-assertion-tampered",
+      "artifact": "status-assertion",
+      "assertion_file": "conformance/frozen/v1/vectors/status-assertion-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.314"
+    },
+    {
+      "name": "epoch-checkpoint-valid",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/frozen/v1/vectors/epoch-checkpoint-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "epoch-checkpoint-tampered",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/frozen/v1/vectors/epoch-checkpoint-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "revocation-feed-valid",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/frozen/v1/vectors/revocation-feed-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "revocation-feed-tampered",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/frozen/v1/vectors/revocation-feed-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "manifest-valid",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/frozen/v1/vectors/federation-manifest-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "manifest-tampered",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/frozen/v1/vectors/federation-manifest-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "status-bundle-valid",
+      "artifact": "federation-status-bundle",
+      "object_file": "conformance/frozen/v1/vectors/federation-status-bundle-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "status-bundle-tampered",
+      "artifact": "federation-status-bundle",
+      "object_file": "conformance/frozen/v1/vectors/federation-status-bundle-tampered.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "transparency-sth-valid",
+      "artifact": "transparency-sth",
+      "object_file": "conformance/frozen/v1/vectors/transparency-sth-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "transparency-sth-tampered",
+      "artifact": "transparency-sth",
+      "object_file": "conformance/frozen/v1/vectors/transparency-sth-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.315"
+    },
+    {
+      "name": "cross-authority-accept",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/frozen/v1/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/frozen/v1/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "accept"
+      },
+      "since": "9.316"
+    },
+    {
+      "name": "cross-authority-untrusted",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/frozen/v1/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/frozen/v1/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": [
+        "00"
+      ],
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "9.316"
+    },
+    {
+      "name": "cross-authority-wrong-context",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/frozen/v1/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/frozen/v1/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 2,
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "9.316"
+    },
+    {
+      "name": "cross-authority-revoked",
+      "artifact": "cross-authority",
+      "pack_file": "conformance/frozen/v1/vectors/cross-authority-pack.json",
+      "manifest_files": [
+        "conformance/frozen/v1/vectors/cross-authority-manifest.json"
+      ],
+      "trusted_anchors": "manifest",
+      "context_id": 1,
+      "now": "2026-06-01T00:00:00Z",
+      "feed_file": "conformance/frozen/v1/vectors/cross-authority-feed-revoked.json",
+      "expect": {
+        "decision": "reject"
+      },
+      "since": "9.316"
+    },
+    {
+      "name": "timestamp-valid",
+      "artifact": "timestamp",
+      "object_file": "conformance/frozen/v1/vectors/timestamp-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.321"
+    },
+    {
+      "name": "timestamp-tampered",
+      "artifact": "timestamp",
+      "object_file": "conformance/frozen/v1/vectors/timestamp-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.321"
+    },
+    {
+      "name": "registry-valid",
+      "artifact": "registry",
+      "object_file": "conformance/frozen/v1/vectors/registry-valid.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.323"
+    },
+    {
+      "name": "registry-tampered",
+      "artifact": "registry",
+      "object_file": "conformance/frozen/v1/vectors/registry-tampered.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.323"
+    },
+    {
+      "name": "registry-impostor",
+      "artifact": "registry",
+      "object_file": "conformance/frozen/v1/vectors/registry-impostor.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.323"
+    },
+    {
+      "name": "exchange-request-valid",
+      "artifact": "exchange-request",
+      "object_file": "conformance/frozen/v1/vectors/exchange-request-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.324"
+    },
+    {
+      "name": "exchange-request-tampered",
+      "artifact": "exchange-request",
+      "object_file": "conformance/frozen/v1/vectors/exchange-request-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.324"
+    },
+    {
+      "name": "signed-document-valid",
+      "artifact": "signed-document",
+      "object_file": "conformance/frozen/v1/vectors/signed-document-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.325"
+    },
+    {
+      "name": "signed-document-tampered",
+      "artifact": "signed-document",
+      "object_file": "conformance/frozen/v1/vectors/signed-document-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.325"
+    },
+    {
+      "name": "id-token-valid",
+      "artifact": "id-token",
+      "object_file": "conformance/frozen/v1/vectors/id-token-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.326"
+    },
+    {
+      "name": "id-token-tampered",
+      "artifact": "id-token",
+      "object_file": "conformance/frozen/v1/vectors/id-token-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.326"
+    },
+    {
+      "name": "trust-list-valid",
+      "artifact": "trust-list",
+      "object_file": "conformance/frozen/v1/vectors/trust-list-valid.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.328"
+    },
+    {
+      "name": "trust-list-tampered",
+      "artifact": "trust-list",
+      "object_file": "conformance/frozen/v1/vectors/trust-list-tampered.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.328"
+    },
+    {
+      "name": "trust-list-impostor",
+      "artifact": "trust-list",
+      "object_file": "conformance/frozen/v1/vectors/trust-list-impostor.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.328"
+    },
+    {
+      "name": "pack-mldsa87-valid",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/frozen/v1/vectors/pack-mldsa87-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "note": "P8.8a: a genuine ML-DSA-87 pack verifies; an accepted parameter set beside the default.",
+      "since": "9.329"
+    },
+    {
+      "name": "pack-mldsa87-tampered",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/frozen/v1/vectors/pack-mldsa87-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "P8.8a: one flipped signature byte under ML-DSA-87.",
+      "since": "9.329"
+    },
+    {
+      "name": "pack-mldsa44-unaccepted",
+      "artifact": "authenticity-pack",
+      "pack_file": "conformance/frozen/v1/vectors/pack-mldsa44-unaccepted.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "P8.8a: a GENUINE ML-DSA-44 signature MUST be refused: the parameter set is below the floor (wire spec section 6).",
+      "since": "9.329"
+    },
+    {
+      "name": "status-assertion-mldsa87-active",
+      "artifact": "status-assertion",
+      "assertion_file": "conformance/frozen/v1/vectors/status-assertion-mldsa87-valid.json",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "active": true
+      },
+      "note": "P8.8a: the status assertion under ML-DSA-87.",
+      "since": "9.329"
+    },
+    {
+      "name": "trust-list-migration",
+      "artifact": "trust-list",
+      "object_file": "conformance/frozen/v1/vectors/trust-list-migration.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "note": "P8.8a: an algorithm migration recorded in a trust list: the ML-DSA-65 key retired, the ML-DSA-87 key active and signing.",
+      "since": "9.329"
+    },
+    {
+      "name": "trust-list-migration-retired-signer",
+      "artifact": "trust-list",
+      "object_file": "conformance/frozen/v1/vectors/trust-list-migration-retired-signer.json",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": false
+      },
+      "note": "P8.8a: the same list signed by the RETIRED ML-DSA-65 key is refused: a publisher signs only under a key it lists active.",
+      "since": "9.329"
+    }
+  ]
+}

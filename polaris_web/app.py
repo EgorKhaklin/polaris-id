@@ -5955,8 +5955,9 @@ def api_v1_exchange_receipt_signed(agency_id):
     if not isinstance(mint, dict) or not isinstance(sig_hex, str) or not sig_hex:
         return jsonify(error='invalid_request',
                        error_description='a polaris-exchange-mint/1 statement under "mint" and its "signature_hex" are required'), 400
-    if mint.get('format') != _EXCHANGE_MINT_FORMAT:
-        return jsonify(error='invalid_request', error_description='mint.format must be %s' % _EXCHANGE_MINT_FORMAT), 400
+    bad = _format_check(mint, _EXCHANGE_MINT_FORMAT, 'mint')
+    if bad:
+        return bad
     try:
         if int(mint.get('responder_agency_id')) != int(agency_id):
             raise ValueError('responder mismatch')
@@ -6096,6 +6097,37 @@ _PROTOCOL_FORMATS = {
     'polaris-qr': 1,
     'polaris-trust-list': 1,
 }
+# P8.8b (v9.330): backward-compatible additions within a major, per format. A minor MAY add
+# fields nested inside an existing signed structure, or unsigned top-level fields a verifier
+# ignores for its decision; it MUST NOT add, remove, rename or re-type a top-level signed field
+# or change canonicalization (that is a major, carried in the format string). Advertised in the
+# registry under instance.protocol.versions; a consumer never needs a minor to verify.
+_PROTOCOL_MINORS = {
+    'polaris-registry': 3,   # 1.1 authorities[].keys (v9.328); 1.2 protocol.signing_algorithm (v9.329); 1.3 protocol.versions (v9.330)
+}
+
+
+def _protocol_versions():
+    """Every format this instance speaks as 'major.minor' (wire spec section 6)."""
+    return {name: '%d.%d' % (major, _PROTOCOL_MINORS.get(name, 0)) for name, major in _PROTOCOL_FORMATS.items()}
+
+
+def _format_check(obj, expected, what):
+    """P8.8b negotiation, producer side: accept exactly the advertised format 'name/MAJOR'. A wrong
+    name is an invalid request; a known name at another major is refused as
+    unsupported_format_version with the supported versions listed, never guessed at. Returns None
+    when acceptable, else a (response, status) pair."""
+    fmt = obj.get('format') if isinstance(obj, dict) else None
+    name = expected.partition('/')[0]
+    if not isinstance(fmt, str) or fmt.partition('/')[0] != name:
+        return jsonify(error='invalid_request', error_description='%s.format must be %s' % (what, expected)), 400
+    if fmt != expected:
+        return jsonify(error='unsupported_format_version',
+                       error_description='%s.format %s is not a version this instance speaks' % (what, fmt),
+                       supported=[expected], advertised_in='/api/v1/registry/<agency_id>'), 400
+    return None
+
+
 _REGISTRY_SERVICES = [
     {'kind': 'oauth-token', 'path': '/api/v1/oauth/token', 'auth': 'client-credentials', 'method': 'POST'},
     {'kind': 'verify', 'path': '/api/v1/verify', 'auth': 'bearer:verify', 'method': 'POST'},
@@ -6172,7 +6204,7 @@ def api_v1_registry(agency_id):
         'format': _REGISTRY_FORMAT,
         'publisher': {'agency_id': publisher['agency_id'], 'name': publisher['name']},
         'instance': {
-            'protocol': {'formats': dict(_PROTOCOL_FORMATS), 'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS), 'signing_algorithm': _signing_algorithm(agency_id),
+            'protocol': {'formats': dict(_PROTOCOL_FORMATS), 'versions': _protocol_versions(), 'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS), 'signing_algorithm': _signing_algorithm(agency_id),
                          'wire_spec': 'docs/reference/WIRE-SPEC.md', 'conformance': 'conformance/cases.json'},
             'services': [dict(s) for s in _REGISTRY_SERVICES],
             'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID],
@@ -6301,8 +6333,9 @@ def api_v1_exchange(target_agency_id):
     if not isinstance(env, dict) or not isinstance(sig_hex, str) or not sig_hex or 'body' not in payload:
         return jsonify(error='invalid_request',
                        error_description='an envelope (polaris-exchange-request/1 with signature_hex) and a body are required'), 400
-    if env.get('format') != _EXCHANGE_REQUEST_FORMAT:
-        return jsonify(error='invalid_request', error_description='envelope.format must be %s' % _EXCHANGE_REQUEST_FORMAT), 400
+    bad = _format_check(env, _EXCHANGE_REQUEST_FORMAT, 'envelope')
+    if bad:
+        return bad
     tgt = env.get('target') if isinstance(env.get('target'), dict) else {}
     try:
         if int(tgt.get('agency_id')) != int(target_agency_id):

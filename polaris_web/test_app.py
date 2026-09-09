@@ -332,6 +332,22 @@ class ExchangeGatewayTests(UnauthenticatedTestCase):
     exchange itself needs real ML-DSA, two instances and an upstream, and is proven over HTTP by
     scripts/polaris-federation-instances-drill.py."""
 
+    def test_unadvertised_format_version_is_refused_not_guessed(self):
+        # P8.8b: a known format at another major is unsupported_format_version with the supported
+        # list; a wrong name, a non-string, or a missing format is an invalid request.
+        with flask_app.app.test_request_context():
+            self.assertIsNone(flask_app._format_check({'format': 'polaris-exchange-request/1'}, 'polaris-exchange-request/1', 'envelope'))
+            resp, status = flask_app._format_check({'format': 'polaris-exchange-request/2'}, 'polaris-exchange-request/1', 'envelope')
+            self.assertEqual(status, 400)
+            self.assertEqual(resp.get_json()['error'], 'unsupported_format_version')
+            self.assertEqual(resp.get_json()['supported'], ['polaris-exchange-request/1'])
+            for bad in ({'format': 'polaris-other/1'}, {'format': 7}, {}, None):
+                resp, status = flask_app._format_check(bad, 'polaris-exchange-request/1', 'envelope')
+                self.assertEqual((status, resp.get_json()['error']), (400, 'invalid_request'))
+        versions = flask_app._protocol_versions()
+        self.assertEqual(set(versions), set(flask_app._PROTOCOL_FORMATS))
+        self.assertTrue(all(v.split('.')[0] == str(flask_app._PROTOCOL_FORMATS[k]) for k, v in versions.items()))
+
     def test_gateway_fails_closed_without_real_pqc(self):
         import os
         from unittest import mock

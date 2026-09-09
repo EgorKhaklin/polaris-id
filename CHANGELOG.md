@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.330 — 2026-09-09 (Protocol versioning, negotiation and cross-version compatibility, P8.8b)
+
+Compatibility was a belief; now it is a rule with a proof on every push, and P8 is complete.
+
+- **Major in the format string, minor in the registry.** A minor may add fields nested
+  inside an existing signed structure or unsigned top-level fields a verifier ignores; it
+  may never touch a top-level signed field or canonicalization. `_PROTOCOL_MINORS` records
+  minors per format and the registry advertises every format as `major.minor` under
+  `instance.protocol.versions` (the registry itself is at 1.3). A verifier never needs a
+  minor.
+- **Negotiation is a rule, not a handshake.** Reject an unknown major, accept any minor,
+  never emit or send an unadvertised version (`registry_speaks` decides from a registry).
+  The interactive routes answer a known format at another major with
+  `400 unsupported_format_version`, the `supported` list and where versions are advertised,
+  through one `_format_check`, before any nonce is spent or signature checked; drilled over
+  HTTP across two instances.
+- **Version 1 is frozen and the freeze is enforced.** `conformance/frozen/v1` holds the 44
+  cases, the 41 vectors and the vendored v9.317 detached verifier under `SHA256SUMS`, which
+  `check_protocol_versioning` (#184) and the suite recompute: a changed frozen file fails
+  CI. Every case now carries `since`.
+- **Both directions, every push.** `scripts/polaris-compat-suite.py`: the current detached
+  verifier and both SDKs hold all 44 frozen cases; the pinned v9.317 verifier agrees on 26
+  current cases, predates 16 artifact types, declines the 2 newer ML-DSA-87 cases
+  fail-closed, and violates nothing. It runs in the pqc-real job and, TypeScript-only, in
+  the SDK job. Wire spec section 6 carries the normative text; 184 checks.
+
 ## v9.329 — 2026-09-09 (Algorithm agility and migration, P8.8a)
 
 Before this ship every signature was ML-DSA-65 by construction, in the signer, in every

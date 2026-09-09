@@ -7760,3 +7760,44 @@ def test_algorithm_agility_check_discriminates(tmp_path):
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the signer hardcodes its parameter set"
     write({'scripts/polaris-verify.py': VER.replace("ML-DSA-44 pack is refused", "ML-DSA-44 pack is accepted")})
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the selftest does not prove the floor"
+
+
+def test_protocol_versioning_check_discriminates(tmp_path):
+    # v9.330 (P8.8b): versioning, negotiation, the frozen set and the compatibility suite.
+    import hashlib as _h
+    APP = ("_PROTOCOL_MINORS = {'polaris-registry': 3}\ndef _protocol_versions(): return {}\n"
+           "def _format_check(obj, expected, what):\n    return jsonify(error='unsupported_format_version', supported=[expected], advertised_in='/api/v1/registry/<agency_id>'), 400\n"
+           "    'protocol': {'formats': dict(_PROTOCOL_FORMATS), 'versions': _protocol_versions()}\n"
+           "    bad = _format_check(mint, _EXCHANGE_MINT_FORMAT, 'mint')\n    bad = _format_check(env, _EXCHANGE_REQUEST_FORMAT, 'envelope')\n")
+    frozen_files = {"cases.json": '{"cases": [{"name": "a", "since": "9.314"}]}\n', "vectors/a.json": "{}\n",
+                    "verifiers/polaris-verify-v9.317.py": "def verify_pack(p, a=None): return {}\n", "FREEZE.md": "# frozen\n"}
+    sums = "".join("%s  %s\n" % (_h.sha256(v.encode()).hexdigest(), k) for k, v in frozen_files.items())
+    good = {
+        'polaris_web/app.py': APP,
+        'scripts/polaris-verify.py': '_VERIFIER_VERSION = "9.330"\ndef registry_speaks(reg, f): return False\n',
+        'conformance/frozen/v1/SHA256SUMS': sums,
+        'conformance/cases.json': '{"cases": [{"name": "a", "since": "9.314", "expect": {"authentic": true}}]}\n',
+        'scripts/polaris-compat-suite.py': "# predated fail-closed SHA256SUMS\ndef decide(V, case): return {}, None\n",
+        '.github/workflows/ci.yml': "      - run: python scripts/polaris-compat-suite.py\n",
+        'docs/reference/WIRE-SPEC.md': "unsupported_format_version; a producer MUST NOT emit an unadvertised version; major.minor\n",
+        'docs/design/protocol-versioning.md': "# Protocol versioning\n",
+    }
+    good.update({"conformance/frozen/v1/" + k: v for k, v in frozen_files.items()})
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_protocol_versioning(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'conformance/frozen/v1/vectors/a.json': '{"changed": true}\n'})
+    assert checks.check_protocol_versioning(tmp_path)[0].level == "FAIL", "must FAIL if a frozen vector changes"
+    write({'polaris_web/app.py': APP.replace("bad = _format_check(env, _EXCHANGE_REQUEST_FORMAT, 'envelope')", "if env.get('format') != _EXCHANGE_REQUEST_FORMAT: pass")})
+    assert checks.check_protocol_versioning(tmp_path)[0].level == "FAIL", "must FAIL if a route compares formats ad hoc"
+    write({'conformance/cases.json': '{"cases": [{"name": "a", "expect": {"authentic": true}}]}\n'})
+    assert checks.check_protocol_versioning(tmp_path)[0].level == "FAIL", "must FAIL if a case lacks since"
+    write({'.github/workflows/ci.yml': "      - run: echo no compat\n"})
+    assert checks.check_protocol_versioning(tmp_path)[0].level == "FAIL", "must FAIL if the compatibility suite does not run in CI"
+    write({'docs/reference/WIRE-SPEC.md': "versions are implied\n"})
+    assert checks.check_protocol_versioning(tmp_path)[0].level == "FAIL", "must FAIL without the normative negotiation rule"

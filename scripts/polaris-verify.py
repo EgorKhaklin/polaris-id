@@ -39,6 +39,7 @@ import json
 import os
 import sys
 
+_VERIFIER_VERSION = "9.330"   # P8.8b: pinned copies of this file self-identify to the compatibility suite
 _ALG = "ML-DSA-65"          # the default parameter set
 # P8.8a: the accepted FIPS 204 parameter sets -> (cryptography witness class, public key
 # bytes, signature bytes). ML-DSA-44 is below the floor and is rejected like any unknown
@@ -1470,6 +1471,18 @@ def registry_service(reg, kind):
 def _hexstr(v):
     """A hex string compared case-insensitively; anything else compares to nothing."""
     return v.lower() if isinstance(v, str) else ""
+
+
+def registry_speaks(reg, format_string):
+    """P8.8b negotiation, consumer side: whether a registry advertises `format_string` as
+    `name/MAJOR`. A consumer MUST NOT send an instance a format it does not advertise, MUST
+    reject an artifact at a major it does not implement, and never needs a minor: minors only
+    add what a verifier may ignore (wire spec section 6). Total over hostile input."""
+    name, _, major = str(format_string or "").partition("/")
+    inst = reg.get("instance") if isinstance(reg, dict) else None
+    proto = inst.get("protocol") if isinstance(inst, dict) else None
+    formats = proto.get("formats") if isinstance(proto, dict) else None
+    return bool(name) and isinstance(formats, dict) and str(formats.get(name)) == major
 
 
 def registry_key_status(reg, public_key_hex):

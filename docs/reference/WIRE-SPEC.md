@@ -194,7 +194,8 @@ relying-party decision over its trusted keys.
 ### 3.10 `polaris-registry/1`
 
 A publishing authority's signed statement of what its instance offers and trusts (P8.3):
-`instance.protocol` (the format names it speaks with their major versions, its algorithms,
+`instance.protocol` (the format names it speaks with their majors under `formats` and their
+`major.minor` under `versions` (section 6), its algorithms,
 where the wire spec and conformance suite live), `instance.services` (kind, path template,
 method, and how each authenticates), `instance.transparency_logs`, the `authorities` it knows
 (each with its configured key and status and its `keys` register: every key the publisher
@@ -362,11 +363,35 @@ authority, and are specified in full in
 
 ## 6. Versioning and algorithm agility
 
-An artifact declares its type and protocol version in its `format` field, as a
-`name/N` suffix, and its algorithm in `algorithm`. This version is `/1` for every type.
-A breaking change to an artifact's signed fields, semantics, or digest construction
-MUST bump its `format` to `/2`; a new signed field that all conformant verifiers can
-ignore MAY be added within `/1` only if it is not part of the signed statement.
+An artifact declares its type and protocol MAJOR version in its `format` field, as a
+`name/N` suffix, and its algorithm in `algorithm`. The major is `/1` for every type.
+
+**Major and minor.** A breaking change to an artifact's signed fields, semantics,
+canonicalization or digest construction MUST bump its `format` to `/2`: adding, removing,
+renaming or re-typing a top-level signed field is always major. Within a major, a MINOR
+version MAY add fields nested inside an existing signed structure (a registry authority's
+`keys`, for example) or add unsigned top-level fields a verifier ignores for its decision
+(`max_window_seconds`, `digest_construction`); a conformant verifier ignores what it does
+not know, so a minor is never needed to verify. Minors are not carried in the format
+string: an instance advertises every format it speaks as `major.minor` in its registry
+(`instance.protocol.versions`, 3.10) beside the major under `formats`.
+
+**Negotiation.** There is no handshake; the registry is the capability statement and the
+rule is fixed: a consumer MUST reject an artifact whose major it does not implement and
+MUST accept any minor of a major it implements; a producer MUST NOT emit a format version
+it does not advertise, and MUST NOT send an instance a format that instance does not
+advertise (the detached verifier's `registry_speaks` decides this from a registry). An
+interactive endpoint that receives a known format at another major MUST answer
+`400 unsupported_format_version` listing the versions it `supported`s and where they are
+advertised, rather than guess at the sender's meaning; a wrong or missing format is an
+invalid request.
+
+**Cross-version compatibility** is proven, not assumed. Version 1 is frozen under
+[`conformance/frozen/v1`](../../conformance/frozen/v1/FREEZE.md): its cases and vectors
+pinned by checksum, with a pinned older detached verifier. On every CI run the current
+verifiers MUST hold every frozen case, and the pinned older verifier MUST agree on every
+current case at or before its release (each case carries `since`), MUST NOT accept anything
+a later case expects rejected, and may only decline what it predates.
 **Algorithm agility.** `algorithm` names a FIPS 204 parameter set. Version 1 accepts
 `"ML-DSA-65"` (NIST level 3, the default) and `"ML-DSA-87"` (level 5). A verifier MUST
 verify under the declared parameter set: a signature that verifies only under another
@@ -386,8 +411,8 @@ genuine ML-DSA-44 pack that MUST be refused, and a trust list recording such a m
 A future parameter set or algorithm family is introduced by adding it to the accepted set
 in a new version of this specification; until then a verifier MUST reject it.
 
-There is no runtime version negotiation in version 1: a producer and consumer agree on
-`/1` out of band. Negotiation and a signed capability registry are P8.3.
+A new major is introduced with its own frozen set beside version 1's; a verifier that
+implements both decides per artifact by its `format`, never by guessing.
 
 ## 7. Conformance
 

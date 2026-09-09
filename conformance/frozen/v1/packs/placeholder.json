@@ -1,0 +1,15 @@
+{
+  "_vector": {
+    "expect": "invalid",
+    "name": "placeholder",
+    "note": "a verifier MUST report this as not-authenticatable, never as a green check",
+    "provenance": "dependency-free SHA3-256 binding (the dev/CI placeholder, not a signature)"
+  },
+  "algorithm": "DETERMINISTIC-PLACEHOLDER-SHA3-256",
+  "digest_construction": "SHA3-256(token_value.encode(\"utf-8\"))",
+  "format": "polaris-authenticity-pack/1",
+  "public_key_hex": null,
+  "real_signature": false,
+  "signature_hex": "8553bd1c47621f78b14e9b6b5757fb8aa5a5e70635d9298cf7aa664005ca5880",
+  "token_value": "POLARIS-VECTOR-PLACEHOLDER-0001"
+}

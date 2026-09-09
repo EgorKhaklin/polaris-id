@@ -912,7 +912,8 @@ service kind, the context, a never-reused nonce, and the time) plus the JSON bod
 receives `{receipt, response_body}`. In order: real ML-DSA required (`503`); target
 federated (`404`); envelope well-formed and bound to this target (`400`); the kind is one this
 instance forwards to (`404`); fresh within 300 s (`401 stale`); `request_hash` binds the body
-(`400`); requester key known here (`401 unknown_requester`); signature two-witness (`401
+(`400`); format at a major this instance speaks (`400 unsupported_format_version`, listing `supported`
+and where versions are advertised); requester key known here (`401 unknown_requester`); signature two-witness (`401
 invalid_signature`); rate bound (`429`); requester authorized in the context by the trust graph
 (`403`) **before** forwarding; nonce consumed (`409 replay`); forwarded to the operator-configured
 upstream (`502` if it does not answer; the nonce stays consumed); receipt minted with the
@@ -943,7 +944,7 @@ scope only). Derived from Athena's views; institutional data only. Short-lived.
 
 ```jsonc
 { "format": "polaris-registry/1", "publisher": {...},
-  "instance": { "protocol": { "formats": { "polaris-timestamp": 1, ... }, "algorithms": ["ML-DSA-65", "ML-DSA-87"], "signing_algorithm": "ML-DSA-65", ... },
+  "instance": { "protocol": { "formats": { "polaris-timestamp": 1, ... }, "versions": { "polaris-timestamp": "1.0", "polaris-registry": "1.3", ... }, "algorithms": ["ML-DSA-65", "ML-DSA-87"], "signing_algorithm": "ML-DSA-65", ... },
                 "services": [ { "kind": "timestamp", "path": "/api/v1/timestamp/{agency_id}", "auth": "none", "method": "POST" }, ... ],
                 "transparency_logs": [...], "disclosure_levels": [...] },
   "authorities": [ { "agency_id": 1, "name": "...", "public_key_hex": "...", "status": "active", ... } ],
