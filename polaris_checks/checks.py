@@ -123,6 +123,7 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         "authcodeconsumed",
         # v9.328 (P8.7b): the authority key register.
         "authoritykeyevent",
+        "timestamplog",
     ]
     if not re.search(r"REVOKE\s+UPDATE\s*,\s*DELETE", grants, re.I):
         return _fail("c1_aor_priv",
@@ -7529,6 +7530,70 @@ _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__py
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
 
 
+def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
+    """P8.5b (v9.341): time evidence that survives the timestamp authority's key being stolen.
+    A caller may ask for an ANCHORED timestamp: only then does the timestamp's SHA3-256 join an
+    append-only transparency log (TimestampLog, migration 007, strict by trigger and privilege),
+    published with signed heads, and the inclusion evidence comes back stapled. The detached
+    verifier checks the anchor offline and, when the relying party names witnesses, requires
+    the head cosigned; long-term validation takes an anchored policy, a quorum of independent
+    authorities as the no-retention alternative, and the authority's key status per the trust
+    list. The default request retains nothing, and every surface says so."""
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if "CREATE TABLE TimestampLog" not in schema or "chk_timestamp_log_hash" not in schema:
+        return _fail("timestamp_transparency", "01_schema.sql must define the append-only TimestampLog of anchored-timestamp hashes")
+    if "trg_timestamp_log_append_only" not in _read(root, "polaris_sql/06_triggers.sql") or "'timestamplog'" not in _read(root, "polaris_sql/09_grants.sql"):
+        return _fail("timestamp_transparency", "the timestamp log must be append-only by trigger and by privilege")
+    if not (root / "polaris_sql" / "migrations" / "2026-09-09-007-timestamp-log.up.sql").is_file() \
+            or not (root / "polaris_sql" / "migrations" / "2026-09-09-007-timestamp-log.down.sql").is_file():
+        return _fail("timestamp_transparency", "the timestamp log must ship as a reversible migration (007)")
+    app = _read(root, "polaris_web/app.py")
+    for sym in ("_TIMESTAMP_LOG_ID = 'polaris-timestamp-log'", "def _anchor_timestamp", "if body.get('anchor') is True:",
+                "/api/v1/timestamp/inclusion/<timestamp_hash>", "/api/v1/transparency/timestamps/sth",
+                "'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID, _TIMESTAMP_LOG_ID]", "fields.get('anchor_timestamp') is True"):
+        if sym not in app:
+            return _fail("timestamp_transparency", "polaris_web/app.py must anchor on request and publish the timestamp log (%s missing)" % sym)
+    v = _read(root, "scripts/polaris-verify.py")
+    for sym in ("def timestamp_hash", "def verify_timestamp_anchor", "trusted_witnesses=None", "timestamp_quorum=1", "require_anchored=False",
+                '"timestamp_authority_key_status_per_trust_list"', '"independent_timestamps"', "timestamps=None"):
+        if sym not in v:
+            return _fail("timestamp_transparency", "scripts/polaris-verify.py must verify anchors, quorums and the authority's key status (%s missing)" % sym)
+    for mod in _VERIFIER_FORBIDDEN_IMPORTS:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
+            return _fail("timestamp_transparency", f"the offline verifier imports {mod!r}; it must stay standalone")
+    drill = _read(root, "scripts/polaris-timestamp-transparency-drill.py")
+    for sym in ("AFTER THE THEFT", "SPLIT VIEW", "QUORUM", "the residual risk, stated"):
+        if sym not in drill:
+            return _fail("timestamp_transparency", "scripts/polaris-timestamp-transparency-drill.py must show the stolen-key forgery, the split view and the quorum (%s)" % sym)
+    if "polaris-timestamp-transparency-drill.py" not in _read(root, ".github/workflows/ci.yml"):
+        return _fail("timestamp_transparency", "the transparency drill must run in CI")
+    fed = _read(root, "scripts/polaris-federation-instances-drill.py")
+    if '"anchor": True' not in fed or "verify_timestamp_anchor" not in fed:
+        return _fail("timestamp_transparency", "the two-instance drill must anchor a timestamp over HTTP and verify the evidence offline")
+    tests = _read(root, "polaris_web/test_app.py")
+    if "TimestampLogTests" not in tests or "retains nothing" not in tests:
+        return _fail("timestamp_transparency", "the route tests must prove an unanchored request retains nothing and an anchored one is included")
+    if "TimestampLog" not in _read(root, "polaris_web/test_check_constraints.py"):
+        return _fail("timestamp_transparency", "the C1 privilege test must cover TimestampLog")
+    spec = _read(root, "docs/reference/WIRE-SPEC.md")
+    for sym in ("`anchor`", "polaris-timestamp-log", "quorum"):
+        if sym not in spec:
+            return _fail("timestamp_transparency", "the wire spec must specify the anchor, the timestamp log and the quorum rule (%s)" % sym)
+    if not _read(root, "docs/design/timestamp-transparency.md"):
+        return _fail("timestamp_transparency", "docs/design/timestamp-transparency.md must record the design and the retention trade-off")
+    if "unless the caller asks for an anchor" not in _read(root, "docs/design/timestamp-authority.md"):
+        return _fail("timestamp_transparency", "the timestamp authority's design record must restate its retention promise honestly")
+    if "anchored timestamp" not in _read(root, "docs/PRODUCTION-READINESS.md"):
+        return _fail("timestamp_transparency", "the readiness ledger must state what the timestamp authority now retains, and when")
+    if "TimestampLog" not in _read(root, "docs/reference/DATA-MODEL.md"):
+        return _fail("timestamp_transparency", "docs/reference/DATA-MODEL.md must document the timestamp log")
+    return _ok("timestamp_transparency",
+               "an anchored timestamp (the caller's choice) is a leaf in an append-only, published timestamp log with stapled "
+               "inclusion evidence the detached verifier checks offline, witnessed when the relying party names witnesses; "
+               "long-term validation takes an anchored policy, a quorum of independent authorities, and the authority's key "
+               "status per the trust list; drilled under a stolen key, across two instances, and stated on every surface")
+
+
 def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
     """v9.337: the roadmap cannot contradict itself. A subsystem whose row is marked done may
     not still sit under "Do not have"; a done row may not open its notes with IN PROGRESS, NEXT
@@ -8940,6 +9005,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_timestamp_transparency,
     check_roadmap_consistent,
     check_broker_policy_bound,
     check_qr_resource_bounds,

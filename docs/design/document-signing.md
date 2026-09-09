@@ -50,7 +50,10 @@ not a trusted one (anyone can sign one), and a signer's own timestamp is backdat
 holds the key, so the embedded self-timestamp the signing route attaches by default is
 convenience evidence; `timestamp_agency_id` lets an operator take the timestamp from another
 federated agency of the instance at signing. A verifier given no timestamp anchors reports the
-facts and claims nothing.
+facts and claims nothing. Since v9.341 the verifier also takes `require_anchored` (with
+`trusted_witnesses`), `timestamp_quorum`, and checks the timestamp authority's key status per
+the trust list; `anchor_timestamp: true` at signing anchors the embedded timestamp. See
+[timestamp-transparency.md](timestamp-transparency.md).
 
 What the evidence does not yet do: a timestamp authority whose own key is later compromised
 could manufacture backdated timestamps. Anchoring each timestamp's SHA3-256 in an append-only

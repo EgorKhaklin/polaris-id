@@ -1596,6 +1596,13 @@ jobs:
       # signed field, non-hex/dropped fields, adversarial values, cross-type confusion) must
       # ALL be rejected fail-closed with no crash. Red on a wrongly-accepted mutation or any
       # exception. No database.
+      # v9.341 (P8.5b) — timestamp transparency under a STOLEN authority key: an anchored
+      # timestamp keeps witnessed inclusion evidence a backdated forgery cannot have; a forged
+      # head is unwitnessed and a caught split view; the trust list refuses post-compromise
+      # forgeries; a quorum of independent authorities is the no-retention alternative. No database.
+      - name: Timestamp transparency — a stolen timestamp-authority key
+        run: python scripts/polaris-timestamp-transparency-drill.py
+
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py
 

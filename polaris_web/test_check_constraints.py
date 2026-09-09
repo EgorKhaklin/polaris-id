@@ -892,6 +892,8 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "AuthCodeConsumed",
         # v9.328 (P8.7b): the authority key register.
         "AuthorityKeyEvent",
+        # v9.341 (P8.5b): the timestamp transparency log.
+        "TimestampLog",
     )
 
     def _app_conn(self):

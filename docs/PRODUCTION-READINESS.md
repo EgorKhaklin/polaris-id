@@ -11,7 +11,9 @@ table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
 document signing, the auth broker, wallet presentations, algorithm agility and
 versioning) is complete, certified in two SDKs and frozen at version 1; it
-changes nothing about this status. What remains is not buildable here: nine decisions that
+changes nothing about this status. One retention fact to know (v9.341): the
+timestamp authority keeps no per-request record, except one digest and one
+instant per anchored timestamp, and only when the caller asked for the anchor. What remains is not buildable here: nine decisions that
 belong to the deploying organization, two engineering limits carried openly,
 and the deployment-scale work that [ROADMAP.md](../ROADMAP.md) tracks phase by
 phase. [MISSION.md](../MISSION.md) still governs every change, and

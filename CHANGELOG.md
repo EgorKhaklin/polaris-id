@@ -5,6 +5,36 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.341 — 2026-09-09 (Timestamp transparency: anchoring as the caller's choice, P8.5b)
+
+The maintainer's decision on the one design question the review series left open. Long-term
+validation trusted a timestamp authority's key; a stolen key could mint a timestamp dated a
+year ago and nothing could tell. Every remedy retains something, and the authority was built
+to retain nothing, so retention is now the caller's choice, per timestamp, visible in the verdict.
+
+- **Anchoring, opt-in.** `anchor: true` at `POST /api/v1/timestamp/<id>` (and `anchor_timestamp`
+  at signing) appends the timestamp's SHA3-256 to `TimestampLog`, an append-only transparency
+  log (migration 007), published as `polaris-timestamp-log` with signed heads, and returns the
+  inclusion evidence stapled. The default request still retains nothing; the anchored one
+  retains one digest and one instant, never a document or a requester.
+- **Verified offline, witnessed when it matters.** `verify_timestamp_anchor` checks the proof,
+  the head and the reconstruction; with trusted witnesses named it requires the head cosigned,
+  because a thief with the authority's key can sign a fresh head over a fabricated log but
+  cannot make a witness have cosigned it at the claimed time.
+- **Long-term validation gains its policies.** `require_anchored` (with witnesses), a
+  `timestamp_quorum` of distinct independent authorities (the no-retention alternative,
+  `attach_ltv` taking further timestamps), and the timestamp authority's key status per the
+  trust list, checked at the instant like the signer's.
+- **Drilled under a stolen key.** A backdated forgery is authentic and trusted, so a verifier
+  with no anchoring policy still accepts it (the residual risk, stated) and one that requires
+  an anchor does not; a forged anchor is unwitnessed and a caught split view; the trust list
+  refuses forgeries dated after the compromise; a quorum of two refuses the lone forgery. The
+  two-instance drill anchors over HTTP and shows the unanchored request leaving no row.
+- **Stated everywhere.** The timestamp authority's design record, the readiness ledger, the
+  API reference, the data model and the wire spec (timestamp 1.1, signed document 1.1,
+  registry 1.4) say what is retained and when. `check_timestamp_transparency` (#190) pins it.
+  Limit: anchor verification is in the detached verifier, not yet the SDKs (P8.5c).
+
 ## v9.340 — 2026-09-09 (The comparison table names its subjects)
 
 At the maintainer's direction, the README's "Where Polaris sits" comparison table names the

@@ -20,12 +20,17 @@ signature.
 ## Why digest-only, and why no log
 
 The route accepts a digest, never content, so the authority learns nothing about what it
-timestamps; and it keeps no per-request record, because a timestamp authority that logs every
-request is a store of who timestamped what, when. A conventional authority keeps a serial
+timestamps; and it keeps no per-request record unless the caller asks for an anchor (P8.5b,
+below), because a timestamp authority that logs every request is a store of who timestamped
+what, when. A conventional authority keeps a serial
 number and an audit trail; Polaris deliberately does not. The evidence is the signed artifact
 in the requester's hands, and the only bound on the route is a per-authority rate limit. If a
 deployment wants the SET of timestamps to be auditable, the answer is the transparency log
-(commit each timestamp's digest as an append-only leaf), not a request log.
+(commit each timestamp's digest as an append-only leaf), not a request log. Since v9.341 that
+is exactly what an ANCHORED request does, at the caller's choice: `anchor: true` appends the
+timestamp's SHA3-256 to the append-only timestamp log and staples the inclusion evidence, the
+one record the authority then keeps (a digest and an instant). Unanchored requests still leave
+nothing. See [timestamp-transparency.md](timestamp-transparency.md).
 
 ## What it is for
 

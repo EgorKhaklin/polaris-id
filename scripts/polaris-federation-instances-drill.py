@@ -449,6 +449,23 @@ def main():
         checks.append(("the nonce is echoed in the signed statement", (tsr or {}).get("nonce") == "drill-nonce", True))
         st8, _ = _http_post_json(base_b + "/api/v1/timestamp/1", {"digest_hex": "not a digest"})
         checks.append(("a non-digest is refused at the door (400): the content itself is never sent", st8, 400))
+        # P8.5b (v9.341): anchoring is the caller's choice. A plain request leaves no row; an anchored
+        # one appends exactly one digest and comes back with inclusion evidence a verifier checks
+        # offline against B's registered key; the registry lists the timestamp log.
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("SELECT count(*) FROM TimestampLog"); rows_before = cur.fetchone()[0]
+        st9, tsa_anchored = _http_post_json(base_b + "/api/v1/timestamp/1",
+                                            {"digest_hex": hashlib.sha3_256(doc).hexdigest(), "nonce": "drill-anchored", "anchor": True})
+        with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("SELECT count(*) FROM TimestampLog"); rows_after = cur.fetchone()[0]
+        av = V.verify_timestamp_anchor(tsa_anchored, log_key=pub_b) if st9 == 200 else {}
+        checks.append(("an unanchored timestamp left NO row; an ANCHORED one (the caller's choice) appended exactly one digest",
+                       (rows_before, rows_after - rows_before), (0, 1)))
+        checks.append(("the anchored timestamp's inclusion evidence verifies offline under B's key (proof reconstructs the signed head)",
+                       (st9, av.get("anchored"), av.get("sth_authentic"), av.get("log_matches")), (200, True, True, True)))
+        st10, incl = _http_get_soft(base_b + "/api/v1/timestamp/inclusion/" + V.timestamp_hash(tsa_anchored)) if st9 == 200 else (0, {})
+        checks.append(("B serves the inclusion evidence for that timestamp hash (200), and the registry lists the timestamp log",
+                       (st10, "polaris-timestamp-log" in ((_http_get(base_b + "/api/v1/registry/1")[1].get("instance") or {}).get("transparency_logs") or [])), (200, True)))
 
         # 6e. RECEIPT TRANSPARENCY (P8.2c): the SET of receipts is an append-only log while no
         #     receipt is retained. The minted receipt's hash is in B's receipt log; inclusion is

@@ -567,7 +567,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     mig.mkdir(parents=True)
     base_tables = ("tokenlifecycleevent verificationevent enrollmentstatusevent "
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
-                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent")
+                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog")
 
     def write(grants, mig_revoke, proc_definer):
         (sql / "09_grants.sql").write_text(grants)
@@ -7967,3 +7967,50 @@ def test_roadmap_consistent_check_discriminates(tmp_path):
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a wrong stamp count"
     write({'ROADMAP.md': ROADMAP.replace("the protocol layer (P8, complete); ", "")})
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer once P8 is done"
+
+
+def test_timestamp_transparency_check_discriminates(tmp_path):
+    # v9.341 (P8.5b): anchored timestamps in an append-only log; each perturbation removes one leg.
+    APP = ("_TIMESTAMP_LOG_ID = 'polaris-timestamp-log'\ndef _anchor_timestamp(ts): pass\n    if body.get('anchor') is True:\n"
+           "@app.route('/api/v1/timestamp/inclusion/<timestamp_hash>')\n@app.route('/api/v1/transparency/timestamps/sth')\n"
+           "            'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID, _TIMESTAMP_LOG_ID],\n    if fields.get('anchor_timestamp') is True:\n")
+    VER = ("def timestamp_hash(ts): pass\ndef verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=1): pass\n"
+           "def verify_signed_document(doc, timestamp_quorum=1, require_anchored=False): pass\n"
+           "L = {\"timestamp_authority_key_status_per_trust_list\": None, \"independent_timestamps\": 0}\ndef attach_ltv(doc, timestamps=None): pass\n")
+    good = {
+        'polaris_sql/01_schema.sql': "CREATE TABLE TimestampLog (chk_timestamp_log_hash)\n",
+        'polaris_sql/06_triggers.sql': "trg_timestamp_log_append_only\n",
+        'polaris_sql/09_grants.sql': "'timestamplog'\n",
+        'polaris_sql/migrations/2026-09-09-007-timestamp-log.up.sql': "CREATE TABLE IF NOT EXISTS TimestampLog ();\n",
+        'polaris_sql/migrations/2026-09-09-007-timestamp-log.down.sql': "DROP TABLE IF EXISTS TimestampLog;\n",
+        'polaris_web/app.py': APP,
+        'scripts/polaris-verify.py': VER,
+        'scripts/polaris-timestamp-transparency-drill.py': "# AFTER THE THEFT; SPLIT VIEW; QUORUM; the residual risk, stated\n",
+        '.github/workflows/ci.yml': "      - run: python scripts/polaris-timestamp-transparency-drill.py\n",
+        'scripts/polaris-federation-instances-drill.py': '{"anchor": True}; V.verify_timestamp_anchor(x)\n',
+        'polaris_web/test_app.py': "class TimestampLogTests: pass  # retains nothing\n",
+        'polaris_web/test_check_constraints.py': '"TimestampLog",\n',
+        'docs/reference/WIRE-SPEC.md': "`anchor` polaris-timestamp-log quorum\n",
+        'docs/design/timestamp-transparency.md': "# Timestamp transparency\n",
+        'docs/design/timestamp-authority.md': "keeps no per-request record unless the caller asks for an anchor\n",
+        'docs/PRODUCTION-READINESS.md': "one digest per anchored timestamp\n",
+        'docs/reference/DATA-MODEL.md': "TimestampLog\n",
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, content in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+    write()
+    first = checks.check_timestamp_transparency(tmp_path)[0]
+    assert first.level == "OK", "must PASS on the full fixture: " + first.message
+    write({'polaris_sql/06_triggers.sql': "-- rewritable\n"})
+    assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp log is not append-only"
+    write({'polaris_web/app.py': APP.replace("if body.get('anchor') is True:", "always_anchor()")})
+    assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if anchoring is not the caller's choice"
+    write({'scripts/polaris-verify.py': VER.replace("def verify_timestamp_anchor", "def verify_something_else")})
+    assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the verifier cannot check an anchor"
+    write({'scripts/polaris-timestamp-transparency-drill.py': "# happy path only\n"})
+    assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL without the stolen-key drill"
+    write({'docs/design/timestamp-authority.md': "keeps no per-request record\n"})
+    assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the promise is not restated honestly"

@@ -305,6 +305,43 @@ class ExchangeReceiptLogTests(PolarisTestCase):
         self.assertEqual(self.client.get('/api/v1/exchange-receipt/inclusion/not-a-hash').status_code, 400)
 
 
+class TimestampLogTests(PolarisTestCase):
+    """P8.5b (v9.341): the timestamp authority retains nothing unless the caller asks for an
+    anchor; an anchored timestamp's hash is in the append-only timestamp log with inclusion
+    evidence the detached verifier checks; the log's public surface mirrors the receipt log's."""
+
+    def test_unanchored_request_retains_nothing_and_anchored_is_included(self):
+        import hashlib
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
+        before = flask_app.query("SELECT count(*) AS n FROM TimestampLog", fetch='one', primary=True)['n']
+        digest = hashlib.sha3_256(b"a thing the authority never sees").hexdigest()
+        plain = self.client.post('/api/v1/timestamp/1', json={'digest_hex': digest, 'nonce': 'plain'})
+        self.assertEqual(plain.status_code, 200)
+        self.assertNotIn('anchor', plain.get_json())
+        self.assertEqual(flask_app.query("SELECT count(*) AS n FROM TimestampLog", fetch='one', primary=True)['n'], before,
+                         "an unanchored request retains nothing")
+        anchored = self.client.post('/api/v1/timestamp/1', json={'digest_hex': digest, 'nonce': 'anchored', 'anchor': True})
+        self.assertEqual(anchored.status_code, 200, anchored.get_data(as_text=True))
+        ts = anchored.get_json()
+        self.assertEqual(flask_app.query("SELECT count(*) AS n FROM TimestampLog", fetch='one', primary=True)['n'], before + 1,
+                         "an anchored request appends exactly one digest")
+        h = flask_app._timestamp_hash(ts)
+        self.assertEqual(ts['anchor']['log_id'], 'polaris-timestamp-log')
+        self.assertEqual(ts['anchor']['timestamp_hash'], h)
+        self.assertEqual(ts['anchor']['proof']['entry_hex'], h)
+        self.assertEqual(ts['anchor']['proof']['root_hash_hex'], ts['anchor']['sth']['root_hash_hex'])
+        self.assertEqual(ts['anchor']['sth']['log_id'], 'polaris-timestamp-log')
+        r = self.client.get('/api/v1/timestamp/inclusion/' + h)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()['proof']['entry_hex'], h)
+        sth = self.client.get('/api/v1/transparency/timestamps/sth').get_json()
+        self.assertEqual(sth['log_id'], 'polaris-timestamp-log')
+        self.assertIn(h, self.client.get('/api/v1/transparency/timestamps/entries').get_json()['entries'])
+        self.assertIn('polaris-timestamp-log', self.client.get('/api/v1/registry/1').get_json()['instance']['transparency_logs'])
+        self.assertEqual(self.client.get('/api/v1/timestamp/inclusion/' + 'ef' * 32).status_code, 404)
+        self.assertEqual(self.client.get('/api/v1/timestamp/inclusion/not-a-hash').status_code, 400)
+
+
 class RegistryTests(PolarisTestCase):
     """P8.3: the signed registry is served from the Athena views once the publisher has a
     registered key, lists the publisher among its authorities, the seven contexts, the trust

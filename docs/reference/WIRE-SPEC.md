@@ -178,7 +178,8 @@ same hash-only rule.
 ### 3.9 `polaris-timestamp/1`
 
 A timestamp authority's binding of an arbitrary digest to an instant under its registered key
-(P8.7a). The authority sees only a digest, never content, and keeps no per-request record.
+(P8.7a). The authority sees only a digest, never content, and keeps no per-request record
+unless the requester asks for an anchor (below).
 Signed fields: format, authority, digest_hex, digest_algorithm, nonce, issued_at, algorithm
 
 `digest_hex` MUST be the lowercase SHA3-256 hex of the data being timestamped and
@@ -190,6 +191,19 @@ binding (`SHA3-256(data) == digest_hex`) before treating the timestamp as eviden
 data; a timestamp over an artifact's canonical bytes (section 3 or 3.8) from an authority other
 than the artifact's signer is time evidence independent of that signer. Authority trust is a
 relying-party decision over its trusted keys.
+
+**Anchoring (P8.5b, minor 1.1).** At the requester's choice a timestamp MAY carry an unsigned
+`anchor` object outside the signed statement: `log_id` (`polaris-timestamp-log`),
+`timestamp_hash` (the lowercase SHA3-256 hex of the signed statement's canonical bytes), an
+RFC-6962 inclusion `proof` for that hash, the log's signed head `sth` (section 4), and
+optionally `cosignatures` (section 4) by witnesses. The authority appends the hash to its
+append-only timestamp log only for an anchored request. A verifier that relies on an anchor
+MUST check that the proof is for this timestamp's hash, that the head is an authentic head of
+the timestamp log signed by the authority, and that the proof reconstructs the head; a verifier
+that names trusted witnesses MUST also require the head cosigned by its threshold of them, since
+a stolen authority key can sign a fresh head over a fabricated log but cannot make a witness
+have cosigned that head at the claimed time. An unanchored timestamp is authentic evidence of
+the authority's signature and nothing more.
 
 ### 3.10 `polaris-registry/1`
 
@@ -260,7 +274,13 @@ distinct from the signer anchors) and MUST be signed by a key distinct from the 
 an authentic timestamp is not a trusted one, since anyone can sign one, and a signer's own
 timestamp is backdatable by whoever holds the signing key, so it is convenience evidence only.
 A verifier given no timestamp-authority anchors MUST report the facts and MUST NOT claim
-long-term validity.
+long-term validity. The container MAY carry further timestamps under `ltv.timestamps` (minor
+1.1); a verifier applying a quorum MUST count only timestamps that are authentic, bound,
+trusted and independent of the signer, one per distinct authority key. With a trust list
+(3.15) the verifier MUST require the timestamp authority's key active at the instant, as the
+signer's. A verifier applying an anchored policy MUST require an anchored timestamp (3.9),
+witnessed when it names witnesses: that, or a quorum of independent authorities, is what
+survives a timestamp authority's key being stolen after the fact.
 
 ### 3.13 `polaris-id-token/1`
 

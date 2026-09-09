@@ -6039,12 +6039,16 @@ def _timestamp_body(agency, agency_id, digest_hex, nonce):
 def api_v1_timestamp(agency_id):
     """P8.7a: a TIMESTAMP AUTHORITY. Bind an arbitrary SHA3-256 digest to an instant under
     this agency's registered ML-DSA-65 key. Public and session-less: the caller sends only a
-    digest (the content itself is never sent, so the authority learns nothing and retains
-    nothing) and an optional nonce it chose, and receives a polaris-timestamp/1 an
+    digest (the content itself is never sent, so the authority learns nothing and, unless the
+    caller asks for an anchor, retains nothing) and an optional nonce it chose, and receives a
+    polaris-timestamp/1 an
     independent party verifies offline (verify_timestamp) and checks against the data it
     holds (timestamp_binds). Timestamp an exchange receipt's canonical bytes at a SECOND
-    authority and the receipt gains time evidence independent of its responder. No personal
-    data, no per-request record; bounding is a per-authority rate limit."""
+    authority and the receipt gains time evidence independent of its responder. With
+    `anchor: true` (P8.5b) the timestamp's SHA3-256 joins the append-only timestamp log and the
+    inclusion evidence comes back stapled, for evidence that must survive this key being stolen
+    later; that is the one record the authority keeps, one digest and one instant, by the
+    caller's choice. No personal data; bounding is a per-authority rate limit."""
     agency, err = _federated_agency(agency_id)
     if err:
         return err
@@ -6061,7 +6065,12 @@ def api_v1_timestamp(agency_id):
                        error_description='nonce, if present, is a string of at most 128 characters'), 400
     if not security.rate_limiter.allow('tsa:%d' % agency_id, _TIMESTAMP_RATE_PER_MIN, 60):
         return jsonify(error='rate_limited'), 429
-    return jsonify(_timestamp_body(agency, agency_id, digest_hex, nonce))
+    ts = _timestamp_body(agency, agency_id, digest_hex, nonce)
+    if body.get('anchor') is True:
+        # P8.5b: the caller's choice. Only now does anything persist: the timestamp's SHA3-256
+        # in the append-only timestamp log, with the inclusion evidence stapled to the answer.
+        _anchor_timestamp(ts)
+    return jsonify(ts)
 
 
 # --- P8.3: the signed registry -- discovery over the Athena authority layer ---------------
@@ -6107,7 +6116,9 @@ _PROTOCOL_FORMATS = {
 # or change canonicalization (that is a major, carried in the format string). Advertised in the
 # registry under instance.protocol.versions; a consumer never needs a minor to verify.
 _PROTOCOL_MINORS = {
-    'polaris-registry': 3,   # 1.1 authorities[].keys (v9.328); 1.2 protocol.signing_algorithm (v9.329); 1.3 protocol.versions (v9.330)
+    'polaris-registry': 4,   # 1.1 authorities[].keys (v9.328); 1.2 protocol.signing_algorithm (v9.329); 1.3 protocol.versions (v9.330); 1.4 transparency_logs gains the timestamp log (v9.341)
+    'polaris-timestamp': 1,          # 1.1 an unsigned `anchor` (inclusion proof + head) may ride outside the signed statement (v9.341)
+    'polaris-signed-document': 1,    # 1.1 ltv.timestamps, a list of further timestamps beside ltv.timestamp (v9.341)
 }
 
 
@@ -6211,7 +6222,7 @@ def api_v1_registry(agency_id):
             'protocol': {'formats': dict(_PROTOCOL_FORMATS), 'versions': _protocol_versions(), 'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS), 'signing_algorithm': _signing_algorithm(agency_id),
                          'wire_spec': 'docs/reference/WIRE-SPEC.md', 'conformance': 'conformance/cases.json'},
             'services': [dict(s) for s in _REGISTRY_SERVICES],
-            'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID],
+            'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID, _TIMESTAMP_LOG_ID],
             'disclosure_levels': [d['disclosure_level'] for d in disclosure],
             # P8.2d: the service kinds the exchange gateway forwards to (operator-configured).
             'exchange_kinds': sorted(_exchange_upstreams().keys()),
@@ -6492,6 +6503,8 @@ def _sign_document(agency, agency_id, fields, on_behalf_of):
             return None, err
         ts_agency_id = tid
     ts_body = _timestamp_body(ts_agency, ts_agency_id, material_digest, None)
+    if fields.get('anchor_timestamp') is True:
+        _anchor_timestamp(ts_body)   # P8.5b: the signer's choice; the container's time evidence gains an anchor
     # Real keys only: under the placeholder profile neither side has a key, and no independence claim exists either way.
     if tid is not None and pub and ts_body.get('public_key_hex') and str(ts_body.get('public_key_hex')).lower() == str(pub).lower():
         return None, (jsonify(error='invalid_request',
@@ -6775,6 +6788,7 @@ def _sth_statement(body):
 
 
 _RECEIPT_LOG_ID = 'polaris-exchange-receipt-log'
+_TIMESTAMP_LOG_ID = 'polaris-timestamp-log'   # P8.5b (v9.341): anchored timestamps, by the caller's choice
 
 
 def _transparency_entries(log='anchors'):
@@ -6784,6 +6798,9 @@ def _transparency_entries(log='anchors'):
     if log == 'receipts':
         rows = query("SELECT receipt_hash FROM ExchangeReceiptLog ORDER BY seq", primary=True)
         return [r['receipt_hash'] for r in rows]
+    if log == 'timestamps':   # P8.5b: every ANCHORED timestamp's SHA3-256 (the timestamp itself is never retained)
+        rows = query("SELECT timestamp_hash FROM TimestampLog ORDER BY seq", primary=True)
+        return [r['timestamp_hash'] for r in rows]
     rows = query("SELECT merkle_root FROM AnchorBatch ORDER BY batch_id", primary=True)
     return [r['merkle_root'] for r in rows]
 
@@ -6945,6 +6962,92 @@ def api_v1_exchange_receipt_inclusion(receipt_hash):
     return jsonify({'log_id': _RECEIPT_LOG_ID,
                     'proof': _proof_body(_RECEIPT_LOG_ID, entries, index),
                     'sth': _sth_body(_RECEIPT_LOG_ID, entries)})
+
+
+# P8.5b (v9.341): the TIMESTAMP TRANSPARENCY LOG. A timestamp authority keeps no per-request
+# record; a caller who needs evidence that survives the authority's key being stolen later asks
+# for an ANCHORED timestamp, and only then does the timestamp's SHA3-256 join TimestampLog,
+# published as a third RFC-6962 log (log_id polaris-timestamp-log) with signed heads the same
+# monitor and witness daemons watch (--log timestamps). The caller staples the inclusion
+# evidence to the timestamp, so a verifier decides offline that the timestamp existed when a
+# witnessed head of the log did: a backdated timestamp is one absent from every such head.
+def _timestamp_hash(ts):
+    """A timestamp's log entry: the SHA3-256 hex of its canonical statement (the bytes its
+    signature covers). MUST match scripts/polaris-verify.py's timestamp_hash."""
+    return hashlib.sha3_256(_timestamp_statement(ts)).hexdigest()
+
+
+def _timestamp_log_append(timestamp_hash):
+    """Append a timestamp's SHA3-256 to the append-only timestamp log (idempotent) and return
+    its 0-based log index."""
+    query("INSERT INTO TimestampLog (timestamp_hash) VALUES (%s) ON CONFLICT (timestamp_hash) DO NOTHING",
+          (timestamp_hash,), fetch='none')
+    row = query("SELECT (SELECT count(*) FROM TimestampLog b WHERE b.seq < a.seq) AS idx "
+                "FROM TimestampLog a WHERE a.timestamp_hash = %s",
+                (timestamp_hash,), fetch='one', primary=True)
+    return int(row['idx']) if row else None
+
+
+def _anchor_timestamp(ts):
+    """Anchor a freshly signed timestamp (P8.5b): append its hash to the timestamp log and
+    attach the inclusion proof and the current signed head as UNSIGNED evidence (`anchor`),
+    outside the signed statement, so the timestamp artifact's major does not change."""
+    h = _timestamp_hash(ts)
+    index = _timestamp_log_append(h)
+    entries = _transparency_entries('timestamps')
+    ts['anchor'] = {'log_id': _TIMESTAMP_LOG_ID, 'timestamp_hash': h,
+                    'proof': _proof_body(_TIMESTAMP_LOG_ID, entries, index),
+                    'sth': _sth_body(_TIMESTAMP_LOG_ID, entries)}
+    return ts
+
+
+@app.route('/api/v1/transparency/timestamps/sth')
+def api_v1_timestamp_log_sth():
+    """P8.5b: the timestamp log's Signed Tree Head."""
+    return jsonify(_sth_body(_TIMESTAMP_LOG_ID, _transparency_entries('timestamps')))
+
+
+@app.route('/api/v1/transparency/timestamps/consistency/<int:m>/<int:n>')
+def api_v1_timestamp_log_consistency(m, n):
+    """P8.5b: an RFC-6962 consistency proof between two sizes of the timestamp log."""
+    body, err = _consistency_body(_TIMESTAMP_LOG_ID, _transparency_entries('timestamps'), m, n)
+    return err if err else jsonify(body)
+
+
+@app.route('/api/v1/transparency/timestamps/proof/<int:index>')
+def api_v1_timestamp_log_proof(index):
+    """P8.5b: an RFC-6962 inclusion proof for the timestamp-log entry at `index`."""
+    entries = _transparency_entries('timestamps')
+    if index < 0 or index >= len(entries):
+        return jsonify(error='index out of range', log_size=len(entries)), 400
+    return jsonify(_proof_body(_TIMESTAMP_LOG_ID, entries, index))
+
+
+@app.route('/api/v1/transparency/timestamps/entries')
+def api_v1_timestamp_log_entries():
+    """P8.5b: the timestamp-log entries (timestamp hashes) in [start, end); C8-bounded."""
+    body, err = _entries_body(_TIMESTAMP_LOG_ID, _transparency_entries('timestamps'))
+    return err if err else jsonify(body)
+
+
+@app.route('/api/v1/timestamp/inclusion/<timestamp_hash>')
+def api_v1_timestamp_inclusion(timestamp_hash):
+    """P8.5b: inclusion evidence that an anchored timestamp is in this instance's append-only
+    timestamp log: the RFC-6962 inclusion proof for its hash plus the current signed head, so a
+    third party verifies offline (verify_timestamp_anchor) that the timestamp it holds was
+    anchored here and cannot have been quietly dropped. Public; the caller already holds the
+    timestamp (it computes the hash), so nothing is disclosed to one who does not."""
+    h = str(timestamp_hash).lower()
+    if not (len(h) == 64 and all(c in '0123456789abcdef' for c in h)):
+        return jsonify(error='invalid_request', error_description='a SHA3-256 hex timestamp hash is required'), 400
+    entries = _transparency_entries('timestamps')
+    try:
+        index = entries.index(h)
+    except ValueError:
+        return jsonify(error='not_in_log', error_description='no anchored timestamp with that hash is in this log'), 404
+    return jsonify({'log_id': _TIMESTAMP_LOG_ID,
+                    'proof': _proof_body(_TIMESTAMP_LOG_ID, entries, index),
+                    'sth': _sth_body(_TIMESTAMP_LOG_ID, entries)})
 
 
 # ============================================================================

@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **35 tables** in `01_schema.sql` (v9.328), organized
-into six functional groups. A migrated deployment holds **42 tables**: those,
+The Polaris schema is **36 tables** in `01_schema.sql` (v9.341), organized
+into six functional groups. A migrated deployment holds **43 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -239,6 +239,17 @@ per-receipt inclusion evidence (`/api/v1/exchange-receipt/inclusion/<hash>`), so
 the SET of receipts is provably append-only and independently monitorable.
 Strictly append-only by trigger (`trg_receipt_log_append_only`, no carve-out)
 and by privilege (`polaris_app` may INSERT, never UPDATE or DELETE).
+
+### `TimestampLog` (constraint C1: append-only; roadmap P8.5b)
+
+The timestamp transparency log (v9.341). `seq BIGSERIAL PRIMARY KEY`, `timestamp_hash CHAR(64)
+UNIQUE` (CHECK-constrained to lowercase SHA3-256 hex), `anchored_at TIMESTAMP`. One row per
+ANCHORED timestamp, and only when the caller asked for the anchor: the timestamp authority keeps
+no per-request record otherwise. The row holds only the timestamp's SHA3-256 (the timestamp is
+never retained; no document, no requester). Published as an RFC-6962 log
+(`/api/v1/transparency/timestamps/*`), strictly append-only by trigger and by privilege, so a
+timestamp backdated under a stolen authority key is one absent from every witnessed head of its
+claimed era. Migration 007.
 
 ### `ExchangeNonce` (constraint C1: append-only; roadmap P8.2d)
 

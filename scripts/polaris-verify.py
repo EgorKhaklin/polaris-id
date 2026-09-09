@@ -1310,12 +1310,87 @@ def timestamp_binds(ts, data):
 
 
 _RECEIPT_LOG_ID = "polaris-exchange-receipt-log"
+_TIMESTAMP_LOG_ID = "polaris-timestamp-log"   # P8.5b (v9.341)
 
 
 def receipt_hash(receipt):
     """A receipt's entry in the receipt transparency log: the SHA3-256 hex of its canonical
     statement (the same bytes its signature covers)."""
     return hashlib.sha3_256(_exchange_receipt_canonical(receipt)).hexdigest()
+
+
+def timestamp_hash(ts):
+    """A timestamp's entry in the timestamp transparency log (P8.5b): the SHA3-256 hex of its
+    canonical statement (the same bytes its signature covers)."""
+    return hashlib.sha3_256(_timestamp_canonical(ts if isinstance(ts, dict) else {})).hexdigest()
+
+
+def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=1):
+    """Verify OFFLINE (P8.5b) that a timestamp is ANCHORED: its unsigned `anchor` carries an
+    RFC-6962 inclusion proof and a Signed Tree Head of the timestamp log, the proof is for this
+    timestamp's hash, the head is an authentic head of that log (with log_key: signed by the
+    expected authority), and the proof reconstructs the head. With trusted_witnesses the head
+    must also be cosigned by `threshold` distinct trusted witnesses (`anchor.cosignatures`):
+    a stolen authority key can sign a fresh head over a fabricated log, but it cannot make a
+    witness have cosigned that head at the claimed time. Total on hostile input."""
+    v = {"anchored": False, "sth_authentic": False, "log_matches": None, "witnessed": None,
+         "cosigner_count": 0, "timestamp_hash": None, "index": None, "tree_size": None, "note": None}
+    if not isinstance(ts, dict):
+        v["note"] = "timestamp must be an object"
+        return v
+    anchor = ts.get("anchor")
+    if not isinstance(anchor, dict):
+        v["note"] = "the timestamp carries no anchor (unanchored: the authority kept no record of it)"
+        return v
+    proof, sth = anchor.get("proof"), anchor.get("sth")
+    if not isinstance(proof, dict) or not isinstance(sth, dict):
+        v["note"] = "anchor.proof and anchor.sth must be objects"
+        return v
+    h = timestamp_hash(ts)
+    v["timestamp_hash"] = h
+    if str(proof.get("entry_hex") or "").lower() != h:
+        v["note"] = "the proof is not for this timestamp"
+        return v
+    sv = verify_sth(sth, issuer_key=log_key)
+    v["sth_authentic"] = bool(sv.get("sth_authentic"))
+    if log_key is not None:
+        v["log_matches"] = sv.get("issuer_matches")
+    if sth.get("log_id") != _TIMESTAMP_LOG_ID or proof.get("log_id") not in (None, _TIMESTAMP_LOG_ID):
+        v["note"] = "the head is not a %s head" % _TIMESTAMP_LOG_ID
+        return v
+    try:
+        idx, size = int(proof.get("index")), int(proof.get("tree_size"))
+        root = bytes.fromhex(str(sth.get("root_hash_hex")))
+        path = [bytes.fromhex(str(p)) for p in (proof.get("proof_hex") or [])]
+    except (TypeError, ValueError):
+        v["note"] = "malformed proof"
+        return v
+    v["index"], v["tree_size"] = idx, size
+    if size != sth.get("tree_size") or \
+            str(proof.get("root_hash_hex") or "").lower() != str(sth.get("root_hash_hex") or "").lower():
+        v["note"] = "the proof and the head describe different trees"
+        return v
+    if not v["sth_authentic"]:
+        v["note"] = sv.get("note") or "the head is not authentic"
+        return v
+    if log_key is not None and not v["log_matches"]:
+        v["note"] = "the head is not signed by the expected log key"
+        return v
+    try:
+        ok = verify_inclusion(idx, size, _lh(h), root, path)
+    except Exception:  # noqa: BLE001 -- a hostile proof shape is a refusal, never a crash
+        ok = False
+    v["anchored"] = bool(ok)
+    if not ok:
+        v["note"] = "the inclusion proof does not reconstruct the head"
+        return v
+    if trusted_witnesses is not None:
+        wv = verify_witnessed_checkpoint(sth, anchor.get("cosignatures") or [], trusted_witnesses,
+                                         threshold=threshold, issuer_key=log_key)
+        v["witnessed"], v["cosigner_count"] = bool(wv.get("witnessed")), int(wv.get("cosigner_count") or 0)
+        if not v["witnessed"]:
+            v["note"] = wv.get("note")
+    return v
 
 
 def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
@@ -1728,13 +1803,15 @@ def is_revoked_leaf(feed, leaf_hex):
     return str(leaf_hex or "").lower() in {str(x).lower() for x in leaves}
 
 
-def attach_ltv(doc, timestamp=None, manifest=None, epoch_checkpoint=None, revocation_feed=None):
+def attach_ltv(doc, timestamp=None, manifest=None, epoch_checkpoint=None, revocation_feed=None, timestamps=None):
     """Attach long-term-validation evidence to a signed document (outside the signed
     statement): a timestamp over document_signature_material(doc) -- from a second authority
     if you want time independent of the signer -- and the signer's manifest, epoch checkpoint
     and revocation feed at that instant. Returns a new container."""
     out = dict(doc) if isinstance(doc, dict) else {}
     ltv = dict(out.get("ltv") or {}) if isinstance(out.get("ltv"), dict) else {}
+    if timestamps:   # P8.5b: further timestamps (a quorum of independent authorities) beside ltv.timestamp
+        ltv["timestamps"] = list(ltv.get("timestamps") or []) + [t for t in timestamps if isinstance(t, dict)]
     for k, val in (("timestamp", timestamp), ("manifest", manifest),
                    ("epoch_checkpoint", epoch_checkpoint), ("revocation_feed", revocation_feed)):
         if val is not None:
@@ -1743,7 +1820,8 @@ def attach_ltv(doc, timestamp=None, manifest=None, epoch_checkpoint=None, revoca
     return out
 
 
-def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=None, trust_list=None, timestamp_anchors=None):
+def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=None, trust_list=None, timestamp_anchors=None,
+                           require_anchored=False, trusted_witnesses=None, witness_threshold=1, timestamp_quorum=1):
     """Verify a signed document OFFLINE (P8.5): the signer's ML-DSA-65 signature over
     SHA3-256(canonical) (two witnesses); with trusted_anchors, signer trust; with
     document_bytes, that the container binds them. Then LONG-TERM VALIDATION from the embedded
@@ -1751,6 +1829,11 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     signature existed at the timestamp's instant); the signer's manifest was authentic and
     fresh AT THAT INSTANT and listed the signing key as active; and, for a holder-authorized
     signature, the signer's revocation feed at that instant did not list the credential.
+    P8.5b (v9.341): `timestamp_quorum` demands that many DISTINCT trusted, independent authorities
+    among ltv.timestamp and ltv.timestamps; `require_anchored` demands an anchored timestamp
+    (inclusion evidence in the authority's append-only timestamp log), cosigned by
+    `witness_threshold` of `trusted_witnesses` when those are given; with a trust list the
+    timestamp authority's key must have been active at the instant, like the signer's.
     `timestamp_anchors` (v9.334) names the timestamp authorities the verifier trusts, distinct
     from the signer anchors: valid_long_term requires the timestamp trusted AND independent of
     the signing key, so neither a stranger's timestamp nor a signer's own (backdatable) one counts.
@@ -1764,6 +1847,8 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
          "digest_hex": d.get("digest_hex"), "signed_at": doc.get("signed_at"),
          "ltv": {"present": False, "timestamp_authentic": None, "timestamp_binds": None, "instant": None,
                  "timestamp_authority_trusted": None, "timestamp_independent": None,
+                 "timestamps": [], "independent_timestamps": 0, "timestamp_anchored": None, "timestamp_witnessed": None,
+                 "timestamp_authority_key_status_per_trust_list": None,
                  "signer_key_active_at_instant": None, "credential_unrevoked_at_instant": None,
                  "signer_key_status_per_trust_list": None},
          "valid_long_term": False, "witnesses": [], "note": None}
@@ -1860,8 +1945,55 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         tlv = verify_trust_list(trust_list, now=now, trusted_anchors=trusted_anchors)
         L["signer_key_status_per_trust_list"] = (key_status_at(trust_list, signer_key, instant)
                                                  if (tlv["trust_list_authentic"] and tlv["fresh"] and instant is not None) else None)
+    # P8.5b (v9.341): every timestamp the container carries (ltv.timestamp, then ltv.timestamps)
+    # is judged the same way; those that are authentic, bound, trusted and independent of the
+    # signer count toward a QUORUM of distinct authorities. An anchored timestamp (inclusion
+    # evidence in the timestamp log, witnessed when the verifier names witnesses) is what
+    # survives the authority's key being stolen later. With a trust list, the authority's key
+    # must have been ACTIVE at the instant, exactly as the signer's must.
+    material = document_signature_material(doc)
+    quorum_keys, tl_ok = set(), None
+    if trust_list is not None:
+        _tlv = verify_trust_list(trust_list, now=now, trusted_anchors=trusted_anchors)
+        tl_ok = bool(_tlv["trust_list_authentic"] and _tlv["fresh"])
+    for t in [ts] + [x for x in (ltv.get("timestamps") or []) if isinstance(x, dict)]:
+        if not isinstance(t, dict):
+            continue
+        tv_i = verify_timestamp(t, anchor_keys=timestamp_anchors)
+        t_key = str(t.get("public_key_hex") or "").lower()
+        entry = {"authority": t.get("authority"), "authentic": bool(tv_i.get("timestamp_authentic")),
+                 "binds": bool(timestamp_binds(t, material)), "trusted": tv_i.get("issuer_trusted"),
+                 "independent": bool(t_key) and t_key != signer_key, "anchored": None, "witnessed": None,
+                 "key_status_per_trust_list": None}
+        if tl_ok and instant is not None and t_key:
+            entry["key_status_per_trust_list"] = key_status_at(trust_list, t_key, instant)
+        if isinstance(t.get("anchor"), dict):
+            av = verify_timestamp_anchor(t, log_key=t_key or None, trusted_witnesses=trusted_witnesses, threshold=witness_threshold)
+            entry["anchored"] = bool(av.get("anchored"))
+            entry["witnessed"] = av.get("witnessed")
+        qualifies = (entry["authentic"] and entry["binds"] and entry["trusted"] is True and entry["independent"]
+                     and (trust_list is None or entry["key_status_per_trust_list"] == "active"))
+        entry["qualifies"] = qualifies
+        if qualifies:
+            quorum_keys.add(t_key)
+            if entry["anchored"]:
+                L["timestamp_anchored"] = True
+                if trusted_witnesses is not None and entry["witnessed"]:
+                    L["timestamp_witnessed"] = True
+        L["timestamps"].append(entry)
+    L["independent_timestamps"] = len(quorum_keys)
+    if L["timestamp_anchored"] is None:
+        L["timestamp_anchored"] = False
+    if trusted_witnesses is not None and L["timestamp_witnessed"] is None:
+        L["timestamp_witnessed"] = False
+    if L["timestamps"]:
+        L["timestamp_authority_key_status_per_trust_list"] = L["timestamps"][0]["key_status_per_trust_list"]
+    quorum = max(1, int(timestamp_quorum or 1))
+    anchored_ok = (not require_anchored) or (L["timestamp_anchored"] and (trusted_witnesses is None or L["timestamp_witnessed"]))
     v["valid_long_term"] = bool(v["document_authentic"] and L["timestamp_authentic"] and L["timestamp_binds"]
                                 and L["timestamp_authority_trusted"] is True and L["timestamp_independent"]
+                                and (trust_list is None or L["timestamp_authority_key_status_per_trust_list"] == "active")
+                                and L["independent_timestamps"] >= quorum and anchored_ok
                                 and L["signer_key_active_at_instant"]
                                 and L["credential_unrevoked_at_instant"] is not False
                                 and (trust_list is None or L["signer_key_status_per_trust_list"] == "active"))
@@ -1870,6 +2002,13 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
             k for k in ("timestamp_authentic", "timestamp_binds", "timestamp_independent", "signer_key_active_at_instant") if not L[k]
         ) + (", no trusted timestamp-authority anchors given" if L["timestamp_authority_trusted"] is None
              else (", timestamp authority not trusted" if L["timestamp_authority_trusted"] is False else "")
+        ) + (", timestamp authority key not active at the instant per the trust list"
+             if (trust_list is not None and L["timestamp_authority_key_status_per_trust_list"] != "active") else ""
+        ) + (", timestamp quorum not met (%d of %d independent authorities)" % (L["independent_timestamps"], quorum)
+             if L["independent_timestamps"] < quorum else ""
+        ) + (", no anchored timestamp under an anchored policy" if (require_anchored and not L["timestamp_anchored"])
+             else (", the anchor's head is not witnessed by a trusted witness"
+                   if (require_anchored and trusted_witnesses is not None and not L["timestamp_witnessed"]) else "")
         ) + (", credential revoked at the instant" if L["credential_unrevoked_at_instant"] is False else "")
     return v
 

@@ -117,7 +117,8 @@ DECLARE
         -- P8.4: the auth broker's consumed-code register (code hashes only).
         'authcodeconsumed',
         -- P8.7b: the authority key register (history is never edited).
-        'authoritykeyevent'
+        'authoritykeyevent',
+        'timestamplog'
     ];
 BEGIN
     FOREACH v_tbl IN ARRAY v_append_only_tables LOOP

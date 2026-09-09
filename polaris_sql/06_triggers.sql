@@ -930,3 +930,30 @@ COMMENT ON FUNCTION enforce_retention_policy_immutability IS
     'RetentionPolicy is append-only with one-way supersession (P1.11): no '
     'DELETE, no UPDATE except superseded_at, and superseded_at moves NULL to a '
     'timestamp once, never back and never earlier.';
+
+-- ---------------------------------------------------------------------------
+-- P8.5b (v9.341): TimestampLog is an append-only transparency log. No carve-out.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION reject_timestamp_log_modification()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION
+        '% on TimestampLog is forbidden: '
+        'the timestamp log is an append-only transparency log and must never be rewritten.',
+        TG_OP
+        USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_timestamp_log_append_only ON TimestampLog;
+CREATE TRIGGER trg_timestamp_log_append_only
+    BEFORE UPDATE OR DELETE ON TimestampLog
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_timestamp_log_modification();
+
+COMMENT ON TRIGGER trg_timestamp_log_append_only ON TimestampLog IS
+    'Strict append-only enforcement for TimestampLog (P8.5b). No carve-out: a '
+    'transparency log that can be rewritten is not one.';
+

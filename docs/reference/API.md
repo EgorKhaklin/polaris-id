@@ -892,7 +892,7 @@ disclosure_level, acr, enrollment, auth_time, iat, exp`). Verified offline with
 ### `POST /api/v1/sign/<agency_id>`
 
 **Operator auth (login + CSRF) (P8.5).** The institution signs a document under its registered
-key. Body `{digest_hex, digest_algorithm?, media_type?, name?, purpose?, timestamp_agency_id?}` --
+key. Body `{digest_hex, digest_algorithm?, media_type?, name?, purpose?, timestamp_agency_id?, anchor_timestamp?}` --
 the SHA3-256 of the document, never the document. Returns a `polaris-signed-document/1` with
 long-term-validation evidence attached (`ltv`: a timestamp over the statement and signature by
 this signer, or by the other federated agency `timestamp_agency_id` names (v9.334: a signer's
@@ -970,9 +970,14 @@ discovery (`registry_service`, `registry_authority`, `registry_trusts`). Specifi
 ### `POST /api/v1/timestamp/<agency_id>`
 
 **Public; no session (P8.7a).** A **timestamp authority**: bind an arbitrary SHA3-256 digest to
-an instant under this agency's registered ML-DSA-65 key. The caller sends only the digest (the
-content itself is never sent) and an optional nonce of its own; the authority keeps no
-per-request record. Rate-bounded per authority.
+an instant under this agency's registered key. The caller sends only the digest (the content
+itself is never sent) and an optional nonce of its own; the authority keeps no per-request
+record unless the caller asks for an anchor. With `"anchor": true` (P8.5b, v9.341) the
+timestamp's SHA3-256 joins the append-only **timestamp transparency log** and the answer
+carries an unsigned `anchor` (`log_id`, `timestamp_hash`, the RFC-6962 inclusion `proof`, the
+signed head `sth`), which the detached verifier checks offline (`verify_timestamp_anchor`) and
+which is what survives this authority's key being stolen later; that is the one record the
+authority then keeps, one digest and one instant, by the caller's choice. Rate-bounded per authority.
 
 ```jsonc
 // request
@@ -998,6 +1003,38 @@ head of the receipt log. A third party verifies offline with `scripts/polaris-ve
 minted here and cannot have been quietly dropped. The caller already holds the receipt (it
 computes the hash), so nothing is disclosed to one who does not; an unknown hash is `404`.
 Every minted receipt carries `log_id` and `log_index` (advisory, unsigned).
+
+### `GET /api/v1/timestamp/inclusion/<timestamp_hash>`
+
+**Public; no auth (P8.5b).** Inclusion evidence that an anchored timestamp is in this instance's
+append-only **timestamp transparency log**: `{log_id, proof, sth}`, the RFC-6962 inclusion proof
+for the timestamp's SHA3-256 (its canonical statement's hash) plus the current signed head. A
+third party verifies offline with `scripts/polaris-verify.py` (`verify_timestamp_anchor`) that the
+timestamp it holds was anchored here and cannot have been quietly dropped. The caller already
+holds the timestamp (it computes the hash); an unknown hash is `404`. Unanchored timestamps are
+never in the log.
+
+### `GET /api/v1/transparency/timestamps/sth`
+
+**Public; no auth (P8.5b).** The **timestamp log's** Signed Tree Head (`log_id`
+`polaris-timestamp-log`), same shape as the anchor log's head below, over the append-only
+sequence of anchored-timestamp hashes. The monitor and witness daemons watch it with
+`--log timestamps`. No timestamp is retained; the entries are hashes.
+
+### `GET /api/v1/transparency/timestamps/consistency/<m>/<n>`
+
+**Public; no auth (P8.5b).** An RFC-6962 consistency proof between two sizes of the timestamp
+log, same shape as the anchor log's.
+
+### `GET /api/v1/transparency/timestamps/proof/<index>`
+
+**Public; no auth (P8.5b).** An RFC-6962 inclusion proof for the timestamp-log entry at `index`,
+same shape as the anchor log's.
+
+### `GET /api/v1/transparency/timestamps/entries`
+
+**Public; no auth (P8.5b).** The timestamp-log entries (timestamp hashes) in `[start, end)` for a
+monitor or mirror to replicate; C8-bounded like the anchor log's.
 
 ### `GET /api/v1/transparency/receipts/sth`
 

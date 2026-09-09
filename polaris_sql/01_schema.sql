@@ -87,6 +87,7 @@ DROP TABLE IF EXISTS IdentityToken          CASCADE;
 DROP TABLE IF EXISTS AuthAuditLog           CASCADE;
 DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
+DROP TABLE IF EXISTS TimestampLog           CASCADE;
 DROP TABLE IF EXISTS ExchangeNonce          CASCADE;
 DROP TABLE IF EXISTS AuthCodeConsumed       CASCADE;
 DROP TABLE IF EXISTS AuthorityKeyEvent      CASCADE;
@@ -283,6 +284,26 @@ COMMENT ON TABLE ExchangeReceiptLog IS
   'P8.2c append-only transparency log over exchange receipts: one row per minted '
   'receipt holding ONLY its SHA3-256 (the receipt is never retained). Published as '
   'an RFC-6962 log; strictly append-only by trigger and by privilege.';
+
+-- P8.5b (v9.341): the TIMESTAMP TRANSPARENCY LOG. The timestamp authority keeps no
+-- per-request record; when a caller asks for an ANCHORED timestamp (its own choice,
+-- for evidence that must survive the authority's key being stolen later), only the
+-- timestamp's SHA3-256 joins this append-only sequence, published as an RFC-6962 log
+-- with signed heads, so a backdated timestamp is one absent from every witnessed
+-- head of its claimed era. One digest and one instant per anchored timestamp; no
+-- document, no requester, no unanchored request is ever recorded here.
+CREATE TABLE TimestampLog (
+    seq             BIGSERIAL    PRIMARY KEY,
+    timestamp_hash  CHAR(64)     NOT NULL UNIQUE
+        CONSTRAINT chk_timestamp_log_hash CHECK (timestamp_hash ~ '^[0-9a-f]{64}$'),
+    anchored_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE TimestampLog IS
+  'P8.5b append-only transparency log over ANCHORED timestamps (the caller opts in): '
+  'one row per anchored timestamp holding ONLY its SHA3-256 (the timestamp is never '
+  'retained; unanchored timestamps leave no row). Published as an RFC-6962 log; '
+  'strictly append-only by trigger and by privilege.';
 
 -- P8.2d (v9.324): the exchange gateway's REPLAY REGISTER. A requester's signed exchange
 -- envelope carries a nonce; the gateway consumes (requester key, nonce) here BEFORE
