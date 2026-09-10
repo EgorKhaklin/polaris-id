@@ -7,7 +7,7 @@
   \node[layerbox, minimum width=3.6cm, text width=3.3cm] (B) at (7.4,3.0) {Authority B\\[-1pt]{\mdseries\scriptsize its own database, its own ML-DSA-65 root; publishes the same three objects}};
   \node[layerbox, minimum width=3.0cm, text width=2.7cm, fill=steelgray!85, draw=steelgray] (C) at (13.6,3.0) {Authority C\\[-1pt]{\mdseries\scriptsize trusted by A, not by B}};
   % The attestation edge (B accepts A in context 3)
-  \draw[flow, line width=1.4pt] (B.west) -- node[lbl, above, text width=3.4cm] {B attests A's key in context 3, until a date (\code{AgencyTrustAttestation})} (A.east);
+  \draw[flow, line width=1.4pt] (B.west) -- node[lbl, above=3pt, text width=3.6cm] {B attests A's key in context 3, until a date (\code{AgencyTrustAttestation})} (A.east);
   % A trusts C, drawn over the top so that it visibly bypasses B
   \draw[flowfaint] (A.north) to[out=60, in=120, looseness=0.5] node[faint, above, pos=0.5] {A attests C, in some context} (C.north);
   % The refused transitive edge

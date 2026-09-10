@@ -5,7 +5,7 @@
   \node[extbox, minimum width=3.2cm, text width=2.9cm] (req) at (-0.4,3.6) {Requesting institution\\[-1pt]{\scriptsize signs an envelope under its registered key: body hash, target, kind, context, nonce, time}};
   \node[layerbox, minimum width=6.8cm, text width=6.5cm] (gw) at (7.0,3.6) {The gateway (the responder's own instance)\\[-1pt]{\mdseries\scriptsize 1 refuses without real signing. 2 checks form, address, freshness, binding. 3 authenticates by a known key, two witnesses. 4 authorizes: the responder itself attests the requester in this context. 5 consumes the nonce. 6 forwards to the operator-configured upstream. 7 signs a receipt. 8 returns response + receipt.}};
   \node[extbox, minimum width=2.8cm, text width=2.5cm] (up) at (14.2,3.6) {Upstream service\\[-1pt]{\scriptsize configured by the operator; never named by a request}};
-  \draw[flow] ([yshift=4mm]req.east) -- node[faint, above, text width=2.2cm] {envelope + body} ([yshift=4mm]gw.west);
+  \draw[flow] ([yshift=4mm]req.east) -- node[faint, above=1.5pt, text width=2.2cm] {envelope + body} ([yshift=4mm]gw.west);
   \draw[flowfaint] ([yshift=-4mm]gw.west) -- node[faint, below, text width=2.2cm] {response + receipt} ([yshift=-4mm]req.east);
   \draw[flow] ([yshift=4mm]gw.east) -- node[faint, above] {body} ([yshift=4mm]up.west);
   \draw[flowfaint] ([yshift=-4mm]up.west) -- node[faint, below] {response} ([yshift=-4mm]gw.east);

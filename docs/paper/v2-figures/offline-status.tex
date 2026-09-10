@@ -9,7 +9,6 @@
   % the assertion's window
   \fill[navymid!12!white] (1.0,-0.28) rectangle (9.0,0.28);
   \draw[navymid, line width=0.8pt] (1.0,-0.28) rectangle (9.0,0.28);
-  \node[font=\scriptsize\color{navydark}, anchor=south] at (5.0,0.32) {the assertion is valid: \code{issued\_at} to \code{expires\_at} (TTL, 3600 s by default; the verifier caps it with \code{max\_window})};
   % the revoked-but-valid window
   \fill[classmark!15!white] (6.2,-0.28) rectangle (9.0,0.28);
   \draw[classmark, line width=0.8pt, dash pattern=on 2pt off 2pt] (6.2,-0.28) rectangle (9.0,0.28);
@@ -22,6 +21,7 @@
   \node[font=\scriptsize, anchor=south, align=center] at (9.0,1.1) {assertion expires;\\only a \code{REVOKED} one\\can be minted now};
   \node[font=\scriptsize, anchor=north, align=center] at (11.4,-0.45) {relying party B,\\offline: reject};
   \foreach \x/\y in {1.0/1.05, 4.6/1.05, 9.0/1.05} { \draw[steelgray, line width=0.4pt, opacity=0.6] (\x,0.3) -- (\x,\y); }
+  \node[font=\scriptsize\color{navydark}, anchor=south, fill=white, inner sep=1.5pt] at (5.0,0.32) {the assertion is valid: \code{issued\_at} to \code{expires\_at} (TTL, 3600 s by default; the verifier caps it with \code{max\_window})};
   % the window's meaning, below the event labels
   \draw[classmark, line width=0.6pt, dash pattern=on 2pt off 2pt] (6.2,-1.35) -- (6.2,-1.9);
   \draw[classmark, line width=0.6pt, dash pattern=on 2pt off 2pt] (9.0,-0.32) -- (9.0,-1.9);

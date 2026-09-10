@@ -55,6 +55,14 @@ instance authorizes nothing there. Before that fix the gateway accepted an attes
 on the instance, which was the transitive trust the federation layer refuses, reappearing one layer
 up. \sImpl
 
+\figfile{signing-chain}{A signed document and its long-term evidence. The document never leaves its
+holder; its digest is signed by an institution, or by the holder's issuing authority on the
+holder's behalf after a possession proof, recorded by credential hash. Evidence fixed at the instant
+of signing, a timestamp from a distinct key, the signer's manifest, checkpoint and feed, together
+with the verifier's own trust list, lets a verifier decide validity at that instant long after the
+signing key has been retired. A signature whose instant falls after a compromise is refused even
+though its embedded manifest says the key was active.}{fig:signing-chain}
+
 \subsection{Time that learns nothing}
 
 The timestamp authority binds an arbitrary SHA3-256 digest to an instant under an authority's
@@ -68,14 +76,6 @@ instant, a record of volume and timing, never of content, and the default reques
 nothing. \sImpl
 
 \subsection{Signing a document so that it outlives the key}
-
-\figfile{signing-chain}{A signed document and its long-term evidence. The document never leaves its
-holder; its digest is signed by an institution, or by the holder's issuing authority on the
-holder's behalf after a possession proof, recorded by credential hash. Evidence fixed at the instant
-of signing, a timestamp from a distinct key, the signer's manifest, checkpoint and feed, together
-with the verifier's own trust list, lets a verifier decide validity at that instant long after the
-signing key has been retired. A signature whose instant falls after a compromise is refused even
-though its embedded manifest says the key was active.}{fig:signing-chain}
 
 A holder in Polaris holds a credential, not a signing key, so the model is notarial: the issuing
 authority signs on behalf of a holder who has just proved possession, exactly as it asserts status

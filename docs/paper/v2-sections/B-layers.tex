@@ -7,10 +7,15 @@ knowledge and scepticism. Each rung states what the layer knows and what it refu
 from the rung below. The layers are not exactly the rings of Figure~\ref{fig:core-to-shell}, because
 some rings hold two kinds of knowledge; the rungs follow the implementation.
 
+\figfile{layer-ladder}{The ladder. From the person, who exists outside the software, to the
+environment of agents the system is preparing for. The right-hand column is the refusal each layer
+makes of the layer below it; the last rung's refusal is an open problem rather than a
+mechanism.}{fig:layer-ladder}
+
 {\footnotesize
 \setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
 \rowcolors{2}{tabstripe}{white}
-\begin{xltabular}{\textwidth}{>{\bfseries}p{0.35in} >{\RaggedRight\arraybackslash}p{1.35in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.0in}}
+\begin{xltabular}{\textwidth}{>{\bfseries}p{0.5in} >{\RaggedRight\arraybackslash}p{1.55in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.15in}}
 \caption{The layers, what checks each, and whether each is needed now or is preparation.}\label{tab:layers}\\
 \toprule
 \rowcolor{tabheader}\thead{Layer} & \thead{Name} & \thead{Checked by} & \thead{Now or later} \\
@@ -20,7 +25,7 @@ some rings hold two kinds of knowledge; the rungs follow the implementation.
 \rowcolor{tabheader}\thead{Layer} & \thead{Name} & \thead{Checked by} & \thead{Now or later} \\
 \midrule
 \endhead
-\multicolumn{4}{r}{\itshape continued on the next page}\\
+\midrule\multicolumn{4}{r}{\itshape continued on the next page}\\
 \endfoot
 \bottomrule
 \endlastfoot
@@ -39,8 +44,3 @@ L11 & Societal boundary & C10's structural absence, the non-goals, the vocation 
 L12 & Agent and web environment & Nothing yet & Later \\
 \end{xltabular}
 }
-
-\figfile{layer-ladder}{The ladder. From the person, who exists outside the software, to the
-environment of agents the system is preparing for. The right-hand column is the refusal each layer
-makes of the layer below it; the last rung's refusal is an open problem rather than a
-mechanism.}{fig:layer-ladder}

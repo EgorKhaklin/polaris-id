@@ -35,13 +35,6 @@ without every monitor that saw the old head detecting it. What it cannot prove o
 two monitors were shown the same head at the same size. A log can show one observer a private fork
 of history. \sImpl
 
-\figfile{transparency}{The log, the monitor, the witnesses, the gossip pool and the equivocation
-proof. The log publishes a signed head and proofs. A monitor proves the log only appended. Witnesses
-cosign heads they found consistent, a relying party requires a threshold of them on the exact head,
-and witnesses gossip the heads they were shown; two log-signed heads of the same size with different
-roots are a non-repudiable proof that the log lied. Heads can also be published into an external
-append-only ledger that returns a receipt.}{fig:transparency}
-
 \subsection{Witnesses, gossip and the equivocation proof}
 
 A witness is a monitor that does two more things. It cosigns a head with its own key, only when the
@@ -60,6 +53,13 @@ the log cannot use a head it has not publicly committed and the ledger cannot la
 ledger is itself an append-only log, so this reuses the same machinery and is monitored the same
 way. The file-backed ledger is implemented and tested; the chain-backed drivers are declared and wait
 on their interfaces. \sImpl{} for the file backend; \sFut{} for a chain.
+
+\figfile{transparency}{The log, the monitor, the witnesses, the gossip pool and the equivocation
+proof. The log publishes a signed head and proofs. A monitor proves the log only appended. Witnesses
+cosign heads they found consistent, a relying party requires a threshold of them on the exact head,
+and witnesses gossip the heads they were shown; two log-signed heads of the same size with different
+roots are a non-repudiable proof that the log lied. Heads can also be published into an external
+append-only ledger that returns a receipt.}{fig:transparency}
 
 \subsection{Who runs the witnesses}
 

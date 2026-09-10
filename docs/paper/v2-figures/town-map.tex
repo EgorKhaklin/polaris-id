@@ -13,11 +13,11 @@
   civic/.style={font=\tiny\scshape\color{gold}, inner sep=1pt},
 ]
 % The laws above the town.
-\node[law] (law) at (0,6.6) {The laws above the town: the vocation and C1--C10 (MISSION.md), enforced in the schema, pinned by 191 checks};
+\node[law] (law) at (0,6.6) {The laws above the town: the vocation and C1--C10 \mbox{(MISSION.md)}, enforced in the schema, pinned by 191 checks};
 \draw[flowfaint] (law.south) -- (0,5.5);
 % The wall (schema constraints).
 \draw[wall] (-5.4,-4.8) rectangle (5.4,5.0);
-\node[civic, anchor=south east] at (-1.5,5.15) {the wall: triggers, checks, unique indexes};
+\node[civic, anchor=south west, align=left] at (-5.12,5.18) {the wall: triggers, checks,\\unique indexes};
 % Districts.
 \node[hall, minimum width=3.2cm] (hall) at (0,1.2) {town hall record\\IdentityToken + TokenSignature};
 \node[district] (work) at (-3.3,3.3) {workshops\\epochs, permissions,\\recovery, duress};
@@ -26,10 +26,10 @@
 \node[district] (reg) at (3.3,-1.5) {registry office\\Athena views,\\the signed registry,\\the trust list};
 \node[district, text width=3.4cm] (court) at (0,-3.5) {court records\\{\tiny AuditAccessLog, DuressEvent,}\\{\tiny LifecycleArchiveCheckpoint}};
 % Gates on the wall.
-\node[gate] (g1) at (0,5.0) {issuance gate\\uc1\_issue, signing};
-\node[gate] (g2) at (5.4,1.2) {verification gate\\/api/v1/verify};
-\node[gate] (g3) at (0,-4.8) {exchange gate\\/api/v1/exchange};
-\node[gate] (g4) at (-5.4,1.2) {login gate\\auth broker, PKCE};
+\node[gate] (g1) at (0,5.0) {issuance gate\\\texttt{uc1\_issue}, signing};
+\node[gate] (g2) at (5.4,1.2) {verification gate\\\texttt{/api/v1/verify}};
+\node[gate] (g3) at (0,-4.8) {exchange gate\\\texttt{/api/v1/exchange}};
+\node[gate, anchor=west] (g4) at (-5.4,1.2) {login gate\\auth broker, PKCE};
 % Watchtowers at the corners.
 \node[tower] (t1) at (-5.4,5.0) {W};
 \node[tower] (t2) at (5.4,5.0) {W};
@@ -37,7 +37,7 @@
 \node[tower] (t4) at (5.4,-4.8) {W};
 \node[civic, anchor=north west] at (-5.4,-5.2) {W: watchtowers, the transparency logs};
 % Watchers outside the wall.
-\node[extbox, minimum width=2.6cm] (wit) at (-8.5,-3.4) {independent witnesses\\[-1pt]{\tiny cosign heads, gossip,}\\{\tiny refuse a fork}};
+\node[extbox, minimum width=2.6cm] (wit) at (-9.4,-3.4) {independent witnesses\\[-1pt]{\tiny cosign heads, gossip,}\\{\tiny refuse a fork}};
 \draw[sees] (wit.east) -- (t3.west);
 \draw[sees] (wit.north east) -- (t1.south west);
 \node[extbox, minimum width=2.6cm] (rp) at (8.5,1.2) {relying party\\[-1pt]{\tiny verifies offline with}\\{\tiny the detached verifier}};
@@ -49,7 +49,7 @@
 \node[civic, anchor=south, align=center] at (6.3,-3.1) {road:\\attestation};
 \node[font=\tiny\itshape\color{steelgray}, anchor=north, align=center] at (6.3,-3.7) {one way,\\one context};
 % The holder outside.
-\node[humanbox, minimum width=2.4cm] (holder) at (-8.5,1.2) {holder\\[-1pt]{\tiny wallet file, presentation}};
+\node[humanbox, minimum width=2.4cm] (holder) at (-9.4,1.2) {holder\\[-1pt]{\tiny wallet file, presentation}};
 \draw[flow] (holder.east) -- (g4.west);
-\node[font=\tiny\itshape\color{steelgray}, anchor=north, text width=3.0cm, align=center] at (-8.5,0.3) {enters by possession; a duress code looks like consent to the coercer};
+\node[font=\tiny\itshape\color{steelgray}, anchor=north, text width=3.0cm, align=center] at (-9.4,0.3) {enters by possession; a duress code looks like consent to the coercer};
 \end{tikzpicture}

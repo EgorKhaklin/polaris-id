@@ -85,6 +85,11 @@ since the model is issuer-centric on purpose and the holder holds a credential r
 pair. That is the same missing piece that blocks the browser bridge, and the repository records it as
 a future credential extension. \sFut
 
+\figfile{present-future}{The present system beside the future environment it is preparation for.
+Solid navy is what runs at \code{v9.345}; dashed gold is what does not exist. The two panels share the
+same core, which is the point: the extensions are proposed on the credential and its verifiers, not
+on a new system.}{fig:present-future}
+
 \subsection{The future internet, concretely}
 
 The term Web3 is used here in one narrow sense, and it has nothing to do with currency: an internet
@@ -106,16 +111,16 @@ item's status is today.
 \rowcolor{tabheader}\thead{The environment asks for} & \thead{What Polaris has} & \thead{Status} \\
 \midrule
 \endhead
-\multicolumn{3}{r}{\itshape continued on the next page}\\
+\midrule\multicolumn{3}{r}{\itshape continued on the next page}\\
 \endfoot
 \bottomrule
 \endlastfoot
 Portable credentials & A signed file any standard library verifies & \sImpl \\
-Independently verifiable proofs & The detached verifier, two SDKs, a conformance suite & \sImpl{} \sExt \\
-Institutional federation & Per-authority roots, directional attestations, published feeds & \sImpl{} \sExt \\
+Independently verifiable proofs & The detached verifier, two SDKs, a conformance suite & \sImpl\newline\sExt \\
+Institutional federation & Per-authority roots, directional attestations, published feeds & \sImpl\newline\sExt \\
 Service discovery & The signed registry & \sImpl \\
 Document signatures with long-term validity & Signed containers with evidence fixed at the instant & \sImpl \\
-Transparent authority behaviour & Three logs, witnesses, equivocation proofs & \sImpl{} \sExt \\
+Transparent authority behaviour & Three logs, witnesses, equivocation proofs & \sImpl\newline\sExt \\
 Offline verification & Status assertions stapled to presentations & \sImpl \\
 Post-quantum trust & ML-DSA, hash-based proofs, a hybrid edge; classical remainders named & \sImpl \\
 Human, account and agent authorization relationships & The broker's credential-bound login token; no agent grant & \sFut \\
@@ -124,8 +129,3 @@ Delegation to agents with bounded scope & Nothing; needs a holder-side key & \sF
 Revoking an agent without destroying the human's identity & Nothing; needs grant-scoped revocation & \sFut \\
 \end{xltabular}
 }
-
-\figfile{present-future}{The present system beside the future environment it is preparation for.
-Solid navy is what runs at \code{v9.345}; dashed gold is what does not exist. The two panels share the
-same core, which is the point: the extensions are proposed on the credential and its verifiers, not
-on a new system.}{fig:present-future}

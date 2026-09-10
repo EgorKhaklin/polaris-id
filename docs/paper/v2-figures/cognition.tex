@@ -11,8 +11,8 @@
   \node[futbox,   minimum width=3.6cm, text width=3.3cm] (myrmex) at (12.6,1.0) {Myrmex (proposed)\\[-1pt]{\scriptsize attacks Polaris from outside as an independent observer}};
   \foreach \n in {atlas,athena,metis,myrmex} { \draw[flowfaint] (themis.south -| \n) -- (\n.north); }
   % The person prohibition.
-  \draw[refuse] (-1.4,-1.0) -- (14.6,-1.0);
-  \node[font=\scriptsize\bfseries, text=classmark, anchor=north west] at (-1.4,-1.1) {below this line nothing is modelled: no person node, no subject surrogate, no behavioural profile, no score};
+  \node[font=\scriptsize\bfseries, text=classmark, anchor=north west, inner sep=0pt] (prohibition) at (-1.4,-1.12) {below this line nothing is modelled: no person node, no subject surrogate, no behavioural profile, no score};
+  \draw[refuse] ([yshift=3.5pt]prohibition.north west) -- ([yshift=3.5pt]prohibition.north east);
   \node[humanbox, minimum width=3.2cm] (person) at (6.6,-2.3) {a natural person};
   \node[faint, text width=8.5cm, anchor=north] at (6.6,-3.0) {Atlas and Athena read events and authority structure; the checks fail the build if a person-level column or traversal appears. Make power legible, not people.};
 \end{tikzpicture}

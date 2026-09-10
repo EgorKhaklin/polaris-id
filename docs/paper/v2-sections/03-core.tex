@@ -22,6 +22,13 @@ card with on-device biometric binding, remains modelled and not manufactured: th
 serial, the binding type and the device bindings, and no card exists. \sFut{} for the hardware;
 \sImpl{} for the record.
 
+\figfile{nucleus}{The core entity geometry, unchanged from Version 1. Seven entities around
+\entity{IdentityToken}: the person who holds it, the agency that issues it, the algorithm that signs
+it, the contexts it may be verified in, and the two append-only event logs it generates. The
+many-to-many relationships resolve to the junction tables \entity{AgencyAlgorithmAuth} and
+\entity{TokenPermission}. This geometry is the constant of the paper: Section~\ref{sec:walls} draws
+the other twenty-nine tables as rings around it.}{fig:nucleus}
+
 \subsection{What the credential is not}
 
 The constitution's tenth constraint, C10, states that identity attestation never carries spending
@@ -35,13 +42,6 @@ it declines to answer \emph{should this person be allowed to do X}. That second 
 the relying party, outside the boundary. \sImpl
 
 \subsection{One active token per person}
-
-\figfile{nucleus}{The core entity geometry, unchanged from Version 1. Seven entities around
-\entity{IdentityToken}: the person who holds it, the agency that issues it, the algorithm that signs
-it, the contexts it may be verified in, and the two append-only event logs it generates. The
-many-to-many relationships resolve to the junction tables \entity{AgencyAlgorithmAuth} and
-\entity{TokenPermission}. This geometry is the constant of the paper: Section~\ref{sec:walls} draws
-the other twenty-nine tables as rings around it.}{fig:nucleus}
 
 A person may hold several provisioned tokens but only one may be \code{ACTIVE}. Two active tokens for
 one person would let one token authorise a transaction and the other repudiate it. The rule is C3,

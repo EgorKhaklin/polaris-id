@@ -57,10 +57,11 @@
 
 % === SECTION STYLING ===
 \usepackage{titlesec}
-\titleformat{\section}{\Large\bfseries\color{navydark}}{\thesection}{1em}{}[\vspace{-4pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
-\titleformat{\subsection}{\large\bfseries\color{navymid}}{\thesubsection}{0.8em}{}
+\newcommand{\polarisTitleStrut}[1]{#1\strut}
+\titleformat{\section}{\Large\bfseries\color{navydark}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{\thesection}{1em}{\polarisTitleStrut}[\vspace{0.5pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
+\titleformat{\subsection}{\large\bfseries\color{navymid}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{\thesubsection}{0.8em}{}
 \titleformat{\subsubsection}{\normalsize\bfseries\color{navymid}}{\thesubsubsection}{0.6em}{}
-\titlespacing*{\section}{0pt}{13pt}{8pt}
+\titlespacing*{\section}{0pt}{13pt}{4pt}
 \titlespacing*{\subsection}{0pt}{8pt}{5pt}
 \titlespacing*{\subsubsection}{0pt}{6pt}{3pt}
 
@@ -68,7 +69,7 @@
 \usepackage{booktabs}
 \usepackage{tabularx}
 \usepackage{xltabular}
-\usepackage[section]{placeins}
+% (no float barrier: it flushed a pending figure and ended the page early)
 \usepackage{array}
 \usepackage{colortbl}
 \usepackage{float}
@@ -80,7 +81,7 @@
 \setlist[itemize]{leftmargin=1.6em, itemsep=2pt, parsep=1pt, topsep=4pt}
 \setlist[itemize,1]{label=\color{accent}\textbullet}
 \setlist[enumerate]{leftmargin=1.8em, itemsep=2pt, parsep=1pt, topsep=4pt}
-\setlist[description]{itemsep=2pt, parsep=1pt, topsep=4pt, font=\normalfont\bfseries\color{navymid}}
+\setlist[description]{itemsep=2pt, parsep=1pt, topsep=4pt, style=unboxed, font=\normalfont\bfseries\color{navymid}}
 \usepackage{needspace}
 % A heading never sits alone at the foot of a page: require room for it and a few lines.
 \let\polarisSectionRaw\section
@@ -138,11 +139,12 @@
 % === THE VERSION 2 VOCABULARY ===
 % Status marks. Every capability in this paper carries one of the four, so a
 % reader never has to guess whether a sentence describes code that runs today.
+\DeclareRobustCommand{\marktie}{\ifdim\lastskip>0pt \unskip\nobreakspace\fi}
 \newcommand{\statusmark}[3]{{\fboxsep=1.5pt\fboxrule=0.5pt\fcolorbox{#1}{#2}{\scriptsize\scshape\color{#3}\strut}}}
-\newcommand{\sImpl}{{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navydark}{navydark}{\scriptsize\scshape\color{white}implemented}}}
-\newcommand{\sExp}{{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{accent}{accent}{\scriptsize\scshape\color{white}experimental}}}
-\newcommand{\sExt}{{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{white}{\scriptsize\scshape\color{gold}external validation required}}}
-\newcommand{\sFut}{{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{futfill}{\scriptsize\scshape\color{navydark}proposed}}}
+\newcommand{\sImpl}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navydark}{navydark}{\scriptsize\scshape\color{white}implemented}}}
+\newcommand{\sExp}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{accent}{accent}{\scriptsize\scshape\color{white}experimental}}}
+\newcommand{\sExt}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{white}{\scriptsize\scshape\color{gold}external validation required}}}
+\newcommand{\sFut}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{futfill}{\scriptsize\scshape\color{navydark}proposed}}}
 % A name in the code.
 % Code names may break after an underscore, so a long check name never overflows a narrow column.
 \DeclareRobustCommand{\code}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
@@ -152,19 +154,30 @@
 % Why the next layer exists: the causal step.
 \newcommand{\nextlayer}[1]{\par\vspace{4pt}\noindent{\color{accent}\rule[-3pt]{2.5pt}{13pt}}\hspace{7pt}\parbox[t]{\dimexpr\textwidth-12pt}{\small\itshape #1}\par\vspace{4pt}}
 % A layer card: the same questions asked of every component.
+% The title and the first three rows always stay together, the last four rows always
+% stay together, so a card never leaves one orphaned row on the next page.
+\newcounter{qarow}
 \newenvironment{layercard}[1]{%
-  \par\vspace{6pt}%
+  \par\Needspace{9\baselineskip}\vspace{3pt}%
   \noindent{\color{navydark}\bfseries\small #1}\par\vspace{2pt}\nopagebreak%
+  \setcounter{qarow}{0}%
   \footnotesize\rowcolors{1}{tabstripe}{white}%
-  \setlength{\LTleft}{0pt}\setlength{\LTright}{0pt}\setlength{\LTpre}{2pt}\setlength{\LTpost}{6pt}%
-  \begin{longtable}{>{\bfseries\color{navymid}\RaggedRight\arraybackslash}p{1.35in} >{\RaggedRight\arraybackslash}p{\dimexpr\textwidth-1.35in-4\tabcolsep-2pt}}
+  \setlength{\LTleft}{0pt}\setlength{\LTright}{0pt}\setlength{\LTpre}{0pt}\setlength{\LTpost}{5pt}%
+  \begin{longtable}{>{\bfseries\RaggedRight\arraybackslash}p{1.35in} >{\RaggedRight\arraybackslash}p{\dimexpr\textwidth-1.35in-4\tabcolsep-2pt}}
   \toprule\endfirsthead
   \toprule\endhead
-  \endfoot
+  \bottomrule\endfoot
   \bottomrule\endlastfoot}{\end{longtable}\normalsize}
-\newcommand{\qa}[2]{#1 & #2 \\}
+\newcommand{\qaStar}{\\*}
+\newcommand{\qaPlain}{\\}
+\newcommand{\qa}[2]{\stepcounter{qarow}\textcolor{navymid}{#1} & #2 \ifnum\numexpr(\value{qarow}-3)*(\value{qarow}-6)\relax>0 \expandafter\qaStar\else\expandafter\qaPlain\fi}
 % A figure from the v2-figures directory, never wider than the text.
-\newcommand{\figfile}[3]{\begin{figure}[!htb]\centering\adjustbox{max width=\textwidth,center}{\input{v2-figures/#1}}\caption{#2}\label{#3}\end{figure}}
+% A figure sits at the top or the bottom of a text page, never inside a run of
+% paragraphs and never on a float page of its own; the height cap keeps every
+% figure small enough that text shares its page.
+\newcommand{\figfile}[3]{\begin{figure}[!htb]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.72\textheight,center}{\input{v2-figures/#1}}%
+  \caption{#2}\label{#3}\end{figure}}
 \newcommand{\thead}[1]{\textbf{\color{white}\small #1}}
 
 % ============================================================================
@@ -190,7 +203,7 @@
 {\fontsize{13}{17}\selectfont\color{navydark} The map of the system}
 \vspace{0.12in}
 
-{\small\color{steelgray} A reference implementation of a post-quantum, issuer-unlinkable, compulsion-resistant identity-token system,\\ read from the centre outward, at version 9.345}
+{\small\color{steelgray} A reference implementation of a post-quantum, issuer-unlinkable,\\ compulsion-resistant identity-token system,\\ read from the centre outward, at version 9.345}
 \vspace{0.5in}
 
 {\color{gold}\rule{0.85in}{0.5pt}}
@@ -243,7 +256,7 @@
 % ---------------------------------------------------------------- APPENDICES
 \appendix
 \renewcommand{\thesection}{\Alph{section}}
-\titleformat{\section}{\Large\bfseries\color{navydark}}{Appendix \thesection}{1em}{}[\vspace{-4pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
+\titleformat{\section}{\Large\bfseries\color{navydark}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{Appendix \thesection}{1em}{\polarisTitleStrut}[\vspace{0.5pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
 \input{v2-sections/A-status}
 \input{v2-sections/B-layers}
 \input{v2-sections/C-counts}

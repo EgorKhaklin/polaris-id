@@ -56,6 +56,13 @@ operator surface, the bounded result sets on every read path, and the threat mod
 residual that a sufficiently resourced adversary with many data sources may still deanonymise by
 traffic analysis.
 
+\figfile{holder-flow}{Holder, relying party and issuer, with what each sees and what each is
+prevented from seeing. The holder presents a file; the relying party decides offline with the
+detached verifier or an SDK and learns that a valid credential exists and its value; the issuer
+records, in zero-knowledge mode, an event with no token identifier, and keeps no who-verified-whom
+row for the online status check. The red edge is the stated limitation: the credential value is a
+stable handle across the verifiers it is shown to.}{fig:holder-flow}
+
 \subsection{The thing that does not exist}
 
 Polaris is a full-credential presentation system. A presentation carries a stable \code{token\_value},
@@ -68,13 +75,6 @@ credentials, and the repository records this as a permanent, documented property
 pending feature. \emph{Unlinkable by default} means the issuer's zero-knowledge-mode records. It
 does not mean cross-verifier presentation. The future presentation technologies that would change
 this are discussed in Section~\ref{sec:research}; none is built. \sImpl{} as a stated limitation.
-
-\figfile{holder-flow}{Holder, relying party and issuer, with what each sees and what each is
-prevented from seeing. The holder presents a file; the relying party decides offline with the
-detached verifier or an SDK and learns that a valid credential exists and its value; the issuer
-records, in zero-knowledge mode, an event with no token identifier, and keeps no who-verified-whom
-row for the online status check. The red edge is the stated limitation: the credential value is a
-stable handle across the verifiers it is shown to.}{fig:holder-flow}
 
 \subsection{Bounded surfaces}
 

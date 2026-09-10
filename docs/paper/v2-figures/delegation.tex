@@ -8,7 +8,7 @@
   \node[futbox, minimum width=3.4cm] (a) at (11.6,-1.05) {AI agent (proposed)\\[-1pt]{\scriptsize acts only within the grant}};
   \node[extbox, minimum width=3.6cm] (s) at (11.6,-3.9) {Service\\[-1pt]{\scriptsize verifies the chain offline}};
   \draw[flow] (h) -- (c);
-  \draw[flowfut] (c.east) -- node[faint, below, sloped] {issues} (g.west);
+  \draw[flowfut] (c.east) -- node[faint, below=2pt, sloped] {issues} (g.west);
   \draw[flowfut] (g) -- node[faint, above] {presents} (a);
   \draw[flowfut] (a) -- node[faint, right] {acts} (s);
   \node[anchor=north west, font=\scriptsize, text=navydark, text width=8.0cm, align=left] at (-1.7,-3.3) {

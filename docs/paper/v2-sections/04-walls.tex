@@ -19,16 +19,6 @@ rather than asking developers not to create them. A verification event that reco
 identifier at the zero-knowledge disclosure level is not an application bug to be caught in review.
 It is a privacy violation that must never be storable, so it is a check constraint on the row.
 
-\figfile{districts}{The 36 canonical tables of \code{01\_schema.sql} at \code{v9.345}, as rings
-around the Version 1 nucleus. The faint lattice at the centre is the nucleus geometry of
-Figure~\ref{fig:nucleus} at the same proportions. Ring two is the credential machinery: signatures,
-permissions, epochs, recovery, duress. Ring three is authority and trust: who may sign under which
-algorithm, who trusts whom, revocation ceilings, quotas, relying parties, the replay registers. Ring
-four is the archives and watchtowers: append-only logs, anchors, the retention decision as data. A
-migrated deployment holds seven more tables (the migration registry, operator sessions and
-credentials, the audit-access log, and Athena's three curated tables), and four partition
-children.}{fig:districts}
-
 \subsection{The ten constraints and where each lives}
 
 The constitution names ten hard constraints in two tiers. Five are constitutional, rights
@@ -69,6 +59,16 @@ instead; remove C1 and every other constraint's enforcement becomes retroactivel
 argument for treating them as a graph rather than a list. Athena, in Section~\ref{sec:cognition},
 holds the map from each constraint to the exact live mechanism that enforces it, and a check fails
 the build if a mechanism drifts.
+
+\figfile{districts}{The 36 canonical tables of \code{01\_schema.sql} at \code{v9.345}, as rings
+around the Version 1 nucleus. The faint lattice at the centre is the nucleus geometry of
+Figure~\ref{fig:nucleus} at the same proportions. Ring two is the credential machinery: signatures,
+permissions, epochs, recovery, duress. Ring three is authority and trust: who may sign under which
+algorithm, who trusts whom, revocation ceilings, quotas, relying parties, the replay registers. Ring
+four is the archives and watchtowers: append-only logs, anchors, the retention decision as data. A
+migrated deployment holds seven more tables (the migration registry, operator sessions and
+credentials, the audit-access log, and Athena's three curated tables), and four partition
+children.}{fig:districts}
 
 \subsection{The audit of record}
 
