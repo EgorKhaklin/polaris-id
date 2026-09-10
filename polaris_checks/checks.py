@@ -10357,7 +10357,123 @@ def check_plonky3_evaluation(root: pathlib.Path) -> list[Finding]:
                "re-open it")
 
 
+
+def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
+    """The ISO 18013-5 bridge is a FORMAT bridge, and says so (P3.7).
+
+    A reader that speaks 18013-5 can parse what this produces and verify every disclosed
+    element against the signed Mobile Security Object, which is the standard's whole
+    selective-disclosure mechanism. It cannot verify the issuer signature, because that is
+    ML-DSA (COSE -49) and the standard mandates ES256, ES384, ES512 or EdDSA.
+
+    Three ways this goes wrong, and each is pinned:
+
+    SIGNING CLASSICALLY. The obvious way to make a conforming reader accept the signature is
+    to produce one it knows. That trades the property this entire system exists to have for
+    the appearance of interoperability, and a post-quantum credential carrying a classical
+    signature is a classical credential. The bridge must sign with ML-DSA and report the
+    limit, not sign around it.
+
+    CLAIMING THE mDL. A Polaris credential holds no name, no date of birth, no portrait and
+    no driving privileges. A document that claimed `org.iso.18013.5.1.mDL` while carrying
+    none of its elements would be a lie in a machine-readable format, which is the worst
+    place to put one.
+
+    CARRYING THE TOKEN VALUE. P9.4 spent a ship bounding the correlation a relying party can
+    do, by deriving a per-verifier handle instead of handing out a stable identifier. An mdoc
+    that carried `token_value` would return that handle in a different encoding, and the
+    reader would have no way to know it had been given something the presentation layer
+    withholds. The refusal must be at build time and must stand on its own, not merely as a
+    consequence of a closed vocabulary: the day somebody adds the element to the vocabulary,
+    the vocabulary check stops firing and only an independent guard saves them."""
+    name = "mdoc_bridge"
+    mod = _read(root, "polaris_web/mdoc.py")
+    if not mod:
+        return _fail(name, "polaris_web/mdoc.py must render the credential in mdoc structure")
+
+    # NOT AN mDL.
+    if "org.iso.18013.5.1" in mod.replace("ISO/IEC 18013-5", "").replace("ISO 18013-5", ""):
+        if 'DOC_TYPE = "org.iso.18013.5.1' in mod or 'NAMESPACE = "org.iso.18013.5.1' in mod:
+            return _fail(name,
+                         "the bridge claims the mDL docType or namespace. A Polaris credential has "
+                         "no name, no date of birth and no driving privileges; claiming them in a "
+                         "machine-readable format is a lie in the worst possible place")
+    if 'DOC_TYPE = "id.polaris' not in mod or 'NAMESPACE = "id.polaris' not in mod:
+        return _fail(name, "the bridge must name its own docType and namespace")
+
+    # NOT SIGNED CLASSICALLY.
+    if "COSE_ALG_ML_DSA_65" not in mod:
+        return _fail(name,
+                     "the issuer signature must be ML-DSA. Signing with an algorithm a conforming "
+                     "reader knows would trade the post-quantum property for the appearance of "
+                     "interoperability, and a PQ credential with a classical signature is a "
+                     "classical credential")
+    for banned in ("ES256", "ES384", "EdDSA", "-7", "-35"):
+        if f"COSE_ALG = {banned}" in mod or f'"alg": "{banned}"' in mod:
+            return _fail(name, f"the bridge signs with {banned}; see above")
+
+    # NOT CARRYING THE CORRELATION HANDLE, and the guard must stand on its own.
+    if "FORBIDDEN_ELEMENTS" not in mod or "token_value" not in mod:
+        return _fail(name,
+                     "the bridge must refuse token_value explicitly: an mdoc is not a way around "
+                     "the correlation the presentation layer bounds")
+    body = mod.split("def build_issuer_signed")[1].split("\ndef ")[0]
+    f_at, u_at = body.find("FORBIDDEN_ELEMENTS"), body.find("set(ELEMENTS)")
+    if f_at < 0:
+        return _fail(name, "build_issuer_signed must check the forbidden elements")
+    if 0 <= u_at < f_at:
+        return _fail(name,
+                     "the forbidden-element check must run BEFORE the vocabulary check, and stand "
+                     "on its own: if it runs second, token_value is refused only for being unknown "
+                     "and the guard vanishes the day somebody adds it to the vocabulary")
+
+    verifier = _read(root, "scripts/polaris-verify.py")
+    if "def verify_mdoc" not in verifier:
+        return _fail(name, "the detached verifier must decide an mdoc offline")
+    v = verifier.split("def verify_mdoc")[1].split("\ndef ")[0]
+    for key, why in (('"digests_match"', "what an off-the-shelf reader CAN establish"),
+                     ('"issuer_authentic"', "what only a Polaris-aware verifier can"),
+                     ('"reader_interop"', "the difference between them, in words, so a caller "
+                                          "cannot report the first as the third")):
+        if key not in v:
+            return _fail(name, f"the verdict must report {key}: {why}")
+    if "_two_witness_verify" not in v:
+        return _fail(name, "the MSO signature must be checked with the same two witnesses as every "
+                           "other signed artifact")
+    if "Signature1" not in verifier:
+        return _fail(name,
+                     "the signature must be over the COSE Sig_structure, not the payload alone; "
+                     "signing the payload leaves the algorithm unauthenticated and relabellable")
+
+    drill = _read(root, "scripts/polaris-mdoc-bridge-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-mdoc-bridge-drill.py must prove the bridge end to end")
+    for needed, why in (("INDEPENDENT reader",
+                         "the interop claim must be tested with a CBOR implementation that did "
+                         "not write the bytes, or it is a round trip with itself"),
+                        ("refusing to emit the token value",
+                         "the correlation refusal must be asserted, not assumed"),
+                        ("never the mDL", "and so must the naming refusal")):
+        if needed not in drill:
+            return _fail(name, why)
+    doc = _read(root, "docs/design/mdoc-bridge.md")
+    if not doc:
+        return _fail(name, "the design record must be published (docs/design/mdoc-bridge.md)")
+    if "not a trust bridge" not in doc:
+        return _fail(name,
+                     "the design record must say plainly that this is a format bridge and not a "
+                     "trust bridge; a reader who takes a digest check for an issuer check has "
+                     "been misled by the document, not by the code")
+    return _ok(name,
+               "the ISO 18013-5 bridge is a format bridge and says so: it signs with ML-DSA rather "
+               "than reaching for an algorithm a conforming reader knows, never claims the mDL "
+               "docType because a Polaris credential is not a driving licence, refuses the token "
+               "value at build time with a guard that stands on its own, and reports what a reader "
+               "can establish separately from what only a Polaris-aware verifier can")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_mdoc_bridge,
     check_plonky3_evaluation,
     check_cost_model,
     check_multi_region_dr,

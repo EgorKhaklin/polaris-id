@@ -3383,6 +3383,276 @@ def verify_agent_proof(proof, now=None):
     return _verify_standalone(proof, _AGENT_PROOF_FORMAT, _agent_proof_canonical, "proof")
 
 
+# ---------------------------------------------------------------------------
+# P3.7: the ISO/IEC 18013-5 mdoc bridge, verified.
+#
+# A FORMAT bridge, not a trust bridge, and the verdict says so in a field rather than in a
+# comment nobody reads. A reader that speaks 18013-5 can parse this document, walk its
+# namespaces and verify each disclosed element against the signed Mobile Security Object,
+# which is the standard's whole selective-disclosure mechanism. It cannot verify the issuer
+# signature, because that signature is ML-DSA-65 (COSE algorithm -49) and the standard
+# mandates ES256, ES384, ES512 or EdDSA.
+#
+# That is not a gap to be closed by signing classically. Signing classically to satisfy an
+# mDL reader would trade the property this system exists to have for the appearance of
+# interoperability. So `structure_valid` and `digests_match` are what an off-the-shelf reader
+# can establish, `issuer_authentic` is what only a Polaris-aware verifier can, and
+# `reader_interop` names the difference so nobody reports the first as the third.
+#
+# cbor2 is a dependency of the app, not of this verifier, which must stay import-standalone.
+# So the parse is done here, by hand, over the subset of CBOR an mdoc actually uses. That
+# subset is small and the alternative is a detached verifier that cannot check an mdoc at all.
+# ---------------------------------------------------------------------------
+
+_MDOC_DOC_TYPE = "id.polaris.credential.1"
+_MDOC_NAMESPACE = "id.polaris.1"
+_MDOC_FORBIDDEN = frozenset({"token_value", "token_id", "individual_id", "legal_name",
+                             "date_of_birth", "signature_hex", "public_key_hex"})
+
+
+def _cbor_load(buf, i=0):
+    """Decode one CBOR item at offset i. Returns (value, next_offset).
+
+    Handles the subset an mdoc uses: unsigned and negative integers, byte and text strings,
+    arrays, maps, tag 24, and the simple values. Anything else raises ValueError, which the
+    callers turn into a refusal: a verifier that guessed at an encoding it did not implement
+    would be deciding on bytes it had not read.
+    """
+    if i >= len(buf):
+        raise ValueError("truncated CBOR")
+    ib = buf[i]; major, info = ib >> 5, ib & 0x1F
+    i += 1
+    if info < 24:
+        val = info
+    elif info == 24:
+        val = buf[i]; i += 1
+    elif info == 25:
+        val = int.from_bytes(buf[i:i + 2], "big"); i += 2
+    elif info == 26:
+        val = int.from_bytes(buf[i:i + 4], "big"); i += 4
+    elif info == 27:
+        val = int.from_bytes(buf[i:i + 8], "big"); i += 8
+    elif info == 31:
+        raise ValueError("indefinite-length CBOR is not deterministic and is refused")
+    else:
+        raise ValueError("reserved CBOR additional information %d" % info)
+    if major == 0:
+        return val, i
+    if major == 1:
+        return -1 - val, i
+    if major in (2, 3):
+        end = i + val
+        if end > len(buf):
+            raise ValueError("truncated CBOR string")
+        raw = buf[i:end]
+        return (raw if major == 2 else raw.decode("utf-8")), end
+    if major == 4:
+        out = []
+        for _ in range(val):
+            item, i = _cbor_load(buf, i)
+            out.append(item)
+        return out, i
+    if major == 5:
+        out = {}
+        for _ in range(val):
+            k, i = _cbor_load(buf, i)
+            v, i = _cbor_load(buf, i)
+            out[k] = v
+        return out, i
+    if major == 6:
+        inner, i = _cbor_load(buf, i)
+        return ("tag", val, inner), i
+    if major == 7:
+        return {20: False, 21: True, 22: None, 23: None}.get(val, val), i
+    raise ValueError("unsupported CBOR major type %d" % major)
+
+
+def _cbor_decode(buf):
+    v, i = _cbor_load(buf, 0)
+    if i != len(buf):
+        raise ValueError("trailing bytes after the CBOR document (%d)" % (len(buf) - i))
+    return v
+
+
+def verify_mdoc(document_bytes, anchor_keys=None, now=None):
+    """Decide an ISO 18013-5-structured Polaris credential OFFLINE. Total on hostile input.
+
+    Reports three separate things, because collapsing them is how a format bridge gets read
+    as a trust bridge:
+
+      structure_valid   the document parses as an mdoc and names the Polaris docType
+      digests_match     every disclosed element's digest matches the signed MSO. This is what
+                        an off-the-shelf 18013-5 reader can establish for itself.
+      issuer_authentic  the MSO's COSE_Sign1 verifies under ML-DSA. Only a Polaris-aware
+                        verifier can do this; an unmodified mDL reader will not know the
+                        algorithm and MUST NOT be told the document is therefore invalid.
+
+    `reader_interop` states the bound in words, so a caller cannot report the second as the
+    third by accident.
+    """
+    v = {"structure_valid": False, "digests_match": None, "issuer_authentic": False,
+         "doc_type": None, "elements": None, "fresh": None, "issuer_trusted": None,
+         "reader_interop": None, "witnesses": [], "note": None}
+    if isinstance(document_bytes, str):
+        try:
+            document_bytes = bytes.fromhex(document_bytes)
+        except (ValueError, TypeError):
+            v["note"] = "the document is neither bytes nor valid hex"
+            return v
+    if not isinstance(document_bytes, (bytes, bytearray)):
+        v["note"] = "the document is not bytes"
+        return v
+    try:
+        doc = _cbor_decode(bytes(document_bytes))
+    except (ValueError, UnicodeDecodeError, IndexError) as e:
+        v["note"] = "the document is not decodable CBOR (%s)" % e
+        return v
+    if not isinstance(doc, dict) or doc.get("docType") != _MDOC_DOC_TYPE:
+        v["note"] = ("not a %s; this bridge deliberately does not claim the mDL docType, "
+                     "because a Polaris credential is not a driving licence" % _MDOC_DOC_TYPE)
+        return v
+    signed = doc.get("issuerSigned")
+    if not isinstance(signed, dict):
+        v["note"] = "the document has no issuerSigned structure"
+        return v
+    v["structure_valid"] = True
+    v["doc_type"] = doc["docType"]
+    v["reader_interop"] = ("structure and digests only: the issuer signature is ML-DSA "
+                           "(COSE -49/-50), which ISO 18013-5 does not list, so an unmodified "
+                           "reader can check every element against the MSO but not the "
+                           "signature over it")
+
+    auth = signed.get("issuerAuth")
+    if not (isinstance(auth, list) and len(auth) == 4):
+        v["note"] = "issuerAuth is not a COSE_Sign1 quadruple"
+        return v
+    protected, unprotected, payload, signature = auth
+    if not isinstance(protected, (bytes, bytearray)) or not isinstance(payload, (bytes, bytearray)):
+        v["note"] = "the COSE_Sign1 protected header or payload is not a byte string"
+        return v
+
+    # The MSO, out of its tag-24 wrapper.
+    try:
+        tagged = _cbor_decode(bytes(payload))
+        if not (isinstance(tagged, tuple) and tagged[0] == "tag" and tagged[1] == 24):
+            raise ValueError("the MSO is not wrapped in tag 24")
+        mso = _cbor_decode(tagged[2])
+    except (ValueError, UnicodeDecodeError, IndexError, TypeError) as e:
+        v["note"] = "the Mobile Security Object does not decode (%s)" % e
+        return v
+    if not isinstance(mso, dict) or mso.get("docType") != _MDOC_DOC_TYPE:
+        v["note"] = "the MSO's docType does not match the document's"
+        return v
+    if mso.get("digestAlgorithm") != "SHA-256":
+        v["note"] = "unsupported MSO digest algorithm: %r" % mso.get("digestAlgorithm")
+        return v
+
+    # DIGESTS: what an off-the-shelf reader can check for itself.
+    ns_items = (signed.get("nameSpaces") or {}).get(_MDOC_NAMESPACE)
+    committed = (mso.get("valueDigests") or {}).get(_MDOC_NAMESPACE)
+    if not isinstance(ns_items, list) or not isinstance(committed, dict):
+        v["note"] = "the document's namespace or the MSO's digests are missing"
+        return v
+    elements, ok = {}, True
+    for tagged_item in ns_items:
+        try:
+            if not (isinstance(tagged_item, tuple) and tagged_item[0] == "tag" and tagged_item[1] == 24):
+                raise ValueError("an element is not wrapped in tag 24")
+            item = _cbor_decode(tagged_item[2])
+            # The digest is over the TAGGED, encoded item, not the inner map. Digesting the
+            # inner map is the classic way an mdoc fails to interoperate with itself.
+            encoded = b"\xd8\x18" + _cbor_bstr_header(len(tagged_item[2])) + tagged_item[2]
+            digest = hashlib.sha256(encoded).digest()
+            did = item["digestID"]
+            if committed.get(did) != digest:
+                ok = False
+            name = str(item.get("elementIdentifier"))
+            if name in _MDOC_FORBIDDEN:
+                v["note"] = ("the document carries %r, a correlation handle the presentation "
+                             "layer bounds; an mdoc is not a way around that" % name)
+                v["digests_match"] = False
+                return v
+            elements[name] = item.get("elementValue")
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError, IndexError) as e:
+            v["note"] = "an element does not decode (%s)" % e
+            v["digests_match"] = False
+            return v
+    v["digests_match"] = ok
+    v["elements"] = elements
+    if not ok:
+        v["note"] = "an element's digest does not match the signed MSO"
+        return v
+
+    # FRESHNESS, from the MSO's own validity window.
+    valid = mso.get("validityInfo") or {}
+    try:
+        now_dt = _instant(now)
+        vf, vu = _parse_iso(valid["validFrom"]), _parse_iso(valid["validUntil"])
+        v["fresh"] = bool(vf <= now_dt < vu)
+    except Exception:  # noqa: BLE001 -- an unreadable window is a refusal, never a crash
+        v["fresh"] = False
+        v["note"] = "the MSO's validity window is not readable"
+
+    # THE SIGNATURE: what only a Polaris-aware verifier can decide.
+    key_hex = unprotected.get("polaris_public_key_hex") if isinstance(unprotected, dict) else None
+    alg = unprotected.get("polaris_algorithm") if isinstance(unprotected, dict) else None
+    try:
+        sig, pk = bytes(signature), bytes.fromhex(str(key_hex or ""))
+    except (ValueError, TypeError):
+        v["note"] = "the COSE signature or public key is not usable"
+        return v
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    sig_struct = _cbor_sig_structure(bytes(protected), bytes(payload))
+    ok2, ran, note = _two_witness_verify(hashlib.sha3_256(sig_struct).digest(), sig, pk, alg)
+    v["witnesses"] = ran
+    if ok2 is None:
+        v["note"] = note
+        return v
+    v["issuer_authentic"] = bool(ok2)
+    if not ok2:
+        v["note"] = "the MSO signature is invalid"
+        return v
+    if anchor_keys is not None:
+        v["issuer_trusted"] = str(key_hex).lower() in {str(a).lower() for a in anchor_keys}
+    return v
+
+
+def _cbor_bstr_header(n):
+    """The CBOR header bytes for a byte string of length n. Deterministic encoding only."""
+    if n < 24:
+        return bytes([0x40 | n])
+    if n < 256:
+        return bytes([0x58, n])
+    if n < 65536:
+        return bytes([0x59]) + n.to_bytes(2, "big")
+    return bytes([0x5A]) + n.to_bytes(4, "big")
+
+
+def _cbor_text(s):
+    raw = s.encode("utf-8")
+    n = len(raw)
+    if n < 24:
+        return bytes([0x60 | n]) + raw
+    if n < 256:
+        return bytes([0x78, n]) + raw
+    return bytes([0x79]) + n.to_bytes(2, "big") + raw
+
+
+def _cbor_sig_structure(protected, payload):
+    """["Signature1", protected, h'', payload] in deterministic CBOR.
+
+    Built by hand so the detached verifier stays import-standalone. Signing the payload alone
+    instead of this structure leaves the algorithm unauthenticated, which lets an attacker
+    relabel a signature's algorithm; that is why the structure exists at all.
+    """
+    return (b"\x84" + _cbor_text("Signature1")
+            + _cbor_bstr_header(len(protected)) + protected
+            + b"\x40"
+            + _cbor_bstr_header(len(payload)) + payload)
+
+
 def verify_agent_grant(grant, binding=None, credential=None, now=None, requested_action=None,
                        revocation=None, agent_proof=None, expected_nonce=None,
                        anchor_keys=None, verifier_scope=None):

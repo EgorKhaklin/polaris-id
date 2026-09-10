@@ -146,7 +146,7 @@ RUN chmod 0755 /opt/polaris/zk
 #                    didn't tolerate trailing comments on the import line)
 WORKDIR /app
 COPY --chown=polaris:polaris polaris_web/app.py polaris_web/security.py polaris_web/gunicorn.conf.py ./
-COPY --chown=polaris:polaris polaris_web/anchoring.py polaris_web/zk.py polaris_web/webauthn_auth.py polaris_web/__version__.py polaris_web/observability.py polaris_web/pqc_signing.py polaris_web/custody.py polaris_web/rp_auth.py polaris_web/tracing.py ./
+COPY --chown=polaris:polaris polaris_web/anchoring.py polaris_web/zk.py polaris_web/webauthn_auth.py polaris_web/__version__.py polaris_web/observability.py polaris_web/pqc_signing.py polaris_web/custody.py polaris_web/rp_auth.py polaris_web/tracing.py polaris_web/mdoc.py ./
 COPY --chown=polaris:polaris polaris_web/templates/ ./templates/
 COPY --chown=polaris:polaris polaris_web/static/   ./static/
 

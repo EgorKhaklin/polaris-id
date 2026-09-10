@@ -700,6 +700,35 @@ P9.1. Fetch the current issuer-signed `polaris-holder-binding/1` for a credentia
 possession. A holder staples it to a presentation so a relying party can decide the holder
 proof offline without contacting the issuer. `404 no_holder_key` when nothing is bound.
 
+### `POST /api/v1/mdoc`
+
+Renders this credential in the ISO/IEC 18013-5 mdoc structure (P3.7). Read-only and derived:
+no new trust semantics, no new mutation path, no record of who asked. Possession-authenticated
+exactly like the status assertion, so a holder renders their own credential without being a
+registered relying party.
+
+**A format bridge, not a trust bridge.** A reader that speaks 18013-5 parses the document and
+verifies every disclosed element's digest against the signed Mobile Security Object, which is
+the standard's whole selective-disclosure mechanism. It **cannot** verify the issuer signature:
+that is ML-DSA (COSE -49), and the standard mandates ES256, ES384, ES512 or EdDSA. The response
+says so in `reader_interop`. Signing with an algorithm a conforming reader knows would trade
+the post-quantum property for the appearance of interoperability, so it is not done.
+
+**This is not an mDL.** The `docType` is `id.polaris.credential.1` and the namespace is
+`id.polaris.1`, never `org.iso.18013.5.1`: a Polaris credential holds no name, date of birth,
+portrait or driving privileges, and claiming that docType would be a false statement in a
+machine-readable format.
+
+Request body: `token_value`, `signature_hex`, and an optional `elements` list for selective
+disclosure. The element vocabulary is closed (`issuing_authority`, `context`,
+`assurance_level`, `enrollment_status`, `credential_status`); an unknown element is refused.
+`token_value` is never emitted as an element, because it is the correlation handle the
+presentation layer bounds and an mdoc is not a way around it.
+
+Returns `document_hex` (the CBOR document), the element list, and `reader_interop`. Rate
+limited per credential. `no-store`, because the document names one credential's facts. See
+[../design/mdoc-bridge.md](../design/mdoc-bridge.md).
+
 ### `POST /api/v1/status-assertion`
 
 **Possession-authenticated (no bearer).** Mints a short-lived, issuer-signed

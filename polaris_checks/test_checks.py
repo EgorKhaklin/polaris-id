@@ -9216,3 +9216,109 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
     write({'polaris_zk/Cargo.lock': 'name = "plonky2"\nversion = "2.0.0"\n'})
     assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the record evaluates a version the lockfile no longer pins"
+
+
+def test_mdoc_bridge_check_discriminates(tmp_path):
+    # v9.362 (P3.7): three ways a format bridge becomes a lie. Sign with an algorithm the
+    # reader knows and the post-quantum property is gone; claim the mDL docType and the
+    # document asserts something false in a machine-readable format; carry the token value and
+    # the correlation the presentation layer bounds is handed back in a different encoding.
+    MOD = ('DOC_TYPE = "id.polaris.credential.1"\n'
+           'NAMESPACE = "id.polaris.1"\n'
+           'COSE_ALG_ML_DSA_65 = -49\n'
+           'FORBIDDEN_ELEMENTS = frozenset({"token_value"})\n'
+           'ELEMENTS = ("context",)\n'
+           "\ndef build_issuer_signed(elements, algorithm, sign):\n"
+           "    forbidden = set(elements) & FORBIDDEN_ELEMENTS\n"
+           "    if forbidden:\n        raise ValueError('correlation handles')\n"
+           "    unknown = set(elements) - set(ELEMENTS)\n"
+           "    if unknown:\n        raise ValueError('unknown')\n    return {}\n")
+    VERIFY = ('def verify_mdoc(doc):\n'
+              '    v = {"digests_match": None, "issuer_authentic": False, "reader_interop": None}\n'
+              '    _two_witness_verify(d, s, p, a)\n    return v\n'
+              '\ndef _cbor_sig_structure(p, y):\n    return b"Signature1"\n')
+    DRILL = ("# an INDEPENDENT reader checks every digest\n"
+             "# refusing to emit the token value in an mdoc\n"
+             "# the docType is Polaris, never the mDL\n")
+    DOC = "This is a format bridge, not a trust bridge.\n"
+    good = {
+        'polaris_web/mdoc.py': MOD,
+        'scripts/polaris-verify.py': VERIFY,
+        'scripts/polaris-mdoc-bridge-drill.py': DRILL,
+        'docs/design/mdoc-bridge.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # CLAIMING THE mDL: a false statement about what the document is, in a format a machine
+    # reads and a caveat cannot reach.
+    write({'polaris_web/mdoc.py': MOD.replace('DOC_TYPE = "id.polaris.credential.1"',
+                                              'DOC_TYPE = "org.iso.18013.5.1.mDL"')})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the bridge claims the mDL docType"
+    write({'polaris_web/mdoc.py': MOD.replace('NAMESPACE = "id.polaris.1"',
+                                              'NAMESPACE = "org.iso.18013.5.1"')})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the bridge claims the mDL namespace"
+
+    # SIGNING CLASSICALLY: the post-quantum property traded for a green tick.
+    write({'polaris_web/mdoc.py': MOD.replace("COSE_ALG_ML_DSA_65 = -49", "COSE_ALG = -7")})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the issuer signature is not ML-DSA"
+
+    # THE ORDERING BUG, which is the subtle one: token_value refused only for being unknown,
+    # so the guard disappears the day it joins the vocabulary.
+    write({'polaris_web/mdoc.py': MOD.replace(
+        "    forbidden = set(elements) & FORBIDDEN_ELEMENTS\n"
+        "    if forbidden:\n        raise ValueError('correlation handles')\n"
+        "    unknown = set(elements) - set(ELEMENTS)\n"
+        "    if unknown:\n        raise ValueError('unknown')\n",
+        "    unknown = set(elements) - set(ELEMENTS)\n"
+        "    if unknown:\n        raise ValueError('unknown')\n"
+        "    forbidden = set(elements) & FORBIDDEN_ELEMENTS\n"
+        "    if forbidden:\n        raise ValueError('correlation handles')\n")})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the forbidden check runs after the vocabulary check"
+
+    # The correlation guard removed entirely.
+    write({'polaris_web/mdoc.py': MOD.replace(
+        'FORBIDDEN_ELEMENTS = frozenset({"token_value"})\n', "")})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when nothing refuses the token value"
+
+    # THE VERDICT COLLAPSES: a digest check reported as an issuer check.
+    write({'scripts/polaris-verify.py': VERIFY.replace('"reader_interop": None', '"note": None')})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the verdict does not state what a conforming reader cannot do"
+    write({'scripts/polaris-verify.py': VERIFY.replace('"digests_match": None, ', "")})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the digest check is not reported separately"
+
+    # The signature stops covering the protected header, so its algorithm is relabellable.
+    write({'scripts/polaris-verify.py': VERIFY.replace("Signature1", "payload")})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the COSE signature is over the payload rather than the Sig_structure"
+
+    # The MSO signature stops being two-witnessed like every other signed artifact.
+    write({'scripts/polaris-verify.py': VERIFY.replace("    _two_witness_verify(d, s, p, a)\n", "")})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the MSO signature is not two-witnessed"
+
+    # The drill stops testing interop against an independent implementation, so it is a round
+    # trip with itself.
+    write({'scripts/polaris-mdoc-bridge-drill.py': DRILL.replace(
+        "# an INDEPENDENT reader checks every digest\n", "")})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not test interop with an independent CBOR implementation"
+
+    # The design record stops saying what kind of bridge it is.
+    write({'docs/design/mdoc-bridge.md': "We support ISO 18013-5.\n"})
+    assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record does not say this is a format bridge and not a trust bridge"

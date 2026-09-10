@@ -79,6 +79,7 @@ import anchoring
 import zk
 import webauthn_auth
 import observability  # v9.31 freeze condition 6 — operator-readable metrics surface
+import mdoc
 import pqc_signing    # v9.58 — issuance signature comes from the signing module
 import rp_auth        # v9.288 (P3.4) — relying-party API auth (OAuth2 client-credentials)
 import tracing        # v9.187 (P1.6) — opt-in OpenTelemetry distributed tracing
@@ -5785,6 +5786,105 @@ def api_v1_status_assertion():
         'max_window_seconds': _STATUS_ASSERTION_TTL,
         'digest_construction': ('SHA3-256(canonical statement: sorted-keys compact JSON of '
                                 '{format,token_value,status,issued_at,expires_at})'),
+    })
+
+
+_MDOC_TTL = int(os.environ.get('POLARIS_MDOC_TTL', '86400'))
+
+
+@app.route('/api/v1/mdoc', methods=['POST'])
+def api_v1_mdoc():
+    """P3.7: render this credential in the ISO/IEC 18013-5 mdoc structure, read-only.
+
+    A FORMAT bridge, not a trust bridge. A reader that speaks 18013-5 parses what this returns
+    and verifies every disclosed element's digest against the signed Mobile Security Object,
+    which is the standard's whole selective-disclosure mechanism. It CANNOT verify the issuer
+    signature, because that signature is ML-DSA (COSE -49) and the standard mandates ES256,
+    ES384, ES512 or EdDSA. Signing classically to satisfy such a reader would trade the
+    property this system exists to have for the appearance of interoperability, so the
+    structure bridges and the cryptography does not, and the response says which.
+
+    Read-only and derived: no new trust semantics, no new mutation path, no record of who
+    asked. Possession-authenticated exactly like the status assertion, so a holder renders
+    their own credential without being a registered relying party.
+
+    The document carries the ID token's claim vocabulary and nothing else. It never carries
+    `token_value`: that is the correlation handle the presentation layer bounds (P9.4), and an
+    mdoc is not a way around it. mdoc.py refuses it at build time rather than trusting callers.
+    """
+    body = request.get_json(silent=True) or {}
+    token_value = body.get('token_value')
+    presented_sig_hex = body.get('signature_hex')
+    if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
+        return jsonify(error='invalid_request',
+                       error_description='token_value and signature_hex are required'), 400
+    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
+    if not security.rate_limiter.allow('mdoc:%s' % _tk, 10, 60):
+        return jsonify(error='rate_limited'), 429
+    row = _possession_authenticated(token_value, presented_sig_hex)
+    if row is None:
+        return jsonify(error='not_verifiable',
+                       error_description='present the genuine issued credential '
+                                         '(token_value + signature_hex)'), 400
+
+    requested = body.get('elements')
+    if requested is not None and not (isinstance(requested, list)
+                                      and all(isinstance(x, str) for x in requested)):
+        return jsonify(error='invalid_request',
+                       error_description='elements must be a list of element identifiers'), 400
+
+    agency = query("SELECT agency_id, name FROM Agency WHERE agency_id = %s",
+                   (row['issuing_agency_id'],), fetch='one', primary=True)
+    enr = query("SELECT current_status FROM IndividualCurrentEnrollment WHERE individual_id = "
+                "(SELECT individual_id FROM IdentityToken WHERE token_value = %s)",
+                (token_value,), fetch='one', primary=True)
+    context_row = query("SELECT c.context_type FROM VerificationContext c "
+                        "JOIN TokenPermission p ON p.context_id = c.context_id "
+                        "JOIN IdentityToken t ON t.token_id = p.token_id "
+                        "WHERE t.token_value = %s ORDER BY c.context_id LIMIT 1",
+                        (token_value,), fetch='one', primary=True)
+    available = {
+        'issuing_authority': agency['name'] if agency else None,
+        'context': context_row['context_type'] if context_row else None,
+        'assurance_level': _AUTH_ACR_POSSESSION,
+        'enrollment_status': enr['current_status'] if enr else 'NOT_ENROLLED',
+        'credential_status': row['status'],
+    }
+    if requested is not None:
+        unknown = sorted(set(requested) - set(mdoc.ELEMENTS))
+        if unknown:
+            return jsonify(error='invalid_request',
+                           error_description='unknown elements: %s' % ', '.join(unknown)), 400
+        available = {k: v for k, v in available.items() if k in set(requested)}
+
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    def _sign(data):
+        sig, alg, pub = pqc_signing.signature_over_message(
+            hashlib.sha3_256(data).digest(), agency_id=row['issuing_agency_id'])
+        return sig, alg, pub
+
+    try:
+        document = mdoc.build_document(
+            available, _signing_algorithm(row['issuing_agency_id']), _sign,
+            now=now, valid_until=now + timedelta(seconds=_MDOC_TTL))
+    except ValueError as e:
+        return jsonify(error='invalid_request', error_description=str(e)), 400
+
+    # Per-holder: this document names one credential's facts, so no cache may keep it.
+    return _private_artifact({
+        'doc_type': mdoc.DOC_TYPE,
+        'namespace': mdoc.NAMESPACE,
+        'document_hex': document.hex(),
+        'elements': sorted(available),
+        'algorithm': _signing_algorithm(row['issuing_agency_id']),
+        'reader_interop': ('ISO 18013-5 STRUCTURE only. A conforming reader parses this '
+                           'document and verifies every disclosed element against the signed '
+                           'Mobile Security Object. It cannot verify the issuer signature: '
+                           'that is ML-DSA (COSE -49/-50), which the standard does not list. '
+                           'This is not an mDL and does not claim the mDL docType.'),
+        'expires_at': (now + timedelta(seconds=_MDOC_TTL)).isoformat().replace('+00:00', 'Z'),
     })
 
 

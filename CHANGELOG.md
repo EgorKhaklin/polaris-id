@@ -5,6 +5,50 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.362 — 2026-09-10 (P3.7: a format bridge to ISO 18013-5, and what does not cross)
+
+A Polaris credential now renders in the ISO/IEC 18013-5 mdoc structure. A reader
+that speaks that standard parses the document, walks its namespaces, and verifies
+every disclosed element's digest against the signed Mobile Security Object, which
+is the standard's whole selective-disclosure mechanism. The drill proves that with
+an independent CBOR implementation rather than the one that wrote the bytes.
+
+**It cannot verify the issuer signature, and that is the design.** The signature is
+ML-DSA-65, COSE algorithm -49, and 18013-5 mandates ES256, ES384, ES512 or EdDSA.
+The obvious fix is to sign with something a reader knows, and it is the wrong one: a
+post-quantum credential carrying a classical signature is a classical credential,
+and the reader would be correctly verifying a signature that no longer carries the
+property the credential was issued for. So the structure bridges and the
+cryptography does not. The verdict reports `digests_match` and `issuer_authentic`
+separately, with `reader_interop` naming the difference in words, because a caller
+reporting the first as the second would be claiming a verification that did not
+happen.
+
+**It is not an mDL and does not claim to be.** The docType is
+`id.polaris.credential.1`, never `org.iso.18013.5.1.mDL`. A Polaris credential holds
+no name, date of birth, portrait or driving privileges, and a document claiming that
+docType while carrying none of its elements would be a false statement in a
+machine-readable format, which is the worst place to put one: a machine cannot read
+the caveat in the surrounding prose. The honest consequence is that a reader looking
+for an mDL will not accept this as one. What bridges is the reader's machinery, not
+its expectations.
+
+**It never carries the token value.** That is the correlation handle P9.4 spent a
+ship bounding, and an mdoc carrying it would hand the identifier back in a different
+encoding with no way for the reader to know. The refusal is at build time and stands
+on its own rather than following from the closed vocabulary, because the day
+somebody adds the element to the vocabulary the vocabulary check stops firing and
+only an independent guard saves them.
+
+The detached verifier parses mdoc CBOR with its own hand-written decoder rather than
+a library, because it must stay import-standalone. The drill checks the app's output
+against that decoder, which is the two-witness discipline applied to the format.
+
+`check_mdoc_bridge` with an eleven-fixture detection test, and a design record that
+says plainly this is a format bridge and not a trust bridge.
+
+---
+
 ## v9.361 — 2026-09-10 (P2.12: the proof-library question, evaluated and decided)
 
 **Decision: keep Plonky2.** This is a spike with a decision record, not a

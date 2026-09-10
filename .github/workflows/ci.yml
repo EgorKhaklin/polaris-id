@@ -1695,6 +1695,14 @@ jobs:
       - name: Agent grant — bounded, revocable by the holder, not a bearer token
         run: python scripts/polaris-agent-grant-drill.py
 
+      # v9.362 (P3.7) — the ISO 18013-5 bridge. A FORMAT bridge: the round trip runs across
+      # two INDEPENDENT CBOR implementations (the app's cbor2 and the detached verifier's own
+      # hand-written decoder), an off-the-shelf reader checks every digest against the signed
+      # MSO with no Polaris code involved, and both refusals hold: the document never claims
+      # the mDL docType and never carries the token value. No database.
+      - name: ISO 18013-5 bridge — format crosses, issuer signature does not
+        run: python scripts/polaris-mdoc-bridge-drill.py
+
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py
 

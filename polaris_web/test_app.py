@@ -3335,6 +3335,95 @@ class ZKSnarkTests(PolarisTestCase):
             row = cur.fetchone()
             self.assertEqual(row['committed_count'], len(tokens))
 
+    def _possession_credential(self):
+        """An ACTIVE credential with a signature the placeholder profile accepts."""
+        import hashlib as _h
+        import psycopg2 as _pg
+        row = flask_app.query("SELECT token_id, token_value FROM IdentityToken "
+                              "WHERE issuing_agency_id = 1 AND status = 'ACTIVE' "
+                              "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
+        ph = _h.sha3_256(row['token_value'].encode('utf-8')).digest()
+        if not flask_app.query("SELECT 1 FROM TokenSignature WHERE token_id = %s AND algorithm_id = 1",
+                               (row['token_id'],), fetch='one', primary=True):
+            flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                            "signing_public_key_hex) VALUES (%s, 1, %s, NULL)",
+                            (row['token_id'], _pg.Binary(ph)), fetch='none')
+        return row['token_value'], ph.hex()
+
+    def test_mdoc_renders_the_credential_in_iso_18013_5_structure(self):
+        # P3.7 (v9.362): a FORMAT bridge. The document must parse as an mdoc and its digests
+        # must check out; the issuer signature is ML-DSA and no conforming reader knows it.
+        import cbor2
+        import mdoc
+        tv, sig = self._possession_credential()
+        r = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        body = r.get_json()
+        self.assertEqual(body['doc_type'], 'id.polaris.credential.1')
+        doc = cbor2.loads(bytes.fromhex(body['document_hex']))
+        self.assertEqual(doc['docType'], mdoc.DOC_TYPE)
+        # An independent reader checks each element against the signed MSO for itself.
+        import hashlib as _h
+        signed = doc['issuerSigned']
+        mso = cbor2.loads(cbor2.loads(signed['issuerAuth'][2]).value)
+        committed = mso['valueDigests'][mdoc.NAMESPACE]
+        for tagged in signed['nameSpaces'][mdoc.NAMESPACE]:
+            digest = _h.sha256(cbor2.dumps(tagged, canonical=True)).digest()
+            self.assertEqual(committed[cbor2.loads(tagged.value)['digestID']], digest,
+                             'a disclosed element does not match the signed MSO')
+
+    def test_mdoc_never_claims_the_mdl_doctype(self):
+        # A Polaris credential is not a driving licence, and a document claiming the mDL
+        # namespace while carrying none of its elements would be a lie in a machine-readable
+        # format.
+        import mdoc
+        self.assertNotIn('18013', mdoc.DOC_TYPE)
+        self.assertNotIn('18013', mdoc.NAMESPACE)
+        tv, sig = self._possession_credential()
+        body = self.client.post('/api/v1/mdoc',
+                                json={'token_value': tv, 'signature_hex': sig}).get_json()
+        self.assertNotIn('org.iso.18013', json.dumps(body))
+
+    def test_mdoc_never_carries_the_token_value(self):
+        # The correlation handle P9.4 bounded. An mdoc is not a way around it, and the refusal
+        # is at build time rather than trusting the caller.
+        import mdoc
+        tv, sig = self._possession_credential()
+        r = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig})
+        self.assertNotIn(tv, r.get_data(as_text=True))
+        with self.assertRaises(ValueError) as ctx:
+            mdoc.build_document({'token_value': tv}, 'ML-DSA-65', lambda d: (b'', 'x', ''))
+        self.assertIn('correlation handles', str(ctx.exception))
+
+    def test_mdoc_is_possession_authenticated_and_never_cached(self):
+        bad = self.client.post('/api/v1/mdoc',
+                               json={'token_value': 'TKN-NOPE', 'signature_hex': 'ab' * 32})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(bad.get_json()['error'], 'not_verifiable')
+        tv, sig = self._possession_credential()
+        r = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig})
+        self.assertIn('no-store', r.headers.get('Cache-Control', ''),
+                      'an mdoc names one credential and must never be cached')
+
+    def test_mdoc_selective_disclosure_withholds_what_was_not_asked_for(self):
+        import cbor2
+        import mdoc
+        tv, sig = self._possession_credential()
+        r = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig,
+                                                   'elements': ['context', 'credential_status']})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        body = r.get_json()
+        self.assertEqual(sorted(body['elements']), ['context', 'credential_status'])
+        doc = cbor2.loads(bytes.fromhex(body['document_hex']))
+        names = {cbor2.loads(t.value)['elementIdentifier']
+                 for t in doc['issuerSigned']['nameSpaces'][mdoc.NAMESPACE]}
+        self.assertEqual(names, {'context', 'credential_status'},
+                         'a withheld element must be absent, not present and empty')
+        # An unknown element is refused rather than silently dropped.
+        bad = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig,
+                                                     'elements': ['favourite_colour']})
+        self.assertEqual(bad.status_code, 400)
+
     def test_public_status_artifacts_cache_only_to_their_own_window(self):
         # P2.6 (v9.358): a status artifact is the one response where a cache is both wanted
         # and dangerous. max-age must be the artifact's OWN remaining life, never a constant,
