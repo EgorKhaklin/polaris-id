@@ -1608,8 +1608,10 @@ jobs:
       # forgeries; a quorum of independent authorities is the no-retention alternative. No database.
       - name: Timestamp transparency — a stolen timestamp-authority key
         run: python scripts/polaris-timestamp-transparency-drill.py
-      - name: Holder key drill (P9.1: the chain issuer -> binding -> holder key -> proof,
-              and a coerced presentation stays indistinguishable)
+      # v9.349 (P9.1) — the holder key chain end to end under real ML-DSA, and the
+      # constitutional property it had to keep: a coerced presentation carrying a holder
+      # proof stays byte-indistinguishable from a consenting one. No database.
+      - name: Holder key drill
         run: python scripts/polaris-holder-key-drill.py
 
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
