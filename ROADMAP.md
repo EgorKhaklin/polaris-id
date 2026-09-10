@@ -55,7 +55,14 @@ hides a holder from the ISSUER, which derives every leaf to build the tree.
 
 By rule 5 the numbered deployment phases resume. P0.11 and P1.12 are the only rows left in
 those phases and both read `ext`, which rule 2 forbids selecting, so the first selectable
-row is **P2.5** and the active phase is **P2**.
+row was **P2.5**.
+
+**P2 is COMPLETE at v9.361** and the active phase is now **P3**. P2.5, P2.6, P2.8, P2.10 and
+P2.12 shipped in that order; the exit gate, P2.9's capacity model, was already green. Two P2
+rows remain open and neither is the exit condition: P2.3, the Atlas console, is wrapper work
+the engine-over-wrapper directive defers, and P2.14, the national simulation harness, is a
+multi-arc row whose measuring half P2.9 already realised. The first selectable P3 row is
+**P3.7**.
 
 **Status marks:** `[ ]` pending · `[>]` in progress · `[x]` done ·
 `[EXT]` blocked on an external actor (funding, law, vendor, institution).
@@ -577,10 +584,13 @@ before the P5 consent framework exists. These do not expire with any phase.
 ## Execution protocol for the next session
 
 1. Read [CLAUDE.md](CLAUDE.md), then this file. **The active phase is named in the
-   decision record at the top of this file. It is P2.** Phases E, P8 and P9 are COMPLETE;
-   the numbered deployment phases resumed after P9, and P0 and P1 hold only `ext` rows,
-   which rule 2 forbids selecting. Do not derive the active phase from the lowest number:
-   that rule selected a row blocked on a vendor's container image.
+   decision record at the top of this file. It is P3.** Phases E, P8, P9 and P2 are
+   COMPLETE; the numbered deployment phases resumed after P9, and P0 and P1 hold only
+   `ext` rows, which rule 2 forbids selecting. P2 met its exit gate at v9.361 with two
+   rows still open, P2.3 and P2.14, both marked `[>]`: they are the Atlas console and the
+   national simulation harness, wrapper and multi-arc work rather than scale architecture,
+   and neither is the phase's exit condition. Do not derive the active phase from the
+   lowest number: that rule selected a row blocked on a vendor's container image.
 2. Pick the first row in the active phase whose Blocked-by column is satisfied and whose
    Risk column does not read `ext`; prefer S and M rows when resuming cold. Never select
    a row listed under "Waiting on the world".
