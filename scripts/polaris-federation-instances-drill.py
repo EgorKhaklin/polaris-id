@@ -733,8 +733,15 @@ def main():
         iv = V.verify_id_token(idt, audience=rp_cid, nonce=login_nonce, trusted_anchors=[pub_b])
         checks.append(("the ID token verifies OFFLINE: B-signed, for this relying party, with its nonce, fresh, trusted",
                        bool(iv.get("token_authentic") and iv.get("audience_matches") and iv.get("nonce_matches") and iv.get("fresh") and iv.get("issuer_trusted")), True))
-        checks.append(("the subject is the credential hash and the token value appears nowhere",
-                       (idt.get("sub") == V.revocation_leaf(b_tok_value), b_tok_value not in json.dumps(idt)), (True, True)))
+        # P9.4 (v9.353): the subject is derived PER RELYING PARTY, so two relying parties
+        # cannot join their user tables on it. Before this it was sha3_256(token_value), the
+        # same value everywhere, and two of them matched people exactly and forever.
+        import hashlib as _h
+        pairwise = _h.sha3_256(("polaris-pairwise/1|%s|%s" % (b_tok_value, rp_cid)).encode("utf-8")).hexdigest()
+        checks.append(("the subject is scoped to THIS relying party and the token value appears nowhere",
+                       (idt.get("sub") == pairwise, b_tok_value not in json.dumps(idt)), (True, True)))
+        checks.append(("the old GLOBAL subject (the bare credential hash) is not handed out",
+                       idt.get("sub") == V.revocation_leaf(b_tok_value), False))
         st24, rep = _http_post_form(base_b + "/api/v1/auth/token",
                                     {"grant_type": "authorization_code", "code": auth.get("code", ""), "code_verifier": verifier},
                                     basic=(rp_cid, rp_secret))

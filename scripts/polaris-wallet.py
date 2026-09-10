@@ -309,6 +309,104 @@ def _holder_proof(wallet, token_value, context_id, verifier_nonce):
     return proof
 
 
+# --- P9.8 (v9.354): delegating to an agent, without handing over the credential ----------
+
+_AGENT_KEY_FILE = "agent_key.json"
+
+
+def _sign_with_holder_key(wallet, statement_bytes, algorithm=None):
+    """Sign bytes with the holder key held here. Returns (signature_hex, public_key_hex, alg)
+    or None when there is no key or no signer installed.
+
+    The holder key never leaves this device, which is the point: a grant is authorised by
+    the person, on their own hardware, and the issuer is not asked and never told."""
+    path = _holder_key_path(wallet)
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        key = json.load(f)
+    try:
+        import oqs  # type: ignore
+    except Exception:  # noqa: BLE001
+        return None
+    alg = algorithm or key["algorithm"]
+    with oqs.Signature(alg, secret_key=bytes.fromhex(key["secret_key_hex"])) as signer:
+        return bytes(signer.sign(statement_bytes)).hex(), key["public_key_hex"], alg
+
+
+def cmd_grant(args):
+    """Mint an agent grant: named actions, stated limits, an expiry, a revocation handle.
+
+    What this deliberately is NOT is a copy of the credential. Handing an agent the
+    credential gives it everything the person can do, forever, revocable only by revoking
+    the person. This gives it exactly the listed actions, inside the stated limits, until the
+    expiry, and the holder can end it alone."""
+    import hashlib as _h
+    from datetime import datetime, timedelta, timezone
+    wallet = _wallet_dir(args)
+    actions = [a.strip() for a in (args.action or []) if a.strip()]
+    if not actions:
+        raise SystemExit("a grant must name at least one action (--action); an empty grant "
+                         "authorises nothing, and is not a way to authorise everything")
+    limits = {}
+    if args.max_uses is not None:
+        limits["max_uses"] = int(args.max_uses)
+    if args.max_amount is not None:
+        limits["max_amount"] = float(args.max_amount)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    iso = lambda d: d.isoformat().replace("+00:00", "Z")
+    V = _load_verifier()
+    grant = {"format": "polaris-agent-grant/1",
+             "grant_id": args.grant_id or ("grant-" + os.urandom(8).hex()),
+             "agent_public_key_hex": args.agent_key, "agent_algorithm": args.agent_algorithm,
+             "actions": actions, "limits": limits, "context_id": args.context,
+             "issued_at": iso(now), "expires_at": iso(now + timedelta(hours=int(args.hours))),
+             "algorithm": "ML-DSA-65"}
+    signed = _sign_with_holder_key(wallet, _h.sha3_256(V._agent_grant_canonical(grant)).digest())
+    if signed is None:
+        raise SystemExit("no holder key in this wallet (run: polaris-wallet holder-keygen), or "
+                         "liboqs is not installed")
+    grant["signature_hex"], grant["public_key_hex"], grant["algorithm"] = signed
+    out = json.dumps(grant, indent=2)
+    if args.out:
+        with open(args.out, "w") as f:
+            f.write(out + "\n")
+        print("grant %s written to %s (revoke it with: polaris-wallet revoke-grant --grant-id %s)"
+              % (grant["grant_id"], args.out, grant["grant_id"]))
+    else:
+        sys.stdout.write(out + "\n")
+    return 0
+
+
+def cmd_revoke_grant(args):
+    """End a grant, with the holder's own key. The issuer is not contacted and never learns
+    the grant existed; the human's credential is untouched and stays usable.
+
+    The revocation says the grant is over and says nothing about why. A reason field would be
+    a place a coercer could demand be filled in or left empty, and either way it would turn a
+    revocation into a signal about the person."""
+    import hashlib as _h
+    from datetime import datetime, timezone
+    wallet = _wallet_dir(args)
+    V = _load_verifier()
+    rev = {"format": "polaris-grant-revocation/1", "grant_id": args.grant_id,
+           "revoked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+           "algorithm": "ML-DSA-65"}
+    signed = _sign_with_holder_key(wallet, _h.sha3_256(V._grant_revocation_canonical(rev)).digest())
+    if signed is None:
+        raise SystemExit("no holder key in this wallet, or liboqs is not installed")
+    rev["signature_hex"], rev["public_key_hex"], rev["algorithm"] = signed
+    out = json.dumps(rev, indent=2)
+    if args.out:
+        with open(args.out, "w") as f:
+            f.write(out + "\n")
+        print("revocation for %s written to %s (your credential is untouched)"
+              % (args.grant_id, args.out))
+    else:
+        sys.stdout.write(out + "\n")
+    return 0
+
+
 def _zk_binary(args):
     return (args.zk_binary or os.environ.get("POLARIS_ZK_BINARY")
             or os.path.join(_ROOT, "polaris_zk", "target", "release", "polaris-zk"))
@@ -495,6 +593,25 @@ def main(argv=None):
     p.add_argument("--zk-binary", help="path to the polaris-zk binary")
     p.add_argument("--out", help="write the proof to a file instead of stdout")
     p.set_defaults(fn=cmd_prove_membership)
+
+    p = sub.add_parser("grant", help="authorise an agent to act for you, WITHOUT handing over your credential (P9.8)")
+    p.add_argument("--agent-key", required=True, help="the agent's PUBLIC key hex; it proves possession of the private half to act")
+    p.add_argument("--agent-algorithm", default="ML-DSA-65", help="the agent key's algorithm")
+    p.add_argument("--action", action="append", required=True,
+                   help="an action the agent may perform (repeatable). A grant with no actions "
+                        "authorises nothing; there is no way to say 'everything'")
+    p.add_argument("--max-uses", type=int, help="limit: how many times the grant may be used")
+    p.add_argument("--max-amount", type=float, help="limit: the largest amount an action may carry")
+    p.add_argument("--context", type=int, help="the context this grant is for")
+    p.add_argument("--hours", type=int, default=24, help="how long the grant lives (default 24)")
+    p.add_argument("--grant-id", help="the revocation handle (default: random)")
+    p.add_argument("--out", help="write the grant to a file instead of stdout")
+    p.set_defaults(fn=cmd_grant)
+
+    p = sub.add_parser("revoke-grant", help="end a grant with your own key; your credential is untouched and the issuer is not told (P9.8)")
+    p.add_argument("--grant-id", required=True, help="the grant to end")
+    p.add_argument("--out", help="write the revocation to a file instead of stdout")
+    p.set_defaults(fn=cmd_revoke_grant)
 
     p = sub.add_parser("login", help="authenticate to a relying party through your issuing authority (authorization code + PKCE)")
     p.add_argument("--instance", required=True, help="base URL of the issuing authority's instance")

@@ -272,6 +272,11 @@ _ARTIFACT_KEYS = {
     # P9.1: the issuer's binding of a holder key, and the holder's own proof of it.
     "polaris-holder-binding/1": ["format", "token_value", "holder_public_key_hex", "holder_algorithm", "bound_at", "status", "issued_at", "expires_at", "algorithm"],
     "polaris-holder-proof/1": ["format", "token_value", "context_id", "verifier_nonce", "issued_at", "algorithm"],
+    # P9.8: delegation. Signed by the HOLDER's key and the AGENT's, never the issuer's.
+    "polaris-agent-grant/1": ["format", "grant_id", "agent_public_key_hex", "agent_algorithm",
+                              "actions", "limits", "context_id", "issued_at", "expires_at", "algorithm"],
+    "polaris-grant-revocation/1": ["format", "grant_id", "revoked_at", "algorithm"],
+    "polaris-agent-proof/1": ["format", "grant_id", "action", "service_nonce", "issued_at", "algorithm"],
     # P9.2: the published anonymity set a holder proves against on their own device.
     "polaris-epoch-leaves/1": ["format", "authority", "epoch_id", "context_id", "merkle_root", "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm"],
 }
@@ -848,3 +853,76 @@ def handles_link(a, b) -> bool:
     if not isinstance(a, str) or not isinstance(b, str):
         return False
     return a.strip().lower() == b.strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# P9.8 — the delegated agent grant.
+#
+# A service that an agent acts against needs to decide the chain offline. These are the
+# canonical statements; verification is the same two-witness ML-DSA check this SDK already
+# does for every other signed artifact.
+# ---------------------------------------------------------------------------
+
+_AGENT_GRANT_KEYS = ["format", "grant_id", "agent_public_key_hex", "agent_algorithm", "actions",
+                     "limits", "context_id", "issued_at", "expires_at", "algorithm"]
+_GRANT_REVOCATION_KEYS = ["format", "grant_id", "revoked_at", "algorithm"]
+_AGENT_PROOF_KEYS = ["format", "grant_id", "action", "service_nonce", "issued_at", "algorithm"]
+
+
+def grant_covers(grant, action) -> bool:
+    """Does this grant's signed `actions` list cover the action being requested?
+
+    An absent or empty list grants NOTHING. A verifier that read it as unrestricted would
+    turn a grant back into the unbounded credential hand-over that grants exist to replace,
+    and the mistake would be invisible because everything would work.
+    """
+    if not isinstance(grant, dict):
+        return False
+    actions = grant.get("actions")
+    if not isinstance(actions, (list, tuple)) or not actions:
+        return False
+    return str(action) in [str(a) for a in actions]
+
+
+def grant_within_limits(grant, uses_so_far: int = 0, amount=None):
+    """Are the grant's stated limits still satisfied? Returns (ok, note).
+
+    Unknown limit keys are REFUSED, not ignored. A grant that says `max_transfers: 3` to a
+    service that has never heard of `max_transfers` must not be treated as unlimited; that
+    is how a bounded grant silently becomes an unbounded one.
+    """
+    if not isinstance(grant, dict) or not isinstance(grant.get("limits"), dict):
+        limits = {}
+    else:
+        limits = grant["limits"]
+    unknown = sorted(set(limits) - {"max_uses", "max_amount"})
+    if unknown:
+        return False, ("the grant carries limits this verifier does not understand (%s); refusing "
+                       "rather than ignoring them" % ", ".join(unknown))
+    try:
+        if limits.get("max_uses") is not None and int(uses_so_far) >= int(limits["max_uses"]):
+            return False, "the grant's use limit (%s) is exhausted" % limits["max_uses"]
+        if limits.get("max_amount") is not None and amount is not None \
+                and float(amount) > float(limits["max_amount"]):
+            return False, "the requested amount exceeds the grant's limit (%s)" % limits["max_amount"]
+    except (TypeError, ValueError):
+        return False, "a limit or the requested amount is not a number"
+    return True, None
+
+
+def revocation_ends_grant(revocation, grant) -> bool:
+    """Does this revocation end THIS grant, and was it signed by the right key?
+
+    Signature verification is the caller's usual `verify_signed_artifact` step; this is the
+    binding check that must accompany it. Anyone may publish bytes claiming to revoke a
+    grant, but only the holder who signed the grant may end it, so the revocation's signing
+    key must equal the grant's.
+    """
+    if not isinstance(revocation, dict) or not isinstance(grant, dict):
+        return False
+    if revocation.get("format") != "polaris-grant-revocation/1":
+        return False
+    if str(revocation.get("grant_id") or "") != str(grant.get("grant_id") or ""):
+        return False
+    return str(revocation.get("public_key_hex") or "").lower() == \
+        str(grant.get("public_key_hex") or "").lower()

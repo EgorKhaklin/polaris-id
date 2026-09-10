@@ -14,7 +14,9 @@ import { verifyAuthenticity, verifyStatusAssertion, verifySignedArtifact, verify
   verifyTimestampAnchor, verifyHolder, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
-  "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth",, "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves"]);
+  "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth",, "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves",
+  // P9.8: delegation. Signed by the holder's key and the agent's, never the issuer's.
+  "agent-grant", "grant-revocation", "agent-proof"]);
 
 let input = "";
 process.stdin.setEncoding("utf8");

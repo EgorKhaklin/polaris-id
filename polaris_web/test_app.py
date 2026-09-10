@@ -546,7 +546,13 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         self.assertEqual(idt['format'], 'polaris-id-token/1')
         self.assertEqual(idt['aud'], cid)
         self.assertEqual(idt['nonce'], 'nonce-test-0001')
-        self.assertEqual(idt['sub'], hashlib.sha3_256(tv.encode()).hexdigest())
+        # P9.4: the subject is derived PER RELYING PARTY. Before v9.353 it was
+        # sha3_256(token_value), the same value at every relying party, so two of them
+        # comparing user tables matched people exactly and forever.
+        self.assertEqual(idt['sub'],
+                         hashlib.sha3_256(('polaris-pairwise/1|%s|%s' % (tv, cid)).encode()).hexdigest())
+        self.assertNotEqual(idt['sub'], hashlib.sha3_256(tv.encode()).hexdigest(),
+                            'the global subject must not come back')
         self.assertEqual(idt['acr'], 'polaris:possession')
         self.assertNotIn(tv, json.dumps(idt))
         replay = self.client.post('/api/v1/auth/token', headers=self._basic(cid, secret),
@@ -558,6 +564,26 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         self.assertEqual((bad.status_code, bad.get_json()['error']), (400, 'invalid_grant'))
         vcid, _ = self._rp('verify')
         self.assertEqual(self._authorize(vcid, tv, sig, challenge).status_code, 401)
+
+    def test_two_relying_parties_get_different_subjects_for_one_person(self):
+        # P9.4, the property in full: the same human authenticating at two relying parties
+        # must not hand them a value they can join their user tables on. Stable at each, so
+        # the account works; unrecognisable across the two.
+        subs = []
+        _tid, tv, sig = self._credential()
+        for _ in range(2):
+            cid, secret = self._rp('verify authenticate')
+            verifier, challenge = self._pkce()
+            code = self._authorize(cid, tv, sig, challenge).get_json()['code']
+            t = self.client.post('/api/v1/auth/token', headers=self._basic(cid, secret),
+                                 data={'grant_type': 'authorization_code', 'code': code,
+                                       'code_verifier': verifier})
+            self.assertEqual(t.status_code, 200, t.get_data(as_text=True))
+            idt = t.get_json()['id_token']
+            subs.append(idt['sub'])
+            self.assertNotIn(tv, json.dumps(idt), 'no id token may carry the token value')
+        self.assertNotEqual(subs[0], subs[1],
+                            'two relying parties must not receive the same subject for one person')
         self.assertEqual(self._authorize(cid, tv, '00' * 64, challenge).status_code, 400)
         self.assertEqual(self._authorize(cid, tv, sig, challenge, require_zk=True).status_code, 403)
 
@@ -7589,10 +7615,11 @@ class V2SubstrateUITests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         body = r.data.decode()
         self.assertIn('ZK Epochs', body)
-        # Seed has 1 closed epoch with merkle_root fd02e50f…7474d
+        # Seed has 1 closed epoch. Its root changed at v9.354 (P9.3): a leaf is now a Poseidon
+        # commitment the circuit opens, not the bare SHA3-256 seed, so the epoch was RE-CLOSED.
         # (depth-14 root; regenerated in v9.65 when the demo epoch moved
         # off the stale depth-4 commitment).
-        self.assertIn('fd02e50f', body)
+        self.assertIn('21117a44', body)
 
     def test_epochs_list_with_leaves_filter(self):
         r = self.client.get('/epochs?epoch_id=1')

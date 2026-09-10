@@ -719,6 +719,72 @@
       },
       "since": "9.350",
       "note": "P9.2: a member swapped after signing; the commitment no longer matches the set."
+    },
+    {
+      "name": "agent-grant-valid",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.354",
+      "note": "P9.8: a holder-signed grant naming its actions, limits and expiry."
+    },
+    {
+      "name": "agent-grant-widened",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/agent-grant-widened.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.354",
+      "note": "P9.8: an action was added after signing. actions is inside the signed statement precisely so this fails."
+    },
+    {
+      "name": "grant-revocation-valid",
+      "artifact": "grant-revocation",
+      "object_file": "conformance/vectors/grant-revocation-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.354",
+      "note": "P9.8: the holder ends the grant with the same key that signed it. The issuer is not contacted and the human's credential is untouched."
+    },
+    {
+      "name": "grant-revocation-impostor",
+      "artifact": "grant-revocation",
+      "object_file": "conformance/vectors/grant-revocation-impostor.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.354",
+      "note": "P9.8: the SIGNATURE is genuine, but by a key that is not the grant's holder. A verifier must check that binding separately: authenticity alone does not end a grant, or anyone able to publish bytes could revoke somebody else's."
+    },
+    {
+      "name": "agent-proof-valid",
+      "artifact": "agent-proof",
+      "object_file": "conformance/vectors/agent-proof-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.354",
+      "note": "P9.8: the agent's signature over the grant, the action and the service's nonce."
+    },
+    {
+      "name": "agent-proof-impostor",
+      "artifact": "agent-proof",
+      "object_file": "conformance/vectors/agent-proof-impostor.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.354",
+      "note": "P9.8: genuinely signed, by a key the grant does not name. Without the key-matches-grant check a copied grant would be a bearer token."
     }
   ]
 }

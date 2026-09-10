@@ -5,6 +5,53 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.354 — 2026-09-10 (P9.8: delegation without the credential)
+
+A person wants an agent to act for them. What people actually do is hand over
+the credential, and that gives the agent everything the person can do, forever,
+revocable only by revoking the person. A grant is the opposite of each of those.
+
+`polaris-agent-grant/1`, signed by the HOLDER key, names its actions, states its
+limits, expires on its own, and carries `grant_id` as a revocation handle that
+belongs to it alone. `actions` and `limits` are inside the signed statement,
+which is the difference between a bounded grant and one that only looks bounded:
+a grant widened in transit fails rather than passing invisibly. An empty
+`actions` grants nothing, and there is no way to say everything.
+
+`polaris-grant-revocation/1` is signed by the same holder key. Anyone may publish
+bytes; only the holder may end the grant. The issuer is not contacted and never
+learns the grant existed, and the human's credential is untouched throughout. A
+person can end their agent's authority without asking permission from, or being
+observed by, the authority that issued their identity.
+
+`polaris-agent-proof/1` is signed by the AGENT key over the action and the
+service's own nonce. Without it a grant is a bearer token and whoever copies it
+in transit becomes the agent. With it, a captured proof replays neither to a
+second service nor to a second action at the first.
+
+Two smaller decisions worth naming. A revocation carries no reason field, and
+none will be added: a place to record why a grant ended is a place a coercer can
+demand be filled in or left empty, and either way it turns a revocation into a
+signal about the person. And an unknown limit key is refused rather than ignored,
+because a grant that says `max_transfers: 3` to a service that has never heard of
+`max_transfers` must not be treated as unlimited.
+
+The bound is stated, as in P9.4. Under a plain holder binding a service still
+sees the credential's token value, so the verdict reports `correlation: exposed`.
+A grant hides the human from the agent's actions, not the credential from the
+service.
+
+Wire spec, canonical-equivalence oracle, both SDKs, and six conformance vectors
+that pass in all three implementations, taking the published contract to 71
+cases. The three artifacts join the metamorphic fuzzer, where the grant is the
+one object whose interesting mutation is a WIDENING rather than a corruption;
+2072 cases, all fail-closed. `check_agent_grant` with a twelve-fixture detection
+test, and a drill proving twenty-four cases under real ML-DSA-65.
+
+This closes P9. Every row in the phase is shipped.
+
+---
+
 ## v9.353 — 2026-09-10 (P9.4: bounded, not permanent)
 
 The login token's subject was `SHA3-256(token_value)`. The same sixty-four

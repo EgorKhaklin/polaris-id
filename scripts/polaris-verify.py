@@ -3244,6 +3244,284 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
     return v
 
 
+
+# ---------------------------------------------------------------------------
+# P9.8: the delegated agent grant.
+#
+# A person wants an agent to act for them, and the honest way to arrange that is NOT to
+# hand over the credential. A credential is unbounded, non-expiring, covers everything the
+# person can do, and cannot be taken back without revoking the person. A grant is the
+# opposite of each: named actions, stated limits, an expiry, and a revocation handle that
+# belongs to the grant alone.
+#
+# That last property is the one to hold on to. Revoking a grant does not revoke the human's
+# credential, and it does not involve the issuer at all: the holder signs a revocation with
+# the same key that signed the grant, and any service checks it offline. A person can end
+# their agent's authority without asking permission from, or being observed by, the
+# authority that issued their identity.
+#
+# The chain is five signatures deep and each link is checked separately, so a verdict says
+# which one broke:
+#
+#   1. the ISSUER signs the credential                    (verify_pack)
+#   2. the ISSUER signs the holder-key binding            (verify_holder_binding)
+#   3. the HOLDER key signs the grant                     here
+#   4. the HOLDER key signs a revocation, if any          here
+#   5. the AGENT key signs its action against a nonce     here
+#
+# Link 5 matters as much as link 3: without it, a grant is a bearer token, and anyone who
+# copies it in transit becomes the agent. With it, the agent must hold a key the grant names.
+#
+# What a service learns, stated exactly, because "the agent acts without revealing who" is
+# easy to overclaim. It learns that the grant is genuine, unexpired, covers the action it is
+# being asked to perform, is not revoked, and chains to a holder key an issuer bound to a
+# real credential. Under a plain binding it ALSO sees that credential's token value, so the
+# verdict reports `correlation` exactly as verify_presentation does: "exposed" here, and
+# "bounded" only when the chain is carried by the zero-knowledge path. The grant hides the
+# HUMAN from the agent's actions, not the credential from the service.
+# ---------------------------------------------------------------------------
+
+_AGENT_GRANT_FORMAT = "polaris-agent-grant/1"
+_GRANT_REVOCATION_FORMAT = "polaris-grant-revocation/1"
+_AGENT_PROOF_FORMAT = "polaris-agent-proof/1"
+
+
+def _agent_grant_canonical(g):
+    """The bytes a HOLDER signs to delegate. MUST match polaris_web/app.py's
+    _agent_grant_statement; the canonical oracle pins the pair.
+
+    `limits` and `actions` are inside the signed statement, which is the whole point: a
+    grant whose limits could be edited after signing would be an unbounded grant with a
+    limits field on it.
+    """
+    if not isinstance(g, dict):
+        g = {}
+    statement = {k: g.get(k) for k in
+                 ("format", "grant_id", "agent_public_key_hex", "agent_algorithm", "actions",
+                  "limits", "context_id", "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _grant_revocation_canonical(r):
+    """The bytes a HOLDER signs to end a grant. Deliberately tiny: the grant id, the
+    instant, nothing else. No reason field, and none will be added.
+
+    A reason would be a place to record that a revocation was coerced, or was not, and a
+    field that can say "this was under duress" is a field a coercer can demand be left
+    empty. The revocation says the grant is over and says nothing about why."""
+    if not isinstance(r, dict):
+        r = {}
+    statement = {k: r.get(k) for k in ("format", "grant_id", "revoked_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _agent_proof_canonical(pr):
+    """The bytes an AGENT signs to act. Names the action and the service's own nonce, so a
+    proof captured at one service cannot be replayed at another, or reused for a different
+    action at the same one."""
+    if not isinstance(pr, dict):
+        pr = {}
+    statement = {k: pr.get(k) for k in
+                 ("format", "grant_id", "action", "service_nonce", "issued_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _signed_by(obj, canonical, key_hex, alg):
+    """Two-witness signature check over a canonical statement. Returns (ok, witnesses, note)
+    with ok None when no verifier is installed, so a caller abstains rather than accepting."""
+    try:
+        sig, pk = bytes.fromhex(str(obj.get("signature_hex") or "")), bytes.fromhex(str(key_hex or ""))
+    except (ValueError, TypeError):
+        return None, [], "signature_hex/public_key_hex are not valid hex"
+    if not _accepted_alg(alg):
+        return None, [], "unknown or unaccepted signature algorithm: %r" % alg
+    return _two_witness_verify(hashlib.sha3_256(canonical).digest(), sig, pk, alg)
+
+
+def _verify_standalone(obj, fmt, canonical, key):
+    """Check ONE delegation artifact's signature, and nothing else.
+
+    Authenticity is not authority, and for these two artifacts the gap is the whole point. A
+    revocation can be perfectly signed and still powerless, because the signer is not the
+    grant's holder. A proof can be perfectly signed and still meaningless, because the key
+    is not the one the grant names. `verify_agent_grant` decides those relationships; this
+    decides only whether the bytes were signed by the key they claim, which is what a
+    verifier needs before it can ask anything else.
+    """
+    v = {"authentic": False, "witnesses": [], "note": None}
+    if not isinstance(obj, dict) or obj.get("format") != fmt:
+        v["note"] = "not a %s" % fmt
+        return v
+    ok, ran, note = _signed_by(obj, canonical(obj), obj.get("public_key_hex"), obj.get("algorithm"))
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "the signature is invalid"
+    return v
+
+
+def verify_grant_revocation(revocation, now=None):
+    """Is this grant revocation genuinely signed? Authenticity only.
+
+    Whether it ENDS a particular grant is a separate question with a separate answer:
+    verify_agent_grant checks that it names that grant and was signed by that grant's own
+    holder. Anyone may publish a perfectly valid revocation; only the holder may end the
+    grant."""
+    return _verify_standalone(revocation, _GRANT_REVOCATION_FORMAT, _grant_revocation_canonical,
+                              "revocation")
+
+
+def verify_agent_proof(proof, now=None):
+    """Is this agent proof genuinely signed? Authenticity only.
+
+    Whether the signing key is the one the grant NAMES is checked by verify_agent_grant.
+    Without that second check a copied grant would be a bearer token, since any key could
+    produce a perfectly authentic proof."""
+    return _verify_standalone(proof, _AGENT_PROOF_FORMAT, _agent_proof_canonical, "proof")
+
+
+def verify_agent_grant(grant, binding=None, credential=None, now=None, requested_action=None,
+                       revocation=None, agent_proof=None, expected_nonce=None,
+                       anchor_keys=None, verifier_scope=None):
+    """Decide a delegated agent grant OFFLINE (P9.8). Total on hostile input.
+
+    Every link is reported separately, because a service that only sees one boolean cannot
+    tell "this grant was revoked" from "this agent does not hold the key it names", and
+    those call for different responses.
+    """
+    v = {"grant_authentic": False, "fresh": None, "principal_bound": None,
+         "action_in_scope": None, "limits": None, "revoked": None, "agent_proved": None,
+         "pairwise_handle": None, "correlation": None, "usable": False,
+         "witnesses": [], "note": None}
+    if not isinstance(grant, dict) or grant.get("format") != _AGENT_GRANT_FORMAT:
+        v["note"] = "not a %s" % _AGENT_GRANT_FORMAT
+        return v
+    holder_key = grant.get("public_key_hex")
+    ok, ran, note = _signed_by(grant, _agent_grant_canonical(grant), holder_key, grant.get("algorithm"))
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    if not ok:
+        v["note"] = "the grant signature is invalid"
+        return v
+    v["grant_authentic"] = True
+
+    _verify_window(grant, v, now, None)
+
+    # Link 2: the holder key must be one an ISSUER bound to a real credential, or the grant
+    # is signed by a key that speaks for nobody.
+    if binding is not None:
+        bv = verify_holder_binding(binding, credential=credential, now=now, anchor_keys=anchor_keys)
+        v["principal_bound"] = bool(
+            bv["binding_authentic"] and bv["fresh"] is not False
+            and str(bv["holder_public_key_hex"] or "").lower() == str(holder_key or "").lower()
+            and (bv["bound_to_credential"] is not False))
+        if not v["principal_bound"]:
+            v["note"] = ("the grant's signing key is not one an issuer bound to a credential "
+                         "(%s)" % (bv["note"] or "binding did not verify"))
+        if verifier_scope is not None:
+            v["pairwise_handle"] = pairwise_handle(bv["holder_public_key_hex"], verifier_scope)
+            v["correlation"] = "exposed"
+
+    # Scope. An absent or empty action list grants NOTHING: a grant that named no actions
+    # and was read as unrestricted would be the credential hand-over this exists to replace.
+    actions = grant.get("actions")
+    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []
+    if requested_action is not None:
+        v["action_in_scope"] = str(requested_action) in actions
+        if not v["action_in_scope"]:
+            v["note"] = "the action %r is not in the grant's scope %r" % (requested_action, actions)
+    v["limits"] = grant.get("limits") if isinstance(grant.get("limits"), dict) else {}
+
+    # Link 4: revocation, by the SAME holder key, naming this grant. The issuer is not
+    # consulted and never learns the grant existed.
+    if revocation is not None:
+        v["revoked"] = False
+        if not isinstance(revocation, dict) or revocation.get("format") != _GRANT_REVOCATION_FORMAT:
+            v["note"] = "the revocation is not a %s" % _GRANT_REVOCATION_FORMAT
+        elif str(revocation.get("grant_id") or "") != str(grant.get("grant_id") or ""):
+            v["note"] = "the revocation names a different grant"
+        else:
+            rok, rran, rnote = _signed_by(revocation, _grant_revocation_canonical(revocation),
+                                          revocation.get("public_key_hex"), revocation.get("algorithm"))
+            if rok is None:
+                v["note"] = rnote
+            elif not rok:
+                v["note"] = "the revocation signature is invalid"
+            elif str(revocation.get("public_key_hex") or "").lower() != str(holder_key or "").lower():
+                # Anyone may publish bytes; only the holder may end the grant.
+                v["note"] = "the revocation is signed by a key other than the grant's holder"
+            else:
+                v["revoked"] = True
+                v["note"] = "the holder revoked this grant"
+
+    # Link 5: the agent must PROVE it holds the key the grant names, or the grant is a
+    # bearer token and whoever copied it is the agent.
+    if agent_proof is not None:
+        v["agent_proved"] = False
+        if not isinstance(agent_proof, dict) or agent_proof.get("format") != _AGENT_PROOF_FORMAT:
+            v["note"] = "the agent proof is not a %s" % _AGENT_PROOF_FORMAT
+        elif str(agent_proof.get("grant_id") or "") != str(grant.get("grant_id") or ""):
+            v["note"] = "the agent proof names a different grant"
+        elif str(agent_proof.get("public_key_hex") or "").lower() != str(grant.get("agent_public_key_hex") or "").lower():
+            v["note"] = "the agent proof is signed by a key the grant does not name"
+        elif expected_nonce is not None and str(agent_proof.get("service_nonce") or "") != str(expected_nonce):
+            v["note"] = "the agent proof does not name this service's nonce (a replay)"
+        elif requested_action is not None and str(agent_proof.get("action") or "") != str(requested_action):
+            v["note"] = "the agent proof is for a different action than the one requested"
+        else:
+            aok, aran, anote = _signed_by(agent_proof, _agent_proof_canonical(agent_proof),
+                                          agent_proof.get("public_key_hex"), agent_proof.get("algorithm"))
+            if aok is None:
+                v["note"] = anote
+            elif not aok:
+                v["note"] = "the agent proof signature is invalid"
+            else:
+                v["agent_proved"] = True
+
+    v["usable"] = bool(v["grant_authentic"] and v["fresh"] is not False
+                       and v["principal_bound"] is not False
+                       and v["action_in_scope"] is not False
+                       and not v["revoked"]
+                       and v["agent_proved"] is not False)
+    return v
+
+
+def grant_within_limits(grant, uses_so_far=0, amount=None):
+    """Are the grant's stated limits still satisfied? Returns (ok, note).
+
+    A limit the service does not enforce is decoration, so this is a real function rather
+    than a field a caller is trusted to read. Unknown limit keys are refused rather than
+    ignored: a grant that says `max_transfers: 3` to a service that has never heard of
+    `max_transfers` must not be treated as unlimited.
+    """
+    limits = grant.get("limits") if isinstance(grant, dict) and isinstance(grant.get("limits"), dict) else {}
+    known = {"max_uses", "max_amount"}
+    unknown = sorted(set(limits) - known)
+    if unknown:
+        return False, ("the grant carries limits this verifier does not understand (%s); refusing "
+                       "rather than ignoring them" % ", ".join(unknown))
+    max_uses = limits.get("max_uses")
+    if max_uses is not None:
+        try:
+            if int(uses_so_far) >= int(max_uses):
+                return False, "the grant's use limit (%s) is exhausted" % max_uses
+        except (TypeError, ValueError):
+            return False, "max_uses is not a number"
+    max_amount = limits.get("max_amount")
+    if max_amount is not None and amount is not None:
+        try:
+            if float(amount) > float(max_amount):
+                return False, "the requested amount exceeds the grant's limit (%s)" % max_amount
+        except (TypeError, ValueError):
+            return False, "max_amount or the requested amount is not a number"
+    return True, None
+
+
 def verify_presentation(presentation, anchor_keys=None, now=None, max_window_seconds=None, expected_context=None,
                         expected_nonce=None, require_holder_proof=False, verifier_scope=None):
     """Decide a presentation OFFLINE (P8.6): the credential's authenticity (and, with anchor

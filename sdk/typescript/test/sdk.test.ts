@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
-         nullifiersLink } from "../src/index.ts";
+         nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant } from "../src/index.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const vec = (n: string) => JSON.parse(readFileSync(join(ROOT, "vectors", n), "utf8"));
@@ -94,4 +94,42 @@ test("nullifiers link only on exact hex", () => {
   assert.equal(nullifiersLink("AB".repeat(32), "ab".repeat(32)), true);
   assert.equal(nullifiersLink("ab".repeat(32), "ab".repeat(31) + "ff"), false);
   assert.equal(nullifiersLink(null, 1), false);
+});
+
+// --- P9.8: the delegated agent grant ------------------------------------------
+
+const GRANT = {
+  format: "polaris-agent-grant/1", grant_id: "g1",
+  actions: ["read:status"], limits: { max_uses: 2 }, public_key_hex: "ab".repeat(32),
+};
+
+test("a grant covers only the actions it names", () => {
+  assert.equal(grantCovers(GRANT, "read:status"), true);
+  assert.equal(grantCovers(GRANT, "transfer:funds"), false);
+});
+
+test("a grant naming no actions grants nothing, not everything", () => {
+  // The dangerous reading: an empty list as "unrestricted". Everything would work, and the
+  // grant would silently be the credential hand-over it exists to replace.
+  assert.equal(grantCovers({ ...GRANT, actions: [] }, "read:status"), false);
+  assert.equal(grantCovers({ ...GRANT, actions: undefined }, "read:status"), false);
+  assert.equal(grantCovers(null, "read:status"), false);
+});
+
+test("limits are enforced, and unknown limits are refused rather than ignored", () => {
+  assert.equal(grantWithinLimits(GRANT, 0)[0], true);
+  assert.equal(grantWithinLimits(GRANT, 2)[0], false);
+  const [ok, note] = grantWithinLimits({ limits: { max_transfers: 3 } });
+  assert.equal(ok, false);
+  assert.match(String(note), /does not understand/);
+});
+
+test("only the holder who signed a grant can revoke it", () => {
+  const rev = { format: "polaris-grant-revocation/1", grant_id: "g1", public_key_hex: "AB".repeat(32) };
+  assert.equal(revocationEndsGrant(rev, GRANT), true, "hex case must not defeat a revocation");
+  assert.equal(revocationEndsGrant({ ...rev, public_key_hex: "cd".repeat(32) }, GRANT), false,
+    "a stranger's key must not end someone else's grant");
+  assert.equal(revocationEndsGrant({ ...rev, grant_id: "other" }, GRANT), false,
+    "a revocation naming another grant must not end this one");
+  assert.equal(revocationEndsGrant({ ...rev, format: "polaris-status-assertion/1" }, GRANT), false);
 });

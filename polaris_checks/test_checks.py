@@ -6628,12 +6628,17 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _holder_binding_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'token_value')}\n"
         "def _holder_proof_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'verifier_nonce')}\n"
         "def _epoch_leaves_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'leaf_count')}\n"
+        # P9.8: delegation.
+        "def _agent_grant_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'actions')}\n"
+        "def _grant_revocation_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'revoked_at')}\n"
+        "def _agent_proof_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'service_nonce')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
             "polaris-trust-attestation/1 polaris-holder-binding/1 polaris-holder-proof/1 polaris-epoch-leaves/1 "
+        "polaris-agent-grant/1 polaris-grant-revocation/1 polaris-agent-proof/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
         "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1 polaris-id-token/1 polaris-presentation/1 polaris-qr/1 polaris-trust-list/1\n"
         "manifest signed fields: format, authority\n"
@@ -6654,6 +6659,9 @@ def test_wire_spec_check_discriminates(tmp_path):
         "binding signed fields: format, token_value\n"
         "holder proof signed fields: format, verifier_nonce\n"
         "epoch leaves signed fields: format, leaf_count\n"
+        "grant signed fields: format, actions\n"
+        "revocation signed fields: format, revoked_at\n"
+        "agent proof signed fields: format, service_nonce\n"
         "The pack signs SHA3-256(token_value), not a JSON statement.\n"
         "canonical = json.dumps(s, sort_keys=True, separators=(',',':')).\n"
         "Trust is non-transitive and in-context.\n"
@@ -7001,7 +7009,7 @@ def test_registry_check_discriminates(tmp_path):
         "    _registry_statement(body)  # polaris-registry/1\n"
         "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
         "_REGISTRY_SERVICES = []\n"
-        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-presentation': 1,\n    'polaris-qr': 1,\n    'polaris-trust-list': 1,\n    'polaris-trust-attestation': 1,\n    'polaris-holder-binding': 1,\n    'polaris-holder-proof': 1,\n    'polaris-epoch-leaves': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
+        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-presentation': 1,\n    'polaris-qr': 1,\n    'polaris-trust-list': 1,\n    'polaris-trust-attestation': 1,\n    'polaris-holder-binding': 1,\n    'polaris-holder-proof': 1,\n    'polaris-epoch-leaves': 1,\n    'polaris-agent-grant': 1,\n    'polaris-grant-revocation': 1,\n    'polaris-agent-proof': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
     )
     good = {
         'polaris_web/app.py': APP,
@@ -8597,3 +8605,122 @@ def test_pairwise_presentation_check_discriminates(tmp_path):
     write({'scripts/polaris-pairwise-drill.py': "# the handles differ, great\n"})
     assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the drill does not assert that a plain presentation is exposed"
+
+
+def test_agent_grant_check_discriminates(tmp_path):
+    # v9.354 (P9.8): each fixture below removes one thing that keeps a grant from being a
+    # copy of the credential. Every one of them fails silently in production: the signature
+    # still verifies, the service still accepts, and the grant is quietly unbounded.
+    VERIFY = (
+        "def _agent_grant_canonical(g):\n"
+        '    return {k: g.get(k) for k in ("format", "grant_id", "agent_public_key_hex",\n'
+        '        "agent_algorithm", "actions", "limits", "context_id", "issued_at",\n'
+        '        "expires_at", "algorithm")}\n'
+        "\ndef _grant_revocation_canonical(r):\n"
+        '    return {k: r.get(k) for k in ("format", "grant_id", "revoked_at", "algorithm")}\n'
+        "\ndef _agent_proof_canonical(p):\n"
+        '    return {k: p.get(k) for k in ("format", "grant_id", "action", "service_nonce")}\n'
+        "\ndef verify_agent_grant(g, revocation=None, agent_proof=None, requested_action=None):\n"
+        "    actions = g.get('actions')\n"
+        "    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []\n"
+        '    v["action_in_scope"] = str(requested_action) in actions\n'
+        '    note = "the revocation names a different grant"\n'
+        '    note = "the revocation is signed by a key other than the grant\'s holder"\n'
+        '    note = "the agent proof is signed by a key the grant does not name"\n'
+        '    note = "a replay"\n'
+        '    note = "the agent proof is for a different action than the one requested"\n'
+        "    return v\n"
+        "\ndef grant_within_limits(g, uses=0):\n"
+        "    unknown = set(g) - {'max_uses'}\n"
+        "    if unknown:\n        return False, 'refusing rather than ignoring them'\n"
+        "    return True, None\n")
+    good = {
+        'scripts/polaris-verify.py': VERIFY,
+        'polaris_web/app.py': ("def _agent_grant_statement(b): pass\n"
+                               "def _grant_revocation_statement(b): pass\n"
+                               "def _agent_proof_statement(b): pass\n"),
+        'polaris_web/test_canonical_equivalence.py': '"agent-grant" "grant-revocation" "agent-proof"\n',
+        'scripts/polaris-wallet.py': ("def cmd_grant(args):\n    sign_locally()\n"
+                                      "\ndef cmd_revoke_grant(args):\n    sign_locally()\n"),
+        'sdk/python/polaris_verify/__init__.py': ('def grant_covers(g, a): return False\n'
+                                                  '# "polaris-agent-grant/1"\n'),
+        'sdk/typescript/src/index.ts': ('export function grantCovers(g, a) { return false; }\n'
+                                        '// "polaris-agent-grant/1"\n'),
+        'scripts/polaris-verifier-fuzz.py': '("agent-grant", g_agent_grant, None),\n',
+        'scripts/polaris-agent-grant-drill.py': ("# a stolen grant fails\n# credential untouched\n"
+                                                 "# correlation is exposed\n"),
+        'docs/reference/WIRE-SPEC.md': "### polaris-agent-grant/1\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_agent_grant(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # The limits leave the signed statement: a grant can be widened in transit and the
+    # widened grant still verifies.
+    write({'scripts/polaris-verify.py': VERIFY.replace('"limits", ', "")})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the limits sit outside the grant's signature"
+
+    # So does the action list.
+    write({'scripts/polaris-verify.py': VERIFY.replace('"actions", ', "")})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the actions sit outside the grant's signature"
+
+    # A malformed action list stops collapsing to empty, so a grant naming nothing could be
+    # read as naming everything.
+    write({'scripts/polaris-verify.py': VERIFY.replace(
+        "    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []\n",
+        "    actions = actions or ['*']\n")})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a grant with no actions is not treated as granting nothing"
+
+    # Anyone who can publish bytes can end someone else's delegation.
+    write({'scripts/polaris-verify.py': VERIFY.replace(
+        '    note = "the revocation is signed by a key other than the grant\'s holder"\n', "")})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a revocation need not be signed by the grant's own holder"
+
+    # The grant becomes a bearer token: no agent key check.
+    write({'scripts/polaris-verify.py': VERIFY.replace(
+        '    note = "the agent proof is signed by a key the grant does not name"\n', "")})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the agent need not hold the key the grant names"
+
+    # A captured proof replays at a second service.
+    write({'scripts/polaris-verify.py': VERIFY.replace('    note = "a replay"\n', "")})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a proof is not bound to the service's own nonce"
+
+    # A reason field appears on the revocation, and becomes a place to signal duress.
+    write({'scripts/polaris-verify.py': VERIFY.replace(
+        '"revoked_at", "algorithm")', '"revoked_at", "reason", "algorithm")')})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a revocation's signed statement carries a reason field"
+
+    # An unknown limit is ignored instead of refused.
+    write({'scripts/polaris-verify.py': VERIFY.replace(
+        "    if unknown:\n        return False, 'refusing rather than ignoring them'\n", "")})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an unrecognised limit is ignored rather than refused"
+
+    # Minting a grant starts contacting the issuer, so delegation becomes observable.
+    write({'scripts/polaris-wallet.py': ("def cmd_grant(args):\n    urllib.request.urlopen(url)\n"
+                                         "\ndef cmd_revoke_grant(args):\n    sign_locally()\n")})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when minting a grant contacts the issuer"
+
+    # An SDK drops the scope check, so an integrator writes their own.
+    write({'sdk/typescript/src/index.ts': '// "polaris-agent-grant/1"\n'})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an SDK does not expose the scope check"
+
+    # The drill stops asserting that a revoked grant leaves the credential usable.
+    write({'scripts/polaris-agent-grant-drill.py': "# a stolen grant fails\n# correlation is exposed\n"})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not show the human's credential survives a revocation"

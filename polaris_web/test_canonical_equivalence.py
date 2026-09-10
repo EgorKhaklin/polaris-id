@@ -90,6 +90,27 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._holder_proof_statement(b),
         "verify": lambda b: _V._holder_proof_canonical(b),
     },
+    # P9.8 (v9.354): delegation. Signed by the HOLDER's key and the AGENT's, never the
+    # issuer's, but the app must build the identical bytes in order to verify one.
+    "agent-grant": {
+        "keys": ["format", "grant_id", "agent_public_key_hex", "agent_algorithm", "actions",
+                 "limits", "context_id", "issued_at", "expires_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._agent_grant_statement(b),
+        "verify": lambda b: _V._agent_grant_canonical(b),
+    },
+    "grant-revocation": {
+        "keys": ["format", "grant_id", "revoked_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._grant_revocation_statement(b),
+        "verify": lambda b: _V._grant_revocation_canonical(b),
+    },
+    "agent-proof": {
+        "keys": ["format", "grant_id", "action", "service_nonce", "issued_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._agent_proof_statement(b),
+        "verify": lambda b: _V._agent_proof_canonical(b),
+    },
     # P9.2 (v9.350): the published anonymity set.
     "epoch-leaves": {
         "keys": ["format", "authority", "epoch_id", "context_id", "merkle_root",
@@ -351,11 +372,19 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-signed-document/1", "polaris-id-token/1",
             "polaris-trust-list/1", "polaris-trust-attestation/1",
             "polaris-holder-binding/1", "polaris-holder-proof/1", "polaris-epoch-leaves/1",
+            # P9.8: delegation. Signed by the holder's key and the agent's, not the issuer's,
+            # but the app builds the identical bytes to VERIFY one, so the oracle covers them.
+            "polaris-agent-grant/1", "polaris-grant-revocation/1", "polaris-agent-proof/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1",
                           # P8.6: the holder-side wrapper and its QR framing carry no app signature
-                          "polaris-presentation/1", "polaris-qr/1"}
+                          "polaris-presentation/1", "polaris-qr/1",
+                          # P9.4: a domain-separation TAG inside a SHA3-256 preimage, not a
+                          # signed artifact. It matches the format-string shape on purpose, so
+                          # that a handle cannot be confused with another value in the protocol,
+                          # and it is named here rather than reshaped to dodge this scan.
+                          "polaris-pairwise/1"}
         missing = formats - covered - not_app_signed
         self.assertFalse(missing, "signed formats with no canonical-equivalence oracle case: %s" % missing)
 

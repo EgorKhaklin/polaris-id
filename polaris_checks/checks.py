@@ -7212,6 +7212,10 @@ _WIRE_SIGNED_TYPES = {
     "polaris-holder-proof/1": "_holder_proof_canonical",
     # P9.2: the published anonymity set a holder proves against on their own device.
     "polaris-epoch-leaves/1": "_epoch_leaves_canonical",
+    # P9.8: delegation. Signed by the HOLDER's key and the AGENT's, never the issuer's.
+    "polaris-agent-grant/1": "_agent_grant_canonical",
+    "polaris-grant-revocation/1": "_grant_revocation_canonical",
+    "polaris-agent-proof/1": "_agent_proof_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -9696,7 +9700,159 @@ def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
                "zero-knowledge form, whose handle is the scoped nullifier)")
 
 
+
+def check_agent_grant(root: pathlib.Path) -> list[Finding]:
+    """A person delegates to an agent WITHOUT handing over their credential (P9.8).
+
+    The thing this replaces is the thing people actually do: give the agent the credential.
+    That gives it everything the person can do, forever, revocable only by revoking the
+    person. A grant is the opposite of each of those, and this check exists to keep it that
+    way, because every one of the four properties degrades silently.
+
+    BOUNDED. `actions` and `limits` are inside the signed statement. If either sat outside,
+    a grant could be widened in transit and the widening would be invisible: the signature
+    would still verify, the service would still accept, and the grant would be the
+    credential hand-over it was supposed to replace. An empty `actions` must grant NOTHING;
+    reading it as unrestricted is the same failure wearing a different hat, and it is the
+    reading a tired implementer reaches for.
+
+    REVOCABLE BY THE HOLDER ALONE. The revocation is signed by the same key that signed the
+    grant, so anyone may publish bytes but only the holder may end it. The issuer is not in
+    this loop at all, which is the property worth protecting: a person can end their agent's
+    authority without asking permission from, or being observed by, the authority that
+    issued their identity.
+
+    NOT A BEARER TOKEN. The agent signs a proof naming the action and the service's own
+    nonce. Without that link a grant is a bearer token and whoever copies it in transit
+    becomes the agent; with it, a captured proof replays neither to a second service nor to
+    a second action at the first.
+
+    NO REASON FIELD ON A REVOCATION. A place to record WHY a grant ended is a place a
+    coercer can demand be filled in or left empty, and either way it turns a revocation into
+    a signal about the person. Four fields, and this refuses a fifth."""
+    name = "agent_grant"
+    verifier = _read(root, "scripts/polaris-verify.py")
+    for needed, why in (("def _agent_grant_canonical", "the grant's signed statement"),
+                        ("def _grant_revocation_canonical", "the revocation's signed statement"),
+                        ("def _agent_proof_canonical", "the agent's proof of the action"),
+                        ("def verify_agent_grant", "the offline decision over the whole chain"),
+                        ("def grant_within_limits", "the limits must be ENFORCED, not just carried")):
+        if needed not in verifier:
+            return _fail(name, f"the detached verifier must define {why} ({needed})")
+
+    # BOUNDED: actions and limits inside the signature.
+    stmt = verifier.split("def _agent_grant_canonical")[1].split("\ndef ")[0]
+    for field in ("actions", "limits", "expires_at", "agent_public_key_hex", "grant_id"):
+        if f'"{field}"' not in stmt:
+            return _fail(name,
+                         f"the grant's signed statement must cover {field!r}; a field outside the "
+                         "signature can be edited in transit, and a widened grant that still "
+                         "verifies is the credential hand-over a grant exists to replace")
+
+    # An empty action list must grant nothing.
+    body = verifier.split("def verify_agent_grant")[1].split("\ndef ")[0]
+    if "isinstance(actions, (list, tuple)) else []" not in body:
+        return _fail(name,
+                     "verify_agent_grant must treat a missing or malformed `actions` as the EMPTY "
+                     "list, so a grant that names nothing authorises nothing")
+    if 'v["action_in_scope"] = str(requested_action) in actions' not in body:
+        return _fail(name, "the requested action must be checked against the grant's own list")
+
+    # REVOCABLE BY THE HOLDER ALONE.
+    if "the revocation is signed by a key other than the grant's holder" not in body:
+        return _fail(name,
+                     "verify_agent_grant must require the revocation to be signed by the SAME key "
+                     "that signed the grant; otherwise anyone who can publish bytes can end "
+                     "somebody else's delegation")
+    if "the revocation names a different grant" not in body:
+        return _fail(name, "a revocation must name THIS grant, or one revocation would end every grant")
+
+    # NOT A BEARER TOKEN.
+    for needed, why in (("the agent proof is signed by a key the grant does not name",
+                         "the agent must hold the key the grant names, or the grant is a bearer "
+                         "token and whoever copied it is the agent"),
+                        ("a replay",
+                         "the proof must name the service's own nonce, or a proof captured at one "
+                         "service replays at another"),
+                        ("the agent proof is for a different action than the one requested",
+                         "a proof for one action must not authorise another")):
+        if needed not in body:
+            return _fail(name, why)
+
+    # NO REASON FIELD.
+    rev_stmt = verifier.split("def _grant_revocation_canonical")[1].split("\ndef ")[0]
+    for banned in ("reason", "coerc", "duress", "note"):
+        if f'"{banned}"' in rev_stmt:
+            return _fail(name,
+                         f"a revocation's signed statement must not carry {banned!r}: a field that "
+                         "records why a grant ended is a field a coercer can demand be filled in "
+                         "or left empty, and either way it makes the revocation a signal about "
+                         "the person")
+
+    # The limits must be refused when unknown, not ignored.
+    limits_body = verifier.split("def grant_within_limits")[1].split("\ndef ")[0]
+    if "unknown" not in limits_body or "refusing" not in limits_body:
+        return _fail(name,
+                     "grant_within_limits must REFUSE a limit key it does not understand; ignoring "
+                     "one silently turns a bounded grant into an unbounded one")
+
+    # The app builds the same bytes, and the oracle pins the pair.
+    app = _read(root, "polaris_web/app.py")
+    for needed in ("_agent_grant_statement", "_grant_revocation_statement", "_agent_proof_statement"):
+        if f"def {needed}" not in app:
+            return _fail(name, f"polaris_web/app.py must build the identical bytes ({needed})")
+    oracle = _read(root, "polaris_web/test_canonical_equivalence.py")
+    for needed in ("agent-grant", "grant-revocation", "agent-proof"):
+        if f'"{needed}"' not in oracle:
+            return _fail(name, f"the canonical-equivalence oracle must pin {needed}")
+
+    # The wallet mints and revokes; the issuer is never asked.
+    wallet = _read(root, "scripts/polaris-wallet.py")
+    for needed, why in (("def cmd_grant", "the holder must be able to mint a grant on their own device"),
+                        ("def cmd_revoke_grant", "and end it on their own device")):
+        if needed not in wallet:
+            return _fail(name, f"{why} (scripts/polaris-wallet.py: {needed})")
+    grant_body = wallet.split("def cmd_grant")[1].split("\ndef ")[0]
+    if "urlopen" in grant_body or "urllib" in grant_body:
+        return _fail(name,
+                     "minting a grant must not contact the issuer; the whole point is that a person "
+                     "delegates without the authority that issued their identity being told")
+
+    # Both SDKs, the fuzzer and a drill.
+    py_sdk, ts_sdk = _read(root, "sdk/python/polaris_verify/__init__.py"), _read(root, "sdk/typescript/src/index.ts")
+    if "def grant_covers" not in py_sdk or "export function grantCovers" not in ts_sdk:
+        return _fail(name, "both SDKs must expose the scope check, or an integrator writes their own "
+                           "and reads an empty action list as unrestricted")
+    if "polaris-agent-grant/1" not in py_sdk or "polaris-agent-grant/1" not in ts_sdk:
+        return _fail(name, "both SDKs must know the grant's signed-field list")
+    fuzz = _read(root, "scripts/polaris-verifier-fuzz.py")
+    if "agent-grant" not in fuzz:
+        return _fail(name,
+                     "the metamorphic fuzzer must cover the grant: it is the one artifact where a "
+                     "WIDENING mutation is the attack rather than a corruption")
+    drill = _read(root, "scripts/polaris-agent-grant-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-agent-grant-drill.py must prove the chain end to end")
+    for needed, why in (("stolen grant", "the drill must show a copied grant is useless without the agent's key"),
+                        ("untouched", "and that revoking a grant leaves the human's credential usable"),
+                        ("exposed", "and must assert the bound: a service under a plain binding still "
+                                    "sees the credential, so the verdict says exposed")):
+        if needed not in drill:
+            return _fail(name, why)
+    spec = _read(root, "docs/reference/WIRE-SPEC.md")
+    if "polaris-agent-grant/1" not in spec:
+        return _fail(name, "the normative wire spec must carry the delegation artifacts")
+    return _ok(name,
+               "a person delegates to an agent without handing over their credential: the grant's "
+               "actions and limits are inside the signed statement so widening it breaks the "
+               "signature, an empty action list authorises nothing, only the holder's own key can "
+               "end it and the issuer is never asked, the agent must prove it holds the key the "
+               "grant names against the service's own nonce, a revocation carries no reason field a "
+               "coercer could read, and an unknown limit is refused rather than ignored")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_agent_grant,
     check_pairwise_presentation,
     check_scoped_nullifier,
     check_commitment_mismatch_is_a_refusal,

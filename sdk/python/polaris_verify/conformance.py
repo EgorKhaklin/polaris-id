@@ -25,7 +25,8 @@ from . import (verify_authenticity, verify_cross_authority, verify_holder, verif
                verify_status_assertion, verify_timestamp_anchor)
 
 _SIGNED_ARTIFACTS = {"epoch-checkpoint", "revocation-feed", "federation-manifest",
-                     "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves"}
+                     "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves",
+                     "agent-grant", "grant-revocation", "agent-proof"}
 
 
 def main(argv=None):

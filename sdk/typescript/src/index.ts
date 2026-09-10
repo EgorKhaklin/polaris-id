@@ -207,6 +207,10 @@ const ARTIFACT_KEYS: Record<string, string[]> = {
   // P9.1: the issuer's binding of a holder key, and the holder's own proof of it.
   "polaris-holder-binding/1": ["format", "token_value", "holder_public_key_hex", "holder_algorithm", "bound_at", "status", "issued_at", "expires_at", "algorithm"],
   "polaris-holder-proof/1": ["format", "token_value", "context_id", "verifier_nonce", "issued_at", "algorithm"],
+  // P9.8: delegation. Signed by the HOLDER's key and the AGENT's, never the issuer's.
+  "polaris-agent-grant/1": ["format", "grant_id", "agent_public_key_hex", "agent_algorithm", "actions", "limits", "context_id", "issued_at", "expires_at", "algorithm"],
+  "polaris-grant-revocation/1": ["format", "grant_id", "revoked_at", "algorithm"],
+  "polaris-agent-proof/1": ["format", "grant_id", "action", "service_nonce", "issued_at", "algorithm"],
   // P9.2: the published anonymity set a holder proves against on their own device.
   "polaris-epoch-leaves/1": ["format", "authority", "epoch_id", "context_id", "merkle_root", "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm"],
 };
@@ -828,4 +832,66 @@ export function pairwiseHandle(holderPublicKeyHex: unknown, verifierScope: unkno
 export function handlesLink(a: unknown, b: unknown): boolean {
   if (typeof a !== "string" || typeof b !== "string") return false;
   return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
+// P9.8 — the delegated agent grant.
+// ---------------------------------------------------------------------------
+
+/**
+ * Does this grant's signed `actions` list cover the action being requested?
+ *
+ * An absent or empty list grants NOTHING. A verifier that read it as unrestricted
+ * would turn a grant back into the unbounded credential hand-over that grants exist
+ * to replace, and the mistake would be invisible because everything would work.
+ */
+export function grantCovers(grant: any, action: unknown): boolean {
+  if (!grant || typeof grant !== "object") return false;
+  const actions = (grant as any).actions;
+  if (!Array.isArray(actions) || actions.length === 0) return false;
+  return actions.map((a: unknown) => String(a)).includes(String(action));
+}
+
+/**
+ * Are the grant's stated limits still satisfied? Returns `[ok, note]`.
+ *
+ * Unknown limit keys are REFUSED, not ignored. A grant that says `max_transfers: 3`
+ * to a service that has never heard of `max_transfers` must not be treated as
+ * unlimited; that is how a bounded grant silently becomes an unbounded one.
+ */
+export function grantWithinLimits(grant: any, usesSoFar = 0, amount?: number): [boolean, string | null] {
+  const limits = grant && typeof grant === "object" && grant.limits && typeof grant.limits === "object"
+    ? grant.limits as Record<string, unknown> : {};
+  const unknown = Object.keys(limits).filter((k) => k !== "max_uses" && k !== "max_amount").sort();
+  if (unknown.length) {
+    return [false, `the grant carries limits this verifier does not understand (${unknown.join(", ")}); refusing rather than ignoring them`];
+  }
+  const maxUses = limits["max_uses"];
+  if (maxUses !== null && maxUses !== undefined) {
+    if (!Number.isFinite(Number(maxUses))) return [false, "max_uses is not a number"];
+    if (Number(usesSoFar) >= Number(maxUses)) return [false, `the grant's use limit (${maxUses}) is exhausted`];
+  }
+  const maxAmount = limits["max_amount"];
+  if (maxAmount !== null && maxAmount !== undefined && amount !== undefined) {
+    if (!Number.isFinite(Number(maxAmount)) || !Number.isFinite(Number(amount))) {
+      return [false, "max_amount or the requested amount is not a number"];
+    }
+    if (Number(amount) > Number(maxAmount)) return [false, `the requested amount exceeds the grant's limit (${maxAmount})`];
+  }
+  return [true, null];
+}
+
+/**
+ * Does this revocation end THIS grant, and was it signed by the right key?
+ *
+ * Signature verification is the caller's usual `verifySignedArtifact` step; this is the
+ * binding check that must accompany it. Anyone may publish bytes claiming to revoke a
+ * grant, but only the holder who signed the grant may end it, so the revocation's
+ * signing key must equal the grant's.
+ */
+export function revocationEndsGrant(revocation: any, grant: any): boolean {
+  if (!revocation || typeof revocation !== "object" || !grant || typeof grant !== "object") return false;
+  if (revocation.format !== "polaris-grant-revocation/1") return false;
+  if (String(revocation.grant_id ?? "") !== String(grant.grant_id ?? "")) return false;
+  return String(revocation.public_key_hex ?? "").toLowerCase() === String(grant.public_key_hex ?? "").toLowerCase();
 }

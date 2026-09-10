@@ -113,7 +113,7 @@ verifications happen at same-agency CA: implicit trust).
 ### `TokenStateEpoch` (R10-1 / M2-1: v8.23)
 
 - **Epoch 1** (BANKING context): merkle_root
-  `fd02e50f…7474d` (depth-14 commitment). Commits 3 leaves (T2, T3, T4). `valid_until =
+  `21117a44…a5bc72` (depth-14 commitment; re-closed at v9.354 for P9.3, when the leaf became a Poseidon commitment the circuit opens rather than a bare SHA3-256 seed). Commits 3 leaves (T2, T3, T4). `valid_until =
   2027-02-10`. Closed by admin. Plonky2 verifier proves Merkle
   inclusion bound to (epoch_id, context_id, nonce).
 

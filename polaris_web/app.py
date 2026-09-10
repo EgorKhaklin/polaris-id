@@ -5460,6 +5460,45 @@ _HOLDER_PROOF_FORMAT = 'polaris-holder-proof/1'
 _HOLDER_BINDING_TTL = int(os.environ.get('POLARIS_HOLDER_BINDING_TTL', '86400'))
 
 
+def _agent_grant_statement(body):
+    """Canonical bytes a HOLDER signs to delegate to an agent (P9.8). MUST match
+    scripts/polaris-verify.py's _agent_grant_canonical; the oracle pins the pair.
+
+    The app never MINTS one -- the holder's device does, and the issuer is deliberately not
+    in that loop -- but the app must be able to build the identical bytes to verify one, and
+    the canonical oracle needs both halves to compare.
+
+    `actions` and `limits` are inside the statement. A grant whose scope or limits sat
+    outside the signature could be widened in transit, which would make it the unbounded
+    credential hand-over that grants exist to replace."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'grant_id', 'agent_public_key_hex', 'agent_algorithm', 'actions',
+                  'limits', 'context_id', 'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _grant_revocation_statement(body):
+    """Canonical bytes a HOLDER signs to end a grant (P9.8). MUST match
+    scripts/polaris-verify.py's _grant_revocation_canonical.
+
+    Four fields, and no reason field: a place to record WHY a grant ended is a place a
+    coercer can demand be filled in or left empty, and either way it turns a revocation into
+    a signal about the person. The revocation says the grant is over."""
+    statement = {k: body.get(k) for k in ('format', 'grant_id', 'revoked_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _agent_proof_statement(body):
+    """Canonical bytes an AGENT signs to act under a grant (P9.8). MUST match
+    scripts/polaris-verify.py's _agent_proof_canonical.
+
+    Names the action and the service's own nonce, so a captured proof cannot be replayed at
+    a second service or reused for a second action at the first."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'grant_id', 'action', 'service_nonce', 'issued_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
 def _holder_binding_statement(body):
     """Canonical bytes the ISSUER signs for a holder key binding (P9.1). MUST match
     scripts/polaris-verify.py's _holder_binding_canonical; the oracle pins the pair."""
@@ -6439,6 +6478,11 @@ _PROTOCOL_FORMATS = {
     'polaris-holder-binding': 1,
     'polaris-holder-proof': 1,
     'polaris-epoch-leaves': 1,
+    # P9.8: delegation. Signed by the HOLDER's key and the AGENT's, never the
+    # issuer's; the issuer is not in the loop and never learns a grant exists.
+    'polaris-agent-grant': 1,
+    'polaris-grant-revocation': 1,
+    'polaris-agent-proof': 1,
 }
 # P8.8b (v9.330): backward-compatible additions within a major, per format. A minor MAY add
 # fields nested inside an existing signed structure, or unsigned top-level fields a verifier

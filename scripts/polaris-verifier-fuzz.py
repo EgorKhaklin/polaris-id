@@ -228,6 +228,33 @@ def main():
             "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=24)), "algorithm": _FUZZ_ALG,
         }, V._trust_list_canonical)
 
+    def g_agent_grant():
+        return _signed({
+            "format": "polaris-agent-grant/1", "grant_id": "grant-fuzz-0001",
+            "agent_public_key_hex": key_hex, "agent_algorithm": _FUZZ_ALG,
+            "actions": ["read:status"], "limits": {"max_uses": 3}, "context_id": 1,
+            "issued_at": _iso(now), "expires_at": _iso(now + timedelta(hours=6)),
+            "algorithm": _FUZZ_ALG,
+        }, V._agent_grant_canonical)
+
+    # One genuine grant, signed by the fuzz key, that the revocation and proof specs below are
+    # verified against. Its agent key is the same key, so the agent proof's signer is the one
+    # the grant names and a mutation to either side is what the spec actually measures.
+    _fuzz_grant = g_agent_grant()
+
+    def g_grant_revocation():
+        return _signed({
+            "format": "polaris-grant-revocation/1", "grant_id": "grant-fuzz-0001",
+            "revoked_at": _iso(now), "algorithm": _FUZZ_ALG,
+        }, V._grant_revocation_canonical)
+
+    def g_agent_proof():
+        return _signed({
+            "format": "polaris-agent-proof/1", "grant_id": "grant-fuzz-0001",
+            "action": "read:status", "service_nonce": "svc-nonce-1", "issued_at": _iso(now),
+            "algorithm": _FUZZ_ALG,
+        }, V._agent_proof_canonical)
+
     # spec: name, build(), verify(obj)->verdict, accept(verdict)->bool, bound_fields
     specs = [
         ("trust-list", g_trust_list, lambda o: V.verify_trust_list(o),
@@ -272,6 +299,25 @@ def main():
         ("status-bundle", g_bundle, lambda o: V.verify_status_bundle(o),
          lambda v: v["bundle_authentic"] and v.get("fresh") is True,
          ["format", "publisher", "members_root_hex", "member_count", "issued_at", "expires_at", "algorithm", "members"]),
+        # P9.8: delegation. The grant is the one artifact where a WIDENING mutation is the
+        # attack rather than a corruption: `actions` and `limits` are in the bound fields, so
+        # the fuzzer's field mutations exercise exactly the edit a thief would attempt.
+        ("agent-grant", g_agent_grant, lambda o: V.verify_agent_grant(o),
+         lambda v: v["grant_authentic"] and v.get("fresh") is True,
+         ["format", "grant_id", "agent_public_key_hex", "agent_algorithm", "actions", "limits",
+          "context_id", "issued_at", "expires_at", "algorithm"]),
+        # The revocation and the proof are only meaningful against a real grant, so each is
+        # fuzzed while the grant beside it stays genuine: the question is whether a MUTATED
+        # revocation can still end the grant, or a MUTATED proof still authorise the action.
+        ("grant-revocation", g_grant_revocation,
+         lambda o: V.verify_agent_grant(_fuzz_grant, revocation=o),
+         lambda v: v["revoked"] is True,
+         ["format", "grant_id", "revoked_at", "algorithm"]),
+        ("agent-proof", g_agent_proof,
+         lambda o: V.verify_agent_grant(_fuzz_grant, agent_proof=o, requested_action="read:status",
+                                        expected_nonce="svc-nonce-1"),
+         lambda v: v["agent_proved"] is True,
+         ["format", "grant_id", "action", "service_nonce", "issued_at", "algorithm"]),
     ]
 
     fails = []  # (spec_name, case, detail)

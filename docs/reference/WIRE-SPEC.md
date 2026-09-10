@@ -384,6 +384,57 @@ against the epoch checkpoint the authority published separately.
 A holder finds their own leaf in the set on their own device, builds the path there, and
 proves there. The issuer is never told which index was used.
 
+### 3.17 `polaris-agent-grant/1`, `polaris-grant-revocation/1` and `polaris-agent-proof/1` (delegation)
+
+Three artifacts that let a person authorise an agent to act for them WITHOUT handing over
+the credential (P9.8). None is signed by the issuer, which is not in this loop and never
+learns a grant exists.
+
+`polaris-agent-grant/1` is signed by the HOLDER key.
+Signed fields: format, grant_id, agent_public_key_hex, agent_algorithm, actions, limits, context_id, issued_at, expires_at, algorithm
+
+`actions` is the exact list of actions the agent may perform, and `limits` is an object of
+constraints on them. Both are INSIDE the signed statement: a grant whose scope or limits
+could be edited in transit would be the unbounded credential hand-over that grants exist to
+replace. An absent or empty `actions` grants NOTHING; a verifier MUST NOT read it as
+unrestricted. `grant_id` is the revocation handle, and it names this grant alone.
+
+A verifier MUST refuse a limit key it does not understand rather than ignoring it: a grant
+that says `max_transfers: 3` to a service that has never heard of `max_transfers` must not be
+treated as unlimited. The defined keys are `max_uses` and `max_amount`.
+
+`polaris-grant-revocation/1` is signed by the HOLDER key.
+Signed fields: format, grant_id, revoked_at, algorithm
+
+Four fields, and no reason field. A place to record WHY a grant ended is a place a coercer
+can demand be filled in or left empty, and either way it turns a revocation into a signal
+about the person. A verifier MUST require the revocation to be signed by the same key that
+signed the grant: anyone may publish bytes, but only the holder may end the grant.
+
+Revoking a grant does not revoke the human's credential, and the issuer is not contacted. A
+person can end their agent's authority without asking permission from, or being observed by,
+the authority that issued their identity.
+
+`polaris-agent-proof/1` is signed by the AGENT key.
+Signed fields: format, grant_id, action, service_nonce, issued_at, algorithm
+
+Without it a grant is a bearer token and whoever copies it in transit becomes the agent. The
+proof names the action and the service's own nonce, so a captured proof replays neither to a
+second service nor to a second action at the first.
+
+A service verifying the chain MUST check all five links and MUST report which one failed,
+because "this grant was revoked" and "this agent does not hold the key it names" call for
+different responses: the issuer's signature on the credential, the issuer's signature on the
+holder binding (section 3.15), the holder's signature on the grant, the holder's signature on
+any revocation, and the agent's signature on its proof. The grant's signing key MUST equal
+the binding's `holder_public_key_hex`.
+
+What a service learns is bounded but not nothing. Under a plain holder binding it also sees
+the credential's `token_value`, so a verifier reports the correlation as `exposed`, exactly
+as for a presentation, and reserves `bounded` for a chain carried by the zero-knowledge path.
+A grant hides the human from the agent's ACTIONS; it does not hide the credential from the
+service.
+
 ### 3.17 `polaris-presentation/1` and `polaris-qr/1` (the holder's presentation and its transfer)
 
 `polaris-presentation/1` is the UNSIGNED wrapper a holder hands a verifier (P8.6):

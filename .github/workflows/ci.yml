@@ -1631,6 +1631,14 @@ jobs:
       - name: Pairwise presentation — per-verifier handles, and the bound stated
         run: python scripts/polaris-pairwise-drill.py
 
+      # v9.354 (P9.8) — a person delegates to an agent WITHOUT handing over the credential.
+      # Under real ML-DSA: the grant's actions and limits are inside the signature so widening
+      # it breaks the grant, only the holder's own key can end it and the credential survives,
+      # a stolen grant is useless without the agent's key, and a captured proof replays neither
+      # to a second service nor to a second action. No database.
+      - name: Agent grant — bounded, revocable by the holder, not a bearer token
+        run: python scripts/polaris-agent-grant-drill.py
+
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py
 

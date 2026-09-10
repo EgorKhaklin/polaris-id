@@ -49,6 +49,18 @@ _SIGNED = {
     "holder-binding":           ("verify_holder_binding", "binding_authentic"),
     "holder-proof":             ("verify_holder_proof", "proof_authentic"),
     "epoch-leaves":             ("verify_epoch_leaves", "leaves_authentic"),
+    # P9.8: delegation. Each is checked as a signed artifact here; the CHAIN between them
+    # (this revocation ends that grant, this proof is by the key that grant names) is what
+    # verify_agent_grant decides, and the agent-grant drill covers it end to end.
+    "agent-grant":              ("verify_agent_grant", "grant_authentic"),
+    # P9.8: each is checked as a signed artifact here. The CHAIN between them (this
+    # revocation ends that grant; this proof is by the key that grant names) is what
+    # verify_agent_grant decides, and the agent-grant drill covers it end to end. Keeping the
+    # two apart is deliberate: a genuine signature by the wrong key is authentic AND
+    # powerless, and a suite that folded them would let an implementation pass by conflating
+    # authenticity with authority.
+    "grant-revocation":         ("verify_grant_revocation", "authentic"),
+    "agent-proof":              ("verify_agent_proof", "authentic"),
 }
 
 
