@@ -19,7 +19,7 @@ Bump procedure (see CLAUDE.md "Shipping"):
     3. Run `bash scripts/polaris-preflight.sh` (polaris_checks + link-check) until READY.
 """
 
-__version__: str = "9.360"
+__version__: str = "9.361"
 
 
 # Backwards-compat alias for code that imported `POLARIS_VERSION`

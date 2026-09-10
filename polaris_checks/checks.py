@@ -10293,7 +10293,72 @@ def check_cost_model(root: pathlib.Path) -> list[Finding]:
                "(staff, an HSM, the physical token) and that the throughput under it is single-node")
 
 
+
+def check_plonky3_evaluation(root: pathlib.Path) -> list[Finding]:
+    """The proof-library decision is recorded with what it rested on (P2.12).
+
+    This check cannot tell whether keeping Plonky2 is the right call. Nothing machine-checkable
+    can. What it can do is refuse the two ways a decision record goes bad.
+
+    The first is a record with no decision: a comparison that lays out columns and stops, so the
+    next person re-does the whole evaluation because they cannot tell what was concluded.
+
+    The second is worse and more common: unverified claims presented in the same voice as
+    measurements. A rewrite of a soundness core is exactly the kind of change that gets
+    justified by a paragraph nobody sourced, and the defence is a record that says plainly
+    which facts were measured here, which were reasoned from the code, and which were NOT
+    checked and must be before anyone acts on it. So this requires the record to carry all
+    three, and to carry the triggers that would re-open it, because a decision with no
+    expiry condition is a decision nobody will ever revisit on evidence."""
+    name = "plonky3_evaluation"
+    doc = _read(root, "docs/design/plonky2-to-plonky3.md")
+    if not doc:
+        return _fail(name,
+                     "docs/design/plonky2-to-plonky3.md must record the evaluation; the roadmap row "
+                     "asked for a decision record, and an evaluation with no record is one the next "
+                     "person has to redo")
+    if "Decision:" not in doc:
+        return _fail(name,
+                     "the record must state a DECISION, not only a comparison: a set of columns with "
+                     "no conclusion leaves the next reader to re-run the whole evaluation")
+    if "NOT verified" not in doc and "not verified" not in doc:
+        return _fail(name,
+                     "the record must separate what was NOT verified from what was measured. A "
+                     "soundness-core rewrite justified by unsourced claims is the failure this "
+                     "section exists to prevent, and version and audit status have a shelf life")
+    for needed, why in (("would change the decision",
+                         "re-evaluation triggers; a decision with no expiry condition is one nobody "
+                         "revisits on evidence"),
+                        ("Proof size", "proof size is one of the dimensions the row named"),
+                        ("two-witness",
+                         "whether the second witness survives a migration is the sharpest question "
+                         "here and the row named it")):
+        if needed not in doc:
+            return _fail(name, f"the record must cover {why} ({needed!r})")
+    # The measured half must be real numbers from this tree, not adjectives.
+    if not re.search(r"\b77,?840\b", doc):
+        return _fail(name,
+                     "the record must carry the MEASURED proof size; 'small' is not a comparison "
+                     "anyone can check or re-run")
+    if "1.1.0" not in doc:
+        return _fail(name, "the record must name the pinned Plonky2 version it evaluated")
+    lock = _read(root, "polaris_zk/Cargo.lock")
+    if 'name = "plonky2"' in lock:
+        m = re.search(r'name = "plonky2"\nversion = "([^"]+)"', lock)
+        if m and m.group(1) not in doc:
+            return _fail(name,
+                         f"the record evaluates a Plonky2 version the lockfile no longer pins "
+                         f"(lockfile: {m.group(1)}); the decision was made about different code")
+    return _ok(name,
+               "the proof-library decision is recorded and re-openable: it states a decision rather "
+               "than only a comparison, separates what was measured here from what was reasoned "
+               "from the code and from what was deliberately NOT verified, names the version it "
+               "evaluated against the one the lockfile pins, and carries the triggers that would "
+               "re-open it")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_plonky3_evaluation,
     check_cost_model,
     check_multi_region_dr,
     check_status_distribution,

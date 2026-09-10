@@ -9151,3 +9151,68 @@ def test_cost_model_check_discriminates(tmp_path):
         "Verification throughput is not the cost driver.\n", "")})
     assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
         "must FAIL when the document does not state its own finding"
+
+
+def test_plonky3_evaluation_check_discriminates(tmp_path):
+    # v9.361 (P2.12): the two ways a decision record goes bad. Either it has no decision, so
+    # the next person redoes the evaluation; or it presents unchecked claims in the same voice
+    # as measurements, which is how a soundness-core rewrite gets justified by a paragraph
+    # nobody sourced.
+    DOC = ("# Plonky2 to Plonky3\n"
+           "**Decision: KEEP Plonky2.**\n"
+           "Proof size 77,840 bytes, measured at depth 24. Pinned at 1.1.0.\n"
+           "## What was NOT verified\nPlonky3's current version and audit status.\n"
+           "The two-witness model would largely survive.\n"
+           "## What would change the decision\nA stable Plonky3 release.\n")
+    LOCK = 'name = "plonky2"\nversion = "1.1.0"\n'
+    good = {'docs/design/plonky2-to-plonky3.md': DOC, 'polaris_zk/Cargo.lock': LOCK}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # No record at all: the row asked for one and an evaluation nobody wrote down is one the
+    # next person has to redo.
+    (tmp_path / "docs/design/plonky2-to-plonky3.md").unlink()
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL without the decision record"
+
+    # A comparison with no conclusion.
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace("**Decision: KEEP Plonky2.**\n", "")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record compares but never decides"
+
+    # THE DANGEROUS ONE: unchecked claims lose their label and read as findings.
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
+        "## What was NOT verified\nPlonky3's current version and audit status.\n", "")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record does not separate what it did not verify"
+
+    # A decision with no expiry condition is one nobody revisits on evidence.
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
+        "## What would change the decision\nA stable Plonky3 release.\n", "")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record carries no re-evaluation triggers"
+
+    # The dimensions the roadmap row named.
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
+        "The two-witness model would largely survive.\n", "")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record does not address two-witness feasibility"
+
+    # A measured number becomes an adjective, which nobody can re-run.
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
+        "Proof size 77,840 bytes, measured at depth 24.", "Proof size is small.")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the proof size is described rather than measured"
+
+    # THE DRIFT CASE: the lockfile moves and the record still evaluates the old version, so
+    # the decision was made about code that is no longer what ships.
+    write({'polaris_zk/Cargo.lock': 'name = "plonky2"\nversion = "2.0.0"\n'})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record evaluates a version the lockfile no longer pins"

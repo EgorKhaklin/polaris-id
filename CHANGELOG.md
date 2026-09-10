@@ -5,6 +5,51 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.361 — 2026-09-10 (P2.12: the proof-library question, evaluated and decided)
+
+**Decision: keep Plonky2.** This is a spike with a decision record, not a
+migration, which is what the roadmap row asked for.
+
+The question is honest. Plonky2 is pinned at `1.1.0` and has been stable a long
+time, and from the outside "finished" and "unmaintained" look identical. For a
+system that expects to outlive its dependencies, that is a real supply-chain risk
+even when nothing is broken. The answer is still no, for now.
+
+**Measured here**, at national tree depth 24, through the CLI so the numbers
+include the process start and circuit construction the application actually pays:
+prove 33 ms, verify 12 ms, proof 77,840 bytes. Proving is barely sensitive to
+depth, and the proof size does not move with it at all, because it is a property
+of the FRI configuration rather than of the statement. There is no performance
+case for a rewrite, and v9.360 found separately that verification is not the cost
+driver either.
+
+**Reasoned from the code rather than from a blog post.** A migration re-expresses
+the circuit as an algebraic intermediate representation over modular component
+crates, rather than Plonky2's ready-made recursive `CircuitBuilder`, and it
+invalidates every published epoch exactly as the P9.3 leaf change did at smaller
+scale. The surprise, and a useful one for whoever eventually decides: the
+two-witness model would largely survive, because the second witness is
+deliberately statement-level and never parses proof bytes. It would need
+re-anchoring to a new hash, not rebuilding.
+
+**Deliberately not verified, and recorded as such:** Plonky3's current release
+status, either library's external audit status, and maintenance trajectory. Those
+have a shelf life measured in months, and a decision record that quietly presents
+unchecked claims as findings is how a soundness-core rewrite gets justified by a
+paragraph nobody sourced. The record says which is which.
+
+Re-evaluation triggers are recorded, the first being a stable Plonky3 release while
+Plonky2 still has none. `check_plonky3_evaluation` with a seven-fixture detection
+test, which also fails if the lockfile moves off the version the record evaluated.
+
+**Phase P2 is complete at this version.** Every row is shipped except the Atlas
+console and the national simulation harness, both of which are wrapper or
+multi-arc work rather than scale architecture, and both already marked in
+progress. The exit gate, P2.9's capacity model, was green before this phase
+resumed.
+
+---
+
 ## v9.360 — 2026-09-10 (P2.10: a cost model you re-run)
 
 A committed cost table is out of date the week it is written, and worse, it hides
