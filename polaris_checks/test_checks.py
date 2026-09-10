@@ -8733,3 +8733,116 @@ def test_agent_grant_check_discriminates(tmp_path):
     write({'scripts/polaris-verify.py': VERIFY})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the detached verifier has no --agent-grant CLI"
+
+
+def test_epoch_pipeline_scale_check_discriminates(tmp_path):
+    # v9.357 (P2.5): each fixture below either reintroduces the O(2^depth) padding on a hot
+    # path, or removes the thing that makes folding it away SOUND rather than merely fast.
+    LIB = (
+        "fn pad_leaves_to_full_depth(l: &[String]) -> Vec<String> { l.to_vec() }\n"
+        "fn zero_hashes(depth: usize) -> Vec<HashOut<F>> { vec![] }\n"
+        "pub struct EpochTree { depth: usize }\n"
+        "impl EpochTree {\n    pub fn set_leaf(&mut self, i: usize) {}\n}\n"
+        "pub fn build_merkle_tree(l: &[String]) -> Result<()> { Ok(()) }\n"
+        "pub fn compute_epoch_root(l: &[String]) -> Result<String> {\n"
+        "    Ok(hex(&EpochTree::from_leaves(l)?.root()))\n}\n"
+        "pub fn prove(w: &WitnessInput) -> Result<ProofBundle> {\n"
+        "    let tree = EpochTree::from_leaves(&w.all_leaves_hex)?;\n    Ok(b)\n}\n"
+        "mod tests {\n"
+        "    fn parity_with_the_padded_construction() {}\n"
+        "    fn parity_of_every_inclusion_path() {}\n"
+        "    fn an_incremental_update_equals_a_rebuild() {}\n}\n")
+    WITNESS = "def zero_hashes(d):\n    return []\n\ndef inclusion_path(l, i):\n    return []\n"
+    APP = ("def api_zk_epoch_close():\n"
+           "    root_hex = zk.compute_epoch_root(leaves)\n"
+           "    token_leaves = [{'token_id': r, 'leaf_hash': x}]\n")
+    DRILL = ("PRODUCTION_DEPTH = 24\nROOT_CEILING_S = 3.0\nMEM_CEILING_MB = 512\n")
+    SPEC = ("# cadence\nRevocation freshness bounds it.\nThe epoch is the anonymity set.\n"
+            "The nullifier ledger resets each epoch.\n")
+    good = {
+        'polaris_zk/src/lib.rs': LIB,
+        'polaris_zk/witness2/merkle.py': WITNESS,
+        'polaris_web/app.py': APP,
+        'polaris_sql/01_schema.sql': "    proof_path         JSONB,\n",
+        'scripts/polaris-epoch-scale-drill.py': DRILL,
+        'docs/design/epoch-cadence.md': SPEC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # The hot path goes back to the padded construction: 10.8s and 2.9GB at depth 24.
+    write({'polaris_zk/src/lib.rs': LIB.replace(
+        "    Ok(hex(&EpochTree::from_leaves(l)?.root()))\n",
+        "    Ok(hex(&build_merkle_tree(l)?.cap.0[0]))\n")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when compute_epoch_root goes back to the padded tree"
+
+    # So does the prover's path construction.
+    write({'polaris_zk/src/lib.rs': LIB.replace(
+        "    let tree = EpochTree::from_leaves(&w.all_leaves_hex)?;\n",
+        "    let tree = build_merkle_tree(&w.all_leaves_hex)?;\n")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when prove() builds its path from the padded tree"
+
+    # The padded construction is deleted, so nothing is left to assert parity against.
+    write({'polaris_zk/src/lib.rs': LIB.replace(
+        "pub fn build_merkle_tree(l: &[String]) -> Result<()> { Ok(()) }\n", "")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the padded reference the sparse root is checked against is deleted"
+
+    # Parity stops being asserted.
+    write({'polaris_zk/src/lib.rs': LIB.replace(
+        "    fn parity_with_the_padded_construction() {}\n", "")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the crate no longer asserts root parity"
+
+    # A matching root with diverging paths: the failure only surfaces when a holder proves.
+    write({'polaris_zk/src/lib.rs': LIB.replace(
+        "    fn parity_of_every_inclusion_path() {}\n", "")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when path parity is not asserted"
+
+    # The second witness goes back to materialising the padding and can no longer run at depth.
+    write({'polaris_zk/witness2/merkle.py': WITNESS + "def _pad_leaves(l):\n    return l\n"})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the second witness materialises the padding again"
+
+    # The epoch close starts storing a path per member again.
+    write({'polaris_web/app.py': APP.replace(
+        "'leaf_hash': x}]", "'leaf_hash': x, 'proof_path': p}]")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the close path materialises an inclusion path per member"
+
+    # The column goes back to NOT NULL, so an epoch cannot be closed without one.
+    write({'polaris_sql/01_schema.sql': "    proof_path         JSONB        NOT NULL,\n"})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when proof_path is mandatory again"
+
+    # The drill drops to the demo depth, measuring the case that was never slow.
+    write({'scripts/polaris-epoch-scale-drill.py': DRILL.replace("PRODUCTION_DEPTH = 24",
+                                                                 "PRODUCTION_DEPTH = 14")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill runs at the demo depth"
+
+    # The drill stops gating on memory, which is what the old cost actually was.
+    write({'scripts/polaris-epoch-scale-drill.py': DRILL.replace("MEM_CEILING_MB = 512\n", "")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill has no memory ceiling"
+
+    # The cadence spec stops naming the property that pulls against revocation freshness.
+    write({'docs/design/epoch-cadence.md': SPEC.replace(
+        "The nullifier ledger resets each epoch.\n", "")})
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the spec omits how the cadence resets a relying party's ledger"
+
+    # And the spec disappearing entirely.
+    (tmp_path / "docs/design/epoch-cadence.md").unlink()
+    assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
+        "must FAIL without the published cadence spec"

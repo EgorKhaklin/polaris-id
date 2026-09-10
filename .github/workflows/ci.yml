@@ -223,6 +223,15 @@ jobs:
       - name: Scoped nullifier — one human once per scope, uncorrelated across scopes
         run: python scripts/polaris-scoped-nullifier-drill.py
 
+      # v9.357 (P2.5) — the epoch pipeline at the NATIONAL tree depth. Before this the padded
+      # construction took 10.8s and 2.9GB to root a thousand members at depth 24, regardless
+      # of population. The drill asserts parity with that construction (so nothing published
+      # becomes unverifiable), agreement between the two witnesses at depth 24 (where the
+      # Python one previously could not run), and wall-clock and memory ceilings a return of
+      # the padding would breach. Needs the ZK binary built above. No database.
+      - name: Epoch pipeline at national depth — parity, two witnesses, ceilings
+        run: python scripts/polaris-epoch-scale-drill.py
+
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
           COVERAGE_FLOOR: "74"

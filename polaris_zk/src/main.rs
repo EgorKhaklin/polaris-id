@@ -20,7 +20,7 @@
 
 use anyhow::{anyhow, Result};
 use polaris_zk::{
-    build_merkle_tree, compute_epoch_root, leaf_commitment, nullifier, prove, tree_depth, verify,
+    compute_epoch_root, leaf_commitment, nullifier, prove, tree_depth, verify, EpochTree,
     ProofBundle, WitnessInput, F,
 };
 use plonky2::field::types::PrimeField64;
@@ -107,14 +107,15 @@ fn cmd_compute_leaves(input: &str) -> Result<String> {
         ));
     }
     // build_merkle_tree from the library handles the padding to 2^tree_depth().
-    let tree = build_merkle_tree(&parsed.leaves_hex)?;
-    let root_hex = hash_to_hex(&tree.cap.0[0]);
+    // Sparse since v9.357: only the real leaves are materialised, so an authority with a
+    // thousand members does not pay for sixteen million zeros to close an epoch.
+    let tree = EpochTree::from_leaves(&parsed.leaves_hex)?;
+    let root_hex = hash_to_hex(&tree.root());
 
     // Generate one proof_path per *real* leaf (not the padded ones).
     let mut entries = Vec::with_capacity(parsed.leaves_hex.len());
     for (i, leaf_hash) in parsed.leaves_hex.iter().enumerate() {
-        let proof = tree.prove(i);
-        let proof_path: Vec<String> = proof.siblings.iter().map(hash_to_hex).collect();
+        let proof_path: Vec<String> = tree.proof(i)?.iter().map(hash_to_hex).collect();
         entries.push(ComputeLeavesLeafEntry {
             index: i,
             leaf_hash: leaf_hash.clone(),

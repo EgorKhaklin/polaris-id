@@ -3335,6 +3335,50 @@ class ZKSnarkTests(PolarisTestCase):
             row = cur.fetchone()
             self.assertEqual(row['committed_count'], len(tokens))
 
+    def test_closing_an_epoch_stores_no_inclusion_path(self):
+        # P2.5 (v9.357): the path is 1.7 KB of plaintext per member that nothing read back,
+        # roughly 17 GB of JSON at ten million members. The procedure accepts an entry
+        # without one and the column has been nullable since migration 011.
+        import zk
+        from psycopg2.extras import Json
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT t.token_id, t.token_value FROM IdentityToken t "
+                "JOIN TokenPermission p ON p.token_id=t.token_id "
+                "WHERE t.status='ACTIVE' AND p.context_id=2 ORDER BY t.token_id")
+            tokens = cur.fetchall()
+            leaves = [zk.derive_leaf_seed(t['token_id'], t['token_value'], 2) for t in tokens]
+            root = zk.compute_epoch_root(leaves)
+            cur.execute("SELECT user_id FROM AppUser WHERE username='admin'")
+            admin = cur.fetchone()['user_id']
+            cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)",
+                        (root, datetime.now() + timedelta(days=31), admin,
+                         Json([{'token_id': t['token_id'], 'leaf_hash': leaf}
+                               for t, leaf in zip(tokens, leaves)])))
+            conn.commit()
+            cur.execute("SELECT epoch_id FROM TokenStateEpoch WHERE merkle_root = %s", (root,))
+            epoch_id = cur.fetchone()['epoch_id']
+            cur.execute("SELECT leaf_hash, proof_path FROM TokenStateEpochLeaf "
+                        "WHERE epoch_id = %s ORDER BY leaf_id", (epoch_id,))
+            rows = cur.fetchall()
+        self.assertEqual(len(rows), len(tokens))
+        self.assertTrue(all(r['proof_path'] is None for r in rows),
+                        'closing an epoch must not store an inclusion path')
+        # And the property that makes dropping it safe: the leaf set alone is enough for a
+        # holder to rebuild their own path and reach the published root.
+        stored = [r['leaf_hash'] for r in rows]
+        self.assertEqual(stored, leaves, 'the published leaf set must be what was committed')
+        import sys, os as _os
+        sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(
+            _os.path.abspath(__file__))), 'polaris_zk'))
+        from witness2 import merkle
+        self.assertEqual(merkle.build_root(stored), root,
+                         'the independent witness must reach the same root from the set alone')
+        for i in range(len(stored)):
+            path = merkle.inclusion_path(stored, i)
+            self.assertEqual(merkle.root_from_path(stored[i], i, path), root,
+                             'member %d could not rebuild the root from a locally derived path' % i)
+
     def test_uc11_close_epoch_rejects_non_admin(self):
         from psycopg2.extras import Json
         with self._db() as conn, conn.cursor() as cur:

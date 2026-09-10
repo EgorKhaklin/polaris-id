@@ -5,6 +5,61 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.357 — 2026-09-10 (P2.5: the epoch pipeline at national depth)
+
+An epoch tree is fixed-depth, and the obvious implementation pads the leaf vector
+to 2^depth before hashing anything. At the demo depth of 14 that is free, which is
+why it survived. At the national depth of 24 it took **10.8 seconds and 2.9 GB** to
+compute a root over a thousand members, and the number did not move with the
+population: sixteen million leaves were materialised whatever the real one was. An
+authority on that budget closes epochs by the minute and the gigabyte and pays all
+of it on zeros.
+
+The padding is one repeated value, so every subtree above the real members is an
+all-zero subtree with exactly one hash per level. Folding those in makes a root cost
+O(members + depth), and repairing a single member O(depth) rather than a rebuild.
+
+| Members at depth 24 | Root | Peak memory |
+|---|---|---|
+| 1,000 | 0.01s | 27 MB |
+| 100,000 | 0.24s | tens of MB |
+| 1,000,000 | 2.10s | tens of MB |
+
+**Two things keep that from being a shortcut.** The sparse root is element for
+element the root the padded construction produced, asserted across the shapes that
+break naive implementations including a full tree with no padding, so no epoch
+already published becomes unverifiable. The padded construction is deliberately
+kept, unused in production, purely as the thing parity is measured against. And the
+independent Python witness folds the padding the same way, so it still agrees at
+depth 24, where before it could not run at all.
+
+**"Parallel proving" is amended away, and what replaced it is better.** P9.2 moved
+proving to the holder's device, so the authority no longer proves. The
+authority-side batch that remained was one inclusion path per member, and measuring
+it found the wall was not compute but storage: 1,718 bytes each, roughly 17 GB of
+JSON to close a ten-million-member epoch, written on every close and read by
+nothing. Every query in the application selects `leaf_hash`; the published anonymity
+set serves leaf hashes; the holder derives their own path. The schema's own comment
+flagged the column as plaintext at rest a later version would have to encrypt. So
+the answer at scale is not to parallelise it but not to materialise it: migration
+011 makes `proof_path` nullable, an epoch close stores none, and epochs closed
+before this keep what they recorded.
+
+**The cadence spec is published.** `docs/design/epoch-cadence.md` states the thing a
+schedule number actually controls: revocation freshness, the size of the anonymity
+crowd, and how often a relying party's one-human-once ledger resets. Those pull
+against each other and no cadence satisfies all three. It also names the constraint
+this ship did not move: the 10,000-member epoch cap and the bounded published set
+are sized for the default depth and are now the binding national-scale limit.
+Raising them is a resource-exhaustion decision about a public body, not a number to
+bump, so nothing here bumps it.
+
+`check_epoch_pipeline_scale` with a twelve-fixture detection test, and a drill that
+runs at depth 24 on every push with wall-clock and memory ceilings a return of the
+padding would breach.
+
+---
+
 ## v9.356 — 2026-09-10 (the paper describes the system that exists)
 
 Version 2 of the paper was written from the tree at `v9.345`. Phase P9 then

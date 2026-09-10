@@ -9859,7 +9859,129 @@ def check_agent_grant(root: pathlib.Path) -> list[Finding]:
                "coercer could read, and an unknown limit is refused rather than ignored")
 
 
+
+def check_epoch_pipeline_scale(root: pathlib.Path) -> list[Finding]:
+    """The epoch pipeline runs at the national tree depth (P2.5).
+
+    An epoch tree is fixed-depth, and the obvious implementation pads the leaf vector to
+    2^depth before hashing anything. At the demo depth of 14 that is free, which is why it
+    survived. At the national depth of 24 it took 10.8 seconds and 2.9 GB of resident memory
+    to compute a root over a THOUSAND members, because sixteen million leaves were
+    materialised whatever the real population was, and the number did not move with the
+    population at all. An authority on that budget closes epochs by the minute and the
+    gigabyte and pays all of it on zeros.
+
+    The padding is one repeated value, so every subtree above the real members is an all-zero
+    subtree with exactly one hash per level. This check pins the three things that make
+    folding them away sound rather than merely fast:
+
+    PARITY. The sparse root must equal the padded root element for element. If it does not,
+    every epoch already published becomes unverifiable and every holder's proof stops
+    verifying, which is a worse failure than a slow close. The padded construction is
+    therefore KEPT, unused in production, purely as the thing parity is asserted against.
+
+    TWO WITNESSES AT DEPTH. The independent Python witness must fold the padding the same
+    way, or the second witness silently stops being able to check the first at the depth that
+    matters: the padded form at depth 24 is sixteen million entries of pure-Python Poseidon.
+
+    NO STORED PATH. Since the holder derives their own inclusion path (P9.2), an epoch close
+    storing one per member was 1.7 KB of plaintext each that no query read back, roughly
+    17 GB at ten million members. The close path must not put it back."""
+    name = "epoch_pipeline_scale"
+    lib = _read(root, "polaris_zk/src/lib.rs")
+    if not lib:
+        return _fail(name, "polaris_zk/src/lib.rs is missing")
+    for needed, why in (("fn zero_hashes", "the per-level all-zero subtree hashes"),
+                        ("pub struct EpochTree", "the sparse fixed-depth tree"),
+                        ("pub fn set_leaf", "an O(depth) single-member repair, so a revocation "
+                                            "between epochs is not a rebuild")):
+        if needed not in lib:
+            return _fail(name, f"polaris_zk must define {why} ({needed})")
+
+    # PARITY: the padded construction is kept as the reference, and the hot paths are not on it.
+    if "fn pad_leaves_to_full_depth" not in lib or "pub fn build_merkle_tree" not in lib:
+        return _fail(name,
+                     "the padded construction must be KEPT as the reference the sparse root is "
+                     "asserted against; deleting it removes the only thing standing between a "
+                     "refactor and every published epoch becoming unverifiable")
+    body = lib.split("pub fn compute_epoch_root")[1].split("\n}")[0]
+    if "EpochTree::from_leaves" not in body:
+        return _fail(name,
+                     "compute_epoch_root must use the sparse tree; the padded one is O(2^depth) "
+                     "and at depth 24 costs 10.8s and 2.9GB for a thousand members")
+    prove_body = lib.split("pub fn prove(")[1].split("\npub fn ")[0]
+    if "EpochTree::from_leaves" not in prove_body:
+        return _fail(name, "prove() must build its path from the sparse tree too")
+    tests = lib.split("mod tests")[-1]
+    for needed, why in (("parity_with_the_padded_construction",
+                         "the sparse root must be asserted equal to the padded root"),
+                        ("parity_of_every_inclusion_path",
+                         "a matching root with diverging paths only surfaces when a holder proves"),
+                        ("an_incremental_update_equals_a_rebuild",
+                         "a repaired path must land where a rebuild would")):
+        if needed not in tests:
+            return _fail(name, f"the crate must test that {why} ({needed})")
+
+    # TWO WITNESSES AT DEPTH.
+    witness = _read(root, "polaris_zk/witness2/merkle.py")
+    if "def zero_hashes" not in witness or "def inclusion_path" not in witness:
+        return _fail(name,
+                     "the second witness must fold the padding the same way (zero_hashes) and "
+                     "derive a path itself (inclusion_path); otherwise it cannot check the first "
+                     "at the depth that matters")
+    if "_pad_leaves" in witness:
+        return _fail(name,
+                     "the second witness still materialises the padding; at depth 24 that is "
+                     "sixteen million entries of pure-Python Poseidon and it will simply not run")
+
+    # NO STORED PATH.
+    app = _read(root, "polaris_web/app.py")
+    close = app.split("def api_zk_epoch_close")[-1].split("\n@app.route")[0] if "def api_zk_epoch_close" in app else app
+    if "'proof_path'" in close:
+        return _fail(name,
+                     "closing an epoch must not materialise an inclusion path per member: nothing "
+                     "reads it back, the holder derives their own (P9.2), and it is 1.7 KB of "
+                     "plaintext each, roughly 17 GB at ten million members")
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if re.search(r"proof_path\s+JSONB\s+NOT NULL", schema):
+        return _fail(name,
+                     "TokenStateEpochLeaf.proof_path must be nullable, or an epoch cannot be "
+                     "closed without one")
+
+    drill = _read(root, "scripts/polaris-epoch-scale-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-epoch-scale-drill.py must hold the pipeline to its "
+                           "claims at production depth")
+    if "PRODUCTION_DEPTH = 24" not in drill:
+        return _fail(name, "the drill must run at the NATIONAL depth; a drill at the demo depth "
+                           "measures the case that was never slow")
+    for needed, why in (("MEM_CEILING_MB", "a memory ceiling, because the old cost was memory"),
+                        ("ROOT_CEILING_S", "a wall-clock ceiling")):
+        if needed not in drill:
+            return _fail(name, f"the drill must gate on {why} ({needed})")
+    spec = _read(root, "docs/design/epoch-cadence.md")
+    if not spec:
+        return _fail(name, "the epoch cadence spec must be published (docs/design/epoch-cadence.md)")
+    for needed, why in (("Revocation freshness", "the cadence bounds how long a revoked member "
+                                                 "stays provable"),
+                        ("anonymity", "the epoch IS the anonymity set, so a short cadence over a "
+                                      "small context is a crowd of nobody"),
+                        ("nullifier", "the cadence also sets how often a relying party's "
+                                      "one-human-once ledger resets, which pulls the other way")):
+        if needed not in spec:
+            return _fail(name, f"the cadence spec must state that {why}")
+    return _ok(name,
+               "the epoch pipeline runs at the national depth: the zero padding is folded into "
+               "precomputed per-level hashes rather than materialised, the padded construction is "
+               "kept as the reference the sparse root is asserted equal to, the second witness "
+               "folds it the same way so it can still check the first at depth 24, a single-member "
+               "repair is O(depth), an epoch close stores no inclusion path because the holder "
+               "derives their own, and the cadence spec states the three properties the schedule "
+               "sets against each other")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_epoch_pipeline_scale,
     check_agent_grant,
     check_pairwise_presentation,
     check_scoped_nullifier,

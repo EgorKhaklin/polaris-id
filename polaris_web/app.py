@@ -3975,18 +3975,18 @@ def api_zk_epoch_close():
     if not rows:
         return jsonify(error="no eligible tokens for the given context"), 404
 
-    # Derive per-token leaf seeds (deterministic).
+    # Derive per-token leaf commitments (deterministic).
     leaves = [zk.derive_leaf_seed(r['token_id'], r['token_value'], context_id) for r in rows]
-    root_hex, leaf_info = zk.compute_epoch_leaves(leaves)
+    # P2.5 (v9.357): the ROOT only. Materialising an inclusion path per member cost 1.7 KB
+    # each, roughly 17 GB of JSON at ten million members, and no query in this application
+    # ever read one back: the holder derives their own path from the published leaf set on
+    # their own device (P9.2). `compute_epoch_leaves` remains for callers that want the paths.
+    root_hex = zk.compute_epoch_root(leaves)
 
-    # Construct the JSONB payload uc11_close_epoch expects.
-    token_leaves = []
-    for r, li in zip(rows, leaf_info):
-        token_leaves.append({
-            'token_id': r['token_id'],
-            'leaf_hash': li['leaf_hash'],
-            'proof_path': li['proof_path'],
-        })
+    # Construct the JSONB payload uc11_close_epoch expects. `proof_path` is omitted, which
+    # the procedure reads as SQL NULL into a column that has been nullable since migration 011.
+    token_leaves = [{'token_id': r['token_id'], 'leaf_hash': leaf}
+                    for r, leaf in zip(rows, leaves)]
 
     conn = get_db()
     try:

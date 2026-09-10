@@ -73,14 +73,51 @@ def elements_to_hex(elements: list[int]) -> str:
     return out.hex()
 
 
-def _pad_leaves(leaves_hex: list[str]) -> list[str]:
-    """Pad with the zero-leaf up to 2^TREE_DEPTH, matching pad_leaves_to_full_depth."""
+def _check_population(leaves_hex: list[str]) -> int:
+    """Validate a leaf set against the tree's capacity; return the capacity."""
     cap = 1 << TREE_DEPTH
     if not leaves_hex:
         raise ValueError("cannot build a Merkle tree from an empty leaf set")
     if len(leaves_hex) > cap:
         raise ValueError(f"too many leaves ({len(leaves_hex)}); depth {TREE_DEPTH} caps at {cap}")
-    return list(leaves_hex) + [ZERO_LEAF_HEX] * (cap - len(leaves_hex))
+    return cap
+
+
+def zero_hashes(depth: int = None) -> list[list[int]]:
+    """`z[k]` is the digest of an all-zero subtree of height k.
+
+    The padding is one repeated value, so every subtree above the real leaves is an all-zero
+    subtree and has exactly one hash per level. Precomputing them is what lets this witness
+    reach production depth at all: at depth 24 the padded form is 16.7 million entries of
+    pure-Python Poseidon, which is not a computation anyone waits for. Mirrors lib.rs's
+    `zero_hashes`, and `test_zero_hashes_match_the_rust_witness` pins the pair.
+    """
+    d = TREE_DEPTH if depth is None else depth
+    z = [[0] * HASH_OUT_ELEMENTS]
+    for _ in range(d):
+        z.append(two_to_one(z[-1], z[-1]))
+    return z
+
+
+def _levels(leaves_hex: list[str]) -> tuple[list[list[list[int]]], list[list[int]]]:
+    """The real prefix of every level, bottom-up, plus the zero-subtree hashes.
+
+    Returns (levels, zero) where levels[0] is the real leaf digests and levels[TREE_DEPTH]
+    is exactly the root. Cost is O(real leaves + depth), not O(2^depth).
+    """
+    _check_population(leaves_hex)
+    z = zero_hashes()
+    cur = [hash_or_noop(hex_to_elements(h)) for h in leaves_hex]
+    levels = []
+    for k in range(TREE_DEPTH):
+        levels.append(cur)
+        nxt = []
+        for i in range(0, len(cur), 2):
+            right = cur[i + 1] if i + 1 < len(cur) else z[k]
+            nxt.append(two_to_one(cur[i], right))
+        cur = nxt
+    levels.append(cur)
+    return levels, z
 
 
 def build_root(leaves_hex: list[str]) -> str:
@@ -88,12 +125,32 @@ def build_root(leaves_hex: list[str]) -> str:
 
     Leaf digest = hash_or_noop(leaf) (a no-op pad for 4-element leaves).
     Internal node = two_to_one(left, right). Pairs adjacent siblings
-    (even index = left, odd index = right), bottom up, for cap_height = 0."""
-    padded = _pad_leaves(leaves_hex)
-    level = [hash_or_noop(hex_to_elements(h)) for h in padded]
-    while len(level) > 1:
-        level = [two_to_one(level[2 * j], level[2 * j + 1]) for j in range(len(level) // 2)]
-    return elements_to_hex(level[0])
+    (even index = left, odd index = right), bottom up, for cap_height = 0.
+
+    Sparse since v9.357: the zero padding is folded into precomputed per-level hashes rather
+    than materialised. The value is bit-identical to the padded construction, which
+    `parity_with_the_padded_construction` asserts on both sides of the language boundary.
+    """
+    levels, _z = _levels(leaves_hex)
+    return elements_to_hex(levels[TREE_DEPTH][0])
+
+
+def inclusion_path(leaves_hex: list[str], leaf_index: int) -> list[str]:
+    """The sibling path for one leaf, bottom-up, exactly TREE_DEPTH entries.
+
+    The witness's own derivation of what the Rust `compute-leaves` publishes, so a published
+    path can be checked rather than trusted.
+    """
+    levels, z = _levels(leaves_hex)
+    if not 0 <= leaf_index < len(leaves_hex):
+        raise ValueError(f"leaf_index {leaf_index} out of range (only {len(leaves_hex)} leaves)")
+    path, i = [], leaf_index
+    for k in range(TREE_DEPTH):
+        sibling = i ^ 1
+        node = levels[k][sibling] if sibling < len(levels[k]) else z[k]
+        path.append(elements_to_hex(node))
+        i >>= 1
+    return path
 
 
 def root_from_path(leaf_hex: str, leaf_index: int, sibling_path_hex: list[str]) -> str:

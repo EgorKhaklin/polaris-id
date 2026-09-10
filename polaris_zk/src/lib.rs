@@ -49,7 +49,7 @@
 use anyhow::{anyhow, Result};
 use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::{Field, PrimeField64};
-use plonky2::hash::hash_types::{HashOutTarget, MerkleCapTarget};
+use plonky2::hash::hash_types::{HashOut, HashOutTarget, MerkleCapTarget};
 use plonky2::hash::merkle_proofs::MerkleProofTarget;
 use plonky2::hash::merkle_tree::MerkleTree;
 use plonky2::hash::poseidon::PoseidonHash;
@@ -253,12 +253,159 @@ pub fn build_merkle_tree(leaves_hex: &[String]) -> Result<MerkleTree<F, Poseidon
     Ok(MerkleTree::new(leaves, 0))
 }
 
+// ---------------------------------------------------------------------------
+// P2.5: the epoch tree, maintained sparsely and incrementally.
+//
+// The obvious implementation of a fixed-depth tree pads the leaf vector to 2^depth and
+// hands the whole thing to a Merkle constructor. That is what `build_merkle_tree` does,
+// and at the demo depth of 14 it is free. At the national depth of 24 it is not: computing
+// a root over a thousand real members took 10.8 seconds and 2.9 GB of resident memory on
+// the reference machine, because 16.7 million leaves get materialised whatever the real
+// population is. An authority closing epochs on that budget is closing them by the minute
+// and by the gigabyte, and the cost is paid entirely on zeros.
+//
+// The padding is the same value everywhere, so every subtree above the real leaves is an
+// all-zero subtree, and an all-zero subtree at level k has ONE hash. Precompute those and
+// a root costs O(real leaves + depth) instead of O(2^depth). The tree kept here is the
+// real prefix of each level, nothing more.
+//
+// The root this produces MUST equal the padded construction's root element for element, or
+// every epoch already published becomes unverifiable. `parity_with_the_padded_construction`
+// asserts it across depths and populations, including the awkward shapes: one leaf, an odd
+// count, a count one short of full, and a full tree with no padding at all.
+// ---------------------------------------------------------------------------
+
+/// `zero[k]` is the digest of an all-zero subtree of height k: `zero[0]` is the digest of a
+/// zero leaf, and each level above is that value compressed with itself.
+fn zero_hashes(depth: usize) -> Vec<HashOut<F>> {
+    let mut z = Vec::with_capacity(depth + 1);
+    // Plonky2 hashes a leaf of at most 4 elements with hash_or_noop, which for exactly 4
+    // elements IS the leaf. A zero leaf is therefore four zero field elements.
+    z.push(HashOut { elements: [F::ZERO; 4] });
+    for k in 1..=depth {
+        let below = z[k - 1];
+        z.push(<PoseidonHash as Hasher<F>>::two_to_one(below, below));
+    }
+    z
+}
+
+/// A fixed-depth Merkle tree over a sparse population, with the zero padding folded away.
+///
+/// Holds only the real prefix of every level, so memory is O(real leaves) rather than
+/// O(2^depth), and a single-leaf update walks one node per level rather than rebuilding.
+pub struct EpochTree {
+    depth: usize,
+    zero: Vec<HashOut<F>>,
+    /// `levels[0]` is the real leaf digests; `levels[depth]` is always exactly the root.
+    levels: Vec<Vec<HashOut<F>>>,
+}
+
+impl EpochTree {
+    /// Build from the real leaves. O(n + depth).
+    pub fn from_leaves(leaves_hex: &[String]) -> Result<Self> {
+        let depth = tree_depth();
+        if leaves_hex.is_empty() {
+            return Err(anyhow!("Cannot build Merkle tree from empty leaf set"));
+        }
+        if leaves_hex.len() > (1usize << depth) {
+            return Err(anyhow!(
+                "Too many leaves ({}); circuit tree depth {} caps at {}",
+                leaves_hex.len(),
+                depth,
+                1usize << depth
+            ));
+        }
+        let zero = zero_hashes(depth);
+        let mut levels: Vec<Vec<HashOut<F>>> = Vec::with_capacity(depth + 1);
+        let mut cur: Vec<HashOut<F>> = leaves_hex
+            .iter()
+            .map(|h| Ok(HashOut { elements: hex_to_hash_elements(h)? }))
+            .collect::<Result<_>>()?;
+        for k in 0..depth {
+            levels.push(cur.clone());
+            let mut next = Vec::with_capacity(cur.len().div_ceil(2));
+            let mut i = 0;
+            while i < cur.len() {
+                let left = cur[i];
+                // The right child is a real node when one exists and the zero subtree of
+                // this height otherwise. That single substitution is the whole optimization.
+                let right = if i + 1 < cur.len() { cur[i + 1] } else { zero[k] };
+                next.push(<PoseidonHash as Hasher<F>>::two_to_one(left, right));
+                i += 2;
+            }
+            cur = next;
+        }
+        levels.push(cur);
+        Ok(EpochTree { depth, zero, levels })
+    }
+
+    /// The epoch root.
+    pub fn root(&self) -> HashOut<F> {
+        self.levels[self.depth][0]
+    }
+
+    /// How many real leaves the tree carries.
+    pub fn len(&self) -> usize {
+        self.levels[0].len()
+    }
+
+    /// Is the tree empty? Never true for a tree built by `from_leaves`, which refuses an
+    /// empty set; present because clippy asks for it beside `len`.
+    pub fn is_empty(&self) -> bool {
+        self.levels[0].is_empty()
+    }
+
+    /// The sibling path for one leaf, bottom-up, exactly `depth` entries.
+    pub fn proof(&self, index: usize) -> Result<Vec<HashOut<F>>> {
+        if index >= self.len() {
+            return Err(anyhow!("leaf_index {} out of range (only {} leaves)", index, self.len()));
+        }
+        let mut path = Vec::with_capacity(self.depth);
+        let mut i = index;
+        for k in 0..self.depth {
+            let sibling = i ^ 1;
+            path.push(match self.levels[k].get(sibling) {
+                Some(h) => *h,
+                None => self.zero[k],
+            });
+            i >>= 1;
+        }
+        Ok(path)
+    }
+
+    /// Replace one leaf and repair the path to the root. O(depth).
+    ///
+    /// This is what makes an epoch pipeline incremental: a revocation between epochs changes
+    /// one member, and repairing 24 nodes is not the same operation as rebuilding 16.7
+    /// million.
+    pub fn set_leaf(&mut self, index: usize, leaf_hex: &str) -> Result<()> {
+        if index >= self.len() {
+            return Err(anyhow!("leaf_index {} out of range (only {} leaves)", index, self.len()));
+        }
+        self.levels[0][index] = HashOut { elements: hex_to_hash_elements(leaf_hex)? };
+        let mut i = index;
+        for k in 1..=self.depth {
+            let parent = i >> 1;
+            let left = self.levels[k - 1][parent << 1];
+            let right = match self.levels[k - 1].get((parent << 1) | 1) {
+                Some(h) => *h,
+                None => self.zero[k - 1],
+            };
+            self.levels[k][parent] = <PoseidonHash as Hasher<F>>::two_to_one(left, right);
+            i = parent;
+        }
+        Ok(())
+    }
+}
+
 /// Compute the epoch Merkle root from the same leaf set the prover sees.
 /// This is the function `polaris_web/zk.py`'s "compute_root" subcommand
 /// shells out to.
 pub fn compute_epoch_root(leaves_hex: &[String]) -> Result<String> {
-    let tree = build_merkle_tree(leaves_hex)?;
-    Ok(hash_elements_to_hex(&tree.cap.0[0].elements))
+    // Via the sparse tree since v9.357: the padded construction materialised 2^depth leaves
+    // whatever the real population was, which at depth 24 was 10.8 seconds and 2.9 GB for a
+    // thousand members. build_merkle_tree survives as the thing parity is asserted against.
+    Ok(hash_elements_to_hex(&EpochTree::from_leaves(leaves_hex)?.root().elements))
 }
 
 /// The circuit's targets, handed back so `prove` can bind a witness to them.
@@ -406,9 +553,10 @@ pub fn prove(
         ));
     }
 
-    let tree = build_merkle_tree(&witness.all_leaves_hex)?;
-    let merkle_proof = tree.prove(witness.leaf_index);
-    let root_hex = hash_elements_to_hex(&tree.cap.0[0].elements);
+    let tree = EpochTree::from_leaves(&witness.all_leaves_hex)?;
+    let siblings = tree.proof(witness.leaf_index)?;
+    let root = tree.root();
+    let root_hex = hash_elements_to_hex(&root.elements);
     let nullifier_hex = nullifier(&witness.secret_hex, scope, epoch_id)?;
 
     let (builder, t) = build_circuit();
@@ -422,13 +570,13 @@ pub fn prove(
     for (i, target) in t.secret.iter().enumerate() {
         pw.set_target(*target, secret_elements[i])?;
     }
-    pw.set_hash_target(t.root, tree.cap.0[0])?;
+    pw.set_hash_target(t.root, root)?;
     pw.set_target(t.epoch_id, F::from_canonical_u64(epoch_id))?;
     pw.set_target(t.context_id, F::from_canonical_u64(context_id))?;
     pw.set_target(t.nonce, F::from_canonical_u64(nonce))?;
     pw.set_target(t.scope, F::from_canonical_u64(scope))?;
 
-    for (i, sibling) in merkle_proof.siblings.iter().enumerate() {
+    for (i, sibling) in siblings.iter().enumerate() {
         pw.set_hash_target(t.proof.siblings[i], *sibling)?;
     }
     // Set index bits: tree_depth() bits, least significant first.
@@ -906,5 +1054,118 @@ mod tests {
             leaf_commitment(&secrets[2], TEST_CONTEXT).unwrap(),
             "the published leaf must equal the out-of-circuit commitment"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // P2.5 — the sparse, incremental epoch tree.
+    //
+    // The optimization is only allowed to be faster. If its root ever differs from the
+    // padded construction's by one element, every epoch already published becomes
+    // unverifiable, so parity is asserted first and across the shapes that break naive
+    // implementations: one leaf, an odd count, one short of full, and exactly full.
+    // ------------------------------------------------------------------
+
+    fn hexes(n: usize) -> Vec<String> {
+        (0..n)
+            .map(|i| {
+                let mut b = [0u8; 32];
+                b[0..8].copy_from_slice(&((i as u64) + 1).to_le_bytes());
+                b[31] = 0x5a;
+                hex::encode(b)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parity_with_the_padded_construction() {
+        let cap = 1usize << tree_depth();
+        for n in [1usize, 2, 3, 5, 8, 9, 17, 100, cap - 1, cap] {
+            let leaves = hexes(n);
+            let padded = build_merkle_tree(&leaves).unwrap();
+            let sparse = EpochTree::from_leaves(&leaves).unwrap();
+            assert_eq!(
+                padded.cap.0[0], sparse.root(),
+                "sparse root diverged from the padded root at n={}; every published epoch \
+                 would become unverifiable", n
+            );
+        }
+    }
+
+    #[test]
+    fn parity_of_every_inclusion_path() {
+        // A root that matches with paths that do not is worse than a root that does not
+        // match, because the failure only surfaces when a holder tries to prove.
+        let leaves = hexes(37);
+        let padded = build_merkle_tree(&leaves).unwrap();
+        let sparse = EpochTree::from_leaves(&leaves).unwrap();
+        for i in 0..leaves.len() {
+            let a = padded.prove(i);
+            let b = sparse.proof(i).unwrap();
+            assert_eq!(a.siblings.len(), b.len(), "path length differs at leaf {}", i);
+            assert_eq!(a.siblings, b, "sibling path diverged at leaf {}", i);
+        }
+    }
+
+    #[test]
+    fn an_incremental_update_equals_a_rebuild() {
+        // The point of set_leaf: repairing one path must land exactly where rebuilding
+        // from scratch would. Anything else is a tree that drifts from its own history.
+        let mut leaves = hexes(50);
+        let mut tree = EpochTree::from_leaves(&leaves).unwrap();
+        let replacement = "ab".repeat(32);
+        for &i in &[0usize, 1, 7, 24, 49] {
+            tree.set_leaf(i, &replacement).unwrap();
+            leaves[i] = replacement.clone();
+            let rebuilt = EpochTree::from_leaves(&leaves).unwrap();
+            assert_eq!(tree.root(), rebuilt.root(), "incremental update diverged at leaf {}", i);
+            for j in 0..leaves.len() {
+                assert_eq!(tree.proof(j).unwrap(), rebuilt.proof(j).unwrap(),
+                           "path {} diverged after updating {}", j, i);
+            }
+        }
+    }
+
+    #[test]
+    fn an_updated_leaf_still_proves_and_the_old_one_does_not() {
+        // The property a revocation between epochs depends on.
+        let leaves = hexes(16);
+        let mut tree = EpochTree::from_leaves(&leaves).unwrap();
+        let old_root = tree.root();
+        let replacement = "cd".repeat(32);
+        tree.set_leaf(5, &replacement).unwrap();
+        assert_ne!(old_root, tree.root(), "changing a member must change the root");
+
+        let mut updated = leaves.clone();
+        updated[5] = replacement;
+        let witness = WitnessInput {
+            secret_hex: "ef".repeat(32),
+            leaf_index: 5,
+            all_leaves_hex: updated,
+        };
+        // The secret does not open that leaf, so prove() refuses by name rather than
+        // producing a proof about a leaf nobody can open.
+        assert!(prove(&witness, 1, 1, 1, 0).unwrap_err().to_string().contains("does not open leaf"));
+    }
+
+    #[test]
+    fn the_sparse_tree_refuses_what_the_padded_one_refuses() {
+        assert!(EpochTree::from_leaves(&[]).is_err(), "an empty set has no root");
+        let too_many = vec!["00".repeat(32); (1usize << tree_depth()) + 1];
+        assert!(EpochTree::from_leaves(&too_many).is_err(), "a set past capacity must be refused");
+        let t = EpochTree::from_leaves(&hexes(4)).unwrap();
+        assert!(t.proof(4).is_err(), "a path for a leaf that does not exist must be refused");
+        let mut t = EpochTree::from_leaves(&hexes(4)).unwrap();
+        assert!(t.set_leaf(9, &"00".repeat(32)).is_err(), "an out-of-range update must be refused");
+    }
+
+    #[test]
+    fn zero_subtree_hashes_are_what_the_padding_produces() {
+        // If this drifts, everything above is wrong in a way the parity tests would catch
+        // only at the depths they happen to cover. Anchor it directly.
+        let z = zero_hashes(tree_depth());
+        assert_eq!(z[0], HashOut { elements: [F::ZERO; 4] }, "a zero leaf is four zero elements");
+        for k in 1..=tree_depth() {
+            assert_eq!(z[k], <PoseidonHash as Hasher<F>>::two_to_one(z[k - 1], z[k - 1]));
+        }
     }
 }

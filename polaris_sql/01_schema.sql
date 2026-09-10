@@ -1241,7 +1241,10 @@ CREATE TABLE TokenStateEpochLeaf (
     epoch_id           INTEGER      NOT NULL REFERENCES TokenStateEpoch(epoch_id),
     token_id           INTEGER      NOT NULL REFERENCES IdentityToken(token_id),
     leaf_hash          VARCHAR(128) NOT NULL,
-    proof_path         JSONB        NOT NULL,
+    -- OPTIONAL since v9.357 (P2.5): nothing reads it. The holder derives their own
+    -- inclusion path from the published leaf set on their own device (P9.2), so a
+    -- stored path was 1.7 KB of plaintext per member that no query selected.
+    proof_path         JSONB,
 
     CONSTRAINT leaf_hash_is_hex CHECK (leaf_hash ~ '^[0-9a-fA-F]+$'),
 
@@ -1250,11 +1253,12 @@ CREATE TABLE TokenStateEpochLeaf (
 );
 
 COMMENT ON TABLE TokenStateEpochLeaf IS
-  'Per-token witness within an epoch (R10-1 / M2-1 / v8.23). Each row '
-  'is the leaf hash and inclusion proof for a token at the epoch '
-  'snapshot. The Rust prover reads its row to generate a ZK proof. '
-  'Note: v1 stores proof_path in plaintext; v2 would encrypt under '
-  'holder key. See docs/design/zk-snark.md.';
+  'Per-token witness within an epoch (R10-1 / M2-1 / v8.23). Each row is the leaf hash for a '
+  'token at the epoch snapshot. Since v9.357 (P2.5) proof_path is OPTIONAL and is not written: '
+  'the holder derives their own inclusion path from the published leaf set on their own device '
+  '(P9.2), so storing one path per member cost 1.7 KB of plaintext each and was read by '
+  'nothing. Rows closed before v9.357 keep the paths they recorded. See '
+  'docs/design/epoch-cadence.md.';
 
 -- ----------------------------------------------------------------------------
 -- ZkVerificationNonce: single-use nonce store for ZK-proof anti-replay (R2).
