@@ -288,6 +288,27 @@ jobs:
       - name: Assurance mapping — every citation resolves and every cited check runs
         run: python scripts/polaris-assurance-mapping-drill.py
 
+      # v9.374 (P6.7) — the TLA+ specs, MODEL-CHECKED. meta/tla carried one spec for years,
+      # described as checked once to show the technique; nothing re-checked it, and graduating
+      # it found the spec could not be parsed (filename did not match the module), violated its
+      # own type invariant (an unguarded counter), and had drifted to naming an index that
+      # exists nowhere in the tree. Each spec now declares the objects it models and the drill
+      # resolves them, so a rename fails on the push that renames. Runners ship a JDK; the
+      # tla2tools version is pinned for the reason the axe-core pin is.
+      # v9.374 (P6.7) — a JDK for TLC, declared rather than assumed. Wiring a drill into a
+      # job without checking what that job provides is how the mdoc drill (cbor2) and the
+      # quantum-event drill (psycopg2) each went red after they were added.
+      - name: Set up Java (for the TLA+ model checker)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Formal specs — model-checked, bound to the tree, and able to fail
+        run: bash scripts/polaris-tla-drill.sh
+        env:
+          POLARIS_TEST_PYTHON: python
+
       # v9.366 (P4.1) — the card profile's own suite: the encoder and decoder reproduce the
       # PUBLISHED VECTORS byte for byte, and every refusal holds (the record off the card by
       # name, unknown tags, repeated tags, descending tags, truncation, wrong doc type, wrong

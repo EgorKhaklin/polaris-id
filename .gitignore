@@ -144,3 +144,9 @@ polaris_web/secrets.sealed.prev/
 *.synctex.gz
 *.toc
 *.out
+.tla/
+
+# TLC writes its fingerprint and state-queue files beside the spec it is checking.
+# They reach a gigabyte on a large run and have no business in the tree; the drill
+# points TLC at a scratch metadir, and this is the belt to that suspenders.
+meta/tla/states/

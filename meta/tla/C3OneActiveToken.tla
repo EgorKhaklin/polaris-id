@@ -11,21 +11,37 @@
  concurrent issuance. The PostgreSQL implementation enforces this via a
  partial unique index:
 
-     CREATE UNIQUE INDEX uq_one_active_token_per_individual
+     CREATE UNIQUE INDEX uq_one_active_per_person
          ON IdentityToken (individual_id)
          WHERE status = 'ACTIVE';
+
+ (v9.374: this quoted DDL named uq_one_active_token_per_individual, an index
+ that does not exist anywhere in the tree. The drift meta/tla/README.md warned
+ maintained specs would suffer had already happened to the one demonstrator,
+ and nothing noticed because nothing resolved the name. The MODELS bindings
+ below are what make that detectable.)
 
  The implementation also uses FOR UPDATE locking inside the
  uc1_issue_and_activate procedure to serialize concurrent issuance for
  the same individual. This spec models both layers and shows that C3
  holds under interleaved concurrent operations.
 
- What this spec is NOT: maintained verification infrastructure. It is a
- one-time demonstrator of the technique, kept because C3 is the constraint
- whose failure mode is hardest to reason about informally. A standing TLA+
- or Lean effort was considered and refused: a model that drifts from the
- schema it claims to describe is worse than no model, and nothing here
- re-checks it on a change.
+ v9.374 (P6.7): this spec is now CHECKED IN CI on every push, and bound to
+ the schema objects it claims to model, so it cannot drift from them
+ silently. Graduating it found two defects in the artifact itself:
+
+   - The file was named c3-one-active-token.tla while the module is
+     C3OneActiveToken. TLA+ requires the two to match, so the spec as
+     committed could not be PARSED, let alone checked. The companion .cfg
+     existed only as a comment at the foot of the file.
+   - Every action incremented op_count and none GUARDED it, so op_count ran
+     past MaxOperations and the spec violated its own TypeOK invariant at
+     the thirteenth step of a twelve-step bound.
+
+ The substantive claim survived both: C3_OneActiveTokenPerIndividual was
+ never violated in any reachable state. What failed was the bookkeeping, and
+ it failed silently for as long as nothing ran the checker. That is the
+ argument for maintenance, made by the artifact rather than about it.
 
  What this spec DOES verify (when checked with TLC):
    - Safety: ¬∃ t1 ≠ t2 : (t1.status = ACTIVE) ∧ (t2.status = ACTIVE)
@@ -46,6 +62,21 @@
    - The duress-code flow (R11-5; modeled separately as a future
      spec if the proposal ever opens)
  ***************************************************************************)
+
+\* ---------------------------------------------------------------------------
+\* MODELS bindings (roadmap P6.7). Each names a real object in the tree that
+\* this spec claims to describe. scripts/polaris-tla-drill.py resolves every
+\* one of them, so if the index is renamed or the procedure is dropped, the
+\* spec's claim is void and CI says so on that push rather than years later.
+\*
+\* This is the answer to the objection meta/tla/README.md used to raise against
+\* maintained specs: that a model which has drifted from the schema it claims
+\* to describe is worse than no model. Drift is not prevented by care, it is
+\* detected by a citation that has to resolve.
+\*
+\* MODELS: uq_one_active_per_person IN polaris_sql/02_indexes.sql
+\* MODELS: uc1_issue_and_activate IN polaris_sql/05_procedures.sql
+\* ---------------------------------------------------------------------------
 
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -121,6 +152,7 @@ AcquireLock(tx, ind) ==
     /\ ~ \E lock \in locks : lock.individual_id = ind  \* No existing lock
     /\ ~ \E lock \in locks : lock.tx_id = tx  \* Transaction not already holding
     /\ locks' = locks \cup {[tx_id |-> tx, individual_id |-> ind]}
+    /\ op_count < MaxOperations        \* v9.374: guard the bound TypeOK asserts
     /\ op_count' = op_count + 1
     /\ UNCHANGED << tokens, next_token_id >>
 
@@ -149,6 +181,7 @@ IssueToken(tx, ind) ==
            status |-> "ACTIVE"
        ]}
     /\ next_token_id' = next_token_id + 1
+    /\ op_count < MaxOperations        \* v9.374: guard the bound TypeOK asserts
     /\ op_count' = op_count + 1
     /\ UNCHANGED locks
 
@@ -168,6 +201,7 @@ RevokeToken(tx, t) ==
            individual_id |-> t.individual_id,
            status |-> "REVOKED"
        ]}
+    /\ op_count < MaxOperations        \* v9.374: guard the bound TypeOK asserts
     /\ op_count' = op_count + 1
     /\ UNCHANGED << next_token_id, locks >>
 
@@ -178,6 +212,7 @@ RevokeToken(tx, t) ==
 ReleaseLock(tx) ==
     /\ \E lock \in locks : lock.tx_id = tx
     /\ locks' = {lock \in locks : lock.tx_id /= tx}
+    /\ op_count < MaxOperations        \* v9.374: guard the bound TypeOK asserts
     /\ op_count' = op_count + 1
     /\ UNCHANGED << tokens, next_token_id >>
 

@@ -9324,6 +9324,119 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_formal_specs_check_discriminates(tmp_path):
+    # v9.374 (P6.7): the ways a formal spec stops carrying weight. A filename that does not
+    # match its module, so the spec cannot be PARSED; a configuration that exists only as a
+    # comment, so nobody runs it; no binding to the tree, so it drifts to describing something
+    # that no longer exists; no counterpart configuration, so a vacuous invariant reads as a
+    # proof; an unpinned checker; a second setter of the carve-out GUC, which is the assumption
+    # the purge-coverage result actually rests on; and a README that still calls the specs
+    # unchecked, which understates rather than overstates but is just as wrong.
+    SPEC_A = ("---- MODULE SpecOne ----\n"
+              "\\* MODELS: uq_thing IN polaris_sql/02_indexes.sql\n"
+              "Init == TRUE\n====\n")
+    SPEC_B = ("---- MODULE SpecTwo ----\n"
+              "\\* MODELS: some_proc IN polaris_sql/05_procedures.sql\n"
+              "Init == TRUE\n====\n")
+    DRILL = ("# every spec's filename matches its module name\n"
+             "# every MODELS binding resolves against the tree\n"
+             "# every counterpart configuration DOES violate its invariant\n")
+    RUNNER = 'TLA_VERSION="${POLARIS_TLA_VERSION:-v1.7.4}"\n'
+    README = ("These are model-checked in CI on every push. What a model check does not tell\n"
+              "you: that the model matches the system. Both are bounded explorations.\n")
+    SQL_IDX = "CREATE UNIQUE INDEX uq_thing ON t (c);\n"
+    SQL_PROC = ("CREATE PROCEDURE some_proc() AS $$ BEGIN\n"
+                "    SET LOCAL polaris.purge_in_progress = 'TRUE';\n"
+                "END $$;\n")
+    good = {
+        'meta/tla/SpecOne.tla': SPEC_A,
+        'meta/tla/SpecOne.cfg': "SPECIFICATION Spec\n",
+        'meta/tla/SpecTwo.tla': SPEC_B,
+        'meta/tla/SpecTwo.cfg': "SPECIFICATION Spec\n",
+        'meta/tla/SpecTwo.violation.cfg': "SPECIFICATION Spec\n",
+        'meta/tla/README.md': README,
+        'scripts/polaris-tla-drill.py': DRILL,
+        'scripts/polaris-tla-drill.sh': RUNNER,
+        'polaris_sql/02_indexes.sql': SQL_IDX,
+        'polaris_sql/05_procedures.sql': SQL_PROC,
+    }
+
+    def write(overrides=None, remove=()):
+        files = dict(good); files.update(overrides or {})
+        for rel in remove:
+            files.pop(rel, None)
+            f = tmp_path / rel
+            if f.exists():
+                f.unlink()
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_formal_specs(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # THE ONE-SPEC DIRECTORY this row exists to change.
+    write(remove=('meta/tla/SpecTwo.tla', 'meta/tla/SpecTwo.cfg',
+                  'meta/tla/SpecTwo.violation.cfg'))
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "a directory with one spec is the state P6.7 exists to change"
+
+    # THE SPEC THAT CANNOT BE PARSED, which is how the original shipped.
+    write({'meta/tla/SpecOne.tla': SPEC_A.replace("MODULE SpecOne", "MODULE c3_one_active")})
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "a filename that does not match its module cannot be parsed at all"
+
+    # THE CONFIGURATION THAT EXISTS ONLY AS A COMMENT.
+    write(remove=('meta/tla/SpecOne.cfg',))
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "a spec with no .cfg on disk is one nobody runs"
+
+    # THE UNBOUND SPEC, free to drift.
+    write({'meta/tla/SpecOne.tla': SPEC_A.replace(
+        "\\* MODELS: uq_thing IN polaris_sql/02_indexes.sql\n", "")})
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "an unbound spec is the artifact this directory used to argue against"
+
+    # THE VACUOUS INVARIANT.
+    write(remove=('meta/tla/SpecTwo.violation.cfg',))
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "a spec whose invariant holds no matter what proves nothing"
+
+    # THE UNPINNED CHECKER.
+    write({'scripts/polaris-tla-drill.sh': 'TLA_VERSION="latest"\n'})
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "an unpinned checker can change semantics under the claim it supports"
+
+    # THE DRILL that declares bindings without resolving them, or stops requiring failure.
+    for needle in ("# every spec's filename matches its module name",
+                   "# every MODELS binding resolves against the tree",
+                   "# every counterpart configuration DOES violate its invariant"):
+        write({'scripts/polaris-tla-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+            f"the drill must carry: {needle}"
+
+    # THE ASSUMPTION THE RESULT RESTS ON. A second setter makes a committed uncovered delete
+    # reachable, which is exactly what the counterpart configuration demonstrates.
+    write({'polaris_sql/05_procedures.sql': SQL_PROC + (
+        "CREATE PROCEDURE other() AS $$ BEGIN\n"
+        "    SET LOCAL polaris.purge_in_progress = 'TRUE';\n"
+        "END $$;\n")})
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "a second setter of the carve-out GUC breaks purge coverage"
+    write({'polaris_sql/05_procedures.sql': "CREATE PROCEDURE some_proc() AS $$ BEGIN END $$;\n"})
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "no setter at all means the model describes a mechanism that is not there"
+
+    # THE README that understates. As wrong as one that overstates.
+    write({'meta/tla/README.md': "This is not maintained verification infrastructure.\n"})
+    assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+        "the README must not still say the specs are unchecked"
+    for phrase in ("model-checked in CI on every push", "does not tell\nyou", "bounded"):
+        write({'meta/tla/README.md': README.replace(phrase, "")})
+        assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
+            f"the README must state: {phrase}"
+
+
 def test_accessibility_check_discriminates(tmp_path):
     # v9.373 (P6.5): the ways an accessibility gate stops meaning anything. An engine too old
     # to have the rules the row claims; a 2.2 tag requested without the earlier ones, so a 2.2

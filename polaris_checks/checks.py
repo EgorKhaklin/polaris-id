@@ -10473,6 +10473,134 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_formal_specs(root: pathlib.Path) -> list[Finding]:
+    """The TLA+ specs are checked, bound to the tree, and able to fail (P6.7).
+
+    meta/tla carried one spec for years, described as checked once to show the technique.
+    Nothing re-checked it, and graduating it found that it could not be parsed (the filename
+    did not match the module), that it violated its own type invariant (an unguarded counter
+    ran past its bound), and that it had already drifted to naming an index that exists nowhere
+    in the tree. The substantive claim survived all three; everything around it had failed
+    silently for as long as nothing ran the checker.
+
+    DRIFT IS DETECTED, NOT PREVENTED. The directory used to argue against maintained specs
+    because a model that has drifted from the schema is worse than no model. That argument was
+    right and was not an argument for leaving the spec unchecked: the drift had already
+    happened. A spec now declares the objects it models and the drill resolves each one, so a
+    rename fails on the push that renames rather than years later.
+
+    A SPEC THAT CANNOT FAIL PROVES NOTHING. The same rule the check layer applies to itself. A
+    counterpart configuration is one the author asserts should fail, and the drill fails if the
+    invariant holds under it.
+
+    AND THE ASSUMPTION IS ENFORCED WHERE IT CAN BE BROKEN. The C1 result is that purge coverage
+    does NOT follow from the trigger, which permits any DELETE while the carve-out GUC is TRUE.
+    It follows from that GUC having exactly one setter, which writes the checkpoint in the same
+    transaction. A formal result whose assumption nothing enforces is a result about a system
+    nobody is running, so this check counts the setters."""
+    name = "formal_specs"
+    tla = root / "meta" / "tla"
+    if not tla.is_dir():
+        return _fail(name, "meta/tla must hold the specs")
+    specs = sorted(p.name for p in tla.glob("*.tla"))
+    if len(specs) < 2:
+        return _fail(name,
+                     "P6.7 asks for more than the one demonstrator; a directory with a single "
+                     "spec is the state this row exists to change")
+    for spec in specs:
+        text = (tla / spec).read_text()
+        module = re.search(r"MODULE\s+(\w+)", text)
+        if not module:
+            return _fail(name, f"{spec} has no MODULE header")
+        if module.group(1) != spec[:-4]:
+            return _fail(name,
+                         f"{spec} declares MODULE {module.group(1)}. TLA+ requires the filename "
+                         "to match, so this spec cannot be PARSED, let alone checked. That is "
+                         "how the original demonstrator shipped")
+        if not (tla / (spec[:-4] + ".cfg")).exists():
+            return _fail(name,
+                         f"{spec} has no companion .cfg on disk. A configuration that exists "
+                         "only as a comment is one nobody runs, which is also how the original "
+                         "shipped")
+        if "MODELS:" not in text:
+            return _fail(name,
+                         f"{spec} declares no MODELS binding. Drift is not prevented by care, "
+                         "it is detected by a citation that has to resolve, and an unbound spec "
+                         "is exactly the artifact this directory used to argue against")
+
+    if not list(tla.glob("*.violation.cfg")):
+        return _fail(name,
+                     "at least one spec must carry a counterpart configuration it is asserted "
+                     "to FAIL under. A spec whose invariant holds no matter what proves "
+                     "nothing, the same way a check that cannot detect its own violation is "
+                     "treated as broken here")
+
+    drill = _read(root, "scripts/polaris-tla-drill.py")
+    runner = _read(root, "scripts/polaris-tla-drill.sh")
+    if not drill or not runner:
+        return _fail(name, "the specs must be model-checked by a drill CI runs, or 'maintained' "
+                           "means nothing")
+    if "POLARIS_TLA_VERSION" not in runner and "v1.7" not in runner:
+        return _fail(name,
+                     "the tla2tools version must be PINNED: an unpinned checker is one whose "
+                     "semantics can change under the claim it is being used to support")
+    for needed, why in (("filename matches its module name",
+                         "an unparseable spec must be named as such rather than reported as a "
+                         "failing one"),
+                        ("MODELS binding resolves",
+                         "the drift binding must be resolved, not merely declared"),
+                        ("DOES violate its invariant",
+                         "a counterpart configuration that stops failing means the invariant "
+                         "went vacuous, and that must fail")):
+        if needed not in drill:
+            return _fail(name, why)
+
+    # THE ASSUMPTION THE C1 RESULT RESTS ON, enforced where it can actually be broken.
+    setters = []
+    for sql in sorted((root / "polaris_sql").glob("*.sql")):
+        for line in sql.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("--"):
+                continue
+            if "purge_in_progress" in stripped and re.search(r"\bSET\b", stripped):
+                setters.append("%s: %s" % (sql.name, stripped[:60]))
+    if len(setters) != 1:
+        return _fail(name,
+                     "polaris.purge_in_progress must be SET in exactly one place and is set in "
+                     "%d: %s. C1PurgeCoverage proves that purge coverage does NOT follow from "
+                     "the trigger, which permits any DELETE while that GUC is true, but from "
+                     "the GUC having a single setter that writes the checkpoint in the same "
+                     "transaction. A second setter makes a committed uncovered delete "
+                     "reachable, which the counterpart configuration demonstrates"
+                     % (len(setters), "; ".join(setters[:3])))
+
+    readme = _read(root, "meta/tla/README.md")
+    if not readme:
+        return _fail(name, "meta/tla/README.md must say how much weight the specs carry")
+    low = " ".join(readme.lower().split())
+    if "not maintained verification infrastructure" in low or "nothing in ci re-checks" in low:
+        return _fail(name,
+                     "the README still says the specs are unchecked. They are checked now, and "
+                     "a record that understates is as wrong as one that overstates")
+    for phrase, why in (("model-checked in ci on every push",
+                         "the README must say what is now true"),
+                        ("does not tell you",
+                         "the README must state what a model check does NOT establish: that the "
+                         "model matches the system is a human judgement TLC cannot make"),
+                        ("bounded", "the bounds must be stated; a property that holds at N=2 "
+                                    "and fails at N=5 is not caught by a bounded check")):
+        if phrase not in low:
+            return _fail(name, why)
+    return _ok(name,
+               "the formal specs are parsed, configured, model-checked in CI against a pinned "
+               "checker, and bound to the objects they claim to describe so a rename fails on "
+               "the push that renames; at least one carries a counterpart configuration it must "
+               "FAIL under, because a spec whose invariant holds no matter what proves nothing; "
+               "the single-setter assumption the purge-coverage result rests on is enforced in "
+               "the SQL where it can actually be broken; and the README states what a bounded "
+               "model check does not establish")
+
+
 def check_accessibility(root: pathlib.Path) -> list[Finding]:
     """Every operator surface is audited, with an engine that has the rules it claims (P6.5).
 
@@ -11934,6 +12062,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_formal_specs,
     check_accessibility,
     check_assurance_mapping,
     check_enrollment_proofing,

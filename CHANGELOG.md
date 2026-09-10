@@ -5,6 +5,62 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.374 — 2026-09-10 (P6.7: the specs, actually checked)
+
+`meta/tla/` carried one TLA+ spec for years, described as "checked once to show
+the technique". Nothing re-checked it. Graduating it to maintained found three
+defects in the artifact, and each one is an argument for having done so:
+
+- **It could not be parsed.** The file was named `c3-one-active-token.tla`
+  while the module inside was `C3OneActiveToken`. TLA+ requires the two to
+  match, so the spec as committed could not be checked at all, and its
+  companion configuration existed only as a comment at the foot of the file. It
+  had never been run in the form it shipped.
+- **It violated its own type invariant.** Every action incremented `op_count`
+  and none guarded it, so the counter ran past `MaxOperations` and `TypeOK`
+  failed at the thirteenth step of a twelve-step bound.
+- **It had already drifted.** It quoted a partial unique index named
+  `uq_one_active_token_per_individual`. No such index exists anywhere in the
+  tree; the real one is `uq_one_active_per_person`.
+
+The substantive claim survived all three: C3 was never violated in any
+reachable state. What failed was everything around it, silently, for as long as
+nothing ran the checker.
+
+**The README's objection was right, and was not an argument for leaving it
+unchecked.** It argued against maintained specs because a model that has
+drifted from the schema is worse than no model. The drift it predicted had
+already happened to the single unmaintained spec. So a spec now declares the
+objects it models and the drill resolves each one against the file it names:
+rename the index and CI fails on the push that renamed it. **Drift is not
+prevented by care. It is detected by a citation that has to resolve.**
+
+**A new spec, and a real result.** `C1PurgeCoverage.tla` models the
+append-only trigger's single DELETE carve-out and proves purge coverage: every
+audit row that has left the table is covered by a committed checkpoint
+recording that it left. A deletion that commits without its checkpoint is a
+hole in the audit chain that nothing afterwards can see, because the absence
+looks exactly like a row that never existed.
+
+What the model shows is sharper than the property. **Coverage does not follow
+from the trigger**, which permits any DELETE while the carve-out GUC is `TRUE`.
+It follows from that GUC having exactly one setter, inside `uc_archive_purge`,
+which writes the checkpoint in the same transaction. So the safety of the audit
+chain rests on nothing else ever setting it, and `check_formal_specs` now
+counts the setters in the SQL: a formal result whose assumption nothing
+enforces is a result about a system nobody is running.
+
+**A spec that cannot fail proves nothing.** The same rule the check layer
+applies to itself. `C1PurgeCoverage.violation.cfg` turns the second setter on
+and the drill requires TLC to find a committed uncovered delete under it; if
+the invariant held there, it would be vacuous. Writing it caught my own first
+version, where an unbounded counter left TLC still enumerating at 35 million
+distinct states with the queue nearly empty.
+
+**P6.7 stays open.** This is the graduation and one of the specs it asks for.
+The C2 spec and the epoch/status protocol remain, and the row is marked in
+progress rather than done.
+
 ## v9.373 — 2026-09-10 (P6.5: the automated third, enforced)
 
 An identity system a person cannot operate is one that excludes them from
