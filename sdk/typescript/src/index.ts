@@ -486,12 +486,16 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
   return v;
 }
 
+/** P9.5: `attestationSigned` says whether the trust edge was signed by the agency that made
+ * it, or is an unsigned legacy row the manifest's signature carries on an operator's behalf.
+ * null when no edge was found. */
 export type CrossAuthorityVerdict = {
   decision: string; // "accept" | "reject"
   authentic: boolean;
   issuerTrusted: boolean;
   via?: unknown;
   reason?: string;
+  attestationSigned?: boolean | null;
 };
 
 /** Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4). Accept
@@ -609,6 +613,7 @@ export function verifyCrossAuthority(
   const tokenKey = String(p.public_key_hex ?? "").toLowerCase();
   const trusted = trustedAnchors != null ? new Set(trustedAnchors.map((t) => t.toLowerCase())) : null;
   let via: unknown = null;
+  let signedEdge: boolean | null = null;
   for (const mm of (manifests ?? []).map((m) => m ?? {})) {
     const mv = verifySignedArtifact(mm, now);
     if (!(mv.authentic && mv.fresh)) continue;
@@ -627,6 +632,7 @@ export function verifyCrossAuthority(
         const av = verifyAttestation(att, mm.authority?.agency_id ?? null, tokenKey);
         if (!unsigned && !av.authentic) continue;
         if (requireSignedAttestation && unsigned) continue;
+        signedEdge = !unsigned;
         via = mm.authority;
         break;
       }
@@ -643,15 +649,17 @@ export function verifyCrossAuthority(
     const bound = String(rf.public_key_hex ?? "").toLowerCase() === tokenKey;
     if (!(rv.authentic && rv.fresh && bound)) {
       return { decision: "reject", authentic: true, issuerTrusted: true, via,
-               reason: "the revocation feed is not authentic, fresh, and bound to the issuer key" };
+               reason: "the revocation feed is not authentic, fresh, and bound to the issuer key",
+               attestationSigned: signedEdge };
     }
     const leaf = bytesToHex(sha3_256(new TextEncoder().encode(String(p.token_value ?? ""))));
     const leaves = new Set((Array.isArray(rf.revoked_leaves) ? rf.revoked_leaves : []).map((x: any) => String(x).toLowerCase()));
     if (leaves.has(leaf)) {
-      return { decision: "reject", authentic: true, issuerTrusted: true, via, reason: "credential is revoked" };
+      return { decision: "reject", authentic: true, issuerTrusted: true, via, reason: "credential is revoked",
+               attestationSigned: signedEdge };
     }
   }
-  return { decision: "accept", authentic: true, issuerTrusted: true, via };
+  return { decision: "accept", authentic: true, issuerTrusted: true, via, attestationSigned: signedEdge };
 }
 
 export type VerifierOptions = {

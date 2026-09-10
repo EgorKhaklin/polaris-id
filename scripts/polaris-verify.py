@@ -674,10 +674,10 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                     "attestation_signed": attestation_signed}
         return {"decision": "accept", "authentic": True, "reasons": [], "via": via,
                 "revocation_checked": True, "revoked": False,
-                "attestation_signed": attestation_signed,
-            "attestation_signed": attestation_signed}
+                "attestation_signed": attestation_signed}
     return {"decision": "accept", "authentic": True, "reasons": [], "via": via,
-            "revocation_checked": False, "revoked": None}
+            "revocation_checked": False, "revoked": None,
+            "attestation_signed": attestation_signed}
 
 
 # ---------------------------------------------------------------------------

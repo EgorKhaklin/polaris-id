@@ -232,6 +232,8 @@ def cmd_holder_keygen(args):
     body = {"token_value": pack["token_value"], "signature_hex": pack["signature_hex"],
             "holder_public_key_hex": pk.hex(), "holder_algorithm": alg,
             "event": ("rotated" if args.rotate else "bound")}
+    import urllib.error
+    import urllib.request
     req = urllib.request.Request(args.instance.rstrip("/") + "/api/v1/holder-key",
                                  data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json"}, method="POST")
@@ -345,6 +347,8 @@ def cmd_prove_membership(args):
     wallet = _wallet_dir(args)
     pack = _load_credential(wallet)
     if getattr(args, "from_instance", None):
+        import urllib.error
+        import urllib.request
         # P9.2: fetch the PUBLISHED anonymity set and verify it before proving. Every holder
         # fetches identical bytes, so the request says nothing about which leaf is theirs;
         # the leaf is found here, on this device, and the proof is built here.

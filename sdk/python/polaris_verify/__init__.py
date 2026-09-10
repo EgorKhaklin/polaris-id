@@ -546,6 +546,11 @@ class CrossAuthorityVerdict:
     issuer_trusted: bool
     via: Optional[str] = None
     reason: Optional[str] = None
+    # P9.5: was the trust edge signed by the agency that made it, or is it an unsigned
+    # legacy row the manifest's signature carries on an operator's behalf? None when no
+    # edge was found. A relying party that requires signatures passes
+    # require_signed_attestation; one that merely wants to know reads this.
+    attestation_signed: Optional[bool] = None
 
 
 @dataclasses.dataclass
@@ -682,17 +687,19 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     if via is None:
         return CrossAuthorityVerdict("reject", True, False,
                                      reason="no trusted authority attests to this credential's issuer in this context")
+    via_str = via if isinstance(via, str) else None
     if revocation_feed is not None:
         rv = verify_signed_artifact(revocation_feed if isinstance(revocation_feed, dict) else {}, now=now)
         bound = str((revocation_feed or {}).get("public_key_hex") or "").lower() == token_key
         if not (rv.authentic and rv.fresh and bound):
-            return CrossAuthorityVerdict("reject", True, True, via if isinstance(via, str) else None,
-                                         "the issuer's revocation feed is not authentic, fresh, and bound to the issuer key")
+            return CrossAuthorityVerdict("reject", True, True, via_str,
+                                         "the issuer's revocation feed is not authentic, fresh, and bound to the issuer key",
+                                         signed_edge)
         leaf = hashlib.sha3_256(str(pack.get("token_value") or "").encode("utf-8")).hexdigest()
         if leaf in {str(x).lower() for x in (revocation_feed.get("revoked_leaves") or [])}:
-            return CrossAuthorityVerdict("reject", True, True, via if isinstance(via, str) else None,
-                                         "credential is revoked in the issuer's published feed")
-    return CrossAuthorityVerdict("accept", True, True, via if isinstance(via, str) else None)
+            return CrossAuthorityVerdict("reject", True, True, via_str,
+                                         "credential is revoked in the issuer's published feed", signed_edge)
+    return CrossAuthorityVerdict("accept", True, True, via_str, None, signed_edge)
 
 
 class PolarisVerifier:
