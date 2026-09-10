@@ -28,14 +28,18 @@ Polaris records each decision and its justification; it does not know the law. \
     scale, and the epoch pipeline at national scale are not built.
   \item A hash-based signer is registered and not wired. Two internal transport hops, the
     certificate signatures and today's operator authenticators remain classical.
-  \item The membership prover runs on the host; there is no holder-side key, no on-device proving,
-    no scoped nullifier, no pairwise or blinded presentation. The interim credential during a
-    recovery cool-down is not built. Attestations are recorded by an operator, not cryptographically
-    signed by the attesting agency.
-  \item Anchor verification for timestamps lives in the detached verifier only; the SDKs verify a
-    timestamp and its head as artifacts and not its inclusion or witnessing.
-  \item The one audit-of-record instance not fully enforced at the schema, \entity{RecoveryRequest},
-    rests on procedure discipline.
+  \item Blinded and one-time presentations are not built, so a verifier looking at a full
+    credential still sees a stable token value, an issuer signature and a holder key. The
+    per-relying-party handle bounds what a verifier \emph{stores}, not what it is \emph{shown};
+    Section~\ref{sec:privacy} states the distinction and the verifier reports which of the two a
+    given presentation gave. This is the residue of the holder-side work, not the whole of it: the
+    holder key, on-device proving, the scoped nullifier and the pairwise handle were built at
+    \code{v9.349} through \code{v9.353} and this list said otherwise until \code{v9.355}.
+  \item Neither the scoped nullifier nor the pairwise handle hides a holder from the \emph{issuer},
+    which derives every epoch leaf in order to build the tree and could therefore compute any
+    member's nullifier in any scope. Issuer-blind derivation is a different construction and is not
+    claimed.
+  \item The interim credential during a recovery cool-down is not built.
 \end{itemize}
 
 \subsection{What has not been validated by anyone else}

@@ -77,9 +77,10 @@ object. There is no separate event log beside the table that could be edited whi
 locked. Mutation is either forbidden outright or bounded to one field that moves one way, such as a
 signature's deprecation date or an attestation's revocation date. Every one of the thirteen is
 enforced by a trigger that raises \code{insufficient\_privilege}, and a check fails the build if any
-trigger stops doing so. The one instance that is not fully enforced at the schema is named rather
-than glossed: \entity{RecoveryRequest} rests on a partial unique index and procedure discipline, and
-a raw update from a database session is not refused. \sImpl
+trigger stops doing so. \entity{RecoveryRequest} was the one instance resting on a partial unique
+index and procedure discipline, so a raw update from a database session was not refused; at
+\code{v9.347} its decision fields moved one way under a trigger like the other twelve, and the check
+now covers thirteen of thirteen. \sImpl
 
 The corollary is that no foreign key anywhere in the schema cascades a delete. A cascade would let
 the lifecycle events of a deleted token vanish with it. Every reference defaults to \code{NO

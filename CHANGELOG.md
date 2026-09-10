@@ -36,8 +36,19 @@ holder-side sections at `v9.355`. The counts elsewhere are still the `v9.345`
 measurements and are labelled as such. A partial re-measurement would be worse than
 an honestly labelled old one.
 
+A sweep of the whole document then found four more claims that P9 had made false,
+three of them in the sections an assessor reads first. The limitations list said
+there is no holder-side key, no on-device proving, no scoped nullifier and no
+pairwise presentation, and that attestations are recorded by an operator rather
+than signed; it now names the residue that remains, which is blinded and one-time
+presentations, and states the issuer bound separately. Section 4 and the ledger
+said `RecoveryRequest` rests on procedure discipline; it has been enforced by a
+trigger since v9.347, thirteen of thirteen. Sections 12 and 18 said anchor
+verification lives only in the detached verifier; it has been in both SDKs since
+v9.346.
+
 `docs/design/auth-broker.md` carried the same stale claim about the login subject
-and is corrected. The paper rebuilds at 57 pages with no overfull boxes, no
+and is corrected. The paper rebuilds at 58 pages with no overfull boxes, no
 underfull vertical boxes and no undefined references, and `rendered-from.txt` is
 restamped so `check_paper_pdf_is_current` holds.
 

@@ -89,8 +89,8 @@ timestamp is backdatable by whoever holds the key. So the strong claim requires 
 trusted by the verifier, from a key distinct from the signer's, active at the instant per the trust
 list, and, if the verifier asks, anchored in a witnessed log or corroborated by a quorum of
 independent authorities. A verifier given no timestamp anchors reports the facts and claims nothing.
-\sImpl{} for the verifier; \sFut{} for anchor verification in the SDKs, which today only the detached
-verifier performs.
+\sImpl. Anchor verification, once available only in the detached verifier, is in both SDKs since
+\code{v9.346}, so an implementation that imports no Polaris code can decide long-term validity.
 
 \begin{layercard}{Layer card: institutions}
 \qa{What it is}{The signed registry, the exchange gateway, the exchange receipt and its log, the timestamp authority with optional anchoring, document signing with long-term validation, the trust list.}

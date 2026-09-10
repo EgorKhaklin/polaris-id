@@ -25,7 +25,7 @@ five of them from proposal to running code. No row moved the other way.
 \bottomrule
 \endlastfoot
 Schema constraints, C1--C10 & \sImpl & The database owner is outside the threat model & \code{check\_c1c10\_objects\_resolve} \\
-Append-only audit of record (13 instances) & \sImpl & \entity{RecoveryRequest} rests on procedure discipline & \code{check\_aor\_append\_only\_triggers} \\
+Append-only audit of record (13 instances) & \sImpl & All thirteen enforced by trigger since \code{v9.347} & \code{check\_aor\_append\_only\_triggers} \\
 Retention as data with a 365-day floor & \sImpl & Archive and purge remain deliberate operator steps & \code{check\_retention\_engine} \\
 ML-DSA-65 and ML-DSA-87 signing & \sImpl & Placeholder profile in development; SLH-DSA registered, not wired & \code{check\_pqc\_signing\_wired} \\
 Two-witness verification, sampled at use & \sImpl & Catches divergence, not a shared misreading & \code{check\_pqc\_second\_witness}, \code{check\_verify\_witness\_sampling} \\
