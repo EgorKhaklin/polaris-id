@@ -40,6 +40,23 @@ that wait on an external actor are gathered under "Waiting on the world" so the
 execution protocol cannot select one. This reopens no non-goal and does not soften the
 constitution; P9.1 carries a constitutional note against the vocation.
 
+**P9 is COMPLETE at v9.354 (2026-09-10).** All eight rows shipped. The holder now has a
+key of their own (P9.1), proves membership on their own device against a published
+anonymity set (P9.2), carries a per-verifier nullifier so one relying party can refuse a
+second claim without learning who (P9.3), hands out no identifier stable across relying
+parties (P9.4), and can delegate to an agent with a bounded, expiring grant they alone can
+revoke (P9.8), while federation trust rests on a signature rather than an operator's word
+(P9.5), long-term validation is decidable by an SDK that imports no Polaris code (P9.6),
+and the last audit-of-record instance resting on procedure is enforced at the schema
+(P9.7). Two limitations were restated rather than closed, in the code and on every outward
+surface: cross-verifier correlation is bounded, not eliminated, because a full credential
+still shows a verifier stable material; and neither the nullifier nor the pairwise handle
+hides a holder from the ISSUER, which derives every leaf to build the tree.
+
+By rule 5 the numbered deployment phases resume. P0.11 and P1.12 are the only rows left in
+those phases and both read `ext`, which rule 2 forbids selecting, so the first selectable
+row is **P2.5** and the active phase is **P2**.
+
 **Status marks:** `[ ]` pending · `[>]` in progress · `[x]` done ·
 `[EXT]` blocked on an external actor (funding, law, vendor, institution).
 Update marks in place as part of each ship; never delete rows.
@@ -451,7 +468,7 @@ which the vocation forbids.
 
 ---
 
-## P9 - The holder: the key, the proof and the grant [SOFTWARE ARC, BUILDABLE NOW]
+## P9 - The holder: the key, the proof and the grant [COMPLETE at v9.354]
 
 Objective: close the gaps Version 2 of the paper found in the tree. Polaris is
 issuer-centric: a holder holds a credential, not a key pair, and that single absence is
@@ -557,9 +574,10 @@ before the P5 consent framework exists. These do not expire with any phase.
 ## Execution protocol for the next session
 
 1. Read [CLAUDE.md](CLAUDE.md), then this file. **The active phase is named in the
-   decision record at the top of this file. It is P9.** Phases E and P8 are COMPLETE;
-   the numbered deployment phases resume after P9. Do not derive the active phase from
-   the lowest number: that rule selected a row blocked on a vendor's container image.
+   decision record at the top of this file. It is P2.** Phases E, P8 and P9 are COMPLETE;
+   the numbered deployment phases resumed after P9, and P0 and P1 hold only `ext` rows,
+   which rule 2 forbids selecting. Do not derive the active phase from the lowest number:
+   that rule selected a row blocked on a vendor's container image.
 2. Pick the first row in the active phase whose Blocked-by column is satisfied and whose
    Risk column does not read `ext`; prefer S and M rows when resuming cold. Never select
    a row listed under "Waiting on the world".
