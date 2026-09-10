@@ -127,11 +127,20 @@ A ship is a coherent change, verified:
    `TokenSignature.signature_bytes`: real ML-DSA-65 when the flag + liboqs are
    present, a deterministic SHA3-256 placeholder otherwise (the default, incl.
    CI). `polaris_checks.check_pqc_signing_wired` guards the wiring.
-8. **CI flakes look like failures.** Two known signatures: the runner's apt index
-   (`Hash Sum mismatch`, jobs die in their install step with exit code 100) and the Go
-   module proxy in the Caddy build (`sum.golang.org` stream errors). `python3
-   scripts/polaris-ship.py triage` names them; `gh run rerun <id> --failed`
-   clears them. Anything else is real: run the verification `plan` names.
+8. **CI flakes look like failures.** Three known signatures: the runner's apt index
+   (`Hash Sum mismatch`, jobs die in their install step with exit code 100), the Go
+   module proxy in the Caddy build (`sum.golang.org` stream errors), and the postgres
+   image's apk + pip layer (`process "/bin/sh -c apk add ... pip3 install ..." did not
+   complete successfully`, v9.377). `python3 scripts/polaris-ship.py triage` names them;
+   `gh run rerun <id> --failed` clears them. Anything else is real: run the verification
+   `plan` names.
+9. **`triage` cannot read a log until the whole run finishes.** `gh` refuses
+   `--log-failed` while any job is still going, so triaging a run whose failure has
+   already landed used to print "investigate (no known flake signature matched)" over an
+   empty string, which reads as a considered verdict. Since v9.377 it says UNKNOWN and
+   tells you to re-run it when the run completes. Confirm a suspected image-build flake
+   with a local `docker build --no-cache -f polaris_web/Dockerfile.postgres .` before
+   rerunning.
 
 ---
 

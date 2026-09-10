@@ -5,6 +5,39 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.377 — 2026-09-10 (triage says what it actually knows)
+
+v9.376's CI went red on the Docker image job, in a layer nothing in that ship
+touched: the postgres image installs Patroni over `apk` and `pip`, and that
+layer failed on the runner while building clean locally under
+`docker build --no-cache`. A flake, and the same class as the two the triage
+tool already knows.
+
+**`triage` reported "investigate (no known flake signature matched)" over an
+empty string.** `gh` refuses `--log-failed` while *any* job in the run is still
+going, so triaging a run whose failure has already landed produced a confident
+verdict about evidence the tool never saw. That reads exactly like a considered
+answer, which is worse than no answer: the next person spends the twenty
+minutes I just spent, and a tool that reports a conclusion it did not reach is
+the thing this repository refuses everywhere else.
+
+It now says `UNKNOWN, no log to read yet`, names why, and gives the command to
+re-run once the run finishes.
+
+**The Alpine layer is now a known signature**, with advice that says how to
+*confirm* it is a flake (`docker build --no-cache -f
+polaris_web/Dockerfile.postgres .`) rather than just asserting it. A signature
+that tells you to rerun without telling you how to check is a signature that
+will eventually excuse a real failure.
+
+**And the classifier has tests.** `scripts/test_ship_tool.py` runs the real log
+line the signature was written for, verbatim, because a signature tested
+against a paraphrase of its log is tested against nothing. The tests also push
+the other way: a check violation, a drill failure, a `ModuleNotFoundError` and
+an assertion error must all still classify as *investigate*, since a classifier
+that called real failures flakes would turn a red build into a rerun loop and
+the defect would ship.
+
 ## v9.376 — 2026-09-10 (P5.1a: a pilot that can actually be undone)
 
 A pilot's real promise is not that it will work. It is that it can be wound

@@ -98,7 +98,7 @@ run "$ROOT/polaris_web" unittest test_app test_check_constraints test_pqc_signin
 run "$ROOT/polaris_web" unittest test_invariants_property test_redaction_property test_canonical_equivalence
 run "$ROOT/polaris_cli" unittest test_cli
 run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relying_party \
-                                       test_verify_conformance test_verify_p9
+                                       test_verify_conformance test_verify_p9 test_ship_tool
 # polaris_sim's tests import the package (from polaris_sim import ...), so they
 # run from the repo root with the dotted module path, not from inside the dir.
 run "$ROOT" unittest polaris_sim.test_sim

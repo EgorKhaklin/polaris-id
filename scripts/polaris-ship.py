@@ -431,6 +431,15 @@ FLAKE_SIGNATURES = [
      "the runner's apt index failed to download (mirror hash mismatch); rerun the failed jobs"),
     ("caddy-module-proxy", r"sum\.golang\.org|stream error|xcaddy build.*(?:unexpected EOF|i/o timeout|connection reset)",
      "known network flake in the Caddy build (Go module proxy); rerun the failed jobs"),
+    # v9.377: the Alpine analogue of the apt-index flake. The postgres image installs Patroni
+    # over apk + pip, and that layer fails on the runner while building clean locally with
+    # --no-cache. Added after one was investigated by hand: the tool returning "investigate"
+    # for a signature somebody has already chased is the cost this table exists to avoid.
+    ("alpine-pip-layer",
+     r"process \"/bin/sh -c apk add[^\"]*pip3 install[^\"]*\" did not complete successfully",
+     "the postgres image's apk + pip layer failed on the runner (Alpine package index or "
+     "PyPI); confirm with a local `docker build --no-cache -f polaris_web/Dockerfile.postgres .` "
+     "and rerun the failed jobs if it builds"),
 ]
 
 
@@ -460,8 +469,21 @@ def triage(run_id=None, out=None):
     jobs = json.loads(_gh("run", "view", str(run_id), "--json", "jobs,conclusion"))
     failed = [j["name"] for j in jobs.get("jobs", []) if j.get("conclusion") == "failure"]
     log = subprocess.run(["gh", "run", "view", str(run_id), "--log-failed"], capture_output=True, text=True, cwd=ROOT).stdout
-    verdict, name, advice = classify_failure_log(log)
     print("run %s: %s; failed jobs: %s" % (run_id, jobs.get("conclusion"), ", ".join(failed) or "none"), file=out)
+
+    # v9.377: "I could not look" is not "I looked and found nothing". gh refuses --log-failed
+    # while ANY job in the run is still going, so triaging a run whose failure has already
+    # landed used to print "investigate (no known flake signature matched)" over an empty
+    # string. That verdict reads as a considered one, and a tool that reports a conclusion it
+    # did not reach is worse than one that reports nothing.
+    if jobs.get("conclusion") is None or "still in progress" in log or not log.strip():
+        print("  verdict: UNKNOWN, no log to read yet. gh refuses --log-failed until every job "
+              "in the run finishes, and %d have already failed." % len(failed), file=out)
+        print("  re-run this triage when the run completes: "
+              "python3 scripts/polaris-ship.py triage %s" % run_id, file=out)
+        return 1
+
+    verdict, name, advice = classify_failure_log(log)
     if verdict == "flake":
         print("  verdict: known flake [%s]: %s" % (name, advice), file=out)
         print("  gh run rerun %s --failed" % run_id, file=out)
