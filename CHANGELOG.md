@@ -5,6 +5,34 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.380 — 2026-09-10 (the tool that decides what to verify, verified)
+
+`polaris-ship.py plan` decides what a ship has to verify: which suites the
+changed paths select, which routes changed, and which drills exercise them. It
+sat at 16% coverage, and its selection logic had no tests at all.
+
+**A verification selector that mis-selects does not fail loudly.** It prints a
+shorter list, the ship passes the checks it was told to run, and the suite that
+would have caught the defect was simply never named. That is the quiet half of
+the tool, and it is the half worth testing.
+
+Two of the fifteen new tests pin properties that would otherwise be silent:
+
+- **A changed *helper* selects every route that calls it.** The handler's own
+  source is untouched, so nothing about that route looks changed by a naive
+  diff, and that route is exactly what broke. This is the case
+  `changed_routes` exists for.
+- **A route that is a prefix of another must not over-match.**
+  `/api/v1/thing` selecting a drill that only mentions `/api/v1/thing-else`
+  would drag in unrelated drills on every ship, and a plan that names
+  everything is one an operator learns to skim. The entry that mattered gets
+  skimmed with it.
+
+Sharding is covered too, for the one sharding bug that does not announce
+itself: a unit dropped between shards is a test that silently never ran.
+
+16% to 31%. The percentage is the smaller half of the point.
+
 ## v9.379 — 2026-09-10 (a module a drill covers is a module nothing covers)
 
 v9.378's CI broke the coverage floor, and the cause was two ships old.

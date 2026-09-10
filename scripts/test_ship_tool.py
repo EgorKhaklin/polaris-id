@@ -104,3 +104,127 @@ class TriageHonestyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VerificationSelectionTests(unittest.TestCase):
+    """`plan` decides what a ship has to verify. Until v9.379 that decision was untested.
+
+    A classifier that mis-selects does not fail loudly: it prints a shorter list, the ship
+    passes the checks it was told to run, and the suite that would have caught the defect was
+    simply never named. That is the quiet half of a verification tool, and it is the half worth
+    testing."""
+
+    def test_a_changed_path_selects_its_verification(self):
+        picked = ship.verification_for(["polaris_sql/01_schema.sql"])
+        self.assertTrue(picked, "a schema change must select something to run")
+        self.assertTrue(all("run" in entry and "why" in entry for entry in picked),
+                        "every entry must say what to run and why")
+
+    def test_an_unrelated_path_selects_nothing_spurious(self):
+        # Over-selection is not harmless: a plan that names everything is one an operator
+        # learns to skim, and then the entry that mattered is skimmed with it.
+        picked = ship.verification_for(["README.md"])
+        for entry in picked:
+            self.assertIn("README", " ".join(entry["paths"]))
+
+    def test_no_changes_selects_nothing(self):
+        self.assertEqual(ship.verification_for([]), [])
+
+
+class RouteChangeDetectionTests(unittest.TestCase):
+    """`changed_routes` is how a ship learns which drills exercise what it touched."""
+
+    BASE = (
+        "@app.route('/a')\n"
+        "def handler_a():\n"
+        "    return helper()\n"
+        "\n"
+        "@app.route('/b')\n"
+        "def handler_b():\n"
+        "    return 2\n"
+        "\n"
+        "def helper():\n"
+        "    return 1\n")
+
+    def test_an_unchanged_module_changes_no_route(self):
+        self.assertEqual(ship.changed_routes(self.BASE, self.BASE), [])
+
+    def test_a_changed_handler_selects_its_own_route(self):
+        now = self.BASE.replace("    return 2\n", "    return 3\n")
+        self.assertEqual(ship.changed_routes(self.BASE, now), ["/b"])
+
+    def test_a_changed_HELPER_selects_every_route_that_calls_it(self):
+        # The case a naive diff misses, and the reason this function exists: the handler's own
+        # source is untouched, so nothing about /a looks changed, and /a is exactly what broke.
+        now = self.BASE.replace("def helper():\n    return 1\n",
+                                "def helper():\n    return 99\n")
+        self.assertEqual(ship.changed_routes(self.BASE, now), ["/a"])
+
+    def test_a_new_route_is_selected(self):
+        now = self.BASE + "\n@app.route('/c')\ndef handler_c():\n    return 3\n"
+        self.assertIn("/c", ship.changed_routes(self.BASE, now))
+
+    def test_top_level_defs_captures_decorators_and_bodies(self):
+        defs = ship.top_level_defs(self.BASE)
+        self.assertEqual(set(defs), {"handler_a", "handler_b", "helper"})
+        self.assertEqual(defs["handler_a"]["routes"], ["/a"])
+        self.assertEqual(defs["helper"]["routes"], [])
+
+
+class DrillSelectionTests(unittest.TestCase):
+    def test_a_drill_mentioning_a_route_is_selected(self):
+        drills = {"d1.py": "client.get('/api/v1/thing')", "d2.py": "nothing here"}
+        self.assertEqual(ship.drills_for_routes(["/api/v1/thing"], drills),
+                         {"d1.py": ["/api/v1/thing"]})
+
+    def test_a_parameterised_route_matches_a_concrete_call(self):
+        # The route is declared with a placeholder and called with a value; a literal match
+        # would select nothing and the drill that covers it would go unrun.
+        drills = {"d.py": "client.get('/api/v1/epoch-checkpoint/7')"}
+        self.assertEqual(
+            ship.drills_for_routes(["/api/v1/epoch-checkpoint/<int:agency_id>"], drills),
+            {"d.py": ["/api/v1/epoch-checkpoint/<int:agency_id>"]})
+
+    def test_a_route_that_is_a_PREFIX_of_another_does_not_over_match(self):
+        # '/api/v1/thing' must not match '/api/v1/thing-else', or every ship drags in drills
+        # for routes it did not touch and the plan stops meaning anything.
+        drills = {"d.py": "client.get('/api/v1/thing-else')"}
+        self.assertEqual(ship.drills_for_routes(["/api/v1/thing"], drills), {})
+
+
+class ShardingTests(unittest.TestCase):
+    """`run` shards the suites across processes. A unit lost in sharding is a test that
+    silently never ran, which is the one sharding bug that does not announce itself."""
+
+    UNITS = [("test_app", "ClassA", 30), ("test_app", "ClassB", 20),
+             ("test_app", "ClassC", 10), ("test_cli", "ClassD", 5),
+             ("test_cli", "ClassE", 1)]
+
+    def test_every_unit_lands_in_exactly_one_shard(self):
+        shards = ship.distribute(self.UNITS, 3, serial=set())
+        flat = [u for shard in shards for u in shard]
+        self.assertEqual(sorted(flat), sorted(self.UNITS),
+                         "no unit may be dropped or duplicated by sharding")
+
+    def test_serial_classes_all_land_in_shard_zero(self):
+        # Process-spawning classes must not run beside each other in parallel shards; the
+        # convention is that shard 0 takes them and runs them serially.
+        serial = {("test_app", "ClassA"), ("test_cli", "ClassD")}
+        shards = ship.distribute(self.UNITS, 3, serial=serial)
+        for unit in self.UNITS:
+            if (unit[0], unit[1]) in serial:
+                self.assertIn(unit, shards[0],
+                              "%s is serial and must be in shard 0" % (unit,))
+
+    def test_the_heaviest_units_are_spread_rather_than_stacked(self):
+        # Heaviest-first onto the least-loaded shard. Without it the wall clock is the sum of
+        # the two slowest classes landing together, which is the whole point of sharding.
+        shards = ship.distribute(self.UNITS, 2, serial=set())
+        loads = [sum(u[2] for u in shard) for shard in shards]
+        self.assertLessEqual(max(loads) - min(loads), 30,
+                             "the biggest class alone may dominate, but not stack with the next")
+
+    def test_one_unit_and_many_shards_still_runs_that_unit(self):
+        shards = ship.distribute([("test_app", "Only", 1)], 8, serial=set())
+        flat = [u for shard in shards for u in shard]
+        self.assertEqual(flat, [("test_app", "Only", 1)])
