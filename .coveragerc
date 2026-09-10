@@ -18,6 +18,12 @@ omit =
     */sitecustomize.py
     # Test infrastructure, not product code (P1.2/P1.3).
     */kms_standin.py
+    # Third-party code. The standalone suites under scripts/ measure without --source (see
+    # run_standalone in polaris-coverage.sh), so the interpreter's own package directories
+    # are named explicitly rather than left to depend on where the runner installed them.
+    */site-packages/*
+    */dist-packages/*
+    */.tox/*
 
 [report]
 # The CLI entrypoints are exercised end to end (the app shells into the ZK

@@ -318,12 +318,32 @@ def _parse_iso(s):
     return dt
 
 
+def _instant(now=None):
+    """Normalise a caller's `now` into an aware datetime.
+
+    Every freshness gate compares `now` against parsed instants, so a caller who passes an
+    ISO-8601 string -- which the conformance contract, the CLI and every docstring invite --
+    must get a verdict, not a TypeError and not a silent `fresh: false`. Accepts None (the
+    real clock), an ISO-8601 string, or a datetime; a naive datetime is read as UTC. Raises
+    ValueError on anything else, which each caller turns into an honest refusal, because a
+    verifier told to judge "as of T" must never quietly judge as of some other instant.
+    """
+    from datetime import datetime, timezone
+    if now is None:
+        return datetime.now(timezone.utc)
+    if isinstance(now, datetime):
+        return now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+    if isinstance(now, str):
+        return _parse_iso(now)
+    raise ValueError("`now` must be None, an ISO-8601 string or a datetime, not %s"
+                     % type(now).__name__)
+
+
 def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor_keys=None):
     """Verify a short-lived signed status assertion (P3.6) OFFLINE: the ML-DSA-65
     signature over SHA3-256(canonical statement), and freshness (now within
     [issued_at, expires_at) and the window no longer than max_window_seconds, when a
     bound is given). Reports status and, with anchors, issuer trust. No network."""
-    from datetime import datetime, timezone
     if not isinstance(assertion, dict):
         assertion = {}
     v = {"status_authentic": False, "fresh": None, "status": assertion.get("status"),
@@ -366,12 +386,12 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
     if not ok:
         v["note"] = "status assertion signature is invalid"
         return v
-    now = now or datetime.now(timezone.utc)
     try:
+        now = _instant(now)
         ia, ea = _parse_iso(assertion["issued_at"]), _parse_iso(assertion["expires_at"])
     except Exception as e:
         v["fresh"] = False
-        v["note"] = "unparseable issued_at/expires_at (%s)" % e
+        v["note"] = "unparseable issued_at/expires_at or `now` (%s)" % e
         return v
     window = (ea - ia).total_seconds()
     within = ia <= now < ea
@@ -437,7 +457,6 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
     over SHA3-256(canonical), that the signing key is one of the manifest's own
     declared active anchors (self-consistency), freshness, and, with trusted_anchors,
     whether this authority is one the relying party trusts. No network."""
-    from datetime import datetime, timezone
     if not isinstance(manifest, dict):
         manifest = {}
     _anchors = manifest.get("anchors")
@@ -491,12 +510,12 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
     if not ok:
         v["note"] = "manifest signature is invalid"
         return v
-    now = now or datetime.now(timezone.utc)
     try:
+        now = _instant(now)
         ia, ea = _parse_iso(manifest["issued_at"]), _parse_iso(manifest["expires_at"])
     except Exception as e:
         v["fresh"] = False
-        v["note"] = "unparseable issued_at/expires_at (%s)" % e
+        v["note"] = "unparseable issued_at/expires_at or `now` (%s)" % e
         return v
     window = (ea - ia).total_seconds()
     within = ia <= now < ea
@@ -764,13 +783,12 @@ def _two_witness_verify(digest, sig, pk, alg=_ALG):
 def _verify_window(obj, v, now, max_window_seconds):
     """Shared freshness gate for a signed, window-bounded object. Sets v['fresh'] and
     v['note']; returns nothing."""
-    from datetime import datetime, timezone
-    now = now or datetime.now(timezone.utc)
     try:
+        now = _instant(now)
         ia, ea = _parse_iso(obj["issued_at"]), _parse_iso(obj["expires_at"])
     except Exception as e:
         v["fresh"] = False
-        v["note"] = "unparseable issued_at/expires_at (%s)" % e
+        v["note"] = "unparseable issued_at/expires_at or `now` (%s)" % e
         return
     window = (ea - ia).total_seconds()
     within = ia <= now < ea
@@ -1560,7 +1578,6 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
     freshness; and, with trusted_anchors, whether the publisher is one the consumer trusts.
     No network. Discovery then reads the verified registry: registry_service,
     registry_authority, registry_trusts."""
-    from datetime import datetime, timezone
     if not isinstance(reg, dict):
         reg = {}
     v = {"registry_authentic": False, "fresh": None, "issuer_trusted": None,
@@ -1606,8 +1623,8 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
     if not ok:
         v["note"] = "registry signature is invalid"
         return v
-    now = now or datetime.now(timezone.utc)
     try:
+        now = _instant(now)
         ia, ea = _parse_iso(reg["issued_at"]), _parse_iso(reg["expires_at"])
         fresh = ia <= now < ea
         if max_window_seconds is not None and (ea - ia).total_seconds() > max_window_seconds:
@@ -1615,7 +1632,7 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
         v["fresh"] = fresh
     except Exception:
         v["fresh"] = False
-        v["note"] = "issued_at/expires_at are not valid instants"
+        v["note"] = "issued_at/expires_at or the caller's `now` are not valid instants"
     if trusted_anchors is not None:
         try:
             v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
@@ -2122,7 +2139,6 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
     nonce this login started with; freshness (iat <= now < exp); and, with trusted_anchors,
     that the issuer is one the relying party trusts. The subject is a credential hash, never
     a token or a person. No network."""
-    from datetime import datetime, timezone
     if not isinstance(tok, dict):
         tok = {}
     v = {"token_authentic": False, "audience_matches": None, "nonce_matches": None, "fresh": None,
@@ -2168,12 +2184,12 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
         v["audience_matches"] = (tok.get("aud") == audience)
     if nonce is not None:
         v["nonce_matches"] = (tok.get("nonce") == nonce)
-    now = now or datetime.now(timezone.utc)
     try:
+        now = _instant(now)
         v["fresh"] = _parse_iso(tok["iat"]) <= now < _parse_iso(tok["exp"])
     except Exception:
         v["fresh"] = False
-        v["note"] = "iat/exp are not valid instants"
+        v["note"] = "iat/exp or the caller's `now` are not valid instants"
     if trusted_anchors is not None:
         try:
             v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
@@ -2206,7 +2222,6 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
     signed by a key the list itself carries as ACTIVE for its publisher (an impostor cannot publish
     a trust list in an authority's name, and a publisher cannot sign one under a key it has
     retired); freshness; and, with trusted_anchors, whether the publisher is trusted."""
-    from datetime import datetime, timezone
     if not isinstance(tl, dict):
         tl = {}
     v = {"trust_list_authentic": False, "fresh": None, "issuer_trusted": None,
@@ -2250,8 +2265,8 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
     if not ok:
         v["note"] = "trust list signature is invalid"
         return v
-    now = now or datetime.now(timezone.utc)
     try:
+        now = _instant(now)
         ia, ea = _parse_iso(tl["issued_at"]), _parse_iso(tl["expires_at"])
         fresh = ia <= now < ea
         if max_window_seconds is not None and (ea - ia).total_seconds() > max_window_seconds:
@@ -2259,7 +2274,7 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
         v["fresh"] = fresh
     except Exception:
         v["fresh"] = False
-        v["note"] = "issued_at/expires_at are not valid instants"
+        v["note"] = "issued_at/expires_at or the caller's `now` are not valid instants"
     if trusted_anchors is not None:
         try:
             v["issuer_trusted"] = str(pk_hex).lower() in {str(k).lower() for k in trusted_anchors}
@@ -2956,15 +2971,28 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
     if ok is None:
         v["note"] = note
         return v
-    v["leaves_authentic"] = bool(ok)
     if not ok:
         v["note"] = "the bundle signature is invalid"
         return v
+    # The commitment must match the published set, and a mismatch is a REFUSAL, not a note.
+    # A caller who read `leaves_authentic: true` would take all_leaves_hex as the anonymity
+    # set, and member_index would place the holder inside a crowd that does not exist: an
+    # attacker who swaps every member but one leaves the signature genuine and the holder
+    # believing they are hidden. That is anonymity-set poisoning, and it defeats the entire
+    # purpose of the bundle. verify_revocation_feed refuses the same shape of tamper for the
+    # same reason, and these two must not disagree about what a broken commitment means.
     leaves = bundle.get("all_leaves_hex")
     leaves = leaves if isinstance(leaves, list) else []
     v["leaf_count"] = len(leaves)
     v["commitment_matches"] = (_leaves_root(leaves) == str(bundle.get("leaves_root_hex") or "").lower())
     v["count_matches"] = (len(leaves) == bundle.get("leaf_count"))
+    if not v["commitment_matches"]:
+        v["note"] = "the published leaves do not match the committed leaves_root_hex"
+        return v
+    if not v["count_matches"]:
+        v["note"] = "the published leaf count does not match the signed one"
+        return v
+    v["leaves_authentic"] = True
     _verify_window(bundle, v, now, max_window_seconds)
     if anchor_keys is not None:
         v["issuer_trusted"] = str(pk_hex).lower() in {str(a).lower() for a in anchor_keys}
@@ -2973,12 +3001,8 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
             str(bundle.get("merkle_root") or "").lower()
             == str((epoch_checkpoint.get("epoch") or {}).get("root_hex")
                    or epoch_checkpoint.get("merkle_root") or "").lower())
-    if not v["commitment_matches"]:
-        v["note"] = "the published leaves do not match the committed leaves_root_hex"
-    elif not v["count_matches"]:
-        v["note"] = "the published leaf count does not match the signed one"
-    elif v["epoch_matches"] is False:
-        v["note"] = "the bundle names a different epoch root than the published checkpoint"
+        if v["epoch_matches"] is False:
+            v["note"] = "the bundle names a different epoch root than the published checkpoint"
     return v
 
 
@@ -3106,13 +3130,16 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
         v["nonce_matches"] = (str(proof.get("verifier_nonce")) == str(expected_nonce))
     if expected_context is not None:
         v["context_matches"] = (proof.get("context_id") == expected_context)
-    from datetime import datetime, timezone, timedelta
-    ref = now or datetime.now(timezone.utc)
+    from datetime import timedelta
+    try:
+        ref = _instant(now)
+    except ValueError:  # a caller's bad `now` is a refusal, not a crash
+        ref = None
     try:
         issued = _parse_iso(proof.get("issued_at"))
     except Exception:  # noqa: BLE001 -- an unparseable instant is a refusal, never a crash
         issued = None
-    if issued is not None:
+    if issued is not None and ref is not None:
         # A proof may be a minute ahead of the verifier's clock and no older than max_age.
         v["fresh"] = (issued <= ref + timedelta(seconds=60)) and ((ref - issued).total_seconds() <= int(max_age_seconds or 300))
     else:

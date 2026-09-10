@@ -5,6 +5,51 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.351 — 2026-09-10 (the detached verifier answers for itself)
+
+Two defects in `scripts/polaris-verify.py`, both found by pointing the published
+conformance contract at the detached verifier in-process for the first time.
+
+**A swapped anonymity set read as authentic.** The members of an epoch leaves bundle
+ride outside the bytes that were signed, bound only by `leaves_root_hex`. The verifier
+recomputed that commitment, recorded the mismatch in a note, and still reported
+`leaves_authentic: true`. An attacker who swaps every member but one leaves the
+signature genuine, and the holder's own `member_index` still finds them, inside a crowd
+that does not exist. The set was published to give the holder a crowd to hide in, and
+this handed back a crowd of one. A mismatch is now a refusal, matching
+`verify_revocation_feed`, which has always refused the same shape of tamper, and
+matching both SDKs, which already folded the commitment into their verdict. Only the
+detached verifier disagreed.
+
+**A caller's `now` was never turned into an instant.** Every freshness gate compared
+`now` directly against parsed timestamps, while the conformance cases, the CLI and every
+docstring invite an ISO-8601 string. Four artifact types raised TypeError where the
+comparison sat outside a try. Four more sat inside one and answered `fresh: false` with a
+note blaming the artifact's own timestamps. The second is the worse failure: a verifier
+that calls fresh material stale, and blames the material, is believed. All seven gates
+now normalise through a new `_instant()`, which honours a string or a datetime and
+refuses a malformed one on its own terms.
+
+**Tests.** `scripts/test_verify_conformance.py` runs the detached verifier over all 65
+published conformance cases in-process, so a divergence between the two shipped verifiers
+fails a test run instead of reaching an integrator. `scripts/test_verify_p9.py` covers the
+P9 surface directly, including the anti-coercion property on the bytes: a holder proof's
+signed statement is byte-identical whether the presented code is the ordinary one or the
+duress one.
+
+**Coverage.** The standalone artifacts under `scripts/` are shipped product living outside
+the four package directories, so `--source` was silently discarding every line their tests
+covered. `polaris-coverage.sh` now runs those suites unrestricted. The detached verifier
+goes from 9% to 44%, and the relying-party client and verify-load harness enter the
+denominator honestly rather than being invisible.
+
+New invariants: `check_commitment_mismatch_is_a_refusal` pins the order in both verifiers
+that publish members outside the signed statement, in both SDKs, and in the published
+contract. `check_verifier_instant_normalised` pins the normalisation structurally, by AST,
+so any future verifier that compares against a raw `now` fails the layer.
+
+---
+
 ## v9.350 — 2026-09-10 (P9.2: a holder proves on their own device)
 
 The membership prover was always a program a holder could run, but nothing published what

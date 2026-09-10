@@ -8273,3 +8273,114 @@ def test_timestamp_transparency_check_discriminates(tmp_path):
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the promise is not restated honestly"
 
 
+
+
+def test_commitment_refusal_check_discriminates(tmp_path):
+    # v9.351: a set that rides outside the signed statement is bound only by its commitment,
+    # so a mismatch has to be a REFUSAL. Annotating it and still reporting the artifact
+    # authentic is how an attacker publishes an anonymity set of their own choosing.
+    good_verify = (
+        "def verify_epoch_leaves(b, now=None):\n"
+        "    v = {'leaves_authentic': False}\n"
+        "    v[\"commitment_matches\"] = _leaves_root(b) == b.get('leaves_root_hex')\n"
+        "    if not v['commitment_matches']:\n"
+        "        return v\n"
+        "    v[\"leaves_authentic\"] = True\n"
+        "    return v\n"
+        "\n"
+        "def verify_revocation_feed(f, now=None):\n"
+        "    v = {'feed_authentic': False}\n"
+        "    v[\"commitment_ok\"] = revoked_root(f) == f.get('revoked_root_hex')\n"
+        "    if not v['commitment_ok']:\n"
+        "        return v\n"
+        "    v[\"feed_authentic\"] = True\n"
+        "    return v\n")
+    good = {
+        'scripts/polaris-verify.py': good_verify,
+        'sdk/python/polaris_verify/__init__.py': 'leaves_root_hex = 1\n',
+        'sdk/typescript/src/index.ts': 'const x = "leaves_root_hex";\n',
+        'conformance/cases.json': '{"cases": ['
+            '{"name": "ok", "artifact": "epoch-leaves", "expect": {"authentic": true}}, '
+            '{"name": "swapped", "artifact": "epoch-leaves", "expect": {"authentic": false}}]}',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_commitment_mismatch_is_a_refusal(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+
+    # The mismatch becomes a note instead of a return: leaves_authentic stays true, and a
+    # caller reading it takes the attacker's set as the anonymity set.
+    write({'scripts/polaris-verify.py': good_verify.replace(
+        "    if not v['commitment_matches']:\n        return v\n",
+        "    if not v['commitment_matches']:\n        v['note'] = 'mismatch'\n")})
+    assert checks.check_commitment_mismatch_is_a_refusal(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a broken leaves commitment is annotated instead of refused"
+
+    # The artifact is called authentic BEFORE the commitment is even computed.
+    write({'scripts/polaris-verify.py': good_verify.replace(
+        "    v[\"commitment_ok\"] = revoked_root(f) == f.get('revoked_root_hex')\n"
+        "    if not v['commitment_ok']:\n"
+        "        return v\n"
+        "    v[\"feed_authentic\"] = True\n",
+        "    v[\"feed_authentic\"] = True\n"
+        "    v[\"commitment_ok\"] = revoked_root(f) == f.get('revoked_root_hex')\n")})
+    assert checks.check_commitment_mismatch_is_a_refusal(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the feed is called authentic before its commitment is checked"
+
+    # An SDK that never looks at the commitment accepts a swapped set in another language.
+    write({'sdk/typescript/src/index.ts': 'const x = 1;\n'})
+    assert checks.check_commitment_mismatch_is_a_refusal(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an SDK does not check the published set against its commitment"
+
+    # The published contract stops certifying the refusal, so other implementations are free
+    # to accept it.
+    write({'conformance/cases.json': '{"cases": ['
+           '{"name": "ok", "artifact": "epoch-leaves", "expect": {"authentic": true}}]}'})
+    assert checks.check_commitment_mismatch_is_a_refusal(tmp_path)[0].level == "FAIL", \
+        "must FAIL when no conformance case certifies that a swapped set is refused"
+
+
+def test_instant_normalised_check_discriminates(tmp_path):
+    # v9.351: a verifier told to judge "as of T" must honour T. Comparing a raw string `now`
+    # either raises, or -- worse -- reports fresh=false and blames the artifact's timestamps.
+    good_verify = (
+        "def _instant(now=None):\n"
+        "    return now\n"
+        "\n"
+        "def verify_thing(obj, now=None):\n"
+        "    now = _instant(now)\n"
+        "    return _parse_iso(obj['issued_at']) <= now\n"
+        "\n"
+        "def verify_wrapper(obj, now=None):\n"
+        "    return verify_thing(obj, now=now)\n")
+
+    def write(body):
+        f = tmp_path / 'scripts' / 'polaris-verify.py'
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body)
+
+    write(good_verify)
+    assert checks.check_verifier_instant_normalised(tmp_path)[0].level == "OK", \
+        "a verifier that normalises `now`, and a wrapper that only passes it on, must PASS"
+
+    # The helper is gone entirely.
+    write(good_verify.replace("def _instant(now=None):\n    return now\n", ""))
+    assert checks.check_verifier_instant_normalised(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the verifier defines no _instant()"
+
+    # The old idiom returns: a string `now` stays a string into the comparison.
+    write(good_verify.replace("    now = _instant(now)\n",
+                              "    now = now or datetime.now(timezone.utc)\n"))
+    assert checks.check_verifier_instant_normalised(tmp_path)[0].level == "FAIL", \
+        "must FAIL on the bare `now or datetime.now(...)` idiom"
+
+    # Normalisation simply dropped, leaving a raw comparison against the caller's value.
+    write(good_verify.replace("    now = _instant(now)\n", ""))
+    assert checks.check_verifier_instant_normalised(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a verifier compares against `now` without normalising it"

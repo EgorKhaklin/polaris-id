@@ -9331,7 +9331,133 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
                "signing tested under real ML-DSA and the issuer-binding field tested in the suite")
 
 
+
+def check_commitment_mismatch_is_a_refusal(root: pathlib.Path) -> list[Finding]:
+    """A set that rides OUTSIDE the signed statement must be refused when its commitment
+    breaks, not merely annotated.
+
+    Two published artifacts carry their members outside the bytes that were signed, bound
+    only by a hash committed to inside them: the revocation feed (`revoked_leaves` under
+    `revoked_root_hex`) and the epoch anonymity set (`all_leaves_hex` under
+    `leaves_root_hex`). For both, the signature stays genuine when the members are swapped,
+    because the members were never in the signed statement. Only the commitment catches it.
+
+    So the commitment is not advisory. A verifier that reports `leaves_authentic: true` and
+    leaves the mismatch in a note hands the caller a set an attacker chose: swap every member
+    but one and the holder's own `member_index` still finds them, inside a crowd that does not
+    exist. That is anonymity-set poisoning, and it costs the holder exactly the anonymity the
+    set was published to give. The revocation feed's version is a verifier accepting a
+    revocation list an attacker rewrote.
+
+    This pins the ORDER in the three shipped verifiers: the commitment is checked, and a
+    mismatch returns, BEFORE the artifact is called authentic. The behaviour itself is proven
+    by conformance case `epoch-leaves-swapped`, which every implementation must refuse."""
+    name = "commitment_refusal"
+    verifier = _read(root, "scripts/polaris-verify.py")
+    for fn, commitment, authentic in (
+            ("verify_epoch_leaves", "commitment_matches", "leaves_authentic"),
+            ("verify_revocation_feed", "commitment_ok", "feed_authentic")):
+        if f"def {fn}" not in verifier:
+            return _fail(name, f"the detached verifier must define {fn}")
+        body = verifier.split(f"def {fn}")[1].split("\ndef ")[0]
+        commit_at = body.find(f'v["{commitment}"] =')
+        accept_at = body.find(f'v["{authentic}"] = True')
+        if commit_at < 0:
+            return _fail(name, f"{fn} must compute the commitment into v[{commitment!r}]")
+        if accept_at < 0:
+            return _fail(name,
+                         f"{fn} must set v[{authentic!r}] = True at exactly one accepting point, so the "
+                         "commitment gate cannot be bypassed; assigning it from the signature result "
+                         "makes a swapped set read as authentic")
+        if commit_at > accept_at:
+            return _fail(name,
+                         f"{fn} calls the artifact authentic BEFORE checking its commitment; a caller that "
+                         f"reads {authentic} would take a swapped set as genuine")
+        between = body[commit_at:accept_at]
+        if "return v" not in between:
+            return _fail(name,
+                         f"{fn} must RETURN on a commitment mismatch, not merely note it: a note the caller "
+                         f"does not read is not a refusal, and {authentic} would still be true")
+    py_sdk = _read(root, "sdk/python/polaris_verify/__init__.py")
+    ts_sdk = _read(root, "sdk/typescript/src/index.ts")
+    for sdk, text in (("the Python SDK", py_sdk), ("the TypeScript SDK", ts_sdk)):
+        if "leaves_root_hex" not in text:
+            return _fail(name, f"{sdk} must check the published set against leaves_root_hex; a verifier that "
+                               "skips the commitment accepts a swapped anonymity set")
+    try:
+        cases = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return _fail(name, f"conformance/cases.json is not valid JSON ({e})")
+    swapped = [c for c in cases.get("cases", [])
+               if c.get("artifact") == "epoch-leaves" and c.get("expect", {}).get("authentic") is False]
+    if not swapped:
+        return _fail(name,
+                     "the published contract must carry a swapped-set case expecting authentic=false, so every "
+                     "implementation is certified to refuse it and not just this one")
+    return _ok(name,
+               "a broken commitment is a refusal, not a note: both verifiers that publish members outside the "
+               "signed statement check the commitment and return before calling the artifact authentic, both "
+               "SDKs check it too, and the conformance suite certifies the swapped set is refused")
+
+
+def check_verifier_instant_normalised(root: pathlib.Path) -> list[Finding]:
+    """A caller's `now` must become an instant before anything is compared against it.
+
+    The detached verifier is a trust boundary that strangers feed input to, and its contract
+    is that it returns a verdict rather than raising. Every freshness gate compares `now`
+    against parsed timestamps, and the conformance cases, the CLI and every docstring invite
+    `now` as an ISO-8601 string. A gate that compared the raw value did two different wrong
+    things: it raised TypeError where the comparison sat outside a try, and where it sat
+    inside one it reported `fresh: false` with a note blaming the artifact's own timestamps.
+    The second is the worse failure. A verifier that answers "not fresh" about material that
+    is fresh, and blames the material, is trusted and believed.
+
+    So the rule is structural: any verifier that accepts `now` and compares against it must
+    route it through `_instant` first."""
+    name = "instant_normalised"
+    rel = "scripts/polaris-verify.py"
+    src = _read(root, rel)
+    if "def _instant(" not in src:
+        return _fail(name, f"{rel} must define _instant() to normalise a caller's `now` into an aware datetime")
+    stale = re.findall(r"\bnow\s*=\s*now\s+or\s+datetime\.now\(", src)
+    if stale:
+        return _fail(name,
+                     f"{rel} still normalises `now` with the bare `now or datetime.now(...)` idiom in "
+                     f"{len(stale)} place(s); that keeps a string `now` a string and the next comparison "
+                     "either raises or silently refuses genuine material")
+    try:
+        import ast as _ast
+        tree = _ast.parse(src)
+    except SyntaxError as e:
+        return _fail(name, f"{rel} does not parse ({e})")
+    offenders = []
+    for fn in tree.body:
+        if not isinstance(fn, _ast.FunctionDef):
+            continue
+        if not any(a.arg == "now" for a in fn.args.args):
+            continue
+        segment = _ast.get_source_segment(src, fn) or ""
+        # Does this function compare against `now` itself, rather than only passing it on?
+        compares = any(
+            isinstance(n, _ast.Compare)
+            and any(isinstance(x, _ast.Name) and x.id == "now" for x in [n.left, *n.comparators])
+            for n in _ast.walk(fn))
+        if compares and "_instant(" not in segment:
+            offenders.append(fn.name)
+    if offenders:
+        return _fail(name,
+                     "these verifiers compare against a caller's `now` without normalising it through "
+                     "_instant(), so an ISO-8601 `now` raises or produces a false refusal: "
+                     + ", ".join(sorted(offenders)))
+    return _ok(name,
+               "every verifier that judges freshness normalises the caller's `now` through _instant() first, so "
+               "an ISO-8601 instant is honoured and a malformed one is refused honestly rather than blamed on "
+               "the artifact being verified")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_commitment_mismatch_is_a_refusal,
+    check_verifier_instant_normalised,
     check_holder_side_prover,
     check_holder_key_binding,
     check_attestation_signed,

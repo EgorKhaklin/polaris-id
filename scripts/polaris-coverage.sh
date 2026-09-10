@@ -65,11 +65,25 @@ export COVERAGE_PROCESS_START="$ROOT/.coveragerc"
 # alongside the floor. (An early version swallowed suite failures with `|| echo`
 # and would have passed CI on a broken test as long as coverage held.)
 SUITE_FAIL=0
-run() {  # run <cwd> <module...>
+run() {  # run <cwd> <module...>  -- measures the product packages
     local dir="$1"; shift
     if ! ( cd "$dir" && COVERAGE_RCFILE="$ROOT/.coveragerc" \
         "$PY" -m coverage run -p --source="$ROOT/polaris_web,$ROOT/polaris_cli,$ROOT/polaris_checks,$ROOT/polaris_sim" \
         -m "$@" ); then
+        echo "::error::suite failed: $dir $*" >&2
+        SUITE_FAIL=1
+    fi
+}
+
+# The standalone artifacts under scripts/ -- the detached verifier, the wallet, the
+# relying-party client -- are shipped product that lives OUTSIDE the four package dirs, so
+# --source would silently discard every line their tests cover. (It did: scripts/polaris-verify.py
+# read 9% while its only measured lines came in through subprocesses.) These suites therefore
+# run UNRESTRICTED, measuring exactly the files they import. The .coveragerc omits keep tests,
+# venvs and generated code out; drills are not imported, so they never enter the denominator.
+run_standalone() {  # run_standalone <cwd> <module...>
+    local dir="$1"; shift
+    if ! ( cd "$dir" && COVERAGE_RCFILE="$ROOT/.coveragerc" "$PY" -m coverage run -p -m "$@" ); then
         echo "::error::suite failed: $dir $*" >&2
         SUITE_FAIL=1
     fi
@@ -80,7 +94,8 @@ run "$ROOT"            pytest polaris_checks/test_checks.py -q
 run "$ROOT/polaris_web" unittest test_app test_check_constraints test_pqc_signing test_custody test_secretstore
 run "$ROOT/polaris_web" unittest test_invariants_property test_redaction_property test_canonical_equivalence
 run "$ROOT/polaris_cli" unittest test_cli
-run "$ROOT/scripts"     unittest test_verify_load test_wallet test_relying_party
+run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relying_party \
+                                       test_verify_conformance test_verify_p9
 # polaris_sim's tests import the package (from polaris_sim import ...), so they
 # run from the repo root with the dotted module path, not from inside the dir.
 run "$ROOT" unittest polaris_sim.test_sim
