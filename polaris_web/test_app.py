@@ -11439,3 +11439,195 @@ class CardPersonalizationTests(PolarisTestCase):
                 ref = bytes(cur.fetchone()["credential_ref"])
         self.assertEqual(len(ref), 32)
         self.assertNotIn(token_value.encode(), ref)
+
+
+class IdentityProofingTests(PolarisTestCase):
+    """P4.4a: the proofing model, measured. The full evidence table is walked by
+    scripts/polaris-enrollment-proofing-drill.py against its own database; these run in the
+    measured suite so the module is not carried at zero coverage by a drill nobody counts.
+
+    That omission is the reason this class exists: proofing.py shipped at v9.371 covered only
+    by a drill, pilot.py did the same at v9.376, and the coverage floor caught the pair of them
+    two ships later rather than either one at the time."""
+
+    def _pf(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        import proofing
+        return proofing
+
+    def _piece(self, strength="SUPERIOR", validated=True, verified=True):
+        return {"evidence_type": "PASSPORT", "strength": strength,
+                "validation_method": "DIGITAL_SIGNATURE_CHECK",
+                "verification_method": "BIOMETRIC_COMPARISON",
+                "validated": validated, "verified": verified}
+
+    def test_the_level_is_derived_from_the_evidence(self):
+        pf = self._pf()
+        self.assertEqual(pf.derive_ial([]), "IAL1")
+        self.assertEqual(pf.derive_ial([self._piece()]), "IAL2")
+        self.assertEqual(pf.derive_ial([self._piece("STRONG"), self._piece("STRONG")]), "IAL2")
+        self.assertEqual(pf.derive_ial([self._piece("STRONG"), self._piece("FAIR")]), "IAL1")
+
+    def test_ial3_needs_the_session_and_a_live_biometric(self):
+        pf = self._pf()
+        two = [self._piece(), self._piece()]
+        self.assertEqual(pf.derive_ial(two, presence="IN_PERSON", biometric_collected=True),
+                         "IAL3")
+        self.assertEqual(pf.derive_ial(two, presence="REMOTE_UNSUPERVISED",
+                                       biometric_collected=True), "IAL2")
+        self.assertEqual(pf.derive_ial(two, presence="IN_PERSON", biometric_collected=False),
+                         "IAL2")
+
+    def test_evidence_nobody_checked_contributes_nothing(self):
+        # The sharper case is the second: a genuine document belonging to somebody else passes
+        # validation and fails verification.
+        pf = self._pf()
+        self.assertEqual(pf.effective_strength(self._piece(validated=False)), "UNACCEPTABLE")
+        self.assertEqual(pf.effective_strength(self._piece(verified=False)), "UNACCEPTABLE")
+        self.assertEqual(pf.derive_ial([self._piece(verified=False)]), "IAL1")
+
+    def test_an_overclaim_is_refused_and_an_underclaim_is_not(self):
+        pf = self._pf()
+        with self.assertRaises(pf.ProofingRefused):
+            pf.check_claimed_ial("IAL3", [self._piece()])
+        self.assertEqual(pf.check_claimed_ial("IAL1", [self._piece()]), "IAL2")
+
+    def test_why_not_higher_says_what_is_missing(self):
+        pf = self._pf()
+        self.assertIn("IAL3 would need", pf.why_not_higher([self._piece()]))
+        self.assertIn("SUPERIOR", pf.why_not_higher([]))
+
+    def test_the_record_refuses_the_document_itself(self):
+        pf = self._pf()
+        for field in ("document_number", "scan", "biometric_template", "date_of_birth"):
+            with self.subTest(field=field), self.assertRaises(pf.ProofingRefused) as ctx:
+                pf.check_evidence(dict(self._piece(), **{field: "x"}))
+            self.assertIn("refusing to record", str(ctx.exception))
+
+    def test_a_capture_needs_liveness_and_quality(self):
+        pf = self._pf()
+        self.assertTrue(pf.BiometricCapture("FINGERPRINT", 90, True).acceptable())
+        self.assertFalse(pf.BiometricCapture("FACE", 99, False).acceptable())
+        self.assertFalse(pf.BiometricCapture("IRIS", 10, True).acceptable())
+        with self.assertRaises(pf.ProofingRefused):
+            pf.BiometricCapture("RETINA", 90, True)
+        with self.assertRaises(pf.ProofingRefused):
+            pf.BiometricCapture("FACE", 900, True)
+        self.assertNotIn("template", pf.BiometricCapture("FACE", 90, True).as_record())
+
+    def test_recording_writes_the_derived_level_and_reads_back(self):
+        pf = self._pf()
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT individual_id FROM Individual ORDER BY 1 LIMIT 1")
+                person = cur.fetchone()["individual_id"]
+                cur.execute("SELECT agency_id FROM Agency ORDER BY 1 LIMIT 1")
+                agency = cur.fetchone()["agency_id"]
+            result = pf.record_proofing(conn, person, agency,
+                                        [self._piece(), self._piece("STRONG")],
+                                        presence="IN_PERSON",
+                                        capture=pf.BiometricCapture("FINGERPRINT", 88, True))
+            self.assertEqual(result["derived_ial"], "IAL3")
+            self.assertEqual(pf.current_ial(conn, person), "IAL3")
+            self.assertEqual(len(pf.evidence_for(conn, result["proofing_id"])), 2)
+            # The latest, not the high-water mark.
+            pf.record_proofing(conn, person, agency, [self._piece("FAIR")])
+            self.assertEqual(pf.current_ial(conn, person), "IAL1")
+        finally:
+            conn.close()
+
+    def test_an_unknown_presence_or_strength_is_refused(self):
+        pf = self._pf()
+        with self.assertRaises(pf.ProofingRefused):
+            pf.derive_ial([], presence="BY_POST")
+        with self.assertRaises(pf.ProofingRefused):
+            pf.check_evidence(dict(self._piece(), strength="EXCELLENT"))
+
+
+class PilotWindDownTests(PolarisTestCase):
+    """P5.1: the wind-down, measured. The full run is
+    scripts/polaris-pilot-winddown-drill.py against its own database; what belongs here is the
+    logic the measured suite can reach, so the module is not carried at zero coverage."""
+
+    def _pilot(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        import pilot
+        return pilot
+
+    def _conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def test_the_consent_language_refuses_the_promise_of_deletion(self):
+        pilot = self._pilot()
+        words = pilot.consent_language()
+        self.assertIn("cannot promise your data will be deleted", words)
+        self.assertIn("would not be true", words)
+        self.assertIn("including us", words)
+        self.assertIn("second, independent authority", words)
+
+    def test_a_wind_down_with_no_cosigner_is_refused(self):
+        pilot = self._pilot()
+        with self._conn() as conn:
+            with self.assertRaises(pilot.WindDownRefused) as ctx:
+                pilot.wind_down(conn, 1, reason="no cosigner")
+            self.assertIn("mass revocation", str(ctx.exception))
+
+    def test_an_authority_cannot_cosign_its_own_winddown(self):
+        pilot = self._pilot()
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT issuing_agency_id FROM IdentityToken "
+                            "WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
+                row = cur.fetchone()
+            if row is None:
+                self.skipTest("no active credential to wind down")
+            with self.assertRaises(pilot.WindDownRefused) as ctx:
+                pilot.wind_down(conn, 1, cosigner_agency_id=row["issuing_agency_id"])
+            self.assertIn("cannot co-sign its own", str(ctx.exception))
+
+    def test_a_dry_run_changes_nothing(self):
+        pilot = self._pilot()
+        with self._conn() as conn:
+            before = pilot.pseudonymized_count(conn)
+            plan = pilot.wind_down(conn, 1, dry_run=True)
+            self.assertTrue(plan["dry_run"])
+            self.assertEqual(pilot.pseudonymized_count(conn), before)
+
+    def test_the_residue_report_is_derived_from_the_schema(self):
+        pilot = self._pilot()
+        with self._conn() as conn:
+            tables = {r["table"] for r in pilot.residue(conn)}
+        self.assertIn("individual", tables)
+        self.assertIn("identitytoken", tables)
+        self.assertGreater(len(tables), 10,
+                           "the report must walk the foreign keys, not name two tables")
+
+    def test_participants_can_be_scoped_to_one_authority(self):
+        pilot = self._pilot()
+        with self._conn() as conn:
+            everyone = pilot.participants(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT issuing_agency_id FROM IdentityToken ORDER BY token_id "
+                            "LIMIT 1")
+                agency = cur.fetchone()["issuing_agency_id"]
+            scoped = pilot.participants(conn, agency)
+        self.assertLessEqual(len(scoped), len(everyone))
+        self.assertGreater(len(everyone), 0)
+
+    def test_the_dpia_pack_is_derived_and_refuses_to_be_a_dpia(self):
+        pilot = self._pilot()
+        with self._conn() as conn:
+            pack = pilot.dpia_inputs(conn)
+        self.assertGreater(len(pack["tables"]), 20)
+        self.assertGreater(len(pack["identifying_columns"]), 10)
+        found = {(c["table_name"], c["column_name"]) for c in pack["identifying_columns"]}
+        self.assertIn(("individual", "legal_name"), found)
+        self.assertTrue(any("duress" in c for _t, c in found),
+                        "the duress columns are the ones a hand-written list omits")
+        self.assertIn("counsel", pack["not_a_dpia"].lower())
+        self.assertIn("consent_language", pack)

@@ -10473,6 +10473,62 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_modules_are_measured(root: pathlib.Path) -> list[Finding]:
+    """Every application module is reached by a MEASURED test, not only by a drill (P5.1).
+
+    A drill proves a path runs. It does not count toward coverage, because the gate measures
+    the unittest suites and a drill is a separate process. So a module exercised only by a
+    drill sits at ZERO percent while looking thoroughly tested, and nothing says so until the
+    floor happens to break.
+
+    That is not hypothetical. proofing.py shipped at v9.371 with a drill and no suite;
+    pilot.py did the same at v9.376. Both sat at 0% and the coverage gate caught the pair two
+    ships later, in a CI run whose failure looked like it belonged to the ship that tripped it
+    rather than to either ship that caused it. This names the module when it is added.
+
+    A module exempts itself with a `coverage:exempt` marker in its own source, carrying the
+    reason. The marker lives next to the code rather than in a list here, for the same reason
+    the SQL uses that convention: a central list of exemptions goes stale silently, and a stale
+    entry is a hole waiting for a future module of that name."""
+    name = "modules_measured"
+    web = root / "polaris_web"
+    if not web.is_dir():
+        return _fail(name, "polaris_web must exist")
+
+    modules = sorted(p.name for p in web.glob("*.py")
+                     if not p.name.startswith("test_") and p.name != "__init__.py")
+    suites = " ".join((web / p.name).read_text() for p in web.glob("test_*.py"))
+
+    unmeasured, unexplained = [], []
+    for module in modules:
+        stem = module[:-3]
+        if f"import {stem}" in suites or f"{stem}." in suites:
+            continue
+        source = (web / module).read_text()
+        marker = re.search(r"coverage:exempt[ \t]*[-—:]?[ \t]*(.*)", source)
+        if marker is None:
+            unmeasured.append(module)
+        elif len(marker.group(1).strip()) < 20:
+            unexplained.append(module)
+    if unmeasured:
+        return _fail(name,
+                     "no measured suite reaches %s. A drill proves a path RUNS but does not "
+                     "count toward coverage, so a module exercised only by one sits at zero "
+                     "percent while looking thoroughly tested. Add a class to a polaris_web/"
+                     "test_*.py, or mark the module `coverage:exempt` with the reason"
+                     % ", ".join(unmeasured))
+    if unexplained:
+        return _fail(name,
+                     "%s is marked coverage:exempt with no reason worth the name. The marker "
+                     "is a deliberate act and the sentence beside it is the whole point"
+                     % ", ".join(unexplained))
+    return _ok(name,
+               "every application module is reached by a measured suite or exempts itself in "
+               "its own source with a stated reason: a module exercised only by a drill counts "
+               "zero toward the coverage floor while looking tested, and this names it when it "
+               "is added rather than when the floor happens to break")
+
+
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
     """A pilot can be wound back, and says truthfully what that leaves (P5.1).
 
@@ -12237,6 +12293,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_modules_are_measured,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,

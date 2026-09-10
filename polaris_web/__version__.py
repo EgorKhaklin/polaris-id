@@ -18,8 +18,9 @@ Bump procedure (see CLAUDE.md "Shipping"):
     2. Prepend a `## vX.Y — DATE (subtitle)` block to CHANGELOG.md.
     3. Run `bash scripts/polaris-preflight.sh` (polaris_checks + link-check) until READY.
 """
+# coverage:exempt - one constant, imported by everything; check_version_is_canonical pins it and there is no behaviour to exercise.
 
-__version__: str = "9.378"
+__version__: str = "9.379"
 
 
 # Backwards-compat alias for code that imported `POLARIS_VERSION`

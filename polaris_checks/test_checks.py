@@ -9324,6 +9324,59 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_modules_are_measured_check_discriminates(tmp_path):
+    # v9.379: a module exercised only by a drill counts ZERO toward the coverage floor while
+    # looking thoroughly tested. proofing.py and pilot.py each shipped that way and the gate
+    # caught them two ships later, in a run whose failure looked like it belonged to the ship
+    # that tripped it. This check names the module when it is added.
+    def write(files):
+        web = tmp_path / "polaris_web"
+        if web.exists():
+            for f in web.glob("*.py"):
+                f.unlink()
+        web.mkdir(parents=True, exist_ok=True)
+        for name, body in files.items():
+            (web / name).write_text(body)
+
+    write({"app.py": "x = 1\n", "helper.py": "y = 2\n",
+           "test_app.py": "import app\nimport helper\n"})
+    assert checks.check_modules_are_measured(tmp_path)[0].level == "OK", \
+        "modules the suites import must PASS"
+
+    # THE MODULE WITH ONLY A DRILL.
+    write({"app.py": "x = 1\n", "drill_only.py": "y = 2\n", "test_app.py": "import app\n"})
+    result = checks.check_modules_are_measured(tmp_path)[0]
+    assert result.level == "FAIL", "a module no measured suite reaches must be named"
+    assert "drill_only.py" in result.message, "and named specifically, not merely counted"
+
+    # REACHED THROUGH ITS ATTRIBUTES, which is how the real suites use these modules.
+    write({"app.py": "x = 1\n", "pilot.py": "y = 2\n",
+           "test_app.py": "import app\nresult = pilot.wind_down(conn)\n"})
+    assert checks.check_modules_are_measured(tmp_path)[0].level == "OK", \
+        "a module used through its attributes is reached"
+
+    # THE SELF-DECLARED EXEMPTION, which must carry a reason worth the name.
+    write({"app.py": "x = 1\n",
+           "standin.py": "# coverage:exempt - the stand-in itself; test_custody exercises it "
+                         "through the custody interface.\ny = 2\n",
+           "test_app.py": "import app\n"})
+    assert checks.check_modules_are_measured(tmp_path)[0].level == "OK", \
+        "a module that exempts itself with a reason is allowed"
+    write({"app.py": "x = 1\n", "standin.py": "# coverage:exempt\ny = 2\n",
+           "test_app.py": "import app\n"})
+    result = checks.check_modules_are_measured(tmp_path)[0]
+    assert result.level == "FAIL", "a bare marker with no reason is not an exemption"
+    assert "no reason" in result.message
+    write({"app.py": "x = 1\n", "standin.py": "# coverage:exempt - because\ny = 2\n",
+           "test_app.py": "import app\n"})
+    assert checks.check_modules_are_measured(tmp_path)[0].level == "FAIL", \
+        "a one-word reason is a marker wearing a sentence"
+
+    # AND A TEST FILE IS NOT ITSELF A MODULE NEEDING COVERAGE.
+    write({"app.py": "x = 1\n", "test_app.py": "import app\n"})
+    assert checks.check_modules_are_measured(tmp_path)[0].level == "OK"
+
+
 def test_pilot_winddown_check_discriminates(tmp_path):
     # v9.376 (P5.1): the ways a pilot's promise stops being keepable. A consent form that says
     # "deleted" in a system where C1 makes that false, or that passes by not mentioning it at

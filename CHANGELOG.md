@@ -5,6 +5,35 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.379 — 2026-09-10 (a module a drill covers is a module nothing covers)
+
+v9.378's CI broke the coverage floor, and the cause was two ships old.
+
+`proofing.py` shipped at v9.371 with a drill and no measured suite.
+`pilot.py` did the same at v9.376. **A drill proves a path runs; it does not
+count toward coverage**, because the gate measures the unittest suites and a
+drill is a separate process. So both modules sat at **0%** while looking
+thoroughly tested, and the floor caught the pair of them two ships later, in a
+run whose failure looked like it belonged to the ship that tripped it rather
+than to either ship that caused it.
+
+I made the same omission twice, which is the argument for a check rather than
+for being more careful.
+
+**The fix is tests, not a lower floor.** `IdentityProofingTests` and
+`PilotWindDownTests` take `proofing.py` from 0% to 93% and `pilot.py` from 0%
+to 79%; the total is back to 75% against a floor of 74.
+
+**And `check_modules_are_measured` names the next one at the moment it is
+added.** A module exempts itself with a `coverage:exempt` marker in its own
+source, carrying the reason. The marker lives next to the code rather than in a
+list inside the check, for the same reason the SQL already uses that
+convention: a central list of exemptions goes stale silently, and a stale entry
+is a hole waiting for a future module of that name. A bare marker with no
+reason, or a one-word one, is refused: the sentence beside it is the whole
+point. Three modules carry one today, each explaining why a unit test would be
+testing a stand-in rather than the module.
+
 ## v9.378 — 2026-09-10 (P5.1 closed: the pack you owe before you start)
 
 v9.376 shipped the wind-down. This adds the rest and closes the row.

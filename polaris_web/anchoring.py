@@ -33,6 +33,7 @@ This module is one of the cryptographic-primitive layers in Polaris:
 Together they realize the "post-quantum by default" claim at the
 substrate level, in line with PDF Appendix E.
 """
+# coverage:exempt - drives an external chain; the anchoring drill exercises it against a stand-in, and a unit test here would be testing the stand-in rather than the module.
 
 from __future__ import annotations
 

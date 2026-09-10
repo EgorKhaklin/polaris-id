@@ -7,6 +7,7 @@ be real in CI. Cryptography is real: ML-DSA-65 via OpenSSL (cryptography) for
 Sign/GetPublicKey (P1.2 custody), AES-256-GCM for GenerateDataKey/Encrypt/
 Decrypt (P1.3 secret store). Not shipped in any image; test infrastructure.
 """
+# coverage:exempt - the stand-in itself; test_custody exercises it through the custody interface, which is the only way it is ever reached in production shape.
 
 from __future__ import annotations
 
