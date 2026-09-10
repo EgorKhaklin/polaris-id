@@ -28,6 +28,18 @@ it precedes the numbered deployment phases, and the wrap is frozen behind it (se
 "Frozen behind the engine" in Phase E). This reopens no non-goal and does not
 soften the constitution.
 
+**The holder before the deployment (2026-09-10).** The owner directed a second
+reprioritization. Version 2 of the paper was written from the tree rather than from
+this plan, and it found five load-bearing absences in the system itself; four of them
+had no row here at all, and a fifth existed only as a sentence inside a completed row.
+The cause was the ordering principle: phases were ordered by distance to national
+deployment, which is gated on institutions, rather than by what can be built without
+one. **Phase P9 below is that work and it is the active phase.** Every row in it is
+buildable by the maintainer alone and every row retires a stated limitation. The rows
+that wait on an external actor are gathered under "Waiting on the world" so the
+execution protocol cannot select one. This reopens no non-goal and does not soften the
+constitution; P9.1 carries a constitutional note against the vocation.
+
 **Status marks:** `[ ]` pending · `[>]` in progress · `[x]` done ·
 `[EXT]` blocked on an external actor (funding, law, vendor, institution).
 Update marks in place as part of each ship; never delete rows.
@@ -88,7 +100,12 @@ test, or pilot; an external team's docs-only integration against the wire specif
 (the conformance suite is the contract; the integration itself has not happened); anchor
 verification in the SDKs (P8.5c; the detached verifier has it); a relying-party-signed
 authorization request; native wallet applications (the wallet is a protocol and a reference
-script); and every institutional prerequisite of a national system (statute,
+script); a holder-side key (the model is issuer-centric, which is why document signing is
+notarial, login is by possession, and no delegation exists); a scoped nullifier, without
+which a membership proof cannot enforce one human once per scope; a presentation that
+carries no handle stable across verifiers; attestations signed by the attesting agency
+rather than recorded by an operator; a schema-enforced `RecoveryRequest`; and every
+institutional prerequisite of a national system (statute,
 funding, enrollment workforce, manufacturing, authorization to operate).
 
 **Carrying debts:** none from the P0 list; that paragraph closed with P0
@@ -114,6 +131,7 @@ OpenSSL 3.5 reaching the pgbouncer and postgres images.
 | P6 | Certification and assurance | Authorization-ready | Validated crypto option, 800-63 mapping, audit and red team published |
 | P7 | National rollout | 350M persons | First state live; a national program office assumes ownership |
 | P8 | The exchange fabric, the Polaris way | Many independent organizations | A non-Polaris implementation interoperates from the spec alone; an institutional exchange is provable to a third party WITHOUT retaining the payload |
+| **P9** | **The holder: the key, the proof and the grant** (ACTIVE) | n/a | A holder proves on their own device, once per scope, unlinkable across scopes; an agent acts under a signed, expiring, separately revocable grant |
 
 Phase E is COMPLETE (v9.280): all of PE.1-PE.8 shipped. The engine was built before
 more deployment machinery was wrapped around it; the numbered phases below resume as
@@ -123,6 +141,9 @@ into the "digital society" layer (the exchange-fabric piece Polaris lacks), and 
 gated on the P4-P7 deployment or institutional phases. Its defining constraint is the
 anti-surveillance inversion of an evidentiary message log: evidence that an exchange occurred and was
 authorized, without retaining the underlying personal data.
+P9 is the ACTIVE phase (2026-09-10): a software arc, buildable now, that closes the
+system's own gaps rather than the deployment's. It precedes the numbered deployment
+phases in priority, not in numbering.
 P5-P7 are gated on external actors; the buildable machinery for each is listed so
 no external gate is ever waiting on us.
 
@@ -430,6 +451,68 @@ which the vocation forbids.
 
 ---
 
+## P9 - The holder: the key, the proof and the grant [SOFTWARE ARC, BUILDABLE NOW]
+
+Objective: close the gaps Version 2 of the paper found in the tree. Polaris is
+issuer-centric: a holder holds a credential, not a key pair, and that single absence is
+the common cause under four separate limitations (document signing is notarial, login is
+by possession, no agent can be delegated to, and a presentation carries a value stable
+across the verifiers it is shown to). This phase supplies the missing primitive and the
+capabilities it unblocks, plus three smaller closures the paper named. Nothing here is
+gated on an external actor, and every row retires a sentence from the paper's limitations
+section or from [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
+
+**Constitutional note (rule 1).** A key the holder controls is also a key the holder can
+be compelled to use. P9.1 is not done until the duress path is re-drilled under
+holder-key presentation and a coerced presentation remains byte-indistinguishable from a
+consenting one. A holder key that weakens the duress path is a regression against the
+vocation and is refused on that ground, not deferred.
+
+Order by dependency: P9.1 -> P9.2 -> P9.3 -> P9.4 -> P9.8, with P9.5, P9.6 and P9.7
+independent and shippable in any gap. P9.6 was carried as a follow-up sentence inside
+P8.5b and becomes a row here so the execution protocol can select it.
+
+| ID | Item | Size | Risk | Blocked by | Definition of done |
+|---|---|---|---|---|---|
+| [ ] P9.1 | Holder-side key binding | L | high | - | An optional holder public key binds to a credential at issuance or by a possession-proved rotation, recorded in an append-only register under the same lifecycle discipline as `AuthorityKeyEvent`; a presentation carries a holder signature over the context, the verifier's nonce and the instant; `verify_presentation` and both SDKs check it; the wire spec gains the signed-field list and the conformance suite its vectors; the duress drill re-runs under holder-key presentation and the coerced and consenting shapes stay identical; `check_holder_key_binding` with a detection test |
+| [ ] P9.2 | Holder-side proving | L | high | P9.1 | The membership prover runs on the holder's device from a Merkle path served out of the published epoch tree; the authority learns only that a path was fetched, the fetch is bounded (C8) and not keyed by holder; the wallet proves locally and the two-witness differential still decides the verdict; retires "the prover runs on the Polaris host" from the soundness ledger; `check_holder_side_prover` |
+| [ ] P9.3 | Scoped nullifier | M | med | P9.2 | One additional public input, the hash of the holder's secret with the relying party's scope and the epoch, so a verifier refuses a second proof from the same person in its own scope while two verifiers cannot link their nullifiers; the leaf derivation already mixes a context, so the circuit change is bounded and the tree depth is unchanged; conformance vectors in both SDKs; `check_scoped_nullifier`. This is the ingredient privacy-preserving proof of personhood is missing |
+| [ ] P9.4 | Pairwise presentation | L | high | P9.3 | A presentation carries no value stable across verifiers: at the presentation layer the token value is replaced by a per-verifier handle derived from the holder key and the verifier's scope, and the login token's subject follows it; the issuer's own records are unchanged; the README, the privacy section and the paper restate cross-verifier correlation as bounded rather than permanent; `check_pairwise_presentation` |
+| [ ] P9.5 | Attestations signed by the attesting agency | M | med | - | An `AgencyTrustAttestation` carries a signature by the attesting agency over the attested key, the context and the window, so cross-authority trust rests on a signature rather than on an operator's word; the federation manifest publishes it; the detached verifier and both SDKs require it; existing rows stay verifiable as legacy for one major; `check_attestation_signed`. Closes the last joint in federation held up by procedure |
+| [ ] P9.6 | Anchor verification in both SDKs (was P8.5c) | S | low | - | `verify_timestamp_anchor` and its witnessed and quorum forms exist in the Python and TypeScript SDKs with conformance vectors, so long-term validation is decidable by an implementation that imports no Polaris code; `check_conformance_suite` requires the artifact |
+| [ ] P9.7 | `RecoveryRequest` enforced at the schema | M | med | - | The one audit-of-record instance resting on procedure discipline gains what the other twelve have: the decision fields move one way, a raw update from a database session is refused, and the readiness ledger's "not fully enforced" sentence is retired; `check_aor_append_only_triggers` covers thirteen of thirteen |
+| [ ] P9.8 | Delegated agent grant | L | high | P9.1, P9.4 | A `polaris-agent-grant/1` signed by the holder key: actions, limits, expiry and a revocation handle scoped to the grant; an agent presents it beside the credential; a service verifies the chain offline and learns only that the grant is genuine, unexpired, in scope, unrevoked and issued by a valid principal, without learning who; revoking the grant does not revoke the human's credential; wire spec, both SDKs, the fuzzer, a real-ML-DSA drill and a two-instance proof; `check_agent_grant` |
+
+Exit gate: a holder proves membership on their own device, once per scope, without
+becoming linkable across scopes; an agent acts inside a signed, expiring, separately
+revocable grant; federation trust rests on signatures end to end; and every claim above is
+pinned by an invariant check with a detection test. Seven sentences leave the paper's
+limitations section.
+
+---
+
+## Waiting on the world [NEVER SELECT FROM THIS LIST]
+
+These rows are blocked on an actor Polaris does not control. Standing rule 6 applies to
+each: the buildable readiness artifact is listed in the row and is built before the actor
+is engaged, so no external gate is ever waiting on us. The execution protocol must not
+select from here.
+
+| Row | Waiting on |
+|---|---|
+| P0.11 | OpenSSL 3.5 reaching the pgbouncer and postgres images |
+| P1.12 | A penetration-testing firm |
+| P4.6 | Secure-element vendors and silicon availability |
+| P5.2, P5.3 | An institution willing to run a pilot with consenting users |
+| P6.1 | A FIPS-validated lattice implementation |
+| P6.3 | A sponsoring agency and an authorizing official |
+| P6.4 | An audit firm |
+| P6.6 | An auditor, a red team and a bounty budget |
+| P7.1 | Statute, funding and a program office |
+| P7.4 | A staffed operations organisation |
+
+---
+
 ## Standing rules (every phase, every ship)
 
 1. **The constitution gates everything.** No item ships if it erodes C1-C10 or
@@ -473,10 +556,13 @@ before the P5 consent framework exists. These do not expire with any phase.
 
 ## Execution protocol for the next session
 
-1. Read [CLAUDE.md](CLAUDE.md), then this file. Phase E (the engine) is COMPLETE
-   (v9.280); the active phase is now the lowest numbered phase with pending rows.
-2. Pick the first row whose Blocked-by column is satisfied; prefer S and M
-   rows when resuming cold.
+1. Read [CLAUDE.md](CLAUDE.md), then this file. **The active phase is named in the
+   decision record at the top of this file. It is P9.** Phases E and P8 are COMPLETE;
+   the numbered deployment phases resume after P9. Do not derive the active phase from
+   the lowest number: that rule selected a row blocked on a vendor's container image.
+2. Pick the first row in the active phase whose Blocked-by column is satisfied and whose
+   Risk column does not read `ext`; prefer S and M rows when resuming cold. Never select
+   a row listed under "Waiting on the world".
 3. One row is one ship (S rows may batch). Mark `[>]` on start; mark `[x]`
    with a version stamp when the definition of done is verifiably true.
 4. If a definition of done proves wrong or underspecified, amend the row in
