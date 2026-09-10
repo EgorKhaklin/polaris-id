@@ -9324,6 +9324,139 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_pilot_winddown_check_discriminates(tmp_path):
+    # v9.376 (P5.1): the ways a pilot's promise stops being keepable. A consent form that says
+    # "deleted" in a system where C1 makes that false, or that passes by not mentioning it at
+    # all; a wind-down one authority can perform alone, which is the coercion the revocation
+    # bound exists to make expensive; a co-signer validated partway through, leaving the pilot
+    # half wound down; a covert deletion path dressed as a privacy feature; and a residue
+    # report from a hand-maintained list, which stops being true the first time a table is
+    # added and keeps reading correctly while it does.
+    MOD = ('import re\n'
+           "\ndef participants(conn, agency_id=None):\n    return []\n"
+           "\ndef residue(conn):\n"
+           "    cur.execute('SELECT * FROM information_schema.table_constraints')\n"
+           "    return []\n"
+           "\ndef wind_down(conn, actor_user_id, *, agency_id=None, cosigner_agency_id=None,\n"
+           "              reason='pilot concluded', dry_run=False):\n"
+           "    if live and cosigner_agency_id is not None:\n"
+           "        issuers = {t['issuing_agency_id'] for t in live}\n"
+           "        if cosigner_agency_id in issuers:\n"
+           "            raise WindDownRefused('cannot co-sign its own wind-down')\n"
+           "        if missing:\n            raise WindDownRefused('half wound down')\n"
+           "    for token in live:\n"
+           "        cur.execute('CALL uc8_revoke_token(%s, %s, %s, %s, %s)')\n"
+           "    for person in people:\n"
+           "        cur.execute('CALL uc_pseudonymize_individual(%s, %s, %s)')\n"
+           "\ndef consent_language(conn=None):\n"
+           '    return ("We cannot promise your data will be deleted, because in this system "\n'
+           '            "that would not be true. Records are append-only so that nobody, "\n'
+           '            "including us, can erase them. Ending this pilot requires a "\n'
+           '            "second, independent authority to co-sign.")\n')
+    DRILL = ("# a wind-down with no co-signer is REFUSED\n"
+             "# self_refused = 'cannot co-sign its own' in str(exc)\n"
+             "# ...before anything was revoked\n"
+             "# no participant's name is readable anywhere in Individual\n"
+             "# the verification audit-of-record is STILL THERE\n"
+             "# a table added later appears in the residue report unprompted\n"
+             "# running the wind-down again is safe and a no-op\n")
+    DOC = ("Read the ending first. Arrange this before enrolling anybody. What this row\n"
+           "does not yet ship: the deployment profile and the DPIA template.\n")
+    good = {
+        'polaris_web/pilot.py': MOD,
+        'scripts/polaris-pilot-winddown-drill.py': DRILL,
+        'docs/operator/PILOT.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # THE CONSENT FORM. Refusing the promise, not merely omitting it.
+    write({'polaris_web/pilot.py': MOD.replace(
+        '"We cannot promise your data will be deleted, because in this system "',
+        '"Your data will be deleted when the pilot ends. "')})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "a consent form promising deletion must be refused"
+    # Silence on the subject is the actual failure mode, not a pass: a form that simply never
+    # mentions deletion satisfies a naive "does not promise it" test and none of the duty.
+    write({'polaris_web/pilot.py': MOD.replace("We cannot promise", "We say nothing about")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "saying nothing on the subject is the actual failure mode, not a pass"
+    for phrase in ("append-only", "including us", "second, independent authority"):
+        write({'polaris_web/pilot.py': MOD.replace(phrase, "something")})
+        assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+            f"the consent language must carry: {phrase}"
+
+    # ONE AUTHORITY ALONE, and a co-signer validated too late.
+    write({'polaris_web/pilot.py': MOD.replace("cosigner_agency_id=None,", "").replace(
+        "cosigner_agency_id is not None", "True").replace(
+        "        if cosigner_agency_id in issuers:\n", "        if False:\n")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "a wind-down must name a co-signer"
+    reordered = MOD.replace(
+        "    if live and cosigner_agency_id is not None:\n"
+        "        issuers = {t['issuing_agency_id'] for t in live}\n"
+        "        if cosigner_agency_id in issuers:\n"
+        "            raise WindDownRefused('cannot co-sign its own wind-down')\n"
+        "        if missing:\n            raise WindDownRefused('half wound down')\n"
+        "    for token in live:\n"
+        "        cur.execute('CALL uc8_revoke_token(%s, %s, %s, %s, %s)')\n",
+        "    for token in live:\n"
+        "        cur.execute('CALL uc8_revoke_token(%s, %s, %s, %s, %s)')\n"
+        "    if live and cosigner_agency_id is not None:\n"
+        "        issuers = {t['issuing_agency_id'] for t in live}\n"
+        "        if cosigner_agency_id in issuers:\n"
+        "            raise WindDownRefused('cannot co-sign its own wind-down')\n"
+        "        if missing:\n            raise WindDownRefused('half wound down')\n")
+    write({'polaris_web/pilot.py': reordered})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "validating the co-signer after revoking leaves the pilot half wound down"
+    write({'polaris_web/pilot.py': MOD.replace(
+        "        if cosigner_agency_id in issuers:\n"
+        "            raise WindDownRefused('cannot co-sign its own wind-down')\n", "")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "an authority that issued into the pilot must not co-sign its own wind-down"
+
+    # THE COVERT DELETION PATH, dressed as a privacy feature.
+    write({'polaris_web/pilot.py': MOD + "\ndef purge(conn):\n"
+           "    cur.execute('DELETE FROM Individual')\n"})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "the wind-down must never delete a participant; C1 is non-negotiable"
+    write({'polaris_web/pilot.py': MOD.replace("uc_pseudonymize_individual", "raw_update")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "erasure must go through the audited procedure"
+
+    # THE HAND-MAINTAINED INVENTORY.
+    write({'polaris_web/pilot.py': MOD.replace(
+        "    cur.execute('SELECT * FROM information_schema.table_constraints')\n",
+        "    return ['individual', 'identitytoken']\n")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "a listed residue report stops being true the first time a table is added"
+
+    # THE DRILL and the record.
+    for needle in ("# a wind-down with no co-signer is REFUSED",
+                   "# self_refused = 'cannot co-sign its own' in str(exc)",
+                   "# ...before anything was revoked",
+                   "# no participant's name is readable anywhere in Individual",
+                   "# the verification audit-of-record is STILL THERE",
+                   "# a table added later appears in the residue report unprompted",
+                   "# running the wind-down again is safe and a no-op"):
+        write({'scripts/polaris-pilot-winddown-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+            f"the drill must assert: {needle}"
+    for phrase in ("Read the ending first.", "Arrange this before enrolling anybody.",
+                   "does not yet ship"):
+        write({'docs/operator/PILOT.md': DOC.replace(phrase, "")})
+        assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+            f"the record must state: {phrase}"
+
+
 def test_formal_specs_check_discriminates(tmp_path):
     # v9.374 (P6.7): the ways a formal spec stops carrying weight. A filename that does not
     # match its module, so the spec cannot be PARSED; a configuration that exists only as a

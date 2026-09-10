@@ -5,6 +5,60 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.376 — 2026-09-10 (P5.1a: a pilot that can actually be undone)
+
+A pilot's real promise is not that it will work. It is that it can be wound
+back. That is the promise institutions say yes on, and it is the one that fails
+quietly: erasure becomes a paragraph in a consent form, nobody ever executes
+it, and "what is still in there?" gets answered years later by whoever inherits
+the database.
+
+**Building it found that the system refuses to let one authority do it.** A
+wind-down is a mass revocation, and `uc8_revoke_token` bounds the share of an
+agency's population that may be revoked in a rolling window, demanding a
+co-signing agency past it. That control exists because a lone authority able to
+revoke a population at will is the coercion this system exists to make
+expensive, and **it applies to an operator ending their own pilot.** The
+refusal arrived partway through the first drill run, which is exactly where it
+should not: the co-signer is now validated before anything is revoked, against
+three conditions, because one valid for part of the population would revoke that
+part and then raise, leaving the pilot in a state nobody designed.
+
+An authority that issued into the pilot cannot co-sign its own wind-down. A
+second authority agreeing is the whole content of co-signing; the same one
+signing twice is not.
+
+**The consent language is generated from what the code does.** C1 makes the
+audit-of-record append-only and non-negotiable, so Polaris cannot delete a
+participant; the supported erasure is pseudonymization. So the language
+**refuses the promise of deletion in those words** rather than passing by not
+mentioning it, because a form that said nothing on the subject would satisfy a
+naive test and none of the obligation. It also tells the participant that what
+is kept is kept so nobody, *including the operator*, can quietly erase evidence
+of what the system did, and that the protection applies to them as much as it
+constrains them.
+
+**The residue report is derived from the schema.** A hand-maintained inventory
+of what a wind-down leaves behind stops being true the first time a table is
+added, and the failure is silent: the privacy claim keeps reading correctly
+while becoming false. The drill adds a table with a foreign key to `Individual`
+and requires it to appear unprompted.
+
+The drill also asserts, in the unusual direction for a privacy test, that the
+audit-of-record is **still there** afterwards. A wind-down that removed it would
+have broken the guarantee that nobody can quietly erase what the system did.
+
+**P5.1 stays open.** This is the rollback-and-erasure plan and the consent
+language it constrains. The one-command deployment profile, ops pack, metrics
+bundle and DPIA template are not done, and `docs/operator/PILOT.md` says which
+parts are absent rather than reading as a complete pilot kit.
+
+Three of my own checks were too loose again, each in a way worth naming: one
+grepped for a phrase split across two adjacent string literals, one read code
+order from text that included a comment naming the very function it was
+ordering against, and one would have passed on a consent form that simply said
+nothing.
+
 ## v9.375 — 2026-09-10 (P6.7 closed: the other two specs)
 
 v9.374 graduated `meta/tla/` to checked and shipped the C1 purge-coverage

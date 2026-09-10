@@ -90,8 +90,8 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 217 invariant
-checks (v9.374) each with a detection test; nineteen operator runbooks and ledgers; the protocol layer
+release; CVE gates on dependencies and images; a coverage floor; 218 invariant
+checks (v9.376) each with a detection test; nineteen operator runbooks and ledgers; the protocol layer
 (P8, complete and released): a signed registry, trust lists, the exchange gateway with
 receipts, a timestamp authority, document signing with long-term validation, an auth broker,
 offline wallet presentations, algorithm agility and versioning, frozen at version 1 with a
@@ -374,7 +374,7 @@ saying yes cheap and safe.
 
 | ID | Item | Size | Risk | Blocked by | Definition of done |
 |---|---|---|---|---|---|
-| [ ] P5.1 | Pilot-in-a-box | L | med | P1, P4.2 | A one-command pilot deployment profile: ops pack, metrics and reporting bundle, DPIA template, consent flow, and a rollback-and-erasure plan |
+| [>] P5.1 | Pilot-in-a-box (v9.376: the wind-down) | L | med | P1, P4.2 | IN PROGRESS. THE ROLLBACK-AND-ERASURE HALF SHIPPED (v9.376), which is the part whose absence lets a pilot start on a promise the system cannot keep. A pilot's real promise is that it can be wound back, and that is the one that fails quietly. BUILDING IT FOUND THAT THE SYSTEM REFUSES TO LET ONE AUTHORITY DO IT: a wind-down is a mass revocation, `uc8_revoke_token` bounds the share of a population an agency may revoke and demands a co-signer past it, and that control applies to an operator ending their OWN pilot. The refusal arrived partway through the first drill run, so the co-signer is now validated BEFORE anything is revoked (one valid for part of the population would revoke that part and then raise); an authority that issued into the pilot cannot co-sign its own wind-down, since a second authority agreeing is the content of co-signing. THE CONSENT LANGUAGE is generated from what the code does and REFUSES the promise of deletion in those words rather than passing by omission, because C1 makes deletion impossible here and a form saying nothing would satisfy a naive test and none of the duty; it also says what is kept is kept so nobody INCLUDING THE OPERATOR can erase evidence, and that this protects the participant as much as it constrains them. THE RESIDUE REPORT is derived from `information_schema`, so a table added next year appears without anyone remembering. The drill asserts, in the unusual direction, that the audit-of-record is STILL THERE afterwards. `check_pilot_winddown` with a twenty-fixture detection test and [PILOT.md](docs/operator/PILOT.md). REMAINING: the one-command deployment profile, ops pack, metrics and reporting bundle, and DPIA template |
 | [ ] P5.2 | Campus pilot | M | ext | P5.1 | [EXT: university MOU, IRB] An opt-in campus credential shadow pilot; our part is support engineering and the public exit report |
 | [ ] P5.3 | Agency pilot | L | ext | P5.2 | [EXT: county or agency MOU] Shadow verification alongside an existing credential at a real agency, to the same reporting bar |
 | [ ] P5.4 | Post-pilot fix arcs | L | med | each pilot | Every pilot finding triaged, fixed, and pinned; the report published |

@@ -13,6 +13,7 @@ fails otherwise.
 | [`KUBERNETES.md`](KUBERNETES.md) | The Helm reference profile: the production topology on a cluster with enforced network policies and the restricted Pod Security Standard |
 | [`INSTALL.md`](INSTALL.md) | The laptop evaluation install (the macOS launcher) and its troubleshooting |
 | [`HARDENING.md`](HARDENING.md) | The operating system around Polaris: SSH, updates, firewall and Docker, time, daemon, permissions, auditing |
+| [`PILOT.md`](PILOT.md) | Running a pilot and ending one: what you may truthfully tell a participant, why a wind-down needs a second authority to co-sign, and the schema-derived report of what is still in there afterwards |
 | [`OPERATIONS.md`](OPERATIONS.md) | Day 2: backup and restore, the running stack, scaling, monitoring, archive and purge, certificate transparency, incidents, common errors, upgrades, decommissioning |
 | [`SECRETS.md`](SECRETS.md) | Every secret the stack uses, how each is generated, read and rotated, and the sealed store |
 | [`KEY-CEREMONY.md`](KEY-CEREMONY.md) | The issuer signing key: custody drivers (file, PKCS#11, AWS KMS), the witnessed ceremony, rotation with trust anchors |

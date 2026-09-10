@@ -279,6 +279,16 @@ jobs:
       - name: Enrollment proofing — the level is derived, not typed
         run: python scripts/polaris-enrollment-proofing-drill.py
 
+      # v9.376 (P5.1) — a pilot that can actually be undone. The promise institutions say yes
+      # on is that it can be wound back, and that is the one that fails quietly. The drill
+      # asserts a wind-down is REFUSED without a co-signer (it is a mass revocation, and the
+      # bound that makes coercive mass revocation expensive applies to an operator ending
+      # their own pilot), that the co-signer is checked before anything moves, that no
+      # participant's name survives, and, in the unusual direction, that the audit-of-record
+      # is STILL THERE. Builds and drops its own database.
+      - name: Pilot wind-down — undone, and honest about what remains
+        run: python scripts/polaris-pilot-winddown-drill.py
+
       # v9.372 (P6.2) — the 800-63 mapping, RESOLVED. A control mapping is the easiest document
       # in a project to write and the easiest to let rot: a table of claims about a codebase,
       # maintained by hand, read by people who cannot check it, going stale the first time

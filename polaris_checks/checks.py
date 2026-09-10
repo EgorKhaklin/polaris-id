@@ -10473,6 +10473,144 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
+    """A pilot can be wound back, and says truthfully what that leaves (P5.1).
+
+    A pilot's real promise is not that it will work, it is that it can be undone. That is the
+    promise institutions say yes on and the one that fails quietly: erasure becomes a paragraph
+    in a consent form, nobody executes it, and what is still in the database gets discovered
+    years later by whoever inherits it.
+
+    THE CONSENT LANGUAGE MUST NOT PROMISE DELETION. C1 makes the audit-of-record append-only
+    and non-negotiable, so Polaris cannot delete a participant; the supported erasure is
+    pseudonymization. A consent form is where the gap between what a system does and what its
+    operators believe it does becomes a promise to a person, and "your data will be deleted" is
+    where it happens. The language is generated from what the code does and REFUSES the promise
+    in those words, rather than passing by not mentioning it: a form that said nothing on the
+    subject would satisfy a naive test and none of the obligation.
+
+    A WIND-DOWN IS A MASS REVOCATION AND ONE AUTHORITY CANNOT DO IT. uc8_revoke_token bounds
+    the share of a population an agency may revoke and demands a co-signer past it, because a
+    lone authority able to revoke a population at will is the coercion this system exists to
+    make expensive. Ending a pilot has that shape, so the control applies to the operator
+    ending their own pilot, and the co-signer is validated BEFORE anything is revoked: one
+    valid for part of the population would revoke that part and then raise, leaving the pilot
+    in a state nobody designed.
+
+    AND THE RESIDUE REPORT IS DERIVED, NOT LISTED. A hand-maintained inventory of what a
+    wind-down leaves behind stops being true the first time a table is added, and the failure
+    is silent: the privacy claim keeps reading correctly while becoming false."""
+    name = "pilot_winddown"
+    mod = _read(root, "polaris_web/pilot.py")
+    if not mod:
+        return _fail(name, "polaris_web/pilot.py must carry the wind-down")
+    for fn in ("def wind_down", "def residue", "def consent_language", "def participants"):
+        if fn not in mod:
+            return _fail(name, f"the module must expose {fn.split()[1]}()")
+
+    consent = mod.split("def consent_language")[1].split("\ndef ")[0]
+    # Adjacent string literals joined before searching. The phrase this check looks for is
+    # split across two of them in the source ("...would not be " "true."), so grepping the
+    # file cannot see a sentence the program plainly contains. Same shape as a prose check
+    # that depended on where a markdown line happened to wrap.
+    consent = re.sub(r'"\s*\n\s*"', "", consent)
+    if "cannot promise" not in consent or "would not be true" not in consent:
+        return _fail(name,
+                     "the consent language must REFUSE the promise of deletion in those words. "
+                     "Passing by simply not mentioning it would be satisfied by a form that "
+                     "said nothing on the subject, which is the actual failure mode")
+    for phrase, why in ("append-only", "the participant must be told what is kept"), \
+                       ("including us", "and that the same protection constrains the operator"), \
+                       ("second, independent authority",
+                        "and that no single organisation can revoke everyone alone"):
+        if phrase not in consent:
+            return _fail(name, why)
+
+    flow = mod.split("def wind_down")[1].split("\ndef ")[0]
+    if "cosigner_agency_id" not in flow:
+        return _fail(name,
+                     "a wind-down is a mass revocation and must name a co-signer. The bound "
+                     "that makes coercive mass revocation expensive applies to an operator "
+                     "ending their own pilot")
+    # Comments stripped before the ordering is read. The module explains this very rule in a
+    # comment that names uc8_revoke_token above the guard, and a positional check over the raw
+    # text would conclude the revocation came first. The same trap as the migration module's
+    # rowcount note; it is worth expecting whenever a check reads order from source.
+    flow_code = "\n".join(ln for ln in flow.splitlines() if not ln.lstrip().startswith("#"))
+    revoke_at = flow_code.find("uc8_revoke_token")
+    validate_at = flow_code.find("WindDownRefused")
+    if validate_at < 0 or (0 <= revoke_at < validate_at):
+        return _fail(name,
+                     "the co-signer must be validated BEFORE anything is revoked. One valid "
+                     "for part of the population would revoke that part and then raise, "
+                     "leaving the pilot half wound down and no procedure to finish it")
+    if "in issuers" not in flow:
+        return _fail(name,
+                     "an authority that issued into the pilot must not co-sign its own "
+                     "wind-down: a second authority agreeing is the content of co-signing, and "
+                     "the same one signing twice is not")
+    if "uc_pseudonymize_individual" not in flow:
+        return _fail(name, "participants must be erased through the audited procedure")
+    if "DELETE FROM Individual" in mod or "DELETE FROM individual" in mod:
+        return _fail(name,
+                     "the wind-down must not delete a participant. C1 is non-negotiable and a "
+                     "covert deletion path here would be the one place it could be broken "
+                     "while looking like a privacy feature")
+
+    residue = mod.split("def residue")[1].split("\ndef ")[0]
+    if "information_schema" not in residue:
+        return _fail(name,
+                     "the residue report must be DERIVED from the schema. A hand-maintained "
+                     "list stops being true the first time a table is added, and the privacy "
+                     "claim keeps reading correctly while becoming false")
+
+    drill = _read(root, "scripts/polaris-pilot-winddown-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-pilot-winddown-drill.py must run the wind-down "
+                           "against a real database")
+    for needed, why in (("no co-signer is REFUSED",
+                         "the one-authority refusal must be exercised"),
+                        ("cannot co-sign its own", "and the self-co-sign refusal"),
+                        ("before anything was revoked",
+                         "and that the refusal happens before the population moves"),
+                        ("no participant's name is readable anywhere",
+                         "erasure must be asserted against the ROWS, not a count"),
+                        ("audit-of-record is STILL THERE",
+                         "the unusual direction: a wind-down that removed the audit would have "
+                         "broken the guarantee that nobody can quietly erase what the system "
+                         "did"),
+                        ("appears in the residue report unprompted",
+                         "a table added later must show up without anyone remembering"),
+                        ("again is safe and a no-op",
+                         "a wind-down nobody dares run once is worth nothing")):
+        if needed not in drill:
+            return _fail(name, why)
+
+    doc = _read(root, "docs/operator/PILOT.md")
+    if not doc:
+        return _fail(name, "the pilot record must be published (docs/operator/PILOT.md)")
+    low = " ".join(doc.lower().split())
+    for phrase, why in (("read the ending first",
+                         "the document must lead with the wind-down, because that is the "
+                         "promise a pilot is said yes on"),
+                        ("arrange this before enrolling anybody",
+                         "the co-signer prerequisite must be stated as a precondition rather "
+                         "than discovered at the end"),
+                        ("does not yet ship",
+                         "the row is partial and the document must say which parts are absent "
+                         "rather than reading as a complete pilot kit")):
+        if phrase not in low:
+            return _fail(name, why)
+    return _ok(name,
+               "a pilot can be wound back and is honest about the half it cannot undo: the "
+               "consent language refuses the promise of deletion in those words rather than by "
+               "omission, a wind-down needs a second authority that did not issue into the "
+               "pilot and is validated before anything is revoked, erasure goes through the "
+               "audited procedure and never deletes, the residue report is derived from the "
+               "schema so a table added later cannot go unlisted, and the drill asserts the "
+               "audit-of-record is still there afterwards")
+
+
 def check_formal_specs(root: pathlib.Path) -> list[Finding]:
     """The TLA+ specs are checked, bound to the tree, and able to fail (P6.7).
 
@@ -12062,6 +12200,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_pilot_winddown,
     check_formal_specs,
     check_accessibility,
     check_assurance_mapping,
