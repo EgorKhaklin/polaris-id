@@ -36,6 +36,7 @@ and the posture documents see [reference/](../reference/README.md).
 
 | Document | The mechanism |
 |---|---|
+| [card-profile.md](card-profile.md) | The physical card as an object somebody else can implement: the on-card data model, the dual-signature layout, PIN and duress semantics, succession, and the limits each of those has |
 | [duress-codes.md](duress-codes.md) | The compulsion-resistant verification path |
 | [recovery-ceremony.md](recovery-ceremony.md) | Recovering an identity without a single point of compromise |
 | [federation.md](federation.md) | Cross-agency trust, recorded explicitly, never transitive |

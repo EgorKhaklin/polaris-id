@@ -9324,6 +9324,159 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_card_profile_check_discriminates(tmp_path):
+    # v9.366 (P4.1): the ways a card profile stops being implementable or stops being safe.
+    # An encoding with more than one reading, which lets a signature move onto content it did
+    # not authorise; a reader that skips tags it does not know, verifying a signature over
+    # bytes it never read; the record creeping onto the card one field at a time;
+    # accept-if-either on the dual signature, which hands the scheme to whoever breaks the
+    # classical leg first; and vectors that drift from the encoder they are supposed to pin.
+    MOD = ('import hashlib\n'
+           'FORBIDDEN_FIELDS = frozenset({"token_value", "legal_name", "date_of_birth",\n'
+           '                              "biometric", "duress_code"})\n'
+           'BODY_TAGS = {1: "profile_version"}\n'
+           'NAME_TO_TAG = {"profile_version": 1}\n'
+           "\ndef credential_ref(token_value):\n    return hashlib.sha3_256(b'x').digest()\n"
+           "\ndef pairwise_handle(secret, scope):\n    return hashlib.sha3_256(b'y').digest()\n"
+           "\ndef encode(fields):\n"
+           "    forbidden = set(fields) & FORBIDDEN_FIELDS\n"
+           "    if forbidden:\n        raise CardProfileError('refusing to put ...')\n"
+           "    unknown = set(fields) - set(NAME_TO_TAG)\n"
+           "    if unknown:\n        raise CardProfileError('unknown card fields')\n"
+           "    return b''\n"
+           "\ndef decode(blob):\n"
+           "    # refuses: appears twice / out of order / unknown tag / truncated\n"
+           "    raise CardProfileError('appears twice, out of order, unknown tag, truncated')\n"
+           "\ndef signing_body(fields):\n"
+           "    return encode({k: v for k, v in fields.items() if k in BODY_TAGS.values()})\n"
+           "\ndef verify_card(blob, *, verify_classical=None, verify_pq=None,\n"
+           "                require_pq=False, now=None):\n"
+           "    checked = []\n"
+           "    if False in checked:\n        return {'authentic': False}\n"
+           "    return {'authentic': True}\n"
+           "\ndef response_body(challenge, reader_scope, handle):\n    return b''\n")
+    VECTORS = ('{"profile": "id.polaris.card.1", "cases": [{"signing_body_hex": "00", '
+               '"signing_digest_hex": "00", "card_object_hex": "00"}]}\n')
+    MAKE = "# regenerates the vectors from the encoder\n"
+    SUITE = "def test_vectors():\n    assert case['card_object_hex']\n"
+    DRILL = ("# ...and is REFUSED under another authority's key\n"
+             "# no single-field edit survives the issuer signature\n"
+             "# a good classical signature does NOT rescue a bad post-quantum one\n"
+             "# ...and two readers cannot tell they saw the same card\n"
+             "# the duress key does not appear in the card object anywhere\n")
+    DOC = ("An offline verifier cannot raise a duress alarm. A card cannot prove offline\n"
+           "that it is the current one. Unlinkable proof of membership needs the holder's\n"
+           "phone.\n")
+    THREATS = "### T-P1: a card is read in a pocket\n"
+    good = {
+        'polaris_card/card_profile.py': MOD,
+        'polaris_card/vectors/card-objects.json': VECTORS,
+        'polaris_card/make_vectors.py': MAKE,
+        'polaris_card/test_card_profile.py': SUITE,
+        'scripts/polaris-card-profile-drill.py': DRILL,
+        'docs/design/card-profile.md': DOC,
+        'docs/design/threat-model.md': THREATS,
+    }
+
+    def write(overrides=None, remove=()):
+        files = dict(good); files.update(overrides or {})
+        for rel in remove:
+            files.pop(rel, None)
+            f = tmp_path / rel
+            if f.exists():
+                f.unlink()
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_card_profile(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # THE STDLIB SHADOW. `profile` is a standard-library module.
+    write({'polaris_card/profile.py': MOD})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "a module named profile.py shadows the standard library for anything that puts this "
+    (tmp_path / 'polaris_card/profile.py').unlink()
+
+    # THE ENCODING WITH TWO READINGS, one refusal at a time.
+    for needle in ("appears twice", "out of order", "unknown tag", "truncated"):
+        write({'polaris_card/card_profile.py': MOD.replace(needle, "something else")})
+        assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+            f"decode must refuse: {needle}"
+
+    # THE RECORD CREEPING ON. Refused by name, and the guard standing on its own.
+    write({'polaris_card/card_profile.py': MOD.replace('"token_value", ', "")})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "the token value must be refused on a card by name"
+    reordered = MOD.replace(
+        "    forbidden = set(fields) & FORBIDDEN_FIELDS\n"
+        "    if forbidden:\n        raise CardProfileError('refusing to put ...')\n"
+        "    unknown = set(fields) - set(NAME_TO_TAG)\n"
+        "    if unknown:\n        raise CardProfileError('unknown card fields')\n",
+        "    unknown = set(fields) - set(NAME_TO_TAG)\n"
+        "    if unknown:\n        raise CardProfileError('unknown card fields')\n"
+        "    forbidden = set(fields) & FORBIDDEN_FIELDS\n"
+        "    if forbidden:\n        raise CardProfileError('refusing to put ...')\n")
+    write({'polaris_card/card_profile.py': reordered})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "the forbidden check must run before the vocabulary check and stand on its own"
+
+    # THE DEPENDENCY. A profile has to be implementable inside a secure element's toolchain.
+    write({'polaris_card/card_profile.py': "from cryptography import x\n" + MOD})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "the profile must not import a crypto library"
+
+    # ACCEPT-IF-EITHER, and the policy flag.
+    write({'polaris_card/card_profile.py': MOD.replace(
+        "    if False in checked:\n        return {'authentic': False}\n", "")})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "when both signatures are present both must verify"
+    write({'polaris_card/card_profile.py': MOD.replace("require_pq=False, ", "")})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "a verifier must be able to require post-quantum by policy"
+
+    # THE SIGNING BODY covering its own signatures.
+    write({'polaris_card/card_profile.py': MOD.replace(
+        "    return encode({k: v for k, v in fields.items() if k in BODY_TAGS.values()})\n",
+        "    return encode(fields)\n")})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "the signing body must exclude the signature tags"
+
+    # THE VECTORS: published, generated, and checked back.
+    write(remove=('polaris_card/vectors/card-objects.json',))
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "the vectors must be published"
+    write(remove=('polaris_card/make_vectors.py',))
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "the vectors must be generated from the encoder rather than hand-written"
+    write({'polaris_card/test_card_profile.py': "def test_nothing():\n    pass\n"})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "the suite must check the vectors back against the encoder"
+
+    # THE DRILL and its individual claims.
+    for needle in ("...and is REFUSED under another authority's key",
+                   "no single-field edit survives the issuer signature",
+                   "a good classical signature does NOT rescue a bad post-quantum one",
+                   "...and two readers cannot tell they saw the same card",
+                   "the duress key does not appear in the card object anywhere"):
+        write({'scripts/polaris-card-profile-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+            f"the drill must assert: {needle}"
+
+    # THE LIMITS, which are the honest half of the profile.
+    for phrase in ("An offline verifier cannot raise a duress alarm.",
+                   "A card cannot prove offline\nthat it is the current one.",
+                   "Unlinkable proof of membership needs the holder's\nphone."):
+        write({'docs/design/card-profile.md': DOC.replace(phrase, "")})
+        assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+            f"the profile must state: {phrase[:40]}"
+
+    # AND THE THREAT MODEL. The physical layer had no entries before this row.
+    write({'docs/design/threat-model.md': "### T-S1: forged signing key\n"})
+    assert checks.check_card_profile(tmp_path)[0].level == "FAIL", \
+        "the physical layer must be reviewed against the threat model"
+
+
 def test_quantum_event_readiness_check_discriminates(tmp_path):
     # v9.365 (P7.6): the ways a population migration turns into an outage. Closing the
     # migration window before the population is on the new algorithm; falling back to

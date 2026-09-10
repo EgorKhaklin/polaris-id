@@ -260,6 +260,15 @@ jobs:
         env:
           POLARIS_QE_POPULATION: '1200'
 
+      # v9.366 (P4.1) — the card profile's own suite: the encoder and decoder reproduce the
+      # PUBLISHED VECTORS byte for byte, and every refusal holds (the record off the card by
+      # name, unknown tags, repeated tags, descending tags, truncation, wrong doc type, wrong
+      # version, wrong key length, no signature at all). No database, no crypto library: the
+      # profile is dependency-free because it has to be implementable inside a secure
+      # element's toolchain.
+      - name: Card profile — the encoding, the vectors, and the refusals
+        run: python -m unittest discover -s polaris_card -t . -p 'test_*.py'
+
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
           COVERAGE_FLOOR: "74"
@@ -1764,6 +1773,14 @@ jobs:
       # bounded by SIGNING (about nine tenths of the work), so the lever is signing
       # parallelism and not database capacity. Needs psql/createdb; the drill builds and drops
       # its own database against the service above.
+      # v9.366 (P4.1) — the card under REAL signatures: P-256 for the classical leg, which
+      # is what today's certified silicon does, and real ML-DSA-65 for the post-quantum one.
+      # The suite's stubs always say yes; this is where a card is refused under another
+      # authority's key, where every field is flipped in turn, and where the anti-downgrade
+      # rule meets an actual forged signature in both directions.
+      - name: Card profile — a credential, not a badge, under real signatures
+        run: python scripts/polaris-card-profile-drill.py
+
       - name: Quantum event — a population re-signed under real ML-DSA-87 (measured)
         run: python scripts/polaris-quantum-event-drill.py
         env:

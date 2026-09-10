@@ -10473,6 +10473,167 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_card_profile(root: pathlib.Path) -> list[Finding]:
+    """The card is specified as an object somebody else can implement (P4.1).
+
+    The schema modelled a card from the first version: serials, biometric binding type, duress
+    hash, succession. What it did not have was an encoding, and a card profile that exists only
+    as prose is a profile two implementers read differently.
+
+    THE ENCODING HAS ONE READING. Deterministic TLV, tags ascending and non-repeating, unknown
+    tags refused rather than skipped. All three matter because the object is signed: a format
+    with two encodings of the same content is one where a signature moves onto content it did
+    not authorise, and a reader that skips what it does not recognise verifies a signature over
+    bytes it never looked at.
+
+    THE RECORD IS NOT ON THE CARD. The token value, the name, the date of birth, biometric
+    templates and the duress code in any form are refused BY NAME, not merely left out of the
+    vocabulary. A card that emitted the token value would hand any reader the identifier the
+    relying-party API accepts, so one read of a card in a pocket would be as good as holding it.
+
+    BREAKING THE WEAKER ALGORITHM IS NOT ENOUGH. When both signatures are present both must
+    verify. Accept-if-either hands the scheme to whoever breaks the classical leg first, which
+    is the entire reason a transitional card carries two.
+
+    AND THE VECTORS ARE THE CONTRACT. An implementer writing an applet in C has no other way to
+    check agreement, so the vectors are published, generated from the encoder rather than
+    hand-written, and checked back against it."""
+    name = "card_profile"
+    mod = _read(root, "polaris_card/card_profile.py")
+    if not mod:
+        return _fail(name, "polaris_card/card_profile.py must carry the normative encoding")
+    if _read(root, "polaris_card/profile.py"):
+        return _fail(name,
+                     "the module must not be named profile.py: `profile` is a standard-library "
+                     "module, and a file with that name shadows it for any process that puts "
+                     "this directory on sys.path")
+    for fn in ("def encode", "def decode", "def signing_body", "def verify_card",
+               "def credential_ref", "def pairwise_handle", "def response_body"):
+        if fn not in mod:
+            return _fail(name, f"the profile must define {fn.split()[1]}()")
+    if "import hashlib" not in mod:
+        return _fail(name, "the profile must hash without a dependency")
+    for banned in ("import cryptography", "import oqs", "from cryptography"):
+        if banned in mod:
+            return _fail(name,
+                         "the profile must stay dependency-free: it has to be implementable "
+                         "inside a secure element's toolchain and inside the detached verifier, "
+                         "so signature verification is passed IN rather than imported")
+
+    if "FORBIDDEN_FIELDS" not in mod:
+        return _fail(name,
+                     "the record must be kept off the card BY NAME. Absence is not a property: "
+                     "a vocabulary that happens not to include a field stops excluding it the "
+                     "day somebody adds one")
+    for field in ("token_value", "legal_name", "date_of_birth", "biometric", "duress_code"):
+        if f'"{field}"' not in mod:
+            return _fail(name, f"{field!r} must be refused on a card by name")
+    enc = mod.split("def encode")[1].split("\ndef ")[0]
+    f_at, u_at = enc.find("FORBIDDEN_FIELDS"), enc.find("NAME_TO_TAG")
+    if f_at < 0:
+        return _fail(name, "encode() must check the forbidden fields")
+    if 0 <= u_at < f_at:
+        return _fail(name,
+                     "the forbidden-field check must run BEFORE the vocabulary check and stand "
+                     "on its own, or the record is refused only for being unknown and the guard "
+                     "vanishes the day somebody widens the vocabulary")
+
+    dec = mod.split("def decode")[1].split("\ndef ")[0]
+    for needle, why in (("appears twice", "a repeated tag makes it ambiguous which one is "
+                                          "signed"),
+                        ("out of order", "tags must ascend so one object has one encoding"),
+                        ("unknown tag", "an unknown tag must be REFUSED rather than skipped: a "
+                                        "reader that skipped it would verify a signature over "
+                                        "bytes it never looked at"),
+                        ("truncated", "a truncated object must be refused, not padded")):
+        if needle not in dec:
+            return _fail(name, why)
+
+    body = mod.split("def signing_body")[1].split("\ndef ")[0]
+    if "BODY_TAGS" not in body:
+        return _fail(name,
+                     "the signing body must exclude the signature tags, so both signatures "
+                     "cover exactly the same bytes")
+    verify = mod.split("def verify_card")[1].split("\ndef ")[0]
+    if "require_pq" not in verify:
+        return _fail(name,
+                     "a verifier must be able to REQUIRE a post-quantum signature by policy, "
+                     "so an authority can refuse classical-only cards on a chosen date without "
+                     "reissuing the population first")
+    if "if False in checked" not in verify and "False in checked" not in verify:
+        return _fail(name,
+                     "when both signatures are present BOTH must verify. Accept-if-either "
+                     "hands the scheme to whoever breaks the weaker algorithm first, which is "
+                     "the entire reason the card carries two")
+
+    vectors = _read(root, "polaris_card/vectors/card-objects.json")
+    if not vectors:
+        return _fail(name,
+                     "the test vectors must be published: an implementer writing an applet in "
+                     "C has no other way to check that they agree with this encoder")
+    for key in ("signing_body_hex", "signing_digest_hex", "card_object_hex"):
+        if key not in vectors:
+            return _fail(name, f"each vector must publish {key}")
+    if not _read(root, "polaris_card/make_vectors.py"):
+        return _fail(name,
+                     "the vectors must be GENERATED from the encoder rather than hand-written, "
+                     "so they cannot drift from it")
+    suite = _read(root, "polaris_card/test_card_profile.py")
+    if "card_object_hex" not in suite:
+        return _fail(name,
+                     "the suite must check the published vectors back against the encoder, or "
+                     "the file and the code drift apart silently")
+
+    drill = _read(root, "scripts/polaris-card-profile-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-card-profile-drill.py must run the card under REAL "
+                           "signatures; the suite's stubs always say yes")
+    for needed, why in (("is REFUSED under another authority's key",
+                         "a card must be a credential rather than a badge"),
+                        ("no single-field edit survives the issuer signature",
+                         "every field must be flipped in turn, not just one"),
+                        ("does NOT rescue a bad post-quantum one",
+                         "the anti-downgrade rule must be exercised with a real forged "
+                         "signature, in both directions"),
+                        ("two readers cannot tell they saw the same card",
+                         "the pairwise property must hold at the card"),
+                        ("duress key does not appear in the card object",
+                         "'the duress feature is invisible' is a claim about bytes")):
+        if needed not in drill:
+            return _fail(name, why)
+
+    doc = _read(root, "docs/design/card-profile.md")
+    if not doc:
+        return _fail(name, "the profile must be published (docs/design/card-profile.md)")
+    low = " ".join(doc.lower().split())
+    for phrase, why in (("cannot raise a duress alarm",
+                         "the profile must state that an offline verifier cannot signal duress, "
+                         "and that the card must therefore behave identically either way"),
+                        ("cannot prove offline that it is the current one",
+                         "the profile must state that succession is resolved by the status "
+                         "layer rather than by the card"),
+                        ("needs the holder's phone",
+                         "the profile must say that unlinkable proof of membership is the "
+                         "wallet's job, since no fielded secure element computes one")):
+        if phrase not in low:
+            return _fail(name, why)
+    threats = _read(root, "docs/design/threat-model.md")
+    if "T-P1" not in threats:
+        return _fail(name,
+                     "the physical layer must be reviewed against the threat model: the card "
+                     "read in a pocket, the lost card offline, the classical algorithm falling "
+                     "while the fleet is classical, the coercer, and the forged object")
+    return _ok(name,
+               "the card is an object somebody else can implement: a deterministic encoding "
+               "with exactly one reading, where a repeated, descending or unknown tag is "
+               "refused rather than tolerated; the record kept off the card by name rather than "
+               "by omission; two issuer signatures over the same bytes where both must verify "
+               "when both are present and post-quantum can be required by policy; published "
+               "vectors generated from the encoder and checked back against it; a drill under "
+               "real signatures; and the physical threats written into the threat model with "
+               "their residual risks stated")
+
+
 def check_quantum_event_readiness(root: pathlib.Path) -> list[Finding]:
     """A population can be re-signed when an algorithm falls, and no holder goes dark (P7.6).
 
@@ -10850,6 +11011,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_card_profile,
     check_quantum_event_readiness,
     check_per_authority_isolation,
     check_vc_format,

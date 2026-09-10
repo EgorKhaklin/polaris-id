@@ -417,6 +417,126 @@ function-owner's privileges.
 
 ---
 
+## P: the physical card
+
+Added with the card profile (roadmap P4.1,
+[card-profile.md](card-profile.md)). Until v0 of that profile the schema
+modelled a card nobody had specified, so these threats had nowhere to attach.
+They are numbered separately because the adversary here is standing in front of
+the holder, not connected to anything.
+
+### T-P1: a card is read in a pocket
+
+**Scenario:** an attacker with a reader gets close enough to power the card and
+take a response, without the holder's knowledge or consent.
+
+**Affected:** the card's presentation path
+
+**Controls:**
+- The card carries a `credential_ref` (`SHA3-256("polaris-card-ref/1" || token_value)`),
+  never the token value. A read yields nothing the relying-party API accepts.
+- Key mode emits a pairwise handle scoped to the reader, so a rogue reader's
+  captures cannot be correlated with any other reader's.
+- The response signs the reader's challenge, so it cannot be replayed elsewhere.
+- The token value, name, date of birth and biometric templates are refused BY
+  NAME by the encoder, so none of them is on the card to read.
+
+**Residual risk:** MEDIUM. A rogue reader still learns that *a* Polaris card was
+present and gets a handle stable for its own scope, so it can recognise a
+returning holder. Presence and return-visit linkage at one reader are inherent
+to a contactless credential and are not claimed to be prevented.
+
+### T-P2: a lost card is presented by a finder, offline
+
+**Scenario:** a card is lost and found; the finder presents it to a verifier
+with no connectivity, before the loss has propagated.
+
+**Affected:** offline verification of a superseded card
+
+**Controls:**
+- `activation_sequence` and `predecessor_ref` let a verifier that has current
+  status tell a superseded card from a current one.
+- The signed status assertion's freshness window bounds how long a stale
+  verifier can be fooled ([status-distribution.md](status-distribution.md)).
+- The card's own `expires_at` bounds the worst case absolutely.
+
+**Residual risk:** ACCEPTED, and stated in the profile. A card cannot prove
+offline that it is the current one, because activation is an event rather than a
+date. The window is exactly the freshness window the verifier chose. Putting a
+validity date on the reserve card instead would fix in advance a moment the
+holder cannot predict, and would leave a window where neither card verified.
+
+### T-P3: the classical algorithm falls while the fleet is still classical
+
+**Scenario:** P-256 is broken. Every fielded card's classical signature can be
+forged, and the fleet cannot be replaced overnight.
+
+**Affected:** every card issued before post-quantum silicon was available
+
+**Controls:**
+- The card carries two issuer signatures over the same body, and **when both are
+  present both must verify**: a valid classical signature does not rescue a
+  forged post-quantum one, or the reverse. Accept-if-either would hand the whole
+  scheme to whoever broke the weaker algorithm first.
+- `require_pq` is a verifier POLICY rather than a format version, so an
+  authority flips its verifiers to post-quantum-only without reissuing the
+  population first, and one population holds both while the fleet turns over.
+- The database-side population migration is the same event handled at the record
+  layer ([QUANTUM-EVENT.md](../operator/QUANTUM-EVENT.md)).
+
+**Residual risk:** MEDIUM, and it is silicon, not software. A classical-only
+card cannot be made post-quantum by re-signing the database record: the private
+key is in the element. Those cards must be replaced, and the profile's job is to
+make sure verifiers can refuse them by policy on a chosen date rather than
+discovering them one at a time.
+
+### T-P4: a coercer learns that a duress code exists
+
+**Scenario:** an attacker compels the holder to present, and tries to determine
+from the card, the reader, or the response whether a duress PIN was used or even
+enrolled.
+
+**Affected:** the anti-coercion property, which is the vocation above C1-C10
+
+**Controls:**
+- The card object carries only the normal slot's public key. Carrying both would
+  make the existence of a duress key readable off the card.
+- Both PINs unlock, with the same response shape, the same timing, the same
+  retry counter and the same unblock procedure.
+- The duress signal is raised by the authority, which holds both public keys, on
+  the online path only ([duress-codes.md](duress-codes.md)).
+- The drill asserts that a duress response is the same shape as a normal one and
+  that the duress key appears nowhere in the object.
+
+**Residual risk:** ACCEPTED, and stated in the profile. **An offline verifier
+cannot raise a duress alarm**, because there is nobody to raise it to. The card
+must therefore behave identically offline under either PIN and must not, for
+instance, decline to respond: a card that behaved differently offline would tell
+the coercer which PIN was entered, which is worse than having no duress feature.
+
+### T-P5: a forged card object with a well-formed encoding
+
+**Scenario:** an attacker constructs a card object, or edits a genuine one, so a
+reader accepts it.
+
+**Affected:** the card object encoding
+
+**Controls:**
+- Deterministic TLV: tags appear at most once and in ascending order, so one
+  object has exactly one encoding and a signature cannot be moved onto content
+  it did not authorise.
+- An unknown tag is REFUSED rather than skipped; a reader that skipped what it
+  did not recognise would verify a signature over bytes it never looked at.
+- The signing body excludes the signature tags, so both signatures cover exactly
+  the same bytes.
+- The drill flips every field in turn, and a byte in the wire encoding, and the
+  card must be refused each time.
+
+**Residual risk:** LOW. This rests on the issuer's signing key, which is the
+same assumption as T-S1.
+
+---
+
 ## Out of scope
 
 | Threat | Reason |
@@ -426,6 +546,8 @@ function-owner's privileges.
 | Social engineering against issuing agency staff | Out of software scope; agency policy concern |
 | Side-channel attacks (timing, power analysis) on signing | Out of software scope; HSM concern |
 | Supply chain attacks on dependencies | DEFERRED to docs/operator/OPERATIONS.md (backlog) |
+| Invasive attack on a secure element (decapping, fault injection, power analysis) | Out of software scope; the certification level of the chosen part is the control, and which parts qualify is roadmap P4.6 |
+| Coercion of the holder BEFORE presentation (a PIN taken under threat) | The duress path is the control and it is partial by construction: it signals, it does not prevent. See T-P4 |
 
 ---
 

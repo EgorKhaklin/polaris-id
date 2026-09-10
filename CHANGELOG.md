@@ -5,6 +5,58 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.366 — 2026-09-10 (P4.1: the card profile, and the limits it states)
+
+The schema has modelled the card since the first version: serials, biometric
+binding type, duress hash, succession. What it never had was an encoding, so
+the card was a set of columns nobody could implement against. `polaris_card/`
+is that encoding, its reference codec, and its published vectors.
+
+**A card is a key and a signed reference, not a copy of the record.** The token
+value, the holder's name and date of birth, biometric templates and the duress
+code in any form are refused **by name** rather than left out of the field
+list, because absence is not a property: a vocabulary that happens not to
+include a field stops excluding it the day somebody adds one. The card carries
+a one-way reference to the credential, so a read of a card in a pocket does not
+hand a reader the identifier the relying-party API accepts.
+
+**The encoding has exactly one reading.** Deterministic TLV, tags ascending and
+non-repeating, unknown tags refused rather than skipped. All three matter
+because the object is signed: a format with two encodings of the same content
+is one where a signature moves onto content it did not authorise, and a reader
+that skips what it does not recognise verifies a signature over bytes it never
+looked at.
+
+**Two signatures, and both must verify.** A card carries a classical signature
+today's certified silicon can make and a post-quantum one for the day it can,
+over exactly the same body. When both are present, both must verify:
+accept-if-either would hand the whole scheme to whoever breaks the classical
+leg first, which is the entire reason a transitional card carries two. Whether
+post-quantum is *required* is verifier policy rather than a format version, so
+one population holds both while the fleet turns over.
+
+**Three limits, stated rather than left to be discovered.** An offline verifier
+cannot raise a duress alarm, because there is nobody to raise it to, so the card
+must behave identically offline under either PIN; a card that behaved
+differently would tell the coercer which one was entered, which is worse than
+having no duress feature. A card cannot prove offline that it is the current
+one, because activation is an event rather than a date, so succession is
+resolved by the status layer's freshness window. And unlinkable proof of
+membership needs the holder's phone: no fielded secure element computes a
+Plonky2 proof, so in v0 the card is the key and the wallet is the prover.
+
+The physical layer is now in the threat model, which had no entries for it:
+T-P1 the card read in a pocket, T-P2 the lost card presented offline, T-P3 the
+classical algorithm falling while the fleet is classical, T-P4 the coercer, and
+T-P5 the forged object, each with its residual risk stated, plus two new
+out-of-scope rows for what a card profile genuinely cannot address.
+
+Proven by 27 tests against the published vectors and
+`scripts/polaris-card-profile-drill.py` under real P-256 and real ML-DSA-65: a
+card is refused under another authority's key, every field flipped in turn fails
+the signature, and a valid signature under one algorithm does not rescue a
+forged one under the other, in either direction.
+
 ## v9.365 — 2026-09-10 (P7.6: re-signing a population when an algorithm falls)
 
 Polaris exists because the algorithms in today's credentials will not hold.
