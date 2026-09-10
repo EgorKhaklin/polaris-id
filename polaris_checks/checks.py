@@ -10473,6 +10473,116 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_accessibility(root: pathlib.Path) -> list[Finding]:
+    """Every operator surface is audited, with an engine that has the rules it claims (P6.5).
+
+    An identity system a person cannot operate is one that excludes them from identity. That
+    is the same failure as the trusted-referee gap in the 800-63 mapping, at a different layer,
+    and it lands on the same people.
+
+    THE ENGINE MUST HAVE THE RULES IT CLAIMS. The convenient Python wrapper bundles axe 4.4.3,
+    which is from 2022 and predates WCAG 2.2 entirely: it has none of the 2.2 rules. Auditing
+    with it and reporting "WCAG 2.2 AA" would be a claim about a standard the tool has never
+    heard of, so the version is pinned, current, and asserted by the drill itself.
+
+    THE SMALL FINDINGS NEED A CEILING. Serious and critical violations failing the build is the
+    easy half. Moderate and minor ones are what accumulate below the threshold anybody watches,
+    so they are counted against a ceiling rather than merely printed.
+
+    AND THE LIMIT MUST BE STATED. Automated testing detects roughly a third of WCAG failures.
+    It cannot tell whether alt text is meaningful, whether a focus order makes sense, or
+    whether a screen-reader user can finish the task. A green run is a floor and not
+    conformance, and the document has to say so in those words, because "accessibility checks
+    pass" is exactly the sentence that gets quoted as conformance."""
+    name = "accessibility"
+    drill = _read(root, "scripts/polaris-accessibility-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-accessibility-drill.py must audit the surfaces")
+    runner = _read(root, "scripts/polaris-accessibility-drill.sh")
+    if not runner:
+        return _fail(name, "the drill needs a runner that boots the app and pins the engine")
+
+    if "axe-core@" not in runner:
+        return _fail(name,
+                     "the axe version must be PINNED in the runner. An unpinned engine is one "
+                     "whose rule set changes under the claim it is being used to support")
+    if "4.13" not in runner and "4.1" not in runner:
+        return _fail(name,
+                     "the pinned axe version must be current enough to HAVE the WCAG 2.2 rules; "
+                     "4.4 predates the standard entirely")
+    # Quoted, exactly. "wcag2a" is a substring of "wcag2aa" and "wcag21a" of "wcag21aa", so a
+    # bare substring test would report the earlier tags as present whenever the later ones are,
+    # and dropping them would go unnoticed. The detection test found this.
+    if '"wcag22aa"' not in drill:
+        return _fail(name,
+                     "the WCAG 2.2 AA tag must actually be requested, or the run tests 2.1 and "
+                     "the row claims 2.2")
+    for tag in ('"wcag2a"', '"wcag2aa"', '"wcag21a"', '"wcag21aa"'):
+        if tag not in drill:
+            return _fail(name,
+                         f"the {tag} tag must be requested too: a 2.2 AA claim is "
+                         "cumulative "
+                         "and includes every earlier A and AA criterion")
+    if "the engine is new enough to HAVE the WCAG 2.2 rules" not in drill:
+        return _fail(name,
+                     "the drill must assert its own engine version. A pin in a shell script is "
+                     "a comment as far as the audit is concerned")
+
+    if "MODERATE_CEILING" not in drill or "MINOR_CEILING" not in drill:
+        return _fail(name,
+                     "moderate and minor violations must be counted against a CEILING. They are "
+                     "the category that accumulates below the threshold anybody is watching")
+    for severity in ('"critical"', '"serious"'):
+        if severity not in drill:
+            return _fail(name, f"{severity} violations must fail the build")
+    if "SURFACES" not in drill:
+        return _fail(name,
+                     "the audited surfaces must be an explicit list: a page missing from it is "
+                     "a page nobody audits")
+    surfaces = drill.split("SURFACES = [")[1].split("]")[0]
+    if surfaces.count('("/') < 10:
+        return _fail(name,
+                     "the surface list must cover the operator console, not a sample of it")
+    for needed, why in (('("/login"', "the login page is the one surface every operator meets "
+                                      "and the only one an unauthenticated user can be stuck on"),
+                        ('("/atlas"', "the densest surface is the one most likely to fail")):
+        if needed not in surfaces:
+            return _fail(name, why)
+
+    doc = _read(root, "docs/design/accessibility.md")
+    if not doc:
+        return _fail(name, "the audit must be published (docs/design/accessibility.md)")
+    low = " ".join(doc.lower().split())
+    for phrase, why in (("a floor, not conformance",
+                         "the document must refuse the reading that a green run is "
+                         "conformance; that sentence is exactly what gets quoted"),
+                        ("third of wcag failures",
+                         "the document must state how much automation actually covers"),
+                        ("does not claim wcag 2.2 aa conformance",
+                         "the outward claim must match what was established"),
+                        ("has not been done",
+                         "manual testing with assistive technology is the largest gap and must "
+                         "be named as undone rather than left unmentioned")):
+        if phrase not in low:
+            return _fail(name, why)
+
+    # The outward surfaces must not have quietly started claiming it either.
+    roadmap = _read(root, "ROADMAP.md")
+    if "accessibility conformance" not in roadmap:
+        return _fail(name,
+                     "ROADMAP.md's not-claimed list must still carry accessibility conformance. "
+                     "Automated checks passing is a floor; removing the caveat would turn a "
+                     "third of the criteria into an assertion about all of them")
+    return _ok(name,
+               "every operator surface is audited in a real browser against a pinned, current "
+               "axe-core at the WCAG 2.0, 2.1 and 2.2 A and AA tags, with the drill asserting "
+               "its own engine has the rules it claims; serious and critical violations fail "
+               "and the moderate and minor ones are held to a ceiling rather than printed; the "
+               "surface list is explicit so a page cannot go unaudited; and the record says a "
+               "green run is a floor rather than conformance, names how little automation "
+               "covers, and leaves the outward claim unchanged")
+
+
 def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).
 
@@ -11824,6 +11934,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_accessibility,
     check_assurance_mapping,
     check_enrollment_proofing,
     check_duress_on_card,

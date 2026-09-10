@@ -557,6 +557,15 @@ jobs:
             psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
           done
 
+      # v9.373 (P6.5) — node for the accessibility drill's PINNED axe-core. Declared rather
+      # than relying on whatever the runner image happens to ship: wiring a drill into a job
+      # without checking what that job installs is how the mdoc drill (cbor2) and the
+      # quantum-event drill (psycopg2) each went red after they were added.
+      - name: Set up Node (for the pinned axe-core)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - name: Install headless Chromium
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
@@ -568,6 +577,16 @@ jobs:
         # interpreter (it has both the app stack and Playwright), so no on-demand
         # install is needed.
         run: POLARIS_UI_PYTHON=python POLARIS_TEST_PYTHON=python bash scripts/polaris-ui-drill.sh
+
+      # v9.373 (P6.5) — every operator surface audited in this same browser, against a PINNED
+      # and current axe-core at the WCAG 2.0/2.1/2.2 A and AA tags. An identity system a person
+      # cannot operate excludes them from identity, which is the trusted-referee gap at another
+      # layer. Serious and critical violations fail; the moderate and minor ceilings are zero,
+      # because those are what accumulate below the threshold anybody watches. A green run is a
+      # FLOOR and not conformance (automated testing covers roughly a third of WCAG), and
+      # docs/design/accessibility.md says so rather than letting this step be quoted otherwise.
+      - name: Accessibility — every operator surface at WCAG 2.2 AA (the automated third)
+        run: POLARIS_UI_PYTHON=python POLARIS_TEST_PYTHON=python bash scripts/polaris-accessibility-drill.sh
 
       - name: Upload UI drill screenshots
         if: always()

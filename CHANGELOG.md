@@ -5,6 +5,58 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.373 — 2026-09-10 (P6.5: the automated third, enforced)
+
+An identity system a person cannot operate is one that excludes them from
+identity. That is the same failure as the trusted-referee gap named in the
+800-63 mapping one ship ago, at a different layer, and it lands on the same
+people.
+
+`scripts/polaris-accessibility-drill.sh` boots the app, logs in as an operator,
+and drives **sixteen surfaces** in a real headless Chromium, running axe-core
+against the rendered DOM of each at the WCAG 2.0, 2.1 and 2.2 A and AA rule
+tags. Serious and critical violations fail the build; moderate and minor ones
+are counted against a ceiling that is **zero**, because that is the category
+which otherwise accumulates below the threshold anybody is watching.
+
+**The engine pin is load-bearing.** The convenient Python wrapper bundles axe
+4.4.3, which is from 2022 and predates WCAG 2.2 entirely: it has *none* of the
+2.2 rules. Auditing with it and reporting "WCAG 2.2 AA" would be a claim about a
+standard the tool has never heard of. The pin is 4.13.0 and the drill asserts
+its own engine is new enough to have the rules it is testing, because a pin in a
+shell script is a comment as far as the audit is concerned.
+
+**What the first audit found.** Fifteen of sixteen surfaces were already clean.
+The Atlas had three real defects, each a barrier rather than a technicality:
+
+- **Contrast, seven nodes.** `--ink-faint` was `#6e8299`: **4.43:1** against the
+  4.5:1 AA floor, on labels the Atlas renders at 10px. That is the label under
+  every number an operator reads, and failing by 0.07 is still failing. Now
+  `#7b8fa6` at 5.26:1. A check caught that the public site carried the same
+  token with the old value, so the same defect was live on that surface too.
+- **A scrollable region no keyboard could reach.** The Overview panel scrolls
+  and nothing inside it takes focus, so there was no way to scroll it without a
+  mouse. Fixed with `tabindex="0"` and *only* that: the element is already a
+  `tabpanel` named by its tab, and the `role="region"` I first added would have
+  replaced the correct role with a vaguer one.
+- **Two charts with no accessible name.** Both hero charts carry `role="img"`
+  and no label, so a screen-reader operator was told "graphic" and nothing else.
+  They are now named from their own data, so the label says what the picture
+  says and cannot go stale the way a static string would.
+
+**What this does not claim.** Automated testing detects roughly a third of WCAG
+failures. It cannot tell whether alt text is *meaningful*, whether a focus order
+makes sense, whether an error message explains what to do, or whether a
+screen-reader user can complete a task. **A green run is a floor, not
+conformance**, and ROADMAP's "not claimed" list still carries accessibility
+conformance for exactly that reason. `check_accessibility` fails if that caveat
+is removed, because "the accessibility checks pass" is precisely the sentence
+that gets quoted as conformance.
+
+Writing the detection test found the check itself too loose: `wcag2a` is a
+substring of `wcag2aa`, so dropping the earlier tag would never have been
+noticed. It matches the quoted tag now.
+
 ## v9.372 — 2026-09-10 (P6.2: a control mapping that goes red)
 
 A control mapping is the easiest document in a project to write and the easiest

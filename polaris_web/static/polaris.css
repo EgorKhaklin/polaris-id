@@ -36,7 +36,11 @@
     /* Ink */
     --ink:        #dce9f6;                       /* primary text          */
     --ink-dim:    #9db1c7;                       /* secondary text        */
-    --ink-faint:  #6e8299;                       /* tertiary / hints      */
+    --ink-faint:  #7b8fa6;                       /* tertiary / hints      */
+    /* #7b8fa6, not #6e8299: the old value was 4.43:1 on the panel ground, under the
+       4.5:1 WCAG AA floor for text this size, and the Atlas KPI labels render at 10px.
+       Failing by 0.07 is still failing, and it is the label under every number an
+       operator reads. 5.26:1 now. (P6.5) */
 
     /* Accents (style.md visual contract) */
     --gold:        #c9a352;
@@ -65,7 +69,7 @@
     --navy:        #0a1421;
     --navy-deep:   #071019;
     --navy-light:  #7fb4e8;
-    --steel:       #6e8299;
+    --steel:       #7b8fa6;   /* tracks --ink-faint; see the contrast note above (P6.5) */
     --steel-light: #9db1c7;
     --bg:          #050a12;
     --paper:       #0e1a2b;

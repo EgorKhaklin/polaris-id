@@ -180,8 +180,13 @@
     function X(i) { return padL + (n === 1 ? iW / 2 : (i / (n - 1)) * iW); }
     function Y(v) { return padT + iH - (v / maxV) * iH; }
 
+    // role="img" without a name announces "graphic" and nothing else, which is what a
+    // screen-reader operator got from this chart. The label is built from the data so it
+    // says what the picture says, rather than being a static string that goes stale. (P6.5)
     var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'ov-hero-svg',
-      preserveAspectRatio: 'none', role: 'img' });
+      preserveAspectRatio: 'none', role: 'img',
+      'aria-label': 'Verification volume over time: ' + n + ' interval'
+        + (n === 1 ? '' : 's') + ', peak ' + fmtInt(maxV) + ' per interval' });
 
     // horizontal gridlines at 0/50/100% of max
     [0, 0.5, 1].forEach(function (f) {
@@ -934,7 +939,12 @@
     var n = points.length;
     function X(i) { return padL + (n === 1 ? iW / 2 : (i / (n - 1)) * iW); }
     function Y(v) { return padT + iH - (v / maxT) * iH; }
-    var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'ov-hero-svg', preserveAspectRatio: 'none', role: 'img' });
+    // Named from the data, for the same reason as the hero chart above. (P6.5)
+    var s = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'ov-hero-svg',
+      preserveAspectRatio: 'none', role: 'img',
+      'aria-label': 'Events over time by type: ' + labels.length + ' series ('
+        + labels.join(', ') + ') across ' + n + ' interval' + (n === 1 ? '' : 's')
+        + ', peak ' + fmtInt(maxT) + ' per interval' });
     [0, 0.5, 1].forEach(function (f) {
       var y = padT + iH - f * iH;
       s.appendChild(svg('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'ov-gridline' }));

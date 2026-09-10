@@ -21,7 +21,10 @@
     /* Ink */
     --ink:         #dce9f6;
     --ink-dim:     #9db1c7;
-    --ink-faint:   #6e8299;
+    --ink-faint:   #7b8fa6;   /* was #6e8299: 4.43:1 on the panel ground, under the
+                                4.5:1 WCAG AA floor for normal text. 5.26:1 now, and
+                                kept identical to the application's token so
+                                check_design_tokens holds. (P6.5) */
 
     /* Accents */
     --gold:        #c9a352;

@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v9.352): not production-ready for real identity data.** Every
+**Status (v9.373): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
@@ -20,7 +20,22 @@ credential; and an epoch's leaves are Poseidon commitments a holder opens on
 their own device, carrying a per-relying-party nullifier, so one relying party
 can refuse a second claim from the same person without learning who they are
 and without being able to compare notes with another. Neither hides a holder
-from the ISSUER, which derives every leaf to build the tree. What remains is
+from the ISSUER, which derives every leaf to build the tree.
+
+Four facts to know from v9.364 to v9.373, each of which is easy to read as more
+than it is. **The physical layer is a specification, an emulator and published
+vectors, not a card.** `polaris_card/` defines the on-card object, speaks ISO
+7816-4, personalizes a token whose keys it generates itself, and drives a
+reference verifier device; no card is manufactured and no silicon is certified,
+and the profile states which of its properties an emulator cannot establish.
+**An enrollment now records what it rested on**, and the assurance level is
+derived from that evidence rather than entered, with no column anywhere for the
+document itself; that is a mechanism, and no proofing has been performed with
+it. **The NIST 800-63 mapping is machine-checked and is not a conformance
+claim**: every row cites an artifact that CI resolves and runs, no assessment
+has taken place, and a deployment does not inherit any of it. **Accessibility is
+enforced for the third that automation covers**, which is why accessibility
+conformance is still in the list below rather than out of it. What remains is
 not buildable here: nine decisions that
 belong to the deploying organization, two engineering limits carried openly,
 and the deployment-scale work that [ROADMAP.md](../ROADMAP.md) tracks phase by

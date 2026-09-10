@@ -96,7 +96,13 @@
     </div>
 
     {# ================= OVERVIEW (default) ================= #}
-    <div class="atlas-view atlas-view-overview" id="atlas-panel-overview"
+    {# tabindex="0" so a keyboard-only operator can scroll this panel at all: it scrolls,
+   and nothing inside it takes focus, so there is no way to reach the scrollbar from
+   the keyboard. Only the tabindex: the element is already a tabpanel named by its
+   tab, and adding role="region" would REPLACE the correct role with a vaguer one.
+   (P6.5) #}
+            <div class="atlas-view atlas-view-overview" id="atlas-panel-overview"
+                 tabindex="0"
          role="tabpanel" aria-labelledby="atlas-tab-overview" data-atlas-view-panel="overview"
          data-atlas-since-all="{{ health.oldest_event or '' }}">
 

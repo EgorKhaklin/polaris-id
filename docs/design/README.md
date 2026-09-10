@@ -74,6 +74,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [transparency-log.md](transparency-log.md) | The public, append-only, RFC-6962-style log over the anchor roots (P3.3): the signed tree head and consistency proofs, what an independent monitor proves and what it does not, and the tampering drill |
 | [tiered-enrollment.md](tiered-enrollment.md) | The evidence tiers behind an issued token |
 | [webauthn.md](webauthn.md) | Operator credentials, enforcement, and the grace period |
+| [accessibility.md](accessibility.md) | Every operator surface audited in a real browser against a pinned current axe-core, what the first audit found and fixed, and the plain statement that a green run is a floor rather than conformance |
 | [abuse-controls.md](abuse-controls.md) | The per-agency quotas and what a refusal looks like |
 
 The proof that the zero-knowledge redaction holds against an explicit

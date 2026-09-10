@@ -9324,6 +9324,96 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_accessibility_check_discriminates(tmp_path):
+    # v9.373 (P6.5): the ways an accessibility gate stops meaning anything. An engine too old
+    # to have the rules the row claims; a 2.2 tag requested without the earlier ones, so a 2.2
+    # AA claim skips every criterion it inherits; small findings printed instead of capped, so
+    # they accumulate below the threshold anybody watches; a surface list that quietly omits a
+    # page; and a document that lets "the accessibility checks pass" be quoted as conformance.
+    DRILL = ('TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]\n'
+             'MODERATE_CEILING = 0\nMINOR_CEILING = 0\n'
+             'SURFACES = [\n'
+             + "".join('    ("/p%d", "page %d"),\n' % (i, i) for i in range(10))
+             + '    ("/login", "login"),\n    ("/atlas", "atlas"),\n]\n'
+             '\ntotals = {"critical": 0, "serious": 0}\n'
+             '_row("the engine is new enough to HAVE the WCAG 2.2 rules", True, True)\n')
+    RUNNER = ('AXE_VERSION="${POLARIS_AXE_VERSION:-4.13.0}"\n'
+              'npm install --no-save --silent "axe-core@${AXE_VERSION}"\n')
+    DOC = ("A green run is a floor, not conformance. Automated testing detects roughly a\n"
+           "third of WCAG failures. Polaris does not claim WCAG 2.2 AA conformance. Manual\n"
+           "testing with assistive technology has not been done.\n")
+    ROADMAP = "Not claimed: accessibility conformance; any external audit.\n"
+    good = {
+        'scripts/polaris-accessibility-drill.py': DRILL,
+        'scripts/polaris-accessibility-drill.sh': RUNNER,
+        'docs/design/accessibility.md': DOC,
+        'ROADMAP.md': ROADMAP,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_accessibility(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # AN ENGINE THAT NEVER HEARD OF THE STANDARD. axe 4.4 is from 2022.
+    write({'scripts/polaris-accessibility-drill.sh': RUNNER.replace("4.13.0", "4.4.3")})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+        "the pinned engine must be new enough to have the WCAG 2.2 rules"
+    write({'scripts/polaris-accessibility-drill.sh': RUNNER.replace('axe-core@${AXE_VERSION}',
+                                                                    'axe-core')})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+        "an unpinned engine is one whose rule set changes under the claim it supports"
+    write({'scripts/polaris-accessibility-drill.py': DRILL.replace(
+        '_row("the engine is new enough to HAVE the WCAG 2.2 rules", True, True)\n', "")})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+        "the drill must assert its own engine version; a pin in a shell script is a comment"
+
+    # THE TAGS. A 2.2 AA claim is cumulative.
+    for tag in ("wcag22aa", "wcag2a", "wcag2aa", "wcag21a", "wcag21aa"):
+        write({'scripts/polaris-accessibility-drill.py': DRILL.replace('"%s", ' % tag, "").replace(
+            '"%s"' % tag, "")})
+        assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+            f"the {tag} tag must be requested"
+
+    # THE SMALL FINDINGS, printed rather than capped.
+    for ceiling in ("MODERATE_CEILING", "MINOR_CEILING"):
+        write({'scripts/polaris-accessibility-drill.py': DRILL.replace(ceiling, "SOMETHING")})
+        assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+            f"{ceiling} must exist: small findings accumulate below the threshold anybody watches"
+    for severity in ('"critical"', '"serious"'):
+        write({'scripts/polaris-accessibility-drill.py': DRILL.replace(severity, '"other"')})
+        assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+            f"{severity} violations must fail the build"
+
+    # THE SURFACE LIST: too small, or quietly missing the pages that matter.
+    write({'scripts/polaris-accessibility-drill.py': DRILL.replace(
+        "".join('    ("/p%d", "page %d"),\n' % (i, i) for i in range(10)), "")})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+        "the surface list must cover the console, not a sample of it"
+    for page in ('("/login"', '("/atlas"'):
+        write({'scripts/polaris-accessibility-drill.py': DRILL.replace(page, '("/other"')})
+        assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+            f"the list must include {page}"
+
+    # THE DOCUMENT that lets a green run be quoted as conformance.
+    for phrase in ("A green run is a floor, not conformance.",
+                   "third of WCAG failures",
+                   "Polaris does not claim WCAG 2.2 AA conformance.",
+                   "has not been done"):
+        write({'docs/design/accessibility.md': DOC.replace(phrase, "")})
+        assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+            f"the record must state: {phrase}"
+
+    # AND THE OUTWARD CLAIM, quietly upgraded because the checks now pass.
+    write({'ROADMAP.md': "Not claimed: any external audit.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+        "removing the caveat turns a third of the criteria into an assertion about all of them"
+
+
 def test_assurance_mapping_check_discriminates(tmp_path):
     # v9.372 (P6.2): the ways a control mapping becomes a compliance spreadsheet. A checkmark
     # with no citation; a mapping with no gaps, because rounding them away is easier than
