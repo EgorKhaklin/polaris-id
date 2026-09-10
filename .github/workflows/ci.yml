@@ -1513,6 +1513,11 @@ jobs:
           # GHSA-537c-gmf6-5ccf, so the job under test would have reinstalled the
           # vulnerable version that cve-scan had just rejected.
           pip install "$(grep -E '^cryptography==' polaris_web/requirements.txt)"
+          # v9.362 (P3.7) — cbor2 for the ISO 18013-5 bridge drill, pinned from the same
+          # requirements file for the same reason the line above derives its pin: a literal
+          # repeated here drifts, and the drill would then run against a version the CVE
+          # scan had not seen.
+          pip install "$(grep -E '^cbor2==' polaris_web/requirements.txt)"
           # v9.178 (P1.2) — the custody drivers, so test_custody runs here with BOTH
           # witnesses (liboqs + OpenSSL): the file driver for real, the AWS KMS
           # driver against its wire-faithful stand-in, rotation end to end.
