@@ -10473,6 +10473,175 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_enrollment_proofing(root: pathlib.Path) -> list[Finding]:
+    """An enrollment records what it rested on, and the level is derived from it (P4.4).
+
+    Polaris could issue a credential and had no way to say how the person was proven to be who
+    they claimed. That gap is why an assurance level could not be asserted honestly and why the
+    800-63-4 mapping was blocked.
+
+    THE LEVEL IS DERIVED, NEVER ASSERTED. An enrollment does not claim IAL2 because somebody
+    typed IAL2. A level an operator can enter is a label, and every relying party downstream
+    would be trusting the label rather than the proofing. Claiming above what the evidence
+    supports is refused; claiming below it is allowed, because an authority may hold itself to
+    less than it could assert and refusing that pushes operators to overstate.
+
+    EVIDENCE NOBODY CHECKED IS NOT EVIDENCE. Validation asks whether the document is genuine;
+    verification asks whether it belongs to the person in front of you. A genuine passport
+    belonging to somebody else passes the first and fails the second, so a piece that fails
+    either must contribute nothing whatever its nominal strength.
+
+    IAL3 NEEDS A LIVE BIOMETRIC, AND THE DATABASE HOLDS THAT FLOOR. A photograph of a face
+    scores excellently on quality, so a capture that failed liveness must not count, and the
+    constraint must sit in the schema as well as the application: an INSERT that skips the
+    application must not be able to record an IAL3 the session never had.
+
+    AND THE RECORD SAYS WHAT WAS ESTABLISHED, NEVER WHAT WAS PRESENTED. No document number, no
+    scan, no template, no date of birth: refused by name AND with no column to write them into.
+    That is what keeps an enrollment archive from being a second identity database sitting
+    behind the first, which is the most attractive target an identity system builds."""
+    name = "enrollment_proofing"
+    mod = _read(root, "polaris_web/proofing.py")
+    if not mod:
+        return _fail(name, "polaris_web/proofing.py must carry the proofing model")
+    for fn in ("def derive_ial", "def check_claimed_ial", "def effective_strength",
+               "def record_proofing", "def why_not_higher"):
+        if fn not in mod:
+            return _fail(name, f"the model must expose {fn.split()[1]}()")
+
+    claimed = mod.split("def check_claimed_ial")[1].split("\ndef ")[0]
+    if "ProofingRefused" not in claimed:
+        return _fail(name,
+                     "claiming a level the evidence does not support must be REFUSED. A level "
+                     "an operator can type in is a label, and relying parties downstream would "
+                     "be trusting the label rather than the proofing")
+    if "index(claimed) > " not in claimed:
+        return _fail(name,
+                     "claiming LESS than the evidence supports must be allowed: an authority "
+                     "may hold itself to less than it could assert, and refusing that pushes "
+                     "operators to overstate in order to record anything at all")
+
+    effective = mod.split("def effective_strength")[1].split("\ndef ")[0]
+    if "validated" not in effective or "verified" not in effective:
+        return _fail(name,
+                     "evidence that was not validated AND verified must contribute nothing. A "
+                     "genuine document belonging to somebody else passes validation and fails "
+                     "verification, and counting it anyway rests an enrollment on a theft")
+    if "UNACCEPTABLE" not in effective:
+        return _fail(name, "unchecked evidence must fall to UNACCEPTABLE rather than keep its "
+                           "nominal strength")
+
+    if "class BiometricCapture" not in mod:
+        return _fail(name,
+                     "a vendor-neutral capture abstraction must be the only shape the "
+                     "enrollment path accepts; letting each vendor's blob through and promising "
+                     "not to store it is a promise rather than a boundary")
+    capture = mod.split("class BiometricCapture")[1].split("\ndef ")[0]
+    if "__slots__" not in capture:
+        return _fail(name,
+                     "the capture object must be closed, so a template cannot be attached to it "
+                     "at the edge and carried inward")
+    if "liveness" not in capture:
+        return _fail(name,
+                     "liveness must gate a capture: a photograph of a face and a lifted "
+                     "fingerprint both score excellently, so a pipeline that ignored liveness "
+                     "would raise the assurance of exactly the enrollments an attacker controls")
+
+    if "FORBIDDEN_EVIDENCE_FIELDS" not in mod:
+        return _fail(name, "the document itself must be refused BY NAME")
+    for field in ("document_number", "scan", "biometric_template", "date_of_birth"):
+        if f'"{field}"' not in mod:
+            return _fail(name, f"{field!r} must be refused by name")
+    check_ev = mod.split("def check_evidence")[1].split("\ndef ")[0]
+    f_at, u_at = check_ev.find("FORBIDDEN_EVIDENCE_FIELDS"), check_ev.find("EVIDENCE_FIELDS)")
+    if f_at < 0:
+        return _fail(name, "check_evidence must check the forbidden fields")
+    if 0 <= u_at < f_at:
+        return _fail(name,
+                     "the forbidden-field check must run BEFORE the vocabulary check and stand "
+                     "on its own, or a document number is refused only for being unknown and "
+                     "the guard vanishes the day somebody widens the vocabulary")
+
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    for table in ("EnrollmentProofing", "EnrollmentEvidence"):
+        if f"CREATE TABLE IF NOT EXISTS {table}" not in schema:
+            return _fail(name, f"the schema must define {table}")
+    create = re.search(r"CREATE TABLE IF NOT EXISTS EnrollmentEvidence\s*\((.*?)\n\);",
+                       schema, re.S)
+    if not create:
+        return _fail(name, "EnrollmentEvidence must be a CREATE TABLE in 01_schema.sql")
+    columns = {m.group(1).lower() for m in
+               re.finditer(r"^\s{4}([a-z_]+)\s+[A-Z]", create.group(1), re.M)}
+    for banned in ("document_number", "scan", "image", "photo", "portrait",
+                   "biometric_template", "template", "date_of_birth", "dob", "address",
+                   "ssn", "expiry_date"):
+        if banned in columns:
+            return _fail(name,
+                         f"there must be no column to write a {banned!r} into: not 'we do not "
+                         "write one'. That absence is what keeps an enrollment archive from "
+                         "being a second identity database behind the first")
+    if "ial3_needs_session_and_biometric" not in schema:
+        return _fail(name,
+                     "the DATABASE must keep its own floor under IAL3. An INSERT that skips the "
+                     "application must not be able to record a level the session never had")
+    if "biometric_recorded_whole" not in schema:
+        return _fail(name,
+                     "a biometric must be recorded whole or not at all: a modality with no "
+                     "liveness result would let an enrollment count a photograph")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    for trig in ("trg_enrollment_proofing_append_only", "trg_enrollment_evidence_append_only"):
+        if trig not in triggers:
+            return _fail(name,
+                         f"{trig} is missing: an assurance level rests on the evidence recorded "
+                         "beside it, and a record of that evidence which can be edited "
+                         "afterwards is not evidence")
+
+    drill = _read(root, "scripts/polaris-enrollment-proofing-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-enrollment-proofing-drill.py must run the model "
+                           "against a real database")
+    for needed, why in (("every combination in the evidence table derives its level",
+                         "the whole table must be walked, not one happy case"),
+                        ("nobody validated contributes nothing",
+                         "unchecked evidence must be exercised"),
+                        ("not bound to the applicant",
+                         "the genuine-document-belonging-to-someone-else case is the sharp one"),
+                        ("failed liveness does not reach IAL3",
+                         "a spoofed capture must be exercised"),
+                        ("does not support is REFUSED",
+                         "the overclaim must be refused in practice"),
+                        ("NO COLUMN to write any of them into",
+                         "the absence must be asserted against the live schema, not assumed"),
+                        ("re-proofing that finds LESS lowers",
+                         "the current level must be the latest rather than the high-water mark")):
+        if needed not in drill:
+            return _fail(name, why)
+
+    doc = _read(root, "docs/design/identity-proofing.md")
+    if not doc:
+        return _fail(name, "the model must be published (docs/design/identity-proofing.md)")
+    low = " ".join(doc.lower().split())
+    for phrase, why in (("derived, never asserted",
+                         "the record must lead on where the level comes from"),
+                        ("second identity database",
+                         "the record must say what the minimisation is FOR"),
+                        ("liveness is not optional",
+                         "the record must state why a quality score alone is not enough"),
+                        ("remain open under p4.4",
+                         "the record must say what this does NOT cover, since the kiosk build "
+                         "is still open")):
+        if phrase not in low:
+            return _fail(name, why)
+    return _ok(name,
+               "an enrollment records what it rested on and the assurance level is derived from "
+               "that evidence rather than typed: an overclaim is refused with the reason while "
+               "an underclaim is allowed, evidence nobody validated AND bound to the applicant "
+               "contributes nothing, IAL3 needs a live biometric with the database holding that "
+               "floor under a direct INSERT, the capture abstraction is closed so no vendor's "
+               "template reaches the record, both tables are append-only, and the document "
+               "itself is refused by name with no column anywhere to write it into")
+
+
 def check_duress_on_card(root: pathlib.Path) -> list[Finding]:
     """Duress is indistinguishable at the physical layer, not only in the bytes (P4.7).
 
@@ -11555,6 +11724,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_enrollment_proofing,
     check_duress_on_card,
     check_verifier_device,
     check_card_personalization,

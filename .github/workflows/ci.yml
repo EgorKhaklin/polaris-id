@@ -270,6 +270,15 @@ jobs:
       - name: Personalization — key generated on the card, recorded un-editably
         run: python scripts/polaris-personalization-drill.py
 
+      # v9.371 (P4.4) — what an enrollment rested on. Polaris could issue a credential and had
+      # no way to say how the person was proven to be who they claimed. The level is DERIVED
+      # from the recorded evidence, never typed: an overclaim is refused with the reason, a
+      # genuine document nobody bound to the applicant contributes nothing, IAL3 needs a live
+      # biometric with the database holding that floor under a direct INSERT, and the document
+      # itself has no column anywhere. Builds and drops its own database (append-only tables).
+      - name: Enrollment proofing — the level is derived, not typed
+        run: python scripts/polaris-enrollment-proofing-drill.py
+
       # v9.366 (P4.1) — the card profile's own suite: the encoder and decoder reproduce the
       # PUBLISHED VECTORS byte for byte, and every refusal holds (the record off the card by
       # name, unknown tags, repeated tags, descending tags, truncation, wrong doc type, wrong

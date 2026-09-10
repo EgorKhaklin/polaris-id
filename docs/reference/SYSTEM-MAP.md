@@ -58,7 +58,7 @@ polaris/
 │   └── observability/  ← Prometheus, Alertmanager, alert rules and their tests, Grafana dashboards, Tempo
 ├── docs/
 │   ├── ARCHITECTURE-OVERVIEW.md, PRODUCTION-READINESS.md, RED-TEAM-SCOPE.md, THESIS.md, SEED_DATA.md, CONVENTIONS.md
-│   ├── operator/       ← the runbooks (seventeen documents and an index)
+│   ├── operator/       ← the runbooks (nineteen documents and an index)
 │   ├── reference/      ← this directory
 │   ├── design/         ← why it is built this way: the threat model, the mechanisms, the substrate
 │   └── paper/          ← the academic report (TeX and PDF)
@@ -113,7 +113,7 @@ publishes `site/`.
 
 | Directory | What |
 |---|---|
-| [`polaris_sql/`](../../polaris_sql/) | The schema (38 tables, 45 in a migrated deployment), procedures, triggers, atlas functions, migrations. The security boundary. |
+| [`polaris_sql/`](../../polaris_sql/) | The schema (40 tables, 45 in a migrated deployment), procedures, triggers, atlas functions, migrations. The security boundary. |
 | [`polaris_web/`](../../polaris_web/) | The Flask application: every route, the security layer, WebAuthn, custody and signing, tracing, the Atlas. |
 | [`polaris_zk/`](../../polaris_zk/) | The Plonky2 Merkle-inclusion prover and verifier in Rust, and `witness2/`, the independent Python re-derivation. |
 | [`polaris_cli/`](../../polaris_cli/) | The operator CLI: the same operations without a browser. |

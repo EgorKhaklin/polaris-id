@@ -38,6 +38,7 @@ and the posture documents see [reference/](../reference/README.md).
 |---|---|
 | [verifier-device.md](verifier-device.md) | The thing at the counter: what it reads over NFC and QR, the three facts it keeps apart, the replay a signature cannot refuse, the linkability an offline authorization check costs, and the measured QR ceiling |
 | [card-profile.md](card-profile.md) | The physical card as an object somebody else can implement: the on-card data model, the dual-signature layout, PIN and duress semantics, succession, and the limits each of those has |
+| [identity-proofing.md](identity-proofing.md) | What an enrollment rested on: the evidence record, the derivation of the assurance level from it rather than from what somebody typed, the biometric abstraction that has no field for a template, and what has no column at all |
 | [duress-codes.md](duress-codes.md) | The compulsion-resistant verification path |
 | [duress-on-card.md](duress-on-card.md) | The same mechanism at the physical layer: the entry method, every observable that must look the same when it is used, the measured timing, and a safety review of what signalling buys and what it does not |
 | [recovery-ceremony.md](recovery-ceremony.md) | Recovering an identity without a single point of compromise |

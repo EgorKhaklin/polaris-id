@@ -5,6 +5,66 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.371 — 2026-09-10 (P4.4a: what an enrollment rested on)
+
+Polaris could issue a credential and had no way to say how the person was
+proven to be who they claimed. `EnrollmentStatusEvent` recorded *that*
+enrollment happened; nothing recorded what it rested on. No assurance level
+could be asserted honestly, and the NIST 800-63-4 mapping (P6.2) was blocked on
+exactly that.
+
+`EnrollmentProofing` and `EnrollmentEvidence` are the 16th and 17th
+audit-of-record instances, append-only by trigger, and
+`polaris_web/proofing.py` is the model over them.
+
+**The level is derived, never asserted.** An enrollment does not claim IAL2
+because someone typed IAL2. `derive_ial` returns what the recorded evidence
+supports, across the published 800-63A combinations. Claiming *more* is refused
+**with the reason**, since a refusal that only said "no" sends the operator back
+to run the same session again. Claiming *less* is allowed: an authority may hold
+itself to less than it could assert, and refusing that would push operators to
+overstate in order to record anything at all. IAL1 is returned rather than
+raised, because an authority that must record *something* will otherwise record
+the level it wanted.
+
+**Evidence nobody checked is not evidence.** Validation asks whether a document
+is genuine; verification asks whether it belongs to the person in front of you.
+A piece that fails either contributes nothing whatever its nominal strength, and
+the second is the sharper one: **a genuine passport belonging to somebody else
+passes validation and fails verification**, and counting it anyway is how an
+IAL2 enrollment ends up resting on a theft.
+
+**Liveness is not optional.** A photograph of a face and a lifted fingerprint
+both produce excellent quality scores, so a capture that fails liveness does not
+count toward IAL3. The database holds that floor itself: an `INSERT` that skips
+the application cannot record an IAL3 whose session was unsupervised or whose
+liveness is not true.
+
+**`BiometricCapture` has no field for a template**, and `__slots__` keeps it
+that way, so a vendor SDK is adapted at the edge and its own types never reach
+the record. That is vendor-neutrality by construction; letting each vendor's
+blob through and promising not to store it is a promise rather than a boundary.
+Matching later is a different system with different retention and a different
+legal posture, and binding a credential to a modality does not require becoming
+one.
+
+**What has no column:** no document number, no scan, no expiry, no template, no
+date of birth, no address. Refused by name *and* absent from both tables. A row
+says a STRONG piece of evidence of type PASSPORT was validated by a signature
+check and bound to the applicant by biometric comparison. That is enough to
+justify a level and not enough to reconstruct somebody's documents, and the
+difference is what keeps an enrollment archive from being a second identity
+database sitting behind the first.
+
+`current_ial` returns the latest proofing event's level, deliberately not the
+highest ever reached: an authority that re-proofs someone and finds less has
+learned something, and a high-water mark would report a level nothing currently
+supports.
+
+**P4.4 stays open.** This is its engine half. The kiosk build (a locked-down
+browser, its supervision model, its physical siting) is deployment packaging and
+remains; the row is marked in progress rather than done.
+
 ## v9.370 — 2026-09-10 (P4.7: duress in time, not just in bytes)
 
 The card's duress mechanism was already indistinguishable at the level of

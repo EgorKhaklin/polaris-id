@@ -9324,6 +9324,168 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_enrollment_proofing_check_discriminates(tmp_path):
+    # v9.371 (P4.4): the ways an assurance claim becomes a label. A level somebody types; an
+    # overclaim accepted or an underclaim refused; evidence counted without being validated or
+    # bound to the applicant; a biometric counted without liveness; the database with no floor
+    # of its own; and the document itself creeping into the record, one convenient column at a
+    # time, until the enrollment archive is a second identity database behind the first.
+    MOD = ('FORBIDDEN_EVIDENCE_FIELDS = frozenset({"document_number", "scan",\n'
+           '                                       "biometric_template", "date_of_birth"})\n'
+           'EVIDENCE_FIELDS = ("evidence_type", "strength")\n'
+           'IAL_LEVELS = ("IAL1", "IAL2", "IAL3")\n'
+           "\ndef check_evidence(evidence):\n"
+           "    forbidden = set(evidence) & FORBIDDEN_EVIDENCE_FIELDS\n"
+           "    if forbidden:\n        raise ProofingRefused('refusing to record')\n"
+           "    unknown = set(evidence) - set(EVIDENCE_FIELDS)\n"
+           "    if unknown:\n        raise ProofingRefused('unknown')\n"
+           "\ndef effective_strength(evidence):\n"
+           "    if not evidence.get('validated') or not evidence.get('verified'):\n"
+           "        return 'UNACCEPTABLE'\n    return evidence['strength']\n"
+           "\ndef derive_ial(evidence_list, presence=None, biometric_collected=False):\n"
+           "    return 'IAL1'\n"
+           "\ndef why_not_higher(evidence_list, presence=None, biometric_collected=False):\n"
+           "    return 'more evidence'\n"
+           "\ndef check_claimed_ial(claimed, evidence_list, presence=None,\n"
+           "                      biometric_collected=False):\n"
+           "    supported = derive_ial(evidence_list)\n"
+           "    if IAL_LEVELS.index(claimed) > IAL_LEVELS.index(supported):\n"
+           "        raise ProofingRefused('claims more than the evidence supports')\n"
+           "    return supported\n"
+           "\ndef record_proofing(conn, individual_id, agency_id, evidence_list):\n"
+           "    pass\n"
+           "\nclass BiometricCapture:\n"
+           "    __slots__ = ('modality', 'quality', 'liveness_passed')\n"
+           "    def acceptable(self, minimum_quality=60.0):\n"
+           "        return self.liveness_passed and self.quality >= minimum_quality\n")
+    SCHEMA = ("CREATE TABLE IF NOT EXISTS EnrollmentProofing (\n"
+              "    proofing_id               SERIAL       PRIMARY KEY,\n"
+              "    derived_ial               VARCHAR(6)   NOT NULL,\n"
+              "    CONSTRAINT biometric_recorded_whole CHECK (true),\n"
+              "    CONSTRAINT ial3_needs_session_and_biometric CHECK (true)\n"
+              ");\n"
+              "CREATE TABLE IF NOT EXISTS EnrollmentEvidence (\n"
+              "    evidence_id            SERIAL       PRIMARY KEY,\n"
+              "    evidence_type          VARCHAR(40)  NOT NULL,\n"
+              "    strength               VARCHAR(12)  NOT NULL,\n"
+              "    validated              BOOLEAN      NOT NULL\n"
+              ");\n")
+    TRIGGERS = ("CREATE TRIGGER trg_enrollment_proofing_append_only ...;\n"
+                "CREATE TRIGGER trg_enrollment_evidence_append_only ...;\n")
+    DRILL = ("# every combination in the evidence table derives its level\n"
+             "# a SUPERIOR piece nobody validated contributes nothing\n"
+             "# ...and neither does one validated but not bound to the applicant\n"
+             "# a high-quality capture that failed liveness does not reach IAL3\n"
+             "# claiming a level the evidence does not support is REFUSED\n"
+             "# ...and there is NO COLUMN to write any of them into\n"
+             "# re-proofing that finds LESS lowers the current level\n")
+    DOC = ("The level is derived, never asserted. What keeps this from being a second identity\n"
+           "database is that the document has no column. Liveness is not optional, because a\n"
+           "photograph scores excellently. The kiosk build and its supervision model remain\n"
+           "open under P4.4.\n")
+    good = {
+        'polaris_web/proofing.py': MOD,
+        'polaris_sql/01_schema.sql': SCHEMA,
+        'polaris_sql/06_triggers.sql': TRIGGERS,
+        'scripts/polaris-enrollment-proofing-drill.py': DRILL,
+        'docs/design/identity-proofing.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+
+    # THE LEVEL AS A LABEL.
+    write({'polaris_web/proofing.py': MOD.replace(
+        "        raise ProofingRefused('claims more than the evidence supports')\n",
+        "        pass\n")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "claiming more than the evidence supports must be refused"
+    write({'polaris_web/proofing.py': MOD.replace(
+        "    if IAL_LEVELS.index(claimed) > IAL_LEVELS.index(supported):\n",
+        "    if claimed != supported:\n")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "claiming LESS than the evidence supports must be allowed"
+
+    # EVIDENCE NOBODY CHECKED.
+    for guard in ("not evidence.get('validated')", "not evidence.get('verified')"):
+        write({'polaris_web/proofing.py': MOD.replace(guard + " or ", "").replace(
+            " or " + guard, "")})
+        assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+            f"evidence must fail without {guard}"
+    write({'polaris_web/proofing.py': MOD.replace("return 'UNACCEPTABLE'",
+                                                  "return evidence['strength']")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "unchecked evidence must fall to UNACCEPTABLE"
+
+    # THE CAPTURE THAT LETS A TEMPLATE THROUGH, and the one with no liveness.
+    write({'polaris_web/proofing.py': MOD.replace(
+        "    __slots__ = ('modality', 'quality', 'liveness_passed')\n", "")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "the capture object must be closed"
+    write({'polaris_web/proofing.py': MOD.replace("liveness_passed and ", "").replace(
+        "    __slots__ = ('modality', 'quality', 'liveness_passed')\n",
+        "    __slots__ = ('modality', 'quality')\n")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "liveness must gate a capture"
+
+    # THE DOCUMENT CREEPING IN, by name and by column.
+    write({'polaris_web/proofing.py': MOD.replace('"document_number", ', "")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "the document number must be refused by name"
+    reordered = MOD.replace(
+        "    forbidden = set(evidence) & FORBIDDEN_EVIDENCE_FIELDS\n"
+        "    if forbidden:\n        raise ProofingRefused('refusing to record')\n"
+        "    unknown = set(evidence) - set(EVIDENCE_FIELDS)\n"
+        "    if unknown:\n        raise ProofingRefused('unknown')\n",
+        "    unknown = set(evidence) - set(EVIDENCE_FIELDS)\n"
+        "    if unknown:\n        raise ProofingRefused('unknown')\n"
+        "    forbidden = set(evidence) & FORBIDDEN_EVIDENCE_FIELDS\n"
+        "    if forbidden:\n        raise ProofingRefused('refusing to record')\n")
+    write({'polaris_web/proofing.py': reordered})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "the forbidden check must run before the vocabulary check"
+    write({'polaris_sql/01_schema.sql': SCHEMA.replace(
+        "    validated              BOOLEAN      NOT NULL\n",
+        "    validated              BOOLEAN      NOT NULL,\n"
+        "    document_number        VARCHAR(64)\n")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "there must be no column to write the document into"
+
+    # THE DATABASE WITH NO FLOOR OF ITS OWN.
+    for constraint in ("ial3_needs_session_and_biometric", "biometric_recorded_whole"):
+        write({'polaris_sql/01_schema.sql': SCHEMA.replace(constraint, "something_else")})
+        assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+            f"the schema must keep {constraint}"
+    for trig in ("trg_enrollment_proofing_append_only", "trg_enrollment_evidence_append_only"):
+        write({'polaris_sql/06_triggers.sql': TRIGGERS.replace(trig, "other")})
+        assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+            f"{trig} must exist"
+
+    # THE DRILL and the record.
+    for needle in ("# every combination in the evidence table derives its level",
+                   "# a SUPERIOR piece nobody validated contributes nothing",
+                   "# ...and neither does one validated but not bound to the applicant",
+                   "# a high-quality capture that failed liveness does not reach IAL3",
+                   "# claiming a level the evidence does not support is REFUSED",
+                   "# ...and there is NO COLUMN to write any of them into",
+                   "# re-proofing that finds LESS lowers the current level"):
+        write({'scripts/polaris-enrollment-proofing-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+            f"the drill must assert: {needle}"
+    for phrase in ("derived, never asserted", "second identity\ndatabase",
+                   "Liveness is not optional", "remain\nopen under P4.4"):
+        write({'docs/design/identity-proofing.md': DOC.replace(phrase, "")})
+        assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+            f"the record must state: {phrase}"
+
+
 def test_duress_on_card_check_discriminates(tmp_path):
     # v9.370 (P4.7): the ways duress stops being invisible at the physical layer. A guarded
     # comparison, which makes ENROLLMENT observable and endangers the holders who opted in by

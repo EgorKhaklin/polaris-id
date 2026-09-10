@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **38 tables** in `01_schema.sql` (v9.368), organized
-into six functional groups. A migrated deployment holds **45 tables**: those,
+The Polaris schema is **40 tables** in `01_schema.sql` (v9.368), organized
+into six functional groups. A migrated deployment holds **47 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,

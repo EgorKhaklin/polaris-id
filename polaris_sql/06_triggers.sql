@@ -1075,6 +1075,23 @@ CREATE TRIGGER trg_holder_key_append_only
 -- leaves its control. That is exactly the record that must not be editable after
 -- the fact.
 -- ----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- EnrollmentProofing and EnrollmentEvidence are the 16th and 17th audit-of-record
+-- instances (P4.4). An assurance level rests on the evidence recorded beside it;
+-- a record of that evidence which can be edited afterwards is not evidence.
+-- ----------------------------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_enrollment_proofing_append_only ON EnrollmentProofing;
+CREATE TRIGGER trg_enrollment_proofing_append_only
+    BEFORE UPDATE OR DELETE ON EnrollmentProofing
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
+DROP TRIGGER IF EXISTS trg_enrollment_evidence_append_only ON EnrollmentEvidence;
+CREATE TRIGGER trg_enrollment_evidence_append_only
+    BEFORE UPDATE OR DELETE ON EnrollmentEvidence
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
 DROP TRIGGER IF EXISTS trg_card_personalization_append_only ON CardPersonalization;
 CREATE TRIGGER trg_card_personalization_append_only
     BEFORE UPDATE OR DELETE ON CardPersonalization
