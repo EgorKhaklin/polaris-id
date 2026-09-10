@@ -10215,7 +10215,86 @@ def check_multi_region_dr(root: pathlib.Path) -> list[Finding]:
                "the procedure rather than during the incident")
 
 
+
+def check_cost_model(root: pathlib.Path) -> list[Finding]:
+    """The cost figure is a model you re-run, not a number you are asked to believe (P2.10).
+
+    A committed cost table is out of date the week it is written, and worse, it hides which of
+    its inputs are facts about this code and which are guesses about a deployment nobody has
+    run. The two have completely different error bars: measured verification throughput is a
+    property of the software, while verifications per person per year is a property of a
+    society, and a table that presents them in the same font is misleading even when every
+    figure is right.
+
+    So the model is a SCRIPT, every input carries the kind of thing it is, and the document
+    names what it leaves out. That last part matters most: staff, an HSM, the physical token
+    and compliance can each exceed the whole infrastructure figure, and a cost document that
+    omits them is not conservative, it is wrong by an order of magnitude in the direction that
+    gets a project funded and then stranded."""
+    name = "cost_model"
+    script = _read(root, "scripts/polaris-cost-model.py")
+    if not script:
+        return _fail(name,
+                     "scripts/polaris-cost-model.py must exist: a cost TABLE is stale the week it "
+                     "is written, and hides which inputs are measurements and which are guesses")
+    for kind, why in (("MEASURED", "numbers taken from an actual run of this code"),
+                      ("COMPUTED", "arithmetic on a published constant"),
+                      ("ASSUMED", "a deployment's own behaviour, which this repository cannot know"),
+                      ("PRICED", "a list price on a date, which will be wrong for the reader")):
+        if kind not in script:
+            return _fail(name,
+                         f"the model must label its {kind} inputs ({why}); presenting a measurement "
+                         "and an assumption in the same font is misleading even when both are right")
+    # The measured inputs must be the ones the benchmark actually published.
+    bench = _read(root, "docs/reference/BENCHMARK.md")
+    if "7,848" not in bench:
+        return _fail(name,
+                     "the benchmark no longer publishes the single-witness verification rate the "
+                     "cost model is built on; one of the two has moved without the other")
+    if "VERIFY_PER_CORE = 7848" not in script:
+        return _fail(name,
+                     "the model's verification rate must be the benchmark's measured number, not a "
+                     "rounded or aspirational one")
+    # The parameters that let a reader ask their own question.
+    for flag in ("--persons", "--verifications-per-person", "--retention-years", "--price-vcpu-hour"):
+        if flag not in script:
+            return _fail(name,
+                         f"the model must take {flag}: a cost model nobody can re-run with their own "
+                         "assumptions is a table with extra steps")
+    doc = _read(root, "docs/reference/COST-MODEL.md")
+    if not doc:
+        return _fail(name, "docs/reference/COST-MODEL.md must publish the model and its caveats")
+    for needed, why in (("hardware security module",
+                         "no HSM has ever been used here and a real deployment needs one"),
+                        ("Staff",
+                         "staff and on-call are the largest line in most real deployments"),
+                        ("physical token",
+                         "the token is modelled, not manufactured")):
+        if needed not in doc:
+            return _fail(name,
+                         f"the cost document must name {needed!r} among what it EXCLUDES: {why}, and "
+                         "a figure that omits it is not conservative, it is wrong in the direction "
+                         "that gets a project funded and then stranded")
+    if "single-node" not in doc:
+        return _fail(name,
+                     "the cost document must say the throughput it rests on is a SINGLE-NODE "
+                     "measurement and the multi-node scale is projected, which is what BENCHMARK.md "
+                     "and roadmap P2.9 already say in their own words")
+    if "not the cost driver" not in doc:
+        return _fail(name,
+                     "the document must state the finding plainly: verification throughput is not "
+                     "the cost driver at national scale, and availability and retention are. A cost "
+                     "model whose conclusion a reader has to derive is a table again")
+    return _ok(name,
+               "infrastructure cost is a model that runs rather than a table that asserts: every "
+               "input labelled measured, computed, assumed or priced so the error bars sit where "
+               "they belong; the measured rate is the benchmark's own; a reader can re-run it with "
+               "their population, retention and prices; and the document names what it excludes "
+               "(staff, an HSM, the physical token) and that the throughput under it is single-node")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_cost_model,
     check_multi_region_dr,
     check_status_distribution,
     check_epoch_pipeline_scale,

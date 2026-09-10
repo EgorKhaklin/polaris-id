@@ -9077,3 +9077,77 @@ def test_multi_region_dr_check_discriminates(tmp_path):
     write({'docs/design/multi-region.md': "We chose a standby cluster.\n"})
     assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
         "must FAIL when the design record does not explain the quorum reason"
+
+
+def test_cost_model_check_discriminates(tmp_path):
+    # v9.360 (P2.10): each fixture below either turns the model back into a table, or drops
+    # a caveat whose absence makes the figure wrong in the direction that gets a project
+    # funded and then stranded.
+    SCRIPT = ("# MEASURED from BENCHMARK.md\nVERIFY_PER_CORE = 7848\n"
+              "# COMPUTED from FIPS 204\nSIG = 3309\n"
+              "# ASSUMED, the deployment's own\n# PRICED, a list price on a date\n"
+              "ap.add_argument('--persons')\nap.add_argument('--verifications-per-person')\n"
+              "ap.add_argument('--retention-years')\nap.add_argument('--price-vcpu-hour')\n")
+    BENCH = "| single-witness | ~7,848 verifications/s per core |\n"
+    DOC = ("Verification throughput is not the cost driver.\n"
+           "Excluded: Staff and on-call; a hardware security module; the physical token.\n"
+           "The throughput is a single-node measurement.\n")
+    good = {
+        'scripts/polaris-cost-model.py': SCRIPT,
+        'docs/reference/BENCHMARK.md': BENCH,
+        'docs/reference/COST-MODEL.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_cost_model(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # The script disappears and the cost becomes a committed table again.
+    (tmp_path / "scripts/polaris-cost-model.py").unlink()
+    assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the cost model is not a runnable script"
+
+    # Inputs stop being labelled: a measurement and a guess in the same font.
+    for kind in ("MEASURED", "ASSUMED", "PRICED", "COMPUTED"):
+        write({'scripts/polaris-cost-model.py': SCRIPT.replace(kind, "note")})
+        assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
+            "must FAIL when %s inputs are not labelled" % kind
+
+    # The model drifts from the benchmark it claims to rest on.
+    write({'scripts/polaris-cost-model.py': SCRIPT.replace("VERIFY_PER_CORE = 7848",
+                                                           "VERIFY_PER_CORE = 20000")})
+    assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the model's rate is not the benchmark's measured one"
+    write({'docs/reference/BENCHMARK.md': "| single-witness | fast |\n"})
+    assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the benchmark no longer publishes the rate the model is built on"
+
+    # A reader can no longer ask their own question, so it is a table with extra steps.
+    write({'scripts/polaris-cost-model.py': SCRIPT.replace("ap.add_argument('--retention-years')\n", "")})
+    assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a reader cannot vary retention"
+
+    # THE EXCLUSIONS. Each of these can exceed the whole infrastructure figure.
+    for missing, label in (("a hardware security module; ", "the HSM"),
+                           ("Staff and on-call; ", "staff"),
+                           ("the physical token.", "the physical token")):
+        write({'docs/reference/COST-MODEL.md': DOC.replace(missing, "")})
+        assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the document does not name %s among its exclusions" % label
+
+    # The single-node caveat goes, and a projected figure reads as a measured one.
+    write({'docs/reference/COST-MODEL.md': DOC.replace(
+        "The throughput is a single-node measurement.\n", "")})
+    assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the document does not say the throughput under it is single-node"
+
+    # The finding stops being stated, so the reader has to derive the conclusion.
+    write({'docs/reference/COST-MODEL.md': DOC.replace(
+        "Verification throughput is not the cost driver.\n", "")})
+    assert checks.check_cost_model(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the document does not state its own finding"

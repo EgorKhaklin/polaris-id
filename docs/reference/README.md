@@ -17,6 +17,7 @@ the system without reading its source. For runbooks see
 | [`PERFORMANCE-BASELINE.md`](PERFORMANCE-BASELINE.md) | Issuance and verification throughput and Atlas latency, measured end to end on stated hardware and re-run by CI |
 | [`SCALING.md`](SCALING.md) | The Atlas and the verification log at 10 million events: indexes, caps, rollups |
 | [`BENCHMARK.md`](BENCHMARK.md) | The committed load certification: the national simulation driven at scale, with throughput, latency, Atlas query times, and invariants under load |
+| [`COST-MODEL.md`](COST-MODEL.md) | Infrastructure cost per million persons per year, as a script you re-run rather than a table you are asked to believe: every input labelled measured, computed, assumed or priced, and the finding that verification throughput is not the cost driver at any realistic national scale |
 | [`DYNO.md`](DYNO.md) | Real numbers from a real box: single-core ML-DSA-65 sign/verify and ZK prove/verify at a stated tree depth, measured by `scripts/polaris-dyno.py` and re-measured every release |
 | [`GLOSSARY.md`](GLOSSARY.md) | Defined terms |
 

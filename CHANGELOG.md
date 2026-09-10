@@ -5,6 +5,52 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.360 — 2026-09-10 (P2.10: a cost model you re-run)
+
+A committed cost table is out of date the week it is written, and worse, it hides
+which of its inputs are facts about the code and which are guesses about a
+deployment nobody has run. Measured verification throughput is a property of the
+software; verifications per person per year is a property of a society. Presenting
+them in the same font misleads even when every figure is right.
+
+So this is a script. Every input is labelled MEASURED, COMPUTED, ASSUMED or PRICED,
+and the error bars sit where they belong.
+
+**The finding, stated rather than left to be derived: verification throughput is
+not the cost driver at any realistic national scale.** Single-witness verify-at-use
+measures about 7,848 ML-DSA-65 verifications per second per core. A hundred million
+people verified twelve times a year is 38 per second on average, 381 at a ten-times
+peak. One core. The whole cryptographic load of a national identity system fits
+inside the base capacity a deployment needs anyway.
+
+What costs money is availability and retention: the database copies that high
+availability and a standby region require, and the verification events accumulating
+for the window. Both are policy choices, not cryptographic ones.
+
+| Population | Peak verify/s | Cores for it | Annual | Per 1M/year |
+|---|---|---|---|---|
+| 1,000,000 | 3.8 | 1 | $12,677 | $12,677 |
+| 10,000,000 | 38 | 1 | $13,241 | $1,324 |
+| 100,000,000 | 381 | 1 | $18,876 | $189 |
+
+The per-million figure falls with scale because the base capacity is a floor, not a
+rate. One measurement was taken for this model: a verification event costs 228.6
+bytes including every index, from 200,010 rows in the partitioned table.
+
+**What it excludes, each of which can exceed the whole figure:** staff and on-call,
+the physical token and its personalisation, enrolment stations, support, legal,
+compliance, external audit, and the hardware security module a real deployment needs
+and this repository has never used. A cost figure that omits those is not
+conservative, it is wrong in the direction that gets a project funded and then
+stranded. The document also repeats that the throughput under it is a single-node
+measurement whose multi-node scale is projected.
+
+`check_cost_model` with a thirteen-fixture detection test, pinning that the model
+stays runnable, that its measured rate is the benchmark's own, and that the
+exclusions stay named.
+
+---
+
 ## v9.359 — 2026-09-10 (P2.8: a second region, evacuated and measured)
 
 The HA profile survives a node dying: Patroni's lease moves and another member in
