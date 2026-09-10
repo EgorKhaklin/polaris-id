@@ -1578,6 +1578,12 @@ jobs:
           # repeated here drifts, and the drill would then run against a version the CVE
           # scan had not seen.
           pip install "$(grep -E '^cbor2==' polaris_web/requirements.txt)"
+          # v9.369 — psycopg2 for the quantum-event drill (v9.365), which measures a
+          # population migration against a real database. Added late: the drill was wired into
+          # this job without checking that this job installs what it imports, so it exited 3
+          # ("needs psycopg2") and failed the step for three ships. Pinned from the same
+          # requirements file, for the reason the cryptography line above spells out.
+          pip install "$(grep -E '^psycopg2-binary==' polaris_web/requirements.txt)"
           # v9.178 (P1.2) — the custody drivers, so test_custody runs here with BOTH
           # witnesses (liboqs + OpenSSL): the file driver for real, the AWS KMS
           # driver against its wire-faithful stand-in, rotation end to end.
@@ -1798,6 +1804,17 @@ jobs:
       # byte-level comparison of the normal and duress transcripts.
       - name: Card emulator — a reader, a card, and a coercer
         run: python scripts/polaris-card-emulator-drill.py
+
+      # v9.369 (P4.5) — the thing at the counter, under a REAL ML-DSA-65 status assertion. It
+      # keeps possession, authenticity and authorization apart and needs all three; it refuses
+      # a response relayed to another device by the scope and one replayed to ITSELF by
+      # remembering its own challenges, which a signature cannot do; and it reports what it
+      # LEARNED about the holder, since a P3.6 status assertion names the token value in the
+      # clear and an offline authorization check therefore costs unlinkability.
+      - name: Verifier device — three facts kept apart, and what the check costs
+        run: python scripts/polaris-verifier-device-drill.py
+        env:
+          POLARIS_USE_REAL_PQC: '1'
 
       - name: Quantum event — a population re-signed under real ML-DSA-87 (measured)
         run: python scripts/polaris-quantum-event-drill.py
