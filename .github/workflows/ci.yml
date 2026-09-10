@@ -225,7 +225,7 @@ jobs:
 
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
-          COVERAGE_FLOOR: "72"
+          COVERAGE_FLOOR: "74"
         run: bash scripts/polaris-coverage.sh
 
       # v9.275 (roadmap PE.5) — attacks that MUST fail, run every release. The db

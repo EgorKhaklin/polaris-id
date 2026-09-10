@@ -26,7 +26,10 @@ cd "$ROOT"
 
 # The floor. Set below the measured baseline so a real drop fails but a small
 # flake does not. Raise it (never silently lower it) as coverage climbs.
-COVERAGE_FLOOR="${COVERAGE_FLOOR:-70}"
+#   v9.350  70  measured 70% -- the detached verifier's tests were being discarded
+#   v9.351  72  measured 75% -- run_standalone stopped discarding them
+#   v9.352  74  measured 75% -- ratcheted to sit just under the real baseline
+COVERAGE_FLOOR="${COVERAGE_FLOOR:-74}"
 GATE=1
 [ "${1:-}" = "--no-gate" ] && GATE=0
 
