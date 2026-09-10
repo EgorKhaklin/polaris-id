@@ -79,10 +79,11 @@ import anchoring
 import zk
 import webauthn_auth
 import observability  # v9.31 freeze condition 6 — operator-readable metrics surface
-import mdoc
+import mdoc           # v9.362 (P3.7) — the ISO 18013-5 mdoc rendering (a format, not a trust model)
 import pqc_signing    # v9.58 — issuance signature comes from the signing module
 import rp_auth        # v9.288 (P3.4) — relying-party API auth (OAuth2 client-credentials)
 import tracing        # v9.187 (P1.6) — opt-in OpenTelemetry distributed tracing
+import vc             # v9.363 (P3.8) — a verification RESULT in the W3C VC data model
 
 # v8.93 — Prometheus-compatible /metrics endpoint. The dependency is
 # optional at runtime: if prometheus_client is unavailable, /metrics
@@ -5885,6 +5886,95 @@ def api_v1_mdoc():
                            'that is ML-DSA (COSE -49/-50), which the standard does not list. '
                            'This is not an mDL and does not claim the mDL docType.'),
         'expires_at': (now + timedelta(seconds=_MDOC_TTL)).isoformat().replace('+00:00', 'Z'),
+    })
+
+
+_VC_TTL = int(os.environ.get('POLARIS_VC_TTL', '3600'))
+
+
+@app.route('/api/v1/verifiable-credential', methods=['POST'])
+def api_v1_verifiable_credential():
+    """P3.8: this credential's verification RESULT as a W3C Verifiable Credential.
+
+    A FORMAT, not a trust model, and the roadmap row says so in those words. What the document
+    attests is not "this person is X" but "at this instant, presented against this credential,
+    the issuing authority's answer was this". That is the status assertion's content in the VC
+    data model, so a consumer whose pipeline speaks VC can carry it.
+
+    A general VC verifier can parse it and read its window. It cannot verify the proof: the
+    cryptosuite is `polaris-mldsa-jcs-2026`, and the registered Data Integrity suites are
+    classical. Naming a registered suite to make such a verifier accept the proof would be a
+    false statement about how the proof was made, on top of trading the post-quantum property
+    for the appearance of interoperability.
+
+    The subject carries a verification result and nothing else: no identity attribute, and
+    never `token_value`. With a `verifier_scope` the subject id is the P9.4 pairwise handle,
+    which is what a subject identifier should be here; without one there is no id, which VC 2.0
+    permits and which is more honest than minting a stable one.
+
+    Read-only and derived: possession-authenticated like the status assertion, no new mutation
+    path, no record of who asked.
+    """
+    body = request.get_json(silent=True) or {}
+    token_value = body.get('token_value')
+    presented_sig_hex = body.get('signature_hex')
+    if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
+        return jsonify(error='invalid_request',
+                       error_description='token_value and signature_hex are required'), 400
+    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
+    if not security.rate_limiter.allow('vc:%s' % _tk, 10, 60):
+        return jsonify(error='rate_limited'), 429
+    row = _possession_authenticated(token_value, presented_sig_hex)
+    if row is None:
+        return jsonify(error='not_verifiable',
+                       error_description='present the genuine issued credential '
+                                         '(token_value + signature_hex)'), 400
+
+    scope = body.get('verifier_scope')
+    if scope is not None and not isinstance(scope, str):
+        return jsonify(error='invalid_request',
+                       error_description='verifier_scope must be a string'), 400
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    context_row = query("SELECT c.context_type FROM VerificationContext c "
+                        "JOIN TokenPermission p ON p.context_id = c.context_id "
+                        "JOIN IdentityToken t ON t.token_id = p.token_id "
+                        "WHERE t.token_value = %s ORDER BY c.context_id LIMIT 1",
+                        (token_value,), fetch='one', primary=True)
+    subject = {
+        'verificationResult': 'usable' if row['status'] == 'ACTIVE' else 'not_usable',
+        'credentialStatus': row['status'],
+        'context': context_row['context_type'] if context_row else None,
+        'assuranceLevel': _AUTH_ACR_POSSESSION,
+        'verifiedAt': now.isoformat().replace('+00:00', 'Z'),
+    }
+    # P9.4: a per-verifier handle, or no identifier at all. Never a stable one.
+    subject_id = None
+    if scope:
+        subject_id = 'polaris:handle:%s' % hashlib.sha3_256(
+            ('%s|%s|%s' % (_PAIRWISE_TAG, token_value, scope)).encode('utf-8')).hexdigest()
+
+    def _sign(data):
+        return pqc_signing.signature_over_message(hashlib.sha3_256(data).digest(),
+                                                  agency_id=row['issuing_agency_id'])
+
+    try:
+        document = vc.build_credential(
+            'polaris:agency:%d' % row['issuing_agency_id'], subject, _sign,
+            subject_id=subject_id, now=now, ttl_seconds=_VC_TTL)
+    except ValueError as e:
+        return jsonify(error='invalid_request', error_description=str(e)), 400
+
+    # Per-holder: this credential is about one credential's verification. No cache may keep it.
+    return _private_artifact({
+        'verifiable_credential': document,
+        'verifier_interop': ('W3C VC STRUCTURE only. A general verifier parses this document '
+                             'and reads its validity window; it cannot verify the proof, whose '
+                             'cryptosuite is %s because the registered Data Integrity suites '
+                             'are classical. This attests a verification RESULT, not identity '
+                             'attributes.' % vc.CRYPTOSUITE),
+        'expires_at': document['validUntil'],
     })
 
 

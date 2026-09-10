@@ -3424,6 +3424,70 @@ class ZKSnarkTests(PolarisTestCase):
                                                      'elements': ['favourite_colour']})
         self.assertEqual(bad.status_code, 400)
 
+    def test_verifiable_credential_attests_a_result_not_an_identity(self):
+        # P3.8 (v9.363): the document says "at this instant the answer was this", never
+        # "this person is X". A VC asserting identity attributes would be a larger claim than
+        # the system makes anywhere else.
+        import vc
+        tv, sig = self._possession_credential()
+        r = self.client.post('/api/v1/verifiable-credential',
+                             json={'token_value': tv, 'signature_hex': sig})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        doc = r.get_json()['verifiable_credential']
+        self.assertIn('VerifiableCredential', doc['type'])
+        self.assertIn('PolarisVerificationResult', doc['type'])
+        subject = doc['credentialSubject']
+        self.assertIn('verificationResult', subject)
+        for identity_field in ('name', 'legal_name', 'date_of_birth', 'birthDate', 'address'):
+            self.assertNotIn(identity_field, subject)
+        with self.assertRaises(ValueError) as ctx:
+            vc.build_credential('polaris:agency:1', {'name': 'Maria'},
+                                lambda d: (b'', 'x', ''))
+        self.assertIn('identity attributes', str(ctx.exception))
+
+    def test_verifiable_credential_names_its_own_cryptosuite(self):
+        # A document carrying an ML-DSA signature under a REGISTERED suite's name would be
+        # asserting something false about how its proof was made, and a general verifier
+        # would report the mismatch as tampering.
+        tv, sig = self._possession_credential()
+        doc = self.client.post('/api/v1/verifiable-credential',
+                               json={'token_value': tv, 'signature_hex': sig}
+                               ).get_json()['verifiable_credential']
+        self.assertEqual(doc['proof']['cryptosuite'], 'polaris-mldsa-jcs-2026')
+        self.assertEqual(doc['proof']['type'], 'DataIntegrityProof')
+        for registered in ('eddsa-jcs-2022', 'ecdsa-rdfc-2019', 'bbs-2023'):
+            self.assertNotEqual(doc['proof']['cryptosuite'], registered)
+
+    def test_verifiable_credential_subject_id_is_per_verifier_or_absent(self):
+        # P9.4 again: a stable subject identifier would hand back the correlation handle the
+        # presentation layer bounds. Without a scope there is no id at all.
+        tv, sig = self._possession_credential()
+        plain = self.client.post('/api/v1/verifiable-credential',
+                                 json={'token_value': tv, 'signature_hex': sig}
+                                 ).get_json()['verifiable_credential']
+        self.assertNotIn('id', plain['credentialSubject'])
+        a = self.client.post('/api/v1/verifiable-credential',
+                             json={'token_value': tv, 'signature_hex': sig,
+                                   'verifier_scope': 'rp_clinic'}
+                             ).get_json()['verifiable_credential']
+        b = self.client.post('/api/v1/verifiable-credential',
+                             json={'token_value': tv, 'signature_hex': sig,
+                                   'verifier_scope': 'rp_library'}
+                             ).get_json()['verifiable_credential']
+        self.assertTrue(a['credentialSubject']['id'].startswith('polaris:handle:'))
+        self.assertNotEqual(a['credentialSubject']['id'], b['credentialSubject']['id'],
+                            'two verifiers must not receive the same subject identifier')
+
+    def test_verifiable_credential_never_carries_the_token_value(self):
+        tv, sig = self._possession_credential()
+        r = self.client.post('/api/v1/verifiable-credential',
+                             json={'token_value': tv, 'signature_hex': sig})
+        self.assertNotIn(tv, r.get_data(as_text=True))
+        self.assertIn('no-store', r.headers.get('Cache-Control', ''))
+        bad = self.client.post('/api/v1/verifiable-credential',
+                               json={'token_value': 'TKN-NOPE', 'signature_hex': 'ab' * 32})
+        self.assertEqual(bad.status_code, 400)
+
     def test_public_status_artifacts_cache_only_to_their_own_window(self):
         # P2.6 (v9.358): a status artifact is the one response where a cache is both wanted
         # and dangerous. max-age must be the artifact's OWN remaining life, never a constant,

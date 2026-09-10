@@ -10472,7 +10472,112 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
                "can establish separately from what only a Polaris-aware verifier can")
 
 
+
+def check_vc_format(root: pathlib.Path) -> list[Finding]:
+    """The W3C VC representation is a FORMAT, and attests a result rather than an identity (P3.8).
+
+    Two things separate this from the mdoc bridge, and both are pinnable.
+
+    WHAT IT ATTESTS. Not "this person is X" but "at this instant the answer was this". A VC
+    asserting identity attributes would be a larger claim than Polaris makes anywhere else,
+    and the disclosure vocabulary has no identity attributes to put in one. The subject
+    vocabulary is therefore closed and identity fields are refused by name, so the drift from
+    "a verification result" to "a credential about a person" cannot happen quietly.
+
+    HOW THE PROOF IS NAMED. Every registered Data Integrity cryptosuite is classical. A
+    document naming one while carrying an ML-DSA signature would be asserting something FALSE
+    about how its proof was made, which is worse than being unverifiable: a general verifier
+    would attempt the wrong algorithm and report a failure that looks like tampering. So the
+    cryptosuite names Polaris, and a relabelled document is refused rather than accepted.
+
+    The canonicalisation is JCS over the document minus its proof, not RDF Dataset
+    Canonicalization, because `-rdfc-` needs a JSON-LD processor and the detached verifier
+    stays import-standalone. That is a stated trade, not an oversight, and the two
+    canonicalisations must agree byte for byte or the app signs what the verifier cannot check."""
+    name = "vc_format"
+    mod = _read(root, "polaris_web/vc.py")
+    if not mod:
+        return _fail(name, "polaris_web/vc.py must build the verification-result credential")
+    if 'CRYPTOSUITE = "polaris-' not in mod:
+        return _fail(name,
+                     "the cryptosuite must name Polaris. A document naming a REGISTERED suite "
+                     "while carrying an ML-DSA signature asserts something false about how its "
+                     "proof was made, and a general verifier would report the mismatch as tampering")
+    for registered in ("eddsa-jcs-2022", "ecdsa-rdfc-2019", "eddsa-rdfc-2022", "bbs-2023"):
+        if f'CRYPTOSUITE = "{registered}"' in mod:
+            return _fail(name, f"the cryptosuite claims {registered}; see above")
+    if "FORBIDDEN_SUBJECT_FIELDS" not in mod:
+        return _fail(name,
+                     "the subject must refuse identity fields by name: this document attests a "
+                     "verification RESULT, and a VC asserting identity attributes would be a "
+                     "larger claim than the system makes anywhere else")
+    for field in ("token_value", "legal_name", "date_of_birth"):
+        if field not in mod:
+            return _fail(name, f"the subject must refuse {field!r} explicitly")
+    body = mod.split("def build_credential")[1].split("\ndef ")[0]
+    f_at, u_at = body.find("FORBIDDEN_SUBJECT_FIELDS"), body.find("set(SUBJECT_FIELDS)")
+    if f_at < 0:
+        return _fail(name, "build_credential must check the forbidden subject fields")
+    if 0 <= u_at < f_at:
+        return _fail(name,
+                     "the forbidden-field check must run BEFORE the vocabulary check and stand on "
+                     "its own, or an identity field is refused only for being unknown and the "
+                     "guard vanishes the day somebody adds it to the vocabulary")
+    if "subject_id" not in body:
+        return _fail(name,
+                     "the subject identifier must be optional and per-verifier (P9.4); minting a "
+                     "stable one would hand back the correlation handle the presentation layer "
+                     "bounds")
+
+    verifier = _read(root, "scripts/polaris-verify.py")
+    if "def verify_verifiable_credential" not in verifier:
+        return _fail(name, "the detached verifier must decide a VC offline")
+    v = verifier.split("def verify_verifiable_credential")[1].split("\ndef ")[0]
+    for key, why in (('"structure_valid"', "what a general reader can establish"),
+                     ('"proof_authentic"', "what only a Polaris-aware verifier can"),
+                     ('"verifier_interop"', "the difference, in words")):
+        if key not in v:
+            return _fail(name, f"the verdict must report {key}: {why}")
+    if "_VC_CRYPTOSUITE" not in v:
+        return _fail(name, "the verifier must refuse a document whose cryptosuite is not the one "
+                           "the signer used")
+    # The two canonicalisations must be the same construction, or the app signs bytes the
+    # verifier cannot reproduce.
+    if "sort_keys=True" not in verifier.split("def _vc_canonical")[1].split("\ndef ")[0]:
+        return _fail(name,
+                     "the verifier's canonicalisation must match the app's JCS-style sorted-keys "
+                     "form; a mismatch means the app signs bytes the verifier never reconstructs")
+
+    drill = _read(root, "scripts/polaris-vc-format-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-vc-format-drill.py must prove the format end to end")
+    for needed, why in (("relabelled to a registered suite",
+                         "a document naming a registered suite must be REFUSED, and the drill "
+                         "must assert it rather than assume it"),
+                        ("refusing an identity attribute",
+                         "the subject refusal must be asserted"),
+                        ("carries NO id",
+                         "without a verifier scope there must be no subject identifier at all")):
+        if needed not in drill:
+            return _fail(name, why)
+    doc = _read(root, "docs/design/vc-format.md")
+    if not doc:
+        return _fail(name, "the design record must be published (docs/design/vc-format.md)")
+    if "verification result" not in doc.lower():
+        return _fail(name,
+                     "the design record must say what the document attests: a verification "
+                     "RESULT, not an identity")
+    return _ok(name,
+               "the W3C VC representation is a format and attests a result: the cryptosuite names "
+               "Polaris rather than falsely claiming a registered classical one, a relabelled "
+               "document is refused, the subject vocabulary is closed and refuses identity fields "
+               "and the token value by name with a guard that stands on its own, the subject "
+               "identifier is per-verifier or absent, and the app and the detached verifier "
+               "canonicalise the same way")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_vc_format,
     check_mdoc_bridge,
     check_plonky3_evaluation,
     check_cost_model,

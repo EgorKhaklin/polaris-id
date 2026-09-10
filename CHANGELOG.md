@@ -5,6 +5,51 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.363 — 2026-09-10 (P3.8: a verification result in the W3C VC data model)
+
+The sibling of the mdoc bridge, and the roadmap row's phrase "explicitly a
+format, not a trust model" is the whole design. What differs is what the
+document is about.
+
+**It attests a verification result, not an identity.** Not "this person is X"
+but "at this instant, presented against this credential, the issuing authority's
+answer was this". The subject vocabulary is closed and refuses identity fields
+and `token_value` by name, because the drift from "a verification result" to "a
+credential about a person" happens one convenient field at a time. Polaris makes
+no identity claims anywhere else; a credential that made them would be a larger
+claim than the whole system supports.
+
+**A general verifier can parse it and cannot verify it.** The cryptosuite is
+`polaris-mldsa-jcs-2026`, because every registered Data Integrity suite is
+classical. Naming a registered one would assert something *false* about how the
+proof was made, and that is worse than being unverifiable: a general verifier
+would attempt the wrong algorithm and report a failure indistinguishable from
+tampering. So a relabelled document is refused rather than accepted, and the
+verdict reports the structure apart from the proof with `verifier_interop`
+naming the gap.
+
+Canonicalisation is JCS over the document minus its proof, not RDF Dataset
+Canonicalization, because the `-rdfc-` suites need a full JSON-LD processor and
+the detached verifier stays import-standalone. A check pins that both sides
+canonicalise identically, since a mismatch would mean the app signs bytes the
+verifier never reconstructs.
+
+The subject `id` is the P9.4 pairwise handle under a `verifier_scope`, and absent
+otherwise. VC 2.0 permits a subject with no `id`, and that is more honest than
+minting a stable identifier, which would hand back exactly the correlation handle
+the presentation layer bounds.
+
+One real defect fixed on the way: under the development placeholder profile there
+is no public key at all, and building the verification method sliced it. A
+credential signed by no key must be refusable rather than un-buildable, so it now
+says so and the verifier refuses it.
+
+`check_vc_format` with a ten-fixture detection test, and both container images
+now copy the new module, which the invariant layer caught for the second ship
+running.
+
+---
+
 ## v9.362 — 2026-09-10 (P3.7: a format bridge to ISO 18013-5, and what does not cross)
 
 A Polaris credential now renders in the ISO/IEC 18013-5 mdoc structure. A reader

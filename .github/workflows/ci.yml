@@ -1703,6 +1703,15 @@ jobs:
       - name: ISO 18013-5 bridge — format crosses, issuer signature does not
         run: python scripts/polaris-mdoc-bridge-drill.py
 
+      # v9.363 (P3.8) — a verification RESULT in the W3C VC data model. A FORMAT: a plain JSON
+      # reader finds the structure and the window; the proof carries Polaris's own cryptosuite
+      # because every registered Data Integrity suite is classical, and a document RELABELLED
+      # to a registered suite is refused rather than accepted, since it would assert something
+      # false about how its proof was made. The subject refuses identity attributes and the
+      # token value alike. No database.
+      - name: W3C VC format — a result, not an identity, under its own cryptosuite
+        run: python scripts/polaris-vc-format-drill.py
+
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py
 

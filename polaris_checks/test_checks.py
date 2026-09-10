@@ -9322,3 +9322,111 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
     write({'docs/design/mdoc-bridge.md': "We support ISO 18013-5.\n"})
     assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
+
+
+def test_vc_format_check_discriminates(tmp_path):
+    # v9.363 (P3.8): the two drifts this row is exposed to. A verification result quietly
+    # becoming a credential about a person, one convenient field at a time; and a proof
+    # claiming a registered cryptosuite it did not use, which is worse than being
+    # unverifiable because a general verifier reports the mismatch as tampering.
+    MOD = ('CRYPTOSUITE = "polaris-mldsa-jcs-2026"\n'
+           'SUBJECT_FIELDS = ("verificationResult",)\n'
+           'FORBIDDEN_SUBJECT_FIELDS = frozenset({"token_value", "legal_name", "date_of_birth"})\n'
+           "\ndef build_credential(issuer, subject, sign, subject_id=None):\n"
+           "    forbidden = set(subject) & FORBIDDEN_SUBJECT_FIELDS\n"
+           "    if forbidden:\n        raise ValueError('identity attributes')\n"
+           "    unknown = set(subject) - set(SUBJECT_FIELDS)\n"
+           "    if unknown:\n        raise ValueError('unknown subject fields')\n"
+           "    return {'subject_id': subject_id}\n")
+    VERIFY = ('_VC_CRYPTOSUITE = "polaris-mldsa-jcs-2026"\n'
+              "\ndef _vc_canonical(d):\n    return json.dumps(d, sort_keys=True)\n"
+              "\ndef verify_verifiable_credential(doc):\n"
+              '    v = {"structure_valid": False, "proof_authentic": False,\n'
+              '         "verifier_interop": None}\n'
+              "    if p.get('cryptosuite') != _VC_CRYPTOSUITE:\n        return v\n    return v\n")
+    DRILL = ("# a credential relabelled to a registered suite is refused\n"
+             "# refusing an identity attribute in the subject\n"
+             "# with no verifier scope the subject carries NO id\n")
+    DOC = "This attests a verification result, not an identity.\n"
+    good = {
+        'polaris_web/vc.py': MOD,
+        'scripts/polaris-verify.py': VERIFY,
+        'scripts/polaris-vc-format-drill.py': DRILL,
+        'docs/design/vc-format.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_vc_format(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # THE FALSE CLAIM: an ML-DSA signature under a registered classical suite's name. A
+    # general verifier attempts the wrong algorithm and reports tampering.
+    write({'polaris_web/vc.py': MOD.replace('CRYPTOSUITE = "polaris-mldsa-jcs-2026"',
+                                            'CRYPTOSUITE = "eddsa-jcs-2022"')})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the cryptosuite claims a registered classical suite"
+
+    # THE DRIFT: identity fields stop being refused by name.
+    write({'polaris_web/vc.py': MOD.replace(
+        'FORBIDDEN_SUBJECT_FIELDS = frozenset({"token_value", "legal_name", "date_of_birth"})\n',
+        "")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the subject does not refuse identity fields"
+    write({'polaris_web/vc.py': MOD.replace('"legal_name", ', "")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a specific identity field stops being refused"
+
+    # The ordering bug again: an identity field refused only for being unknown.
+    write({'polaris_web/vc.py': MOD.replace(
+        "    forbidden = set(subject) & FORBIDDEN_SUBJECT_FIELDS\n"
+        "    if forbidden:\n        raise ValueError('identity attributes')\n"
+        "    unknown = set(subject) - set(SUBJECT_FIELDS)\n"
+        "    if unknown:\n        raise ValueError('unknown subject fields')\n",
+        "    unknown = set(subject) - set(SUBJECT_FIELDS)\n"
+        "    if unknown:\n        raise ValueError('unknown subject fields')\n"
+        "    forbidden = set(subject) & FORBIDDEN_SUBJECT_FIELDS\n"
+        "    if forbidden:\n        raise ValueError('identity attributes')\n")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the forbidden check runs after the vocabulary check"
+
+    # The subject identifier stops being optional and per-verifier.
+    write({'polaris_web/vc.py': MOD.replace("def build_credential(issuer, subject, sign, subject_id=None):",
+                                            "def build_credential(issuer, subject, sign):")
+                                  .replace("    return {'subject_id': subject_id}\n",
+                                           "    return {}\n")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the subject identifier is not per-verifier or absent"
+
+    # THE CANONICALISATION SPLIT: the app signs bytes the verifier never reconstructs.
+    write({'scripts/polaris-verify.py': VERIFY.replace(
+        "    return json.dumps(d, sort_keys=True)\n", "    return json.dumps(d)\n")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the verifier canonicalises differently from the signer"
+
+    # The verifier stops COMPARING against the pinned suite, so a relabelled document is
+    # accepted. Removing the constant alone is not the regression; removing the comparison is.
+    write({'scripts/polaris-verify.py': VERIFY.replace(
+        "    if p.get('cryptosuite') != _VC_CRYPTOSUITE:\n        return v\n", "")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the verifier does not compare against the pinned cryptosuite"
+
+    # The verdict collapses the parse into the verification.
+    write({'scripts/polaris-verify.py': VERIFY.replace('"verifier_interop": None', '"note": None')})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the verdict does not state what a general verifier cannot do"
+
+    # The drill stops asserting the relabel refusal.
+    write({'scripts/polaris-vc-format-drill.py': DRILL.replace(
+        "# a credential relabelled to a registered suite is refused\n", "")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not assert that a relabelled suite is refused"
+
+    # The record stops saying what the document attests.
+    write({'docs/design/vc-format.md': "We support W3C Verifiable Credentials.\n"})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the record does not say the document attests a verification result"

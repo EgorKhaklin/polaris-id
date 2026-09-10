@@ -700,6 +700,32 @@ P9.1. Fetch the current issuer-signed `polaris-holder-binding/1` for a credentia
 possession. A holder staples it to a presentation so a relying party can decide the holder
 proof offline without contacting the issuer. `404 no_holder_key` when nothing is bound.
 
+### `POST /api/v1/verifiable-credential`
+
+Returns this credential's verification RESULT as a W3C Verifiable Credential (P3.8). A format,
+not a trust model.
+
+**What it attests:** not "this person is X" but "at this instant, presented against this
+credential, the issuing authority's answer was this". The subject vocabulary is closed
+(`verificationResult`, `credentialStatus`, `context`, `assuranceLevel`, `verifiedAt`) and
+refuses identity fields and `token_value` by name.
+
+**What a general VC verifier can do:** parse the document, read `validFrom`/`validUntil`, read
+the subject, find the `DataIntegrityProof`. **What it cannot do:** verify the proof. The
+cryptosuite is `polaris-mldsa-jcs-2026`, because every registered Data Integrity suite is
+classical. A document naming a registered suite while carrying an ML-DSA signature would assert
+something false about how its proof was made, so that is not done and such a document is
+refused by the verifier rather than accepted.
+
+Canonicalisation is JCS (RFC 8785) over the document minus its proof, not RDF Dataset
+Canonicalization, because `-rdfc-` needs a JSON-LD processor and the detached verifier stays
+import-standalone.
+
+Request body: `token_value`, `signature_hex`, and an optional `verifier_scope`. With a scope
+the subject `id` is the P9.4 pairwise handle; without one there is no `id`, which VC 2.0 permits
+and which is more honest than minting a stable identifier. Possession-authenticated, rate
+limited, `no-store`. See [../design/vc-format.md](../design/vc-format.md).
+
 ### `POST /api/v1/mdoc`
 
 Renders this credential in the ISO/IEC 18013-5 mdoc structure (P3.7). Read-only and derived:

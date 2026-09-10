@@ -34,7 +34,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 #                    the regression-guard regex didn't tolerate trailing
 #                    comments on the `import observability  # ...` line)
 COPY app.py security.py test_app.py gunicorn.conf.py ./
-COPY anchoring.py zk.py webauthn_auth.py __version__.py observability.py pqc_signing.py custody.py rp_auth.py tracing.py mdoc.py ./
+COPY anchoring.py zk.py webauthn_auth.py __version__.py observability.py pqc_signing.py custody.py rp_auth.py tracing.py mdoc.py vc.py ./
 COPY templates/ ./templates/
 COPY static/   ./static/
 

@@ -3384,6 +3384,119 @@ def verify_agent_proof(proof, now=None):
 
 
 # ---------------------------------------------------------------------------
+# P3.8: a verification RESULT as a W3C Verifiable Credential, verified.
+#
+# The sibling of the mdoc bridge and the same shape of claim. A general VC verifier can parse
+# this document and read its validity window; it cannot verify the proof, because the
+# cryptosuite is `polaris-mldsa-jcs-2026` and the registered Data Integrity suites are
+# classical. Naming a registered suite to make such a verifier accept the proof would be a
+# false statement about how the proof was made, on top of trading the post-quantum property.
+#
+# Canonicalisation is JCS (RFC 8785) over the document minus its proof, not RDF Dataset
+# Canonicalization, because `-rdfc-` needs a full JSON-LD processor and this verifier must stay
+# import-standalone. A verifier that could not check its own format would be worse than one
+# that used a simpler canonicalisation and said so.
+# ---------------------------------------------------------------------------
+
+_VC_CRYPTOSUITE = "polaris-mldsa-jcs-2026"
+_VC_TYPE = "PolarisVerificationResult"
+_VC_FORBIDDEN_SUBJECT = frozenset({"token_value", "tokenValue", "token_id", "individual_id",
+                                   "legal_name", "name", "date_of_birth", "birthDate",
+                                   "address", "portrait"})
+
+
+def _vc_canonical(document):
+    """JCS-style canonical bytes of the document minus its proof. MUST match
+    polaris_web/vc.py's canonical_bytes."""
+    body = {k: v for k, v in document.items() if k != "proof"}
+    return json.dumps(body, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode("utf-8")
+
+
+def verify_verifiable_credential(document, anchor_keys=None, now=None):
+    """Decide a Polaris verification-result credential OFFLINE. Total on hostile input.
+
+    Reports what a general VC verifier can establish (`structure_valid`, `fresh`) apart from
+    what only a Polaris-aware verifier can (`proof_authentic`), and states the difference in
+    `verifier_interop`, so a caller cannot report a parse as a verification.
+    """
+    v = {"structure_valid": False, "proof_authentic": False, "fresh": None,
+         "issuer_trusted": None, "subject": None, "verifier_interop": None,
+         "witnesses": [], "note": None}
+    if isinstance(document, (bytes, bytearray)):
+        try:
+            document = json.loads(document.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            v["note"] = "the credential is not decodable JSON"
+            return v
+    if not isinstance(document, dict):
+        v["note"] = "the credential is not an object"
+        return v
+    types = document.get("type")
+    if not (isinstance(types, list) and "VerifiableCredential" in types and _VC_TYPE in types):
+        v["note"] = "not a %s; this bridge does not borrow a standard credential type" % _VC_TYPE
+        return v
+    subject = document.get("credentialSubject")
+    if not isinstance(subject, dict):
+        v["note"] = "the credential has no subject object"
+        return v
+    leaked = sorted(set(subject) & _VC_FORBIDDEN_SUBJECT)
+    if leaked:
+        v["note"] = ("the subject carries %s: this document attests a verification RESULT, and "
+                     "those are identity attributes or the correlation handle the presentation "
+                     "layer bounds" % ", ".join(leaked))
+        return v
+    v["structure_valid"] = True
+    v["subject"] = subject
+    v["verifier_interop"] = ("structure and validity window only: the proof cryptosuite is "
+                             "%s, which no general Data Integrity verifier knows, because the "
+                             "registered suites are classical" % _VC_CRYPTOSUITE)
+
+    proof = document.get("proof")
+    if not isinstance(proof, dict):
+        v["note"] = "the credential carries no proof"
+        return v
+    if proof.get("cryptosuite") != _VC_CRYPTOSUITE:
+        v["note"] = ("unexpected cryptosuite %r; a document naming a REGISTERED suite would be "
+                     "asserting something false about how its proof was made"
+                     % proof.get("cryptosuite"))
+        return v
+
+    try:
+        now_dt = _instant(now)
+        vf, vu = _parse_iso(document["validFrom"]), _parse_iso(document["validUntil"])
+        v["fresh"] = bool(vf <= now_dt < vu)
+    except Exception:  # noqa: BLE001 -- an unreadable window is a refusal, never a crash
+        v["fresh"] = False
+        v["note"] = "the credential's validity window is not readable"
+
+    alg = proof.get("polarisAlgorithm")
+    key_hex = proof.get("polarisPublicKeyHex")
+    try:
+        sig = bytes.fromhex(str(proof.get("proofValue") or ""))
+        pk = bytes.fromhex(str(key_hex or ""))
+    except (ValueError, TypeError):
+        v["note"] = "proofValue or the public key is not valid hex"
+        return v
+    if not _accepted_alg(alg):
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        return v
+    ok, ran, note = _two_witness_verify(
+        hashlib.sha3_256(_vc_canonical(document)).digest(), sig, pk, alg)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["proof_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "the credential proof is invalid"
+        return v
+    if anchor_keys is not None:
+        v["issuer_trusted"] = str(key_hex).lower() in {str(a).lower() for a in anchor_keys}
+    return v
+
+
+# ---------------------------------------------------------------------------
 # P3.7: the ISO/IEC 18013-5 mdoc bridge, verified.
 #
 # A FORMAT bridge, not a trust bridge, and the verdict says so in a field rather than in a
