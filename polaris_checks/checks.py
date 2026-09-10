@@ -82,14 +82,37 @@ def check_one_active_token_index(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # C1 — audit-of-record append-only triggers on the lifecycle event tables.
 # ---------------------------------------------------------------------------
+# The audit-of-record instances named in docs/design/audit-of-record.md. Each one is a row
+# whose own history is the record, so each must be append-only (or bounded one way) AT THE
+# SCHEMA, not by the discipline of whoever writes to it. v9.347 (P9.7) closed the last
+# exception, RecoveryRequest, which until then rested on procedure discipline: the check
+# now names every table instead of counting triggers, so removing one is a failure rather
+# than a smaller number nobody reads.
+_AOR_TABLES = (
+    "TokenLifecycleEvent", "VerificationEvent", "EnrollmentStatusEvent", "TokenSignature",
+    "AgencyTrustAttestation", "TokenStateEpoch", "TokenStateEpochLeaf", "AnchorBatch",
+    "DuressEvent", "AuthAuditLog", "IndividualErasureEvent", "LifecycleArchiveCheckpoint",
+    "AuditAccessLog", "RecoveryRequest",
+)
+
+
 def check_aor_append_only_triggers(root: pathlib.Path) -> list[Finding]:
-    triggers = _read(root, "polaris_sql/06_triggers.sql")
-    if "insufficient_privilege" not in triggers:
+    sql = _read(root, "polaris_sql/06_triggers.sql")
+    for f in sorted((root / "polaris_sql" / "migrations").glob("*.up.sql")):
+        sql += "\n" + f.read_text(encoding="utf-8", errors="replace")
+    if "insufficient_privilege" not in sql:
         return _fail("c1_aor", "06_triggers.sql must raise insufficient_privilege on AoR UPDATE/DELETE (C1)")
-    n = len(re.findall(r"BEFORE\s+UPDATE\s+OR\s+DELETE", triggers, re.I))
-    if n < 1:
-        return _fail("c1_aor", "no BEFORE UPDATE OR DELETE append-only triggers found (C1)")
-    return _ok("c1_aor", f"{n} append-only audit-of-record trigger(s) present (C1)")
+    guarded = {m.lower() for m in re.findall(r"BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+(\w+)", sql, re.I)}
+    missing = [t for t in _AOR_TABLES if t.lower() not in guarded]
+    if missing:
+        return _fail("c1_aor",
+                     "these audit-of-record tables have no BEFORE UPDATE OR DELETE trigger, so their history rests "
+                     "on the discipline of whoever holds a database session rather than on the schema (C1): "
+                     + ", ".join(missing))
+    n = len(re.findall(r"BEFORE\s+UPDATE\s+OR\s+DELETE", sql, re.I))
+    return _ok("c1_aor",
+               f"all {len(_AOR_TABLES)} audit-of-record tables are guarded at the schema, RecoveryRequest included "
+               f"since v9.347; {n} append-only trigger(s) in all, each raising insufficient_privilege (C1)")
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +147,8 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         # v9.328 (P8.7b): the authority key register.
         "authoritykeyevent",
         "timestamplog",
+        # v9.349 (P9.1): the holder key register.
+        "holderkeyevent",
     ]
     if not re.search(r"REVOKE\s+UPDATE\s*,\s*DELETE", grants, re.I):
         return _fail("c1_aor_priv",
@@ -7170,6 +7195,13 @@ _WIRE_SIGNED_TYPES = {
     "polaris-signed-document/1": "_signed_document_canonical",
     "polaris-id-token/1": "_id_token_canonical",
     "polaris-trust-list/1": "_trust_list_canonical",
+    # P9.5: the attesting agency's own signature over a federation trust edge.
+    "polaris-trust-attestation/1": "_attestation_canonical",
+    # P9.1: the issuer's binding of a holder key, and the holder's own proof of it.
+    "polaris-holder-binding/1": "_holder_binding_canonical",
+    "polaris-holder-proof/1": "_holder_proof_canonical",
+    # P9.2: the published anonymity set a holder proves against on their own device.
+    "polaris-epoch-leaves/1": "_epoch_leaves_canonical",
 }
 _WIRE_ALL_FORMATS = list(_WIRE_SIGNED_TYPES) + [
     "polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
@@ -7528,6 +7560,224 @@ _NAMED_REF_EXTS = {".md", ".py", ".sh", ".tex", ".bib", ".html", ".ts", ".js", "
                    ".txt", ".cff", ".sql", ".rs", ".toml", ".json", ".cfg", ".ini"}
 _NAMED_REF_SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "target", "__pycache__", "dist", "build"}
 _NAMED_REF_EXEMPT = {"polaris_checks/checks.py", "polaris_checks/test_checks.py"}   # they hold the patterns
+
+
+def check_holder_side_prover(root: pathlib.Path) -> list[Finding]:
+    """P9.2 (v9.350): a holder can prove membership on their OWN device.
+
+    The prover was always a program a holder could run, but until this version nothing
+    published what proving needs. An epoch's leaf set IS the anonymity set, and a set only
+    the issuer holds is not one; without a published set the holder had to be handed it out
+    of band, which in practice meant the issuer proving on their behalf and learning which
+    member asked.
+
+    The check requires the set to be published, signed, bounded, and checkable with SHA3-256
+    alone: a verifier that needed the Poseidon proving library to check the set would not be
+    standalone, and the SDKs an outsider installs could not do it at all."""
+    app = _read(root, "polaris_web/app.py")
+    if "_epoch_leaves_statement" not in app or "api_v1_epoch_leaves" not in app:
+        return _fail("holder_side_prover",
+                     "the authority must publish the epoch's leaf set, signed (_epoch_leaves_statement, "
+                     "api_v1_epoch_leaves); a set only the issuer holds is not an anonymity set")
+    if "_EPOCH_LEAVES_MAX" not in app:
+        return _fail("holder_side_prover",
+                     "the published set must be bounded (C8): an unbounded body is an unbounded read")
+    # A decorator sits ABOVE the def, so look at the lines that precede it.
+    before = app.split("def api_v1_epoch_leaves")[0]
+    if any(g in before[-400:] for g in ("login_required", "require_role", "require_client")):
+        return _fail("holder_side_prover",
+                     "the anonymity set must be PUBLIC: a set a holder must authenticate to fetch tells the "
+                     "issuer who is about to prove")
+    verifier = _read(root, "scripts/polaris-verify.py")
+    for needed, why in (("def verify_epoch_leaves", "the detached verifier must decide a published set offline"),
+                        ("def member_index", "a holder must find their own leaf locally, never by asking the issuer"),
+                        ("_leaves_root", "the set must be committed to with SHA3-256, checkable in any language")):
+        if needed not in verifier:
+            return _fail("holder_side_prover", f"{why} ({needed})")
+    # The set must be checkable without the proving library: no subprocess, no zk import.
+    body = verifier.split("def verify_epoch_leaves")[1].split("\ndef ")[0]
+    if "subprocess" in body or "compute_epoch_root" in body or "import zk" in verifier:
+        return _fail("holder_side_prover",
+                     "the detached verifier must not reach for the proving library to check a published set; "
+                     "the commitment is SHA3-256 precisely so a standalone verifier can check it")
+    if "_leaves_root(" not in body:
+        return _fail("holder_side_prover",
+                     "verify_epoch_leaves must recompute the SHA3-256 commitment over the published leaves")
+    wallet = _read(root, "scripts/polaris-wallet.py")
+    if "from_instance" not in wallet or "verify_epoch_leaves" not in wallet:
+        return _fail("holder_side_prover",
+                     "the wallet must fetch the published set and VERIFY it before proving against it")
+    py_sdk, ts_sdk = _read(root, "sdk/python/polaris_verify/__init__.py"), _read(root, "sdk/typescript/src/index.ts")
+    if "polaris-epoch-leaves/1" not in py_sdk or "polaris-epoch-leaves/1" not in ts_sdk:
+        return _fail("holder_side_prover", "both SDKs must know the published anonymity set")
+    try:
+        cases = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return _fail("holder_side_prover", f"conformance/cases.json is not valid JSON ({e})")
+    ep = [c for c in cases.get("cases", []) if c.get("artifact") == "epoch-leaves"]
+    if not any(c.get("expect", {}).get("authentic") is True for c in ep) or \
+            not any(c.get("expect", {}).get("authentic") is False for c in ep):
+        return _fail("holder_side_prover",
+                     "the conformance cases must certify a published set AND one whose members were swapped "
+                     "after signing")
+    return _ok("holder_side_prover",
+               "a holder proves on their own device: the epoch's leaf set is published and signed, bounded, "
+               "public so that fetching it says nothing about who is proving, committed to with SHA3-256 so any "
+               "verifier checks it without the proving library, and the wallet verifies the set before finding "
+               "its own leaf locally (P9.2)")
+
+
+def check_holder_key_binding(root: pathlib.Path) -> list[Finding]:
+    """P9.1 (v9.349): a holder can hold a KEY, not only a file.
+
+    Polaris was issuer-centric from v1: a holder held a credential, and presenting the file
+    was the whole of the proof. That single absence was the common cause under four separate
+    limitations, so this is the keystone of P9. The check requires the whole chain and, above
+    all, the constitutional guard on it: a key the holder controls is also a key the holder
+    can be COMPELLED to use, so the holder proof must never cover the presented code. If it
+    did, a coerced presentation would become distinguishable from a consenting one and the
+    anti-coercion vocation would be weaker than before the key existed."""
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if "CREATE TABLE HolderKeyEvent" not in schema:
+        return _fail("holder_key", "HolderKeyEvent (the append-only holder key register) is missing from the schema")
+    if "HolderKeyCurrent" not in schema:
+        return _fail("holder_key", "HolderKeyCurrent must derive the key in force per credential")
+    if "trg_holder_key_append_only" not in _read(root, "polaris_sql/06_triggers.sql"):
+        return _fail("holder_key",
+                     "the holder key register must be append-only by trigger; a binding that could be updated "
+                     "would let an operator replace the holder's key")
+    if "'holderkeyevent'" not in _read(root, "polaris_sql/09_grants.sql"):
+        return _fail("holder_key", "polaris_app must lose UPDATE/DELETE on holderkeyevent (the privilege boundary)")
+    app = _read(root, "polaris_web/app.py")
+    for needed, why in (("_holder_binding_statement", "the issuer must sign a holder key binding"),
+                        ("_holder_proof_statement", "the app must build the holder proof's canonical bytes"),
+                        ("api_v1_holder_key_bind", "a holder must be able to bind, rotate and revoke a key"),
+                        ("_possession_authenticated", "binding must be proved by POSSESSION of the credential")):
+        if needed not in app:
+            return _fail("holder_key", f"{why} ({needed})")
+    # THE CONSTITUTIONAL GUARD. The holder proof's signed statement must not name the
+    # presented code, in either implementation.
+    verifier = _read(root, "scripts/polaris-verify.py")
+    # Read the SIGNED KEY LIST itself out of each implementation, not the prose around it.
+    for src, name in ((app, "polaris_web/app.py"), (verifier, "scripts/polaris-verify.py")):
+        m = re.search(r"def _holder_proof_(?:statement|canonical)\(.*?statement = \{k: \w+\.get\(k\) for k in\s*(\([^)]*\))",
+                      src, re.S)
+        if not m:
+            return _fail("holder_key", f"{name} must define the holder proof's canonical statement")
+        signed = {t.strip().strip("'\"") for t in m.group(1).strip("()").split(",") if t.strip()}
+        if "presented_code" in signed or any("code" in f and f != "format" for f in signed):
+            return _fail("holder_key",
+                         f"{name}'s holder proof signs {sorted(signed)}, which names the presented code: a proof "
+                         "that covered it would make a coerced presentation distinguishable from a consenting "
+                         "one, a regression against the vocation rather than a feature")
+        if not {"token_value", "context_id", "verifier_nonce", "issued_at"} <= signed:
+            return _fail("holder_key",
+                         f"{name}'s holder proof must sign the credential, the context, the verifier's nonce and "
+                         f"the instant; it signs {sorted(signed)}")
+    if "def verify_holder_binding" not in verifier or "def verify_holder_proof" not in verifier:
+        return _fail("holder_key", "the detached verifier must decide the binding and the proof offline")
+    if "require_holder_proof" not in verifier:
+        return _fail("holder_key",
+                     "verify_presentation must let a relying party REQUIRE possession of the holder key, not only "
+                     "of the file")
+    if "verifier_nonce" not in verifier:
+        return _fail("holder_key",
+                     "the holder proof must be bound to the verifier's own nonce, or a captured proof replays to "
+                     "another verifier")
+    py_sdk, ts_sdk = _read(root, "sdk/python/polaris_verify/__init__.py"), _read(root, "sdk/typescript/src/index.ts")
+    if "def verify_holder" not in py_sdk or "verifyHolder" not in ts_sdk:
+        return _fail("holder_key", "both SDKs must decide the holder chain, or it is available only to whoever "
+                                   "runs Polaris's own verifier")
+    try:
+        cases = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return _fail("holder_key", f"conformance/cases.json is not valid JSON ({e})")
+    chain = [c for c in cases.get("cases", []) if c.get("artifact") == "holder-chain"]
+    if not any(c.get("expect", {}).get("proved") is True for c in chain) or \
+            not any(c.get("expect", {}).get("proved") is False for c in chain) or len(chain) < 4:
+        return _fail("holder_key",
+                     "the conformance cases must certify the chain proved AND the three ways it fails: a stranger's "
+                     "key, a replayed nonce, and a revoked binding")
+    return _ok("holder_key",
+               "a holder can hold a key: an append-only register binds a holder PUBLIC key to a credential by "
+               "possession, the issuer signs the binding, the holder signs a nonce-bound proof, the detached "
+               "verifier and both SDKs decide the chain offline and can require it, and the proof's statement "
+               "does not name the presented code, so a coerced presentation stays indistinguishable (P9.1)")
+
+
+def check_attestation_signed(root: pathlib.Path) -> list[Finding]:
+    """P9.5 (v9.348): a federation trust edge is signed by the agency that made it.
+
+    Until this version the trust graph was the one load-bearing joint of federation that
+    rested on an operator's word. The manifest that published an attestation was signed, but
+    the ROW was recorded by a human and the next publication signed whatever the table held,
+    so an edge inserted straight into a database was indistinguishable from one made through
+    the ceremony. The whole architecture says do not trust the application; here it was
+    asking exactly that.
+
+    The check requires the whole path: the schema holds the signature and refuses to let it
+    be replaced, the ceremony writes it, the manifest publishes it, and every verifier
+    (the detached one and both SDKs) checks it against the attesting agency and the attested
+    key."""
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    for col in ("attestation_format", "attestation_signature_hex", "attestation_public_key_hex"):
+        if col not in schema:
+            return _fail("attestation_signed",
+                         f"AgencyTrustAttestation must carry {col}: without it the trust graph is an "
+                         "operator's word that the next manifest signs on their behalf")
+    if "attestation_signature_complete" not in schema:
+        return _fail("attestation_signed",
+                     "the signature columns must be all-or-nothing (attestation_signature_complete), so a row "
+                     "cannot carry half a signature")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    if "an attestation signature cannot be replaced once recorded" not in triggers:
+        return _fail("attestation_signed",
+                     "enforce_attestation_immutability must refuse a replaced attestation signature; a signature "
+                     "that can be rewritten proves nothing the operator's word did not already prove")
+    app = _read(root, "polaris_web/app.py")
+    if "_attestation_statement" not in app or "_sign_attestation" not in app:
+        return _fail("attestation_signed",
+                     "the app must build the canonical attestation statement and sign the edge at the ceremony "
+                     "(_attestation_statement, _sign_attestation)")
+    if "_sign_attestation(cur, row['attestation_id'])" not in app:
+        return _fail("attestation_signed",
+                     "the attestation route must sign the edge it just recorded, in the same request")
+    if "'signature_hex': a.get('attestation_signature_hex')" not in app:
+        return _fail("attestation_signed",
+                     "the federation manifest must publish each attestation's signature, or a consumer can only "
+                     "trust that the publisher recorded the edge faithfully")
+    verifier = _read(root, "scripts/polaris-verify.py")
+    if "def verify_attestation" not in verifier or "require_signed_attestation" not in verifier:
+        return _fail("attestation_signed",
+                     "the detached verifier must verify an attestation signature and offer to require one "
+                     "(verify_attestation, require_signed_attestation)")
+    if "attester_matches" not in verifier or "key_matches" not in verifier:
+        return _fail("attestation_signed",
+                     "the verifier must bind the attestation to the publishing authority and to the attested key; "
+                     "an edge signed over another key would be replayable across rotations")
+    py_sdk = _read(root, "sdk/python/polaris_verify/__init__.py")
+    ts_sdk = _read(root, "sdk/typescript/src/index.ts")
+    if "def verify_attestation" not in py_sdk or "verifyAttestation" not in ts_sdk:
+        return _fail("attestation_signed",
+                     "both SDKs must verify an attestation signature, or the stronger trust decision is available "
+                     "only to whoever runs Polaris's own verifier")
+    if "polaris-trust-attestation/1" not in py_sdk or "polaris-trust-attestation/1" not in ts_sdk:
+        return _fail("attestation_signed", "both SDKs must know the polaris-trust-attestation/1 signed-field list")
+    try:
+        cases = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return _fail("attestation_signed", f"conformance/cases.json is not valid JSON ({e})")
+    atts = [c for c in cases.get("cases", []) if c.get("artifact") == "trust-attestation"]
+    if not any(c.get("expect", {}).get("authentic") is True for c in atts) or \
+            not any(c.get("expect", {}).get("authentic") is False for c in atts):
+        return _fail("attestation_signed",
+                     "the conformance cases must certify a signed edge AND an edge whose signature no longer binds "
+                     "(a re-pointed key or a widened context)")
+    return _ok("attestation_signed",
+               "a federation trust edge is signed by the agency that made it: the schema holds the signature and "
+               "refuses to replace it, the ceremony writes it, the manifest publishes it, the detached verifier and "
+               "both SDKs check it against the publishing authority and the attested key, and the conformance cases "
+               "certify both a binding edge and one whose key or context moved after signing (P9.5)")
 
 
 def check_ship_tool(root: pathlib.Path) -> list[Finding]:
@@ -8773,6 +9023,10 @@ def check_typescript_sdk(root: pathlib.Path) -> list[Finding]:
                      "@noble/post-quantum, not trust a flag")
     if '"polaris-exchange-receipt/1"' not in sdk or '"polaris-exchange-mint/1"' not in sdk:
         return _fail("typescript_sdk", "the TS SDK must verify the exchange receipt and the mint statement (v9.331)")
+    if "verifyTimestampAnchor" not in sdk or "verifyInclusion" not in sdk or "verifyCosignature" not in sdk:
+        return _fail("typescript_sdk",
+                     "the TS SDK must decide a timestamp anchor offline too (verifyTimestampAnchor, with the "
+                     "RFC-6962 inclusion proof and the witness cosignatures it rests on) -- P9.6")
     if "/api/v1/oauth/token" not in sdk or "/api/v1/verify" not in sdk:
         return _fail("typescript_sdk",
                      "the TS SDK's online path must authenticate (OAuth2 client-credentials) and call /api/v1/verify")
@@ -8837,6 +9091,15 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
                      "the SDK must decide the federation trust decision offline (verify_cross_authority)")
     if '"polaris-exchange-receipt/1"' not in sdk or '"polaris-exchange-mint/1"' not in sdk:
         return _fail("conformance_suite", "the SDK must verify the exchange receipt and the mint statement (v9.331)")
+    # P9.6 (v9.346): long-term validation's strongest form is an ANCHORED timestamp, and until
+    # now only the detached verifier could decide one. An outside verifier must be able to reach
+    # the same verdict, or the strongest claim is reserved for whoever runs Polaris's own tools.
+    if "def verify_timestamp_anchor" not in sdk or "def verify_inclusion" not in sdk \
+            or "def verify_cosignature" not in sdk:
+        return _fail("conformance_suite",
+                     "the SDK must decide a timestamp anchor offline (verify_timestamp_anchor, with the RFC-6962 "
+                     "inclusion proof and the witness cosignatures it rests on), not treat the anchor as an opaque "
+                     "artifact")
     if "sha3_256" not in sdk or "MLDSA65PublicKey" not in sdk:
         return _fail("conformance_suite",
                      "the SDK must verify a real ML-DSA-65 signature over SHA3-256(token_value), not trust a flag")
@@ -8882,6 +9145,18 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
     if "cross-authority" not in artifacts:
         return _fail("conformance_suite",
                      "the cases must certify the federation trust decision too (an `artifact: cross-authority` case)")
+    if "timestamp-anchor" not in artifacts:
+        return _fail("conformance_suite",
+                     "the cases must certify the timestamp anchor too (an `artifact: timestamp-anchor` case), "
+                     "including a head no trusted witness cosigned")
+    anchors = [c for c in manifest.get("cases", []) if c.get("artifact") == "timestamp-anchor"]
+    if not any(c.get("expect", {}).get("witnessed") is True for c in anchors) \
+            or not any(c.get("expect", {}).get("witnessed") is False for c in anchors) \
+            or not any(c.get("expect", {}).get("anchored") is False for c in anchors):
+        return _fail("conformance_suite",
+                     "the timestamp-anchor cases must cover a witnessed head, an unwitnessed one, and a proof that "
+                     "does not reconstruct its head -- a stolen log key can sign a fabricated head, so witnessing is "
+                     "the part that cannot be forged")
     if "artifact" not in _read(root, "sdk/python/polaris_verify/conformance.py"):
         return _fail("conformance_suite",
                      "the verifier CLI must dispatch on the case's `artifact` (not only the authenticity pack)")
@@ -9057,6 +9332,9 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_holder_side_prover,
+    check_holder_key_binding,
+    check_attestation_signed,
     check_ship_tool,
     check_timestamp_transparency,
     check_roadmap_consistent,

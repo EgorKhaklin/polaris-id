@@ -67,6 +67,37 @@ SIGNED_TYPES = {
         "app": lambda b: flask_app._manifest_statement(b),
         "verify": lambda b: _V._manifest_canonical(b),
     },
+    # P9.5 (v9.348): the attesting agency's own signature over a federation trust edge.
+    "trust-attestation": {
+        "keys": ["format", "attesting_agency_id", "attested_agency_id",
+                 "attested_public_key_hex", "context_id", "attested_date",
+                 "valid_until", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._attestation_statement(b),
+        "verify": lambda b: _V._attestation_canonical(b),
+    },
+    # P9.1 (v9.349): the issuer's binding of a holder key, and the holder's own proof.
+    "holder-binding": {
+        "keys": ["format", "token_value", "holder_public_key_hex", "holder_algorithm",
+                 "bound_at", "status", "issued_at", "expires_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._holder_binding_statement(b),
+        "verify": lambda b: _V._holder_binding_canonical(b),
+    },
+    "holder-proof": {
+        "keys": ["format", "token_value", "context_id", "verifier_nonce", "issued_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._holder_proof_statement(b),
+        "verify": lambda b: _V._holder_proof_canonical(b),
+    },
+    # P9.2 (v9.350): the published anonymity set.
+    "epoch-leaves": {
+        "keys": ["format", "authority", "epoch_id", "context_id", "merkle_root",
+                 "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm"],
+        "fixed": {},
+        "app": lambda b: flask_app._epoch_leaves_statement(b),
+        "verify": lambda b: _V._epoch_leaves_canonical(b),
+    },
     "epoch-checkpoint": {
         "keys": ["format", "authority", "epoch", "prev", "as_of",
                  "issued_at", "expires_at", "algorithm"],
@@ -318,7 +349,8 @@ class CanonicalEquivalenceCoverage(unittest.TestCase):
             "polaris-exchange-receipt/1", "polaris-exchange-mint/1", "polaris-timestamp/1",
             "polaris-registry/1", "polaris-exchange-request/1",
             "polaris-signed-document/1", "polaris-id-token/1",
-            "polaris-trust-list/1",
+            "polaris-trust-list/1", "polaris-trust-attestation/1",
+            "polaris-holder-binding/1", "polaris-holder-proof/1", "polaris-epoch-leaves/1",
         }
         not_app_signed = {"polaris-authenticity-pack/1", "polaris-transparency-cosignature/1",
                           "polaris-transparency-publication/1", "polaris-published-head/1",

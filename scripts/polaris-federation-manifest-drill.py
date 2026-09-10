@@ -108,8 +108,51 @@ def main():
     bb = bytearray.fromhex(tampered_token["signature_hex"]); bb[0] ^= 0x01
     tampered_token["signature_hex"] = bb.hex()
 
+    # P9.5: a trust edge signed by the agency that made it, and the three ways it stops
+    # binding. Until v9.348 an edge was a row an operator recorded and the manifest signed on
+    # their behalf; a signed edge is evidence in its own right.
+    def signed_edge(attester, attested, context_id, over=None):
+        edge = {"format": "polaris-trust-attestation/1",
+                "attesting_agency_id": attester["agency_id"], "attested_agency_id": attested["agency_id"],
+                "attested_public_key_hex": (over or attested["key_hex"]), "context_id": context_id,
+                "attested_date": _iso(datetime.now(timezone.utc) - timedelta(days=1)).replace("Z", ""),
+                "valid_until": "2027-01-01", "algorithm": "ML-DSA-65"}
+        sig, pk = sign_with(attester["key_file"], V._attestation_canonical(edge))
+        edge["signature_hex"], edge["public_key_hex"] = sig.hex(), pk
+        edge["attested_public_key_hex"] = attested["key_hex"]   # published beside the credential key
+        return edge
+
+    edge_ok = signed_edge(B, A, 1)
+    b_signed = manifest_for(B, [edge_ok])
+    # An edge signed over ANOTHER key: the attester never saw the key it is now vouching for.
+    edge_rekeyed = signed_edge(B, A, 1, over=C["key_hex"])
+    b_rekeyed = manifest_for(B, [edge_rekeyed])
+    # An edge whose context was widened after signing.
+    edge_widened = dict(signed_edge(B, A, 2)); edge_widened["context_id"] = 1
+    b_widened = manifest_for(B, [edge_widened])
+    # An edge whose signature names a different attesting agency than the manifest publishing it.
+    edge_wrong_attester = signed_edge(C, A, 1)
+    b_wrong_attester = manifest_for(B, [edge_wrong_attester])
+    b_unsigned = manifest_for(B, [{"attested_agency_id": "A", "attested_public_key_hex": A["key_hex"], "context_id": 1}])
+
     trust_B = [B["key_hex"]]
     checks = [
+        ("P9.5: B's SIGNED edge for A in ctx1",
+         V.verify_cross_authority(token_a, 1, [b_signed], trusted_anchors=trust_B), "accept"),
+        ("P9.5: the same, with signed edges REQUIRED",
+         V.verify_cross_authority(token_a, 1, [b_signed], trusted_anchors=trust_B,
+                                  require_signed_attestation=True), "accept"),
+        ("P9.5: an edge signed over ANOTHER key",
+         V.verify_cross_authority(token_a, 1, [b_rekeyed], trusted_anchors=trust_B), "reject"),
+        ("P9.5: an edge widened to another context after signing",
+         V.verify_cross_authority(token_a, 1, [b_widened], trusted_anchors=trust_B), "reject"),
+        ("P9.5: an edge signed by an agency other than the publisher",
+         V.verify_cross_authority(token_a, 1, [b_wrong_attester], trusted_anchors=trust_B), "reject"),
+        ("P9.5: an UNSIGNED legacy edge still decides",
+         V.verify_cross_authority(token_a, 1, [b_unsigned], trusted_anchors=trust_B), "accept"),
+        ("P9.5: ... but not when signed edges are REQUIRED",
+         V.verify_cross_authority(token_a, 1, [b_unsigned], trusted_anchors=trust_B,
+                                  require_signed_attestation=True), "reject"),
         ("A-token, B attests A in ctx1, RP trusts B",
          V.verify_cross_authority(token_a, 1, [b_attests_a], trusted_anchors=trust_B), "accept"),
         ("same, but wrong context (ctx2)",

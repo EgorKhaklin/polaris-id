@@ -267,6 +267,13 @@ _ARTIFACT_KEYS = {
     "polaris-trust-list/1": ["format", "publisher", "keys", "issued_at", "expires_at", "algorithm"],
     "polaris-exchange-receipt/1": ["format", "requester", "responder", "context_id", "request_hash", "response_hash", "authorized_via", "occurred_at", "algorithm"],
     "polaris-exchange-mint/1": ["format", "requester_public_key_hex", "context_id", "request_hash", "response_hash", "responder_agency_id", "occurred_at"],
+    # P9.5: the attesting agency's own signature over a federation trust edge.
+    "polaris-trust-attestation/1": ["format", "attesting_agency_id", "attested_agency_id", "attested_public_key_hex", "context_id", "attested_date", "valid_until", "algorithm"],
+    # P9.1: the issuer's binding of a holder key, and the holder's own proof of it.
+    "polaris-holder-binding/1": ["format", "token_value", "holder_public_key_hex", "holder_algorithm", "bound_at", "status", "issued_at", "expires_at", "algorithm"],
+    "polaris-holder-proof/1": ["format", "token_value", "context_id", "verifier_nonce", "issued_at", "algorithm"],
+    # P9.2: the published anonymity set a holder proves against on their own device.
+    "polaris-epoch-leaves/1": ["format", "authority", "epoch_id", "context_id", "merkle_root", "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm"],
 }
 
 
@@ -345,6 +352,13 @@ def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
     if ok and fmt == "polaris-revocation-feed/1":
         ok = _revoked_root(obj.get("revoked_leaves")) == str(obj.get("revoked_root_hex") or "").lower()
         note = None if ok else "the revocation feed's commitment does not match its leaves"
+    elif ok and fmt == "polaris-epoch-leaves/1":
+        # P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex,
+        # so a verifier checks the set with SHA3-256 alone and never needs the proving library.
+        leaves = obj.get("all_leaves_hex") if isinstance(obj.get("all_leaves_hex"), list) else []
+        ok = (_revoked_root(leaves) == str(obj.get("leaves_root_hex") or "").lower()
+              and len(leaves) == obj.get("leaf_count"))
+        note = None if ok else "the published leaves do not match the committed set"
     elif ok and fmt == "polaris-federation-status-bundle/1":
         ok = _members_root(obj.get("members")) == str(obj.get("members_root_hex") or "").lower()
         note = None if ok else "the status bundle's members_root does not match its members"
@@ -369,6 +383,162 @@ def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
     return ArtifactVerdict(ok, _within_window(obj, now), note, ran)
 
 
+# --- P9.6: timestamp anchor verification (was P8.5c) --------------------------------
+# Long-term validation asks whether a signature was valid at the instant it was made.
+# A timestamp alone does not settle it: whoever holds the timestamp authority's key can
+# mint a backdated one. An ANCHORED timestamp is different. Its digest is an entry in an
+# append-only log whose head is published and cosigned by witnesses, so a forgery has to
+# be absent from every witnessed head of its claimed era. Until now only the detached
+# verifier could check that, which put the strongest form of long-term validation behind
+# Polaris's own tooling. These four functions put it in the SDK an outsider installs.
+_TIMESTAMP_LOG_ID = "polaris-timestamp-log"
+_STH_FORMAT = "polaris-transparency-sth/1"
+_COSIGNATURE_FORMAT = "polaris-transparency-cosignature/1"
+_COSIGNATURE_KEYS = ["format", "log_id", "tree_size", "root_hash_hex"]
+
+
+def timestamp_hash(ts: dict) -> str:
+    """A timestamp's entry in the timestamp transparency log: the SHA3-256 hex of the same
+    canonical statement its signature covers."""
+    keys = _ARTIFACT_KEYS["polaris-timestamp/1"]
+    return hashlib.sha3_256(_canonical(ts if isinstance(ts, dict) else {}, keys)).hexdigest()
+
+
+def _leaf_hash(entry_hex: str) -> bytes:
+    """RFC 6962 leaf hash, SHA3-256(0x00 || entry), the entry taken as its UTF-8 bytes."""
+    return hashlib.sha3_256(b"\x00" + str(entry_hex).encode("utf-8")).digest()
+
+
+def _node_hash(left: bytes, right: bytes) -> bytes:
+    """RFC 6962 interior node hash, SHA3-256(0x01 || left || right)."""
+    return hashlib.sha3_256(b"\x01" + left + right).digest()
+
+
+def verify_inclusion(idx: int, tree_size: int, leaf: bytes, root: bytes, proof) -> bool:
+    """RFC 6962 section 2.1.1: is `leaf` the entry at `idx` in a tree of `tree_size` whose
+    head is `root`? Total on hostile input: a malformed path is False, never an exception."""
+    try:
+        idx, tree_size = int(idx), int(tree_size)
+    except (TypeError, ValueError):
+        return False
+    if idx < 0 or idx >= tree_size:
+        return False
+    fn, sn, r = idx, tree_size - 1, leaf
+    for pnode in proof:
+        if sn == 0 or not isinstance(pnode, (bytes, bytearray)):
+            return False
+        if (fn & 1) or (fn == sn):
+            r = _node_hash(bytes(pnode), r)
+            if not (fn & 1):
+                while fn != 0 and not (fn & 1):
+                    fn >>= 1
+                    sn >>= 1
+        else:
+            r = _node_hash(r, bytes(pnode))
+        fn >>= 1
+        sn >>= 1
+    return sn == 0 and r == root
+
+
+def verify_cosignature(cosig: dict, witness_key=None) -> ArtifactVerdict:
+    """Verify a witness cosignature over a log head: the ML-DSA signature over the SHA3-256
+    of the canonical (format, log_id, tree_size, root_hash_hex), and with `witness_key` that
+    it came from the expected witness. `fresh` is None: a cosignature carries no window."""
+    c = cosig if isinstance(cosig, dict) else {}
+    if c.get("format") != _COSIGNATURE_FORMAT:
+        return ArtifactVerdict(False, None, "not a %s" % _COSIGNATURE_FORMAT)
+    if c.get("algorithm") == PLACEHOLDER_LABEL or not c.get("public_key_hex"):
+        return ArtifactVerdict(False, None, "placeholder cosignature -- not authenticatable offline")
+    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(c, _COSIGNATURE_KEYS)).digest(),
+                                        c.get("signature_hex"), c.get("public_key_hex"), c.get("algorithm"))
+    if ok is None:
+        return ArtifactVerdict(False, None, note, ran)
+    if ok and witness_key is not None and str(c.get("public_key_hex") or "").lower() != str(witness_key).lower():
+        return ArtifactVerdict(False, None, "the cosignature is not from the expected witness", ran)
+    return ArtifactVerdict(bool(ok), None, None if ok else "cosignature signature is invalid", ran)
+
+
+@dataclasses.dataclass
+class AnchorVerdict:
+    anchored: bool
+    sth_authentic: bool
+    witnessed: Optional[bool]
+    cosigner_count: int
+    timestamp_hash: Optional[str]
+    index: Optional[int]
+    tree_size: Optional[int]
+    note: Optional[str] = None
+
+
+def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, threshold: int = 1) -> AnchorVerdict:
+    """Verify OFFLINE that a timestamp is ANCHORED in the timestamp transparency log: its
+    unsigned `anchor` carries an inclusion proof and a Signed Tree Head, the proof is for this
+    timestamp's own hash, the head is an authentic head of that log (with `log_key`, signed by
+    the expected authority), and the proof reconstructs the head. With `trusted_witnesses`, the
+    head must also be cosigned by `threshold` DISTINCT trusted witnesses: a stolen authority key
+    can sign a fresh head over a fabricated log, but it cannot make a witness have cosigned that
+    head at the claimed time. No network, no Polaris code. Total on hostile input."""
+    v = AnchorVerdict(False, False, None, 0, None, None, None, None)
+    if not isinstance(ts, dict):
+        v.note = "timestamp must be an object"
+        return v
+    anchor = ts.get("anchor")
+    if not isinstance(anchor, dict):
+        v.note = "the timestamp carries no anchor (unanchored: the authority kept no record of it)"
+        return v
+    proof, sth = anchor.get("proof"), anchor.get("sth")
+    if not isinstance(proof, dict) or not isinstance(sth, dict):
+        v.note = "anchor.proof and anchor.sth must be objects"
+        return v
+    v.timestamp_hash = timestamp_hash(ts)
+    if str(proof.get("entry_hex") or "").lower() != v.timestamp_hash:
+        v.note = "the proof is not for this timestamp"
+        return v
+    sv = verify_signed_artifact(sth)
+    v.sth_authentic = bool(sv.authentic)
+    if sth.get("log_id") != _TIMESTAMP_LOG_ID or proof.get("log_id") not in (None, _TIMESTAMP_LOG_ID):
+        v.note = "the head is not a %s head" % _TIMESTAMP_LOG_ID
+        return v
+    try:
+        idx, size = int(proof.get("index")), int(proof.get("tree_size"))
+        root = bytes.fromhex(str(sth.get("root_hash_hex")))
+        path = [bytes.fromhex(str(x)) for x in (proof.get("proof_hex") or [])]
+    except (TypeError, ValueError):
+        v.note = "malformed proof"
+        return v
+    v.index, v.tree_size = idx, size
+    if size != sth.get("tree_size") or \
+            str(proof.get("root_hash_hex") or "").lower() != str(sth.get("root_hash_hex") or "").lower():
+        v.note = "the proof and the head describe different trees"
+        return v
+    if not v.sth_authentic:
+        v.note = sv.note or "the head is not authentic"
+        return v
+    if log_key is not None and str(sth.get("public_key_hex") or "").lower() != str(log_key).lower():
+        v.note = "the head is not signed by the expected log key"
+        return v
+    v.anchored = verify_inclusion(idx, size, _leaf_hash(v.timestamp_hash), root, path)
+    if not v.anchored:
+        v.note = "the inclusion proof does not reconstruct the head"
+        return v
+    if trusted_witnesses is not None:
+        trusted = {str(t).lower() for t in trusted_witnesses}
+        seen = set()
+        for c in (anchor.get("cosignatures") or []):
+            if not isinstance(c, dict) or not verify_cosignature(c).authentic:
+                continue
+            if (c.get("log_id") == sth.get("log_id") and c.get("tree_size") == sth.get("tree_size")
+                    and str(c.get("root_hash_hex") or "").lower() == str(sth.get("root_hash_hex") or "").lower()):
+                w = str(c.get("public_key_hex") or "").lower()
+                if w in trusted:
+                    seen.add(w)
+        v.cosigner_count = len(seen)
+        v.witnessed = v.cosigner_count >= int(threshold or 1)
+        if not v.witnessed:
+            v.note = "only %d trusted witness cosignature(s) over this head, need %d" % (v.cosigner_count, threshold)
+    return v
+
+
 @dataclasses.dataclass
 class CrossAuthorityVerdict:
     decision: str                    # "accept" | "reject"
@@ -378,8 +548,95 @@ class CrossAuthorityVerdict:
     reason: Optional[str] = None
 
 
+@dataclasses.dataclass
+class HolderVerdict:
+    proved: bool
+    binding_authentic: Optional[bool]
+    bound_to_credential: Optional[bool]
+    binding_fresh: Optional[bool]
+    proof_authentic: Optional[bool]
+    key_matches_binding: Optional[bool]
+    nonce_matches: Optional[bool]
+    note: Optional[str] = None
+
+
+def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=None,
+                  expected_context=None, now=None, max_age_seconds: int = 300) -> HolderVerdict:
+    """Decide the holder key chain offline (P9.1): issuer anchor -> binding -> holder key -> proof.
+
+    Polaris was issuer-centric until v9.349: a holder held a credential, not a key pair, so
+    presenting the file was the whole of the proof. A holder proof answers a different
+    question, whether the party presenting it holds the key the ISSUER bound to that
+    credential. The proof is signed over the credential, the context, the verifier's nonce
+    and the instant, and deliberately NOT over the presented code, so a coerced presentation
+    stays byte-indistinguishable from a consenting one."""
+    v = HolderVerdict(False, None, None, None, None, None, None)
+    b = binding if isinstance(binding, dict) else {}
+    pr = proof if isinstance(proof, dict) else {}
+    if b.get("format") != "polaris-holder-binding/1" or pr.get("format") != "polaris-holder-proof/1":
+        v.note = "a holder chain needs a polaris-holder-binding/1 and a polaris-holder-proof/1"
+        return v
+    bv = verify_signed_artifact(b, now=now)
+    v.binding_authentic, v.binding_fresh = bv.authentic, bv.fresh
+    cred = credential if isinstance(credential, dict) else {}
+    v.bound_to_credential = (str(b.get("token_value")) == str(cred.get("token_value"))
+                             and str(b.get("public_key_hex") or "").lower()
+                             == str(cred.get("public_key_hex") or "").lower())
+    keys = _ARTIFACT_KEYS["polaris-holder-proof/1"]
+    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(pr, keys)).digest(),
+                                        pr.get("signature_hex"), pr.get("public_key_hex"), pr.get("algorithm"))
+    v.proof_authentic = None if ok is None else bool(ok)
+    v.key_matches_binding = (str(pr.get("public_key_hex") or "").lower()
+                             == str(b.get("holder_public_key_hex") or "").lower()
+                             and (b.get("status") or "active") == "active")
+    if expected_nonce is not None:
+        v.nonce_matches = (str(pr.get("verifier_nonce")) == str(expected_nonce))
+    ctx_ok = expected_context is None or pr.get("context_id") == expected_context
+    issued = _iso_to_epoch(pr.get("issued_at"))
+    ref = _iso_to_epoch(now) if now else __import__("time").time()
+    fresh = issued is not None and ref is not None and issued <= ref + 60 and (ref - issued) <= max_age_seconds
+    v.proved = bool(v.binding_authentic and v.binding_fresh and v.bound_to_credential
+                    and v.proof_authentic and v.key_matches_binding
+                    and v.nonce_matches is not False and ctx_ok and fresh)
+    if not v.proved:
+        v.note = "the holder proof does not chain to a fresh issuer-signed binding for this credential"
+    return v
+
+
+def verify_attestation(att: dict, attesting_agency_id=None, expected_key=None) -> ArtifactVerdict:
+    """Verify that a federation attestation carries the ATTESTING agency's own signature over
+    the attested key, the context and the window (P9.5).
+
+    Before v9.348 an attestation was a row an operator recorded, and the manifest that
+    published it signed whatever the table held, so a row inserted straight into a database
+    was indistinguishable from one made through the ceremony. An unsigned attestation is not
+    a failure but legacy: `authentic` is False with a note, and the caller decides whether to
+    require a signature. `fresh` is None; an attestation's window is its `valid_until`, which
+    the trust decision reads."""
+    a = att if isinstance(att, dict) else {}
+    if not a.get("signature_hex") and not a.get("public_key_hex"):
+        return ArtifactVerdict(False, None, "unsigned legacy attestation (recorded before v9.348)")
+    if a.get("format") != "polaris-trust-attestation/1":
+        return ArtifactVerdict(False, None, "not a polaris-trust-attestation/1")
+    if a.get("algorithm") == PLACEHOLDER_LABEL:
+        return ArtifactVerdict(False, None, "placeholder attestation signature -- not authenticatable offline")
+    keys = _ARTIFACT_KEYS["polaris-trust-attestation/1"]
+    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(a, keys)).digest(),
+                                        a.get("signature_hex"), a.get("public_key_hex"), a.get("algorithm"))
+    if ok is None:
+        return ArtifactVerdict(False, None, note, ran)
+    if ok and attesting_agency_id is not None and a.get("attesting_agency_id") != attesting_agency_id:
+        return ArtifactVerdict(False, None, "the attestation names a different attesting agency "
+                                            "than the manifest that published it", ran)
+    if ok and expected_key is not None and \
+            str(a.get("attested_public_key_hex") or "").lower() != str(expected_key).lower():
+        return ArtifactVerdict(False, None, "the attestation is signed over a different attested key", ran)
+    return ArtifactVerdict(bool(ok), None, None if ok else "the attestation signature is invalid", ran)
+
+
 def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=None,
-                           revocation_feed=None, now=None) -> CrossAuthorityVerdict:
+                           revocation_feed=None, now=None,
+                           require_signed_attestation: bool = False) -> CrossAuthorityVerdict:
     """Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4).
     Accept iff: the authenticity pack is genuine; some federation manifest the relying party
     trusts (authentic, fresh, and signed by a trusted anchor) attests the credential's signing
@@ -393,6 +650,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     token_key = str(pack.get("public_key_hex") or "").lower()
     trusted = {t.lower() for t in trusted_anchors} if trusted_anchors is not None else None
     via = None
+    signed_edge = None
     for m in (manifests or []):
         m = m if isinstance(m, dict) else {}
         mv = verify_signed_artifact(m, now=now)   # manifest: signature + self-consistency + freshness
@@ -407,6 +665,16 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                 continue
             if (str(att.get("attested_public_key_hex") or "").lower() == token_key
                     and (context_id is None or att.get("context_id") == context_id)):
+                # P9.5: is the edge signed by the agency that made it, or is it the
+                # operator's word carried by the manifest's signature?
+                auth = m.get("authority") if isinstance(m.get("authority"), dict) else {}
+                av = verify_attestation(att, attesting_agency_id=auth.get("agency_id"), expected_key=token_key)
+                unsigned = not att.get("signature_hex") and not att.get("public_key_hex")
+                if not unsigned and not av.authentic:
+                    continue    # a present-but-bad signature is worse than none: refuse the edge
+                if require_signed_attestation and unsigned:
+                    continue
+                signed_edge = not unsigned
                 via = m.get("authority")
                 break
         if via is not None:

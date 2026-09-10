@@ -90,7 +90,7 @@ invariant-check layer that gates CI.
 
 ### Layer 1: Data substrate (`polaris_sql/`)
 
-PostgreSQL 16. 36 tables, stored procedures, triggers, append-only
+PostgreSQL 16. 37 tables, stored procedures, triggers, append-only
 audit-of-record tables, and schema-level guards. The migration
 framework records SHA-256 hashes in an append-only registry.
 

@@ -10371,6 +10371,105 @@ class RelyingPartyApiTests(PolarisTestCase):
 # exercised here (placeholder-safe: the assertion is a placeholder when real PQC is
 # absent, but its shape and the endpoint logic are identical). The full real-ML-DSA
 # offline accept/reject matrix runs in scripts/polaris-offline-status-drill.py.
+class HolderKeyBindingTests(PolarisTestCase):
+    """P9.1 (v9.349): a holder can hold a KEY, not only a file.
+
+    The register behind these routes is append-only and the binding is proved by POSSESSION
+    of the credential, so an operator cannot bind a key to a credential they do not hold and
+    a recorded binding is never rewritten."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _issue_pack(self, token_value):
+        r = self._post('/uc1/issue', data={
+            'legal_name': 'Key Holder', 'date_of_birth': '1990-01-15', 'jurisdiction': 'US-OH',
+            'issuing_agency_id': '1', 'algorithm_id': '1', 'biometric_binding_type': 'IRIS',
+            'witness_agency_id': '2', 'liveness_check_type': 'MULTI_MODAL', 'token_value': token_value,
+            'physical_serial': 'SN-' + token_value, 'hardware_model': 'TitanQ-3', 'contexts': ['1'],
+        }, follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (token_value,))
+            tid = cur.fetchone()['token_id']
+        return tid, self.client.get('/api/tokens/%d/authenticity-pack' % tid).get_json()
+
+    KEY = 'ab' * 40      # a stand-in public key: the route never sees a private half
+
+    def test_possession_is_required_to_bind(self):
+        _tid, pack = self._issue_pack('HOLDER-KEY-POSSESS-1')
+        bad = self.client.post('/api/v1/holder-key', json={
+            'token_value': pack['token_value'], 'signature_hex': 'dead',
+            'holder_public_key_hex': self.KEY})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(bad.get_json()['error'], 'not_verifiable')
+        # an unknown credential gives the SAME answer: no existence oracle
+        unk = self.client.post('/api/v1/holder-key', json={
+            'token_value': 'NO-SUCH', 'signature_hex': pack['signature_hex'],
+            'holder_public_key_hex': self.KEY})
+        self.assertEqual(unk.status_code, 400)
+        self.assertEqual(unk.get_json()['error'], 'not_verifiable')
+
+    def test_binding_shape_carries_no_personal_data(self):
+        _tid, pack = self._issue_pack('HOLDER-KEY-SHAPE-1')
+        b = self.client.post('/api/v1/holder-key', json={
+            'token_value': pack['token_value'], 'signature_hex': pack['signature_hex'],
+            'holder_public_key_hex': self.KEY}).get_json()
+        self.assertEqual(b['format'], 'polaris-holder-binding/1')
+        self.assertEqual(b['holder_public_key_hex'], self.KEY)
+        self.assertEqual(b['status'], 'active')
+        for f in ('token_value', 'bound_at', 'issued_at', 'expires_at', 'algorithm',
+                  'signature_hex', 'public_key_hex', 'max_window_seconds'):
+            self.assertIn(f, b)
+        forbidden = {'legal_name', 'name', 'date_of_birth', 'jurisdiction', 'individual_id',
+                     'secret_key_hex', 'private_key_hex'}
+        self.assertEqual(forbidden & {k.lower() for k in b}, set(),
+                         "a holder binding carries no personal data and never a private key")
+
+    def test_rotation_replaces_the_current_key_without_rewriting_history(self):
+        tid, pack = self._issue_pack('HOLDER-KEY-ROTATE-1')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=self.KEY))
+        second = 'cd' * 40
+        b2 = self.client.post('/api/v1/holder-key',
+                              json=dict(body, holder_public_key_hex=second, event='rotated')).get_json()
+        self.assertEqual(b2['holder_public_key_hex'], second)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM HolderKeyEvent WHERE token_id=%s", (tid,))
+            self.assertEqual(cur.fetchone()['n'], 2, "a rotation appends; it never rewrites")
+
+    def test_a_recorded_binding_cannot_be_rewritten(self):
+        tid, pack = self._issue_pack('HOLDER-KEY-APPEND-1')
+        self.client.post('/api/v1/holder-key', json={
+            'token_value': pack['token_value'], 'signature_hex': pack['signature_hex'],
+            'holder_public_key_hex': self.KEY})
+        with self._new_conn() as conn, conn.cursor() as cur:
+            with self.assertRaises(psycopg2.Error) as ctx:
+                cur.execute("UPDATE HolderKeyEvent SET public_key_hex=%s WHERE token_id=%s",
+                            ('ef' * 40, tid))
+            # 42501 is insufficient_privilege: the append-only trigger refused the rewrite.
+            self.assertEqual(ctx.exception.pgcode, '42501')
+            self.assertIn('append-only', str(ctx.exception))
+
+    def test_revocation_publishes_rather_than_hides(self):
+        _tid, pack = self._issue_pack('HOLDER-KEY-REVOKE-1')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=self.KEY))
+        r = self.client.post('/api/v1/holder-key', json=dict(body, event='revoked')).get_json()
+        self.assertEqual(r['status'], 'revoked',
+                         "a revoked binding is published, so a verifier sees the holder has no usable key")
+
+    def test_binding_endpoint_returns_the_current_binding(self):
+        _tid, pack = self._issue_pack('HOLDER-KEY-FETCH-1')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        none_yet = self.client.post('/api/v1/holder-binding', json=body)
+        self.assertEqual(none_yet.status_code, 404)
+        self.client.post('/api/v1/holder-key', json=dict(body, holder_public_key_hex=self.KEY))
+        got = self.client.post('/api/v1/holder-binding', json=body)
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(got.get_json()['holder_public_key_hex'], self.KEY)
+
+
 class OfflineStatusAssertionTests(PolarisTestCase):
     def _new_conn(self):
         return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)

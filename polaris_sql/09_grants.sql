@@ -118,7 +118,8 @@ DECLARE
         'authcodeconsumed',
         -- P8.7b: the authority key register (history is never edited).
         'authoritykeyevent',
-        'timestamplog'
+        'timestamplog',
+        'holderkeyevent'
     ];
 BEGIN
     FOREACH v_tbl IN ARRAY v_append_only_tables LOOP

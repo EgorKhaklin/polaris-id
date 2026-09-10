@@ -48,6 +48,11 @@ FUNCTIONS = {
     "trust-list": ("verify_trust_list", "trust_list_authentic"),
     "exchange-receipt": ("verify_exchange_receipt", "receipt_authentic"),
     "exchange-mint": ("verify_exchange_mint", "mint_authentic"),
+    # P9.5 / P9.1 / P9.2 (v9.348-v9.350): the trust edge, the holder chain, the anonymity set.
+    "trust-attestation": ("verify_attestation", "attestation_authentic"),
+    "holder-binding": ("verify_holder_binding", "binding_authentic"),
+    "holder-proof": ("verify_holder_proof", "proof_authentic"),
+    "epoch-leaves": ("verify_epoch_leaves", "leaves_authentic"),
 }
 
 
@@ -95,6 +100,37 @@ def decide(V, case):
             kw["revocation_feed"] = _read(case["feed_file"])
         v = V.verify_cross_authority(pack, case.get("context_id"), ms, trusted_anchors=anchors, **kw)
         return {"decision": v.get("decision"), "authentic": v.get("authentic"), "issuer_trusted": v.get("issuer_trusted")}, None
+    if art == "timestamp-anchor":
+        # P9.6: the composite anchor decision, not a per-artifact authenticity check.
+        fn = getattr(V, "verify_timestamp_anchor", None)
+        if fn is None:
+            return None, "predates %s" % art
+        ts = _read(case["timestamp_file"])
+        log_key = case.get("log_key")
+        if log_key == "sth":
+            log_key = ts["anchor"]["sth"]["public_key_hex"]
+        tw = case.get("trusted_witnesses")
+        if tw == "cosigners":
+            tw = sorted({x["public_key_hex"] for x in ts["anchor"].get("cosignatures", [])
+                         if isinstance(x, dict) and x.get("public_key_hex")})
+        v = fn(ts, log_key=log_key, trusted_witnesses=tw, threshold=int(case.get("threshold") or 1))
+        return {"anchored": v.get("anchored"), "witnessed": v.get("witnessed")}, None
+    if art == "holder-chain":
+        # P9.1: the composite chain decision.
+        fn = getattr(V, "verify_holder_proof", None)
+        if fn is None:
+            return None, "predates %s" % art
+        cred, b, pr = _read(case["credential_file"]), _read(case["binding_file"]), _read(case["proof_file"])
+        now = _at(case.get("now"))
+        bv = V.verify_holder_binding(b, credential=cred, now=now)
+        pv = fn(pr, binding=b if bv.get("binding_authentic") else None,
+                expected_nonce=case.get("expected_nonce"), expected_context=case.get("expected_context"), now=now)
+        proved = bool(bv.get("binding_authentic") and bv.get("fresh") and bv.get("bound_to_credential") is not False
+                      and pv.get("proof_authentic") and pv.get("fresh") and pv.get("key_matches_binding")
+                      and pv.get("nonce_matches") is not False and pv.get("context_matches") is not False)
+        return {"proved": proved}, None
+    if art not in FUNCTIONS:
+        return None, "predates %s" % art
     fn_name, key = FUNCTIONS[art]
     fn = getattr(V, fn_name, None)
     if fn is None:

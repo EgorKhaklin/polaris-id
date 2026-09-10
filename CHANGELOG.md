@@ -5,6 +5,169 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.350 — 2026-09-10 (P9.2: a holder proves on their own device)
+
+The membership prover was always a program a holder could run, but nothing published what
+proving needs. An epoch's leaf set IS the anonymity set: a proof hides which member is proving
+inside the set it is proved against, so a set only the issuer holds is not an anonymity set at
+all. Without a published set a holder had to be handed one out of band, which in practice
+meant the issuer proving on their behalf and learning which member asked.
+
+- **`polaris-epoch-leaves/1`**, wire spec section 3.16: the authority's signed publication of
+  an epoch's leaf set. `GET /api/v1/epoch/<id>/leaves` serves it to anyone. Public by
+  construction, because a set you must authenticate to fetch tells the issuer who is about to
+  prove; every requester receives identical bytes, each entry is an opaque SHA3-256 only the
+  matching holder recognises, and nothing is recorded about who asked. Bounded at ten thousand
+  members (C8).
+- **Checkable without the proving library.** The leaves ride outside the signed statement and
+  are committed to by `leaves_root_hex`, SHA3-256 over the sorted set, the same construction
+  the revocation feed uses. A standalone verifier and both SDKs check the set with SHA3-256
+  alone; `merkle_root` is carried only so a holder can cross-check the bundle against the
+  epoch checkpoint.
+- **`verify_epoch_leaves` and `member_index`** in the detached verifier: the holder finds their
+  own leaf HERE, on their own device, and is never asked which index they used. Both SDKs
+  verify the published set. Two conformance vectors certify a good set and one whose members
+  were swapped after signing; 65 cases now pass in all three verifiers.
+- **The wallet fetches and verifies before proving.** `prove-membership --from-instance
+  --epoch-id N` pulls the signed set, refuses it unless the signature and the commitment hold,
+  then finds its own leaf and proves locally.
+- **`check_holder_side_prover`** (#194) with a six-perturbation detection test, including the
+  one that matters: putting the anonymity set behind a login.
+
+Closes P9.2.
+
+## v9.349 — 2026-09-10 (P9.1: a holder can hold a key, not only a file)
+
+The keystone of P9. Polaris has been issuer-centric since Version 1: a holder holds a
+credential, not a key pair, so presenting the file was the whole of the proof. That single
+absence is the common cause under four separate limitations, and it is why document signing
+is notarial, login is by possession, no agent can be delegated to, and a presentation carries
+a value stable across the verifiers it is shown to. This ship supplies the missing primitive.
+
+**The constitutional note first.** A key the holder controls is also a key the holder can be
+COMPELLED to use. The holder proof is signed over the credential, the context, the verifier's
+nonce and the instant, and deliberately NOT over the presented code, so a coerced presentation
+stays byte-indistinguishable from a consenting one. `check_holder_key_binding` reads the
+signed key list out of both implementations and fails the build if the code ever appears in
+it; the drill proves the statement bytes and the verifier's verdict are identical under
+duress and under consent. A holder key that weakened the duress path would be a regression
+against the vocation, not a feature.
+
+- **`HolderKeyEvent`** (migration 010, 37 tables / 44 migrated), an append-only register of
+  bound, rotated and revoked holder PUBLIC keys, with `HolderKeyCurrent` deriving the key in
+  force. The private key lives on the holder's device and never reaches the database. A hash
+  index serves the key lookup, since an ML-DSA-65 public key exceeds a btree row.
+- **Two routes**, `POST /api/v1/holder-key` and `POST /api/v1/holder-binding`, authenticated
+  by POSSESSION of the credential exactly as the status assertion is: no session, no bearer,
+  no operator. An operator cannot bind a key to a credential they do not hold. A revoked
+  binding is published rather than withdrawn, so a verifier sees the holder has no usable key
+  instead of inferring it from an absence.
+- **Two signed artifacts**: `polaris-holder-binding/1` (the issuer's) and
+  `polaris-holder-proof/1` (the holder's), wire spec section 3.15, both pinned by the
+  canonical-equivalence oracle (103 cases).
+- **Every verifier decides the chain.** `verify_holder_binding`, `verify_holder_proof` and
+  `verify_presentation(..., expected_nonce=, require_holder_proof=)` in the detached verifier;
+  `verify_holder` and `verifyHolder` in the two SDKs. Seven published vectors and seven
+  conformance cases certify the chain proved and the three ways it fails: a stranger's key, a
+  replayed nonce, a revoked binding. 63 cases now pass in all three verifiers.
+- **The wallet holds the key.** `polaris-wallet holder-keygen` generates it and binds the
+  public half; `present --holder-nonce` signs a proof against the verifier's own nonce.
+- **`scripts/polaris-holder-key-drill.py`**, in CI, exercises nine cases under real ML-DSA
+  including the two constitutional ones.
+- **`check_holder_key_binding`** (#193) with a six-perturbation detection test. Counts
+  restamped to 193 checks, 37 tables, 121 routes.
+
+Closes P9.1, which unblocks P9.2, P9.3, P9.4 and P9.8.
+
+## v9.348 — 2026-09-10 (P9.5: a trust edge is signed by the agency that made it)
+
+The trust graph was the one load-bearing joint of federation that rested on an operator's
+word. The federation manifest that publishes an attestation was always signed, but the ROW
+was recorded by a human and the next publication signed whatever the table held, so an edge
+inserted straight into a database was indistinguishable from one made through the ceremony.
+The architecture's whole argument is do not trust the application, and here it was asking
+exactly that.
+
+- **`polaris-trust-attestation/1`**, the twenty-first signed wire artifact: the attesting
+  agency's signature over `attesting_agency_id`, `attested_agency_id`,
+  `attested_public_key_hex`, `context_id`, `attested_date`, `valid_until` and `algorithm`.
+  The edge is bound to the attested KEY, not only to the agency, because an attestation
+  naming an agency alone keeps meaning what the attester meant after that agency rotates to
+  a key the attester never saw. The context is signed, so an edge cannot be widened later.
+- **The schema** (migration 009) carries the signature all-or-nothing, and
+  `enforce_attestation_immutability` refuses to let a recorded signature be replaced.
+  The columns are nullable: rows made before this version stay verifiable as unsigned legacy
+  for one major, and a verifier reports which it saw.
+- **The ceremony signs what it records.** `/api/federation/attest` signs the edge in the same
+  request that creates it, under the attesting agency's own key; the manifest publishes the
+  signature beside each edge.
+- **Every verifier checks it.** The detached verifier gains `verify_attestation` and
+  `verify_cross_authority(..., require_signed_attestation=)`; both SDKs gain the same. A
+  present-but-invalid signature refuses the edge, which is stricter than an absent one. The
+  canonical-equivalence oracle pins app and verifier byte for byte (91 cases), the wire spec
+  gains section 3.14, and three conformance vectors certify a binding edge, one re-pointed at
+  another key, and one widened to another context. 56 cases now pass in all three verifiers.
+- **`check_attestation_signed`** (#192) requires the whole path, with a seven-perturbation
+  detection test. Counts restamped to 192.
+
+Closes P9.5.
+
+## v9.347 — 2026-09-10 (P9.7: the recovery ceremony is enforced at the schema)
+
+The audit-of-record principle says a row whose own history is the record must be append-only,
+or bounded one way, AT THE SCHEMA rather than by the discipline of whoever writes to it.
+Thirteen of the fourteen instances were. `RecoveryRequest` was not, and it was named rather
+than glossed for eight versions: `uc9_complete_recovery` was the only sanctioned writer, but
+a raw UPDATE from a database session was accepted. This closes it.
+
+- **`enforce_recovery_request_immutability`** (migration 008, in the shape of
+  `enforce_attestation_immutability`). Everything it permits moves one way: identity and
+  request fields never change; `status` leaves `PENDING` exactly once for a terminal value
+  and never moves again; the three out-of-band channels may be recorded while `PENDING` and
+  not after a decision, and a verified biometric never returns to false; the four decision
+  fields are written once, never rewritten and never withdrawn; `DELETE` is refused outright.
+  The sanctioned procedure writes exactly inside that envelope and is unaffected.
+- **`check_aor_append_only_triggers` now names all fourteen tables** instead of counting
+  triggers, because a count nobody reads can fall by one silently, and it reads migrations
+  as well as `06_triggers.sql` because that is how later tables arrive. Its first detection
+  test lands with it: four perturbations, including the removal of this very trigger.
+- **Six database-backed tests** in `test_check_constraints.py` exercise each refusal and
+  prove the sanctioned envelope still writes, run against a live database.
+- **The design record** (`docs/design/audit-of-record.md`) replaces "the one that is not
+  fully enforced" with how it was closed, and its count is corrected from thirteen to the
+  fourteen the table has listed for some time.
+
+Closes P9.7.
+
+## v9.346 — 2026-09-10 (P9.6: an outsider can check an anchored timestamp)
+
+The first row of P9. Long-term validation asks whether a signature was valid at the instant
+it was made, and a timestamp alone does not settle it: whoever holds the timestamp
+authority's key can mint a backdated one. An ANCHORED timestamp is different, because its
+digest is an entry in an append-only log whose head is published and cosigned by independent
+witnesses, so a forgery has to be absent from every witnessed head of its claimed era. Until
+now only `scripts/polaris-verify.py` could decide that, which reserved the strongest form of
+long-term validation for whoever runs Polaris's own tooling. Both SDKs now decide it.
+
+- **Python SDK** (`sdk/python/polaris_verify/`): `timestamp_hash`, `verify_inclusion` (RFC
+  6962 section 2.1.1, total on hostile input), `verify_cosignature`, and
+  `verify_timestamp_anchor(ts, log_key=, trusted_witnesses=, threshold=)` returning an
+  `AnchorVerdict`.
+- **TypeScript SDK** (`sdk/typescript/src/index.ts`): `timestampHash`, `verifyInclusion`,
+  `verifyCosignature`, `verifyTimestampAnchor`, the same verdicts, type-checked.
+- **The conformance contract**: a new `artifact: timestamp-anchor` case shape in both
+  verifier CLIs, the runner and `conformance/SPEC.md`, with four published vectors generated
+  and pre-verified by `conformance/make_anchor_vectors.py` under real ML-DSA-65: a valid
+  anchor, a head cosigned by two witnesses, a fabricated head signed by a stolen log key
+  (`anchored: true, witnessed: false`, which is the verdict that matters), and a path that
+  does not reconstruct its head. 53 cases now pass in all three verifiers, and the
+  TypeScript SDK independently accepts Python-signed anchors.
+- **Checks**: `check_conformance_suite` and `check_typescript_sdk` now require the anchor
+  decision in both SDKs and require the cases to cover a witnessed head, an unwitnessed one
+  and a broken proof; four new perturbations in the detection tests.
+
+Closes P9.6, carried since v9.341 as a follow-up sentence inside a completed row.
+
 ## v9.345 — 2026-09-09 (Engine and tool only)
 
 The measurement apparatus of v9.343 and v9.344 is cut: the viewer, the fits, the dimensions,

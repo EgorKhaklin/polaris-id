@@ -27,7 +27,7 @@ Making the primary table itself append-only, with a bounded mutation surface,
 removes the second copy. The primary table is the event log.
 
 The pattern is not novel. It is named here because the schema applies it in
-thirteen places, and a rule applied thirteen times without a name gets applied
+fourteen places, and a rule applied fourteen times without a name gets applied
 inconsistently the fourteenth.
 
 ## What qualifies
@@ -49,7 +49,7 @@ inconsistently the fourteenth.
    when. If that needs a join to a separate event log, it is not an audit of
    record.
 
-## The thirteen instances
+## The fourteen instances
 
 | Element | What it records | Bounded mutation | Enforcement |
 |---|---|---|---|
@@ -66,21 +66,37 @@ inconsistently the fourteenth.
 | `IndividualErasureEvent` | Right-to-erasure ceremonies | None; fully append-only | `trg_erasure_append_only` |
 | `LifecycleArchiveCheckpoint` | The watermarks that bound every purge | None; fully append-only | `trg_checkpoint_append_only` |
 | `AuditAccessLog` | Who read which audit surface, and when | None; fully append-only | `trg_audit_access_append_only`, added by migration |
-| `RecoveryRequest` | Catastrophic-loss recovery ceremonies | The decision fields, written by `uc9_complete_recovery` | Partial: see below |
+| `RecoveryRequest` | Catastrophic-loss recovery ceremonies | The out-of-band channels while PENDING, then the decision, once | `trg_recovery_request_immutable`, added by migration 008 |
 
 Every trigger above raises `insufficient_privilege`, and
-`check_aor_append_only_triggers` fails the build if that stops being true.
+`check_aor_append_only_triggers` fails the build if any of the fourteen stops
+being guarded. The check names each table rather than counting triggers,
+because a count nobody reads can fall by one silently.
 
-## The one that is not fully enforced
+## The exception, and how it was closed
 
-`RecoveryRequest` is the exception, and it is named rather than glossed. A
-partial unique index prevents a second pending request for an individual while
-one is open, and `uc9_complete_recovery` is the only sanctioned path that
-writes the decision. A raw UPDATE from a database session is not refused at
-the schema level. Closing that gap means a trigger in the shape of
-`enforce_token_signature_immutability`, and until it exists the honest
-statement is that this instance rests on procedure discipline rather than on
-the schema.
+`RecoveryRequest` was the one instance that rested on procedure discipline
+rather than on the schema, and it was named rather than glossed for eight
+versions. A partial unique index prevented a second pending request while one
+was open, and `uc9_complete_recovery` was the only sanctioned path that wrote
+the decision, but a raw UPDATE from a database session was not refused.
+
+Migration 008 (v9.347, P9.7) closes it with
+`enforce_recovery_request_immutability`, in the shape of
+`enforce_attestation_immutability`. Everything it permits moves one way:
+
+- the identity and request fields never change;
+- `status` leaves `PENDING` exactly once, for `APPROVED`, `REJECTED` or
+  `EXPIRED`, and a terminal value never moves again;
+- the three out-of-band channels may be recorded while the request is
+  `PENDING` and not after a decision, and `biometric_verified` never returns
+  to false;
+- the four decision fields are written once, never rewritten, never withdrawn;
+- `DELETE` is refused outright.
+
+The sanctioned procedure writes exactly within that envelope, so it is
+unaffected. What changed is that it is no longer the only thing standing
+between the record and an operator with a database session.
 
 ## What the principle is not
 

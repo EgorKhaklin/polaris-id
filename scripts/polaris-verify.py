@@ -512,9 +512,78 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
     return v
 
 
+_ATTESTATION_FORMAT = "polaris-trust-attestation/1"   # P9.5 (v9.348)
+
+
+def _attestation_canonical(att):
+    """The bytes an ATTESTING agency signs when it accepts another authority (P9.5). MUST
+    match polaris_web/app.py's _attestation_statement; the canonical oracle pins the pair."""
+    if not isinstance(att, dict):
+        att = {}
+    statement = {k: att.get(k) for k in
+                 ("format", "attesting_agency_id", "attested_agency_id",
+                  "attested_public_key_hex", "context_id", "attested_date",
+                  "valid_until", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_attestation(att, attesting_agency_id=None, expected_key=None):
+    """Verify OFFLINE that a federation attestation carries the ATTESTING agency's own
+    signature over the attested key, the context and the window (P9.5).
+
+    Before v9.348 an attestation was a row an operator recorded, and the manifest that
+    published it signed whatever the table held: a row inserted straight into the database
+    was indistinguishable from one made through the ceremony. A signed attestation is
+    evidence in its own right, independent of the manifest's freshness window.
+
+    An attestation with no signature is not a failure, it is `signed: False` LEGACY: rows
+    recorded before v9.348 stay verifiable for one major, and a relying party that requires
+    signatures asks for them. Total on hostile input."""
+    v = {"signed": False, "attestation_authentic": False, "attester_matches": None,
+         "key_matches": None, "witnesses": [], "note": None}
+    if not isinstance(att, dict):
+        v["note"] = "attestation must be an object"
+        return v
+    if not att.get("signature_hex") and not att.get("public_key_hex"):
+        v["note"] = "unsigned legacy attestation (recorded before v9.348): the trust edge rests on the manifest"
+        return v
+    v["signed"] = True
+    if att.get("format") != _ATTESTATION_FORMAT:
+        v["note"] = "not a %s" % _ATTESTATION_FORMAT
+        return v
+    alg, pk_hex, sig_hex = att.get("algorithm"), att.get("public_key_hex"), att.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder attestation signature -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    ok, ran, note = _two_witness_verify(hashlib.sha3_256(_attestation_canonical(att)).digest(), sig, pk, alg)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["attestation_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "the attestation signature is invalid"
+        return v
+    if attesting_agency_id is not None:
+        v["attester_matches"] = (att.get("attesting_agency_id") == attesting_agency_id)
+        if not v["attester_matches"]:
+            v["note"] = "the attestation names a different attesting agency than the manifest that published it"
+    if expected_key is not None:
+        v["key_matches"] = (str(att.get("attested_public_key_hex") or "").lower() == str(expected_key).lower())
+        if not v["key_matches"]:
+            v["note"] = "the attestation is signed over a different attested key"
+    return v
+
+
 def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                            max_window_seconds=None, trusted_anchors=None,
-                           revocation_feed=None, trust_list=None):
+                           revocation_feed=None, trust_list=None,
+                           require_signed_attestation=False):
     """Decide whether to accept a credential from ANOTHER authority, OFFLINE, using
     published federation manifests (P3.2). Accept iff the credential's signature is
     genuine AND some manifest the relying party trusts attests to the credential's
@@ -538,6 +607,7 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                 "revocation_checked": False, "revoked": None}
     token_key = (pack.get("public_key_hex") or "").lower()
     via = None
+    attestation_signed = None       # P9.5: None until an edge is found
     for manifest in trusted_manifests:
         mv = verify_manifest(manifest, now=now, max_window_seconds=max_window_seconds,
                              trusted_anchors=trusted_anchors)
@@ -551,14 +621,27 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
             same_key = str(att.get("attested_public_key_hex") or "").lower() == token_key
             same_ctx = (context_id is None or att.get("context_id") == context_id)
             if same_key and same_ctx:
+                # P9.5: is this edge signed by the agency that made it, or is it the
+                # operator's word carried by the manifest's signature?
+                agency = (mv["authority"] or {}).get("agency_id") if isinstance(mv["authority"], dict) else None
+                av = verify_attestation(att, attesting_agency_id=agency, expected_key=token_key)
+                if av["signed"] and not (av["attestation_authentic"]
+                                         and av["attester_matches"] is not False
+                                         and av["key_matches"] is not False):
+                    continue   # a present-but-bad signature is worse than none: refuse the edge
+                if require_signed_attestation and not av["signed"]:
+                    continue
+                attestation_signed = bool(av["signed"])
                 via = mv["authority"]
                 break
         if via:
             break
     if not via:
         return {"decision": "reject", "authentic": True,
-                "reasons": ["no trusted authority attests to this credential's issuer in this context"],
-                "via": None, "revocation_checked": False, "revoked": None}
+                "reasons": ["no trusted authority attests to this credential's issuer in this context"
+                            + (" with a signature by the attesting agency" if require_signed_attestation else "")],
+                "via": None, "revocation_checked": False, "revoked": None,
+                "attestation_signed": None}
     # P8.7b: a trust list the relying party holds decides the issuer KEY's status independently
     # of the issuer's own manifest -- a compromised key rejects the credential outright.
     if trust_list is not None:
@@ -566,12 +649,14 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
         if not (tv["trust_list_authentic"] and tv["fresh"]) or (trusted_anchors is not None and not tv["issuer_trusted"]):
             return {"decision": "reject", "authentic": True,
                     "reasons": ["the supplied trust list is not authentic, fresh and trusted"],
-                    "via": via, "revocation_checked": False, "revoked": None, "key_status": None}
+                    "via": via, "revocation_checked": False, "revoked": None, "key_status": None,
+                    "attestation_signed": attestation_signed}
         status = key_status_at(trust_list, token_key, now)
         if status == "compromised":
             return {"decision": "reject", "authentic": True,
                     "reasons": ["the issuer key is listed COMPROMISED by a trusted trust list"],
-                    "via": via, "revocation_checked": False, "revoked": None, "key_status": status}
+                    "via": via, "revocation_checked": False, "revoked": None, "key_status": status,
+                    "attestation_signed": attestation_signed}
     # P3.2b: fail-closed revocation propagation, if the relying party supplies the feed.
     if revocation_feed is not None:
         rv = verify_revocation_feed(revocation_feed, now=now,
@@ -580,13 +665,17 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
             return {"decision": "reject", "authentic": True,
                     "reasons": ["the issuer's revocation feed is not authentic, fresh, and bound to "
                                 "the issuer key -- non-revocation cannot be confirmed"],
-                    "via": via, "revocation_checked": True, "revoked": None}
+                    "via": via, "revocation_checked": True, "revoked": None,
+                    "attestation_signed": attestation_signed}
         if is_revoked(revocation_feed, pack.get("token_value") or ""):
             return {"decision": "reject", "authentic": True,
                     "reasons": ["credential is revoked in the issuer's published revocation feed"],
-                    "via": via, "revocation_checked": True, "revoked": True}
+                    "via": via, "revocation_checked": True, "revoked": True,
+                    "attestation_signed": attestation_signed}
         return {"decision": "accept", "authentic": True, "reasons": [], "via": via,
-                "revocation_checked": True, "revoked": False}
+                "revocation_checked": True, "revoked": False,
+                "attestation_signed": attestation_signed,
+            "attestation_signed": attestation_signed}
     return {"decision": "accept", "authentic": True, "reasons": [], "via": via,
             "revocation_checked": False, "revoked": None}
 
@@ -2813,7 +2902,233 @@ def decode_presentation_frames(frames):
     return obj, None
 
 
-def verify_presentation(presentation, anchor_keys=None, now=None, max_window_seconds=None, expected_context=None):
+_EPOCH_LEAVES_FORMAT = "polaris-epoch-leaves/1"        # P9.2 (v9.350)
+
+
+def _epoch_leaves_canonical(b):
+    """The bytes an authority signs for a published anonymity set (P9.2). MUST match app.py's
+    _epoch_leaves_statement; the canonical oracle pins the pair."""
+    if not isinstance(b, dict):
+        b = {}
+    statement = {k: b.get(k) for k in
+                 ("format", "authority", "epoch_id", "context_id", "merkle_root",
+                  "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _leaves_root(leaves):
+    """The commitment over a leaf set: SHA3-256 of the sorted, newline-joined hexes. The same
+    construction the revocation feed uses, so it is checkable with SHA3-256 alone."""
+    uniq = sorted({str(x).lower() for x in (leaves or [])})
+    return hashlib.sha3_256("\n".join(uniq).encode("utf-8")).hexdigest()
+
+
+def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=None,
+                        epoch_checkpoint=None):
+    """Verify OFFLINE that a published anonymity set is authentic and complete (P9.2).
+
+    A holder needs the epoch's leaf set to prove membership on their OWN device: the set is
+    the anonymity set, and a set only its issuer holds is not one. This checks the authority's
+    signature over the statement, that the leaves riding beside it match the committed
+    leaves_root_hex, that the count agrees, freshness, and, with an epoch checkpoint, that the
+    bundle describes the same epoch root the authority published there.
+
+    It deliberately does NOT recompute the Poseidon Merkle root: that needs the proving
+    library, and a verifier that required it would not be standalone. The commitment is
+    SHA3-256 over the set, so the leaves are tamper-evident in any language."""
+    v = {"leaves_authentic": False, "fresh": None, "issuer_trusted": None,
+         "commitment_matches": None, "count_matches": None, "epoch_matches": None,
+         "leaf_count": None, "witnesses": [], "note": None}
+    if not isinstance(bundle, dict) or bundle.get("format") != _EPOCH_LEAVES_FORMAT:
+        v["note"] = "not a %s" % _EPOCH_LEAVES_FORMAT
+        return v
+    alg, pk_hex, sig_hex = bundle.get("algorithm"), bundle.get("public_key_hex"), bundle.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder bundle -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    ok, ran, note = _two_witness_verify(hashlib.sha3_256(_epoch_leaves_canonical(bundle)).digest(), sig, pk, alg)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["leaves_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "the bundle signature is invalid"
+        return v
+    leaves = bundle.get("all_leaves_hex")
+    leaves = leaves if isinstance(leaves, list) else []
+    v["leaf_count"] = len(leaves)
+    v["commitment_matches"] = (_leaves_root(leaves) == str(bundle.get("leaves_root_hex") or "").lower())
+    v["count_matches"] = (len(leaves) == bundle.get("leaf_count"))
+    _verify_window(bundle, v, now, max_window_seconds)
+    if anchor_keys is not None:
+        v["issuer_trusted"] = str(pk_hex).lower() in {str(a).lower() for a in anchor_keys}
+    if isinstance(epoch_checkpoint, dict):
+        v["epoch_matches"] = (
+            str(bundle.get("merkle_root") or "").lower()
+            == str((epoch_checkpoint.get("epoch") or {}).get("root_hex")
+                   or epoch_checkpoint.get("merkle_root") or "").lower())
+    if not v["commitment_matches"]:
+        v["note"] = "the published leaves do not match the committed leaves_root_hex"
+    elif not v["count_matches"]:
+        v["note"] = "the published leaf count does not match the signed one"
+    elif v["epoch_matches"] is False:
+        v["note"] = "the bundle names a different epoch root than the published checkpoint"
+    return v
+
+
+def member_index(bundle, leaf_seed_hex):
+    """Where is this holder's leaf in the published set (P9.2)? Returns an index or None.
+
+    The holder computes their own leaf seed from data only they hold and looks it up HERE, on
+    their own device. The issuer is never asked, so it never learns which member is proving."""
+    leaves = bundle.get("all_leaves_hex") if isinstance(bundle, dict) else None
+    if not isinstance(leaves, list):
+        return None
+    target = str(leaf_seed_hex or "").lower()
+    for i, x in enumerate(leaves):
+        if str(x).lower() == target:
+            return i
+    return None
+
+
+_HOLDER_BINDING_FORMAT = "polaris-holder-binding/1"    # P9.1 (v9.349)
+_HOLDER_PROOF_FORMAT = "polaris-holder-proof/1"
+
+
+def _holder_binding_canonical(b):
+    """The bytes the ISSUER signs for a holder key binding (P9.1). MUST match app.py's
+    _holder_binding_statement; the canonical oracle pins the pair."""
+    if not isinstance(b, dict):
+        b = {}
+    statement = {k: b.get(k) for k in
+                 ("format", "token_value", "holder_public_key_hex", "holder_algorithm",
+                  "bound_at", "status", "issued_at", "expires_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _holder_proof_canonical(pr):
+    """The bytes the HOLDER signs to prove they hold the bound key (P9.1).
+
+    Deliberately narrow: the credential it is about, the context it is presented in, the
+    verifier's nonce (so a captured proof cannot be replayed to another verifier), and the
+    instant. It does NOT cover the presented code, so a duress presentation carrying this
+    proof is byte-indistinguishable from a consenting one."""
+    if not isinstance(pr, dict):
+        pr = {}
+    statement = {k: pr.get(k) for k in
+                 ("format", "token_value", "context_id", "verifier_nonce", "issued_at", "algorithm")}
+    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_holder_binding(binding, credential=None, now=None, max_window_seconds=None, anchor_keys=None):
+    """Verify OFFLINE that an ISSUER bound a holder public key to a credential (P9.1): the
+    issuer's signature over the canonical statement, freshness, the binding's status, and
+    (with `credential`) that it is about THIS credential and signed by the same issuer key.
+    Total on hostile input."""
+    v = {"binding_authentic": False, "fresh": None, "issuer_trusted": None, "bound_to_credential": None,
+         "status": None, "holder_public_key_hex": None, "holder_algorithm": None,
+         "witnesses": [], "note": None}
+    if not isinstance(binding, dict) or binding.get("format") != _HOLDER_BINDING_FORMAT:
+        v["note"] = "not a %s" % _HOLDER_BINDING_FORMAT
+        return v
+    v["status"] = binding.get("status")
+    v["holder_public_key_hex"] = binding.get("holder_public_key_hex")
+    v["holder_algorithm"] = binding.get("holder_algorithm")
+    alg, pk_hex, sig_hex = binding.get("algorithm"), binding.get("public_key_hex"), binding.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder binding -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    ok, ran, note = _two_witness_verify(hashlib.sha3_256(_holder_binding_canonical(binding)).digest(), sig, pk, alg)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["binding_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "the binding signature is invalid"
+        return v
+    _verify_window(binding, v, now, max_window_seconds)
+    if anchor_keys is not None:
+        v["issuer_trusted"] = str(pk_hex).lower() in {str(a).lower() for a in anchor_keys}
+    if isinstance(credential, dict):
+        v["bound_to_credential"] = (
+            str(binding.get("token_value")) == str(credential.get("token_value"))
+            and str(pk_hex).lower() == str(credential.get("public_key_hex") or "").lower())
+        if not v["bound_to_credential"]:
+            v["note"] = "the binding is not about this credential, or not signed by its issuer key"
+    return v
+
+
+def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_context=None,
+                        now=None, max_age_seconds=300):
+    """Verify OFFLINE that the party presenting a credential HOLDS the key its issuer bound
+    to it (P9.1): the holder's signature over the canonical statement, and, with `binding`,
+    that the signing key is the bound one and the binding is active.
+
+    `expected_nonce` is the value the verifier issued for this presentation; a proof that
+    does not name it is a replay of one made for somebody else. `max_age_seconds` bounds how
+    old a proof may be. Total on hostile input."""
+    v = {"proof_authentic": False, "key_matches_binding": None, "nonce_matches": None,
+         "context_matches": None, "fresh": None, "witnesses": [], "note": None}
+    if not isinstance(proof, dict) or proof.get("format") != _HOLDER_PROOF_FORMAT:
+        v["note"] = "not a %s" % _HOLDER_PROOF_FORMAT
+        return v
+    alg, pk_hex, sig_hex = proof.get("algorithm"), proof.get("public_key_hex"), proof.get("signature_hex")
+    if alg == _PLACEHOLDER or not pk_hex:
+        v["note"] = "placeholder holder proof -- not authenticatable offline"
+        return v
+    try:
+        sig, pk = bytes.fromhex(sig_hex), bytes.fromhex(pk_hex)
+    except (ValueError, TypeError):
+        v["note"] = "signature_hex/public_key_hex are not valid hex"
+        return v
+    ok, ran, note = _two_witness_verify(hashlib.sha3_256(_holder_proof_canonical(proof)).digest(), sig, pk, alg)
+    v["witnesses"] = ran
+    if ok is None:
+        v["note"] = note
+        return v
+    v["proof_authentic"] = bool(ok)
+    if not ok:
+        v["note"] = "the holder proof signature is invalid"
+        return v
+    if expected_nonce is not None:
+        v["nonce_matches"] = (str(proof.get("verifier_nonce")) == str(expected_nonce))
+    if expected_context is not None:
+        v["context_matches"] = (proof.get("context_id") == expected_context)
+    from datetime import datetime, timezone, timedelta
+    ref = now or datetime.now(timezone.utc)
+    try:
+        issued = _parse_iso(proof.get("issued_at"))
+    except Exception:  # noqa: BLE001 -- an unparseable instant is a refusal, never a crash
+        issued = None
+    if issued is not None:
+        # A proof may be a minute ahead of the verifier's clock and no older than max_age.
+        v["fresh"] = (issued <= ref + timedelta(seconds=60)) and ((ref - issued).total_seconds() <= int(max_age_seconds or 300))
+    else:
+        v["fresh"] = False
+        v["note"] = "unparseable issued_at"
+    if isinstance(binding, dict):
+        v["key_matches_binding"] = (
+            str(pk_hex).lower() == str(binding.get("holder_public_key_hex") or "").lower()
+            and (binding.get("status") or "active") == "active")
+        if not v["key_matches_binding"]:
+            v["note"] = "the proof is not signed by the key the issuer bound, or the binding is revoked"
+    return v
+
+
+def verify_presentation(presentation, anchor_keys=None, now=None, max_window_seconds=None, expected_context=None,
+                        expected_nonce=None, require_holder_proof=False):
     """Decide a presentation OFFLINE (P8.6): the credential's authenticity (and, with anchor
     keys, issuer trust); the stapled status assertion's authenticity, freshness, ACTIVE status
     and BINDING to this credential (same token, same issuer key); the context, if the verifier
@@ -2823,6 +3138,10 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
     binary (verify_zk_against_root). Total on hostile input."""
     v = {"credential_authentic": False, "issuer_trusted": None, "token_value": None,
          "status": {"present": False, "authentic": None, "fresh": None, "active": None, "bound": None},
+         # P9.1: the holder key chain, issuer anchor -> binding -> holder key -> proof.
+         "holder": {"present": False, "binding_authentic": None, "bound_to_credential": None,
+                    "binding_fresh": None, "proof_authentic": None, "key_matches_binding": None,
+                    "nonce_matches": None, "proved": None},
          "zk_present": False, "presented_code_present": False, "context_matches": None,
          "usable_offline": False, "note": None}
     if not isinstance(presentation, dict) or presentation.get("format") != _PRESENTATION_FORMAT:
@@ -2847,9 +3166,32 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
         S["active"] = (sv.get("status") == "ACTIVE")
         S["bound"] = (str(sa.get("token_value")) == str(cred.get("token_value"))
                       and str(sa.get("public_key_hex") or "").lower() == str(cred.get("public_key_hex") or "").lower())
+    # P9.1: a holder proof, when present, must chain to a binding the issuer signed. When the
+    # verifier requires one (require_holder_proof), a presentation without it is not usable:
+    # possession of a file stops being sufficient and possession of a KEY is required.
+    H = v["holder"]
+    binding, proof = presentation.get("holder_binding"), presentation.get("holder_proof")
+    if isinstance(binding, dict) or isinstance(proof, dict):
+        H["present"] = True
+        bv = verify_holder_binding(binding, credential=cred, now=now,
+                                   max_window_seconds=max_window_seconds, anchor_keys=anchor_keys)
+        H["binding_authentic"] = bv["binding_authentic"]
+        H["bound_to_credential"] = bv["bound_to_credential"]
+        H["binding_fresh"] = bv["fresh"]
+        pv2 = verify_holder_proof(proof, binding=binding if bv["binding_authentic"] else None,
+                                  expected_nonce=expected_nonce, expected_context=expected_context, now=now)
+        H["proof_authentic"] = pv2["proof_authentic"]
+        H["key_matches_binding"] = pv2["key_matches_binding"]
+        H["nonce_matches"] = pv2["nonce_matches"]
+        H["proved"] = bool(bv["binding_authentic"] and bv["fresh"] and bv["bound_to_credential"] is not False
+                           and pv2["proof_authentic"] and pv2["fresh"]
+                           and pv2["key_matches_binding"] and pv2["nonce_matches"] is not False
+                           and pv2["context_matches"] is not False)
     v["usable_offline"] = bool(v["credential_authentic"] and v["issuer_trusted"] is not False
                                and S["present"] and S["authentic"] and S["fresh"] and S["active"] and S["bound"]
-                               and v["context_matches"] is not False)
+                               and v["context_matches"] is not False
+                               and (H["proved"] if H["present"] else True)
+                               and (H["proved"] if require_holder_proof else True))
     if not v["usable_offline"]:
         why = []
         if not v["credential_authentic"]:
@@ -2862,6 +3204,10 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
             why += [k for k in ("authentic", "fresh", "active", "bound") if not S[k]]
         if v["context_matches"] is False:
             why.append("context mismatch")
+        if H["present"] and not H["proved"]:
+            why.append("the holder proof does not chain to an issuer-signed binding")
+        elif require_holder_proof and not H["present"]:
+            why.append("no holder proof (this verifier requires possession of the holder key, not only the file)")
         v["note"] = "; ".join(why)
     return v
 

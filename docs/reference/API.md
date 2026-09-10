@@ -663,6 +663,43 @@ accepted here for exactly that reason. Per-relying-party rate limited; no
 per-verification record is kept (a who-verified-whom log would be a surveillance
 store).
 
+### `GET /api/v1/epoch/<epoch_id>/leaves`
+
+P9.2. Publish an epoch's leaf set, signed, as `polaris-epoch-leaves/1`. This is what lets a
+holder prove membership on their OWN device: the set is the anonymity set, and a set only the
+issuer holds is not one.
+
+Public and unauthenticated by design. A set a holder had to authenticate to fetch would tell
+the issuer who was about to prove; every requester receives identical bytes, each entry is an
+opaque SHA3-256 that only the holder of the matching credential can recognise, and nothing is
+recorded about who asked.
+
+`all_leaves_hex` rides outside the signed statement, committed to by `leaves_root_hex`
+(SHA3-256 over the sorted set), so any verifier checks the set without the proving library.
+Bounded at ten thousand members (C8); `413` above that, `404` for an unknown epoch.
+
+### `POST /api/v1/holder-key`
+
+P9.1. Bind, rotate or revoke the HOLDER's own key for a credential. Possession-authenticated:
+present the genuine credential (`token_value` + `signature_hex`), exactly as the status
+assertion does. No session, no bearer, no operator, and the holder's PRIVATE key is never sent
+or asked for.
+
+Request: `{ token_value, signature_hex, holder_public_key_hex, holder_algorithm?, event? }`
+where `event` is `bound` (default), `rotated` or `revoked`.
+Response: the issuer-signed `polaris-holder-binding/1` now in force.
+
+Refusals: `400 not_verifiable` when the presented credential is not genuine, `409 not_active`
+when the credential is not ACTIVE, `409 no_holder_key` when revoking with nothing bound,
+`429 rate_limited`. The register behind it is append-only, so a binding is never rewritten;
+a rotation is a new event and the previous key stops being current.
+
+### `POST /api/v1/holder-binding`
+
+P9.1. Fetch the current issuer-signed `polaris-holder-binding/1` for a credential, proved by
+possession. A holder staples it to a presentation so a relying party can decide the holder
+proof offline without contacting the issuer. `404 no_holder_key` when nothing is bound.
+
 ### `POST /api/v1/status-assertion`
 
 **Possession-authenticated (no bearer).** Mints a short-lived, issuer-signed

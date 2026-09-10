@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **36 tables** in `01_schema.sql` (v9.341), organized
-into six functional groups. A migrated deployment holds **43 tables**: those,
+The Polaris schema is **37 tables** in `01_schema.sql` (v9.349), organized
+into six functional groups. A migrated deployment holds **44 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -239,6 +239,28 @@ per-receipt inclusion evidence (`/api/v1/exchange-receipt/inclusion/<hash>`), so
 the SET of receipts is provably append-only and independently monitorable.
 Strictly append-only by trigger (`trg_receipt_log_append_only`, no carve-out)
 and by privilege (`polaris_app` may INSERT, never UPDATE or DELETE).
+
+### `HolderKeyEvent`
+
+P9.1 (v9.349, migration 010). The append-only register of HOLDER key events: which holder
+public key is bound to which credential, from which instant, as `bound`, `rotated` or
+`revoked`. `HolderKeyCurrent` derives the key in force per credential.
+
+Polaris was issuer-centric until this version: a holder held a credential, not a key pair, so
+presenting the file was the whole of the proof. This register is the missing primitive, and it
+holds a PUBLIC key and an instant only. The private key lives on the holder's device and never
+reaches the database. Binding is authenticated by POSSESSION of the credential, so an operator
+cannot bind a key to a credential they do not hold.
+
+Append-only by `trg_holder_key_append_only` and by privilege: a binding that could be updated
+or deleted would let an operator replace the holder. A rotation is a new event; the previous
+key simply stops being current. A hash index serves the key lookup, since an ML-DSA-65 public
+key is 3904 hex characters and exceeds a btree row.
+
+Constitutional note: a key the holder controls is also a key the holder can be compelled to
+use. The holder proof signed with this key covers the credential, the context, the verifier's
+nonce and the instant, and deliberately NOT the presented code, so a coerced presentation stays
+byte-indistinguishable from a consenting one.
 
 ### `TimestampLog` (constraint C1: append-only; roadmap P8.5b)
 

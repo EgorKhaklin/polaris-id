@@ -491,6 +491,87 @@ class TestRecoveryRequestChecks(_CheckBase):
             constraint_name='approver_differs_from_requester',
         )
 
+    # P9.7 (v9.347): RecoveryRequest is an audit of record enforced at the SCHEMA, not by
+    # the discipline of whoever holds a session. uc9_complete_recovery writes within the
+    # envelope below; a raw UPDATE outside it is refused, and so is any DELETE.
+    def _open_request(self, cur, _unused=None):
+        """Open a PENDING request for an individual that has none. A partial unique index
+        allows one open request per person, and these rows can no longer be deleted."""
+        cur.execute(
+            "INSERT INTO RecoveryRequest "
+            "(claimed_individual_id, requesting_agency_id, requesting_user_id, cooldown_expires_at) "
+            "SELECT i.individual_id, 1, (SELECT MIN(user_id) FROM AppUser), "
+            "       CURRENT_TIMESTAMP + INTERVAL '49 hours' "
+            "  FROM Individual i "
+            " WHERE NOT EXISTS (SELECT 1 FROM RecoveryRequest r "
+            "                    WHERE r.claimed_individual_id = i.individual_id AND r.status = 'PENDING') "
+            " ORDER BY i.individual_id LIMIT 1 "
+            "RETURNING recovery_id")
+        row = cur.fetchone()
+        self.assertIsNotNone(row, "no individual without an open recovery request")
+        return row["recovery_id"]
+
+    def _expect_refusal(self, sql, params, fragment):
+        with self.assertRaises(psycopg2.Error) as ctx:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+        self.assertIn(fragment, str(ctx.exception))
+        self.conn.rollback()
+
+    def test_identity_fields_are_immutable(self):
+        with self.conn.cursor() as cur:
+            rid = self._open_request(cur, 1)
+        self._expect_refusal("UPDATE RecoveryRequest SET claimed_individual_id = 2 WHERE recovery_id = %s",
+                             (rid,), "append-only except for")
+
+    def test_delete_is_refused(self):
+        with self.conn.cursor() as cur:
+            rid = self._open_request(cur, 1)
+        self._expect_refusal("DELETE FROM RecoveryRequest WHERE recovery_id = %s", (rid,),
+                             "DELETE on RecoveryRequest is forbidden")
+
+    def test_verified_biometric_cannot_be_unset(self):
+        with self.conn.cursor() as cur:
+            rid = self._open_request(cur, 1)
+            cur.execute("UPDATE RecoveryRequest SET biometric_verified = TRUE WHERE recovery_id = %s", (rid,))
+        self._expect_refusal("UPDATE RecoveryRequest SET biometric_verified = FALSE WHERE recovery_id = %s",
+                             (rid,), "cannot be un-set once recorded")
+
+    def test_a_recorded_decision_cannot_be_rewritten(self):
+        with self.conn.cursor() as cur:
+            rid = self._open_request(cur, 1)
+            cur.execute(
+                "UPDATE RecoveryRequest SET status='REJECTED', decided_at=CURRENT_TIMESTAMP, "
+                "decided_by_user_id=(SELECT MAX(user_id) FROM AppUser), decision_reason='under test' "
+                "WHERE recovery_id = %s", (rid,))
+        self._expect_refusal("UPDATE RecoveryRequest SET decision_reason = 'rewritten' WHERE recovery_id = %s",
+                             (rid,), "cannot be rewritten or withdrawn")
+
+    def test_a_terminal_status_cannot_move(self):
+        with self.conn.cursor() as cur:
+            rid = self._open_request(cur, 1)
+            cur.execute(
+                "UPDATE RecoveryRequest SET status='REJECTED', decided_at=CURRENT_TIMESTAMP, "
+                "decided_by_user_id=(SELECT MAX(user_id) FROM AppUser), decision_reason='under test' "
+                "WHERE recovery_id = %s", (rid,))
+        self._expect_refusal("UPDATE RecoveryRequest SET status = 'EXPIRED' WHERE recovery_id = %s",
+                             (rid,), "is terminal at REJECTED")
+
+    def test_the_sanctioned_envelope_still_writes(self):
+        """The paths uc9_complete_recovery uses are exactly the ones the trigger permits."""
+        with self.conn.cursor() as cur:
+            rid = self._open_request(cur, 1)
+            cur.execute("UPDATE RecoveryRequest SET biometric_verified = TRUE, sworn_statement_hash = 'h' "
+                        "WHERE recovery_id = %s", (rid,))
+            cur.execute(
+                "UPDATE RecoveryRequest SET status='REJECTED', decided_at=CURRENT_TIMESTAMP, "
+                "decided_by_user_id=(SELECT MAX(user_id) FROM AppUser), decision_reason='under test' "
+                "WHERE recovery_id = %s", (rid,))
+            cur.execute("SELECT status, decision_reason FROM RecoveryRequest WHERE recovery_id = %s", (rid,))
+            row = cur.fetchone()
+        self.assertEqual(row["status"], "REJECTED")
+        self.assertEqual(row["decision_reason"], "under test")
+
 
 # ============================================================================
 # RevocationList
@@ -892,6 +973,9 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         "AuthCodeConsumed",
         # v9.328 (P8.7b): the authority key register.
         "AuthorityKeyEvent",
+        # v9.349 (P9.1): the holder key register. A binding that could be updated would let
+        # an operator replace the holder's key, which is the thing the register prevents.
+        "HolderKeyEvent",
         # v9.341 (P8.5b): the timestamp transparency log.
         "TimestampLog",
     )

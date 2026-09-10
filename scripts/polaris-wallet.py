@@ -167,6 +167,18 @@ def cmd_present(args):
     if getattr(args, "zk_proof", None):
         with open(args.zk_proof) as f:
             presentation["zk_proof"] = json.load(f)
+    # P9.1: prove possession of the HOLDER KEY, not only of the file. The proof names the
+    # verifier's own nonce, so it cannot be replayed to anyone else.
+    if getattr(args, "holder_nonce", None):
+        binding_path = os.path.join(wallet, "holder_binding.json")
+        proof = _holder_proof(wallet, pack["token_value"], getattr(args, "context", None), args.holder_nonce)
+        if proof is None:
+            sys.stderr.write("no holder key in this wallet; run: polaris-wallet holder-keygen\n")
+            return 3
+        presentation["holder_proof"] = proof
+        if os.path.isfile(binding_path):
+            with open(binding_path) as f:
+                presentation["holder_binding"] = json.load(f)
     if getattr(args, "context", None) is not None:
         presentation["context_id"] = args.context
     if getattr(args, "disclosure_level", None):
@@ -183,6 +195,84 @@ def cmd_present(args):
     else:
         sys.stdout.write(out + "\n")
     return 0
+
+
+# --- P9.1 (v9.349): the holder's own key -------------------------------------------------
+# Until this version a holder held a credential, not a key pair, so presenting the file was
+# the whole of the proof. These two commands give the holder a key that never leaves this
+# directory, and a proof that the party presenting the credential holds it.
+_HOLDER_KEY_FILE = "holder_key.json"
+
+
+def _holder_key_path(wallet):
+    return os.path.join(wallet, _HOLDER_KEY_FILE)
+
+
+def cmd_holder_keygen(args):
+    """Generate a holder key pair and bind its PUBLIC half to the held credential.
+
+    The private key is written here and goes nowhere else: the binding endpoint is
+    authenticated by POSSESSION of the credential, never by handing over a secret. Losing
+    this file loses the key, not the credential; bind a new one with --rotate."""
+    wallet = _wallet_dir(args)
+    pack = _load_credential(wallet)
+    try:
+        import oqs  # type: ignore
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write("holder-keygen needs liboqs-python (pip install liboqs-python): %s\n" % e)
+        return 3
+    alg = args.algorithm
+    with oqs.Signature(alg) as signer:
+        pk = bytes(signer.generate_keypair())
+        sk = bytes(signer.export_secret_key())
+    path = _holder_key_path(wallet)
+    with open(path, "w") as f:
+        json.dump({"algorithm": alg, "public_key_hex": pk.hex(), "secret_key_hex": sk.hex()}, f, indent=2)
+    os.chmod(path, 0o600)
+    body = {"token_value": pack["token_value"], "signature_hex": pack["signature_hex"],
+            "holder_public_key_hex": pk.hex(), "holder_algorithm": alg,
+            "event": ("rotated" if args.rotate else "bound")}
+    req = urllib.request.Request(args.instance.rstrip("/") + "/api/v1/holder-key",
+                                 data=json.dumps(body).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            binding = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise SystemExit("binding refused: HTTP %d %s" % (e.code, e.read().decode("utf-8", "replace")[:200]))
+    out = os.path.join(wallet, "holder_binding.json")
+    with open(out, "w") as f:
+        json.dump(binding, f, indent=2)
+    sys.stdout.write("holder key %s; the private half stays in %s\nbinding written to %s\n"
+                     % ("rotated" if args.rotate else "bound", path, out))
+    return 0
+
+
+def _holder_proof(wallet, token_value, context_id, verifier_nonce):
+    """Sign a holder proof with the key held here. Narrow by design: the credential, the
+    context, the verifier's nonce and the instant. NOT the presented code, so a coerced
+    presentation is byte-indistinguishable from a consenting one."""
+    import hashlib as _h
+    from datetime import datetime, timezone
+    path = _holder_key_path(wallet)
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        key = json.load(f)
+    try:
+        import oqs  # type: ignore
+    except Exception:  # noqa: BLE001
+        return None
+    V = _load_verifier()
+    proof = {"format": "polaris-holder-proof/1", "token_value": token_value,
+             "context_id": context_id, "verifier_nonce": verifier_nonce,
+             "issued_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+             "algorithm": key["algorithm"]}
+    digest = _h.sha3_256(V._holder_proof_canonical(proof)).digest()
+    with oqs.Signature(key["algorithm"], secret_key=bytes.fromhex(key["secret_key_hex"])) as signer:
+        proof["signature_hex"] = bytes(signer.sign(digest)).hex()
+    proof["public_key_hex"] = key["public_key_hex"]
+    return proof
 
 
 def _zk_binary(args):
@@ -254,8 +344,24 @@ def cmd_prove_membership(args):
     the root and the binding, never the holder's index."""
     wallet = _wallet_dir(args)
     pack = _load_credential(wallet)
-    with open(args.epoch) as f:
-        epoch = json.load(f)
+    if getattr(args, "from_instance", None):
+        # P9.2: fetch the PUBLISHED anonymity set and verify it before proving. Every holder
+        # fetches identical bytes, so the request says nothing about which leaf is theirs;
+        # the leaf is found here, on this device, and the proof is built here.
+        url = "%s/api/v1/epoch/%d/leaves" % (args.from_instance.rstrip("/"), args.epoch_id)
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                epoch = json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise SystemExit("could not fetch the anonymity set: HTTP %d" % e.code)
+        V = _load_verifier()
+        v = V.verify_epoch_leaves(epoch)
+        if not (v["leaves_authentic"] and v["commitment_matches"] and v["count_matches"]):
+            raise SystemExit("the published anonymity set does not verify: %s" % v["note"])
+        sys.stderr.write("anonymity set: %d members, signed by the issuing authority\n" % v["leaf_count"])
+    else:
+        with open(args.epoch) as f:
+            epoch = json.load(f)
     all_leaves = epoch.get("all_leaves_hex") or epoch.get("leaves_hex")
     if not all_leaves:
         raise SystemExit("epoch bundle has no all_leaves_hex")
@@ -323,11 +429,21 @@ def main(argv=None):
     p.add_argument("--disclosure-level", help="ZERO_KNOWLEDGE, SELECTIVE or FULL")
     p.add_argument("--qr", action="store_true", help="emit polaris-qr/1 frames (one per line) for QR/NFC transfer instead of JSON")
     p.add_argument("--frame-bytes", type=int, default=1800, help="maximum bytes per QR frame (default 1800)")
+    p.add_argument("--holder-nonce", help="prove possession of the holder key against this verifier-issued nonce (P9.1)")
     p.add_argument("--out", help="write to a file instead of stdout")
     p.set_defaults(fn=cmd_present)
 
+    p = sub.add_parser("holder-keygen", help="generate a holder key and bind its public half to the credential (P9.1)")
+    p.add_argument("--algorithm", default="ML-DSA-65", choices=["ML-DSA-65", "ML-DSA-87"])
+    p.add_argument("--rotate", action="store_true", help="replace the bound key rather than binding a first one")
+    p.add_argument("--instance", default=os.environ.get("POLARIS_INSTANCE", "http://127.0.0.1:5000"),
+                   help="the issuing authority's instance")
+    p.set_defaults(fn=cmd_holder_keygen)
+
     p = sub.add_parser("prove-membership", help="produce a ZK membership proof for a published epoch")
-    p.add_argument("--epoch", required=True, help="the published epoch bundle (all_leaves_hex, epoch_id, context_id)")
+    p.add_argument("--epoch", help="the published epoch bundle (all_leaves_hex, epoch_id, context_id)")
+    p.add_argument("--from-instance", help="fetch the signed anonymity set from an instance and prove locally (P9.2)")
+    p.add_argument("--epoch-id", type=int, help="which epoch to fetch with --from-instance")
     p.add_argument("--context", type=int, help="context id (if not in the epoch bundle)")
     p.add_argument("--nonce", type=int, help="proof nonce (default from the bundle, or 0)")
     p.add_argument("--zk-binary", help="path to the polaris-zk binary")

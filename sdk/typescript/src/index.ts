@@ -202,6 +202,13 @@ const ARTIFACT_KEYS: Record<string, string[]> = {
   "polaris-trust-list/1": ["format", "publisher", "keys", "issued_at", "expires_at", "algorithm"],
   "polaris-exchange-receipt/1": ["format", "requester", "responder", "context_id", "request_hash", "response_hash", "authorized_via", "occurred_at", "algorithm"],
   "polaris-exchange-mint/1": ["format", "requester_public_key_hex", "context_id", "request_hash", "response_hash", "responder_agency_id", "occurred_at"],
+  // P9.5: the attesting agency's own signature over a federation trust edge.
+  "polaris-trust-attestation/1": ["format", "attesting_agency_id", "attested_agency_id", "attested_public_key_hex", "context_id", "attested_date", "valid_until", "algorithm"],
+  // P9.1: the issuer's binding of a holder key, and the holder's own proof of it.
+  "polaris-holder-binding/1": ["format", "token_value", "holder_public_key_hex", "holder_algorithm", "bound_at", "status", "issued_at", "expires_at", "algorithm"],
+  "polaris-holder-proof/1": ["format", "token_value", "context_id", "verifier_nonce", "issued_at", "algorithm"],
+  // P9.2: the published anonymity set a holder proves against on their own device.
+  "polaris-epoch-leaves/1": ["format", "authority", "epoch_id", "context_id", "merkle_root", "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm"],
 };
 
 export type ArtifactVerdict = { authentic: boolean; fresh: boolean | null; note?: string };
@@ -270,6 +277,12 @@ export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVer
   } catch (e) {
     return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
   }
+  if (ok && o.format === "polaris-epoch-leaves/1") {
+    // P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex.
+    const leaves = Array.isArray(o.all_leaves_hex) ? o.all_leaves_hex : [];
+    ok = revokedRoot(leaves) === String(o.leaves_root_hex ?? "").toLowerCase() && leaves.length === o.leaf_count;
+    if (!ok) return { authentic: false, fresh: null, note: "the published leaves do not match the committed set" };
+  }
   if (ok && o.format === "polaris-revocation-feed/1") {
     ok = revokedRoot(o.revoked_leaves) === String(o.revoked_root_hex ?? "").toLowerCase();
   } else if (ok && o.format === "polaris-federation-status-bundle/1") {
@@ -301,6 +314,178 @@ export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVer
   return { authentic: ok, fresh: withinWindow(o, now) };
 }
 
+// --- P9.6: timestamp anchor verification (was P8.5c) --------------------------------
+// A timestamp alone does not settle long-term validation: whoever holds the timestamp
+// authority's key can mint a backdated one. An ANCHORED timestamp is an entry in an
+// append-only log whose head is published and cosigned by witnesses, so a forgery has to
+// be absent from every witnessed head of its claimed era. Until now only Polaris's own
+// detached verifier could check that. Here it is in the SDK an outsider installs.
+const TIMESTAMP_LOG_ID = "polaris-timestamp-log";
+const COSIGNATURE_FORMAT = "polaris-transparency-cosignature/1";
+const COSIGNATURE_KEYS = ["format", "log_id", "tree_size", "root_hash_hex"];
+
+/** A timestamp's entry in the timestamp transparency log: the SHA3-256 hex of the same
+ * canonical statement its signature covers. */
+export function timestampHash(ts: any): string {
+  return bytesToHex(sha3_256(canonicalBytes(ts ?? {}, ARTIFACT_KEYS["polaris-timestamp/1"])));
+}
+
+/** RFC 6962 leaf hash, SHA3-256(0x00 || entry), the entry taken as its UTF-8 bytes. */
+function leafHash(entryHex: string): Uint8Array {
+  const e = new TextEncoder().encode(String(entryHex));
+  const buf = new Uint8Array(1 + e.length);
+  buf[0] = 0x00;
+  buf.set(e, 1);
+  return sha3_256(buf);
+}
+
+/** RFC 6962 interior node hash, SHA3-256(0x01 || left || right). */
+function nodeHash(left: Uint8Array, right: Uint8Array): Uint8Array {
+  const buf = new Uint8Array(1 + left.length + right.length);
+  buf[0] = 0x01;
+  buf.set(left, 1);
+  buf.set(right, 1 + left.length);
+  return sha3_256(buf);
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+  return d === 0;
+}
+
+/** RFC 6962 section 2.1.1: is `leaf` the entry at `idx` in a tree of `treeSize` whose head
+ * is `root`? Total on hostile input: a malformed path is false, never a throw. */
+export function verifyInclusion(idx: number, treeSize: number, leaf: Uint8Array, root: Uint8Array, proof: Uint8Array[]): boolean {
+  if (!Number.isInteger(idx) || !Number.isInteger(treeSize) || idx < 0 || idx >= treeSize) return false;
+  let fn = idx, sn = treeSize - 1, r = leaf;
+  for (const p of proof) {
+    if (sn === 0 || !(p instanceof Uint8Array)) return false;
+    if ((fn & 1) !== 0 || fn === sn) {
+      r = nodeHash(p, r);
+      if ((fn & 1) === 0) {
+        while (fn !== 0 && (fn & 1) === 0) { fn >>= 1; sn >>= 1; }
+      }
+    } else {
+      r = nodeHash(r, p);
+    }
+    fn >>= 1;
+    sn >>= 1;
+  }
+  return sn === 0 && sameBytes(r, root);
+}
+
+/** Verify a witness cosignature over a log head: the ML-DSA signature over the SHA3-256 of
+ * the canonical (format, log_id, tree_size, root_hash_hex), and with `witnessKey` that it
+ * came from the expected witness. */
+export function verifyCosignature(cosig: any, witnessKey?: string | null): ArtifactVerdict {
+  const c = cosig ?? {};
+  if (c.format !== COSIGNATURE_FORMAT) return { authentic: false, fresh: null, note: "not a " + COSIGNATURE_FORMAT };
+  if (c.algorithm === PLACEHOLDER_LABEL || !c.public_key_hex) {
+    return { authentic: false, fresh: null, note: "placeholder cosignature -- not authenticatable offline" };
+  }
+  const impl = verifierFor(c.algorithm);
+  if (!impl) return { authentic: false, fresh: null, note: "unknown or unaccepted signature algorithm: " + String(c.algorithm) };
+  let ok: boolean;
+  try {
+    ok = impl.verify(hexToBytes(c.signature_hex), sha3_256(canonicalBytes(c, COSIGNATURE_KEYS)), hexToBytes(c.public_key_hex));
+  } catch (e) {
+    return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
+  }
+  if (ok && witnessKey != null && String(c.public_key_hex).toLowerCase() !== String(witnessKey).toLowerCase()) {
+    return { authentic: false, fresh: null, note: "the cosignature is not from the expected witness" };
+  }
+  return { authentic: ok, fresh: null, note: ok ? undefined : "cosignature signature is invalid" };
+}
+
+export type AnchorVerdict = {
+  anchored: boolean;
+  sthAuthentic: boolean;
+  witnessed: boolean | null;
+  cosignerCount: number;
+  timestampHash: string | null;
+  index: number | null;
+  treeSize: number | null;
+  note?: string;
+};
+
+/** Verify OFFLINE that a timestamp is ANCHORED in the timestamp transparency log: its unsigned
+ * `anchor` carries an inclusion proof and a Signed Tree Head, the proof is for this timestamp's
+ * own hash, the head is an authentic head of that log (with `logKey`, signed by the expected
+ * authority), and the proof reconstructs the head. With `trustedWitnesses`, the head must also
+ * be cosigned by `threshold` DISTINCT trusted witnesses: a stolen authority key can sign a fresh
+ * head over a fabricated log, but it cannot make a witness have cosigned that head at the
+ * claimed time. No network. Total on hostile input. */
+export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWitnesses?: string[] | null,
+                                      threshold: number = 1): AnchorVerdict {
+  const v: AnchorVerdict = { anchored: false, sthAuthentic: false, witnessed: null, cosignerCount: 0,
+                             timestampHash: null, index: null, treeSize: null };
+  if (ts === null || typeof ts !== "object") { v.note = "timestamp must be an object"; return v; }
+  const anchor = ts.anchor;
+  if (anchor === null || typeof anchor !== "object") {
+    v.note = "the timestamp carries no anchor (unanchored: the authority kept no record of it)";
+    return v;
+  }
+  const proof = anchor.proof, sth = anchor.sth;
+  if (proof === null || typeof proof !== "object" || sth === null || typeof sth !== "object") {
+    v.note = "anchor.proof and anchor.sth must be objects";
+    return v;
+  }
+  v.timestampHash = timestampHash(ts);
+  if (String(proof.entry_hex ?? "").toLowerCase() !== v.timestampHash) {
+    v.note = "the proof is not for this timestamp";
+    return v;
+  }
+  const sv = verifySignedArtifact(sth);
+  v.sthAuthentic = sv.authentic;
+  if (sth.log_id !== TIMESTAMP_LOG_ID || (proof.log_id != null && proof.log_id !== TIMESTAMP_LOG_ID)) {
+    v.note = "the head is not a " + TIMESTAMP_LOG_ID + " head";
+    return v;
+  }
+  const idx = Number(proof.index), size = Number(proof.tree_size);
+  let root: Uint8Array, path: Uint8Array[];
+  try {
+    root = hexToBytes(String(sth.root_hash_hex));
+    path = (Array.isArray(proof.proof_hex) ? proof.proof_hex : []).map((x: any) => hexToBytes(String(x)));
+  } catch (e) {
+    v.note = "malformed proof";
+    return v;
+  }
+  v.index = Number.isInteger(idx) ? idx : null;
+  v.treeSize = Number.isInteger(size) ? size : null;
+  if (size !== sth.tree_size ||
+      String(proof.root_hash_hex ?? "").toLowerCase() !== String(sth.root_hash_hex ?? "").toLowerCase()) {
+    v.note = "the proof and the head describe different trees";
+    return v;
+  }
+  if (!v.sthAuthentic) { v.note = sv.note ?? "the head is not authentic"; return v; }
+  if (logKey != null && String(sth.public_key_hex ?? "").toLowerCase() !== String(logKey).toLowerCase()) {
+    v.note = "the head is not signed by the expected log key";
+    return v;
+  }
+  v.anchored = verifyInclusion(idx, size, leafHash(v.timestampHash), root, path);
+  if (!v.anchored) { v.note = "the inclusion proof does not reconstruct the head"; return v; }
+  if (trustedWitnesses != null) {
+    const trusted = new Set(trustedWitnesses.map((t) => String(t).toLowerCase()));
+    const seen = new Set<string>();
+    for (const c of (Array.isArray(anchor.cosignatures) ? anchor.cosignatures : [])) {
+      if (c === null || typeof c !== "object" || !verifyCosignature(c).authentic) continue;
+      if (c.log_id === sth.log_id && c.tree_size === sth.tree_size &&
+          String(c.root_hash_hex ?? "").toLowerCase() === String(sth.root_hash_hex ?? "").toLowerCase()) {
+        const w = String(c.public_key_hex ?? "").toLowerCase();
+        if (trusted.has(w)) seen.add(w);
+      }
+    }
+    v.cosignerCount = seen.size;
+    v.witnessed = v.cosignerCount >= (threshold || 1);
+    if (!v.witnessed) {
+      v.note = "only " + v.cosignerCount + " trusted witness cosignature(s) over this head, need " + threshold;
+    }
+  }
+  return v;
+}
+
 export type CrossAuthorityVerdict = {
   decision: string; // "accept" | "reject"
   authentic: boolean;
@@ -314,9 +499,108 @@ export type CrossAuthorityVerdict = {
  * (authentic, fresh, signed by a trusted anchor) attests the credential's signing key in the
  * presented context (non-transitive), and -- if a revocation feed is supplied -- the credential
  * is not revoked (feed authentic, fresh, and bound to the issuer key). No network. */
+export type HolderVerdict = {
+  proved: boolean;
+  bindingAuthentic: boolean | null;
+  boundToCredential: boolean | null;
+  bindingFresh: boolean | null;
+  proofAuthentic: boolean | null;
+  keyMatchesBinding: boolean | null;
+  nonceMatches: boolean | null;
+  note?: string;
+};
+
+/** Decide the holder key chain offline (P9.1): issuer anchor -> binding -> holder key -> proof.
+ *
+ * Polaris was issuer-centric until v9.349: a holder held a credential, not a key pair, so
+ * presenting the file was the whole of the proof. A holder proof answers a different question,
+ * whether the party presenting it holds the key the ISSUER bound to that credential. The proof
+ * is signed over the credential, the context, the verifier's nonce and the instant, and
+ * deliberately NOT over the presented code, so a coerced presentation stays
+ * byte-indistinguishable from a consenting one. */
+export function verifyHolder(credential: any, binding: any, proof: any, expectedNonce?: string | null,
+                             expectedContext?: any, now?: string | null,
+                             maxAgeSeconds: number = 300): HolderVerdict {
+  const v: HolderVerdict = { proved: false, bindingAuthentic: null, boundToCredential: null,
+                             bindingFresh: null, proofAuthentic: null, keyMatchesBinding: null,
+                             nonceMatches: null };
+  const b = binding ?? {}, pr = proof ?? {};
+  if (b.format !== "polaris-holder-binding/1" || pr.format !== "polaris-holder-proof/1") {
+    v.note = "a holder chain needs a polaris-holder-binding/1 and a polaris-holder-proof/1";
+    return v;
+  }
+  const bv = verifySignedArtifact(b, now);
+  v.bindingAuthentic = bv.authentic;
+  v.bindingFresh = bv.fresh;
+  const cred = credential ?? {};
+  v.boundToCredential = String(b.token_value) === String(cred.token_value)
+    && String(b.public_key_hex ?? "").toLowerCase() === String(cred.public_key_hex ?? "").toLowerCase();
+  const impl = verifierFor(pr.algorithm);
+  if (!impl) {
+    v.note = "unknown or unaccepted signature algorithm: " + String(pr.algorithm);
+    return v;
+  }
+  try {
+    const digest = sha3_256(canonicalBytes(pr, ARTIFACT_KEYS["polaris-holder-proof/1"]));
+    v.proofAuthentic = impl.verify(hexToBytes(pr.signature_hex), digest, hexToBytes(pr.public_key_hex));
+  } catch (e) {
+    v.note = "verification error: " + (e as Error).message;
+    return v;
+  }
+  v.keyMatchesBinding = String(pr.public_key_hex ?? "").toLowerCase()
+    === String(b.holder_public_key_hex ?? "").toLowerCase() && (b.status ?? "active") === "active";
+  if (expectedNonce != null) v.nonceMatches = String(pr.verifier_nonce) === String(expectedNonce);
+  const ctxOk = expectedContext == null || pr.context_id === expectedContext;
+  const issued = Date.parse(String(pr.issued_at ?? ""));
+  const ref = now ? Date.parse(now) : Date.now();
+  const fresh = Number.isFinite(issued) && Number.isFinite(ref)
+    && issued <= ref + 60_000 && (ref - issued) / 1000 <= maxAgeSeconds;
+  v.proved = !!(v.bindingAuthentic && v.bindingFresh && v.boundToCredential && v.proofAuthentic
+                && v.keyMatchesBinding && v.nonceMatches !== false && ctxOk && fresh);
+  if (!v.proved) v.note = "the holder proof does not chain to a fresh issuer-signed binding for this credential";
+  return v;
+}
+
+/** Verify that a federation attestation carries the ATTESTING agency's own signature over
+ * the attested key, the context and the window (P9.5). Before v9.348 an attestation was a row
+ * an operator recorded, and the manifest that published it signed whatever the table held, so
+ * a row inserted straight into a database was indistinguishable from one made through the
+ * ceremony. An unsigned attestation is legacy, not a failure: `authentic` is false with a
+ * note, and the caller decides whether to require a signature. */
+export function verifyAttestation(att: any, attestingAgencyId?: number | null,
+                                  expectedKey?: string | null): ArtifactVerdict {
+  const a = att ?? {};
+  if (!a.signature_hex && !a.public_key_hex) {
+    return { authentic: false, fresh: null, note: "unsigned legacy attestation (recorded before v9.348)" };
+  }
+  if (a.format !== "polaris-trust-attestation/1") {
+    return { authentic: false, fresh: null, note: "not a polaris-trust-attestation/1" };
+  }
+  if (a.algorithm === PLACEHOLDER_LABEL) {
+    return { authentic: false, fresh: null, note: "placeholder attestation signature -- not authenticatable offline" };
+  }
+  const impl = verifierFor(a.algorithm);
+  if (!impl) return { authentic: false, fresh: null, note: "unknown or unaccepted signature algorithm: " + String(a.algorithm) };
+  let ok: boolean;
+  try {
+    const digest = sha3_256(canonicalBytes(a, ARTIFACT_KEYS["polaris-trust-attestation/1"]));
+    ok = impl.verify(hexToBytes(a.signature_hex), digest, hexToBytes(a.public_key_hex));
+  } catch (e) {
+    return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
+  }
+  if (ok && attestingAgencyId != null && a.attesting_agency_id !== attestingAgencyId) {
+    return { authentic: false, fresh: null, note: "the attestation names a different attesting agency than the manifest that published it" };
+  }
+  if (ok && expectedKey != null &&
+      String(a.attested_public_key_hex ?? "").toLowerCase() !== String(expectedKey).toLowerCase()) {
+    return { authentic: false, fresh: null, note: "the attestation is signed over a different attested key" };
+  }
+  return { authentic: ok, fresh: null, note: ok ? undefined : "the attestation signature is invalid" };
+}
+
 export function verifyCrossAuthority(
   pack: any, contextId: any, manifests: any[], trustedAnchors?: string[] | null,
-  revocationFeed?: any, now?: string | null,
+  revocationFeed?: any, now?: string | null, requireSignedAttestation: boolean = false,
 ): CrossAuthorityVerdict {
   const p = pack ?? {};
   if (!verifyAuthenticity(p).authentic) {
@@ -337,6 +621,12 @@ export function verifyCrossAuthority(
     for (const att of Array.isArray(mm.attestations) ? mm.attestations : []) {
       if (att && String(att.attested_public_key_hex ?? "").toLowerCase() === tokenKey
           && (contextId == null || att.context_id === contextId)) {
+        // P9.5: is the edge signed by the agency that made it, or is it the operator's
+        // word carried by the manifest's signature?
+        const unsigned = !att.signature_hex && !att.public_key_hex;
+        const av = verifyAttestation(att, mm.authority?.agency_id ?? null, tokenKey);
+        if (!unsigned && !av.authentic) continue;
+        if (requireSignedAttestation && unsigned) continue;
         via = mm.authority;
         break;
       }

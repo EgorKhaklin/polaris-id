@@ -10,6 +10,9 @@ names the artifact it is about; a verifier dispatches on it:
     {"artifact": "<epoch-checkpoint|revocation-feed|federation-manifest|
                   federation-status-bundle|transparency-sth>", "object": {...}, "now": "<iso8601>"}
         -> {"authentic": bool, "fresh": bool|null}
+    {"artifact": "timestamp-anchor", "timestamp": {...}, "log_key": "<hex>"|null,
+     "trusted_witnesses": ["<hex>", ...]|null, "threshold": int}
+        -> {"anchored": bool, "witnessed": bool|null}
 
 For backward compatibility a case with no `artifact` is an authenticity pack. A conformant
 verifier in any language implements this same stdin->stdout contract; conformance/run_conformance.py
@@ -18,11 +21,11 @@ drives it over the published cases and checks every verdict. See conformance/SPE
 import json
 import sys
 
-from . import (verify_authenticity, verify_cross_authority, verify_signed_artifact,
-               verify_status_assertion)
+from . import (verify_authenticity, verify_cross_authority, verify_holder, verify_signed_artifact,
+               verify_status_assertion, verify_timestamp_anchor)
 
 _SIGNED_ARTIFACTS = {"epoch-checkpoint", "revocation-feed", "federation-manifest",
-                     "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint"}
+                     "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves"}
 
 
 def main(argv=None):
@@ -46,6 +49,18 @@ def main(argv=None):
     if artifact in _SIGNED_ARTIFACTS:
         v = verify_signed_artifact(case.get("object") or {}, now=case.get("now"))
         print(json.dumps({"authentic": v.authentic, "fresh": v.fresh}))
+        return 0
+    if artifact == "timestamp-anchor":
+        v = verify_timestamp_anchor(case.get("timestamp") or {}, log_key=case.get("log_key"),
+                                    trusted_witnesses=case.get("trusted_witnesses"),
+                                    threshold=int(case.get("threshold") or 1))
+        print(json.dumps({"anchored": v.anchored, "witnessed": v.witnessed}))
+        return 0
+    if artifact == "holder-chain":
+        v = verify_holder(case.get("credential") or {}, case.get("binding") or {}, case.get("proof") or {},
+                          expected_nonce=case.get("expected_nonce"), expected_context=case.get("expected_context"),
+                          now=case.get("now"))
+        print(json.dumps({"proved": v.proved}))
         return 0
     if artifact == "cross-authority":
         v = verify_cross_authority(case.get("pack") or {}, case.get("context_id"),

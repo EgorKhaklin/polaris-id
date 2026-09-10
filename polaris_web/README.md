@@ -231,7 +231,7 @@ and means the server can enforce correctness without trusting the client.
 
 ### CRUD scope
 
-The schema has 36 tables (v9.341; see [DATA-MODEL.md](../docs/reference/DATA-MODEL.md)).
+The schema has 37 tables (v9.349; see [DATA-MODEL.md](../docs/reference/DATA-MODEL.md)).
 Building separate CRUD
 UIs for all of them would create sprawl with little marginal value.
 The high-value entities (where users need direct CRUD) are:

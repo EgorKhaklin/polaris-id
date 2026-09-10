@@ -303,7 +303,88 @@ token is stateless and signed under a salt distinct from access tokens, bound to
 challenge (S256), and single-use: the broker consumes its hash in an append-only register that
 holds nothing else, so the broker keeps no record of who authenticated where.
 
-### 3.14 `polaris-presentation/1` and `polaris-qr/1` (the holder's presentation and its transfer)
+### 3.14 `polaris-trust-attestation/1` (a federation trust edge, signed by the agency that made it)
+
+The attesting agency's own signature over a single trust edge (P9.5).
+Signed fields: format, attesting_agency_id, attested_agency_id, attested_public_key_hex, context_id, attested_date, valid_until, algorithm
+
+Until v9.348 a trust edge was a row an operator recorded, and the federation manifest that
+published it signed whatever the table held, so an edge inserted straight into a database was
+indistinguishable from one made through the attestation ceremony. This artifact makes the edge
+evidence in its own right, independent of the manifest's freshness window.
+
+The statement binds the edge to the attested KEY, not only to the attested agency: an
+attestation naming an agency alone would keep meaning what the attester meant after that
+agency rotated to a key the attester never saw. It binds the context, so an edge cannot be
+widened after the fact, and the window, so it cannot be extended.
+
+An attestation published inside a federation manifest carries `format`, `signature_hex` and
+`public_key_hex` beside the edge's fields. A verifier MUST, when those are present, verify the
+signature over the canonical statement, MUST require `attesting_agency_id` to equal the
+publishing manifest's authority, and MUST require `attested_public_key_hex` to equal the
+credential key it is deciding; a present-but-invalid signature MUST refuse the edge, which is
+stricter than an absent one. An attestation with no signature is LEGACY, recorded before
+v9.348: a verifier MAY accept it for one major and MUST report that it did, and a relying
+party that requires signed edges says so (`require_signed_attestation`).
+
+### 3.15 `polaris-holder-binding/1` and `polaris-holder-proof/1` (the holder's own key)
+
+Polaris was issuer-centric until v9.349: a holder held a credential, not a key pair, so
+presenting the file was the whole of the proof. Two artifacts change that, and a verifier
+checks the chain offline: issuer anchor -> binding -> holder key -> proof.
+
+`polaris-holder-binding/1` is signed by the ISSUING agency.
+Signed fields: format, token_value, holder_public_key_hex, holder_algorithm, bound_at, status, issued_at, expires_at, algorithm
+
+It says which holder public key belongs to which credential, from which instant, and whether
+that binding is `active` or `revoked`. A revoked binding is published rather than withdrawn,
+so a verifier sees that the holder has no usable key instead of inferring it from an absence.
+It is short-lived and window-bounded like a status assertion. The binding is obtained by
+POSSESSION of the credential, so an operator cannot bind a key to a credential they do not
+hold, and the holder's private key never reaches the issuer.
+
+`polaris-holder-proof/1` is signed by the HOLDER.
+Signed fields: format, token_value, context_id, verifier_nonce, issued_at, algorithm
+
+It says that the party presenting this credential, in this context, right now, holds the key
+the issuer bound to it. `verifier_nonce` is the value the relying party issued for this
+presentation, so a captured proof cannot be replayed to another verifier.
+
+A verifier MUST verify the binding's signature under its issuer anchors, MUST require the
+binding to be about the credential presented and signed by the same issuer key, MUST require
+the proof's signing key to equal `holder_public_key_hex` with the binding `active`, MUST
+require `verifier_nonce` to equal the one it issued, and MUST bound the proof's age. A
+verifier that requires possession of the KEY, not only of the file, says so
+(`require_holder_proof`); until it does, a presentation with no holder proof is decided as
+before, which is how credentials issued before v9.349 stay usable.
+
+The proof's statement deliberately does NOT cover the presented code. A coerced presentation
+carrying a holder proof is byte-indistinguishable from a consenting one, which is the
+anti-coercion vocation this key could otherwise have weakened.
+
+### 3.16 `polaris-epoch-leaves/1` (the published anonymity set)
+
+The authority's signed publication of an epoch's leaf set (P9.2).
+Signed fields: format, authority, epoch_id, context_id, merkle_root, leaf_count, leaves_root_hex, issued_at, expires_at, algorithm
+
+A membership proof hides which member is proving inside the set it is proved against, so a
+set only the issuer holds is not an anonymity set. This artifact publishes it. Every requester
+receives identical bytes, so fetching says nothing about which member is asking, and each
+entry is an opaque SHA3-256 only the holder of the matching credential can recognise as
+their own.
+
+`all_leaves_hex` rides OUTSIDE the signed statement and is committed to by `leaves_root_hex`,
+which is SHA3-256 of the sorted, newline-joined, lower-cased hexes: the same construction the
+revocation feed uses for `revoked_root_hex`. A verifier MUST recompute that commitment and
+MUST require `leaf_count` to equal the number of leaves published. It MUST NOT be required to
+recompute the Poseidon `merkle_root`, because a verifier that needed the proving library
+would not be standalone; `merkle_root` is carried so a holder can cross-check the bundle
+against the epoch checkpoint the authority published separately.
+
+A holder finds their own leaf in the set on their own device, builds the path there, and
+proves there. The issuer is never told which index was used.
+
+### 3.17 `polaris-presentation/1` and `polaris-qr/1` (the holder's presentation and its transfer)
 
 `polaris-presentation/1` is the UNSIGNED wrapper a holder hands a verifier (P8.6):
 `credential` (the section 3.7 authenticity pack), an optional `status_assertion` (section
@@ -330,7 +411,7 @@ is far smaller). No frame
 exceeds the emitter's frame budget (RECOMMENDED 1800 bytes). Framing is transport integrity
 only; it adds no authenticity.
 
-### 3.15 `polaris-trust-list/1`
+### 3.18 `polaris-trust-list/1`
 
 A publishing authority's signed statement of every authority key its instance knows, with each
 key's lifecycle status (P8.7b).

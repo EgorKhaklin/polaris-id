@@ -61,6 +61,7 @@ import sys
 import time
 import shutil
 import json
+import re
 import pathlib
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -3873,13 +3874,21 @@ def api_federation_attest():
                    AND revocation_date IS NULL
             """, (attesting_id, attested_id, context_id))
             row = cur.fetchone()
+            # P9.5: the ceremony signs the edge it just recorded, under the ATTESTING
+            # agency's own key. Without this the trust graph rests on an operator's word:
+            # a row inserted straight into the database would be published by the next
+            # manifest and be indistinguishable from one made here.
+            signed = _sign_attestation(cur, row['attestation_id']) if row else None
+            conn.commit()
     except psycopg2.Error as e:
         conn.rollback()
         return jsonify(error=db_error_to_message(e)), 400
     finally:
         conn.close()
 
-    return jsonify(attestation_id=row['attestation_id'], status='active')
+    return jsonify(attestation_id=row['attestation_id'], status='active',
+                   attestation_signed=bool(signed),
+                   signature_hex=(signed or {}).get('signature_hex'))
 
 
 @app.route('/api/federation/revoke', methods=['POST'])
@@ -5348,6 +5357,255 @@ def _possession_authenticated(token_value, presented_sig_hex):
     return row
 
 
+# --- P9.2 (v9.350): the anonymity set, published ------------------------------------------
+# The membership prover already runs wherever the holder runs it, but until now the holder
+# could not OBTAIN what proving needs: the epoch's leaf set is the anonymity set, and no
+# endpoint published it. A holder had to be handed the set out of band, which in practice
+# meant the issuer proving on their behalf.
+#
+# This publishes the set, signed. Every holder fetches the same bytes, so the request says
+# nothing about which leaf is theirs; the issuer learns that somebody fetched a public
+# artifact, which is what a transparency log tells the world by design. The holder finds
+# their own leaf locally, builds the path locally, and proves locally.
+_EPOCH_LEAVES_FORMAT = 'polaris-epoch-leaves/1'
+_EPOCH_LEAVES_TTL = int(os.environ.get('POLARIS_EPOCH_LEAVES_TTL', '86400'))
+# C8: an epoch is capped at ten thousand leaves by the schema; the route refuses to serve a
+# set larger than that rather than stream an unbounded body.
+_EPOCH_LEAVES_MAX = 10000
+
+
+def _epoch_leaves_statement(body):
+    """Canonical bytes the authority signs for a published anonymity set (P9.2). MUST match
+    scripts/polaris-verify.py's _epoch_leaves_canonical.
+
+    The leaves themselves ride OUTSIDE the statement and are committed to by
+    leaves_root_hex, the same construction the revocation feed uses, so a verifier in any
+    language recomputes the commitment with SHA3-256 alone and never needs Poseidon."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'authority', 'epoch_id', 'context_id', 'merkle_root',
+                  'leaf_count', 'leaves_root_hex', 'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _leaves_root(leaves):
+    """The commitment over a leaf set: SHA3-256 of the sorted, newline-joined hexes. The
+    same shape as the revocation feed's revoked_root_hex, so both SDKs already know it."""
+    uniq = sorted({str(x).lower() for x in (leaves or [])})
+    return hashlib.sha3_256('\n'.join(uniq).encode('utf-8')).hexdigest()
+
+
+@app.route('/api/v1/epoch/<int:epoch_id>/leaves')
+def api_v1_epoch_leaves(epoch_id):
+    """P9.2: publish an epoch's leaf set, signed, so a holder can prove membership on their
+    own device.
+
+    Public by construction: the set IS the anonymity set, and a set only its issuer holds is
+    not an anonymity set at all. Each entry is an opaque SHA3-256 that only the holder of the
+    matching credential can recognise as their own. Every requester receives identical bytes,
+    so fetching reveals nothing about which member is asking, and nothing is recorded about
+    who asked."""
+    epoch = query("""
+        SELECT e.epoch_id, e.merkle_root, e.committed_count, e.valid_until
+          FROM TokenStateEpoch e WHERE e.epoch_id = %s
+    """, (epoch_id,), fetch='one', primary=True)
+    if not epoch:
+        return jsonify(error='epoch not found'), 404
+    if (epoch['committed_count'] or 0) > _EPOCH_LEAVES_MAX:
+        return jsonify(error='epoch too large to publish in one body'), 413
+    rows = query("""
+        SELECT leaf_hash FROM TokenStateEpochLeaf WHERE epoch_id = %s ORDER BY leaf_id
+    """, (epoch_id,), primary=True)
+    leaves = [r['leaf_hash'].lower() for r in rows]
+    ag = query("SELECT agency_id, name FROM Agency ORDER BY agency_id LIMIT 1",
+               fetch='one', primary=True)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    body = {
+        'format': _EPOCH_LEAVES_FORMAT,
+        'authority': {'agency_id': ag['agency_id'], 'name': ag['name']},
+        'epoch_id': epoch['epoch_id'],
+        'context_id': None,
+        'merkle_root': epoch['merkle_root'],
+        'leaf_count': len(leaves),
+        'leaves_root_hex': _leaves_root(leaves),
+        'issued_at': now.isoformat().replace('+00:00', 'Z'),
+        'expires_at': (now + timedelta(seconds=_EPOCH_LEAVES_TTL)).isoformat().replace('+00:00', 'Z'),
+        'algorithm': _signing_algorithm(ag['agency_id']),
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(
+        _epoch_leaves_statement(body), agency_id=ag['agency_id'])
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['max_window_seconds'] = _EPOCH_LEAVES_TTL
+    # Outside the signed statement, committed to by leaves_root_hex.
+    body['all_leaves_hex'] = leaves
+    return jsonify(body)
+
+
+# --- P9.1 (v9.349): the holder key ---------------------------------------------------------
+# Polaris has been issuer-centric since v1: a holder holds a credential, not a key pair.
+# Two artifacts close it. The ISSUER signs a BINDING, saying which holder public key belongs
+# to which credential from which instant; the HOLDER signs a PROOF, saying that the party
+# presenting this credential right now holds that key. A verifier checks the chain offline:
+# issuer anchor -> binding -> holder key -> proof.
+#
+# The private key never reaches Polaris. Binding is proved by POSSESSION of the credential,
+# exactly as a status assertion is, so an operator cannot bind a key to a credential they do
+# not hold. And the proof is signed over the context, the verifier's nonce and the instant,
+# never over the presented code: a coerced presentation stays byte-indistinguishable from a
+# consenting one, which is the vocation this key could otherwise have weakened.
+_HOLDER_BINDING_FORMAT = 'polaris-holder-binding/1'
+_HOLDER_PROOF_FORMAT = 'polaris-holder-proof/1'
+_HOLDER_BINDING_TTL = int(os.environ.get('POLARIS_HOLDER_BINDING_TTL', '86400'))
+
+
+def _holder_binding_statement(body):
+    """Canonical bytes the ISSUER signs for a holder key binding (P9.1). MUST match
+    scripts/polaris-verify.py's _holder_binding_canonical; the oracle pins the pair."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'token_value', 'holder_public_key_hex', 'holder_algorithm',
+                  'bound_at', 'status', 'issued_at', 'expires_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _holder_proof_statement(body):
+    """Canonical bytes the HOLDER signs to prove they hold the bound key (P9.1). The app
+    never produces one -- the holder's device does -- but it verifies them, so it must build
+    the identical bytes. MUST match scripts/polaris-verify.py's _holder_proof_canonical.
+
+    Deliberately narrow, and deliberately WITHOUT the presented code: a coerced presentation
+    carrying a holder proof stays byte-indistinguishable from a consenting one."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'token_value', 'context_id', 'verifier_nonce', 'issued_at', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _holder_binding_for(token_value, row):
+    """Build and sign the current holder key binding for a credential, or None when no key
+    is bound. The binding is short-lived like a status assertion: a revoked holder key stops
+    being presentable when the last binding that named it expires."""
+    cur_row = query("""
+        SELECT public_key_hex, algorithm, event, effective_at
+          FROM HolderKeyCurrent WHERE token_id = %s
+    """, (row['token_id'],), fetch='one', primary=True)
+    if not cur_row:
+        return None
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    body = {
+        'format': _HOLDER_BINDING_FORMAT,
+        'token_value': token_value,
+        'holder_public_key_hex': cur_row['public_key_hex'],
+        'holder_algorithm': cur_row['algorithm'],
+        'bound_at': cur_row['effective_at'].isoformat() if cur_row['effective_at'] else None,
+        # 'revoked' is published, not hidden: a verifier must be able to see that the holder
+        # has no usable key rather than infer it from a missing binding.
+        'status': ('revoked' if cur_row['event'] == 'revoked' else 'active'),
+        'issued_at': now.isoformat().replace('+00:00', 'Z'),
+        'expires_at': (now + timedelta(seconds=_HOLDER_BINDING_TTL)).isoformat().replace('+00:00', 'Z'),
+        'algorithm': _signing_algorithm(row['issuing_agency_id']),
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(
+        _holder_binding_statement(body), agency_id=row['issuing_agency_id'])
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    body['max_window_seconds'] = _HOLDER_BINDING_TTL
+    return body
+
+
+@app.route('/api/v1/holder-key', methods=['POST'])
+def api_v1_holder_key_bind():
+    """P9.1: bind, rotate or revoke a HOLDER key, proved by possession of the credential.
+
+    Request: { token_value, signature_hex, holder_public_key_hex, holder_algorithm?,
+               event? ('bound' | 'rotated' | 'revoked') }
+    Response: the issuer-signed polaris-holder-binding/1 for the credential.
+
+    Possession-authenticated, exactly like the status assertion: no bearer, no operator, no
+    session. The private key never reaches this endpoint and is never asked for. Nothing
+    about who bound a key is recorded beyond the append-only register itself."""
+    body = request.get_json(silent=True) or {}
+    token_value = body.get('token_value')
+    presented_sig_hex = body.get('signature_hex')
+    holder_key = body.get('holder_public_key_hex')
+    event = body.get('event') or 'bound'
+    holder_alg = body.get('holder_algorithm') or 'ML-DSA-65'
+    if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
+        return jsonify(error='invalid_request',
+                       error_description='token_value and signature_hex are required'), 400
+    if event not in ('bound', 'rotated', 'revoked'):
+        return jsonify(error='invalid_request',
+                       error_description="event must be 'bound', 'rotated' or 'revoked'"), 400
+    if event != 'revoked' and not (isinstance(holder_key, str) and re.fullmatch(r'[0-9a-f]{64,}', holder_key)):
+        return jsonify(error='invalid_request',
+                       error_description='holder_public_key_hex must be lowercase hex, 64 characters or more'), 400
+    if holder_alg not in ('ML-DSA-65', 'ML-DSA-87'):
+        return jsonify(error='invalid_request',
+                       error_description='holder_algorithm must be an accepted parameter set'), 400
+    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
+    if not security.rate_limiter.allow('holderkey:%s' % _tk, 5, 300):
+        return jsonify(error='rate_limited'), 429
+
+    row = _possession_authenticated(token_value, presented_sig_hex)
+    if row is None:
+        return jsonify(error='not_verifiable',
+                       error_description='present the genuine issued credential (token_value + signature_hex)'), 400
+    if row['status'] != 'ACTIVE':
+        return jsonify(error='not_active',
+                       error_description='a holder key binds only to an ACTIVE credential'), 409
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            if event == 'revoked':
+                cur.execute("SELECT public_key_hex, algorithm FROM HolderKeyCurrent WHERE token_id = %s",
+                            (row['token_id'],))
+                cur_row = cur.fetchone()
+                if not cur_row:
+                    return jsonify(error='no_holder_key',
+                                   error_description='no holder key is bound to this credential'), 409
+                holder_key, holder_alg = cur_row['public_key_hex'], cur_row['algorithm']
+            cur.execute("""
+                INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event)
+                VALUES (%s, %s, %s, %s)
+            """, (row['token_id'], holder_key, holder_alg, event))
+        conn.commit()
+    except psycopg2.Error as e:
+        conn.rollback()
+        return jsonify(error=db_error_to_message(e)), 400
+    finally:
+        conn.close()
+    binding = _holder_binding_for(token_value, row)
+    return jsonify(binding or {'error': 'no_binding'}), (200 if binding else 500)
+
+
+@app.route('/api/v1/holder-binding', methods=['POST'])
+def api_v1_holder_binding():
+    """P9.1: fetch the current issuer-signed holder key binding for a credential, proved by
+    possession. A holder staples it to a presentation so a relying party can check the
+    holder proof offline without contacting the issuer."""
+    body = request.get_json(silent=True) or {}
+    token_value = body.get('token_value')
+    presented_sig_hex = body.get('signature_hex')
+    if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
+        return jsonify(error='invalid_request',
+                       error_description='token_value and signature_hex are required'), 400
+    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
+    if not security.rate_limiter.allow('holderbind:%s' % _tk, 10, 60):
+        return jsonify(error='rate_limited'), 429
+    row = _possession_authenticated(token_value, presented_sig_hex)
+    if row is None:
+        return jsonify(error='not_verifiable',
+                       error_description='present the genuine issued credential (token_value + signature_hex)'), 400
+    binding = _holder_binding_for(token_value, row)
+    if binding is None:
+        return jsonify(error='no_holder_key',
+                       error_description='no holder key is bound to this credential'), 404
+    return jsonify(binding)
+
+
 @app.route('/api/v1/status-assertion', methods=['POST'])
 def api_v1_status_assertion():
     """P3.6: mint a short-lived, issuer-signed status assertion. A holder fetches it
@@ -5407,6 +5665,64 @@ _MANIFEST_FORMAT = 'polaris-federation-manifest/1'
 _FEDERATION_MANIFEST_TTL = int(os.environ.get('POLARIS_FEDERATION_MANIFEST_TTL', '86400'))
 
 
+_ATTESTATION_FORMAT = 'polaris-trust-attestation/1'
+
+
+def _attestation_statement(body):
+    """Canonical bytes the ATTESTING agency signs when it accepts another authority
+    (P9.5). MUST match scripts/polaris-verify.py's _attestation_canonical, byte for byte;
+    the canonical-equivalence oracle pins the pair.
+
+    The statement binds the decision to the attested KEY, not only to the attested agency:
+    an attestation that named an agency alone would keep meaning what the operator meant
+    after that agency rotated to a key the attester never saw."""
+    statement = {k: body.get(k) for k in
+                 ('format', 'attesting_agency_id', 'attested_agency_id',
+                  'attested_public_key_hex', 'context_id', 'attested_date',
+                  'valid_until', 'algorithm')}
+    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
+
+
+def _sign_attestation(cur, attestation_id):
+    """Sign an attestation row under the ATTESTING agency's key and record the signature
+    on the row (P9.5). Written once; the immutability trigger refuses any replacement.
+    Returns the signed body, or None when the row cannot be signed (no attested key yet),
+    in which case the row stays unsigned legacy and a verifier reports it as such."""
+    cur.execute("""
+        SELECT att.attestation_id, att.attesting_agency_id, att.attested_agency_id,
+               att.context_id, att.attested_date, att.valid_until,
+               ag2.signing_public_key_hex AS attested_public_key_hex
+          FROM AgencyTrustAttestation att
+          JOIN Agency ag2 ON ag2.agency_id = att.attested_agency_id
+         WHERE att.attestation_id = %s
+    """, (attestation_id,))
+    row = cur.fetchone()
+    if not row or not row['attested_public_key_hex']:
+        return None
+    body = {
+        'format': _ATTESTATION_FORMAT,
+        'attesting_agency_id': row['attesting_agency_id'],
+        'attested_agency_id': row['attested_agency_id'],
+        'attested_public_key_hex': row['attested_public_key_hex'],
+        'context_id': row['context_id'],
+        'attested_date': row['attested_date'].isoformat() if row['attested_date'] else None,
+        'valid_until': row['valid_until'].isoformat() if row['valid_until'] else None,
+        'algorithm': _signing_algorithm(row['attesting_agency_id']),
+    }
+    sig_bytes, alg, pub = pqc_signing.signature_over_message(
+        _attestation_statement(body), agency_id=row['attesting_agency_id'])
+    body['algorithm'] = alg
+    body['signature_hex'] = sig_bytes.hex()
+    body['public_key_hex'] = pub
+    cur.execute("""
+        UPDATE AgencyTrustAttestation
+           SET attestation_format = %s, attestation_signature_hex = %s,
+               attestation_public_key_hex = %s
+         WHERE attestation_id = %s AND attestation_signature_hex IS NULL
+    """, (_ATTESTATION_FORMAT, body['signature_hex'], body['public_key_hex'], attestation_id))
+    return body
+
+
 def _manifest_statement(body):
     """Canonical bytes the authority signs. MUST match scripts/polaris-verify.py's
     _manifest_canonical: sorted-keys compact JSON of the manifest minus the signature
@@ -5464,7 +5780,9 @@ def _federation_manifest_body(ag, now):
     to a signed document (the signer's anchors at the instant of signing)."""
     agency_id = ag['agency_id']
     atts = query("""
-        SELECT att.attested_agency_id, att.context_id, att.valid_until,
+        SELECT att.attested_agency_id, att.context_id, att.attested_date, att.valid_until,
+               att.attestation_format, att.attestation_signature_hex,
+               att.attestation_public_key_hex,
                ag2.signing_public_key_hex AS attested_public_key_hex
         FROM   AgencyTrustAttestation att
         JOIN   Agency ag2 ON ag2.agency_id = att.attested_agency_id
@@ -5487,11 +5805,19 @@ def _federation_manifest_body(ag, now):
                     for k in _authority_keys(agency_id, ag['signing_public_key_hex'])],
         # Only attest to an agency that has a registered key: a verifier needs the
         # attested key to bind the attestation to a foreign credential's signature.
+        # P9.5: each attestation carries the attesting agency's own signature over the
+        # canonical polaris-trust-attestation/1 statement, so a consumer can check the
+        # trust edge itself rather than trusting that the manifest's publisher recorded it
+        # faithfully. A row made before v9.348 rides unsigned and is reported as legacy.
         'attestations': [
             {'attested_agency_id': a['attested_agency_id'],
              'attested_public_key_hex': a['attested_public_key_hex'],
              'context_id': a['context_id'],
-             'valid_until': a['valid_until'].isoformat() if a['valid_until'] else None}
+             'attested_date': (a['attested_date'].isoformat() if a.get('attested_date') else None),
+             'valid_until': a['valid_until'].isoformat() if a['valid_until'] else None,
+             'format': a.get('attestation_format'),
+             'signature_hex': a.get('attestation_signature_hex'),
+             'public_key_hex': a.get('attestation_public_key_hex')}
             for a in atts if a['attested_public_key_hex']
         ],
         'epoch': ({'number': epoch['epoch_id'], 'root_hex': epoch['merkle_root']} if epoch else None),
@@ -6109,6 +6435,10 @@ _PROTOCOL_FORMATS = {
     'polaris-presentation': 1,
     'polaris-qr': 1,
     'polaris-trust-list': 1,
+    'polaris-trust-attestation': 1,
+    'polaris-holder-binding': 1,
+    'polaris-holder-proof': 1,
+    'polaris-epoch-leaves': 1,
 }
 # P8.8b (v9.330): backward-compatible additions within a major, per format. A minor MAY add
 # fields nested inside an existing signed structure, or unsigned top-level fields a verifier

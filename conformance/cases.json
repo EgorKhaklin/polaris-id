@@ -506,6 +506,219 @@
       },
       "since": "9.331",
       "note": "P8.2b: the responder agency changed after signing."
+    },
+    {
+      "name": "timestamp-anchor-valid",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-valid.json",
+      "log_key": "sth",
+      "expect": {
+        "anchored": true,
+        "witnessed": null
+      },
+      "since": "9.346",
+      "note": "P9.6: the inclusion proof reconstructs a head the expected log key signed."
+    },
+    {
+      "name": "timestamp-anchor-witnessed",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-witnessed.json",
+      "log_key": "sth",
+      "trusted_witnesses": "cosigners",
+      "threshold": 2,
+      "expect": {
+        "anchored": true,
+        "witnessed": true
+      },
+      "since": "9.346",
+      "note": "P9.6: two distinct trusted witnesses have cosigned this exact head."
+    },
+    {
+      "name": "timestamp-anchor-unwitnessed",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-valid.json",
+      "log_key": "sth",
+      "trusted_witnesses": [],
+      "threshold": 1,
+      "expect": {
+        "anchored": true,
+        "witnessed": false
+      },
+      "since": "9.346",
+      "note": "P9.6: anchored, but nobody the verifier trusts has cosigned the head."
+    },
+    {
+      "name": "timestamp-anchor-forged-head",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-forged.json",
+      "log_key": "sth",
+      "trusted_witnesses": [],
+      "threshold": 1,
+      "expect": {
+        "anchored": true,
+        "witnessed": false
+      },
+      "since": "9.346",
+      "note": "P9.6: a stolen log key can sign a fabricated head; it cannot make a trusted witness cosign it."
+    },
+    {
+      "name": "timestamp-anchor-broken-proof",
+      "artifact": "timestamp-anchor",
+      "timestamp_file": "conformance/vectors/timestamp-anchor-broken-proof.json",
+      "log_key": "sth",
+      "expect": {
+        "anchored": false,
+        "witnessed": null
+      },
+      "since": "9.346",
+      "note": "P9.6: the path does not reconstruct the head."
+    },
+    {
+      "name": "trust-attestation-valid",
+      "artifact": "trust-attestation",
+      "object_file": "conformance/vectors/trust-attestation-valid.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.348",
+      "note": "P9.5: the attesting agency signed this edge itself; it is not the operator's word."
+    },
+    {
+      "name": "trust-attestation-rekeyed",
+      "artifact": "trust-attestation",
+      "object_file": "conformance/vectors/trust-attestation-rekeyed.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.348",
+      "note": "P9.5: the edge is bound to the attested KEY, so re-pointing it at another key breaks it."
+    },
+    {
+      "name": "trust-attestation-widened",
+      "artifact": "trust-attestation",
+      "object_file": "conformance/vectors/trust-attestation-widened.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.348",
+      "note": "P9.5: the context is signed, so an edge cannot be widened after the fact."
+    },
+    {
+      "name": "holder-binding-valid",
+      "artifact": "holder-binding",
+      "object_file": "conformance/vectors/holder-binding-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.349",
+      "note": "P9.1: the issuer's signed statement that this holder key belongs to this credential."
+    },
+    {
+      "name": "holder-binding-tampered",
+      "artifact": "holder-binding",
+      "object_file": "conformance/vectors/holder-binding-tampered.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.349",
+      "note": "P9.1: the bound key was swapped after signing."
+    },
+    {
+      "name": "holder-proof-valid",
+      "artifact": "holder-proof",
+      "object_file": "conformance/vectors/holder-proof-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true
+      },
+      "since": "9.349",
+      "note": "P9.1: the holder's own signature over the credential, context, nonce and instant."
+    },
+    {
+      "name": "holder-chain-proved",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-credential.json",
+      "binding_file": "conformance/vectors/holder-binding-valid.json",
+      "proof_file": "conformance/vectors/holder-proof-valid.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": true
+      },
+      "since": "9.349",
+      "note": "P9.1: the party presenting the credential holds the key its issuer bound to it."
+    },
+    {
+      "name": "holder-chain-stranger",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-credential.json",
+      "binding_file": "conformance/vectors/holder-binding-valid.json",
+      "proof_file": "conformance/vectors/holder-proof-stranger.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "9.349",
+      "note": "P9.1: a genuine proof by a key the issuer never bound proves nothing about this credential."
+    },
+    {
+      "name": "holder-chain-replayed",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-credential.json",
+      "binding_file": "conformance/vectors/holder-binding-valid.json",
+      "proof_file": "conformance/vectors/holder-proof-replayed.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "9.349",
+      "note": "P9.1: a proof naming another verifier's nonce is a replay of one made for somebody else."
+    },
+    {
+      "name": "holder-chain-revoked",
+      "artifact": "holder-chain",
+      "credential_file": "conformance/vectors/holder-credential.json",
+      "binding_file": "conformance/vectors/holder-binding-revoked.json",
+      "proof_file": "conformance/vectors/holder-proof-valid.json",
+      "expected_nonce": "rp-nonce-1",
+      "expected_context": 1,
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "proved": false
+      },
+      "since": "9.349",
+      "note": "P9.1: a revoked binding means the holder has no usable key until a new one is bound."
+    },
+    {
+      "name": "epoch-leaves-valid",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.350",
+      "note": "P9.2: the published anonymity set, signed, with the leaves committed by leaves_root_hex."
+    },
+    {
+      "name": "epoch-leaves-swapped",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-swapped.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.350",
+      "note": "P9.2: a member swapped after signing; the commitment no longer matches the set."
     }
   ]
 }

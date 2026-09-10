@@ -561,13 +561,214 @@ def test_c6_atlas_zk_check_fails_when_zk_location_not_redacted(tmp_path):
         "must FAIL when atlas_geo_jurisdictions centroid includes ZERO_KNOWLEDGE events"
 
 
+def test_holder_side_prover_check_discriminates(tmp_path):
+    # v9.350 (P9.2): a holder proves on their OWN device. The set an epoch commits to IS the
+    # anonymity set, so publishing it is what makes proving possible without the issuer.
+    good = {
+        'polaris_web/app.py': ("_EPOCH_LEAVES_MAX = 10000\ndef _epoch_leaves_statement(b):\n    pass\n"
+                               "def api_v1_epoch_leaves(epoch_id):\n    return None\n"),
+        'scripts/polaris-verify.py': ("def _leaves_root(x):\n    return ''\n"
+                                      "def verify_epoch_leaves(b):\n    return _leaves_root(b)\n"
+                                      "def member_index(b, seed):\n    return None\n"),
+        'scripts/polaris-wallet.py': "from_instance = None\nverify_epoch_leaves(e)\n",
+        'sdk/python/polaris_verify/__init__.py': '# "polaris-epoch-leaves/1"\n',
+        'sdk/typescript/src/index.ts': '// "polaris-epoch-leaves/1"\n',
+        'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": ['
+            '{"name": "a", "artifact": "epoch-leaves", "expect": {"authentic": true}}, '
+            '{"name": "b", "artifact": "epoch-leaves", "expect": {"authentic": false}}]}',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_holder_side_prover(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the set is not published at all -- proving needs the issuer again
+    write({"polaris_web/app.py": "def something_else():\n    pass\n"})
+    assert checks.check_holder_side_prover(tmp_path)[0].level == "FAIL", "must FAIL without the published set"
+    # 2. the set becomes unbounded (C8)
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("_EPOCH_LEAVES_MAX = 10000", "")})
+    assert checks.check_holder_side_prover(tmp_path)[0].level == "FAIL", "must FAIL if the set is unbounded"
+    # 3. the set requires authentication -- fetching it would tell the issuer who is proving
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace(
+        "def api_v1_epoch_leaves(epoch_id):", "@security.login_required\ndef api_v1_epoch_leaves(epoch_id):")})
+    out = checks.check_holder_side_prover(tmp_path)
+    assert out[0].level == "FAIL", "must FAIL if the anonymity set is behind a login"
+    assert "PUBLIC" in out[0].message
+    # 4. the holder can no longer find their own leaf locally
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def member_index", "def gone")})
+    assert checks.check_holder_side_prover(tmp_path)[0].level == "FAIL", "must FAIL without a local lookup"
+    # 5. checking the set starts needing the proving library, so a standalone verifier cannot
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace(
+        "    return _leaves_root(b)", "    return subprocess.run(['polaris-zk'])")})
+    assert checks.check_holder_side_prover(tmp_path)[0].level == "FAIL", "must FAIL if checking needs the prover"
+    # 6. the wallet stops verifying the set before proving against it
+    write({"scripts/polaris-wallet.py": "from_instance = None\n"})
+    assert checks.check_holder_side_prover(tmp_path)[0].level == "FAIL", "must FAIL if the wallet trusts the set"
+
+
+def test_holder_key_binding_check_discriminates(tmp_path):
+    # v9.349 (P9.1): a holder can hold a KEY, not only a file. The perturbation that matters
+    # most is the last one: a holder proof that covered the presented code would make a
+    # coerced presentation distinguishable from a consenting one, which is a regression
+    # against the vocation and not a feature.
+    proof_stmt = ("def _holder_proof_%s(body):\n    statement = {k: body.get(k) for k in\n"
+                  "                 ('format', 'token_value', 'context_id', 'verifier_nonce', 'issued_at', 'algorithm')}\n"
+                  "    return b''\n")
+    good = {
+        'polaris_sql/01_schema.sql': "CREATE TABLE HolderKeyEvent (id SERIAL);\nCREATE VIEW HolderKeyCurrent AS SELECT 1;\n",
+        'polaris_sql/06_triggers.sql': "CREATE TRIGGER trg_holder_key_append_only BEFORE UPDATE OR DELETE ON HolderKeyEvent;\n",
+        'polaris_sql/09_grants.sql': "REVOKE UPDATE ON 'holderkeyevent' FROM polaris_app;\n",
+        'polaris_web/app.py': ("def _holder_binding_statement(b):\n    pass\n" + (proof_stmt % "statement")
+                               + "def api_v1_holder_key_bind():\n    _possession_authenticated(t, s)\n"),
+        'scripts/polaris-verify.py': ((proof_stmt % "canonical")
+                                      + "def verify_holder_binding(b):\n    pass\ndef verify_holder_proof(p):\n    pass\n"
+                                      + "require_holder_proof = False\nverifier_nonce = None\n"),
+        'sdk/python/polaris_verify/__init__.py': "def verify_holder(c, b, p):\n    pass\n",
+        'sdk/typescript/src/index.ts': "export function verifyHolder(c, b, p) { return null; }\n",
+        'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": ['
+            '{"name": "a", "artifact": "holder-chain", "expect": {"proved": true}}, '
+            '{"name": "b", "artifact": "holder-chain", "expect": {"proved": false}}, '
+            '{"name": "c", "artifact": "holder-chain", "expect": {"proved": false}}, '
+            '{"name": "d", "artifact": "holder-chain", "expect": {"proved": false}}]}',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_holder_key_binding(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the register is no longer append-only -- an operator could replace the holder's key
+    write({"polaris_sql/06_triggers.sql": "-- nothing\n"})
+    assert checks.check_holder_key_binding(tmp_path)[0].level == "FAIL", "must FAIL without the append-only trigger"
+    # 2. binding stops being proved by possession of the credential
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("_possession_authenticated", "session_user")})
+    assert checks.check_holder_key_binding(tmp_path)[0].level == "FAIL", "must FAIL without the possession proof"
+    # 3. the proof stops being bound to the verifier's nonce -- a captured proof replays
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("verifier_nonce", "whenever")})
+    assert checks.check_holder_key_binding(tmp_path)[0].level == "FAIL", "must FAIL without the nonce binding"
+    # 4. an SDK stops deciding the chain
+    write({"sdk/typescript/src/index.ts": "// nothing\n"})
+    assert checks.check_holder_key_binding(tmp_path)[0].level == "FAIL", "must FAIL if the TS SDK cannot decide it"
+    # 5. THE CONSTITUTIONAL ONE: the holder proof starts covering the presented code, so a
+    #    coerced presentation becomes distinguishable from a consenting one
+    leaky = good["scripts/polaris-verify.py"].replace("'issued_at', 'algorithm')", "'issued_at', 'presented_code', 'algorithm')")
+    write({"scripts/polaris-verify.py": leaky})
+    out = checks.check_holder_key_binding(tmp_path)
+    assert out[0].level == "FAIL", "must FAIL if the holder proof covers the presented code"
+    assert "coerced" in out[0].message, "the failure must say why: it breaks the duress path"
+    # 6. the cases stop certifying the ways the chain fails
+    import json as _json
+    c = _json.loads(good["conformance/cases.json"])
+    c["cases"] = [x for x in c["cases"] if x["expect"]["proved"] is not False]
+    write({"conformance/cases.json": _json.dumps(c)})
+    assert checks.check_holder_key_binding(tmp_path)[0].level == "FAIL", "must FAIL without the failure cases"
+
+
+def test_attestation_signed_check_discriminates(tmp_path):
+    # v9.348 (P9.5): a federation trust edge is signed by the agency that made it, not
+    # recorded by an operator and signed on their behalf by the next manifest. Each
+    # perturbation removes one leg of that path.
+    good = {
+        'polaris_sql/01_schema.sql': "attestation_format attestation_signature_hex attestation_public_key_hex\nCONSTRAINT attestation_signature_complete CHECK (TRUE)\n",
+        'polaris_sql/06_triggers.sql': "RAISE EXCEPTION 'an attestation signature cannot be replaced once recorded';\n",
+        'polaris_web/app.py': "def _attestation_statement(body):\n    pass\ndef _sign_attestation(cur, attestation_id):\n    pass\nsigned = _sign_attestation(cur, row['attestation_id'])\n'signature_hex': a.get('attestation_signature_hex')\n",
+        'scripts/polaris-verify.py': "def verify_attestation(att, attesting_agency_id=None, expected_key=None):\n    return {'attester_matches': None, 'key_matches': None}\ndef verify_cross_authority(pack, ctx, ms, require_signed_attestation=False):\n    pass\n",
+        'sdk/python/polaris_verify/__init__.py': "# polaris-trust-attestation/1\ndef verify_attestation(att, attesting_agency_id=None, expected_key=None):\n    pass\n",
+        'sdk/typescript/src/index.ts': '// "polaris-trust-attestation/1"\nexport function verifyAttestation(a, b, c) { return null; }\n',
+        'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": ['
+                                  '{"name": "ok", "artifact": "trust-attestation", "expect": {"authentic": true}}, '
+                                  '{"name": "bad", "artifact": "trust-attestation", "expect": {"authentic": false}}]}',
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_attestation_signed(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1. the schema no longer holds the signature -- the edge is the operator's word again
+    write({"polaris_sql/01_schema.sql": good["polaris_sql/01_schema.sql"].replace("attestation_signature_hex", "x")})
+    assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL without the signature column"
+    # 2. a recorded signature can be replaced
+    write({"polaris_sql/06_triggers.sql": "RAISE NOTICE 'anything goes';\n"})
+    assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL if a signature can be replaced"
+    # 3. the ceremony no longer signs the edge it recorded
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("signed = _sign_attestation(cur, row['attestation_id'])", "pass")})
+    assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL if the route does not sign"
+    # 4. the manifest stops publishing the signature
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("'signature_hex': a.get('attestation_signature_hex')", "pass")})
+    assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL if the manifest hides it"
+    # 5. the verifier stops binding the edge to the attested key
+    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("key_matches", "whatever")})
+    assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL without the key binding"
+    # 6. an SDK stops checking it -- the stronger decision becomes Polaris-only
+    write({"sdk/typescript/src/index.ts": "// nothing\n"})
+    assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL if the TS SDK cannot check it"
+    # 7. the cases stop certifying an edge whose signature no longer binds
+    import json as _json
+    c = _json.loads(good["conformance/cases.json"])
+    c["cases"] = [x for x in c["cases"] if x["expect"]["authentic"] is not False]
+    write({"conformance/cases.json": _json.dumps(c)})
+    assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL without a non-binding case"
+
+
+def test_aor_append_only_triggers_check_discriminates(tmp_path):
+    # v9.347 (P9.7): the audit-of-record check names every instance instead of counting
+    # triggers, because a count nobody reads can fall by one silently. RecoveryRequest was
+    # the last table whose history rested on procedure discipline; removing any table's
+    # trigger, or the exception it raises, must turn the check red.
+    tables = ["TokenLifecycleEvent", "VerificationEvent", "EnrollmentStatusEvent", "TokenSignature",
+              "AgencyTrustAttestation", "TokenStateEpoch", "TokenStateEpochLeaf", "AnchorBatch",
+              "DuressEvent", "AuthAuditLog", "IndividualErasureEvent", "LifecycleArchiveCheckpoint",
+              "AuditAccessLog", "RecoveryRequest"]
+    body = "RAISE EXCEPTION 'no' USING ERRCODE = 'insufficient_privilege';\n" + "".join(
+        "CREATE TRIGGER trg_%s BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION f();\n" % (t.lower(), t)
+        for t in tables)
+
+    def write(sql, migration=None):
+        d = tmp_path / "polaris_sql" / "migrations"
+        d.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "06_triggers.sql").write_text(sql)
+        for old in d.glob("*.up.sql"):
+            old.unlink()
+        if migration:
+            (d / "2026-01-01-001-x.up.sql").write_text(migration)
+
+    write(body)
+    assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "OK", "must PASS with every instance guarded"
+    # 1. the recovery ceremony loses its trigger -- the v9.347 closure regresses
+    write(body.replace("BEFORE UPDATE OR DELETE ON RecoveryRequest", "AFTER INSERT ON RecoveryRequest"))
+    out = checks.check_aor_append_only_triggers(tmp_path)
+    assert out[0].level == "FAIL", "must FAIL when RecoveryRequest is no longer guarded"
+    assert "RecoveryRequest" in out[0].message, "the failure must name the table that lost its guard"
+    # 2. any other instance loses its trigger
+    write(body.replace("BEFORE UPDATE OR DELETE ON DuressEvent", "AFTER INSERT ON DuressEvent"))
+    assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "FAIL", "must FAIL when DuressEvent is unguarded"
+    # 3. a trigger that no longer refuses the write
+    write(body.replace("insufficient_privilege", "notice"))
+    assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "FAIL", "must FAIL without insufficient_privilege"
+    # 4. a trigger added by a migration counts, since that is how later tables arrive
+    write(body.replace("CREATE TRIGGER trg_auditaccesslog BEFORE UPDATE OR DELETE ON AuditAccessLog FOR EACH ROW EXECUTE FUNCTION f();\n", ""),
+          migration="CREATE TRIGGER trg_audit_access_append_only BEFORE UPDATE OR DELETE ON AuditAccessLog FOR EACH ROW EXECUTE FUNCTION f();\n")
+    assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "OK", "a migration-added trigger must count"
+
+
 def test_aor_privilege_boundary_check_discriminates(tmp_path):
     sql = tmp_path / "polaris_sql"
     mig = sql / "migrations"
     mig.mkdir(parents=True)
     base_tables = ("tokenlifecycleevent verificationevent enrollmentstatusevent "
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
-                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog")
+                   "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent")
 
     def write(grants, mig_revoke, proc_definer):
         (sql / "09_grants.sql").write_text(grants)
@@ -6410,11 +6611,16 @@ def test_wire_spec_check_discriminates(tmp_path):
         "def _signed_document_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'document')}\n"
         "def _id_token_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'aud')}\n"
         "def _trust_list_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'keys')}\n"
+        "def _attestation_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'context_id')}\n"
+        "def _holder_binding_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'token_value')}\n"
+        "def _holder_proof_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'verifier_nonce')}\n"
+        "def _epoch_leaves_canonical(m):\n    x = {k: m.get(k) for k in ('format', 'leaf_count')}\n"
     )
     spec = (
         "# Polaris wire spec\nA verifier MUST check the signature.\n"
         "Artifacts: polaris-federation-manifest/1 polaris-epoch-checkpoint/1 polaris-revocation-feed/1 "
         "polaris-status-assertion/1 polaris-transparency-sth/1 polaris-federation-status-bundle/1 "
+            "polaris-trust-attestation/1 polaris-holder-binding/1 polaris-holder-proof/1 polaris-epoch-leaves/1 "
         "polaris-authenticity-pack/1 polaris-transparency-cosignature/1 polaris-transparency-publication/1 "
         "polaris-published-head/1 polaris-exchange-receipt/1 polaris-exchange-mint/1 polaris-timestamp/1 polaris-registry/1 polaris-exchange-request/1 polaris-signed-document/1 polaris-id-token/1 polaris-presentation/1 polaris-qr/1 polaris-trust-list/1\n"
         "manifest signed fields: format, authority\n"
@@ -6431,6 +6637,10 @@ def test_wire_spec_check_discriminates(tmp_path):
         "assertion signed fields: format, status\n"
         "sth signed fields: format, tree_size\n"
         "bundle signed fields: format, publisher\n"
+        "attestation signed fields: format, context_id\n"
+        "binding signed fields: format, token_value\n"
+        "holder proof signed fields: format, verifier_nonce\n"
+        "epoch leaves signed fields: format, leaf_count\n"
         "The pack signs SHA3-256(token_value), not a JSON statement.\n"
         "canonical = json.dumps(s, sort_keys=True, separators=(',',':')).\n"
         "Trust is non-transitive and in-context.\n"
@@ -6771,7 +6981,7 @@ def test_registry_check_discriminates(tmp_path):
         "    _registry_statement(body)  # polaris-registry/1\n"
         "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
         "_REGISTRY_SERVICES = []\n"
-        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-presentation': 1,\n    'polaris-qr': 1,\n    'polaris-trust-list': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
+        "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-presentation': 1,\n    'polaris-qr': 1,\n    'polaris-trust-list': 1,\n    'polaris-trust-attestation': 1,\n    'polaris-holder-binding': 1,\n    'polaris-holder-proof': 1,\n    'polaris-epoch-leaves': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
     )
     good = {
         'polaris_web/app.py': APP,
@@ -7495,7 +7705,7 @@ def test_offline_verification_check_discriminates(tmp_path):
 def test_typescript_sdk_check_discriminates(tmp_path):
     # v9.290 (P3.5b): the TypeScript verify SDK, same conformance contract, second
     # implementation, run in CI. Each perturbation removes one leg.
-    good = {'sdk/typescript/src/index.ts': "// \"polaris-exchange-receipt/1\" \"polaris-exchange-mint/1\"\nimport { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';\nimport { sha3_256 } from '@noble/hashes/sha3.js';\nexport function verifyAuthenticity(pack, anchors) {\n  const d = sha3_256(new TextEncoder().encode(pack.token_value));\n  return ml_dsa65.verify(pack.sig, d, pack.pk);\n}\nexport function verifyStatusAssertion(a, now) {\n  return { authentic: true, fresh: true, active: true };\n}\nexport function verifySignedArtifact(o, now) {\n  return { authentic: true, fresh: true };\n}\nexport function verifyCrossAuthority(p, ctx, ms, ta, rf, now) {\n  return { decision: 'accept', authentic: true, issuerTrusted: true };\n}\nexport class PolarisVerifier {\n  async status() { await fetch('/api/v1/oauth/token'); await fetch('/api/v1/verify'); }\n}\n", 'sdk/typescript/src/conformance.ts': "import { verifyAuthenticity, verifyStatusAssertion } from './index.ts';\nprocess.stdout.write(JSON.stringify({ authentic: true, issuer_trusted: null }));\n", 'sdk/typescript/package.json': '{"dependencies": {"@noble/post-quantum": "^0.7.1"}}\n', 'sdk/typescript/package-lock.json': '{"lockfileVersion": 3}\n', 'sdk/typescript/test/sdk.test.ts': "import { test } from 'node:test';\ntest('x', () => {});\n", '.github/workflows/ci.yml': 'jobs:\n  sdk-typescript:\n    steps:\n      - uses: actions/setup-node@v4\n      - run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"\n'}
+    good = {'sdk/typescript/src/index.ts': "// \"polaris-exchange-receipt/1\" \"polaris-exchange-mint/1\"\nimport { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';\nimport { sha3_256 } from '@noble/hashes/sha3.js';\nexport function verifyAuthenticity(pack, anchors) {\n  const d = sha3_256(new TextEncoder().encode(pack.token_value));\n  return ml_dsa65.verify(pack.sig, d, pack.pk);\n}\nexport function verifyStatusAssertion(a, now) {\n  return { authentic: true, fresh: true, active: true };\n}\nexport function verifySignedArtifact(o, now) {\n  return { authentic: true, fresh: true };\n}\nexport function verifyCrossAuthority(p, ctx, ms, ta, rf, now) {\n  return { decision: 'accept', authentic: true, issuerTrusted: true };\n}\nexport function verifyInclusion(i, n, l, r, p) {\n  return true;\n}\nexport function verifyCosignature(c, k) {\n  return { authentic: true };\n}\nexport function verifyTimestampAnchor(ts, logKey, tw, threshold) {\n  return { anchored: true, witnessed: null };\n}\nexport class PolarisVerifier {\n  async status() { await fetch('/api/v1/oauth/token'); await fetch('/api/v1/verify'); }\n}\n", 'sdk/typescript/src/conformance.ts': "import { verifyAuthenticity, verifyStatusAssertion } from './index.ts';\nprocess.stdout.write(JSON.stringify({ authentic: true, issuer_trusted: null }));\n", 'sdk/typescript/package.json': '{"dependencies": {"@noble/post-quantum": "^0.7.1"}}\n', 'sdk/typescript/package-lock.json': '{"lockfileVersion": 3}\n', 'sdk/typescript/test/sdk.test.ts': "import { test } from 'node:test';\ntest('x', () => {});\n", '.github/workflows/ci.yml': 'jobs:\n  sdk-typescript:\n    steps:\n      - uses: actions/setup-node@v4\n      - run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts"\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -7533,13 +7743,17 @@ def test_typescript_sdk_check_discriminates(tmp_path):
     # 8. the TS SDK no longer decides the federation trust decision (P8.1)
     write({"sdk/typescript/src/index.ts": good["sdk/typescript/src/index.ts"].replace("verifyCrossAuthority", "gone")})
     assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL without TS trust decision"
+    # 9. the TS SDK no longer decides a timestamp anchor (P9.6): long-term validation's
+    #    strongest form would be reserved for whoever runs Polaris's own verifier
+    write({"sdk/typescript/src/index.ts": good["sdk/typescript/src/index.ts"].replace("verifyTimestampAnchor", "gone")})
+    assert checks.check_typescript_sdk(tmp_path)[0].level == "FAIL", "must FAIL without TS timestamp-anchor verification"
 
 
 def test_conformance_suite_check_discriminates(tmp_path):
     # v9.289 (P3.5): the verification conformance suite + Python reference SDK.
     # Standalone SDK (real ML-DSA + OAuth online), a language-agnostic runner, cases
     # covering authentic/not/untrusted-issuer, run in CI. Each perturbation removes a leg.
-    good = {'sdk/python/polaris_verify/__init__.py': "# \"polaris-exchange-receipt/1\" \"polaris-exchange-mint/1\"\nimport hashlib, urllib.request\ndef verify_authenticity(pack, anchors=None):\n    hashlib.sha3_256(b'')\n    from cryptography.hazmat.primitives.asymmetric import mldsa\n    mldsa.MLDSA65PublicKey\ndef verify_status_assertion(a, now=None):\n    return None\ndef verify_signed_artifact(o, now=None):\n    return None\ndef verify_cross_authority(p, ctx, ms, trusted_anchors=None, revocation_feed=None, now=None):\n    return None\nclass PolarisVerifier:\n    def _t(self):\n        return ('/api/v1/oauth/token', '/api/v1/verify')\n", 'sdk/python/polaris_verify/conformance.py': 'from . import verify_authenticity, verify_status_assertion, verify_signed_artifact, verify_cross_authority\n# dispatch on the case artifact\n', 'conformance/run_conformance.py': "import argparse\nFLAGS = ('--verifier', '--self', 'issuer_trusted')\n", 'conformance/SPEC.md': '# contract\nstdin authentic issuer_trusted\n', 'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": [{"name": "a", "expect": {"authentic": true, "issuer_trusted": null}}, {"name": "b", "expect": {"authentic": true, "issuer_trusted": false}}, {"name": "c", "expect": {"authentic": false, "issuer_trusted": null}}, {"name": "sa", "artifact": "status-assertion", "expect": {"authentic": true}}, {"name": "cp", "artifact": "epoch-checkpoint", "expect": {"authentic": true}}, {"name": "fd", "artifact": "revocation-feed", "expect": {"authentic": true}}, {"name": "mf", "artifact": "federation-manifest", "expect": {"authentic": true}}, {"name": "bn", "artifact": "federation-status-bundle", "expect": {"authentic": true}}, {"name": "ca", "artifact": "cross-authority", "expect": {"decision": "accept"}}]}', '.github/workflows/ci.yml': '      - run: python conformance/run_conformance.py --self\n', 'sdk/python/test_sdk.py': 'class ConformanceRunnerTest:\n    def t(self): pass\n'}
+    good = {'sdk/python/polaris_verify/__init__.py': "# \"polaris-exchange-receipt/1\" \"polaris-exchange-mint/1\"\nimport hashlib, urllib.request\ndef verify_authenticity(pack, anchors=None):\n    hashlib.sha3_256(b'')\n    from cryptography.hazmat.primitives.asymmetric import mldsa\n    mldsa.MLDSA65PublicKey\ndef verify_status_assertion(a, now=None):\n    return None\ndef verify_signed_artifact(o, now=None):\n    return None\ndef verify_cross_authority(p, ctx, ms, trusted_anchors=None, revocation_feed=None, now=None):\n    return None\ndef verify_inclusion(i, n, leaf, root, proof):\n    return True\ndef verify_cosignature(c, witness_key=None):\n    return None\ndef verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=1):\n    return None\nclass PolarisVerifier:\n    def _t(self):\n        return ('/api/v1/oauth/token', '/api/v1/verify')\n", 'sdk/python/polaris_verify/conformance.py': 'from . import verify_authenticity, verify_status_assertion, verify_signed_artifact, verify_cross_authority\n# dispatch on the case artifact\n', 'conformance/run_conformance.py': "import argparse\nFLAGS = ('--verifier', '--self', 'issuer_trusted')\n", 'conformance/SPEC.md': '# contract\nstdin authentic issuer_trusted\n', 'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": [{"name": "a", "expect": {"authentic": true, "issuer_trusted": null}}, {"name": "b", "expect": {"authentic": true, "issuer_trusted": false}}, {"name": "c", "expect": {"authentic": false, "issuer_trusted": null}}, {"name": "sa", "artifact": "status-assertion", "expect": {"authentic": true}}, {"name": "cp", "artifact": "epoch-checkpoint", "expect": {"authentic": true}}, {"name": "fd", "artifact": "revocation-feed", "expect": {"authentic": true}}, {"name": "mf", "artifact": "federation-manifest", "expect": {"authentic": true}}, {"name": "bn", "artifact": "federation-status-bundle", "expect": {"authentic": true}}, {"name": "ca", "artifact": "cross-authority", "expect": {"decision": "accept"}}, {"name": "an1", "artifact": "timestamp-anchor", "expect": {"anchored": true, "witnessed": true}}, {"name": "an2", "artifact": "timestamp-anchor", "expect": {"anchored": true, "witnessed": false}}, {"name": "an3", "artifact": "timestamp-anchor", "expect": {"anchored": false, "witnessed": null}}]}', '.github/workflows/ci.yml': '      - run: python conformance/run_conformance.py --self\n', 'sdk/python/test_sdk.py': 'class ConformanceRunnerTest:\n    def t(self): pass\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -7594,6 +7808,17 @@ def test_conformance_suite_check_discriminates(tmp_path):
     cases4["cases"] = [c for c in cases4["cases"] if c.get("artifact") != "cross-authority"]
     write({"conformance/cases.json": _json.dumps(cases4)})
     assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without a cross-authority case"
+    # 13. the SDK stops deciding a timestamp anchor (P9.6): the strongest form of long-term
+    #     validation would be reserved for whoever runs Polaris's own detached verifier
+    write({"sdk/python/polaris_verify/__init__.py":
+           good["sdk/python/polaris_verify/__init__.py"].replace("def verify_timestamp_anchor", "def gone")})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without SDK anchor verification"
+    # 14. the cases keep an anchor case but drop the unwitnessed one, so a stolen log key
+    #     signing a fabricated head would stop being a certified verdict
+    cases5 = _json.loads(good["conformance/cases.json"])
+    cases5["cases"] = [c for c in cases5["cases"] if c.get("expect", {}).get("witnessed") is not False]
+    write({"conformance/cases.json": _json.dumps(cases5)})
+    assert checks.check_conformance_suite(tmp_path)[0].level == "FAIL", "must FAIL without an unwitnessed-head case"
 
 
 def test_relying_party_api_check_discriminates(tmp_path):

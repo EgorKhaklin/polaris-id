@@ -52,10 +52,28 @@ def _load_cases():
             if "now" in c:
                 payload["now"] = c["now"]
         elif artifact in ("epoch-checkpoint", "revocation-feed", "federation-manifest",
-                          "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint"):
+                          "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves"):
             payload["object"] = _load_file(c["object_file"])
             if "now" in c:
                 payload["now"] = c["now"]
+        elif artifact == "holder-chain":
+            payload["credential"] = _load_file(c["credential_file"])
+            payload["binding"] = _load_file(c["binding_file"])
+            payload["proof"] = _load_file(c["proof_file"])
+            for k in ("expected_nonce", "expected_context", "now"):
+                if k in c:
+                    payload[k] = c[k]
+        elif artifact == "timestamp-anchor":
+            payload["timestamp"] = _load_file(c["timestamp_file"])
+            for k in ("log_key", "trusted_witnesses", "threshold"):
+                if k in c:
+                    payload[k] = c[k]
+            if c.get("log_key") == "sth":
+                payload["log_key"] = payload["timestamp"]["anchor"]["sth"]["public_key_hex"]
+            if c.get("trusted_witnesses") == "cosigners":
+                payload["trusted_witnesses"] = sorted(
+                    {x["public_key_hex"] for x in payload["timestamp"]["anchor"].get("cosignatures", [])
+                     if isinstance(x, dict) and x.get("public_key_hex")})
         elif artifact == "cross-authority":
             payload["pack"] = _load_file(c["pack_file"])
             manifests = [_load_file(f) for f in c.get("manifest_files", [])]

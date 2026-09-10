@@ -10,10 +10,11 @@
  * See conformance/SPEC.md. This is the TypeScript counterpart of the Python SDK's
  * `python -m polaris_verify.conformance`; the same runner drives either.
  */
-import { verifyAuthenticity, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority, type Pack } from "./index.ts";
+import { verifyAuthenticity, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
+  verifyTimestampAnchor, verifyHolder, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
-  "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth",, "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint"]);
+  "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth",, "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves"]);
 
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -38,6 +39,14 @@ process.stdin.on("end", () => {
   } else if (SIGNED_ARTIFACTS.has(artifact)) {
     const v = verifySignedArtifact(caseObj.object ?? {}, caseObj.now ?? null);
     process.stdout.write(JSON.stringify({ authentic: v.authentic, fresh: v.fresh }) + "\n");
+  } else if (artifact === "timestamp-anchor") {
+    const v = verifyTimestampAnchor(caseObj.timestamp ?? {}, caseObj.log_key ?? null,
+      caseObj.trusted_witnesses ?? null, Number(caseObj.threshold ?? 1));
+    process.stdout.write(JSON.stringify({ anchored: v.anchored, witnessed: v.witnessed }) + "\n");
+  } else if (artifact === "holder-chain") {
+    const v = verifyHolder(caseObj.credential ?? {}, caseObj.binding ?? {}, caseObj.proof ?? {},
+      caseObj.expected_nonce ?? null, caseObj.expected_context ?? null, caseObj.now ?? null);
+    process.stdout.write(JSON.stringify({ proved: v.proved }) + "\n");
   } else if (artifact === "cross-authority") {
     const v = verifyCrossAuthority(caseObj.pack ?? {}, caseObj.context_id, caseObj.manifests ?? [],
       caseObj.trusted_anchors ?? null, caseObj.revocation_feed ?? null, caseObj.now ?? null);

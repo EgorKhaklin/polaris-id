@@ -26,6 +26,15 @@ revocation feed is supplied) it is not revoked. Online authorization (a live cal
 `POST /api/v1/verify`, specified in [`docs/reference/API.md`](../docs/reference/API.md)) is
 the only check not in these offline vectors, because it depends on live issuer state.
 
+It certifies the **timestamp anchor** (`artifact: timestamp-anchor`, P9.6). A timestamp on
+its own does not settle long-term validation: whoever holds the timestamp authority's key
+can mint a backdated one. An anchored timestamp is an entry in an append-only log whose head
+is published and cosigned by independent witnesses, so a forgery has to be absent from every
+witnessed head of its claimed era. A conformant verifier decides, offline, that the
+inclusion proof is for this timestamp's own hash, that it reconstructs a head the expected
+log key signed, and (when the case names trusted witnesses) that enough distinct trusted
+witnesses cosigned that exact head.
+
 ## The verifier contract
 
 A verifier is a command that reads ONE case as JSON on **stdin**. The case names the
@@ -43,7 +52,26 @@ key the case's expected verdict names; the verifier may report additional keys.
   "assertion": { "...": "a polaris-status-assertion/1" },
   "now": "2026-06-01T00:00:00Z" }
    -> { "authentic": true, "fresh": true, "active": true }
+
+{ "artifact": "timestamp-anchor",
+  "timestamp": { "...": "a polaris-timestamp/1 carrying an unsigned `anchor`" },
+  "log_key": "<the timestamp log's public key hex>",
+  "trusted_witnesses": ["<witness public key hex>", "..."],
+  "threshold": 2 }
+   -> { "anchored": true, "witnessed": true }
 ```
+
+For the timestamp anchor the verdict is:
+
+- `anchored` (bool) -- the anchor's inclusion proof is for `SHA3-256(canonical timestamp)`,
+  the proof and the head describe the same tree, the head is an authentic
+  `polaris-transparency-sth/1` for `polaris-timestamp-log` (signed by `log_key` when one is
+  given), and the RFC-6962 path reconstructs the head's root.
+- `witnessed` (bool or null) -- `null` when no `trusted_witnesses` were supplied; otherwise
+  whether at least `threshold` DISTINCT trusted witnesses have cosigned that exact head
+  (same log, tree size and root). A stolen log key can sign a fabricated head, so a
+  fabricated anchor is `anchored: true, witnessed: false`, and that is the verdict a relying
+  party doing long-term validation MUST act on.
 
 `anchors` is present only when the case supplies a trusted issuer set; `now` pins the
 evaluation time for a windowed artifact (so a published vector stays verifiable). For the
