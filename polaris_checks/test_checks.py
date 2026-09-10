@@ -8958,3 +8958,122 @@ def test_status_distribution_check_discriminates(tmp_path):
     (tmp_path / "docs/design/status-distribution.md").unlink()
     assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
         "must FAIL without the published freshness rules"
+
+
+def test_multi_region_dr_check_discriminates(tmp_path):
+    # v9.359 (P2.8): each fixture below either collapses the second region back into a node
+    # of the first, or removes the honesty about a recovery point that is not zero. Both fail
+    # silently in a single-host test, which is why they are pinned rather than reviewed.
+    COMPOSE = ("services:\n  dr-etcd:\n    image: polaris-etcd:prod\n"
+               "  dr-postgres:\n    environment:\n"
+               "      POLARIS_PATRONI_SCOPE: polaris-dr\n"
+               "      POLARIS_PATRONI_ETCD_HOSTS: dr-etcd:2379\n"
+               "      POLARIS_PATRONI_STANDBY_HOST: pg-router\n")
+    ENTRY = ('STANDBY_HOST="${POLARIS_PATRONI_STANDBY_HOST:-}"\n'
+             'fail "POLARIS_PATRONI_STANDBY_HOST must be a plain hostname"\n'
+             'STANDBY_YAML="    standby_cluster:\n      host: $STANDBY_HOST\n"\n')
+    DRILL = ("CEIL_RTO=90\nCEIL_RPO_ROWS=50\n"
+             'echo "$n" >> "$WORK/acked.log"\n'
+             "docker stop polaris-postgres polaris-pg-router polaris-etcd1\n"
+             'fail "the regions DIVERGED"\n'
+             'echo "  region B refuses writes while it is a standby   OK"\n'
+             'echo "  what did cross is a contiguous prefix           OK"\n')
+    RUNBOOK = ("### 4.8 Region-wide outage\n"
+               "**Procedure (with a standby region):**\n"
+               "The recovery point is not zero.\n"
+               "Promoting while region A still accepts writes will diverge the regions.\n"
+               "Do not bring region A back as a primary.\n")
+    DESIGN = "A cross-region member puts the WAN inside the quorum.\n"
+    good = {
+        'polaris_web/docker-compose.dr.yml': COMPOSE,
+        'polaris_web/patroni-entrypoint.sh': ENTRY,
+        'scripts/polaris-region-evacuation-drill.sh': DRILL,
+        'docs/operator/DR.md': RUNBOOK,
+        'docs/design/multi-region.md': DESIGN,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # Region B shares region A's lease store: it becomes unavailable exactly when region A is.
+    write({'polaris_web/docker-compose.dr.yml': COMPOSE.replace(
+        "POLARIS_PATRONI_ETCD_HOSTS: dr-etcd:2379", "POLARIS_PATRONI_ETCD_HOSTS: etcd1:2379")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when region B points at region A's lease store"
+
+    # Region B shares the cluster scope: it competes for region A's leader key.
+    write({'polaris_web/docker-compose.dr.yml': COMPOSE.replace(
+        "POLARIS_PATRONI_SCOPE: polaris-dr", "POLARIS_PATRONI_SCOPE: polaris")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when region B shares region A's cluster scope"
+
+    # It stops being a standby cluster at all.
+    write({'polaris_web/docker-compose.dr.yml': COMPOSE.replace(
+        "      POLARIS_PATRONI_STANDBY_HOST: pg-router\n", "")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when region B is not configured as a standby cluster"
+
+    # The entrypoint ignores what the compose file configures.
+    write({'polaris_web/patroni-entrypoint.sh': 'STANDBY_HOST=""\n'})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the entrypoint renders no standby_cluster block"
+
+    # An unvalidated hostname is interpolated into YAML.
+    write({'polaris_web/patroni-entrypoint.sh': ENTRY.replace(
+        'fail "POLARIS_PATRONI_STANDBY_HOST must be a plain hostname"\n', "")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the upstream host is not validated before YAML interpolation"
+
+    # The drill stops recording what was acknowledged, so its RPO is a guess.
+    write({'scripts/polaris-region-evacuation-drill.sh': DRILL.replace(
+        'echo "$n" >> "$WORK/acked.log"\n', "")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not record acknowledged writes as it goes"
+
+    # It stops asserting no-divergence: a recovery point becomes indistinguishable from
+    # region B publishing writes no client was told succeeded.
+    write({'scripts/polaris-region-evacuation-drill.sh': DRILL.replace(
+        'fail "the regions DIVERGED"\n', "")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not assert the regions did not diverge"
+
+    # It stops asserting a contiguous prefix: a standby that SKIPPED reads as one that lagged.
+    write({'scripts/polaris-region-evacuation-drill.sh': DRILL.replace(
+        'echo "  what did cross is a contiguous prefix           OK"\n', "")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not assert what crossed is an unbroken prefix"
+
+    # It cuts only the leader, which is the failover drill's scenario.
+    write({'scripts/polaris-region-evacuation-drill.sh': DRILL.replace(
+        "docker stop polaris-postgres polaris-pg-router polaris-etcd1\n",
+        "docker stop polaris-postgres\n")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not take the whole region down"
+
+    # It stops checking that region B refuses writes before promotion.
+    write({'scripts/polaris-region-evacuation-drill.sh': DRILL.replace(
+        'echo "  region B refuses writes while it is a standby   OK"\n', "")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not assert region B refuses writes before promotion"
+
+    # The runbook stops saying the recovery point is not zero, so an operator learns it
+    # mid-incident.
+    write({'docs/operator/DR.md': RUNBOOK.replace("The recovery point is not zero.\n", "")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the runbook does not state a non-zero recovery point up front"
+
+    # And stops warning that a returning region A must not come back as a primary.
+    write({'docs/operator/DR.md': RUNBOOK.replace("Do not bring region A back as a primary.\n", "")})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the runbook does not forbid bringing a returned region A back as primary"
+
+    # The design record stops explaining why a cross-region member is wrong.
+    write({'docs/design/multi-region.md': "We chose a standby cluster.\n"})
+    assert checks.check_multi_region_dr(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the design record does not explain the quorum reason"

@@ -428,10 +428,7 @@ several services in the region are unreachable at once.
 
 **Procedure (single-region deployment):**
 
-The shipped deployment is single-region. A regional outage means Polaris is
-unavailable until the region recovers or the operator has built and drilled a
-second region; multi-region is listed as a deployment-scale gap in
-[`PRODUCTION-READINESS.md`](../PRODUCTION-READINESS.md).
+Without a second region Polaris is unavailable until the region recovers.
 
 1. **Communicate** with the "service down" template (section 8.2). Quote the
    provider's status page; do not promise a recovery time you cannot meet.
@@ -440,9 +437,58 @@ second region; multi-region is listed as a deployment-scale gap in
    replication on it. If they do not, file that as a SEV-2 finding in the
    post-incident review.
 3. **Do not improvise a cross-region failover.** An untested failover during
-   an incident creates a second incident. [`FAILOVER.md`](FAILOVER.md) covers
-   a standby that was already streaming before the outage; a standby in
-   another region is only usable if it was built and drilled in advance.
+   an incident creates a second incident.
+
+**Procedure (with a standby region):**
+
+Since v9.359 a second region ships as a profile:
+[`polaris_web/docker-compose.dr.yml`](../../polaris_web/docker-compose.dr.yml).
+It is a Patroni **standby cluster**, not another member of the first cluster,
+and the difference is the point. A member across the boundary would put the WAN
+inside region A's quorum: the lease store would have to be reachable across it,
+and a region going dark would take part of the other region's consensus with it.
+A standby cluster keeps its own lease store, so region B's availability does not
+depend on region A's, and it replicates asynchronously, so region A's write
+latency does not depend on region B either.
+
+**The price, stated before the procedure rather than discovered during it.**
+Asynchronous replication means the recovery point is **not zero**. Promoting
+region B accepts the writes region A acknowledged that had not yet crossed.
+`scripts/polaris-region-evacuation-drill.sh` measures that number under a live
+write stream on every push rather than asserting it, and writes an RTO/RPO ledger
+row. Synchronous cross-region replication would make the recovery point zero and
+put the WAN's round trip on every commit in region A; that is a different product
+and the choice is yours, not the repository's.
+
+1. **Confirm region A is actually gone**, not slow. Promoting while region A is
+   still accepting writes is how two regions diverge, and nothing below repairs
+   that. Check the provider's status page and that region A's Patroni REST
+   endpoint is unreachable from outside the region, not only from inside it.
+2. **Communicate** as above, and say that a recovery point is expected: some
+   acknowledged writes will be lost. Give the drill's most recent measured number
+   as the order of magnitude, not as a promise.
+3. **Promote region B.** On a `dr-postgres` member:
+
+   ```bash
+   patronictl -c /var/lib/postgresql/patroni.yml edit-config --force --set standby_cluster=null
+   ```
+
+   Patroni removes the standby configuration from region B's own lease store, the
+   standby leader promotes, and its timeline advances. Confirm with
+   `patronictl list`: the role must read `Leader`, not `Standby Leader`.
+4. **Point the application at region B** and confirm a write succeeds.
+5. **Record the recovery point.** Compare what clients were told succeeded
+   against what region B holds; anything missing is real data loss and belongs in
+   the post-incident review with the affected records named.
+6. **Do not bring region A back as a primary.** When the region returns its
+   database holds a diverged timeline. Rebuild it as a standby of region B, or
+   restore it from the archive. Two primaries on two timelines is the one state
+   from which there is no clean recovery.
+
+The two regions are two placements, which is yours: the compose file is the same
+with `POLARIS_PATRONI_STANDBY_HOST` naming region A's real address, and etcd needs
+TLS between members once it leaves a single host's internal network. See
+[multi-region.md](../design/multi-region.md) for the design record.
 
 ---
 

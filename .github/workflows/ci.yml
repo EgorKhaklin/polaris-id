@@ -1360,6 +1360,46 @@ jobs:
         run: docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml down -v || true
 
   # --------------------------------------------------------------------------
+  # v9.359 (roadmap P2.8) — the SECOND REGION, evacuated. Region B is a Patroni
+  # standby cluster with its OWN lease store, streaming asynchronously from
+  # region A's router: a member across the boundary would put the WAN inside
+  # region A's quorum. The drill cuts the region the way a region goes dark
+  # (members, router AND lease store, at once), promotes region B, and MEASURES
+  # the recovery time and the recovery point rather than asserting them, having
+  # recorded every acknowledged write as it went. Asynchronous replication makes
+  # the recovery point non-zero by design; what must be zero is divergence.
+  # Pinned by check_multi_region_dr.
+  # --------------------------------------------------------------------------
+  region-evacuation:
+    name: Second region survives the first going dark (async standby, measured RTO/RPO)
+    runs-on: ubuntu-latest
+    env:
+      POLARIS_DOMAIN: localhost
+      POLARIS_COMPOSE_EXTRA: "-f docker-compose.citest.yml -f docker-compose.bluegreen.yml -f docker-compose.ha.yml -f docker-compose.dr.yml"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build the prod images (the database image carries Patroni; etcd is self-built)
+        run: bash scripts/polaris-image-build.sh --stack prod
+
+      - name: Generate secrets + certs
+        run: bash scripts/polaris-generate-secrets.sh
+
+      - name: Region evacuation drill (cut region A, promote region B, measure RTO and RPO)
+        env:
+          POLARIS_EVACUATION_OUT: /tmp/evacuation.json
+        run: bash scripts/polaris-region-evacuation-drill.sh
+
+      - name: Upload the RTO/RPO ledger
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: region-evacuation
+          path: /tmp/evacuation.json
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------------
   # v9.243 (roadmap P2.7) — the HA profile under induced failures. Two Patroni
   # members, a three-member etcd, HAProxy routing on Patroni's role endpoints,
   # and a writer inserting through pgbouncer four times a second: the leader

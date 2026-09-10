@@ -5,6 +5,55 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.359 — 2026-09-10 (P2.8: a second region, evacuated and measured)
+
+The HA profile survives a node dying: Patroni's lease moves and another member in
+the same region takes over, with no data loss. It does not survive the region.
+
+The tempting fix is a third Patroni member "in region B", and it is wrong in three
+places at once. The lease store would have to be reachable across the wide-area
+network, so a partition between regions partitions the consensus itself, and a
+three-member etcd split two-and-one loses quorum when the two-member side goes
+dark, which is exactly the outage the second region existed to survive. Write
+latency would include the round trip. And a member of region A's cluster living in
+region B is still region A's problem when region A's lease store is unreachable:
+the regions are not independent, they are one cluster with a long wire.
+
+**So region B is a standby cluster.** A different scope, its own lease store,
+streaming asynchronously from region A's router so a failover *inside* region A
+does not break replication to B, and electing no primary of its own so the two can
+never both accept writes.
+
+**The price is measured, not asserted.** Asynchronous replication means the
+recovery point is not zero, and a runbook that does not say how far from zero is
+one nobody can plan against. The evacuation drill runs on every push under a live
+write stream, recording every acknowledged write as it goes, because once the
+region is gone nobody can ask it what it acknowledged. It cuts the region the way a
+region goes dark, members and router and lease store at once, promotes region B,
+and reports both numbers. Measured locally: 5 seconds to serve, zero rows lost at
+the drill's write rate, against ceilings of 90 seconds and 50 rows.
+
+**Two things matter more than either number**, and both are asserted. Region B
+holds no row region A never acknowledged: a recovery point is a stated cost, but
+divergence would mean a promotion publishes writes no client was told succeeded.
+And what crossed is a contiguous prefix, because a standby holding 1-40 and 45-60
+has skipped rather than lagged, and counting rows would not catch it.
+
+`docs/operator/DR.md` carries the procedure and states the non-zero recovery point
+before it rather than during the incident, along with the rule that a returned
+region A is rebuilt as a standby and never brought back as a primary: two primaries
+on two timelines is the one state with no clean recovery.
+`docs/design/multi-region.md` is the design record. `check_multi_region_dr` with a
+fourteen-fixture detection test.
+
+**Not done, and the row says so.** Placement is the operator's. Promotion is
+deliberate rather than automatic, because an automatic cross-region promotion would
+have to distinguish "region A is gone" from "region A is unreachable from here".
+Zero data loss would need synchronous replication with the WAN on every commit in
+region A, which is a different product.
+
+---
+
 ## v9.358 — 2026-09-10 (P2.6: a signed status through an untrusted cache)
 
 Signing a status artifact is what lets an untrusted intermediary carry it: a

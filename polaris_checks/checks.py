@@ -10099,7 +10099,124 @@ def check_status_distribution(root: pathlib.Path) -> list[Finding]:
                "credential is no-store so a shared cache cannot serve one holder's to another")
 
 
+
+def check_multi_region_dr(root: pathlib.Path) -> list[Finding]:
+    """The second region is a region, not another node (P2.8).
+
+    The HA profile survives a node dying. It does not survive the region, and the tempting fix
+    is to add a third Patroni member "in region B". That puts the wide-area network inside the
+    quorum in three places: the lease store must be reachable across it, so a partition between
+    regions partitions the consensus; write latency includes it; and a member of region A's
+    cluster living in region B is still region A's problem when region A's lease store is
+    unreachable. A three-member etcd split two-and-one loses quorum when the two-member side
+    goes dark, which is exactly the outage the second region existed to survive.
+
+    So region B is a STANDBY CLUSTER: a different scope, its own lease store, streaming
+    asynchronously from region A's router. This check pins that shape, because every part of
+    it is something a later change could quietly undo while everything still appeared to work
+    in a single-host test.
+
+    And it pins the honesty. Asynchronous replication means the recovery point is NOT ZERO, and
+    a runbook that does not say how far from zero is one nobody can plan against. The drill
+    must MEASURE both numbers rather than assert them, must assert that region B holds no row
+    region A never acknowledged (a stated recovery point is a cost; divergence is a correctness
+    failure), and the runbook must state the price before the procedure rather than after."""
+    name = "multi_region_dr"
+    compose = _read(root, "polaris_web/docker-compose.dr.yml")
+    if not compose:
+        return _fail(name, "polaris_web/docker-compose.dr.yml must define the standby region")
+    for needed, why in (
+            ("POLARIS_PATRONI_STANDBY_HOST",
+             "region B must be configured as a standby cluster, not another member"),
+            ("POLARIS_PATRONI_SCOPE: polaris-dr",
+             "region B must use a DIFFERENT cluster scope, or it competes for region A's leader key"),
+            ("dr-etcd",
+             "region B must have its OWN lease store; sharing region A's puts the WAN inside the "
+             "quorum and a region going dark takes the other region's consensus with it")):
+        if needed not in compose:
+            return _fail(name, f"{why} ({needed})")
+    if "POLARIS_PATRONI_ETCD_HOSTS: dr-etcd:2379" not in compose:
+        return _fail(name,
+                     "region B's Patroni must point at region B's own lease store; pointing it at "
+                     "region A's makes region B unavailable exactly when region A is")
+
+    entry = _read(root, "polaris_web/patroni-entrypoint.sh")
+    if "standby_cluster:" not in entry:
+        return _fail(name,
+                     "the Patroni entrypoint must render a standby_cluster block, or the compose "
+                     "profile configures something the entrypoint ignores")
+    if "POLARIS_PATRONI_STANDBY_HOST" not in entry:
+        return _fail(name, "the entrypoint must read the upstream host")
+    # The upstream must be validated like every other value interpolated into YAML.
+    if "POLARIS_PATRONI_STANDBY_HOST must be a plain hostname" not in entry:
+        return _fail(name,
+                     "the standby host is interpolated into YAML and must be refused unless it is "
+                     "a plain hostname, the same discipline as every other value there")
+
+    drill = _read(root, "scripts/polaris-region-evacuation-drill.sh")
+    if not drill:
+        return _fail(name, "scripts/polaris-region-evacuation-drill.sh must evacuate the region")
+    for needed, why in (
+            ("CEIL_RTO", "the drill must gate on a recovery TIME"),
+            ("CEIL_RPO_ROWS", "and on a recovery POINT, in rows"),
+            ("acked.log",
+             "the drill must RECORD every acknowledged write as it goes; once the region is gone "
+             "nobody can ask it what it acknowledged, so an RPO measured any other way is a guess"),
+            ("DIVERGED",
+             "the drill must assert region B holds no row region A never acknowledged: a recovery "
+             "point is a stated cost, divergence is a correctness failure"),
+            ("contiguous",
+             "and that what crossed is an unbroken prefix; a standby missing rows BELOW its "
+             "high-water mark skipped rather than lagged, which counting rows would not catch")):
+        if needed not in drill:
+            return _fail(name, why)
+    # The region must be cut the way a region goes dark, not the way a node dies.
+    if "polaris-etcd1" not in drill or "polaris-pg-router" not in drill:
+        return _fail(name,
+                     "the drill must cut the members, the router AND the lease store together; "
+                     "stopping only the leader is the failover drill's scenario, not this one")
+    if "refuses writes while it is a standby" not in drill:
+        return _fail(name,
+                     "the drill must assert region B refuses writes BEFORE promotion; two regions "
+                     "accepting writes at once is the divergence everything else is guarding")
+
+    runbook = _read(root, "docs/operator/DR.md")
+    if "standby region" not in runbook:
+        return _fail(name, "docs/operator/DR.md must carry the region-evacuation procedure")
+    ev = runbook.split("Procedure (with a standby region)")[-1][:4000]
+    if "not zero" not in ev:
+        return _fail(name,
+                     "the runbook must state that the recovery point is NOT ZERO before the "
+                     "procedure, not after it: an operator learning mid-incident that acknowledged "
+                     "writes are gone is the failure this sentence prevents")
+    if "diverge" not in ev:
+        return _fail(name,
+                     "the runbook must warn that promoting while region A still accepts writes "
+                     "diverges the regions, and that nothing later repairs it")
+    if "never brought back as a primary" not in runbook and "not bring region A back as a primary" not in runbook:
+        return _fail(name,
+                     "the runbook must say a returning region A is rebuilt as a standby or "
+                     "restored, never brought back as a primary: two primaries on two timelines "
+                     "is the one state with no clean recovery")
+    design = _read(root, "docs/design/multi-region.md")
+    if not design:
+        return _fail(name, "the design record must be published (docs/design/multi-region.md)")
+    if "quorum" not in design:
+        return _fail(name,
+                     "the design record must explain why a cross-region MEMBER puts the WAN inside "
+                     "the quorum; without that reason the standby shape looks like an arbitrary choice")
+    return _ok(name,
+               "the second region is a region and not another node: a standby cluster with its own "
+               "lease store and its own scope, streaming asynchronously through region A's router, "
+               "refusing writes until promoted so the two never both accept; the evacuation drill "
+               "cuts members, router and lease store together and MEASURES both the recovery time "
+               "and the recovery point, asserting that what crossed is a contiguous prefix region A "
+               "actually acknowledged; and the runbook states the non-zero recovery point before "
+               "the procedure rather than during the incident")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_multi_region_dr,
     check_status_distribution,
     check_epoch_pipeline_scale,
     check_agent_grant,

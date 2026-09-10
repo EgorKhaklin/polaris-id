@@ -70,7 +70,7 @@ polaris/
 ├── conformance/        ← the verification conformance suite: the published cases + a language-agnostic runner (SPEC.md); passing it is the integration contract
 ├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
 │
-├── .github/workflows/  ← ci.yml (18 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)
+├── .github/workflows/  ← ci.yml (19 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ```
 
@@ -86,6 +86,7 @@ polaris/
 - `custody-pkcs11`: key custody through PKCS#11 (Kryoptic token, ML-DSA-65 in-token, two-witness verified).
 - `rolling-deploy`: a rolling deploy under traffic drops zero requests (blue-green profile and control).
 - `ha-failover`: the HA profile (Patroni, etcd, HAProxy) under a leader loss, a lease partition, a switchover and an etcd crash, measured under a live write stream.
+- `region-evacuation`: the SECOND region (a Patroni standby cluster with its own lease store, streaming asynchronously) after region A goes dark entirely, promoted with the recovery time and the recovery point MEASURED rather than asserted, and divergence asserted absent.
 - `helm-kind`: the Kubernetes reference profile boots to healthy on kind with Calico-enforced policies and restricted PSS.
 - `pqc-real`: real ML-DSA-65 sign and verify (liboqs), cross-checked by the cryptography second witness.
 - `federation-two-instances`: boots two independent instances, each its own database and real ML-DSA-65 root, and drives cross-authority federation over HTTP; a relying party accepts a foreign credential from a manifest, epoch checkpoint and revocation feed pulled over the wire, and the decision flips as attestations and revocations change (P3.10). The first job with both a database and real liboqs.

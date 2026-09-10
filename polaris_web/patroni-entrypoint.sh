@@ -47,6 +47,23 @@ else
     HOST="${POLARIS_PATRONI_HOST:-$NAME}"
 fi
 ETCD_HOSTS="${POLARIS_PATRONI_ETCD_HOSTS:-etcd1:2379,etcd2:2379,etcd3:2379}"
+# P2.8: a STANDBY CLUSTER. When set, this cluster does not elect a primary of its own;
+# its leader streams from an upstream in another region and every member follows it.
+#
+# Why a standby cluster and not another member of the first cluster. A member across the
+# region boundary would put the WAN inside the quorum: the lease store would have to be
+# reachable across it, write latency would include it, and a region that goes dark would take
+# part of the other region's consensus with it. A standby cluster has its OWN lease store, so
+# region B's availability does not depend on region A's, and it replicates ASYNCHRONOUSLY, so
+# region A's write latency does not depend on region B either. The price is stated rather than
+# hidden: promotion accepts the writes that had not yet crossed, which is the RPO the
+# region-evacuation drill measures rather than assumes.
+STANDBY_HOST="${POLARIS_PATRONI_STANDBY_HOST:-}"
+STANDBY_PORT="${POLARIS_PATRONI_STANDBY_PORT:-5432}"
+if [ -n "$STANDBY_HOST" ]; then
+    case "$STANDBY_HOST" in ''|*[!A-Za-z0-9._-]*) fail "POLARIS_PATRONI_STANDBY_HOST must be a plain hostname (got '$STANDBY_HOST')" ;; esac
+    case "$STANDBY_PORT" in ''|*[!0-9]*) fail "POLARIS_PATRONI_STANDBY_PORT must be a port number (got '$STANDBY_PORT')" ;; esac
+fi
 TTL="${POLARIS_PATRONI_TTL:-20}"
 LOOP_WAIT="${POLARIS_PATRONI_LOOP_WAIT:-5}"
 RETRY_TIMEOUT="${POLARIS_PATRONI_RETRY_TIMEOUT:-5}"
@@ -142,6 +159,22 @@ else
 $ETCD_YAML"
 fi
 
+# The standby_cluster block, empty for a normal cluster. `create_replica_methods: basebackup`
+# so a fresh standby region clones from the upstream over the same replication credentials
+# rather than needing a shared archive to exist first.
+STANDBY_YAML=""
+if [ -n "$STANDBY_HOST" ]; then
+    STANDBY_YAML="    standby_cluster:
+      host: $STANDBY_HOST
+      port: $STANDBY_PORT
+      create_replica_methods:
+        - basebackup
+"
+    echo "patroni-entrypoint: STANDBY CLUSTER, streaming from $STANDBY_HOST:$STANDBY_PORT." >&2
+    echo "patroni-entrypoint: this cluster elects no primary of its own until it is promoted;" >&2
+    echo "patroni-entrypoint: replication is ASYNCHRONOUS, so a promotion accepts bounded loss." >&2
+fi
+
 RUN_AS=""
 if [ "$(id -u)" = "0" ]; then
     RUN_AS=postgres
@@ -173,7 +206,7 @@ bootstrap:
     # docs/operator/FAILOVER.md's split-brain analysis relies on NOT having.
     failsafe_mode: false
     synchronous_mode: false
-    postgresql:
+$STANDBY_YAML    postgresql:
       use_pg_rewind: true
       use_slots: true
       parameters:

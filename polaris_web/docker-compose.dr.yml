@@ -1,0 +1,119 @@
+# ============================================================================
+# docker-compose.dr.yml — the second region: an async standby cluster
+# (v9.359, roadmap P2.8).
+#
+# Overlay on the HA profile:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.ha.yml \
+#                  -f docker-compose.dr.yml up -d
+#
+# What it adds, and why it is shaped this way:
+#
+#   dr-etcd       region B's OWN lease store, on its own network. This is the
+#                 whole point. A third Patroni member placed "in region B" would
+#                 put the WAN inside region A's quorum: the lease store would
+#                 have to be reachable across it, and a region going dark would
+#                 take part of the other region's consensus with it. A standby
+#                 CLUSTER has its own lease store, so region B's availability
+#                 does not depend on region A's.
+#
+#   dr-postgres   region B's database, running as a Patroni standby cluster:
+#                 it elects no primary of its own and streams from region A's
+#                 leader through pg-router. Replication is ASYNCHRONOUS, so
+#                 region A's write latency does not depend on region B either.
+#
+# The price is stated rather than hidden. An async standby promoted after its
+# upstream disappears accepts the writes that had not yet crossed. That is a
+# real RPO, not zero, and scripts/polaris-region-evacuation-drill.sh MEASURES it
+# under a live write stream rather than asserting a number. Synchronous
+# cross-region replication would make the RPO zero and put the WAN's round trip
+# on every commit in region A, which is a different product; the choice is the
+# operator's and docs/operator/DR.md states both sides.
+#
+# On one host this proves the mechanism. In production the two regions are two
+# placements, which is the operator's; the compose file is the same with
+# POLARIS_PATRONI_STANDBY_HOST naming region A's real address, and etcd needs
+# TLS between members once it leaves a single host's internal network.
+# ============================================================================
+services:
+  dr-etcd:
+    image: polaris-etcd:prod
+    build:
+      context: .
+      dockerfile: Dockerfile.etcd
+    container_name: polaris-dr-etcd
+    restart: unless-stopped
+    command:
+      # A single member: region B's lease store exists to hold ONE cluster's
+      # leader key while it is a standby. Sizing it for quorum is region B's
+      # decision once it is promoted and becomes the region that matters.
+      - --name=dr-etcd
+      - --data-dir=/var/lib/etcd
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --initial-advertise-peer-urls=http://dr-etcd:2380
+      - --advertise-client-urls=http://dr-etcd:2379
+      - --initial-cluster=dr-etcd=http://dr-etcd:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=polaris-dr-dcs
+      - --auto-compaction-retention=1h
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - dr_etcd_data:/var/lib/etcd
+    networks:
+      - polaris-dr-dcs
+
+  dr-postgres:
+    extends:
+      file: docker-compose.prod.yml
+      service: postgres
+    container_name: polaris-dr-postgres
+    command: ["/usr/local/bin/polaris-patroni-entrypoint.sh"]
+    environment:
+      POLARIS_PATRONI_NAME: dr-postgres
+      # A DIFFERENT scope from region A: this is another cluster, not another
+      # member. Sharing the scope would make it compete for region A's leader key.
+      POLARIS_PATRONI_SCOPE: polaris-dr
+      POLARIS_PATRONI_ETCD_HOSTS: dr-etcd:2379
+      POLARIS_PATRONI_TTL: "20"
+      POLARIS_PATRONI_LOOP_WAIT: "5"
+      POLARIS_PATRONI_RETRY_TIMEOUT: "5"
+      # The upstream: region A's primary, through the router that follows its
+      # lease, so a failover INSIDE region A does not break replication to B.
+      POLARIS_PATRONI_STANDBY_HOST: pg-router
+      POLARIS_PATRONI_STANDBY_PORT: "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8008/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 90s
+    volumes:
+      - dr_pg_data:/var/lib/postgresql/data
+    networks:
+      # Both: the DR lease store is region B's alone, while the replication
+      # stream reaches region A's router over the shared application network.
+      # In a real deployment these are two placements and one WAN link.
+      - polaris-dr-dcs
+      - default
+    depends_on:
+      dr-etcd:
+        condition: service_healthy
+
+networks:
+  polaris-dr-dcs:
+    driver: bridge
+    internal: true
+
+volumes:
+  dr_pg_data:
+  dr_etcd_data:
