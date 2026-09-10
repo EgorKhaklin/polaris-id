@@ -10473,6 +10473,106 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
+    """The 800-63 mapping cites evidence that exists, and does not claim conformance (P6.2).
+
+    A control mapping is the easiest document in a project to write and the easiest to let
+    rot. It is a table of claims about a codebase, maintained by hand, read by people who
+    cannot check it, and it goes stale the first time somebody deletes the thing a row pointed
+    at. Nothing turns red; the document just becomes untrue.
+
+    So the mapping is executable. Every row cites a check, a test class, a drill or a schema
+    object, and the drill resolves each one and RUNS every cited check. This check pins the
+    shape that makes that possible, and three properties of the document itself.
+
+    IT MUST NOT CLAIM CONFORMANCE. Polaris is a reference implementation on notional data. A
+    row marked MET means the mechanism is here and CI proves it still is; it does not mean an
+    assessor agreed, and a deployment does not inherit it by running the code. The front matter
+    has to say so, because this is the file somebody quotes after reading only its first page.
+
+    A GAP MUST CARRY A REASON. The whole value of writing a gap down is the sentence explaining
+    it. A gap with no reason is one somebody meant to come back to.
+
+    AND THE TOTALS MUST BE RECOMPUTED. The document states how many gaps it has; the drill
+    counts them from the rows and fails on a disagreement. A summary that can drift from its
+    own table is worse than no summary, because it is the part a reader believes."""
+    name = "assurance_mapping"
+    doc = _read(root, "docs/reference/NIST-800-63-MAPPING.md")
+    if not doc:
+        return _fail(name, "the mapping must be published "
+                           "(docs/reference/NIST-800-63-MAPPING.md)")
+    low = " ".join(doc.lower().split())
+    for phrase, why in (("not a conformance claim",
+                         "the front matter must refuse the reading it will otherwise get: this "
+                         "is the file somebody quotes after reading only its first page"),
+                        ("no assessment has been performed",
+                         "an unassessed mapping must say so"),
+                        ("does not inherit",
+                         "a deployment does not get these properties by running the code, and "
+                         "the document must say it")):
+        if phrase not in low:
+            return _fail(name, why)
+    for level, why in (("highest holder aal claimed",
+                        "the highest AAL claimed must be stated in one place, or a reader "
+                        "infers it from the greenest row"),
+                       ("highest fal claimed", "and the highest FAL")):
+        if level not in low:
+            return _fail(name, why)
+
+    rows = []
+    for line in doc.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 3 and cells[1] in ("MET", "PARTIAL", "GAP", "WAIVED", "EXTERNAL"):
+            rows.append(cells)
+    if len(rows) < 20:
+        return _fail(name,
+                     "the mapping must actually map: %d rows is not IAL, AAL and FAL"
+                     % len(rows))
+    if not any(r[1] == "GAP" for r in rows):
+        return _fail(name,
+                     "a mapping with no gaps at all is a mapping that rounded them away. Name "
+                     "them; the value of writing a gap down is the sentence explaining it")
+    uncited = [r[0][:40] for r in rows
+               if r[1] == "MET" and not re.search(r"`(check|test|drill|schema):", r[2])]
+    if uncited:
+        return _fail(name,
+                     "a MET row with no citation is an assertion wearing a checkmark: %s"
+                     % ", ".join(uncited[:3]))
+
+    drill = _read(root, "scripts/polaris-assurance-mapping-drill.py")
+    if not drill:
+        return _fail(name,
+                     "scripts/polaris-assurance-mapping-drill.py must RESOLVE the citations. "
+                     "Without it the mapping is a spreadsheet that goes stale silently")
+    for needed, why in (("every citation in the mapping resolves",
+                         "a citation naming something that was renamed away must fail"),
+                        ("every cited check PASSES",
+                         "naming a check that FAILS is the same as naming one that is gone, so "
+                         "the cited checks must be RUN rather than merely found"),
+                        ("carries a reason",
+                         "a gap with no reason must fail"),
+                        ("the stated gap count matches the rows",
+                         "the totals must be recomputed from the rows, since a summary that "
+                         "can drift from its own table is the part a reader believes")):
+        if needed not in drill:
+            return _fail(name, why)
+    if "cannot tell you the mapping is CORRECT" not in drill:
+        return _fail(name,
+                     "the drill must state its own limit: it cannot tell you a row's "
+                     "requirement is really what the standard asks, or that the cited check "
+                     "really proves it. That is an assessor's judgement, and a drill that "
+                     "implied otherwise would be the same overclaim the document avoids")
+    return _ok(name,
+               "the assurance mapping is executable rather than asserted: every MET row cites a "
+               "check, test, drill or schema object, the drill resolves each and runs every "
+               "cited check, gaps are named with reasons rather than rounded away, the totals "
+               "are recomputed from the rows, the front matter refuses the conformance reading "
+               "and says a deployment does not inherit these properties, and the drill states "
+               "the limit of what resolving citations can establish")
+
+
 def check_enrollment_proofing(root: pathlib.Path) -> list[Finding]:
     """An enrollment records what it rested on, and the level is derived from it (P4.4).
 
@@ -11724,6 +11824,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_assurance_mapping,
     check_enrollment_proofing,
     check_duress_on_card,
     check_verifier_device,

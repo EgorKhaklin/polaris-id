@@ -90,8 +90,8 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 214 invariant
-checks (v9.371) each with a detection test; nineteen operator runbooks and ledgers; the protocol layer
+release; CVE gates on dependencies and images; a coverage floor; 215 invariant
+checks (v9.372) each with a detection test; nineteen operator runbooks and ledgers; the protocol layer
 (P8, complete and released): a signed registry, trust lists, the exchange gateway with
 receipts, a timestamp authority, document signing with long-term validation, an auth broker,
 offline wallet presentations, algorithm agility and versioning, frozen at version 1 with a
@@ -392,7 +392,7 @@ certifications are theirs to grant; readiness is ours to build.
 | ID | Item | Size | Risk | Blocked by | Definition of done |
 |---|---|---|---|---|---|
 | [ ] P6.1 | Validated-crypto option | M | ext | P1.2 | [EXT: module certification] The custody interface drives a FIPS 140-3 validated module; the two-witness discipline is retained; the toggle documented |
-| [ ] P6.2 | NIST 800-63-4 mapping | L | med | P4.4 | An IAL/AAL/FAL mapping with evidence per control; gaps closed or explicitly waived with reasons |
+| [x] P6.2 | NIST 800-63-4 mapping (v9.372) | L | med | P4.4 | DONE (v9.372), and the point is that it GOES RED. A control mapping is the easiest document in a project to write and the easiest to let rot: a table of claims maintained by hand, read by people who cannot check it, going stale the first time somebody deletes what a row pointed at, with nothing turning red. So every row cites a `check:`/`test:`/`drill:`/`schema:` artifact and `scripts/polaris-assurance-mapping-drill.py` resolves each against the tree and RUNS every cited check, since naming a check that was renamed away and naming one that fails today are the same thing to a reader. Forty rows across IAL, AAL and FAL: 32 MET, 2 PARTIAL, 5 GAP, 1 EXTERNAL, with the totals RECOMPUTED from the rows because a summary that can drift from its own table is the part a reader believes. The front matter refuses the conformance reading on the first page (not a conformance claim, no assessment performed, a deployment does not inherit these properties), and the highest levels are stated in ONE place or a reader infers them from the greenest row: **AAL2** for the holder with AAL3 waiting on FIPS 140 validation and certified silicon that are bought rather than written, and **FAL1** with FAL2's confidentiality provided by the channel rather than the assertion. Gaps are NAMED with their reasons (address confirmation, which Polaris cannot do because it records no address; trusted-referee flows, whose absence excludes exactly the people most likely to need them; the kiosk build; on-card biometric comparison, the one place a template would have to exist). The drill states its own limit: it cannot tell you a row's requirement is really what the standard asks. `check_assurance_mapping` with a fifteen-fixture detection test |
 | [ ] P6.3 | FedRAMP/StateRAMP-ready profile | L | ext | P1.5 | [EXT: authorization] A GovCloud IaC reference, a control-mapping SSP skeleton, inheritance documented |
 | [ ] P6.4 | SOC 2 evidence automation | M | ext | P1 | [EXT: audit] Continuous evidence collection wired to the ops stack |
 | [ ] P6.5 | Accessibility to WCAG 2.2 AA / Section 508 | L | med | - | Every surface audited and conformant; automated accessibility checks added to CI |

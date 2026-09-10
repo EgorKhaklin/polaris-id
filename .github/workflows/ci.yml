@@ -279,6 +279,15 @@ jobs:
       - name: Enrollment proofing — the level is derived, not typed
         run: python scripts/polaris-enrollment-proofing-drill.py
 
+      # v9.372 (P6.2) — the 800-63 mapping, RESOLVED. A control mapping is the easiest document
+      # in a project to write and the easiest to let rot: a table of claims about a codebase,
+      # maintained by hand, read by people who cannot check it, going stale the first time
+      # somebody deletes the thing a row pointed at, with nothing turning red. This parses the
+      # mapping, resolves every check/test/drill/schema citation against the tree, RUNS every
+      # cited check, and recomputes the gap total from the rows. No database.
+      - name: Assurance mapping — every citation resolves and every cited check runs
+        run: python scripts/polaris-assurance-mapping-drill.py
+
       # v9.366 (P4.1) — the card profile's own suite: the encoder and decoder reproduce the
       # PUBLISHED VECTORS byte for byte, and every refusal holds (the record off the card by
       # name, unknown tags, repeated tags, descending tags, truncation, wrong doc type, wrong

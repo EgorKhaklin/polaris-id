@@ -9324,6 +9324,91 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_assurance_mapping_check_discriminates(tmp_path):
+    # v9.372 (P6.2): the ways a control mapping becomes a compliance spreadsheet. A checkmark
+    # with no citation; a mapping with no gaps, because rounding them away is easier than
+    # writing the sentence; a drill that FINDS cited checks without RUNNING them, so a check
+    # that fails still reads as evidence; a total that drifted from its own table; and front
+    # matter that lets the whole thing be quoted as a certification.
+    DOC = ("This is not a conformance claim and no assessment has been performed. It does not\n"
+           "inherit.\n"
+           "\n| Requirement | Verdict | Evidence |\n|---|---|---|\n"
+           + "".join("| requirement %d | MET | `check:enrollment_proofing` |\n" % i
+                     for i in range(21))
+           + "| something not built | GAP | Not built, and here is the reason it is not. |\n"
+           + "\n**Highest holder AAL claimed: AAL2.**\n**Highest FAL claimed: FAL1.**\n"
+           + "\n**One** rows above are GAP or EXTERNAL.\n")
+    DRILL = ("# every citation in the mapping resolves\n"
+             "# every cited check PASSES against this tree\n"
+             "# every GAP, WAIVED and PARTIAL row carries a reason\n"
+             "# the stated gap count matches the rows\n"
+             "# It cannot tell you the mapping is CORRECT: that is an assessor's judgement.\n")
+    good = {
+        'docs/reference/NIST-800-63-MAPPING.md': DOC,
+        'scripts/polaris-assurance-mapping-drill.py': DRILL,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_assurance_mapping(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+
+    # THE FRONT MATTER that lets it be quoted as a certification.
+    for phrase in ("not a conformance claim", "no assessment has been performed",
+                   "It does not\ninherit."):
+        write({'docs/reference/NIST-800-63-MAPPING.md': DOC.replace(phrase, "")})
+        assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
+            f"the front matter must carry: {phrase}"
+    for phrase in ("**Highest holder AAL claimed: AAL2.**", "**Highest FAL claimed: FAL1.**"):
+        write({'docs/reference/NIST-800-63-MAPPING.md': DOC.replace(phrase, "")})
+        assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
+            "the highest level claimed must be stated, or a reader infers it from the greenest row"
+
+    # THE CHECKMARK WITH NO CITATION.
+    write({'docs/reference/NIST-800-63-MAPPING.md': DOC.replace(
+        "| requirement 0 | MET | `check:enrollment_proofing` |",
+        "| requirement 0 | MET | yes, we do this |")})
+    assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
+        "a MET row with no citation is an assertion wearing a checkmark"
+
+    # THE MAPPING WITH NO GAPS.
+    write({'docs/reference/NIST-800-63-MAPPING.md': DOC.replace(
+        "| something not built | GAP | Not built, and here is the reason it is not. |",
+        "| something not built | MET | `check:enrollment_proofing` |")})
+    assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
+        "a mapping with no gaps at all rounded them away"
+
+    # A MAPPING TOO SMALL TO BE ONE.
+    write({'docs/reference/NIST-800-63-MAPPING.md':
+           DOC.split("| requirement 5")[0] + "\n**One** rows above are GAP or EXTERNAL.\n"
+           + "**Highest holder AAL claimed: AAL2.**\n**Highest FAL claimed: FAL1.**\n"})
+    assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
+        "five rows is not IAL, AAL and FAL"
+
+    # THE DRILL that finds without running, or omits a guarantee.
+    for needle in ("# every citation in the mapping resolves",
+                   "# every cited check PASSES against this tree",
+                   "# every GAP, WAIVED and PARTIAL row carries a reason",
+                   "# the stated gap count matches the rows"):
+        write({'scripts/polaris-assurance-mapping-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
+            f"the drill must carry: {needle}"
+    write({'scripts/polaris-assurance-mapping-drill.py': DRILL.replace(
+        "# It cannot tell you the mapping is CORRECT: that is an assessor's judgement.\n", "")})
+    assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
+        "the drill must state its own limit, or it implies the same overclaim the document avoids"
+
+    # AND NO DRILL AT ALL: the document is a spreadsheet again.
+    (tmp_path / 'scripts/polaris-assurance-mapping-drill.py').unlink()
+    assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
+        "without the drill the mapping goes stale silently, which is the failure mode"
+
+
 def test_enrollment_proofing_check_discriminates(tmp_path):
     # v9.371 (P4.4): the ways an assurance claim becomes a label. A level somebody types; an
     # overclaim accepted or an underclaim refused; evidence counted without being validated or

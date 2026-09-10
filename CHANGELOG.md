@@ -5,6 +5,59 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.372 — 2026-09-10 (P6.2: a control mapping that goes red)
+
+A control mapping is the easiest document in a project to write and the easiest
+to let rot. It is a table of claims about a codebase, maintained by hand, read
+by people who cannot check it, and it goes stale the first time somebody deletes
+the thing a row was pointing at. Nothing turns red. The document just becomes
+untrue.
+
+So [docs/reference/NIST-800-63-MAPPING.md](docs/reference/NIST-800-63-MAPPING.md)
+is executable. Every row cites a `check:`, `test:`, `drill:` or `schema:`
+artifact, and `scripts/polaris-assurance-mapping-drill.py` resolves each one
+against the tree and **runs every cited check**. Naming a check that was renamed
+away fails; naming one that fails today fails too, because those are the same
+thing from a reader's point of view. **When the evidence disappears, CI goes red
+rather than the document going quietly stale.**
+
+**Forty rows across IAL, AAL and FAL.** Thirty-two MET, two PARTIAL, five GAP,
+one EXTERNAL. The totals are recomputed from the rows by the drill, because a
+summary that can drift from its own table is worse than no summary: it is the
+part a reader believes.
+
+**What it refuses to claim.** The front matter says, before anything else, that
+this is not a conformance claim, that no assessment has been performed, and that
+a deployment does not inherit these properties by running the code. A row marked
+MET means the mechanism is in this tree and CI proves it still is. It does not
+mean an assessor agreed. This is the file somebody quotes after reading only its
+first page, so it has to refuse that reading on the first page.
+
+**The highest levels are stated in one place**, or a reader infers them from the
+greenest row: **AAL2** for the holder's credential, with AAL3 explicitly waiting
+on FIPS 140 validation and certified silicon that are bought rather than written;
+**FAL1**, with FAL2's confidentiality provided by the channel rather than by the
+assertion, and a holder-of-key mechanism that is real but is not in 800-63C's
+assertion format.
+
+**The gaps are named rather than rounded away.** Address confirmation, which
+Polaris cannot do because it records no address at all. Trusted-referee flows,
+whose absence excludes exactly the people most likely to need them. The kiosk
+build. On-card biometric comparison, which is the one place a template would
+have to exist. Each carries the sentence explaining it, because that sentence is
+the whole value of writing a gap down.
+
+Writing this caught two of my own errors immediately, which is the point: a
+cited check name that did not exist (`c3_one_identity_per_person`, actually
+`one_active_token_index`), and a stated gap total I had written from memory
+rather than counted. Both failed the drill on its first run.
+
+The drill also states its own limit. It cannot tell you the mapping is
+*correct*: whether a row's requirement is really what the standard asks, and
+whether the cited check really proves it, is an assessor's judgement and no
+script substitutes for it. What it guarantees is narrower and still worth
+having.
+
 ## v9.371 — 2026-09-10 (P4.4a: what an enrollment rested on)
 
 Polaris could issue a credential and had no way to say how the person was
