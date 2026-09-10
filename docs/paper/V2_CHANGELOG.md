@@ -11,6 +11,37 @@ schema, the checks, the design records under `docs/design/`, the reference set u
 CHANGELOG entries of the self-correction episodes. Every count was re-measured by the
 commands listed in the paper's Appendix C.
 
+## Revision at v9.355: the holder-side sections
+
+The body was written from `v9.345`. Between that tag and `v9.355` the repository shipped
+Phase P9, which closed five absences this paper had recorded as open. Leaving the sections
+as written would have made the paper a description of a system that no longer exists, so
+these parts were rewritten and the rest was not:
+
+| Rewritten | Why |
+|---|---|
+| §8.3, the membership proof | Said the prover runs on the Polaris host and there is no per-verifier nullifier. Both are now false. |
+| §8.4, replacing "The thing that does not exist" | Called cross-verifier correlation a permanent, documented property. It is bounded now, and the section states both what changed and what did not. |
+| §17, AI agents and proof of personhood | Opened "Nothing in this section is solved" and marked the nullifier, local proving, the pairwise handle and the agent grant as proposals. All four run. |
+| `v2-figures/delegation.tex` | Drew the whole chain dashed as a proposal. Redrawn as built, with one dashed box for the residue that is not closed. |
+| `v2-figures/present-future.tex` | Put the agent grant and proof of personhood in the "not implemented" panel. |
+| Appendix A, the capability ledger | Four rows moved from proposal to running, each with the limit it still carries; a new row names the residue. |
+| §20's closing sentence, §0's front matter | Both now state the two dates rather than one. |
+
+**What was deliberately not done.** The counts elsewhere in the paper are still the `v9.345`
+measurements and are labelled as such where they appear. Re-measuring the whole document at
+`v9.355` would have been a different piece of work, and a partial re-measurement is worse
+than an honestly labelled old one. A reader checking a count against the current tree should
+expect it to have grown.
+
+**What the rewrite refused to claim.** Every closed absence is paired with the bound it does
+not clear. The nullifier does not hide the holder from the issuer, which derives every leaf
+to build the tree. The pairwise handle bounds what a verifier *stores*, not what it is
+*shown*, because a full credential still carries a stable token value. And the agent grant
+hides the human from the agent's actions, not the credential from the service. The verifier
+reports which of the two guarantees a given presentation actually gave, so a reader of the
+code cannot assume the stronger one either.
+
 ## Structure: one coherent document, not an appendix of updates
 
 Version 1 followed a database-design pipeline (requirements, ER model, relational model, SQL,

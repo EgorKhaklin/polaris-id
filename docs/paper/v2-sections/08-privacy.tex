@@ -43,11 +43,20 @@ What the proof does not do is stated with the same care. It proves membership an
 else: whether a token is active, permitted for the context and unrevoked is decided when the epoch is
 composed, not inside the circuit. The nonce prevents substituting a captured proof into another
 context; online, a single-use nonce store refuses a replayed bundle, and offline the verifier keeps no
-state, so a relying party that needs single use issues a challenge. There is no per-verifier
-nullifier, so the proof cannot by itself enforce \emph{one human, once} (Section~\ref{sec:agents}).
-The prover runs on the Polaris host, not on the holder's device. And the circuit over the proof
-library has had no external cryptographic audit; the repository's soundness ledger says not to
-protect real identities with it as shipped. \sExt
+state, so a relying party that needs single use issues a challenge. Two limitations this section
+carried have since been closed and are recorded here as such. The proof now carries a per-verifier
+nullifier, \code{Poseidon(secret\,||\,scope\,||\,epoch)}, so a relying party can enforce \emph{one
+human, once} within its own scope while another cannot correlate its nullifiers; and the prover runs
+on the holder's device, against a published anonymity set, so the issuer is no longer asked which
+member is proving. Both rest on the epoch leaf having become a Poseidon commitment the circuit opens:
+while it was an opaque digest computed outside, a nullifier beside it would have proved only that the
+prover knew some number. \sImpl
+
+Two bounds remain and are not closed. The nullifier does not hide the holder from the \emph{issuer},
+which derives every leaf in order to build the tree and could compute any member's nullifier in any
+scope; the property is between relying parties. And the circuit over the proof library has had no
+external cryptographic audit; the repository's soundness ledger says not to protect real identities
+with it as shipped. \sExt
 
 The strongest attack on the proof is not on the proof. It is correlation: matching zero-knowledge
 events with selective or full ones across contexts and timestamps to rebuild the graph the proof was

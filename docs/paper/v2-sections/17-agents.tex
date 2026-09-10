@@ -2,8 +2,10 @@
 \section{AI agents, proof of personhood and the future internet}
 \label{sec:agents}
 
-Nothing in this section is solved. It is the environment Polaris is preparing for, stated as a
-problem, with what exists today marked apart from what would have to be built.
+This section was written as a statement of what did not exist. Most of it has since been built, and
+it is rewritten here as a record of what runs, what it costs, and what is still missing, with the
+marks distinguishing the three. The environment it describes has not changed; Polaris's answer to it
+has.
 
 \subsection{The problem that is arriving}
 
@@ -21,7 +23,8 @@ extended to answer.
 
 \subsection{What exists today that points this way}
 
-Three ingredients of a privacy-preserving proof of personhood already run.
+Six ingredients of a privacy-preserving proof of personhood already run; the last three arrived
+after this section was first written.
 
 \begin{itemize}
   \item \textbf{Uniqueness at issuance.} C3, one active token per person, is a partial unique index
@@ -33,62 +36,96 @@ Three ingredients of a privacy-preserving proof of personhood already run.
     epoch. \sImpl
   \item \textbf{Revocation without naming.} A revoked token drops out of the next epoch root, so a
     membership proof expires with the epoch and no relying party learns who was revoked. \sImpl
+  \item \textbf{A key the holder controls.} A credential may carry a holder public key the issuer
+    binds to it, so possession of the file stops being possession of the credential and a verifier
+    can require a signature from the person rather than a copy of their credential. \sImpl
+  \item \textbf{Proving on the holder's device.} The epoch's leaf set is published, signed and
+    bounded; every requester receives identical bytes; the holder finds their own leaf and builds the
+    path locally. The issuer is never told which member is proving. \sImpl
+  \item \textbf{A per-verifier nullifier.} The proof carries
+    \code{Poseidon(secret\,||\,scope\,||\,epoch)}, constant for one person within one relying
+    party's scope and epoch and uncorrelated across scopes. \sImpl
 \end{itemize}
 
-\subsection{What is missing, precisely}
+\subsection{One human, once: what runs and what it costs}
 
-Polaris is not a proof-of-personhood system today, and the gap is specific. The membership proof
-stops replay of one proof, but it does not stop the same person from producing a thousand fresh proofs
-to the same site and registering a thousand accounts. \emph{One human, once, here} needs a scoped
-nullifier: one more public input, a hash of the holder's secret, the relying party's scope and the
-epoch, so that a site can refuse a second proof from the same person while two sites cannot link
-their nullifiers. The leaf derivation already mixes in a context, which is part of the way there;
-exposing a nullifier is a circuit change, small and well bounded, and not built. \sFut
+The membership proof stops replay of one proof, but on its own it does not stop the same person
+producing a thousand fresh proofs to one site and registering a thousand accounts. \emph{One human,
+once, here} needs a scoped nullifier: one more public input, a hash of the holder's secret, the
+relying party's scope and the epoch, so a site can refuse a second proof from the same person while
+two sites cannot link their nullifiers. That is now a public input of the circuit. \sImpl
 
-Two more gaps sit outside the circuit. The prover runs on the Polaris host, and a personhood
-credential needs the holder to prove on their own device from a Merkle path obtained from the
-published tree. And the presentation layer is full-credential: a stable value shown to every
-verifier is the correlator that defeats the purpose. The pairwise, blinded and one-time presentation
-technologies that would remove it are surveyed in Section~\ref{sec:research}; none is
-implemented. \sFut
+Adding it was not the small change this section once predicted, and the reason is worth recording
+because it is the kind of mistake a plan makes from outside the code. The epoch leaf was a
+\code{SHA3-256} digest computed \emph{outside} the circuit and handed in as an opaque private
+value. A nullifier beside an opaque leaf proves only that the prover knows some number: nothing ties
+the two to one secret, so a prover could pair any member's leaf with a nullifier of their own
+choosing, and every property above would have been a claim rather than a proof. Constraining both to
+one secret means opening the leaf inside the circuit, and verifying a \code{SHA3-256} preimage there
+costs thousands of constraints where Poseidon costs about a hundred. So the leaf became
+\code{Poseidon(secret\,||\,context)}, a commitment the circuit opens, and the old digest became the
+holder's secret. The change is not backward compatible: an epoch closed under the old derivation
+holds leaves the current circuit cannot open, and epochs are re-closed rather than migrated.
 
-Two conditions the vocation imposes on any future version deserve stating before the design. The
-nullifier's scope must be per relying party and per epoch, never global, because a global nullifier
-is a persistent identifier and therefore the surveillance outcome the constitution refuses. And a
-relying party must not be able to demand full disclosure as a precaution; the broker's registered
-policy already lets a party be held to the zero-knowledge level, and that has to remain the default
-posture of any personhood extension.
+The two conditions the vocation imposes were carried into the implementation rather than left as
+intentions. The nullifier's scope is per relying party and per epoch, never global, because a global
+nullifier is a persistent identifier and therefore the surveillance outcome the constitution refuses;
+and it rotates each epoch, so membership never becomes a permanent pseudonym. A relying party's
+ledger is keyed by its own scope and that epoch, and should not outlive it.
+
+Two bounds remain and are stated rather than closed. The nullifier does not hide the holder from the
+\emph{issuer}, which derives every leaf in order to build the tree and could therefore compute any
+member's nullifier in any scope; the property holds between relying parties. And the presentation
+layer is still full-credential: a verifier looking at a plain credential sees a stable token value,
+an issuer signature and a holder key, so two verifiers who deliberately keep the raw material can
+still correlate. What the pairwise derivation bounds is what a verifier \emph{stores}, which is the
+material that gets pooled, sold, subpoenaed and breached. Section~\ref{sec:privacy} states the
+distinction, and the verifier reports which of the two a given presentation gave rather than letting
+a caller assume the stronger one. The blinded and one-time presentation technologies that would
+remove the residue are surveyed in Section~\ref{sec:research}; none is implemented. \sFut
 
 \subsection{Delegating authority to an agent}
 
-\figfile{delegation}{A proposed delegation chain. The human holds the foundational credential,
-which exists. Everything else is dashed: a scoped grant signed by a holder-side key, an agent that
-acts only within it, and a service that verifies the chain offline and learns nothing beyond the five
-answers listed. The repository has no holder-side key, no pairwise handle and no grant-scoped
-revocation; each is named as an open problem.}{fig:delegation}
+\figfile{delegation}{The delegation chain, as built. The human holds the foundational credential and
+a key the issuer bound to it. With that key they sign a grant naming actions, limits, an expiry and a
+revocation handle; the agent signs each action against the service's own nonce; the service verifies
+the chain offline. The one link drawn dashed is the residue: under a plain holder binding the service
+also sees the credential's token value, so the correlation it is left with is bounded rather than
+absent.}{fig:delegation}
 
-The relationship this paper proposes is a chain. A human possesses a foundational credential. The
-human grants a narrowly scoped cryptographic authority to an agent: named actions, limits, an
-expiry, a revocation handle. The agent can perform only the specified actions. A service verifies,
-offline, that the agent's grant is genuine and unexpired; that it was issued by a valid principal,
-without learning who; that this exact action is inside the delegated scope; that the grant has not
-been revoked, without the human's own credential being revoked; and it learns nothing more than
-those answers. Revoking an agent's authority must not destroy the human's underlying identity, which
-is why the grant needs its own revocation path, separate from the credential's.
+The relationship is a chain, and it now runs. A human possesses a foundational credential and a key
+the issuer bound to it. With that key the human signs a grant giving an agent a narrowly scoped
+authority: named actions, stated limits, an expiry, and a revocation handle belonging to the grant
+alone. The agent signs each action it performs, naming the action and the service's own nonce. A
+service verifies, offline, that the grant is genuine and unexpired, that it covers this exact action,
+that it has not been revoked, and that it chains to a holder key an issuer bound to a real
+credential. \sImpl
 
-Polaris's existing machinery maps onto the chain more closely than one might expect. The grant is a
-signed statement in the same canonical discipline as every other artifact; the service is a relying
-party with the detached verifier; the expiry and revocation handle are the status assertion and
-revocation feed applied to a grant rather than a credential; and the trust graph decides which
-principals a service accepts. What the chain needs and the repository lacks is a holder-side key,
-since the model is issuer-centric on purpose and the holder holds a credential rather than a key
-pair. That is the same missing piece that blocks the browser bridge, and the repository records it as
-a future credential extension. \sFut
+What the design is for is visible in what it refuses. Handing an agent the credential itself gives it
+everything the person can do, forever, revocable only by revoking the person. The grant is the
+opposite of each: \code{actions} and \code{limits} sit \emph{inside} the signed statement, so a
+grant widened in transit fails rather than passing invisibly; an empty action list authorises nothing
+and there is no way to write \emph{everything}; a limit key the service does not recognise is
+refused rather than ignored, since a grant that says \code{max\_transfers: 3} to a service that has
+never heard of it must not read as unlimited. And the agent must sign: without that link a grant is a
+bearer token, and whoever copies it in transit becomes the agent.
 
-\figfile{present-future}{The present system beside the future environment it is preparation for.
-Solid navy is what runs at \code{v9.345}; dashed gold is what does not exist. The two panels share the
-same core, which is the point: the extensions are proposed on the credential and its verifiers, not
-on a new system.}{fig:present-future}
+Revocation is the property worth naming twice. The revocation is signed by the same key that signed
+the grant, so anyone may publish bytes but only the holder may end it. The issuer is not contacted
+and never learns the grant existed, and the human's credential is untouched throughout. A person can
+end their agent's authority without asking permission from, or being observed by, the authority that
+issued their identity.
+
+The revocation carries the grant identifier and the instant, and nothing else. It will not carry a
+reason. A field recording \emph{why} a grant ended is a field a coercer can demand be filled in or
+left empty, and either way it turns a revocation into a signal about the person; the constitutional
+argument is the same one that keeps the presented code out of the holder proof's signed statement.
+
+What a service learns is bounded, and the bound is reported rather than assumed. Under a plain holder
+binding the service also sees the credential's token value, so the verdict names the correlation
+\code{exposed}; only a chain carried by the zero-knowledge path, whose handle is the scoped
+nullifier, is named \code{bounded}. The grant hides the human from the agent's \emph{actions}. It
+does not hide the credential from the service.
 
 \subsection{The future internet, concretely}
 
@@ -102,7 +139,7 @@ item's status is today.
 \setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
 \rowcolors{2}{tabstripe}{white}
 \begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash}p{1.85in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.8in}}
-\caption{What a future environment would ask of Polaris, and the status of each at \code{v9.345}.}\label{tab:web3}\\
+\caption{What a future environment would ask of Polaris, and the status of each.}\label{tab:web3}\\
 \toprule
 \rowcolor{tabheader}\thead{The environment asks for} & \thead{What Polaris has} & \thead{Status} \\
 \midrule
@@ -123,9 +160,10 @@ Document signatures with long-term validity & Signed containers with evidence fi
 Transparent authority behaviour & Three logs, witnesses, equivocation proofs & \sImpl\newline\sExt \\
 Offline verification & Status assertions stapled to presentations & \sImpl \\
 Post-quantum trust & ML-DSA, hash-based proofs, a hybrid edge; classical remainders named & \sImpl \\
-Human, account and agent authorization relationships & The broker's credential-bound login token; no agent grant & \sFut \\
-Privacy-preserving uniqueness & Membership proofs; no scoped nullifier & \sFut \\
-Delegation to agents with bounded scope & Nothing; needs a holder-side key & \sFut \\
-Revoking an agent without destroying the human's identity & Nothing; needs grant-scoped revocation & \sFut \\
+Human, account and agent authorization relationships & A login token whose subject is per relying party, plus the agent grant below & \sImpl \\
+Privacy-preserving uniqueness & Membership proofs carrying a per-verifier, per-epoch nullifier & \sImpl \\
+Delegation to agents with bounded scope & A holder-signed grant: actions, limits, expiry, revocation handle & \sImpl \\
+Revoking an agent without destroying the human's identity & A holder-signed revocation; the issuer is not contacted and the credential is untouched & \sImpl \\
+Presentation that shows a verifier nothing stable & The zero-knowledge path only; a plain credential still shows a stable value & \sImpl\newline\sFut \\
 \end{xltabular}
 }

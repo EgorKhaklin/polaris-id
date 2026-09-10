@@ -5,6 +5,44 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.356 — 2026-09-10 (the paper describes the system that exists)
+
+Version 2 of the paper was written from the tree at `v9.345`. Phase P9 then
+closed five absences the paper had recorded as open, and the paper went on saying
+they were open. A citable document that describes a system which no longer exists
+is worse than no document, so the holder-side sections were rewritten.
+
+Section 8.3 said the prover runs on the Polaris host and there is no per-verifier
+nullifier. Section 8.4 called cross-verifier correlation "a permanent, documented
+property". Section 17 opened with "Nothing in this section is solved" and marked
+the nullifier, local proving, the pairwise handle and the agent grant as
+proposals. All four run. The delegation figure drew the entire chain dashed; it is
+redrawn as built, with a single dashed box for the residue that is not closed. The
+capability ledger moved four rows and added one for the residue.
+
+**Each closed absence is paired with the bound it does not clear**, which is the
+part a rewrite like this gets wrong if it is written in a hurry. The nullifier does
+not hide the holder from the issuer, which derives every leaf to build the tree. The
+pairwise handle bounds what a verifier stores, not what it is shown, because a full
+credential still carries a stable token value. The agent grant hides the human from
+the agent's actions, not the credential from the service. Section 17 also records
+why the nullifier was not the small circuit change the section had predicted: an
+opaque leaf cannot anchor a nullifier to anything, so the leaf had to become a
+Poseidon commitment the circuit opens.
+
+**Two dates, stated rather than blurred.** The front matter, the capability ledger
+and the closing sentence now say the body was measured at `v9.345` and the
+holder-side sections at `v9.355`. The counts elsewhere are still the `v9.345`
+measurements and are labelled as such. A partial re-measurement would be worse than
+an honestly labelled old one.
+
+`docs/design/auth-broker.md` carried the same stale claim about the login subject
+and is corrected. The paper rebuilds at 57 pages with no overfull boxes, no
+underfull vertical boxes and no undefined references, and `rendered-from.txt` is
+restamped so `check_paper_pdf_is_current` holds.
+
+---
+
 ## v9.355 — 2026-09-10 (a runnable path, and the holder arc written down)
 
 Two gaps left by P9.8 and P9.4, both about whether the work is reachable by the

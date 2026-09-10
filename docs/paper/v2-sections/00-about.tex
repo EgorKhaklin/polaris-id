@@ -12,6 +12,17 @@ and from zero machine-checked invariants to 191. Version 2 describes the system 
 tag \code{v9.345} (9 September 2026), and it is written for a reader who has never opened the
 repository.
 
+\textbf{Two dates, stated plainly.} The body was written from the tree at \code{v9.345} and every
+count in it was measured there. Between that tag and \code{v9.355} the repository shipped Phase P9,
+which closed five absences this paper had recorded as open: a key the holder controls, a prover that
+runs on the holder's device, a per-verifier nullifier, a per-relying-party handle, and a delegated
+agent grant. Leaving those sections as they were would have made the paper a description of a system
+that no longer exists, so Section~\ref{sec:privacy} and Section~\ref{sec:agents}, the appendix
+status ledger and the figures they carry were rewritten at \code{v9.355}. The counts elsewhere are
+still the \code{v9.345} measurements and are labelled as such wherever they appear; a reader
+checking one against the current tree should expect it to have grown. Nothing that ran at
+\code{v9.345} stopped running.
+
 The paper keeps what Version 1 got right: the token-centred geometry of the schema, used here as
 the centre of every map, and the lifecycle machine, with one correction, since the trigger Version 1
 recommended for enforcing it now exists.
@@ -24,7 +35,8 @@ Every capability carries one of four marks, so that code that runs is never conf
 intention.
 
 \begin{description}
-  \item[\sImpl] A path that runs at \code{v9.345}, exercised by a test or a drill in continuous
+  \item[\sImpl] A path that runs (at \code{v9.345}, or at \code{v9.355} in the two rewritten
+    sections), exercised by a test or a drill in continuous
     integration, and pinned by an invariant check that fails the build if it stops being true.
   \item[\sExp] A path that runs but is limited in a way the repository itself names: not covered by
     CI, notional in scale, or dependent on a backend that CI simulates.

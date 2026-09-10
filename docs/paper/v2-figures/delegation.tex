@@ -1,23 +1,54 @@
-% v2-figures/delegation.tex: a PROPOSED delegation chain from a human to an AI
-% agent to a service. Nothing in this figure exists in the repository today;
-% it is drawn in the future style (dashed gold) except the one box that exists.
-\begin{tikzpicture}
-  \node[humanbox, minimum width=3.4cm] (h) at (0,0) {Human\\[-1pt]{\mdseries\scriptsize holds the foundational credential}};
-  \node[corebox, minimum width=3.4cm] (c) at (0,-2.1) {Polaris credential\\[-1pt]{\mdseries\scriptsize exists today: ML-DSA-signed, one active per person}};
-  \node[futbox, minimum width=3.8cm, text width=3.5cm] (g) at (6.0,-1.05) {Scoped grant (proposed)\\[-1pt]{\scriptsize signed by the holder's key: actions, limits, expiry, revocation handle}};
-  \node[futbox, minimum width=3.4cm] (a) at (11.6,-1.05) {AI agent (proposed)\\[-1pt]{\scriptsize acts only within the grant}};
-  \node[extbox, minimum width=3.6cm] (s) at (11.6,-3.9) {Service\\[-1pt]{\scriptsize verifies the chain offline}};
-  \draw[flow] (h) -- (c);
-  \draw[flowfut] (c.east) -- node[faint, below=2pt, sloped] {issues} (g.west);
-  \draw[flowfut] (g) -- node[faint, above] {presents} (a);
-  \draw[flowfut] (a) -- node[faint, right] {acts} (s);
-  \node[anchor=north west, font=\scriptsize, text=navydark, text width=8.0cm, align=left] at (-1.7,-3.3) {
-    \textbf{What the service must be able to check:}\\
-    1. the agent's grant is genuine and unexpired;\\
-    2. the grant was issued by a valid principal, without learning who;\\
+% v2-figures/delegation.tex: the delegation chain from a human to an agent to a service,
+% as built at v9.354. Layout note: the chain is a single left-to-right band about 13cm
+% wide and 3cm tall, with the two prose blocks BELOW it rather than beside it, so the
+% figure's aspect ratio stays close to the text block and \figfile's adjustbox barely has
+% to scale it. An earlier version ran the prose alongside the chain, which made the box
+% twice as wide as tall and shrank every label past reading size.
+%
+% Colour carries meaning here, as everywhere in this paper: navy for what the HUMAN holds,
+% accent for the signed artifacts that run, steel for the outside party, dashed gold for
+% the one thing that is NOT closed.
+\begin{tikzpicture}[node distance=0pt]
+  % --- the chain -----------------------------------------------------------------
+  \node[humanbox, minimum width=2.9cm, text width=2.6cm] (h) at (0,0)
+    {Human\\[-1pt]{\mdseries\scriptsize credential + a key the issuer bound}};
+  \node[corebox, minimum width=3.1cm, text width=2.8cm] (g) at (4.2,0)
+    {Scoped grant\\[-1pt]{\mdseries\scriptsize signed by the holder's key}};
+  \node[corebox, minimum width=2.7cm, text width=2.4cm] (a) at (8.3,0)
+    {AI agent\\[-1pt]{\mdseries\scriptsize signs each action}};
+  \node[extbox, minimum width=2.7cm, text width=2.4cm] (s) at (12.1,0)
+    {Service\\[-1pt]{\scriptsize verifies offline}};
+
+  \draw[flow] (h) -- node[faint, above=1pt] {grants} (g);
+  \draw[flow] (g) -- node[faint, above=1pt] {presents} (a);
+  \draw[flow] (a) -- node[faint, above=1pt] {acts} (s);
+
+  % what rides inside the grant, hung under it so the chain stays one clean band
+  \node[lbl, below=5pt of g, text width=3.3cm] (gd)
+    {actions · limits · expiry\\ a revocation handle};
+  \node[lbl, below=5pt of a, text width=2.9cm] (ad)
+    {names the action and the service's own nonce};
+
+  % --- what the service is told --------------------------------------------------
+  \node[anchor=north west, font=\scriptsize, text=navydark, text width=6.9cm, align=left]
+    (checks) at (-1.65,-1.75) {
+    \textbf{What the service checks:}\\
+    1. the grant is genuine and unexpired;\\
+    2. it chains to a holder key an issuer bound to a credential;\\
     3. this exact action is inside the delegated scope;\\
-    4. the grant has not been revoked, without the human's credential being revoked;\\
-    5. it learns nothing more than the four answers above.};
-  \node[anchor=north west, font=\scriptsize, text=classmark, text width=5.6cm, align=left] at (7.8,-5.0) {
-    Open problems the repository does not solve: a holder-side key (the model is issuer-centric), a per-service pairwise handle, and a revocation path scoped to the grant.};
+    4. it is not revoked, and the credential is untouched;\\
+    5. each failure is named on its own.};
+
+  % --- the residue ---------------------------------------------------------------
+  \node[futbox, anchor=north west, font=\scriptsize, text width=5.4cm, align=left]
+    (res) at (6.6,-1.85) {
+    \textbf{Not closed.} Under a plain holder binding the service also sees the
+    credential's token value, so the verdict names the correlation \emph{exposed}.
+    Only the zero-knowledge path is \emph{bounded}.};
+
+  % --- the property the whole design exists for ----------------------------------
+  \node[anchor=north, font=\scriptsize\itshape, text=navymid, text width=12.6cm, align=center]
+    at (5.3,-5.15) {Revoking the grant does not revoke the human. The holder signs the
+    revocation with the same key; the issuer is never contacted and never learns the grant
+    existed.};
 \end{tikzpicture}
