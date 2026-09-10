@@ -5696,8 +5696,9 @@ def test_verify_witness_sampling_check_discriminates(tmp_path):
 def test_public_claims_honest_check_discriminates(tmp_path):
     # The outward surfaces must not overstate what exists now: understate to reality.
     README = ("# POLARIS\n\nA reference implementation on notional data.\n\n"
-              "**Relying-party linkability, stated positively.** A full-credential presentation carries a stable "
-              "token_value that colluding verifiers can correlate.\n\n"
+              "**Relying-party correlation, bounded rather than permanent.** What a verifier should store "
+              "is a per-verifier handle; what it is shown by a full credential still includes a stable "
+              "token_value, so two that keep the raw material can correlate.\n\n"
               "| System | Deployed to a real population | National-scope issuance | PQ |\n"
               "| **Polaris** | **✗** | **✗** | ✓ |\n")
     SITE = ('<title>Polaris: a reference implementation of an identity-token system</title>\n'
@@ -5733,9 +5734,21 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     # the comparison awards Polaris a deployment/national-scope tick
     write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| **Polaris** | **✗** | ✓ | ✓ |"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL if Polaris is awarded national-scope issuance"
-    # the relying-party linkability statement is missing
-    write(readme=README.replace("**Relying-party linkability, stated positively.**", "**A different note.**"))
-    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL without the linkability statement"
+    # v9.353 (P9.4): the correlation statement is missing entirely
+    write(readme=README.replace("**Relying-party correlation, bounded rather than permanent.**", "**A different note.**"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL without the correlation statement"
+    # Only the good half is kept: per-verifier handles, with no mention of what a full
+    # credential still SHOWS. That reads as unlinkability, which is an overclaim.
+    write(readme=README.replace(
+        "what it is shown by a full credential still includes a stable "
+        "token_value, so two that keep the raw material can correlate.",
+        "so relying parties cannot correlate."))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the README keeps only the flattering half of the correlation statement"
+    # The stable value a presentation shows stops being named.
+    write(readme=README.replace("a stable token_value", "some material"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the README no longer names the stable token_value a presentation shows"
     # the two-witness overclaim returns
     write(readme=README + "Two independent witnesses for every cryptographic verdict.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on the two-witness overclaim"
@@ -6792,7 +6805,7 @@ def test_auth_broker_check_discriminates(tmp_path):
         "def api_v1_auth_authorize():\n"
         "    rp_auth.SCOPE_AUTHENTICATE; row = _possession_authenticated(token_value, presented)\n"
         "    _check_and_record_duress(row['token_id'], c, a, code); _zk_verify_and_consume(1, 2, 3, b)\n"
-        "    code = {'sub': hashlib.sha3_256(token_value.encode()).hexdigest()}\n"
+        "    code = {'sub': _pairwise_subject(token_value, rp['client_id'])}\n"
         "@app.route('/api/v1/auth/token', methods=['POST'])\n"
         "def api_v1_auth_token():\n"
         "    _pkce_challenge(verifier); query('INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)')\n"
@@ -6827,8 +6840,15 @@ def test_auth_broker_check_discriminates(tmp_path):
 
     write()
     assert checks.check_auth_broker(tmp_path)[0].level == "OK", "must PASS on the full fixture"
-    write({'polaris_web/app.py': APP.replace("'sub': hashlib.sha3_256(token_value", "'sub': token_value")})
-    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the subject is the token rather than its hash"
+    # v9.353 (P9.4): the subject must be derived PER RELYING PARTY. The raw token value is
+    # the obvious break; the subtler one is a global hash, which looks like a hash and is
+    # still one identifier handed to everybody.
+    write({'polaris_web/app.py': APP.replace("_pairwise_subject(token_value, rp['client_id'])", "token_value")})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the subject is the raw token value"
+    write({'polaris_web/app.py': APP.replace("_pairwise_subject(token_value, rp['client_id'])",
+                                             "hashlib.sha3_256(token_value.encode()).hexdigest()")})
+    assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", \
+        "must FAIL if the subject is a GLOBAL hash: the same value at every relying party"
     write({'polaris_web/app.py': APP.replace("def api_v1_auth_authorize():\n", "def api_v1_auth_authorize():\n    query('INSERT INTO LoginLog (sub, rp) VALUES (1, 2)')\n")})
     assert checks.check_auth_broker(tmp_path)[0].level == "FAIL", "must FAIL if the authorize route records a login"
     write({'polaris_sql/01_schema.sql': "CREATE TABLE AuthCodeConsumed (\n    code_hash CHAR(64) PRIMARY KEY,\n    client_id TEXT,\n    sub TEXT\n);\n"})
@@ -8494,3 +8514,86 @@ def test_scoped_nullifier_check_discriminates(tmp_path):
     write({'sdk/typescript/src/index.ts': "export const x = 1;\n"})
     assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
         "must FAIL when an SDK does not expose the nullifier comparison"
+
+
+def test_pairwise_presentation_check_discriminates(tmp_path):
+    # v9.353 (P9.4): the fixtures below each restore one way for a global identifier to
+    # come back, or for the verdict to overclaim what a handle bounds.
+    good_verify = (
+        "_PAIRWISE_TAG = 'polaris-pairwise/1'\n"
+        "def pairwise_handle(k, scope):\n"
+        "    if not k or not scope:\n        return None\n"
+        "    return sha3(_PAIRWISE_TAG + k + scope)\n"
+        "\ndef handles_link(a, b):\n    return a == b\n"
+        "\ndef verify_presentation(p, verifier_scope=None):\n"
+        '    v = {"correlation": None}\n'
+        '    if zk: v["correlation"] = "bounded"\n'
+        '    else: v["correlation"] = "exposed"\n'
+        "    return v\n")
+    good = {
+        'polaris_web/app.py': ("def _pairwise_subject(token_value, client_id):\n    return ''\n"
+                               "code = {'sub': _pairwise_subject(token_value, rp['client_id'])}\n"),
+        'scripts/polaris-verify.py': good_verify,
+        'sdk/python/polaris_verify/__init__.py': "def pairwise_handle(k, s):\n    return None\n",
+        'sdk/typescript/src/index.ts': "export function pairwiseHandle(k, s) { return null; }\n",
+        'scripts/polaris-wallet.py': "args.verifier_scope\n",
+        'scripts/polaris-pairwise-drill.py': "# asserts correlation is exposed for a plain one\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # The global subject returns: one identifier handed to every relying party.
+    write({'polaris_web/app.py': ("def _pairwise_subject(token_value, client_id):\n    return ''\n"
+                                  "code = {'sub': hashlib.sha3_256(token_value.encode()).hexdigest()}\n")})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the login subject is derived from the token value alone"
+
+    # The subject stops being scoped to the relying party.
+    write({'polaris_web/app.py': ("def _pairwise_subject(token_value, client_id):\n    return ''\n"
+                                  "code = {'sub': _pairwise_subject(token_value, 'polaris')}\n")})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the subject is not scoped to the relying party's client_id"
+
+    # A handle with no scope is quietly globalised instead of refused.
+    write({'scripts/polaris-verify.py': good_verify.replace(
+        "    if not k or not scope:\n        return None\n", "")})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a scopeless handle is hashed instead of refused"
+
+    # The domain tag goes, so a handle could be confused with another SHA3-256 value.
+    write({'scripts/polaris-verify.py': good_verify.replace("_PAIRWISE_TAG + ", "")})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the handle carries no domain tag"
+
+    # The verdict stops being able to say the unflattering word: every presentation would
+    # look like the strong form.
+    write({'scripts/polaris-verify.py': good_verify.replace('"exposed"', '"bounded"')})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the verdict cannot report that a plain credential is exposed"
+
+    # The verdict stops reporting correlation at all.
+    write({'scripts/polaris-verify.py': good_verify.replace('"correlation"', '"note"')})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the verdict makes no correlation statement"
+
+    # An SDK drops the derivation, so an integrator rolls their own and it will not match.
+    write({'sdk/typescript/src/index.ts': "export const x = 1;\n"})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an SDK does not expose the handle derivation"
+
+    # The wallet cannot name a verifier, so there is no scope to derive under.
+    write({'scripts/polaris-wallet.py': "def cmd_present(a):\n    pass\n"})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the wallet cannot present to a named verifier"
+
+    # The drill stops asserting the bound and becomes an advertisement.
+    write({'scripts/polaris-pairwise-drill.py': "# the handles differ, great\n"})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not assert that a plain presentation is exposed"

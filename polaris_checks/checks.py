@@ -6246,15 +6246,25 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
         return _fail("public_claims",
                      "the 'Where Polaris sits' comparison must keep the 'Deployed to a real population' column so "
                      "Polaris's design ticks are not read as a deployment")
-    # Unlinkability is issuer-side and ZK-mode-scoped; a full-credential presentation
-    # carries a stable token_value that colluding relying parties can correlate. The
-    # README must say so, or "unlinkable by default" is read as covering the
-    # holder-to-verifier hop, which it does not.
-    if "Relying-party linkability" not in readme:
+    # Unlinkability is issuer-side and ZK-mode-scoped. Since P9.4 the holder-to-verifier hop
+    # has a two-sided answer, and the README must give BOTH sides. Saying only that stored
+    # handles are now per-verifier would overclaim, because a full-credential presentation
+    # still SHOWS a stable token_value. Saying only the old flat sentence would understate
+    # work that shipped. Either half alone misleads, so both are required.
+    if "Relying-party correlation" not in readme:
         return _fail("public_claims",
-                     "the README must state relying-party linkability positively: a full-credential presentation "
-                     "carries a stable token_value that colluding verifiers can join their logs by, so 'unlinkable "
-                     "by default' is the issuer's ZK-mode records, not cross-verifier presentation")
+                     "the README must state relying-party correlation positively, under a heading a reader "
+                     "can find")
+    para = readme[readme.index("Relying-party correlation"):][:2000]
+    if "store" not in para or "shown" not in para:
+        return _fail("public_claims",
+                     "the README must distinguish what a verifier STORES (a per-verifier handle since P9.4) "
+                     "from what it is SHOWN (a full credential still carries a stable token_value); the "
+                     "guarantee is about the first, and stating it without the second overclaims")
+    if "token_value" not in para:
+        return _fail("public_claims",
+                     "the README must still name the stable token_value a full-credential presentation "
+                     "shows a verifier; dropping it turns a bounded claim into an unlinkability claim")
     # The comparison must not award Polaris a deployment property it does not have:
     # its first two columns (deployed to a real population, national-scope issuance)
     # must both be a clear negative, so a skimmer is not told Polaris issues nationally.
@@ -8326,9 +8336,9 @@ def check_auth_broker(root: pathlib.Path) -> list[Finding]:
     """P8.4: the auth broker's protocol core -- authorization code + PKCE, a holder-side
     possession-authenticated authorize, an RP-side client-credentials exchange for an
     issuing-agency-signed polaris-id-token/1, step-up by ZK proof, duress served identically --
-    with the vocation's guards pinned: the subject is a credential hash, the only write is the
-    consumed code's hash (no record of who authenticated where), and a verify bearer cannot
-    reach the broker (a running AC-6 adversary)."""
+    with the vocation's guards pinned: the subject is derived PER RELYING PARTY (P9.4), the only
+    write is the consumed code's hash (no record of who authenticated where), and a verify bearer
+    cannot reach the broker (a running AC-6 adversary)."""
     app = _read(root, "polaris_web/app.py")
     for sym, why in (("/api/v1/auth/authorize", "the holder-side authorize route"),
                      ("/api/v1/auth/token", "the RP-side token route"),
@@ -8336,7 +8346,11 @@ def check_auth_broker(root: pathlib.Path) -> list[Finding]:
                      ("polaris-id-token/1", "the ID token format"),
                      ("rp_auth.SCOPE_AUTHENTICATE", "the 'authenticate' scope gate"),
                      ("_possession_authenticated(token_value, presented)", "possession authentication of the holder"),
-                     ("'sub': hashlib.sha3_256(token_value", "the subject is a credential hash"),
+                     ("'sub': _pairwise_subject(token_value, rp['client_id'])",
+                      "the subject is PER RELYING PARTY (P9.4). Until v9.353 this check pinned "
+                      "`sha3_256(token_value)`, which was the same value everywhere: it was "
+                      "pinning the defect. A global subject lets two relying parties join their "
+                      "user tables exactly, forever, without either doing anything wrong"),
                      ("_pkce_challenge(verifier)", "PKCE binding"),
                      ("INSERT INTO AuthCodeConsumed (code_hash)", "single-use codes via the consumed-code register"),
                      ("_check_and_record_duress(row['token_id']", "duress served identically and recorded silently"),
@@ -9585,7 +9599,105 @@ def check_scoped_nullifier(root: pathlib.Path) -> list[Finding]:
                "value it cannot correlate")
 
 
+
+def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
+    """No value a relying party keys its records by is stable across relying parties (P9.4).
+
+    The login token's subject used to be `SHA3-256(token_value)`: the same sixty-four
+    characters at every relying party in the system. Two of them comparing user tables
+    matched people exactly, forever, and neither had to do anything wrong, because the
+    identifier they were handed was a global one. The subject is the value a relying party
+    WRITES DOWN, and written-down values are the ones that get pooled, sold, subpoenaed and
+    breached, so this was the correlation handle that mattered most in practice.
+
+    It is now `SHA3-256("polaris-pairwise/1" || token_value || client_id)`: stable at one
+    relying party, so an account still works, and unrecognisable at the next. The same
+    derivation gives the presentation layer its handle, from the holder key rather than the
+    token value.
+
+    Two things this check refuses to let slide, because both would turn the guarantee back
+    into a claim:
+
+    A handle with no scope. Deriving one from the holder key alone would be a global
+    identifier again, wearing the word "pairwise". The derivations return None on a missing
+    scope rather than hashing an empty string, which would collide every holder into one
+    record, and this pins that.
+
+    An overclaim. A plain presentation still SHOWS a verifier the token value, the issuer's
+    signature and the holder's public key, all stable everywhere. Two verifiers who keep the
+    raw material can still correlate. So `verify_presentation` must report `correlation` and
+    must have both words available: "exposed" for a plain credential and "bounded" for the
+    zero-knowledge form, whose handle is P9.3's scoped nullifier. A verifier that reported
+    only the good word would be lying by omission about the common case."""
+    name = "pairwise_presentation"
+    app = _read(root, "polaris_web/app.py")
+    if "def _pairwise_subject" not in app:
+        return _fail(name, "polaris_web/app.py must derive the login subject per relying party "
+                           "(_pairwise_subject)")
+    if re.search(r"'sub':\s*hashlib\.sha3_256\(token_value", app):
+        return _fail(name,
+                     "the login subject is derived from the token value ALONE again; that is one "
+                     "global identifier handed to every relying party, and two of them comparing "
+                     "user tables match people exactly and forever")
+    if "_pairwise_subject(token_value, rp['client_id'])" not in app:
+        return _fail(name,
+                     "the subject must be scoped to the relying party's own client_id; a subject "
+                     "with no relying party in it is a global identifier whatever it is called")
+
+    verifier = _read(root, "scripts/polaris-verify.py")
+    for needed, why in (("def pairwise_handle", "the detached verifier must derive the handle"),
+                        ("def handles_link", "and give a verifier the one correct way to compare two")):
+        if needed not in verifier:
+            return _fail(name, f"{why} ({needed})")
+    body = verifier.split("def pairwise_handle")[1].split("\ndef ")[0]
+    if "return None" not in body:
+        return _fail(name,
+                     "pairwise_handle must return None on a missing scope or key rather than "
+                     "hashing an empty string, which would key every holder to one record")
+    if "_PAIRWISE_TAG" not in body:
+        return _fail(name, "the handle must carry a domain tag, so it cannot be confused with "
+                           "another SHA3-256 value in the protocol")
+
+    # The verdict must report correlation, and must be able to say the unflattering word.
+    if '"correlation"' not in verifier:
+        return _fail(name,
+                     "verify_presentation must report `correlation`; a handle without a statement "
+                     "of what it actually bounds invites the caller to assume the strong form")
+    pres = verifier.split("def verify_presentation")[1].split("\ndef ")[0]
+    for word, why in (('"exposed"', "a plain presentation still shows a stable token value, issuer "
+                                    "signature and holder key; the verdict must say so"),
+                      ('"bounded"', "the zero-knowledge form withholds them, and must be "
+                                    "distinguishable from the plain one")):
+        if word not in pres:
+            return _fail(name, f"verify_presentation must be able to report {word}: {why}")
+
+    py_sdk, ts_sdk = _read(root, "sdk/python/polaris_verify/__init__.py"), _read(root, "sdk/typescript/src/index.ts")
+    if "def pairwise_handle" not in py_sdk or "export function pairwiseHandle" not in ts_sdk:
+        return _fail(name, "both SDKs must expose the handle derivation, or an integrator writes "
+                           "their own and it will not match")
+    wallet = _read(root, "scripts/polaris-wallet.py")
+    if "verifier_scope" not in wallet:
+        return _fail(name, "the wallet must be able to present to a NAMED verifier "
+                           "(--verifier-scope), or there is no scope to derive a handle under")
+    drill = _read(root, "scripts/polaris-pairwise-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-pairwise-drill.py must prove the property end to end")
+    if "exposed" not in drill:
+        return _fail(name,
+                     "the drill must ASSERT the bound, not only the benefit: a plain presentation "
+                     "reports EXPOSED, and a reader must not take the drill for a proof of "
+                     "something stronger than what ships")
+    return _ok(name,
+               "no value a relying party keys its records by is stable across relying parties: the "
+               "login subject and the presentation handle are both derived under the relying "
+               "party's own scope, a handle with no scope is refused rather than globalised, both "
+               "SDKs derive it identically, and the verdict states honestly whether the "
+               "correlation it bounds is exposed (a plain credential) or bounded (the "
+               "zero-knowledge form, whose handle is the scoped nullifier)")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_pairwise_presentation,
     check_scoped_nullifier,
     check_commitment_mismatch_is_a_refusal,
     check_verifier_instant_normalised,

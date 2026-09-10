@@ -35,9 +35,9 @@ Frozen version 1, cross-version suite & \sImpl & & \code{check\_frozen\_v1} \\
 Relying-party verify API & \sImpl & Client-credentials only; mutual TLS deferred & \code{check\_relying\_party\_api} \\
 Signed status assertion, offline authorization & \sImpl & The revoked-but-valid window is the cost & \code{check\_offline\_verification} \\
 Epoch checkpoints, revocation feeds, status bundle & \sImpl & Distribution at content-delivery scale not built & \code{check\_epoch\_revocation\_propagation}, \code{check\_federation\_status\_bundle} \\
-Zero-knowledge membership proof, second witness & \sImpl\newline\sExt & No external audit; prover on the host; no nullifier & \code{check\_zk\_tree\_depth\_synced}, the witness differential \\
+Zero-knowledge membership proof, second witness & \sImpl\newline\sExt & No external audit; holder proves locally; scoped nullifier built & \code{check\_zk\_tree\_depth\_synced}, \code{check\_scoped\_nullifier}, the witness differential \\
 Issuer-side unlinkable verification records & \sImpl & Scoped to zero-knowledge mode & the C2 CHECK, the redaction suite \\
-Cross-verifier unlinkability & not implemented & A permanent, documented property & the README states it \\
+Cross-verifier correlation, bounded & \sImpl & Stored handles are per-verifier; a plain presentation still shows stable material & \code{check\_pairwise\_presentation} \\
 Wallet protocol, presentations, QR framing & \sImpl & No native clients, no browser bridge & \code{check\_wallet\_presentation} \\
 Auth broker with registered policy & \sImpl & No session product, no consent screen & \code{check\_auth\_broker}, \code{check\_broker\_policy\_bound} \\
 Federation: roots, attestations, manifests & \sImpl\newline\sExt & Attestations operator-recorded; two instances by one author & \code{check\_federation\_topology}, \code{check\_federation\_two\_instances} \\

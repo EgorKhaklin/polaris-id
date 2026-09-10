@@ -63,18 +63,33 @@ records, in zero-knowledge mode, an event with no token identifier, and keeps no
 row for the online status check. The red edge is the stated limitation: the credential value is a
 stable handle across the verifiers it is shown to.}{fig:holder-flow}
 
-\subsection{The thing that does not exist}
+\subsection{Bounded, not permanent}
 
-Polaris is a full-credential presentation system. A presentation carries a stable \code{token\_value},
-and the login token's subject is the credential's hash. Two relying parties who both see a credential
-can therefore join their logs by that value, with no name required, and nothing in C2 or C6 stops
-them. Even without the value, any stable handle shown to every verifier, a reused public key, a
-reused membership proof, is the same correlator. Polaris does not implement pairwise or per-verifier
-identifiers, blinded or derived presentations, one-time presentation tokens, or anonymous
-credentials, and the repository records this as a permanent, documented property rather than a
-pending feature. \emph{Unlinkable by default} means the issuer's zero-knowledge-mode records. It
-does not mean cross-verifier presentation. The future presentation technologies that would change
-this are discussed in Section~\ref{sec:research}; none is built. \sImpl{} as a stated limitation.
+Polaris is a full-credential presentation system, and until recently the consequence was flat: the
+login token's subject was the credential's hash, the same value at every relying party, so two of
+them could join their user tables exactly and forever without either doing anything wrong. The
+identifier they had been handed was a global one.
+
+That is no longer true, and the honest restatement has two halves. The subject and the presentation
+handle are now derived under the relying party's own scope, so each is stable where an account needs
+it and unrecognisable at the next verifier. Since the subject is the value a relying party
+\emph{writes down}, and written-down values are the ones pooled, sold, subpoenaed and breached, this
+is the half that matters most in practice. \sImpl
+
+The other half is what did not change. A full-credential presentation still shows the verifier a
+stable \code{token\_value}, the issuer's signature and the holder's public key. Two relying parties
+who deliberately keep the raw material can still correlate. So the guarantee is about what a verifier
+should \emph{store}, not about what it is \emph{shown}, and the detached verifier says which it is
+giving: a plain presentation is reported as \code{exposed}, never as unlinkable. Withholding the
+material entirely needs the zero-knowledge path, where the handle is the scoped nullifier and the
+verifier sees no stable credential at all; that presentation is reported as \code{bounded}.
+
+So cross-verifier correlation is bounded rather than permanent. Blinded presentations, one-time
+presentation tokens and anonymous credentials remain unbuilt, and the technologies that would remove
+the remaining exposure are discussed in Section~\ref{sec:research}. \emph{Unlinkable by default}
+still means the issuer's zero-knowledge-mode records, and still does not mean that a verifier
+looking at a full credential learns nothing stable. \sImpl{} for the scoped derivations, with the
+residual exposure stated rather than closed.
 
 \subsection{Bounded surfaces}
 

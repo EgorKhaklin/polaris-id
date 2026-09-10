@@ -5,6 +5,58 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.353 — 2026-09-10 (P9.4: bounded, not permanent)
+
+The login token's subject was `SHA3-256(token_value)`. The same sixty-four
+characters at every relying party in the system. Two of them comparing user
+tables matched people exactly, forever, and neither had to do anything wrong,
+because the identifier they had been handed was a global one. The subject is the
+value a relying party writes down, and written-down values are the ones that get
+pooled, sold, subpoenaed and breached, so this was the correlation handle that
+mattered most in practice.
+
+It is now `SHA3-256("polaris-pairwise/1" || token_value || client_id)`: stable at
+one relying party, so an account still works, and unrecognisable at the next. The
+same derivation gives the presentation layer its handle, from the holder key
+rather than the token value. The wallet emits it under `--verifier-scope`, and
+the verifier recomputes it from the binding it already verified rather than
+trusting the holder for it. A handle with no scope is refused rather than
+globalised, because a value derived from the holder key alone would be a global
+identifier wearing the word pairwise, and a hash of the empty string would key
+every holder to one record.
+
+**The bound, stated rather than glossed.** A full-credential presentation still
+shows the verifier a stable token value, the issuer's signature and the holder's
+public key. Two relying parties who deliberately keep the raw material can still
+correlate. So `verify_presentation` now reports `correlation`, and it has to be
+able to say the unflattering word: `exposed` for a plain credential, `bounded`
+only for the zero-knowledge form, whose handle is P9.3's scoped nullifier and
+which shows the verifier no stable credential at all. The guarantee is about what
+a verifier should store, not about what it is shown. The drill asserts that bound
+as carefully as it asserts the benefit, so nobody reads it for more than it says.
+
+The README, the paper's privacy section and the status ledger said this was a
+permanent, documented property. It is not any more, so they say bounded rather
+than permanent, and the paper is rebuilt and restamped: 56 pages, no overfull
+boxes, no undefined references. The issuer's own records are unchanged
+throughout; this changes what a relying party is told, not what the issuer knows.
+
+Two checks were pinning the old behaviour and now pin the new. `check_auth_broker`
+required the subject to be `sha3_256(token_value)`, which was pinning the defect.
+`check_public_claims_honest` required the flat old sentence, and now requires both
+halves, because either alone misleads: stored handles are per-verifier, and a
+presentation still shows stable material.
+
+**Breaking for relying parties:** every existing account subject changes once. A
+relying party that loses its registration and re-registers gets a new client id,
+and its accounts become strangers. That is the standing cost of not handing out a
+global identifier.
+
+Both SDKs derive the handle identically, pinned by a cross-language anchor.
+`check_pairwise_presentation` with a ten-fixture detection test.
+
+---
+
 ## v9.352 — 2026-09-10 (P9.3: one person, once per scope)
 
 A relying party constantly needs to know whether this person has already claimed

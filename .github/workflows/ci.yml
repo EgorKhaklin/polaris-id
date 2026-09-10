@@ -1623,6 +1623,14 @@ jobs:
       - name: Holder key drill
         run: python scripts/polaris-holder-key-drill.py
 
+      # v9.353 (P9.4) — no value a relying party keys its records by is stable across relying
+      # parties. The login subject and the presentation handle are both scoped to the relying
+      # party. The drill asserts the BOUND as well as the benefit: a plain presentation still
+      # shows a stable token value, so the verdict must report it as exposed, never unlinkable.
+      # No database.
+      - name: Pairwise presentation — per-verifier handles, and the bound stated
+        run: python scripts/polaris-pairwise-drill.py
+
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py
 

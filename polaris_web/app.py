@@ -6916,6 +6916,35 @@ _AUTH_ACR_POSSESSION = 'polaris:possession'
 _AUTH_ACR_ZK = 'polaris:possession+zk'
 
 
+_PAIRWISE_TAG = 'polaris-pairwise/1'
+
+
+def _pairwise_subject(token_value, client_id):
+    """P9.4: the login token's subject, DIFFERENT at every relying party.
+
+    `SHA3-256("polaris-pairwise/1|" || token_value || "|" || client_id)`.
+
+    Before P9.4 the subject was `SHA3-256(token_value)`, identical everywhere. Two relying
+    parties comparing their user tables matched people exactly, forever, without either
+    doing anything wrong: the identifier they were handed was a global one. That is the
+    correlation handle that matters most in practice, because the subject is the value a
+    relying party WRITES DOWN, and stored values are what get pooled, sold, subpoenaed and
+    breached.
+
+    Keyed on `client_id` rather than the `rp_id` serial: the client id is the relying
+    party's own registered identity and survives a restore, while a serial need not. The
+    consequence is the standard one for pairwise subjects and is worth stating plainly: a
+    relying party that loses its registration and re-registers gets a new client id, and
+    every one of its accounts becomes a stranger. That is the cost of not handing out a
+    global identifier, and it is the right side of the trade.
+
+    The issuer's own records are untouched. This changes what a relying party is TOLD, not
+    what the issuer knows.
+    """
+    material = '%s|%s|%s' % (_PAIRWISE_TAG, token_value, client_id)
+    return hashlib.sha3_256(material.encode('utf-8')).hexdigest()
+
+
 def _id_token_statement(body):
     """Canonical bytes the issuing agency signs for an ID token. MUST match
     scripts/polaris-verify.py's _id_token_canonical."""
@@ -7000,7 +7029,7 @@ def api_v1_auth_authorize():
     from datetime import datetime, timezone
     auth_time = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
     code = rp_auth.issue_auth_code(app.secret_key, {
-        'rp': int(rp['rp_id']), 'cid': rp['client_id'], 'sub': hashlib.sha3_256(token_value.encode('utf-8')).hexdigest(),
+        'rp': int(rp['rp_id']), 'cid': rp['client_id'], 'sub': _pairwise_subject(token_value, rp['client_id']),
         'ag': int(row['issuing_agency_id']), 'ctx': context_id, 'dl': disclosure_level, 'acr': acr,
         'enr': enrollment, 'nonce': nonce, 'cc': challenge, 'at': auth_time,
     })

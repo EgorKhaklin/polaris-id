@@ -784,3 +784,48 @@ export function nullifiersLink(a: unknown, b: unknown): boolean {
   if (typeof a !== "string" || typeof b !== "string") return false;
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
+
+// ---------------------------------------------------------------------------
+// P9.4 — the pairwise handle, for a relying party keying its own records.
+// ---------------------------------------------------------------------------
+
+const PAIRWISE_TAG = "polaris-pairwise/1";
+
+/**
+ * The per-verifier handle to key your records by, instead of the token value.
+ *
+ * `SHA3-256("polaris-pairwise/1|" || holderPublicKeyHex || "|" || verifierScope)`.
+ * Recompute it yourself from the holder binding you verified; never take the
+ * holder's word for it.
+ *
+ * What it buys: your stored records cannot be matched against another verifier's.
+ * That is the realistic threat, because stored values are what get pooled, sold,
+ * subpoenaed and breached.
+ *
+ * What it does not buy: a plain presentation still SHOWS you a stable token value,
+ * issuer signature and holder key. Two verifiers who deliberately keep the raw
+ * material can still correlate. Withholding it needs the zero-knowledge path, where
+ * the scoped nullifier is the handle. The detached verifier's `verify_presentation`
+ * reports which of the two applies, under `correlation`; do not assume the stronger.
+ *
+ * Returns null on unusable input rather than the hash of an empty string, which
+ * would collide every holder into one record.
+ */
+export function pairwiseHandle(holderPublicKeyHex: unknown, verifierScope: unknown): string | null {
+  if (typeof holderPublicKeyHex !== "string" || holderPublicKeyHex.trim() === "") return null;
+  if (verifierScope === null || verifierScope === undefined || String(verifierScope).trim() === "") return null;
+  const material = `${PAIRWISE_TAG}|${holderPublicKeyHex.trim().toLowerCase()}|${String(verifierScope).trim()}`;
+  return bytesToHex(sha3_256(new TextEncoder().encode(material)));
+}
+
+/**
+ * Do two pairwise handles name the same holder at the same verifier?
+ *
+ * Exact hex, and only within one scope. Comparing handles across verifiers is
+ * meaningless: the values are uncorrelated by construction, so a `false` cannot be
+ * read as "different person". Across scopes the honest answer is that you cannot tell.
+ */
+export function handlesLink(a: unknown, b: unknown): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}

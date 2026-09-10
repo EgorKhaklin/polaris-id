@@ -22,7 +22,21 @@ def _zk_binary():
             or os.path.join(_ROOT, "polaris_zk", "target", "release", "polaris-zk"))
 
 
-def _leaf_seed(token_id, token_value, context_id):
+def _leaf(binary, token_id, token_value, context_id):
+    """The published epoch leaf for a member: Poseidon(secret || context_id).
+
+    Since P9.3 the leaf is a commitment the circuit opens, so a test cannot build an epoch
+    out of bare SHA3-256 seeds any more: the prover would hold a secret that opens nothing.
+    """
+    secret = _holder_secret(token_id, token_value, context_id)
+    out = subprocess.run([binary, "leaf"],
+                         input=json.dumps({"secret_hex": secret, "context_id": context_id}),
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)["leaf_hex"]
+
+
+def _holder_secret(token_id, token_value, context_id):
     return hashlib.sha3_256(("%s|%s|%s" % (token_id, token_value, context_id)).encode()).hexdigest()
 
 
@@ -83,8 +97,8 @@ class HolderWalletTests(unittest.TestCase):
         if not os.path.exists(binary):
             self.skipTest("polaris-zk binary not built")
         self._enroll()
-        mine = _leaf_seed(42, "WALLET-TEST-TOKEN-0001", 1)
-        others = [_leaf_seed(i, "OTHER-%d" % i, 1) for i in range(3)]
+        mine = _leaf(binary, 42, "WALLET-TEST-TOKEN-0001", 1)
+        others = [_leaf(binary, i, "OTHER-%d" % i, 1) for i in range(3)]
         epoch = os.path.join(self.dir, "epoch.json")
         with open(epoch, "w") as f:
             json.dump({"epoch_id": 7, "context_id": 1, "nonce": 0,
@@ -99,9 +113,47 @@ class HolderWalletTests(unittest.TestCase):
         self.assertEqual(v.returncode, 0, v.stderr)
         self.assertTrue(json.loads(v.stdout)["verified"], "the wallet's membership proof did not verify")
 
-    def test_prove_membership_refuses_non_member(self):
+    def test_prove_membership_carries_a_scoped_nullifier(self):
+        # P9.3 through the wallet: proving to one relying party twice yields the same
+        # nullifier, so it can refuse the repeat; proving to another yields a value the two
+        # cannot correlate. The holder never asks the issuer for either.
+        binary = _zk_binary()
+        if not os.path.exists(binary):
+            self.skipTest("polaris-zk binary not built")
         self._enroll()
-        others = [_leaf_seed(i, "OTHER-%d" % i, 1) for i in range(3)]
+        mine = _leaf(binary, 42, "WALLET-TEST-TOKEN-0001", 1)
+        others = [_leaf(binary, i, "OTHER-%d" % i, 1) for i in range(3)]
+        epoch = os.path.join(self.dir, "epoch.json")
+        with open(epoch, "w") as f:
+            json.dump({"epoch_id": 7, "context_id": 1, "nonce": 0,
+                       "all_leaves_hex": [others[0], mine, others[1], others[2]]}, f)
+
+        def prove(scope, name):
+            out = os.path.join(self.dir, name)
+            r = self._run("prove-membership", "--epoch", epoch, "--scope", str(scope), "--out", out)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(out) as fh:
+                return json.load(fh)
+
+        at_a, at_a_again = prove(1001, "a1.json"), prove(1001, "a2.json")
+        at_b = prove(2002, "b.json")
+        self.assertEqual(at_a["public_inputs"]["nullifier_hex"],
+                         at_a_again["public_inputs"]["nullifier_hex"],
+                         "one relying party must recognise a second proof from the same holder")
+        self.assertNotEqual(at_a["public_inputs"]["nullifier_hex"],
+                            at_b["public_inputs"]["nullifier_hex"],
+                            "two relying parties must not see the same value for one holder")
+        for bundle in (at_a, at_b):
+            v = subprocess.run([binary, "verify"], input=json.dumps(bundle),
+                               capture_output=True, text=True)
+            self.assertTrue(json.loads(v.stdout)["verified"])
+
+    def test_prove_membership_refuses_non_member(self):
+        binary = _zk_binary()
+        if not os.path.exists(binary):
+            self.skipTest("polaris-zk binary not built")
+        self._enroll()
+        others = [_leaf(binary, i, "OTHER-%d" % i, 1) for i in range(3)]
         epoch = os.path.join(self.dir, "epoch_non.json")
         with open(epoch, "w") as f:
             json.dump({"epoch_id": 7, "context_id": 1, "nonce": 0, "all_leaves_hex": others}, f)

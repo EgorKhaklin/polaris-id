@@ -52,12 +52,29 @@ def _load_verifier():
     return m
 
 
-def _leaf_seed(token_id, token_value, context_id):
-    """The holder's epoch leaf seed — the SAME derivation the issuer uses:
-    SHA3-256("{token_id}|{token_value}|{context_id}")."""
+def _holder_secret(token_id, token_value, context_id):
+    """The holder's per-context SECRET — the SAME derivation the issuer uses:
+    SHA3-256("{token_id}|{token_value}|{context_id}").
+
+    Since P9.3 this is the secret, not the published leaf. The leaf is its Poseidon
+    commitment, which the circuit opens; the secret never leaves this device."""
     h = hashlib.sha3_256()
     h.update(("%s|%s|%s" % (token_id, token_value, context_id)).encode("utf-8"))
     return h.hexdigest()
+
+
+def _leaf_commitment(binary, secret_hex, context_id):
+    """The published epoch leaf: Poseidon(secret || context_id), via the polaris-zk binary.
+
+    Computed rather than looked up, so the holder finds their OWN leaf in the published set
+    locally and never has to ask the issuer which member they are."""
+    proc = subprocess.run([binary, "leaf"],
+                          input=json.dumps({"secret_hex": secret_hex, "context_id": int(context_id)}),
+                          capture_output=True, text=True, timeout=60)
+    if proc.returncode != 0:
+        raise SystemExit("could not derive the leaf commitment: %s"
+                         % (proc.stderr.strip() or proc.returncode))
+    return json.loads(proc.stdout)["leaf_hex"]
 
 
 def _wallet_dir(args):
@@ -179,6 +196,21 @@ def cmd_present(args):
         if os.path.isfile(binding_path):
             with open(binding_path) as f:
                 presentation["holder_binding"] = json.load(f)
+    # P9.4: the handle this relying party should key its records by. Emitted only when the
+    # holder names the verifier, because a handle without a scope is a global identifier
+    # again, which is the thing being removed. The verifier RECOMPUTES it from the binding
+    # it verified, so putting it here is a convenience, never something it has to trust.
+    if getattr(args, "verifier_scope", None):
+        binding_path = os.path.join(wallet, "holder_binding.json")
+        holder_key = None
+        if os.path.isfile(binding_path):
+            with open(binding_path) as f:
+                holder_key = (json.load(f) or {}).get("holder_public_key_hex")
+        V = _load_verifier()
+        handle = V.pairwise_handle(holder_key or pack.get("token_value"), args.verifier_scope)
+        if handle:
+            presentation["verifier_scope"] = args.verifier_scope
+            presentation["pairwise_handle"] = handle
     if getattr(args, "context", None) is not None:
         presentation["context_id"] = args.context
     if getattr(args, "disclosure_level", None):
@@ -378,17 +410,22 @@ def cmd_prove_membership(args):
     token_value = pack.get("token_value")
     if token_id is None or token_value is None:
         raise SystemExit("the held credential lacks token_id/token_value; cannot derive the leaf")
-    seed = _leaf_seed(token_id, token_value, context_id)
-    if seed not in all_leaves:
-        raise SystemExit("this credential is not a member of that epoch/context (its leaf seed is "
-                         "not in the published set) — nothing to prove")
-    leaf_index = all_leaves.index(seed)
     binary = _zk_binary(args)
     if not os.path.exists(binary):
         raise SystemExit("the polaris-zk binary is not built at %s (build it, or set "
                          "POLARIS_ZK_BINARY / --zk-binary)" % binary)
-    payload = {"leaf_seed_hex": seed, "leaf_index": leaf_index, "all_leaves_hex": all_leaves,
-               "epoch_id": int(epoch_id), "context_id": int(context_id), "nonce": int(nonce)}
+    secret = _holder_secret(token_id, token_value, context_id)
+    leaf = _leaf_commitment(binary, secret, context_id)
+    if leaf not in all_leaves:
+        raise SystemExit("this credential is not a member of that epoch/context (its leaf "
+                         "commitment is not in the published set) — nothing to prove")
+    leaf_index = all_leaves.index(leaf)
+    # P9.3: the SECRET goes to the prover, never the leaf. The circuit opens
+    # Poseidon(secret || context_id) into the leaf and derives the scoped nullifier from the
+    # same secret, which is what makes the nullifier mean anything.
+    payload = {"secret_hex": secret, "leaf_index": leaf_index, "all_leaves_hex": all_leaves,
+               "epoch_id": int(epoch_id), "context_id": int(context_id), "nonce": int(nonce),
+               "scope": int(getattr(args, "scope", None) or 0)}
     try:
         proc = subprocess.run([binary, "prove"], input=json.dumps(payload),
                               capture_output=True, text=True, timeout=600)
@@ -434,6 +471,7 @@ def main(argv=None):
     p.add_argument("--qr", action="store_true", help="emit polaris-qr/1 frames (one per line) for QR/NFC transfer instead of JSON")
     p.add_argument("--frame-bytes", type=int, default=1800, help="maximum bytes per QR frame (default 1800)")
     p.add_argument("--holder-nonce", help="prove possession of the holder key against this verifier-issued nonce (P9.1)")
+    p.add_argument("--verifier-scope", help="the relying party this presentation is for; emits a per-verifier pairwise handle it should key its records by instead of the token value (P9.4)")
     p.add_argument("--out", help="write to a file instead of stdout")
     p.set_defaults(fn=cmd_present)
 
@@ -446,6 +484,10 @@ def main(argv=None):
 
     p = sub.add_parser("prove-membership", help="produce a ZK membership proof for a published epoch")
     p.add_argument("--epoch", help="the published epoch bundle (all_leaves_hex, epoch_id, context_id)")
+    p.add_argument("--scope", type=int, default=0,
+                   help="the relying party's scope (P9.3): the proof carries a nullifier under it, so "
+                        "that verifier can refuse a second proof from you without learning who you are, "
+                        "and another verifier cannot correlate it with yours")
     p.add_argument("--from-instance", help="fetch the signed anonymity set from an instance and prove locally (P9.2)")
     p.add_argument("--epoch-id", type=int, help="which epoch to fetch with --from-instance")
     p.add_argument("--context", type=int, help="context id (if not in the epoch bundle)")

@@ -2860,6 +2860,59 @@ def _load_anchor(path):
 # base64url-encoded and split into digest-tied frames (polaris-qr/1); a receiver rejects mixed,
 # missing or altered frames before it ever parses the payload.
 _PRESENTATION_FORMAT = "polaris-presentation/1"
+
+# P9.4: the pairwise handle. The domain tag is inside the hash so a handle cannot be
+# confused with any other SHA3-256 value in the protocol, and so a future construction
+# can be told apart from this one by its tag rather than by its length.
+_PAIRWISE_TAG = "polaris-pairwise/1"
+
+
+def pairwise_handle(holder_public_key_hex, verifier_scope):
+    """The per-verifier handle a relying party should key its records by.
+
+    `SHA3-256("polaris-pairwise/1|" || holder_public_key_hex || "|" || verifier_scope)`.
+
+    The holder computes it and the verifier RECOMPUTES it from the holder binding it has
+    already verified, so it is not something the holder can choose. The same holder at the
+    same verifier gets the same handle, which is what makes an account work; at a different
+    verifier the value is unrecognisable.
+
+    What this does and does not buy, stated exactly, because the difference matters:
+
+    A verifier that stores the handle instead of the token value cannot pool its records
+    with another verifier and match people. That is the realistic threat, since it is the
+    stored key that gets shared, sold, subpoenaed or breached.
+
+    It does NOT hide the raw credential from a verifier that is looking at it. A plain
+    presentation carries the token value, the issuer's signature and the holder's public
+    key, each stable across verifiers, so two verifiers who deliberately keep the raw
+    material can still correlate. Withholding the raw material needs the ZK path, where the
+    scoped nullifier (P9.3) is the handle and the verifier sees no stable value at all.
+    verify_presentation reports which of the two a given presentation gives, under
+    `correlation`, rather than letting a caller assume the stronger one.
+
+    Returns None on input it cannot use, because a verifier must not silently key its
+    records on the hash of an empty string, which would collide every holder into one.
+    """
+    if not isinstance(holder_public_key_hex, str) or not holder_public_key_hex.strip():
+        return None
+    if verifier_scope is None or not str(verifier_scope).strip():
+        return None
+    material = "%s|%s|%s" % (_PAIRWISE_TAG, holder_public_key_hex.strip().lower(),
+                             str(verifier_scope).strip())
+    return hashlib.sha3_256(material.encode("utf-8")).hexdigest()
+
+
+def handles_link(a, b):
+    """Do two pairwise handles name the same holder at the same verifier?
+
+    Exact match on lowercase hex. As with a nullifier, comparing handles ACROSS verifiers
+    is meaningless: the values are uncorrelated by construction, so a False cannot be read
+    as "different person". The honest answer across scopes is that you cannot tell.
+    """
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    return a.strip().lower() == b.strip().lower()
 _QR_FORMAT = "polaris-qr/1"
 _QR_PREFIX = "PLRS1"
 QR_FRAME_BYTES = 1800   # a QR version-40 byte-mode frame holds 2953; 1800 leaves margin for any encoder
@@ -3192,7 +3245,7 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
 
 
 def verify_presentation(presentation, anchor_keys=None, now=None, max_window_seconds=None, expected_context=None,
-                        expected_nonce=None, require_holder_proof=False):
+                        expected_nonce=None, require_holder_proof=False, verifier_scope=None):
     """Decide a presentation OFFLINE (P8.6): the credential's authenticity (and, with anchor
     keys, issuer trust); the stapled status assertion's authenticity, freshness, ACTIVE status
     and BINDING to this credential (same token, same issuer key); the context, if the verifier
@@ -3207,6 +3260,9 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
                     "binding_fresh": None, "proof_authentic": None, "key_matches_binding": None,
                     "nonce_matches": None, "proved": None},
          "zk_present": False, "presented_code_present": False, "context_matches": None,
+         # P9.4: what this verifier should key its records by, and what correlation the
+         # presentation actually permits. Both None when no scope was supplied.
+         "pairwise_handle": None, "correlation": None,
          "usable_offline": False, "note": None}
     if not isinstance(presentation, dict) or presentation.get("format") != _PRESENTATION_FORMAT:
         v["note"] = "not a %s" % _PRESENTATION_FORMAT
@@ -3220,6 +3276,7 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
     v["zk_present"] = isinstance(presentation.get("zk_proof"), dict)
     if expected_context is not None:
         v["context_matches"] = (presentation.get("context_id") == expected_context)
+    H_binding_key = None
     sa = presentation.get("status_assertion")
     S = v["status"]
     if isinstance(sa, dict):
@@ -3242,6 +3299,7 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
         H["binding_authentic"] = bv["binding_authentic"]
         H["bound_to_credential"] = bv["bound_to_credential"]
         H["binding_fresh"] = bv["fresh"]
+        H_binding_key = bv["holder_public_key_hex"] if bv["binding_authentic"] else None
         pv2 = verify_holder_proof(proof, binding=binding if bv["binding_authentic"] else None,
                                   expected_nonce=expected_nonce, expected_context=expected_context, now=now)
         H["proof_authentic"] = pv2["proof_authentic"]
@@ -3251,6 +3309,26 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
                            and pv2["proof_authentic"] and pv2["fresh"]
                            and pv2["key_matches_binding"] and pv2["nonce_matches"] is not False
                            and pv2["context_matches"] is not False)
+    # P9.4: the handle this verifier should key its records by, and an honest word for the
+    # correlation the presentation actually permits.
+    if verifier_scope is not None:
+        zk_pi = (presentation.get("zk_proof") or {}).get("public_inputs") \
+            if isinstance(presentation.get("zk_proof"), dict) else None
+        zk_nullifier = str((zk_pi or {}).get("nullifier_hex") or "").lower() or None
+        if zk_nullifier:
+            # The strong form: the verifier holds a value derived under its own scope from a
+            # secret it never sees, and the presentation showed it no stable credential.
+            v["pairwise_handle"] = zk_nullifier
+            v["correlation"] = "bounded"
+        else:
+            # The weaker, honest form. Keying records on this handle still stops two verifiers
+            # matching people by comparing STORED records, which is the realistic threat. It
+            # does not stop two verifiers who keep the raw presentation from correlating on
+            # the token value, the issuer signature or the holder key, each of which this
+            # presentation showed them.
+            v["pairwise_handle"] = pairwise_handle(
+                (H_binding_key if H["present"] else None) or v["token_value"], verifier_scope)
+            v["correlation"] = "exposed"
     v["usable_offline"] = bool(v["credential_authentic"] and v["issuer_trusted"] is not False
                                and S["present"] and S["authentic"] and S["fresh"] and S["active"] and S["bound"]
                                and v["context_matches"] is not False

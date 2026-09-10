@@ -799,3 +799,52 @@ def nullifiers_link(a, b) -> bool:
     if not isinstance(a, str) or not isinstance(b, str):
         return False
     return a.strip().lower() == b.strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# P9.4 — the pairwise handle, for a relying party keying its own records.
+# ---------------------------------------------------------------------------
+
+_PAIRWISE_TAG = "polaris-pairwise/1"
+
+
+def pairwise_handle(holder_public_key_hex, verifier_scope):
+    """The per-verifier handle to key your records by, instead of the token value.
+
+    `SHA3-256("polaris-pairwise/1|" || holder_public_key_hex || "|" || verifier_scope)`.
+    Recompute it yourself from the holder binding you verified; never take the holder's
+    word for it.
+
+    What it buys: your stored records cannot be matched against another verifier's. That
+    is the realistic threat, because stored values are what get pooled, sold, subpoenaed
+    and breached.
+
+    What it does not buy: a plain presentation still SHOWS you a stable token value,
+    issuer signature and holder key. Two verifiers who deliberately keep the raw material
+    can still correlate. Withholding it needs the zero-knowledge path, where the scoped
+    nullifier is the handle. `verify_presentation` in the detached verifier reports which
+    of the two applies, under `correlation`; do not assume the stronger one.
+
+    Returns None on unusable input rather than the hash of an empty string, which would
+    collide every holder into one record.
+    """
+    import hashlib as _h
+    if not isinstance(holder_public_key_hex, str) or not holder_public_key_hex.strip():
+        return None
+    if verifier_scope is None or not str(verifier_scope).strip():
+        return None
+    material = "%s|%s|%s" % (_PAIRWISE_TAG, holder_public_key_hex.strip().lower(),
+                             str(verifier_scope).strip())
+    return _h.sha3_256(material.encode("utf-8")).hexdigest()
+
+
+def handles_link(a, b) -> bool:
+    """Do two pairwise handles name the same holder at the same verifier?
+
+    Exact hex, and only within one scope. Comparing handles across verifiers is
+    meaningless: the values are uncorrelated by construction, so a False cannot be read as
+    "different person". Across scopes the honest answer is that you cannot tell.
+    """
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    return a.strip().lower() == b.strip().lower()
