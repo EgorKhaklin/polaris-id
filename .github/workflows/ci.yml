@@ -214,6 +214,15 @@ jobs:
       - name: Cross-authority ZK — a foreign proof decided offline
         run: python scripts/polaris-cross-authority-zk-drill.py
 
+      # v9.352 (P9.3) — one person, once per scope. Against the real Plonky2 circuit: a
+      # second proof from the same member in one relying party's scope and epoch carries the
+      # same nullifier and is refused, while the same member at a second relying party
+      # presents a value the two cannot correlate. Also proves the construction underneath,
+      # that the epoch leaf is a Poseidon commitment the circuit opens, by showing a member
+      # cannot prove against another member's leaf. No database.
+      - name: Scoped nullifier — one human once per scope, uncorrelated across scopes
+        run: python scripts/polaris-scoped-nullifier-drill.py
+
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
           COVERAGE_FLOOR: "72"

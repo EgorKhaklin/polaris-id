@@ -3104,16 +3104,18 @@ class ZKSnarkTests(PolarisTestCase):
 
     def test_honest_prover_passes(self):
         import zk
-        leaves = [zk.derive_leaf_seed(i, f'T{i}', 1) for i in range(4)]
-        bundle = zk.generate_proof(leaves[2], 2, leaves,
+        secrets = [zk.derive_holder_secret(i, f'T{i}', 1) for i in range(4)]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        bundle = zk.generate_proof(secrets[2], 2, leaves,
                                    epoch_id=1, context_id=1, nonce=99)
         root = bundle['public_inputs']['epoch_root_hex']
         self.assertTrue(zk.verify_proof_against_epoch(bundle, root, 1, 1, 99))
 
     def test_replay_with_wrong_nonce_fails(self):
         import zk
-        leaves = [zk.derive_leaf_seed(i, f'T{i}', 1) for i in range(4)]
-        bundle = zk.generate_proof(leaves[0], 0, leaves,
+        secrets = [zk.derive_holder_secret(i, f'T{i}', 1) for i in range(4)]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        bundle = zk.generate_proof(secrets[0], 0, leaves,
                                    epoch_id=1, context_id=1, nonce=42)
         root = bundle['public_inputs']['epoch_root_hex']
         # Verifier expects nonce=43; proof's nonce is 42. Must reject.
@@ -3121,8 +3123,9 @@ class ZKSnarkTests(PolarisTestCase):
 
     def test_cross_epoch_proof_fails(self):
         import zk
-        leaves = [zk.derive_leaf_seed(i, f'T{i}', 1) for i in range(4)]
-        bundle = zk.generate_proof(leaves[1], 1, leaves,
+        secrets = [zk.derive_holder_secret(i, f'T{i}', 1) for i in range(4)]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        bundle = zk.generate_proof(secrets[1], 1, leaves,
                                    epoch_id=7, context_id=1, nonce=10)
         root = bundle['public_inputs']['epoch_root_hex']
         # Verifier expects epoch_id=8; proof is for epoch_id=7.
@@ -3130,19 +3133,82 @@ class ZKSnarkTests(PolarisTestCase):
 
     def test_cross_context_proof_fails(self):
         import zk
-        leaves = [zk.derive_leaf_seed(i, f'T{i}', 1) for i in range(4)]
-        bundle = zk.generate_proof(leaves[2], 2, leaves,
+        secrets = [zk.derive_holder_secret(i, f'T{i}', 1) for i in range(4)]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        bundle = zk.generate_proof(secrets[2], 2, leaves,
                                    epoch_id=1, context_id=1, nonce=5)
         root = bundle['public_inputs']['epoch_root_hex']
         self.assertFalse(zk.verify_proof_against_epoch(bundle, root, 1, 2, 5))
 
     def test_wrong_root_fails(self):
         import zk
-        leaves = [zk.derive_leaf_seed(i, f'T{i}', 1) for i in range(4)]
-        bundle = zk.generate_proof(leaves[0], 0, leaves,
+        secrets = [zk.derive_holder_secret(i, f'T{i}', 1) for i in range(4)]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        bundle = zk.generate_proof(secrets[0], 0, leaves,
                                    epoch_id=1, context_id=1, nonce=1)
         wrong_root = "0" * 64
         self.assertFalse(zk.verify_proof_against_epoch(bundle, wrong_root, 1, 1, 1))
+
+    def test_leaf_is_a_poseidon_commitment_the_circuit_opens(self):
+        # P9.3: the published leaf is Poseidon(secret || context), not the raw
+        # SHA3-256 secret. If these were ever equal again the circuit would be
+        # back to treating the leaf as opaque, and the nullifier below would
+        # prove nothing about who is presenting it.
+        import zk
+        secret = zk.derive_holder_secret(2, 'TKN-X', 1)
+        leaf = zk.derive_leaf_commitment(secret, 1)
+        self.assertNotEqual(secret, leaf)
+        self.assertEqual(leaf, zk.derive_leaf_seed(2, 'TKN-X', 1))
+
+    def test_one_person_once_per_scope(self):
+        # A relying party sees the same nullifier when the same member proves
+        # twice under a fresh nonce, so it can refuse the second.
+        import zk
+        secrets = [zk.derive_holder_secret(i, f'T{i}', 1) for i in range(4)]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        first = zk.generate_proof(secrets[2], 2, leaves, epoch_id=1, context_id=1,
+                                  nonce=99, scope=1001)
+        second = zk.generate_proof(secrets[2], 2, leaves, epoch_id=1, context_id=1,
+                                   nonce=100, scope=1001)
+        self.assertEqual(first['public_inputs']['nullifier_hex'],
+                         second['public_inputs']['nullifier_hex'])
+        self.assertNotEqual(first['proof_hex'], second['proof_hex'])
+
+    def test_two_verifiers_cannot_link_one_person(self):
+        # The same member at two relying parties yields uncorrelated values.
+        import zk
+        secrets = [zk.derive_holder_secret(i, f'T{i}', 1) for i in range(4)]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        at_a = zk.generate_proof(secrets[2], 2, leaves, epoch_id=1, context_id=1,
+                                 nonce=99, scope=1001)
+        at_b = zk.generate_proof(secrets[2], 2, leaves, epoch_id=1, context_id=1,
+                                 nonce=99, scope=2002)
+        self.assertNotEqual(at_a['public_inputs']['nullifier_hex'],
+                            at_b['public_inputs']['nullifier_hex'])
+        self.assertTrue(zk.verify_proof(at_a) and zk.verify_proof(at_b))
+
+    def test_the_nullifier_matches_the_independent_witness(self):
+        # The app derives the nullifier through the Rust binary; the Python
+        # second witness derives it from the specification. They must agree, or
+        # a relying party's one-person-once rule stops matching the same person.
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'polaris_zk'))
+        from witness2.commitment import nullifier as witness_nullifier
+        import zk
+        secret = zk.derive_holder_secret(3, 'TKN-N', 1)
+        self.assertEqual(zk.derive_nullifier(secret, 1001, 7),
+                         witness_nullifier(secret, 1001, 7))
+
+    def test_a_stranger_cannot_prove_against_a_members_leaf(self):
+        # The leaf is a commitment the circuit opens, so a secret that does not
+        # open it is refused at the prover rather than proved opaquely.
+        import zk
+        secrets = [zk.derive_holder_secret(i, f'T{i}', 1) for i in range(4)]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        with self.assertRaises(Exception) as ctx:
+            zk.generate_proof('ab' * 32, 2, leaves, epoch_id=1, context_id=1, nonce=9)
+        self.assertIn('does not open leaf', str(ctx.exception))
 
     # ------------------------------------------------------------------
     # Schema-layer assertions
@@ -3185,13 +3251,14 @@ class ZKSnarkTests(PolarisTestCase):
             cur.execute("SELECT merkle_root FROM TokenStateEpoch WHERE epoch_id = 1")
             schema_root = cur.fetchone()['merkle_root']
 
-        leaves = [zk.derive_leaf_seed(t['token_id'], t['token_value'], 1) for t in tokens]
+        secrets = [zk.derive_holder_secret(t['token_id'], t['token_value'], 1) for t in tokens]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
         computed_root = zk.compute_epoch_root(leaves)
         self.assertEqual(schema_root, computed_root,
             'Schema-stored epoch root must match Python-recomputed root')
 
         # Prove + verify for one leaf
-        bundle = zk.generate_proof(leaves[0], 0, leaves,
+        bundle = zk.generate_proof(secrets[0], 0, leaves,
                                    epoch_id=1, context_id=1, nonce=314)
         self.assertTrue(zk.verify_proof_against_epoch(
             bundle, schema_root, 1, 1, 314))
@@ -3300,8 +3367,9 @@ class ZKSnarkTests(PolarisTestCase):
                 "WHERE t.status='ACTIVE' AND p.context_id=1 ORDER BY t.token_id")
             tokens = cur.fetchall()
 
-        leaves = [zk.derive_leaf_seed(t['token_id'], t['token_value'], 1) for t in tokens]
-        bundle = zk.generate_proof(leaves[1], 1, leaves,
+        secrets = [zk.derive_holder_secret(t['token_id'], t['token_value'], 1) for t in tokens]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        bundle = zk.generate_proof(secrets[1], 1, leaves,
                                    epoch_id=1, context_id=1, nonce=777)
 
         csrf = self._csrf_token_from('/verifications/new')
@@ -3327,8 +3395,9 @@ class ZKSnarkTests(PolarisTestCase):
                 "JOIN TokenPermission p ON p.token_id=t.token_id "
                 "WHERE t.status='ACTIVE' AND p.context_id=1 ORDER BY t.token_id")
             tokens = cur.fetchall()
-        leaves = [zk.derive_leaf_seed(t['token_id'], t['token_value'], 1) for t in tokens]
-        bundle = zk.generate_proof(leaves[1], 1, leaves,
+        secrets = [zk.derive_holder_secret(t['token_id'], t['token_value'], 1) for t in tokens]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        bundle = zk.generate_proof(secrets[1], 1, leaves,
                                    epoch_id=1, context_id=1, nonce=909090)
 
         csrf = self._csrf_token_from('/verifications/new')
@@ -3365,8 +3434,9 @@ class ZKSnarkTests(PolarisTestCase):
                 "WHERE t.status='ACTIVE' AND p.context_id=1 ORDER BY t.token_id")
             tokens = cur.fetchall()
 
-        leaves = [zk.derive_leaf_seed(t['token_id'], t['token_value'], 1) for t in tokens]
-        bundle = zk.generate_proof(leaves[0], 0, leaves,
+        secrets = [zk.derive_holder_secret(t['token_id'], t['token_value'], 1) for t in tokens]
+        leaves = [zk.derive_leaf_commitment(s, 1) for s in secrets]
+        bundle = zk.generate_proof(secrets[0], 0, leaves,
                                    epoch_id=1, context_id=1, nonce=100)
 
         csrf = self._csrf_token_from('/verifications/new')

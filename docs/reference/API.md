@@ -1610,7 +1610,9 @@ write-up.
 
 Closes a ZK epoch: snapshots currently-valid `ACTIVE` tokens with
 their `TokenPermission` for the given context, derives per-token
-leaf seeds, computes the Merkle root via the Rust prover, and
+leaf commitments (`Poseidon(secret || context_id)`, which the circuit
+opens; see `docs/design/zk-snark.md`), computes the Merkle root via
+the Rust prover, and
 calls `uc11_close_epoch` (per-procedure advisory lock: 6th catalog
 entry; v8.23).
 

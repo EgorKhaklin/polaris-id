@@ -40,20 +40,74 @@ Public inputs, which the verifier sees:
   epoch_id    one field element
   context_id  one field element
   nonce       one field element
+  scope       one field element: the relying party's domain separator
+  nullifier   four field elements: Poseidon(secret || scope || epoch_id)
 
 Private inputs, which only the prover holds:
-  leaf        four field elements: the prover's leaf seed
+  secret      four field elements: the holder's per-context secret
   proof_path  the sibling hashes, one per level
   index_bits  the leaf's position, as booleans
 
-The constraint: hashing the leaf up the path, in the order the index
-bits give, must produce the public root.
+The constraints:
+  1. leaf = Poseidon(secret || context_id)
+  2. hashing that leaf up the path, in the order the index bits give,
+     must produce the public root
+  3. nullifier = Poseidon(secret || scope || epoch_id), the SAME secret
 ```
 
-The epoch, context and nonce are registered as public inputs rather than
+The epoch, context, nonce and scope are registered as public inputs rather than
 constrained arithmetically. That binds the proof to them by commitment: a
-proof made for one triple cannot be presented under another, because the
+proof made for one tuple cannot be presented under another, because the
 verifier checks the proof's public inputs against what it expected.
+
+## The leaf is a commitment the circuit opens
+
+Constraint 1 is newer than the rest and it is what makes constraint 3 mean
+anything. The leaf used to be `SHA3-256(token_id | token_value | context_id)`,
+computed outside the circuit and handed in as an opaque private value. A
+nullifier beside an opaque leaf proves only that the prover knows some number:
+nothing ties the two to one secret, so a prover could pair any member's leaf
+with a nullifier of their own choosing.
+
+Verifying a SHA3-256 preimage inside a circuit costs thousands of constraints.
+Poseidon costs about a hundred. So the leaf moved to Poseidon and the circuit
+opens it, which is what lets constraint 3 name the same secret as constraint 1.
+
+The SHA3-256 derivation did not disappear; it became the **secret**, which the
+holder derives from the credential they hold and the issuer derives at
+issuance. The epoch publishes the commitment.
+
+The change is not backward compatible. An epoch closed under the old derivation
+holds leaves the current circuit cannot open, and its proofs do not verify
+against the current verifier. Epochs are re-closed rather than migrated.
+
+## One person, once per scope
+
+The nullifier answers a question a relying party asks constantly and a
+credential system usually answers badly: *has this person already claimed
+here?* The usual answer is an account, which is an identifier, which is a
+lifelong correlation handle. The nullifier answers it without one.
+
+Within one relying party's scope and one epoch, a member's nullifier is
+constant, so a second proof is recognisable as a repeat and can be refused.
+Across two relying parties, the values are uncorrelated: distinguishing them
+needs the secret, which neither has. So each can enforce its own rule and the
+two learn nothing by pooling their ledgers.
+
+Two bounds, stated because they are easy to overclaim:
+
+- **It does not hide the holder from the issuer.** The issuer derives every
+  member's secret in order to build the epoch tree, so it could compute any
+  member's nullifier in any scope. The property is between relying parties.
+  Issuer-blind derivation is a different construction and is not claimed.
+- **It resets each epoch.** That is deliberate. A nullifier that persisted
+  across epochs would be a permanent pseudonym, which is the thing being
+  avoided. A relying party's ledger should be keyed by (its scope, epoch) and
+  should not outlive the epoch.
+
+Both SDKs carry the comparison rule (`nullifiers_link` / `nullifiersLink`)
+because it is easy to get wrong by hand: exact hex only, never across scopes,
+never across epochs.
 
 That prevents substituting a captured proof into a different context. It does
 not by itself prevent replaying the identical request, because the verification
@@ -82,7 +136,8 @@ is a process rather than a foreign function interface:
 - `polaris_zk/` is the crate, built against a pinned nightly toolchain, and
   produces one binary.
 - `polaris_web/zk.py` shells out to it with JSON on stdin and stdout.
-- The subcommands are `compute-root`, `compute-leaves`, `prove` and `verify`.
+- The subcommands are `compute-root`, `compute-leaves`, `leaf`, `nullifier`,
+  `prove` and `verify`.
 
 The cost is process spawn per call and a build step in deployment; the
 production image compiles the binary once and ships it. The benefit is that no

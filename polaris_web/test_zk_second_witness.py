@@ -72,29 +72,45 @@ def _rust_verify(bundle: dict) -> bool:
     return bool(out["verified"])
 
 
-def _make_leaves(n: int, salt: int = 0) -> list[str]:
-    leaves = []
+def _make_secrets(n: int, salt: int = 0) -> list[str]:
+    """n distinct holder secrets. Since P9.3 a test cannot invent leaves directly:
+    a leaf is Poseidon(secret || context_id) and the circuit opens it, so the
+    secret is the thing a prover actually holds."""
+    secrets = []
     for i in range(n):
         b = bytearray(32)
         b[0:8] = ((i + 1) * 0x1001 + salt).to_bytes(8, "little")
         b[8:16] = (salt * 7 + 3).to_bytes(8, "little")
-        leaves.append(b.hex())
+        secrets.append(b.hex())
+    return secrets
+
+
+def _make_leaves(secrets: list[str], ctx: int) -> list[str]:
+    """The published epoch leaves for those secrets, via the Rust binary."""
+    leaves = []
+    for s in secrets:
+        rc, out, err = _rust("leaf", {"secret_hex": s, "context_id": ctx})
+        assert rc == 0 and out is not None, f"leaf failed: {err}"
+        leaves.append(out["leaf_hex"])
     return leaves
 
 
-def _honest_case(n: int, leaf_index: int, epoch: int, ctx: int, nonce: int) -> dict:
+def _honest_case(n: int, leaf_index: int, epoch: int, ctx: int, nonce: int,
+                 scope: int = 0) -> dict:
     """Produce an honest proof + the ground-truth witness needed by the Python
     second witness (the inclusion path and the committed public inputs)."""
-    leaves = _make_leaves(n, salt=epoch)
+    secrets = _make_secrets(n, salt=epoch)
+    leaves = _make_leaves(secrets, ctx)
     rc, bundle, err = _rust(
         "prove",
         {
-            "leaf_seed_hex": leaves[leaf_index],
+            "secret_hex": secrets[leaf_index],
             "leaf_index": leaf_index,
             "all_leaves_hex": leaves,
             "epoch_id": epoch,
             "context_id": ctx,
             "nonce": nonce,
+            "scope": scope,
         },
     )
     assert rc == 0 and bundle is not None, f"prove failed: {err}"
@@ -109,6 +125,9 @@ def _honest_case(n: int, leaf_index: int, epoch: int, ctx: int, nonce: int) -> d
             "leaf_hash": entry["leaf_hash"],
             "leaf_index": leaf_index,
             "proof_path": entry["proof_path"],
+            # P9.3: the secret lets the second witness RE-DERIVE the leaf and the
+            # nullifier instead of taking the bundle's word for either.
+            "secret_hex": secrets[leaf_index],
         },
         "committed": dict(bundle["public_inputs"]),  # the proof's true public inputs
     }
@@ -207,10 +226,85 @@ def test_proof_byte_tamper_rust_rejects_witness_abstains():
 def test_root_agreement_bit_identical(n):
     """The core cryptographic computation (Goldilocks+Poseidon+Merkle root) is
     two-witnessed bit-for-bit across cohort sizes."""
-    leaves = _make_leaves(n, salt=n * 11)
+    leaves = _make_leaves(_make_secrets(n, salt=n * 11), 1)
     rc, out, err = _rust("compute-root", {"leaves_hex": leaves})
     assert rc == 0 and out is not None, err
     assert out["epoch_root_hex"] == w2.recompute_root(leaves), f"root mismatch at n={n}"
+
+
+@_NEED_BIN
+@pytest.mark.parametrize("ctx", [1, 2, 9, 4294967296])
+def test_leaf_commitment_agreement_bit_identical(ctx):
+    """P9.3: the leaf commitment is two-witnessed. If the Rust and Python
+    derivations ever drift, the issuer publishes an epoch of leaves no holder can
+    open, and the failure looks like broken proving rather than like a mismatch."""
+    from witness2.commitment import leaf_commitment
+    for secret in _make_secrets(6, salt=ctx % 1000):
+        rc, out, err = _rust("leaf", {"secret_hex": secret, "context_id": ctx})
+        assert rc == 0 and out is not None, err
+        assert out["leaf_hex"] == leaf_commitment(secret, ctx), \
+            f"leaf mismatch for context {ctx}"
+
+
+@_NEED_BIN
+@pytest.mark.parametrize("scope", [0, 7, 1001, 2**63])
+def test_nullifier_agreement_bit_identical(scope):
+    """P9.3: the scoped nullifier is two-witnessed. A drift here would silently
+    stop a relying party recognising the same person on a second visit."""
+    from witness2.commitment import nullifier
+    for epoch in (1, 42, 999):
+        for secret in _make_secrets(4, salt=epoch):
+            rc, out, err = _rust("nullifier", {"secret_hex": secret, "scope": scope,
+                                               "epoch_id": epoch})
+            assert rc == 0 and out is not None, err
+            assert out["nullifier_hex"] == nullifier(secret, scope, epoch), \
+                f"nullifier mismatch at scope={scope} epoch={epoch}"
+
+
+@_NEED_BIN
+def test_the_second_witness_catches_an_unconstrained_nullifier():
+    """The failure the second witness exists for.
+
+    Suppose the circuit stopped constraining the nullifier to the leaf's secret.
+    Every proof would still verify in Rust, and a membership-only witness would
+    still say ACCEPT. The witness catches it by RE-DERIVING the nullifier from
+    the secret: a bundle carrying any other value is REJECT.
+    """
+    case = _honest_case(8, 3, 42, 1, 99, scope=1001)
+    pred = w2.check_claim(case["witness"], case["committed"], case["bundle"]["public_inputs"])
+    assert pred["verdict"] == "ACCEPT" and pred["nullifier_derived"] is True
+
+    forged = dict(case["committed"], nullifier_hex="ff" * 32)
+    pred = w2.check_claim(case["witness"], forged, dict(forged))
+    assert pred["verdict"] == "REJECT"
+    assert pred["nullifier_derived"] is False
+
+
+@_NEED_BIN
+def test_the_second_witness_catches_a_secret_that_does_not_open_the_leaf():
+    """A prover pairing someone else's leaf with their own secret must be caught
+    by the witness as well as by the circuit."""
+    case = _honest_case(8, 3, 42, 1, 99, scope=1001)
+    stranger = dict(case["witness"], secret_hex="ab" * 32)
+    pred = w2.check_claim(stranger, case["committed"], case["bundle"]["public_inputs"])
+    assert pred["verdict"] == "REJECT"
+    assert pred["opens"] is False
+
+
+@_NEED_BIN
+def test_one_person_once_per_scope_across_both_witnesses():
+    """Same member, same scope, two proofs: one nullifier, agreed by both."""
+    from witness2.commitment import links, nullifier
+    a = _honest_case(8, 3, 42, 1, 99, scope=1001)
+    b = _honest_case(8, 3, 42, 1, 12345, scope=1001)
+    na = a["bundle"]["public_inputs"]["nullifier_hex"]
+    nb = b["bundle"]["public_inputs"]["nullifier_hex"]
+    assert links(na, nb), "a relying party must recognise the second visit"
+    assert na == nullifier(a["witness"]["secret_hex"], 1001, 42)
+
+    elsewhere = _honest_case(8, 3, 42, 1, 99, scope=2002)
+    assert not links(na, elsewhere["bundle"]["public_inputs"]["nullifier_hex"]), \
+        "another relying party must not be able to correlate the same person"
 
 
 if __name__ == "__main__":

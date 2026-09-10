@@ -20,7 +20,8 @@
 
 use anyhow::{anyhow, Result};
 use polaris_zk::{
-    build_merkle_tree, compute_epoch_root, prove, tree_depth, verify, ProofBundle, WitnessInput, F,
+    build_merkle_tree, compute_epoch_root, leaf_commitment, nullifier, prove, tree_depth, verify,
+    ProofBundle, WitnessInput, F,
 };
 use plonky2::field::types::PrimeField64;
 use serde::{Deserialize, Serialize};
@@ -38,12 +39,19 @@ struct ComputeRootOutput {
 
 #[derive(Deserialize)]
 struct ProveInput {
-    leaf_seed_hex: String,
+    /// The holder's secret. Never logged, never echoed into the output bundle.
+    secret_hex: String,
     leaf_index: usize,
     all_leaves_hex: Vec<String>,
     epoch_id: u64,
     context_id: u64,
     nonce: u64,
+    /// The relying party's scope. Defaults to 0, which is the "no scope" value:
+    /// every member's nullifier is then derived under one shared separator, so a
+    /// deployment that leaves it unset gets a single global nullifier space
+    /// rather than a per-verifier one.
+    #[serde(default)]
+    scope: u64,
 }
 
 #[derive(Serialize)]
@@ -123,12 +131,59 @@ fn cmd_compute_leaves(input: &str) -> Result<String> {
 fn cmd_prove(input: &str) -> Result<String> {
     let parsed: ProveInput = serde_json::from_str(input)?;
     let witness = WitnessInput {
-        leaf_seed_hex: parsed.leaf_seed_hex,
+        secret_hex: parsed.secret_hex,
         leaf_index: parsed.leaf_index,
         all_leaves_hex: parsed.all_leaves_hex,
     };
-    let bundle = prove(&witness, parsed.epoch_id, parsed.context_id, parsed.nonce)?;
+    let bundle = prove(
+        &witness,
+        parsed.epoch_id,
+        parsed.context_id,
+        parsed.nonce,
+        parsed.scope,
+    )?;
     Ok(serde_json::to_string(&bundle)?)
+}
+
+#[derive(Deserialize)]
+struct LeafInput {
+    secret_hex: String,
+    context_id: u64,
+}
+
+#[derive(Serialize)]
+struct LeafOutput {
+    leaf_hex: String,
+}
+
+#[derive(Deserialize)]
+struct NullifierInput {
+    secret_hex: String,
+    scope: u64,
+    epoch_id: u64,
+}
+
+#[derive(Serialize)]
+struct NullifierOutput {
+    nullifier_hex: String,
+}
+
+/// `leaf`: Poseidon(secret || context_id). The issuer builds an epoch tree from
+/// these; the holder computes their own to find it in the published set.
+fn cmd_leaf(input: &str) -> Result<String> {
+    let parsed: LeafInput = serde_json::from_str(input)?;
+    Ok(serde_json::to_string(&LeafOutput {
+        leaf_hex: leaf_commitment(&parsed.secret_hex, parsed.context_id)?,
+    })?)
+}
+
+/// `nullifier`: Poseidon(secret || scope || epoch_id), the value a relying party
+/// records to refuse the same person twice in its own scope.
+fn cmd_nullifier(input: &str) -> Result<String> {
+    let parsed: NullifierInput = serde_json::from_str(input)?;
+    Ok(serde_json::to_string(&NullifierOutput {
+        nullifier_hex: nullifier(&parsed.secret_hex, parsed.scope, parsed.epoch_id)?,
+    })?)
 }
 
 fn cmd_verify(input: &str) -> Result<String> {
@@ -140,7 +195,7 @@ fn cmd_verify(input: &str) -> Result<String> {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let subcommand = args.get(1).cloned().unwrap_or_else(|| {
-        eprintln!("usage: polaris-zk <compute-root|compute-leaves|prove|verify>");
+        eprintln!("usage: polaris-zk <compute-root|compute-leaves|leaf|nullifier|prove|verify>");
         std::process::exit(2);
     });
 
@@ -150,6 +205,8 @@ fn main() -> Result<()> {
     let output = match subcommand.as_str() {
         "compute-root" => cmd_compute_root(&input)?,
         "compute-leaves" => cmd_compute_leaves(&input)?,
+        "leaf" => cmd_leaf(&input)?,
+        "nullifier" => cmd_nullifier(&input)?,
         "prove" => cmd_prove(&input)?,
         "verify" => cmd_verify(&input)?,
         other => {

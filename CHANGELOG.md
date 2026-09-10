@@ -5,6 +5,54 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.352 — 2026-09-10 (P9.3: one person, once per scope)
+
+A relying party constantly needs to know whether this person has already claimed
+here. The usual answer is an account, which is an identifier, which is a lifelong
+correlation handle. The scoped nullifier answers the same question without one.
+
+**The leaf became a commitment the circuit opens.** This is the part that took the
+work, and the reason the roadmap resized this row after reading the circuit. The
+epoch leaf was `SHA3-256(token_id | token_value | context_id)`, computed outside
+the circuit and handed in as an opaque private value. A nullifier beside an opaque
+leaf proves only that the prover knows some number: nothing ties the two to one
+secret, so a prover could pair any member's leaf with a nullifier of their own
+choosing, and every property below would be a claim rather than a proof. Verifying
+a SHA3-256 preimage in-circuit costs thousands of constraints; Poseidon costs about
+a hundred. So the leaf is now `Poseidon(secret || context_id)`, the circuit opens
+it, and the old SHA3-256 derivation became the holder secret.
+
+**The nullifier.** The circuit gains a `scope` public input, the relying party's own
+domain separator, and a `nullifier` public input, `Poseidon(secret || scope ||
+epoch_id)`, derived from the same secret as the leaf. `verify` binds both like any
+other public input. One person proving twice in one scope and epoch presents the
+same nullifier under a fresh nonce and a different proof, so the verifier refuses
+the repeat while learning nothing about who was refused. The same person at a
+second relying party presents a value the two cannot correlate.
+
+**Two bounds, stated rather than glossed.** The nullifier does not hide the holder
+from the ISSUER, which derives every member's secret in order to build the epoch
+tree and could compute any nullifier in any scope. The property is between relying
+parties. And it resets each epoch, deliberately, so that membership never becomes a
+permanent pseudonym.
+
+**Not backward compatible.** An epoch closed before this ship holds SHA3-256 leaves
+the current circuit cannot open, and its proofs do not verify against the current
+verifier. Epochs are re-closed, not migrated.
+
+**Two witnesses, not one.** The independent Python witness re-derives both the leaf
+and the nullifier from the secret rather than taking the bundle's word, so a Rust
+verifier that quietly stopped constraining them would be caught instead of agreed
+with. The cross-language differential pins both derivations bit for bit across
+contexts, scopes and epochs.
+
+Sixteen crate tests, twenty-nine differential tests, an eighteen-case drill under
+the real circuit, `check_scoped_nullifier` with a nine-fixture detection test, and
+the comparison rule in both SDKs, because exact hex only, never across scopes,
+never across epochs is easy to get wrong by hand.
+
+---
+
 ## v9.351 — 2026-09-10 (the detached verifier answers for itself)
 
 Two defects in `scripts/polaris-verify.py`, both found by pointing the published

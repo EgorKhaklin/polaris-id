@@ -82,14 +82,16 @@ def generate(path):
         return sig, pk
 
     # A's epoch tree, and a holder's inclusion proof for one leaf.
-    leaves = [zk.derive_leaf_seed(tid, "TKN-CA-%d" % tid, CONTEXT_ID) for tid in range(1, 6)]
+    secrets = [zk.derive_holder_secret(tid, "TKN-CA-%d" % tid, CONTEXT_ID) for tid in range(1, 6)]
+    leaves = [zk.derive_leaf_commitment(s, CONTEXT_ID) for s in secrets]
     root_hex, _ = zk.compute_epoch_leaves(leaves)
-    proof = zk.generate_proof(leaves[2], 2, leaves, EPOCH_ID, CONTEXT_ID, NONCE)
+    proof = zk.generate_proof(secrets[2], 2, leaves, EPOCH_ID, CONTEXT_ID, NONCE)
     assert proof["public_inputs"]["epoch_root_hex"] == root_hex, "prover root must equal the epoch root"
 
     # A proof for a DIFFERENT tree (a different root): valid on its own, but not for A's epoch.
-    other = [zk.derive_leaf_seed(tid, "TKN-OTHER-%d" % tid, CONTEXT_ID) for tid in range(1, 6)]
-    proof_wrong_root = zk.generate_proof(other[1], 1, other, EPOCH_ID, CONTEXT_ID, NONCE)
+    other_secrets = [zk.derive_holder_secret(tid, "TKN-OTHER-%d" % tid, CONTEXT_ID) for tid in range(1, 6)]
+    other = [zk.derive_leaf_commitment(s, CONTEXT_ID) for s in other_secrets]
+    proof_wrong_root = zk.generate_proof(other_secrets[1], 1, other, EPOCH_ID, CONTEXT_ID, NONCE)
 
     # A signs an epoch checkpoint committing exactly {EPOCH_ID, root_hex}.
     cp = {

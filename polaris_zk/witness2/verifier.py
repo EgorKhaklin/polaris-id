@@ -33,9 +33,14 @@ from __future__ import annotations
 import json
 import sys
 
+from .commitment import leaf_commitment, nullifier as derive_nullifier
 from .merkle import build_root, membership_holds
 
-_PI_FIELDS = ("epoch_root_hex", "epoch_id", "context_id", "nonce")
+# The public inputs the circuit commits to, in registration order. P9.3 added
+# `scope` and `nullifier_hex`: a witness that ignored them would call a re-scoped
+# or nullifier-edited bundle ACCEPT while the Rust verifier rejected it, and the
+# two witnesses would disagree for a reason that is not about the proof.
+_PI_FIELDS = ("epoch_root_hex", "epoch_id", "context_id", "nonce", "scope", "nullifier_hex")
 
 
 def recompute_root(leaves_hex: list[str]) -> str:
@@ -51,6 +56,8 @@ def _normalize_pi(pi: dict) -> tuple:
         int(pi["epoch_id"]),
         int(pi["context_id"]),
         int(pi["nonce"]),
+        int(pi.get("scope", 0)),
+        str(pi.get("nullifier_hex", "")).lower(),
     )
 
 
@@ -65,8 +72,17 @@ def check_claim(witness: dict, committed: dict, claimed: dict) -> dict:
                 bundle's public_inputs; may be tampered relative to committed).
 
     Returns {"verdict": "ACCEPT"|"REJECT", "membership": bool, "binding": bool,
-             "reasons": [...]}. ACCEPT iff the membership fact holds AND the
-    claimed public inputs match the committed ones.
+             "opens": bool|None, "nullifier_derived": bool|None, "reasons": [...]}.
+    ACCEPT iff the membership fact holds AND the claimed public inputs match the
+    committed ones AND, when the witness carries the secret, that secret really
+    opens the leaf and really derives the committed nullifier.
+
+    The last two are P9.3's contribution and they are what the circuit added. The
+    Rust verifier establishes them by verifying the proof; this witness
+    establishes them by RE-DERIVING both values from the secret. A witness that
+    only re-checked membership would have gone on agreeing with a Rust verifier
+    that had quietly stopped constraining the nullifier to the leaf's secret,
+    which is the exact failure the second witness exists to catch.
     """
     reasons: list[str] = []
 
@@ -82,15 +98,37 @@ def check_claim(witness: dict, committed: dict, claimed: dict) -> dict:
     binding = _normalize_pi(claimed) == _normalize_pi(committed)
     if not binding:
         diffs = [
-            f"{f}: claimed={claimed[f]!r} != committed={committed[f]!r}"
+            f"{f}: claimed={claimed.get(f)!r} != committed={committed.get(f)!r}"
             for f in _PI_FIELDS
-            if str(claimed[f]).lower() != str(committed[f]).lower()
-            and claimed[f] != committed[f]
+            if str(claimed.get(f)).lower() != str(committed.get(f)).lower()
+            and claimed.get(f) != committed.get(f)
         ]
         reasons.append("public-input binding broken: " + "; ".join(diffs))
 
-    verdict = "ACCEPT" if (membership and binding) else "REJECT"
-    return {"verdict": verdict, "membership": membership, "binding": binding, "reasons": reasons}
+    # P9.3: when the witness carries the secret, re-derive both commitments.
+    opens = None
+    nullifier_ok = None
+    secret_hex = witness.get("secret_hex")
+    if secret_hex:
+        expected_leaf = leaf_commitment(secret_hex, int(committed["context_id"]))
+        opens = expected_leaf == str(witness["leaf_hash"]).lower()
+        if not opens:
+            reasons.append(
+                "the secret does not open the claimed leaf: Poseidon(secret || context_id) is "
+                f"{expected_leaf}, the leaf is {str(witness['leaf_hash']).lower()}")
+        if "nullifier_hex" in committed:
+            expected_nullifier = derive_nullifier(
+                secret_hex, int(committed.get("scope", 0)), int(committed["epoch_id"]))
+            nullifier_ok = expected_nullifier == str(committed["nullifier_hex"]).lower()
+            if not nullifier_ok:
+                reasons.append(
+                    "the committed nullifier is not the one this secret derives: expected "
+                    f"{expected_nullifier}, committed {str(committed['nullifier_hex']).lower()}")
+
+    accept = membership and binding and opens is not False and nullifier_ok is not False
+    verdict = "ACCEPT" if accept else "REJECT"
+    return {"verdict": verdict, "membership": membership, "binding": binding,
+            "opens": opens, "nullifier_derived": nullifier_ok, "reasons": reasons}
 
 
 # ---------------------------------------------------------------------------

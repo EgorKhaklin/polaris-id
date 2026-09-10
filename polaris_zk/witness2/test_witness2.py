@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from witness2 import merkle, poseidon, verifier
+from witness2 import commitment, merkle, poseidon, verifier
 from witness2.poseidon_constants import P, POSEIDON_TEST_VECTORS
 
 # External anchor for the Merkle math. These roots and the inclusion path are
@@ -170,6 +170,135 @@ def test_check_claim_rejects_non_member():
     res = verifier.check_claim(witness, committed, dict(committed))
     assert res["verdict"] == "REJECT"
     assert res["membership"] is False
+
+
+# ---------------------------------------------------------------------------
+# P9.3 - the leaf commitment and the scoped nullifier.
+#
+# The anchors below are the INDEPENDENT Rust witness's output, captured once, so
+# the Python derivation is pinned to external ground truth rather than to itself.
+# Regenerate after any change to the construction with:
+#   echo '{"secret_hex":"<64 hex>","context_id":3}'          | polaris-zk leaf
+#   echo '{"secret_hex":"<64 hex>","scope":11,"epoch_id":5}' | polaris-zk nullifier
+# ---------------------------------------------------------------------------
+_ANCHOR_SECRET = "7fd9c03d0cd9d66cc8738a8c9518067a22ddb087a6e1b4ca927b3d807dfa357a"
+_ANCHOR_LEAF_CTX3 = "9299d39303fd019a044098d44dab21d8b4e027a9f56335f01f62a184da099941"
+_ANCHOR_NULLIFIER_S11_E5 = "39f3836c9cdd68dd11fe9491a0fbce48f0c2660b6efd5da2a9b58e778e9f32a0"
+_ANCHOR_NULLIFIER_S22_E5 = "23b864acc5308e203d57b56655ec0ca1b417e87483da34a5c810a20413348162"
+
+
+def test_leaf_commitment_matches_the_rust_witness():
+    # If these two ever drift, the issuer publishes an epoch of leaves no holder
+    # can open, and the symptom looks like "proving is broken" rather than like a
+    # commitment mismatch. Pin it.
+    assert commitment.leaf_commitment(_ANCHOR_SECRET, 3) == _ANCHOR_LEAF_CTX3
+
+
+def test_nullifier_matches_the_rust_witness():
+    assert commitment.nullifier(_ANCHOR_SECRET, 11, 5) == _ANCHOR_NULLIFIER_S11_E5
+    assert commitment.nullifier(_ANCHOR_SECRET, 22, 5) == _ANCHOR_NULLIFIER_S22_E5
+
+
+def test_the_context_is_inside_the_leaf():
+    # A leaf minted for one context must not open in another, so a member cannot
+    # carry their membership sideways into a context they were never enrolled in.
+    assert commitment.leaf_commitment(_ANCHOR_SECRET, 3) != \
+        commitment.leaf_commitment(_ANCHOR_SECRET, 4)
+
+
+def test_one_person_one_nullifier_per_scope_and_epoch():
+    # Deterministic in (secret, scope, epoch): this is what lets a relying party
+    # recognise a second visit.
+    a = commitment.nullifier(_ANCHOR_SECRET, 11, 5)
+    b = commitment.nullifier(_ANCHOR_SECRET, 11, 5)
+    assert a == b and commitment.links(a, b)
+
+
+def test_two_scopes_do_not_link():
+    # The privacy half. Two relying parties see uncorrelated values for one
+    # person, and `links` reports no relationship rather than a partial one.
+    a = commitment.nullifier(_ANCHOR_SECRET, 11, 5)
+    b = commitment.nullifier(_ANCHOR_SECRET, 22, 5)
+    assert a != b
+    assert commitment.links(a, b) is False
+
+
+def test_a_new_epoch_rotates_the_nullifier():
+    # Within a scope, a new epoch gives a new value, so a relying party's
+    # one-person-once rule resets per epoch rather than lasting forever.
+    assert commitment.nullifier(_ANCHOR_SECRET, 11, 5) != \
+        commitment.nullifier(_ANCHOR_SECRET, 11, 6)
+
+
+def test_distinct_secrets_give_distinct_nullifiers():
+    seen = set()
+    for i in range(32):
+        secret = (bytes([i + 1]) + b"\x00" * 31).hex()
+        n = commitment.nullifier(secret, 11, 5)
+        assert n not in seen, "two members collided in one scope"
+        seen.add(n)
+
+
+def test_links_is_case_insensitive_hex():
+    a = commitment.nullifier(_ANCHOR_SECRET, 11, 5)
+    assert commitment.links(a, a.upper())
+
+
+def test_check_claim_rejects_a_secret_that_does_not_open_the_leaf():
+    # The second witness must catch a bundle whose secret is not the one behind
+    # the leaf. This is the property the circuit added; a witness that only
+    # rechecked membership would call it ACCEPT.
+    leaf = commitment.leaf_commitment(_ANCHOR_SECRET, 1)
+    path = ["00" * 32] * merkle.TREE_DEPTH
+    root = merkle.root_from_path(leaf, 0, path)
+    committed = {"epoch_root_hex": root, "epoch_id": 5, "context_id": 1, "nonce": 9,
+                 "scope": 11, "nullifier_hex": commitment.nullifier(_ANCHOR_SECRET, 11, 5)}
+    good = {"leaf_hash": leaf, "leaf_index": 0, "proof_path": path, "secret_hex": _ANCHOR_SECRET}
+    assert verifier.check_claim(good, committed, dict(committed))["verdict"] == "ACCEPT"
+
+    stranger = dict(good, secret_hex="ab" * 32)
+    res = verifier.check_claim(stranger, committed, dict(committed))
+    assert res["verdict"] == "REJECT"
+    assert res["opens"] is False
+
+
+def test_check_claim_rejects_a_nullifier_the_secret_does_not_derive():
+    leaf = commitment.leaf_commitment(_ANCHOR_SECRET, 1)
+    path = ["00" * 32] * merkle.TREE_DEPTH
+    root = merkle.root_from_path(leaf, 0, path)
+    committed = {"epoch_root_hex": root, "epoch_id": 5, "context_id": 1, "nonce": 9,
+                 "scope": 11, "nullifier_hex": "ff" * 32}
+    witness = {"leaf_hash": leaf, "leaf_index": 0, "proof_path": path, "secret_hex": _ANCHOR_SECRET}
+    res = verifier.check_claim(witness, committed, dict(committed))
+    assert res["verdict"] == "REJECT"
+    assert res["nullifier_derived"] is False
+
+
+def test_check_claim_rejects_a_rescoped_bundle():
+    # Relabelling a proof into another scope breaks the public-input binding.
+    leaf = commitment.leaf_commitment(_ANCHOR_SECRET, 1)
+    path = ["00" * 32] * merkle.TREE_DEPTH
+    root = merkle.root_from_path(leaf, 0, path)
+    committed = {"epoch_root_hex": root, "epoch_id": 5, "context_id": 1, "nonce": 9,
+                 "scope": 11, "nullifier_hex": commitment.nullifier(_ANCHOR_SECRET, 11, 5)}
+    res = verifier.check_claim({"leaf_hash": leaf, "leaf_index": 0, "proof_path": path},
+                               committed, dict(committed, scope=22))
+    assert res["verdict"] == "REJECT"
+    assert res["binding"] is False
+
+
+def test_check_claim_without_a_secret_abstains_on_the_commitment():
+    # A verifier that holds only the bundle cannot re-derive anything from a
+    # secret it does not have, and must say so rather than guessing True.
+    leaf = commitment.leaf_commitment(_ANCHOR_SECRET, 1)
+    path = ["00" * 32] * merkle.TREE_DEPTH
+    root = merkle.root_from_path(leaf, 0, path)
+    committed = {"epoch_root_hex": root, "epoch_id": 5, "context_id": 1, "nonce": 9,
+                 "scope": 11, "nullifier_hex": commitment.nullifier(_ANCHOR_SECRET, 11, 5)}
+    res = verifier.check_claim({"leaf_hash": leaf, "leaf_index": 0, "proof_path": path},
+                               committed, dict(committed))
+    assert res["verdict"] == "ACCEPT"
+    assert res["opens"] is None and res["nullifier_derived"] is None
 
 
 if __name__ == "__main__":

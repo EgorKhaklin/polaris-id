@@ -8384,3 +8384,113 @@ def test_instant_normalised_check_discriminates(tmp_path):
     write(good_verify.replace("    now = _instant(now)\n", ""))
     assert checks.check_verifier_instant_normalised(tmp_path)[0].level == "FAIL", \
         "must FAIL when a verifier compares against `now` without normalising it"
+
+
+def test_scoped_nullifier_check_discriminates(tmp_path):
+    # v9.352 (P9.3): the nullifier means something only because the circuit OPENS
+    # the leaf. Every fixture below breaks exactly one joint of that argument.
+    good_circuit = (
+        "pub fn build_circuit() -> (CircuitBuilder<F, D>, CircuitTargets) {\n"
+        "    let secret = builder.add_virtual_targets(HASH_ELEMENTS);\n"
+        "    let scope_t = builder.add_virtual_target();\n"
+        "    builder.register_public_input(scope_t);\n"
+        "    let mut leaf_input = secret.clone();\n"
+        "    leaf_input.push(context_id_t);\n"
+        "    let leaf_target = builder.hash_n_to_hash_no_pad::<PoseidonHash>(leaf_input);\n"
+        "    builder.verify_merkle_proof_to_cap::<PoseidonHash>(leaf_target.elements.to_vec());\n"
+        "    let mut nullifier_input = secret.clone();\n"
+        "    let nullifier_target = builder.hash_n_to_hash_no_pad::<PoseidonHash>(nullifier_input);\n"
+        "    builder.register_public_inputs(&nullifier_target.elements);\n"
+        "}\n"
+        "\npub fn verify(bundle: &ProofBundle) -> Result<bool> {\n"
+        "    if actual_scope != bundle.public_inputs.scope { return Ok(false); }\n"
+        "    let e = hex_to_hash_elements(&bundle.public_inputs.nullifier_hex)?;\n"
+        "}\n")
+    good = {
+        'polaris_zk/src/lib.rs': good_circuit,
+        'polaris_zk/witness2/commitment.py': ("from .poseidon import hash_no_pad\n"
+                                              "def leaf_commitment(s, c):\n    return hash_no_pad([])\n"
+                                              "def nullifier(s, sc, e):\n    return hash_no_pad([])\n"),
+        'polaris_zk/witness2/verifier.py': ("from .commitment import leaf_commitment, "
+                                            "nullifier as derive_nullifier\n"),
+        'polaris_web/test_zk_second_witness.py': ("def test_leaf_commitment_agreement_bit_identical():\n    pass\n"
+                                                  "def test_nullifier_agreement_bit_identical():\n    pass\n"),
+        'polaris_web/zk.py': ("def derive_holder_secret(a, b, c):\n    return ''\n"
+                              "def derive_leaf_commitment(s, c):\n    return ''\n"
+                              "def derive_nullifier(s, sc, e):\n    return ''\n"),
+        'scripts/polaris-scoped-nullifier-drill.py': "SCOPE_CLINIC = 1\nSCOPE_LIBRARY = 2\n",
+        'sdk/python/polaris_verify/__init__.py': "def nullifiers_link(a, b):\n    return a == b\n",
+        'sdk/typescript/src/index.ts': "export function nullifiersLink(a, b) { return a === b; }\n",
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # The leaf goes back to being handed in opaquely: the nullifier now proves
+    # only that the prover knows some number.
+    write({'polaris_zk/src/lib.rs': good_circuit.replace(
+        "    let mut leaf_input = secret.clone();\n"
+        "    leaf_input.push(context_id_t);\n"
+        "    let leaf_target = builder.hash_n_to_hash_no_pad::<PoseidonHash>(leaf_input);\n",
+        "    let leaf_target = builder.add_virtual_hash();\n")})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the circuit takes the leaf as an opaque input again"
+
+    # The nullifier is derived from something other than the leaf's secret.
+    write({'polaris_zk/src/lib.rs': good_circuit.replace(
+        "    let mut nullifier_input = secret.clone();\n",
+        "    let mut nullifier_input = other_secret.clone();\n")})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the nullifier is not bound to the same secret as the leaf"
+
+    # The scope stops being a public input: a proof made for one verifier could be
+    # replayed at another.
+    write({'polaris_zk/src/lib.rs': good_circuit.replace(
+        "    builder.register_public_input(scope_t);\n", "")})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the scope is not a public input"
+
+    # The nullifier stops being a public input: it could be edited after the fact.
+    write({'polaris_zk/src/lib.rs': good_circuit.replace(
+        "    builder.register_public_inputs(&nullifier_target.elements);\n", "")})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the nullifier is not a public input"
+
+    # The Merkle proof is verified before the leaf is opened.
+    write({'polaris_zk/src/lib.rs': good_circuit.replace(
+        "    let mut leaf_input = secret.clone();\n"
+        "    leaf_input.push(context_id_t);\n"
+        "    let leaf_target = builder.hash_n_to_hash_no_pad::<PoseidonHash>(leaf_input);\n"
+        "    builder.verify_merkle_proof_to_cap::<PoseidonHash>(leaf_target.elements.to_vec());\n",
+        "    builder.verify_merkle_proof_to_cap::<PoseidonHash>(leaf_target.elements.to_vec());\n"
+        "    let mut leaf_input = secret.clone();\n"
+        "    leaf_input.push(context_id_t);\n"
+        "    let leaf_target = builder.hash_n_to_hash_no_pad::<PoseidonHash>(leaf_input);\n")})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the Merkle proof is checked before the leaf is opened"
+
+    # The second witness stops re-deriving, and goes back to membership only.
+    write({'polaris_zk/witness2/verifier.py': "from .merkle import membership_holds\n"})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the second witness does not re-derive the leaf and nullifier"
+
+    # The cross-language differential stops pinning the derivations.
+    write({'polaris_web/test_zk_second_witness.py': "def test_root_agreement():\n    pass\n"})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the differential no longer pins both derivations"
+
+    # The drill demonstrates one scope only, which cannot show non-correlation.
+    write({'scripts/polaris-scoped-nullifier-drill.py': "SCOPE_CLINIC = 1\n"})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill uses only one relying-party scope"
+
+    # An SDK drops the comparison rule, so an integrator writes it by hand.
+    write({'sdk/typescript/src/index.ts': "export const x = 1;\n"})
+    assert checks.check_scoped_nullifier(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an SDK does not expose the nullifier comparison"

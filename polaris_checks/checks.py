@@ -9455,7 +9455,138 @@ def check_verifier_instant_normalised(root: pathlib.Path) -> list[Finding]:
                "the artifact being verified")
 
 
+
+def check_scoped_nullifier(root: pathlib.Path) -> list[Finding]:
+    """One person, once per scope, and no two scopes correlate (P9.3).
+
+    A relying party often needs "this person has not already claimed here" without
+    needing "this person is Maria". The scoped nullifier is that: a public value
+    `Poseidon(holder secret || relying-party scope || epoch)` carried by the proof,
+    identical for one person on a second visit to the SAME verifier, and
+    uncorrelated with what that person presents to any OTHER verifier.
+
+    The whole thing rests on one structural fact, and this check exists to keep it
+    true. The epoch leaf must be a Poseidon COMMITMENT the circuit opens, not an
+    opaque digest handed in. While the leaf was `SHA3-256(token_id|token_value|
+    context_id)` computed outside the circuit, a nullifier beside it proved only
+    "I know some number", because nothing tied the two to one secret: a prover
+    could pair any member's leaf with a nullifier of their own choosing, and every
+    property above would be a claim rather than a proof. Verifying a SHA3-256
+    preimage in-circuit is expensive; moving the leaf to Poseidon is not. That is
+    why the leaf moved, and why a regression to an opaque leaf is a FAIL here even
+    though every test of the nullifier itself would still pass.
+
+    The rest follows: the scope must be a public input, or a proof made for one
+    verifier could be replayed at another; the nullifier must be a public input,
+    or it could be edited after the fact; and the second witness must RE-DERIVE
+    both from the secret rather than take the bundle's word, because a Rust
+    verifier that quietly stopped constraining them would otherwise keep agreeing
+    with a witness that only rechecked membership."""
+    name = "scoped_nullifier"
+    lib = _read(root, "polaris_zk/src/lib.rs")
+    if not lib:
+        return _fail(name, "polaris_zk/src/lib.rs is missing; the circuit is the whole construction")
+
+    body_start = lib.find("pub fn build_circuit")
+    if body_start < 0:
+        return _fail(name, "polaris_zk/src/lib.rs must define build_circuit")
+    circuit = lib[body_start:lib.find("\npub fn ", body_start + 10)]
+
+    # 1. The leaf is OPENED in the circuit from a private secret, not handed in.
+    if "add_virtual_hash()" in circuit.split("verify_merkle_proof_to_cap")[0].split("let leaf_target")[-1]:
+        return _fail(name,
+                     "the circuit takes the leaf as an opaque input again; a nullifier beside an "
+                     "unopened leaf proves only that the prover knows some number, not that they "
+                     "are the person behind that leaf")
+    if "hash_n_to_hash_no_pad" not in circuit:
+        return _fail(name,
+                     "build_circuit must compute the leaf commitment in-circuit with Poseidon "
+                     "(hash_n_to_hash_no_pad); an opaque leaf cannot be bound to a nullifier")
+    leaf_at = circuit.find("let leaf_target = builder.hash_n_to_hash_no_pad")
+    merkle_at = circuit.find("verify_merkle_proof_to_cap")
+    if leaf_at < 0 or merkle_at < 0 or leaf_at > merkle_at:
+        return _fail(name,
+                     "the leaf must be OPENED from the secret before the Merkle proof is verified "
+                     "against it, or the proof is about a leaf nobody opened")
+
+    # 2. Both the leaf and the nullifier derive from the SAME secret target.
+    for needed, why in (
+            ("let secret = builder.add_virtual_targets",
+             "the holder secret must be a private input the circuit owns"),
+            ("let mut leaf_input = secret.clone();",
+             "the leaf must be derived from that secret"),
+            ("let mut nullifier_input = secret.clone();",
+             "the nullifier must be derived from the SAME secret as the leaf; that identity IS "
+             "the construction")):
+        if needed not in circuit:
+            return _fail(name, f"{why} ({needed!r} not found in build_circuit)")
+
+    # 3. Scope and nullifier are PUBLIC inputs.
+    if "builder.register_public_input(scope_t)" not in circuit:
+        return _fail(name,
+                     "scope must be a public input, or a proof made for one relying party could be "
+                     "replayed at another and defeat its one-person-once rule")
+    if "builder.register_public_inputs(&nullifier_target.elements)" not in circuit:
+        return _fail(name,
+                     "the nullifier must be a public input, or a prover could edit it after the "
+                     "fact and every visit would look like a first visit")
+
+    # 4. The verifier checks them like any other public input.
+    if "bundle.public_inputs.scope" not in lib or "nullifier_hex" not in lib:
+        return _fail(name, "verify() must bind the claimed scope and nullifier to the proof's own")
+
+    # 5. Three implementations of the two derivations, and they are tested against
+    #    each other rather than each against itself.
+    witness = _read(root, "polaris_zk/witness2/commitment.py")
+    for needed, why in (("def leaf_commitment", "the second witness must re-derive the leaf"),
+                        ("def nullifier", "the second witness must re-derive the nullifier"),
+                        ("hash_no_pad", "it must use the same no-pad sponge the circuit uses")):
+        if needed not in witness:
+            return _fail(name, f"{why} (polaris_zk/witness2/commitment.py: {needed})")
+    verifier = _read(root, "polaris_zk/witness2/verifier.py")
+    if "leaf_commitment" not in verifier or "derive_nullifier" not in verifier:
+        return _fail(name,
+                     "the second witness's check_claim must RE-DERIVE the leaf and the nullifier "
+                     "from the secret; a witness that only rechecks membership would keep agreeing "
+                     "with a verifier that had stopped constraining them")
+    differential = _read(root, "polaris_web/test_zk_second_witness.py")
+    for needed in ("test_leaf_commitment_agreement_bit_identical",
+                   "test_nullifier_agreement_bit_identical"):
+        if needed not in differential:
+            return _fail(name, f"the cross-language differential must pin both derivations ({needed})")
+
+    # 6. The app derives through the same commitment, and the drill proves the property.
+    zkpy = _read(root, "polaris_web/zk.py")
+    for needed, why in (("def derive_holder_secret", "the secret derivation must be named and separate"),
+                        ("def derive_leaf_commitment", "the published leaf must be the commitment"),
+                        ("def derive_nullifier", "the app must be able to derive a nullifier")):
+        if needed not in zkpy:
+            return _fail(name, f"{why} (polaris_web/zk.py: {needed})")
+    drill = _read(root, "scripts/polaris-scoped-nullifier-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-scoped-nullifier-drill.py must prove the property end to end")
+    for needed, why in (("SCOPE_CLINIC", "the drill must use two DIFFERENT relying-party scopes"),
+                        ("SCOPE_LIBRARY", "one scope cannot demonstrate non-correlation")):
+        if needed not in drill:
+            return _fail(name, f"{why} ({needed})")
+
+    # 7. The SDKs carry the comparison rule, since an integrator will write it by hand otherwise.
+    py_sdk, ts_sdk = _read(root, "sdk/python/polaris_verify/__init__.py"), _read(root, "sdk/typescript/src/index.ts")
+    if "def nullifiers_link" not in py_sdk or "export function nullifiersLink" not in ts_sdk:
+        return _fail(name,
+                     "both SDKs must expose the nullifier comparison, with its rules: exact hex "
+                     "only, never across scopes, never across epochs")
+    return _ok(name,
+               "one person, once per scope: the epoch leaf is a Poseidon commitment the circuit "
+               "OPENS, so the scoped nullifier is provably derived from the same secret as the "
+               "leaf; scope and nullifier are public inputs the verifier binds; the independent "
+               "second witness re-derives both and the cross-language differential pins them; and "
+               "the drill proves a second visit is refused while a second relying party sees a "
+               "value it cannot correlate")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_scoped_nullifier,
     check_commitment_mismatch_is_a_refusal,
     check_verifier_instant_normalised,
     check_holder_side_prover,

@@ -751,3 +751,36 @@ export class PolarisVerifier {
     };
   }
 }
+
+// ---------------------------------------------------------------------------
+// P9.3 — the scoped nullifier, for a relying party that enforces one person once.
+//
+// This SDK cannot verify a Plonky2 proof: that needs the polaris_zk crate, and a
+// verifier without it must ABSTAIN rather than guess, which is what the detached
+// verifier does. What an SDK integrator DOES need is the one rule that is easy to
+// get wrong by hand, so it lives here rather than in prose someone may not read.
+// ---------------------------------------------------------------------------
+
+/**
+ * Do two nullifiers name the same person, in the same scope and epoch?
+ *
+ * Exact match on lowercase hex, and nothing else. Three warnings, because each is
+ * a mistake a relying party can make while believing it is being careful:
+ *
+ * 1. Never compare PREFIXES. A nullifier is a Poseidon hash; a shared prefix
+ *    means nothing, and treating it as a partial match would refuse strangers.
+ * 2. Never compare ACROSS SCOPES. Two verifiers' nullifiers for one person are
+ *    uncorrelated by construction. Comparing them cannot return information, and
+ *    a `false` from such a comparison must not be read as "different person": the
+ *    honest answer is that you cannot tell, which is the whole point of the scope.
+ * 3. Never carry a ledger ACROSS EPOCHS. The nullifier rotates each epoch so that
+ *    membership does not become a permanent identifier. A ledger that outlives its
+ *    epoch quietly turns the privacy feature into a lifelong one.
+ *
+ * So: key your ledger by (your scope, epoch), keep only the nullifiers, and
+ * compare with this.
+ */
+export function nullifiersLink(a: unknown, b: unknown): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}

@@ -61,24 +61,71 @@ def _run_subcommand(subcommand: str, payload: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Leaf-seed derivation. The schema layer hands us a (token_id,
-# token_value, status, context_set) tuple; we deterministically derive
-# the 32-byte leaf-seed that goes into the Merkle tree.
+# Leaf derivation, in two steps since P9.3.
 #
-# v1 derivation: leaf_seed = SHA3-256(token_id || token_value || context_id).
-# A future v2 would extend this to encode the validity timestamp and the
-# revocation-list hash for in-circuit predicate enforcement (B1 instead of
-# B3). v1 is pure B3 — predicates are filtered at epoch-commitment time;
-# the circuit only proves Merkle membership.
+#   secret = SHA3-256(token_id || token_value || context_id)   (holder-derivable)
+#   leaf   = Poseidon(secret || context_id)                    (published)
+#
+# Before P9.3 the leaf WAS the SHA3-256 digest, handed to the circuit as an
+# opaque private value. That is why the scoped nullifier could not be added: a
+# circuit that never opens the leaf cannot constrain a nullifier to the same
+# secret, so the nullifier would have proved "I know some number" rather than "I
+# am the person behind this leaf". Poseidon is the circuit's native hash, so the
+# commitment is cheap to open in-circuit where a SHA3-256 preimage would not be.
+#
+# The change is NOT backward compatible: an epoch closed before P9.3 holds
+# SHA3-256 leaves that the current circuit cannot open, and its proofs do not
+# verify against the current verifier. Epochs are re-closed rather than migrated.
+#
+# The secret stays holder-derivable from the credential the holder holds. The
+# ISSUER can derive it too, since it must build the epoch tree; the nullifier's
+# unlinkability is between RELYING PARTIES, not against the issuer. Stated in
+# full in witness2/commitment.py.
 # ---------------------------------------------------------------------------
 
-def derive_leaf_seed(token_id: int, token_value: str, context_id: int) -> str:
-    """Deterministically derive the 32-byte leaf seed for an epoch leaf.
-    Returns hex (64 chars). Used by uc11_close_epoch sample-data path and
-    by tests."""
+def derive_holder_secret(token_id: int, token_value: str, context_id: int) -> str:
+    """The holder's per-context secret: SHA3-256(token_id || token_value || context_id).
+
+    Derivable by anyone holding the credential, and by the issuer at issuance.
+    Never published: the epoch publishes its COMMITMENT, and the holder opens it
+    inside the circuit.
+    """
     h = hashlib.sha3_256()
     h.update(f"{token_id}|{token_value}|{context_id}".encode("utf-8"))
     return h.hexdigest()
+
+
+def derive_leaf_commitment(secret_hex: str, context_id: int) -> str:
+    """The published epoch leaf: Poseidon(secret || context_id).
+
+    Shells into the Rust binary, which computes it with the same Poseidon the
+    circuit uses. `polaris_zk.witness2.commitment.leaf_commitment` is the
+    independent Python re-derivation and must agree byte for byte.
+    """
+    return _run_subcommand("leaf", {"secret_hex": secret_hex,
+                                    "context_id": int(context_id)})["leaf_hex"]
+
+
+def derive_leaf_seed(token_id: int, token_value: str, context_id: int) -> str:
+    """The epoch leaf for a member, end to end: commit to the derived secret.
+
+    Kept under its original name because every caller means "the leaf this member
+    contributes to the epoch tree", which is still exactly what it returns. What
+    changed underneath is that the value is now a Poseidon commitment the circuit
+    can open, not a bare SHA3-256 digest.
+    """
+    return derive_leaf_commitment(derive_holder_secret(token_id, token_value, context_id),
+                                  context_id)
+
+
+def derive_nullifier(secret_hex: str, scope: int, epoch_id: int) -> str:
+    """The scoped nullifier: Poseidon(secret || scope || epoch_id).
+
+    A relying party records these to refuse the same person a second time in its
+    own scope. Two relying parties with different scopes cannot correlate theirs.
+    """
+    return _run_subcommand("nullifier", {"secret_hex": secret_hex, "scope": int(scope),
+                                         "epoch_id": int(epoch_id)})["nullifier_hex"]
 
 
 # ---------------------------------------------------------------------------
@@ -101,29 +148,36 @@ def compute_epoch_leaves(leaves_hex: list[str]) -> tuple[str, list[dict]]:
 
 
 def generate_proof(
-    leaf_seed_hex: str,
+    secret_hex: str,
     leaf_index: int,
     all_leaves_hex: list[str],
     epoch_id: int,
     context_id: int,
     nonce: int,
+    scope: int = 0,
 ) -> dict:
-    """Generate a ZK-SNARK proof that the prover knows the witness for
+    """Generate a ZK-SNARK proof that the prover holds the secret opening
     leaves[leaf_index] in a tree whose root is computed over all_leaves_hex.
-    The proof is bound to (epoch_id, context_id, nonce) — see R1, R2, R9
-    audit refinements.
+    The proof is bound to (epoch_id, context_id, nonce, scope) — see R1, R2, R9
+    audit refinements — and carries the scoped nullifier as a public input.
+
+    `scope` is the relying party's domain separator. Left at 0 every member's
+    nullifier lands in one global space, which is a real choice a deployment can
+    make but not the private one: a per-verifier scope is what keeps two relying
+    parties from correlating a person.
 
     Returns the ProofBundle: {"proof_hex": ..., "public_inputs": {...}}.
     """
     return _run_subcommand(
         "prove",
         {
-            "leaf_seed_hex": leaf_seed_hex,
+            "secret_hex": secret_hex,
             "leaf_index": leaf_index,
             "all_leaves_hex": all_leaves_hex,
             "epoch_id": epoch_id,
             "context_id": context_id,
             "nonce": nonce,
+            "scope": int(scope),
         },
     )
 

@@ -61,6 +61,74 @@ class TotalityTests(unittest.TestCase):
         self.assertIsNone(V.member_index({"all_leaves_hex": "not-a-list"}, "aa"))
 
 
+class ScopedNullifierTests(unittest.TestCase):
+    """P9.3: the verifier's half of one-person-once. No Plonky2 needed for these.
+
+    Every case here is about the PUBLIC INPUTS, which is where a relying party's rule
+    actually lives. The proof bytes are the crate's business; whether this verifier binds
+    the scope and holds a ledger is this file's.
+    """
+
+    ROOT = "ab" * 32
+    NULL = "cd" * 32
+
+    def _bundle(self, **over):
+        pi = {"epoch_root_hex": self.ROOT, "epoch_id": 7, "context_id": 3, "nonce": 11,
+              "scope": 1001, "nullifier_hex": self.NULL}
+        pi.update(over)
+        return {"proof_hex": "00", "public_inputs": pi}
+
+    def test_a_proof_made_for_another_verifier_is_refused(self):
+        v = V.verify_zk_against_root(self._bundle(), self.ROOT, 7, 3, expected_scope=2002)
+        self.assertFalse(v["bound"])
+        self.assertIn("scope", v["note"])
+
+    def test_the_verifier_gets_the_nullifier_back(self):
+        v = V.verify_zk_against_root(self._bundle(), self.ROOT, 7, 3, expected_scope=1001)
+        self.assertTrue(v["bound"])
+        self.assertEqual(v["nullifier"], self.NULL)
+
+    def test_a_repeat_in_the_same_scope_is_refused(self):
+        ledger = {self.NULL}
+        v = V.verify_zk_against_root(self._bundle(), self.ROOT, 7, 3, expected_scope=1001,
+                                     seen_nullifiers=ledger)
+        self.assertFalse(v["fresh_nullifier"])
+        self.assertIn("already been accepted", v["note"])
+
+    def test_a_first_visit_is_fresh(self):
+        v = V.verify_zk_against_root(self._bundle(), self.ROOT, 7, 3, expected_scope=1001,
+                                     seen_nullifiers=set())
+        self.assertTrue(v["fresh_nullifier"])
+
+    def test_the_ledger_comparison_ignores_hex_case(self):
+        v = V.verify_zk_against_root(self._bundle(nullifier_hex=self.NULL.upper()), self.ROOT, 7, 3,
+                                     seen_nullifiers={self.NULL})
+        self.assertFalse(v["fresh_nullifier"], "hex case must not let one person prove twice")
+
+    def test_a_proof_with_no_nullifier_cannot_satisfy_a_scoped_verifier(self):
+        # A pre-P9.3 bundle carries no nullifier. Accepting it would mean the verifier's
+        # one-person-once rule silently stops applying to exactly the proofs that predate it.
+        bundle = self._bundle()
+        del bundle["public_inputs"]["nullifier_hex"]
+        v = V.verify_zk_against_root(bundle, self.ROOT, 7, 3, seen_nullifiers=set())
+        self.assertFalse(v["fresh_nullifier"])
+        self.assertIn("no nullifier", v["note"])
+
+    def test_without_a_ledger_the_verifier_does_not_guess(self):
+        v = V.verify_zk_against_root(self._bundle(), self.ROOT, 7, 3)
+        self.assertIsNone(v["fresh_nullifier"], "no ledger means no opinion, not a free pass")
+
+    def test_it_is_total_on_hostile_public_inputs(self):
+        for bad in (None, {}, {"public_inputs": None}, {"public_inputs": {"scope": "many"}},
+                    {"public_inputs": {"epoch_root_hex": ROOT_JUNK}}):
+            with self.subTest(value=repr(bad)[:40]):
+                self.assertIsInstance(
+                    V.verify_zk_against_root(bad, self.ROOT, 7, 3, expected_scope=1), dict)
+
+
+ROOT_JUNK = object()
+
+
 class HolderProofStatementTests(unittest.TestCase):
     """P9.1's constitutional property, on the bytes."""
 

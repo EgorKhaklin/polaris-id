@@ -32,6 +32,11 @@ from .poseidon_constants import (
 # NUM_HASH_OUT_ELTS. A digest is 4 elements = 32 bytes.
 HASH_OUT_ELEMENTS = 4
 
+# Plonky2's SPONGE_RATE: how many input elements are absorbed per permutation.
+# WIDTH is 12 lanes and the capacity is the 4 that hold the digest, so the rate
+# is 8.
+SPONGE_RATE = WIDTH - HASH_OUT_ELEMENTS
+
 
 def _sbox_monomial(x: int) -> int:
     """The Poseidon S-box, x^7 over Goldilocks."""
@@ -108,6 +113,30 @@ def two_to_one(left: list[int], right: list[int]) -> list[int]:
     state = list(left) + list(right) + [0] * (WIDTH - 2 * HASH_OUT_ELEMENTS)
     out = permute(state)
     return out[:HASH_OUT_ELEMENTS]
+
+
+def hash_no_pad(elements: list[int]) -> list[int]:
+    """Plonky2's `hash_n_to_hash_no_pad`: the sponge with NO padding.
+
+    Absorb the input in RATE-element chunks into a WIDTH-lane state that starts
+    at zero, permuting after each chunk, then squeeze the first HASH_OUT_ELEMENTS
+    lanes. A short final chunk sets only its own lanes and leaves the rest of the
+    state as the previous permutation left them, which is exactly what Plonky2's
+    `set_from_slice` does; padding the chunk with zeros instead would produce a
+    different digest for the same input, so it is not done here.
+
+    This is the hash behind the P9.3 leaf commitment and scoped nullifier
+    (witness2.commitment), and it must agree with the in-circuit
+    `builder.hash_n_to_hash_no_pad::<PoseidonHash>` element for element.
+    """
+    state = [0] * WIDTH
+    absorbed = [x % P for x in elements]
+    for start in range(0, len(absorbed), SPONGE_RATE):
+        chunk = absorbed[start : start + SPONGE_RATE]
+        for i, c in enumerate(chunk):
+            state[i] = c
+        state = permute(state)
+    return state[:HASH_OUT_ELEMENTS]
 
 
 def hash_or_noop(elements: list[int]) -> list[int]:

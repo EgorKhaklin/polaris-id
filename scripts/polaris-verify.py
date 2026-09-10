@@ -1198,13 +1198,23 @@ def _zk_verify_proof(proof_bundle, zk_binary=None):
 
 
 def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
-                           expected_context_id, expected_nonce=None, zk_binary=None):
+                           expected_context_id, expected_nonce=None, zk_binary=None,
+                           expected_scope=None, seen_nullifiers=None):
     """The ZK half of the cross-authority decision, factored so it is testable WITHOUT ML-DSA:
     a holder's proof is accepted against a TRUSTED epoch root iff its public inputs bind to that
-    root, epoch number, and context (and a nonce, if the verifier issued a challenge), AND the
-    Plonky2 proof verifies. Returns {bound, proof_verified, note}; proof_verified is None
-    (abstain) when the polaris-zk binary is absent. Total on hostile input."""
-    v = {"bound": False, "proof_verified": None, "note": None}
+    root, epoch number, and context (and a nonce, if the verifier issued a challenge, and a
+    scope, if the verifier works in one), AND the Plonky2 proof verifies. Returns
+    {bound, proof_verified, nullifier, fresh_nullifier, note}; proof_verified is None (abstain)
+    when the polaris-zk binary is absent. Total on hostile input.
+
+    P9.3: `expected_scope` is the relying party's own domain separator, and binding it is what
+    stops a proof made for another verifier being replayed here. `seen_nullifiers` is the set of
+    nullifiers this verifier has already accepted in this scope and epoch; a repeat sets
+    fresh_nullifier False, which is how one person is held to one proof without the verifier ever
+    learning who they are. A verifier that passes a scope and no seen set still gets the
+    nullifier back and can keep its own ledger."""
+    v = {"bound": False, "proof_verified": None, "nullifier": None, "fresh_nullifier": None,
+         "note": None}
     pi = proof_bundle.get("public_inputs") if isinstance(proof_bundle, dict) else None
     if not isinstance(pi, dict):
         v["note"] = "proof bundle has no public inputs"
@@ -1222,10 +1232,25 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
         if expected_nonce is not None and int(pi.get("nonce", -1)) != int(expected_nonce):
             v["note"] = "proof nonce does not match the verifier challenge"
             return v
+        if expected_scope is not None and int(pi.get("scope", -1)) != int(expected_scope):
+            v["note"] = "proof scope is not this verifier's; a proof made elsewhere is not valid here"
+            return v
     except (TypeError, ValueError):
         v["note"] = "proof public inputs are malformed"
         return v
     v["bound"] = True
+    nullifier = str(pi.get("nullifier_hex") or "").lower() or None
+    v["nullifier"] = nullifier
+    if seen_nullifiers is not None:
+        if nullifier is None:
+            v["fresh_nullifier"] = False
+            v["note"] = ("the proof carries no nullifier, so one person cannot be held to one "
+                         "proof; a pre-P9.3 proof cannot satisfy a scoped verifier")
+            return v
+        v["fresh_nullifier"] = nullifier not in {str(x).lower() for x in seen_nullifiers}
+        if not v["fresh_nullifier"]:
+            v["note"] = "this nullifier has already been accepted in this scope and epoch"
+            return v
     v["proof_verified"] = _zk_verify_proof(proof_bundle, zk_binary=zk_binary)
     if v["proof_verified"] is None:
         v["note"] = ("public inputs bind to the trusted epoch, but the ZK proof cannot be checked "
@@ -1237,7 +1262,8 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
 
 def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, trusted_manifests,
                               now=None, max_window_seconds=None, trusted_anchors=None,
-                              expected_nonce=None, zk_binary=None):
+                              expected_nonce=None, zk_binary=None, expected_scope=None,
+                              seen_nullifiers=None):
     """Decide a HOLDER's zero-knowledge inclusion proof against a FOREIGN authority's epoch,
     OFFLINE (P3.2d). Accept iff: (1) the foreign epoch checkpoint is authentic and fresh, and
     signed by an authority a trusted manifest attests IN the presented context -- so the epoch
@@ -1246,11 +1272,18 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
     the Plonky2 proof verifies via the local polaris-zk binary. Steps 1-2 pure Python; step 3
     shells to the binary (no network -- still offline). If the binary is absent the decision is
     ABSTAIN, never a false accept. The verdict carries no credential: the proof is
-    zero-knowledge and nothing about which credential it is leaks."""
+    zero-knowledge and nothing about which credential it is leaks.
+
+    P9.3: with `expected_scope` and `seen_nullifiers`, the same decision also enforces one
+    person, one proof, per scope and epoch. The verdict returns the nullifier so the caller can
+    add it to its ledger. The nullifier still identifies nobody: it is a hash under this
+    verifier's own scope, and the same person at another verifier presents a value the two
+    cannot correlate."""
     cv = verify_epoch_checkpoint(epoch_checkpoint, now=now, max_window_seconds=max_window_seconds)
     base = {"decision": "reject",
             "checkpoint_authentic": bool(cv["checkpoint_authentic"] and cv["fresh"]),
-            "issuer_trusted": None, "bound": None, "proof_verified": None, "via": None, "reasons": []}
+            "issuer_trusted": None, "bound": None, "proof_verified": None, "nullifier": None,
+            "fresh_nullifier": None, "via": None, "reasons": []}
     if not (cv["checkpoint_authentic"] and cv["fresh"]):
         return {**base, "reasons": ["the foreign epoch checkpoint is not authentic or not fresh"]}
     cp_key = str((epoch_checkpoint or {}).get("public_key_hex") or "").lower() if isinstance(epoch_checkpoint, dict) else ""
@@ -1278,11 +1311,15 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
         return {**base, "reasons": ["no trusted authority attests to the checkpoint's issuer in this context"]}
     epoch = (epoch_checkpoint.get("epoch") if isinstance(epoch_checkpoint, dict) else None) or {}
     zk = verify_zk_against_root(proof_bundle, epoch.get("root_hex"), epoch.get("number"),
-                                context_id, expected_nonce=expected_nonce, zk_binary=zk_binary)
-    result = {**base, "via": via, "bound": zk["bound"], "proof_verified": zk["proof_verified"]}
+                                context_id, expected_nonce=expected_nonce, zk_binary=zk_binary,
+                                expected_scope=expected_scope, seen_nullifiers=seen_nullifiers)
+    result = {**base, "via": via, "bound": zk["bound"], "proof_verified": zk["proof_verified"],
+              "nullifier": zk["nullifier"], "fresh_nullifier": zk["fresh_nullifier"]}
     if not zk["bound"]:
         return {**result, "decision": "reject",
                 "reasons": ["the ZK proof is not bound to the trusted epoch (%s)" % zk["note"]]}
+    if zk["fresh_nullifier"] is False:
+        return {**result, "decision": "reject", "reasons": [zk["note"]]}
     if zk["proof_verified"] is None:
         return {**result, "decision": "abstain",
                 "reasons": ["trust established and the proof binds to the trusted epoch, but the ZK "
