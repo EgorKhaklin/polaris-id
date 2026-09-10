@@ -5,6 +5,64 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.370 — 2026-09-10 (P4.7: duress in time, not just in bytes)
+
+The card's duress mechanism was already indistinguishable at the level of
+bytes: same commands, same status words, same response length. That is
+necessary and it is not sufficient. A coercer standing at the reader also
+observes how long the card took.
+
+**The defect this row found.** The card skipped the duress comparison when the
+holder had not enrolled a duress PIN. That made **enrollment itself
+observable**, and the shape of the harm is worth stating: it does not endanger
+the holder who skipped enrollment, it endangers the ones who *did* enroll, by
+splitting the population into two classes a coercer can tell apart. Learning
+that a card has no duress PIN tells them the PIN they just watched was the real
+one.
+
+A card now always holds a duress comparand. When no duress PIN is enrolled it
+is an unguessable value of the same length beginning with a NUL, which a keypad
+cannot put in a command's data field, so the comparison always runs, always
+costs the same, and never matches. This is the physical-layer twin of the P4.3
+rule that every card carries a duress *slot* whether or not a PIN is enrolled:
+both exist so the mechanism says nothing about the individual.
+
+**The entry method, specified.** A second PIN, of the same length as the first,
+at the same pinpad. The length rule is not stylistic: the PIN travels in the
+data field of a `VERIFY` command, so a six-digit duress PIN beside a
+four-digit normal one announces which class was entered to anyone watching the
+exchange, without their needing to see the keypad. Four alternatives are
+recorded with the reason each was rejected.
+
+**The measurement, and what it will not claim.**
+`scripts/polaris-duress-timing-drill.py` measures four pairs with a permutation
+test that calibrates itself against the machine's own noise, and judges the
+gaps against **10 microseconds**: what a coercer could read through a reader,
+where an NFC exchange is milliseconds and the field's jitter is tens of
+microseconds. Gaps of a few tens of *nanoseconds* are Python object layout, and
+a drill that failed on those would be measuring the emulator rather than the
+design. Every gap is printed with the resolution the run achieved rather than
+rounded to "no difference".
+
+A right PIN and a wrong one **do** differ, by around a hundred nanoseconds.
+That is measured and reported rather than asserted away: it is not a leak,
+because the status word already announces the difference, and it has to, since
+a holder who mistyped needs to be told.
+
+**A check that pinned a spelling instead of a property.** The first version of
+the structural assertion matched the exact text of the original defect. I
+reintroduced the leak with different wording to confirm the drill would catch
+it, and it did not. Both the drill and `check_duress_on_card` now require the
+duress comparison to be the whole right-hand side of its assignment: anything
+else there is a guard, whatever it is called. The detection test exercises three
+different spellings.
+
+**The safety review** is the half that is about the person: the mechanism
+signals, it does not prevent, and treating it as prevention is how it gets
+people hurt. Recall under stress, blocking read as defiance, the silence
+offline, and the fact that a rare signal is a loud one, all recorded in
+[docs/design/duress-on-card.md](docs/design/duress-on-card.md).
+
 ## v9.369 — 2026-09-10 (P4.5: the thing at the counter, and what a check costs)
 
 A border post, a bank counter, a pharmacy. `polaris_card/verifier_device.py`

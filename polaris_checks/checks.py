@@ -10473,6 +10473,129 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_duress_on_card(root: pathlib.Path) -> list[Finding]:
+    """Duress is indistinguishable at the physical layer, not only in the bytes (P4.7).
+
+    The vocation above C1-C10 says no person can be compelled to surrender their identity
+    against their will. This is that mechanism where the coercer is standing next to the
+    holder rather than reading a log, and indistinguishability there is not one property but
+    every observable at once.
+
+    THE COMPARISON IS UNCONDITIONAL. The card compares against a duress comparand every time,
+    whether or not the holder enrolled a duress PIN. Skipping it when none is enrolled makes
+    ENROLLMENT ITSELF observable, and note the shape of that harm: it does not endanger the
+    holder who skipped enrollment, it endangers the ones who did enroll, by splitting the
+    population into two classes a coercer can tell apart. Learning that a card has no duress
+    PIN tells them the PIN they just watched was the real one.
+
+    This is checked as a PROPERTY rather than as text. The duress comparison must be the whole
+    right-hand side of its assignment: anything else there is a guard, whatever it is called.
+    The first version of this check matched the exact wording of the original defect and duly
+    missed a differently-worded reintroduction of it.
+
+    THE TWO PINS ARE THE SAME LENGTH. The PIN travels in the data field of a VERIFY command,
+    so its length is on the wire: a six-digit duress PIN beside a four-digit normal one
+    announces which class was entered without anyone needing to see the keypad.
+
+    AND THE TIMING IS MEASURED AGAINST SOMETHING PHYSICAL. A gap of tens of nanoseconds is
+    Python object layout; what matters is whether a gap could be read through a reader, where
+    an NFC exchange is milliseconds and the field's jitter is tens of microseconds. A drill
+    that failed on nanoseconds would be measuring the emulator rather than the design."""
+    name = "duress_on_card"
+    emu = _read(root, "polaris_card/emulator.py")
+    if not emu:
+        return _fail(name, "polaris_card/emulator.py must implement the card's PIN handling")
+    body = emu.split("def _verify_pin")[1].split("\n    def ")[0]
+    if body.count("hmac.compare_digest") != 2:
+        return _fail(name,
+                     "both PIN comparisons must run every time and both must be constant-time")
+    assignment = [ln.strip() for ln in body.splitlines() if ln.strip().startswith("duress_ok")]
+    if not assignment:
+        return _fail(name, "the duress comparison must be its own assignment")
+    guarded = [ln for ln in assignment
+               if not (ln.startswith("duress_ok = hmac.compare_digest(") and ln.endswith(")"))]
+    if guarded:
+        return _fail(name,
+                     "the duress comparison must be the WHOLE right-hand side of its "
+                     "assignment. Anything else there is a guard, whatever it is called, and a "
+                     "guard makes the work depend on whether the holder enrolled a duress PIN. "
+                     "That does not endanger the holder who skipped enrollment; it endangers "
+                     "the ones who did, by splitting the population into two classes a coercer "
+                     "can tell apart")
+    init = emu.split("def __init__")[1].split("\n    def ")[0]
+    if "_unmatchable" not in init:
+        return _fail(name,
+                     "a card with no enrolled duress PIN must still hold a comparand, or there "
+                     "is nothing for the unconditional comparison to compare against")
+    if "def _unmatchable" not in emu:
+        return _fail(name, "the stand-in comparand must be defined")
+    unmatch = emu.split("def _unmatchable")[1].split("\ndef ")[0].split("\nclass ")[0]
+    if "\\x00" not in unmatch:
+        return _fail(name,
+                     "the stand-in comparand must be UNMATCHABLE rather than merely improbable: "
+                     "a keypad cannot put a NUL in the data field, so a leading NUL is what "
+                     "makes it never match")
+    if "len(duress_pin) != len(normal_pin)" not in init:
+        return _fail(name,
+                     "the two PINs must be the same length: the PIN is in the command's data "
+                     "field, so its length is on the wire")
+
+    drill = _read(root, "scripts/polaris-duress-timing-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-duress-timing-drill.py must MEASURE the physical "
+                           "layer rather than asserting it")
+    if "OBSERVABLE_GAP" not in drill:
+        return _fail(name,
+                     "the timing judgement needs a threshold that means something physically. "
+                     "A gap of tens of nanoseconds is object layout; what matters is what could "
+                     "be read through a reader, where an NFC exchange is milliseconds")
+    if "permutation_test" not in drill:
+        return _fail(name,
+                     "the measurement must be judged against noise it calibrates itself, not "
+                     "against a fixed number that turns a shared runner into a coin flip")
+    for needed, why in (("a card WITH a duress PIN costs no observable time over one without",
+                         "the enrollment leak is the sharp case and must be measured"),
+                        ("a duress PIN costs no observable time over the normal one",
+                         "the basic case must be measured"),
+                        ("WHOLE right-hand side, unguarded",
+                         "the structural property must be asserted as a property"),
+                        ("not a leak",
+                         "the right/wrong PIN gap must be reported and EXPLAINED rather than "
+                         "asserted away: the status word already announces it")):
+        if needed not in drill:
+            return _fail(name, why)
+
+    doc = _read(root, "docs/design/duress-on-card.md")
+    if not doc:
+        return _fail(name, "the entry method and its safety review must be published "
+                           "(docs/design/duress-on-card.md)")
+    low = " ".join(doc.lower().split())
+    for phrase, why in (("same length as the first",
+                         "the record must specify the entry method, starting with the length "
+                         "rule that keeps it off the wire"),
+                        ("it does not prevent",
+                         "the safety review must say that the mechanism SIGNALS rather than "
+                         "prevents; treating it as prevention is how it gets people hurt"),
+                        ("recall", "the safety review must address recall under stress, since "
+                                   "a duress PIN is used once, years later, at the worst moment "
+                                   "of someone's life"),
+                        ("nothing is signalled",
+                         "the record must repeat that an offline verifier raises no alarm, and "
+                         "that the card must therefore behave identically offline")):
+        if phrase not in low:
+            return _fail(name, why)
+    return _ok(name,
+               "duress is indistinguishable at the physical layer and not only in the bytes: "
+               "the card compares against a duress comparand unconditionally, so whether the "
+               "holder ENROLLED one is not observable and the population does not split into "
+               "two classes a coercer can tell apart; the stand-in comparand is unmatchable "
+               "rather than improbable; the two PINs are the same length because a PIN's length "
+               "is on the wire; the timing is measured with a self-calibrating test and judged "
+               "against what a reader could actually carry; the one gap that does exist is "
+               "reported and explained rather than asserted away; and the safety review states "
+               "that the mechanism signals rather than prevents")
+
+
 def check_verifier_device(root: pathlib.Path) -> list[Finding]:
     """The thing at the counter decides honestly, and says what it learned (P4.5).
 
@@ -11432,6 +11555,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_duress_on_card,
     check_verifier_device,
     check_card_personalization,
     check_card_emulator,

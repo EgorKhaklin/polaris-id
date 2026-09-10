@@ -9324,6 +9324,116 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_duress_on_card_check_discriminates(tmp_path):
+    # v9.370 (P4.7): the ways duress stops being invisible at the physical layer. A guarded
+    # comparison, which makes ENROLLMENT observable and endangers the holders who opted in by
+    # splitting the population into two classes; a stand-in comparand that is merely improbable
+    # rather than unmatchable; two PINs of different lengths, which puts the answer on the wire;
+    # and a timing drill judged against nothing physical, which measures object layout.
+    EMU = ('import hmac\nimport secrets\n'
+           "\ndef _unmatchable(length):\n"
+           "    return ('\\x00' + secrets.token_urlsafe(length))[:length]\n"
+           "\nclass SoftwareToken:\n"
+           "    def __init__(self, normal_pin, duress_pin=None):\n"
+           "        if duress_pin is not None and len(duress_pin) != len(normal_pin):\n"
+           "            raise ValueError('same length')\n"
+           "        self._pins = {'normal': normal_pin,\n"
+           "                      'duress': duress_pin if duress_pin is not None\n"
+           "                      else _unmatchable(len(normal_pin))}\n"
+           "\n    def _verify_pin(self, data):\n"
+           "        normal_ok = hmac.compare_digest(supplied, self._pins['normal'])\n"
+           "        duress_ok = hmac.compare_digest(supplied, self._pins['duress'])\n"
+           "        if normal_ok or duress_ok:\n            return b''\n")
+    DRILL = ("OBSERVABLE_GAP = 10e-6\n"
+             "def permutation_test(a, b):\n    return 0, 1, 0\n"
+             "# a duress PIN costs no observable time over the normal one\n"
+             "# a card WITH a duress PIN costs no observable time over one without\n"
+             "# ...and the duress comparison is the WHOLE right-hand side, unguarded\n"
+             "# correct vs wrong: median gap (not a leak, see below)\n")
+    DOC = ("A second PIN, of the same length as the first, entered at the same pinpad.\n"
+           "The mechanism signals. It does not prevent. A duress PIN is used once, years\n"
+           "later, so recall under stress is what sets its length. Offline, nothing is\n"
+           "signalled, because there is nobody to signal to.\n")
+    good = {
+        'polaris_card/emulator.py': EMU,
+        'scripts/polaris-duress-timing-drill.py': DRILL,
+        'docs/design/duress-on-card.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_duress_on_card(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # THE GUARD, in three different spellings. The check must catch the PROPERTY, because the
+    # first version of it matched the exact text of the original defect and missed a rewording.
+    for guarded in (
+        "        duress_ok = (self._pins['duress'] is not None\n"
+        "                     and hmac.compare_digest(supplied, self._pins['duress']))\n",
+        "        duress_ok = (self._duress_enrolled\n"
+        "                     and hmac.compare_digest(supplied, self._pins['duress']))\n",
+        "        duress_ok = hmac.compare_digest(supplied, self._pins['duress']) if x else False\n",
+    ):
+        write({'polaris_card/emulator.py': EMU.replace(
+            "        duress_ok = hmac.compare_digest(supplied, self._pins['duress'])\n",
+            guarded)})
+        assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+            "a guarded duress comparison must be refused however it is spelled"
+
+    # ONE COMPARISON INSTEAD OF TWO.
+    write({'polaris_card/emulator.py': EMU.replace(
+        "        duress_ok = hmac.compare_digest(supplied, self._pins['duress'])\n", "")})
+    assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+        "both comparisons must run every time"
+
+    # THE COMPARAND: present, and unmatchable rather than improbable.
+    write({'polaris_card/emulator.py': EMU.replace(
+        "                      'duress': duress_pin if duress_pin is not None\n"
+        "                      else _unmatchable(len(normal_pin))}\n",
+        "                      'duress': duress_pin}\n")})
+    assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+        "a card with no enrolled duress PIN must still hold a comparand"
+    write({'polaris_card/emulator.py': EMU.replace(
+        "    return ('\\x00' + secrets.token_urlsafe(length))[:length]\n",
+        "    return secrets.token_urlsafe(length)[:length]\n")})
+    assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+        "the comparand must be unmatchable, not merely improbable"
+
+    # THE LENGTH ON THE WIRE.
+    write({'polaris_card/emulator.py': EMU.replace(
+        "        if duress_pin is not None and len(duress_pin) != len(normal_pin):\n"
+        "            raise ValueError('same length')\n", "")})
+    assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+        "the two PINs must be the same length"
+
+    # THE MEASUREMENT judged against nothing, or against nothing physical.
+    write({'scripts/polaris-duress-timing-drill.py': DRILL.replace("OBSERVABLE_GAP = 10e-6\n", "")})
+    assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+        "the timing judgement needs a physically meaningful threshold"
+    write({'scripts/polaris-duress-timing-drill.py': DRILL.replace(
+        "def permutation_test(a, b):\n    return 0, 1, 0\n", "")})
+    assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+        "the measurement must calibrate itself against noise"
+    for needle in ("# a duress PIN costs no observable time over the normal one",
+                   "# a card WITH a duress PIN costs no observable time over one without",
+                   "# ...and the duress comparison is the WHOLE right-hand side, unguarded",
+                   "# correct vs wrong: median gap (not a leak, see below)"):
+        write({'scripts/polaris-duress-timing-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+            f"the drill must carry: {needle}"
+
+    # THE SAFETY REVIEW, which is the half that is about the person.
+    for phrase in ("same length as the first", "It does not prevent.", "recall",
+                   "nothing is\nsignalled"):
+        write({'docs/design/duress-on-card.md': DOC.replace(phrase, "")})
+        assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
+            f"the record must state: {phrase}"
+
+
 def test_verifier_device_check_discriminates(tmp_path):
     # v9.369 (P4.5): the ways the thing at the counter starts lying. One boolean instead of
     # three findings; a device that trusts a signature to refuse a replay it cannot refuse; a

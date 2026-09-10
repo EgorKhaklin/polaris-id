@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import secrets
 import struct
 
 try:                                     # both layouts, like the rest of the tree
@@ -70,6 +71,17 @@ def sw_bytes(sw: int) -> bytes:
     return struct.pack(">H", sw)
 
 
+def _unmatchable(length: int) -> str:
+    """A comparand of `length` characters that no pinpad can produce.
+
+    Used as the duress PIN on a card whose holder has not enrolled one, so that the
+    comparison always runs and always costs the same. The leading NUL is what makes it
+    unmatchable rather than merely improbable: a PIN arrives as the decoded data field of a
+    VERIFY command, and a keypad cannot put a NUL there."""
+    filler = secrets.token_urlsafe(max(length, 1))[:max(length - 1, 0)]
+    return ("\x00" + filler)[:max(length, 1)]
+
+
 class SoftwareToken:
     """A card. Reset it, talk to it in APDUs, and it behaves like one.
 
@@ -96,7 +108,17 @@ class SoftwareToken:
             cp.decode(card_object)       # refuse a card object this card could not present
         self._card_object = card_object
         self.state = STATE_PERSONALIZED if card_object is not None else STATE_BLANK
-        self._pins = {"normal": normal_pin, "duress": duress_pin}
+        # A card ALWAYS holds a duress comparand. When the holder has not enrolled a duress
+        # PIN, it is an unguessable value of the same length that no pinpad can produce, so
+        # the comparison still runs and still costs the same. Storing None here and skipping
+        # the comparison would make "this holder enrolled a duress PIN" measurable from
+        # outside the card, which is a fact about the holder and exactly the class of thing a
+        # coercer can use: learning that a card has none tells them the PIN they just watched
+        # was the real one. See docs/design/duress-on-card.md.
+        self._duress_enrolled = duress_pin is not None
+        self._pins = {"normal": normal_pin,
+                      "duress": duress_pin if duress_pin is not None
+                      else _unmatchable(len(normal_pin))}
         self._puk = puk
         self._secrets = {"normal": slot_secret_normal, "duress": slot_secret_duress}
         self._sign = sign_with_slot
@@ -196,8 +218,7 @@ class SoftwareToken:
         # normal PIN would make a duress presentation measurably slower than a normal one,
         # which is exactly the fact that must not be observable.
         normal_ok = hmac.compare_digest(supplied, self._pins["normal"])
-        duress_ok = (self._pins["duress"] is not None
-                     and hmac.compare_digest(supplied, self._pins["duress"]))
+        duress_ok = hmac.compare_digest(supplied, self._pins["duress"])
         if normal_ok or duress_ok:
             # Identical in every observable: same status word, same counter reset. A duress
             # PIN that left the counter alone would announce itself on the next wrong attempt.

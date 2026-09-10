@@ -279,6 +279,16 @@ jobs:
       - name: Card profile and emulator — the encoding, the APDUs, and the refusals
         run: python -m unittest discover -s polaris_card -t . -p 'test_*.py'
 
+      # v9.370 (P4.7) — duress at the PHYSICAL layer, measured rather than asserted. The byte
+      # level is covered elsewhere; this asks whether the card takes a different amount of
+      # TIME. The sharp case is a card whose holder enrolled a duress PIN against one whose
+      # holder did not: if the card skipped the comparison when none was enrolled, the
+      # population would split into two observable classes and learning that a card has none
+      # would tell a coercer the PIN they just watched was the real one. Judged against 10us,
+      # what a reader could actually carry, not against a Python process's nanosecond floor.
+      - name: Duress on the card — indistinguishable in time, not just in bytes
+        run: python scripts/polaris-duress-timing-drill.py
+
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
           COVERAGE_FLOOR: "74"
