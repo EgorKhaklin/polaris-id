@@ -266,7 +266,7 @@ jobs:
       # version, wrong key length, no signature at all). No database, no crypto library: the
       # profile is dependency-free because it has to be implementable inside a secure
       # element's toolchain.
-      - name: Card profile — the encoding, the vectors, and the refusals
+      - name: Card profile and emulator — the encoding, the APDUs, and the refusals
         run: python -m unittest discover -s polaris_card -t . -p 'test_*.py'
 
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
@@ -1780,6 +1780,14 @@ jobs:
       # rule meets an actual forged signature in both directions.
       - name: Card profile — a credential, not a badge, under real signatures
         run: python scripts/polaris-card-profile-drill.py
+
+      # v9.367 (P4.2) — a reader built from NOTHING but the published APDU vectors, so
+      # "everything downstream develops against the emulator" is tested rather than asserted.
+      # Then it is attacked: a captured response replayed under a fresh challenge and relayed
+      # to another reader, a card asked to sign before a PIN, a brute-forced PIN, and a
+      # byte-level comparison of the normal and duress transcripts.
+      - name: Card emulator — a reader, a card, and a coercer
+        run: python scripts/polaris-card-emulator-drill.py
 
       - name: Quantum event — a population re-signed under real ML-DSA-87 (measured)
         run: python scripts/polaris-quantum-event-drill.py

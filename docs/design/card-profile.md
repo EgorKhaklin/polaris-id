@@ -100,6 +100,21 @@ Mechanically, the two PINs unlock **two key slots**. The card object carries onl
 the normal slot's public key; carrying both would make the existence of a duress
 key readable off the card, which is the one fact that must not be readable.
 
+**Two constraints the emulator established** (P4.2), both of them about what is on the wire
+rather than what is in the card:
+
+- **The two PINs must be the same length.** The PIN travels in the command's data field, so
+  its length is observable. A six-digit duress PIN beside a four-digit normal one announces
+  which class was entered without anyone needing to see the keypad. The emulator refuses the
+  mismatch at construction.
+- **The card emits a fixed-length raw `r||s` signature, never DER.** This is what a secure
+  element returns; DER is something host software wraps around it. It also makes the
+  indistinguishability *exact* rather than statistical: a DER signature's length varies by a
+  byte or two per signature, so with DER the claim "a duress response looks the same" is
+  something you can only sample for. With a fixed length there is one response length and it
+  carries no information at all. The reader wraps to DER on its own side, where a varying
+  length costs nothing.
+
 **Where the signal goes.** The authority holds both public keys. A response
 signed by the duress slot verifies against the authority's record and raises a
 `DuressEvent` exactly as [duress-codes.md](duress-codes.md) describes for the
@@ -162,10 +177,39 @@ the wallet is **the prover**: the card unlocks the holder's proving secret and
 the wallet produces the proof (P9.2, P9.3). A card alone cannot do it, and this
 profile does not claim it can.
 
-## 7. What v0 does not settle
+## 7. The card's behaviour, and the emulator
 
-- **The APDU layer.** Command and response encoding, file structure, and the
-  select/verify/sign sequence are P4.2, developed against the emulator.
+The object above says what a card holds. [`polaris_card/emulator.py`](../../polaris_card/emulator.py)
+says what it *does*: ISO 7816-4 command and response pairs with real status words, published
+in [`polaris_card/vectors/apdu-exchanges.json`](../../polaris_card/vectors/apdu-exchanges.json).
+
+The interface is APDUs rather than a comfortable Python API on purpose. A reader written
+against a method call has to be rewritten the day a card arrives; a reader written against
+APDUs does not. That is what "everything downstream develops against the emulator" has to mean
+if it is to mean anything.
+
+| | |
+|---|---|
+| `SELECT` (`80 A4`) | Answers with doc type, profile version, attempts remaining. Nothing else answers before it, and selecting drops any previous authentication. |
+| `VERIFY PIN` (`80 20`) | Both PINs answer `9000`. A wrong one answers `63Cx` with the attempts left. |
+| `UNBLOCK` (`80 2C`) | The PUK restores the retry counter. |
+| `GET CARD OBJECT` (`80 30`) | Identified mode. A separate command a verifier has to ask for, rather than what a card volunteers. |
+| `SIGN CHALLENGE` (`80 34`) | Key mode: `scope_len ‖ scope ‖ challenge` in, handle and signature out. |
+
+Three behaviours are load-bearing. The card **signs nothing before a PIN** and **refuses a
+challenge under 16 bytes**, so it is never an oracle. The **retry counter survives a power
+cycle**, or a wrong PIN would be free to retry forever. And a **blocked card refuses the
+correct PIN**, both of them, identically.
+
+An emulator cannot tell you a real secure element is constant-time, resists fault injection,
+or keeps a key non-extractable. Those are properties of a part and its certification (P4.6).
+What it can do is fix the protocol so that when such a part exists, the readers and the
+personalization service already work.
+
+## 8. What v0 does not settle
+
+- **File structure and secure messaging.** The command set above is the working subset; a
+  production applet needs an AID, file selection and an encrypted channel.
 - **Personalization.** Key injection bound to the audit-of-record is P4.3.
 - **Which silicon.** The vendor matrix and eval-kit results are P4.6, and
   external: they depend on what is certified and purchasable, not on this
@@ -174,6 +218,13 @@ profile does not claim it can.
   Capture is the enrollment station's problem (P4.4).
 
 ## Proven by
+
+`polaris_card/test_emulator.py` (33 tests) walks the published APDU session against a real
+card, so the vectors and the emulator cannot drift apart, and
+`scripts/polaris-card-emulator-drill.py` runs a reader built from nothing but those vectors,
+then attacks it: a captured response replayed under a fresh challenge and relayed to another
+reader, a card asked to sign before a PIN, a brute-forced PIN, and a byte-level comparison of
+the normal and duress transcripts.
 
 `polaris_card/test_card_profile.py` (27 tests) on every push: the encoder and
 decoder reproduce the published vectors byte for byte, the signing body excludes

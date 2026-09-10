@@ -46,7 +46,7 @@ polaris/
 ├── polaris_cli/        ← the operator CLI
 ├── polaris_checks/     ← the flat invariant layer that gates CI (README.md indexes it)
 ├── polaris_sim/        ← the national simulation and benchmark harness (a synthetic USA through the real pipeline)
-├── polaris_card/       ← the physical token: the card profile as a normative encoding, its dependency-free reference codec, and the published vectors an applet is written against
+├── polaris_card/       ← the physical token: the card profile as a normative encoding, its dependency-free reference codec, the software token emulator (ISO 7816-4 APDUs), and the published vectors an applet and a reader are written against
 ├── sdk/                ← the verify SDKs a relying party installs: python/ (the reference) and typescript/
 ├── conformance/        ← the verification conformance suite: cases.json, vectors/, the frozen version-1 set (frozen/v1/)
 ├── vectors/            ← the published authenticity vectors (real ML-DSA-65 packs, made by an independent implementation)

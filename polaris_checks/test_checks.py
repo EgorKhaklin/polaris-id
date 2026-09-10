@@ -9324,6 +9324,148 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_card_emulator_check_discriminates(tmp_path):
+    # v9.367 (P4.2): the ways a card emulator stops modelling a card. Signing before a PIN,
+    # which makes it an oracle; a retry counter reset by pulling the card, which makes a
+    # four-digit PIN enumerable; a PIN comparison that short-circuits on the normal PIN, which
+    # makes a duress presentation measurably slower; two PINs of different lengths, which puts
+    # the answer on the wire; and a DER signature, whose varying length turns an exact
+    # indistinguishability claim into one you can only sample for.
+    MOD = ('import hmac\n'
+           'INS_SELECT = 0xA4\nINS_VERIFY_PIN = 0x20\nINS_SIGN_CHALLENGE = 0x34\n'
+           'SW_BLOCKED = 0x6983\nSW_SECURITY_NOT_SATISFIED = 0x6982\n'
+           'MAX_PIN_TRIES = 3\nRAW_SIGNATURE_LEN = 64\n'
+           "\ndef der_from_raw(signature):\n    return signature\n"
+           "\nclass SoftwareToken:\n"
+           "    def __init__(self, normal_pin, duress_pin=None):\n"
+           "        if duress_pin is not None and len(duress_pin) != len(normal_pin):\n"
+           "            raise ValueError('the duress PIN must be the same length')\n"
+           "\n    def reset(self):\n"
+           "        if not hasattr(self, '_tries'):\n            self._tries = MAX_PIN_TRIES\n"
+           "\n    def transmit(self, apdu):\n"
+           "        try:\n            return self._transmit(apdu)\n"
+           "        except Exception:\n            return b'\\x6a\\x80'\n"
+           "\n    def _verify_pin(self, data):\n"
+           "        normal_ok = hmac.compare_digest(data, self._normal)\n"
+           "        duress_ok = hmac.compare_digest(data, self._duress)\n"
+           "        if normal_ok or duress_ok:\n"
+           "            self._tries = MAX_PIN_TRIES\n            return b'\\x90\\x00'\n"
+           "\n    def _get_card_object(self):\n"
+           "        if self._unlocked_slot is None:\n            return b'\\x69\\x82'\n"
+           "\n    def _sign_challenge(self, data, p1, p2):\n"
+           "        if self._unlocked_slot is None:\n            return b'\\x69\\x82'\n"
+           "        raise CardProfileError('a short challenge is not a challenge')\n")
+    VECTORS = ('{"commands": [], "session": [], "status_words": {}, '
+               '"response_body_hex": "00"}\n')
+    SUITE = "with open('vectors/apdu-exchanges.json') as fh:\n    doc = json.load(fh)\n"
+    DRILL = ("# a reader built only from the published vectors completes a presentation\n"
+             "# ...a captured response replayed under a fresh challenge is refused\n"
+             "# ...and relayed to a different reader is refused\n"
+             "# three wrong PINs block the card\n"
+             "# a duress presentation walks the same commands as a normal one\n"
+             "# ...and exactly one response length, the same for both slots\n")
+    good = {
+        'polaris_card/emulator.py': MOD,
+        'polaris_card/vectors/apdu-exchanges.json': VECTORS,
+        'polaris_card/test_emulator.py': SUITE,
+        'scripts/polaris-card-emulator-drill.py': DRILL,
+    }
+
+    def write(overrides=None, remove=()):
+        files = dict(good); files.update(overrides or {})
+        for rel in remove:
+            files.pop(rel, None)
+            f = tmp_path / rel
+            if f.exists():
+                f.unlink()
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_card_emulator(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # THE ORACLE. A card that signs before a PIN is a signing service in somebody's pocket.
+    write({'polaris_card/emulator.py': MOD.replace(
+        "    def _sign_challenge(self, data, p1, p2):\n"
+        "        if self._unlocked_slot is None:\n            return b'\\x69\\x82'\n",
+        "    def _sign_challenge(self, data, p1, p2):\n")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "the card must sign nothing before a PIN"
+    write({'polaris_card/emulator.py': MOD.replace(
+        "        raise CardProfileError('a short challenge is not a challenge')\n", "")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "a challenge too short to be one must be refused by the CARD"
+    write({'polaris_card/emulator.py': MOD.replace(
+        "    def _get_card_object(self):\n"
+        "        if self._unlocked_slot is None:\n            return b'\\x69\\x82'\n",
+        "    def _get_card_object(self):\n")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "identified mode must need a verified PIN too"
+
+    # THE ENUMERABLE PIN.
+    write({'polaris_card/emulator.py': MOD.replace(
+        "        if not hasattr(self, '_tries'):\n            self._tries = MAX_PIN_TRIES\n",
+        "        self._tries = MAX_PIN_TRIES\n")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "the retry counter must survive a power cycle"
+
+    # THE TIMING LEAK, and the counter that announces itself two commands later.
+    write({'polaris_card/emulator.py': MOD.replace(
+        "        duress_ok = hmac.compare_digest(data, self._duress)\n"
+        "        if normal_ok or duress_ok:\n",
+        "        if normal_ok:\n")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "both PIN comparisons must run every time, or duress is measurably slower"
+    write({'polaris_card/emulator.py': MOD.replace("hmac.compare_digest", "str.__eq__")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "the PIN comparison must be constant-time"
+    write({'polaris_card/emulator.py': MOD.replace(
+        "            self._tries = MAX_PIN_TRIES\n            return b'\\x90\\x00'\n",
+        "            return b'\\x90\\x00'\n")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "a correct PIN must reset the counter, and both must reset it identically"
+
+    # THE LENGTH ON THE WIRE.
+    write({'polaris_card/emulator.py': MOD.replace(
+        "        if duress_pin is not None and len(duress_pin) != len(normal_pin):\n"
+        "            raise ValueError('the duress PIN must be the same length')\n", "")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "the two PINs must be the same length"
+
+    # THE DER SIGNATURE, which makes the claim sampled rather than exact.
+    write({'polaris_card/emulator.py': MOD.replace("RAW_SIGNATURE_LEN = 64\n", "")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "the card must emit a fixed-length raw signature, not DER"
+
+    # THE CARD THAT CRASHES ON A BAD COMMAND.
+    write({'polaris_card/emulator.py': MOD.replace(
+        "        try:\n            return self._transmit(apdu)\n"
+        "        except Exception:\n            return b'\\x6a\\x80'\n",
+        "        return self._transmit(apdu)\n")})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "a malformed command must get a status word, not an exception"
+
+    # THE PUBLISHED CONTRACT.
+    write(remove=('polaris_card/vectors/apdu-exchanges.json',))
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "the APDU contract must be published"
+    write({'polaris_card/test_emulator.py': "def test_nothing():\n    pass\n"})
+    assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+        "the suite must walk the published session against a real card"
+
+    # THE DRILL's individual claims.
+    for needle in ("# a reader built only from the published vectors completes a presentation",
+                   "# ...a captured response replayed under a fresh challenge is refused",
+                   "# ...and relayed to a different reader is refused",
+                   "# three wrong PINs block the card",
+                   "# a duress presentation walks the same commands as a normal one",
+                   "# ...and exactly one response length, the same for both slots"):
+        write({'scripts/polaris-card-emulator-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
+            f"the drill must assert: {needle}"
+
+
 def test_card_profile_check_discriminates(tmp_path):
     # v9.366 (P4.1): the ways a card profile stops being implementable or stops being safe.
     # An encoding with more than one reading, which lets a signature move onto content it did

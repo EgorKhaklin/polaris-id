@@ -1,0 +1,96 @@
+{
+  "class_byte": "80",
+  "commands": [
+    {
+      "apdu_hex": "80a4040000",
+      "name": "select",
+      "why": "SELECT the application. Nothing else answers before it."
+    },
+    {
+      "apdu_hex": "802000800431323334",
+      "name": "verify_pin",
+      "why": "VERIFY PIN, ASCII in the data field. Both the normal and the duress PIN answer 0x9000; nothing about the response says which."
+    },
+    {
+      "apdu_hex": "802c0080083132333435363738",
+      "name": "unblock",
+      "why": "UNBLOCK with the PUK after the retry counter reaches zero."
+    },
+    {
+      "apdu_hex": "8030000000",
+      "name": "get_card_object",
+      "why": "Identified mode: the whole signed card object. Needs a verified PIN, because the reader learns a stable credential reference."
+    },
+    {
+      "apdu_hex": "8034000029087265616465722d6102070c11161b20252a2f34393e43484d52575c61666b70757a7f84898e93989d",
+      "name": "sign_challenge",
+      "why": "Key mode: data is scope_len(1) || scope || challenge."
+    }
+  ],
+  "note": "Signatures and pairwise handles are NOT pinned here: they depend on keys, and pinning them would pin a key every implementer would need. The command encodings, the status-word protocol and response_body_hex below are the deterministic contract.",
+  "profile": "id.polaris.card.1",
+  "response_body": {
+    "challenge_hex": "02070c11161b20252a2f34393e43484d52575c61666b70757a7f84898e93989d",
+    "handle_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "reader_scope": "reader-a",
+    "response_body_hex": "706f6c617269732d636172642d726573706f6e73652f31002002070c11161b20252a2f34393e43484d52575c61666b70757a7f84898e93989d00087265616465722d61000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "why": "What the card signs at presentation. Length-prefixed so no concatenation trick can shift the boundary between challenge and scope."
+  },
+  "session": [
+    {
+      "meaning": "the application answers with its doc type, version, tries left",
+      "step": "select",
+      "sw": "9000"
+    },
+    {
+      "meaning": "the card signs nothing before a PIN",
+      "step": "sign_challenge",
+      "sw": "6982"
+    },
+    {
+      "meaning": "two attempts left; the count is announced",
+      "step": "verify_pin (wrong)",
+      "sw": "63c2"
+    },
+    {
+      "meaning": "one attempt left",
+      "step": "verify_pin (wrong)",
+      "sw": "63c1"
+    },
+    {
+      "meaning": "blocked",
+      "step": "verify_pin (wrong)",
+      "sw": "6983"
+    },
+    {
+      "meaning": "a blocked card refuses the CORRECT PIN too, and refuses BOTH correct PINs identically",
+      "step": "verify_pin (correct)",
+      "sw": "6983"
+    },
+    {
+      "meaning": "the retry counter is restored",
+      "step": "unblock (correct PUK)",
+      "sw": "9000"
+    },
+    {
+      "meaning": "identical either way",
+      "step": "verify_pin (normal or duress)",
+      "sw": "9000"
+    },
+    {
+      "meaning": "handle_len(1) || handle || sig_len(2) || sig",
+      "step": "sign_challenge",
+      "sw": "9000"
+    }
+  ],
+  "status_words": {
+    "63cX": "wrong PIN or PUK; X is the number of attempts remaining",
+    "6982": "security status not satisfied (no PIN verified)",
+    "6983": "authentication method blocked",
+    "6985": "conditions not satisfied (application not selected)",
+    "6a80": "wrong data (a malformed command, or a challenge under 16 bytes)",
+    "6d00": "instruction not supported",
+    "6e00": "class not supported",
+    "9000": "success"
+  }
+}

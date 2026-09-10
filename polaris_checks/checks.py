@@ -10473,6 +10473,140 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_card_emulator(root: pathlib.Path) -> list[Finding]:
+    """The card's BEHAVIOUR is fixed, so everything downstream can be built now (P4.2).
+
+    P4.1 said what is on a card. This is what a card answers, in what order, and what it
+    refuses. The interface is ISO 7816-4 APDUs rather than a comfortable Python API, because a
+    reader written against a method call has to be rewritten the day silicon arrives and a
+    reader written against APDUs does not. That is the whole content of "everything downstream
+    develops against the emulator".
+
+    THE CARD IS NOT AN ORACLE. It signs nothing before a PIN, and it refuses a challenge short
+    enough to be worth waiting for a repeat of. A card that signed whatever a reader asked for
+    would be a signing service in somebody's pocket.
+
+    THE PIN IS NOT BRUTE-FORCEABLE, AND THE COUNTER SURVIVES A POWER CYCLE. A retry counter
+    reset by pulling the card would make a four-digit PIN free to enumerate.
+
+    AND THE COERCER LEARNS NOTHING, EXACTLY. Both PINs unlock with the same status word, both
+    reset the counter identically, and the two must be the SAME LENGTH because the PIN travels
+    in the command's data field where its length is observable. The signature is fixed-length
+    raw r||s rather than DER: that is what a secure element returns, and it is what makes the
+    indistinguishability an exact property instead of one you can only sample for, since a DER
+    signature's length varies per signature."""
+    name = "card_emulator"
+    mod = _read(root, "polaris_card/emulator.py")
+    if not mod:
+        return _fail(name, "polaris_card/emulator.py must implement the card's behaviour")
+    for needed, why in (("INS_SELECT", "the command set must be ISO 7816-4 APDUs, not a Python "
+                                       "API a reader would have to abandon for real silicon"),
+                        ("INS_VERIFY_PIN", "PIN verification is a command"),
+                        ("INS_SIGN_CHALLENGE", "presentation is a command"),
+                        ("SW_BLOCKED", "a blocked card needs its own status word"),
+                        ("SW_SECURITY_NOT_SATISFIED", "refusing before a PIN needs its own")):
+        if needed not in mod:
+            return _fail(name, why)
+
+    if "def transmit" not in mod:
+        return _fail(name, "the card must be spoken to through one transmit() entry point")
+    tx = mod.split("def transmit")[1].split("\n    def ")[0]
+    if "except Exception" not in tx:
+        return _fail(name,
+                     "transmit() must answer a malformed command with a status word rather "
+                     "than raising: half of what a reader is written against is what happens "
+                     "when it gets the command wrong")
+
+    verify = mod.split("def _verify_pin")[1].split("\n    def ")[0]
+    if "compare_digest" not in verify:
+        return _fail(name, "the PIN comparison must be constant-time")
+    if verify.count("compare_digest") < 2 or "normal_ok or duress_ok" not in verify:
+        return _fail(name,
+                     "BOTH PIN comparisons must run every time. Short-circuiting on the normal "
+                     "PIN makes a duress presentation measurably slower, which is exactly the "
+                     "fact that must not be observable")
+    if "_tries = MAX_PIN_TRIES" not in verify:
+        return _fail(name,
+                     "a correct PIN must reset the retry counter, and the duress PIN must reset "
+                     "it identically: one that left the counter alone would announce itself on "
+                     "the NEXT wrong attempt")
+    init = mod.split("def __init__")[1].split("\n    def ")[0]
+    if "len(duress_pin) != len(normal_pin)" not in init:
+        return _fail(name,
+                     "the two PINs must be the same length. The PIN travels in the command's "
+                     "data field, so its length is on the wire: a six-digit duress PIN beside a "
+                     "four-digit normal one announces which class was entered without anyone "
+                     "seeing the keypad")
+    reset = mod.split("def reset")[1].split("\n    def ")[0]
+    if "hasattr" not in reset or "_tries" not in reset:
+        return _fail(name,
+                     "the retry counter must survive a power cycle, or a wrong PIN is free to "
+                     "retry forever and a four-digit PIN is enumerable")
+
+    if "RAW_SIGNATURE_LEN" not in mod or "def der_from_raw" not in mod:
+        return _fail(name,
+                     "the card must emit a FIXED-LENGTH raw r||s signature, as a secure element "
+                     "does, with DER wrapping left to the reader. A DER signature's length "
+                     "varies per signature, which turns 'a duress response is indistinguishable' "
+                     "from an exact property into one you can only sample for")
+
+    sign = mod.split("def _sign_challenge")[1].split("\n    def ")[0]
+    if "_unlocked_slot is None" not in sign:
+        return _fail(name, "the card must sign nothing before a PIN is verified")
+    if "CardProfileError" not in sign:
+        return _fail(name,
+                     "a challenge too short to be a challenge must be refused BY THE CARD; a "
+                     "card that signed whatever a reader asked for would be an oracle")
+    obj = mod.split("def _get_card_object")[1].split("\n    def ")[0]
+    if "_unlocked_slot is None" not in obj:
+        return _fail(name,
+                     "identified mode must need a verified PIN too: the reader learns a stable "
+                     "credential reference, so it is something a verifier asks for rather than "
+                     "something a card volunteers")
+
+    vectors = _read(root, "polaris_card/vectors/apdu-exchanges.json")
+    if not vectors:
+        return _fail(name,
+                     "the APDU contract must be published: a reader implementer downstream has "
+                     "nothing else to write against")
+    for key in ("commands", "session", "status_words", "response_body_hex"):
+        if key not in vectors:
+            return _fail(name, f"the published APDU contract must carry {key}")
+    suite = _read(root, "polaris_card/test_emulator.py")
+    if "apdu-exchanges.json" not in suite:
+        return _fail(name,
+                     "the suite must walk the PUBLISHED session against a real card. If the "
+                     "file and the card diverge, the file is a lie in the shape of a "
+                     "specification, and it must fail here rather than in somebody's lab")
+
+    drill = _read(root, "scripts/polaris-card-emulator-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-card-emulator-drill.py must run a reader against "
+                           "the card")
+    for needed, why in (("built only from the published vectors",
+                         "the drill's reader must use only what a downstream implementer has, "
+                         "or 'everything downstream develops against it' is untested"),
+                        ("replayed under a fresh challenge is refused",
+                         "a captured response must be worth nothing"),
+                        ("relayed to a different reader is refused",
+                         "the scope is inside the signature for a reason"),
+                        ("three wrong PINs block the card", "the PIN must not be brute-forceable"),
+                        ("walks the same commands as a normal one",
+                         "the coercer's transcript must be compared, not asserted"),
+                        ("exactly one response length",
+                         "the length claim must be EXACT rather than sampled")):
+        if needed not in drill:
+            return _fail(name, why)
+    return _ok(name,
+               "the card's behaviour is fixed as ISO 7816-4 APDUs with a published contract, so "
+               "a reader can be written before silicon exists: it signs nothing before a PIN and "
+               "refuses a challenge too short to be one, three wrong PINs block it and the block "
+               "survives a power cycle, both PINs unlock identically and must be the same length "
+               "because a PIN's length is on the wire, both comparisons run every time so timing "
+               "says nothing, and the signature is fixed-length raw r||s as a secure element "
+               "returns, which makes the duress indistinguishability exact rather than sampled")
+
+
 def check_card_profile(root: pathlib.Path) -> list[Finding]:
     """The card is specified as an object somebody else can implement (P4.1).
 
@@ -11011,6 +11145,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_card_emulator,
     check_card_profile,
     check_quantum_event_readiness,
     check_per_authority_isolation,

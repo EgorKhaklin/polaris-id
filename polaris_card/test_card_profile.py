@@ -11,7 +11,14 @@ import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-import card_profile as cp   # noqa: E402
+# Imported the same way emulator.py imports it, and in the same ORDER. Under discovery from
+# the repo root `polaris_card` is a package, so a flat `import card_profile` here beside a
+# packaged import there would bind TWO module objects with two distinct CardProfileError
+# classes, and assertRaises would stop catching what the code raises.
+try:
+    from polaris_card import card_profile as cp   # type: ignore  # noqa: E402
+except ImportError:                               # pragma: no cover - the flat layout
+    import card_profile as cp                     # type: ignore  # noqa: E402
 
 VECTORS = os.path.join(_HERE, "vectors", "card-objects.json")
 

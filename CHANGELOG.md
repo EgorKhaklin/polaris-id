@@ -5,6 +5,52 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.367 — 2026-09-10 (P4.2: the software token, and two things it taught the profile)
+
+P4.1 said what is on a card. This is what a card **does**:
+`polaris_card/emulator.py`, ISO 7816-4 command and response pairs with real
+status words, two PIN slots, a retry counter and a PUK, published in
+`polaris_card/vectors/apdu-exchanges.json`.
+
+**APDUs rather than a comfortable Python API, on purpose.** A reader written
+against a method call has to be rewritten the day a card arrives. A reader
+written against APDUs does not. That is the entire content of "everything
+downstream develops against the emulator", and the drill tests it rather than
+asserting it: its reader is built from nothing but the published vectors and
+the profile, and it completes a full presentation.
+
+**Then it is attacked.** A captured response replayed under a fresh challenge is
+refused, and relayed to a different reader is refused, because both the
+challenge and the scope are inside the signature. The card signs nothing before
+a PIN and refuses a challenge short enough to wait for a repeat of, so it is
+never an oracle. Three wrong PINs block it, the block survives a power cycle,
+and a blocked card refuses both correct PINs alike.
+
+**Building it found two things the profile had not said**, and both are about
+what is on the wire rather than what is in the card:
+
+**The two PINs must be the same length.** The PIN travels in the command's data
+field, so its length is observable. A six-digit duress PIN beside a four-digit
+normal one announces which class was entered without anyone needing to see the
+keypad. The emulator refuses the mismatch at construction.
+
+**The card emits a fixed-length raw `r||s` signature, never DER.** This is what
+a secure element actually returns; DER is something host software wraps around
+it. More importantly it makes the indistinguishability **exact** rather than
+statistical: a DER signature's length varies by a byte or two per signature, so
+with DER "a duress response looks the same" is a claim you can only sample for,
+and the first version of this drill duly found a response length one slot had
+produced and the other had not in thirty trials. With a fixed length there is
+one response length and it carries nothing. The reader wraps to DER on its own
+side, where a varying length costs nothing.
+
+The coercer's transcript is now compared byte position by byte position: same
+commands, same lengths, same status words, same order. The PIN digits themselves
+are excluded, deliberately, because they are the holder's input and a coercer
+may well have watched them typed. The claim was never that they cannot see the
+digits; it is that nothing tells them whether those digits were the normal PIN
+or the duress one.
+
 ## v9.366 — 2026-09-10 (P4.1: the card profile, and the limits it states)
 
 The schema has modelled the card since the first version: serials, biometric

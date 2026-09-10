@@ -1,4 +1,4 @@
-"""polaris_card/make_vectors.py - regenerate polaris_card/vectors/ (roadmap P4.1).
+"""polaris_card/make_vectors.py - regenerate polaris_card/vectors/ (roadmap P4.1, P4.2).
 
 The vectors are the profile's contract with implementers who are not running this code. They
 are generated rather than hand-written so they cannot drift from the encoder, and they are
@@ -18,6 +18,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import card_profile as cp   # noqa: E402
+import emulator as em       # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "vectors")
@@ -89,6 +90,74 @@ def build():
     }
 
 
+
+def build_apdus():
+    """The APDU contract: the command bytes, and the status words a scripted session walks.
+
+    Signatures and handles are NOT here. They depend on keys, and a vector that pinned them
+    would pin a key every implementer would need. What IS deterministic is every command
+    encoding, the status-word protocol, and the response body the card signs for a given
+    challenge, scope and handle. Match those and a reader written against this file works
+    against the emulator and against silicon.
+    """
+    handle = bytes(range(32))
+    challenge = bytes((i * 5 + 2) & 0xFF for i in range(32))
+    commands = [
+        ("select", "SELECT the application. Nothing else answers before it.",
+         em.select().hex()),
+        ("verify_pin", "VERIFY PIN, ASCII in the data field. Both the normal and the duress "
+                       "PIN answer 0x9000; nothing about the response says which.",
+         em.verify_pin("1234").hex()),
+        ("unblock", "UNBLOCK with the PUK after the retry counter reaches zero.",
+         em.unblock("12345678").hex()),
+        ("get_card_object", "Identified mode: the whole signed card object. Needs a verified "
+                            "PIN, because the reader learns a stable credential reference.",
+         em.get_card_object().hex()),
+        ("sign_challenge", "Key mode: data is scope_len(1) || scope || challenge.",
+         em.sign_challenge("reader-a", challenge).hex()),
+    ]
+    session = [
+        ("select", "9000", "the application answers with its doc type, version, tries left"),
+        ("sign_challenge", "6982", "the card signs nothing before a PIN"),
+        ("verify_pin (wrong)", "63c2", "two attempts left; the count is announced"),
+        ("verify_pin (wrong)", "63c1", "one attempt left"),
+        ("verify_pin (wrong)", "6983", "blocked"),
+        ("verify_pin (correct)", "6983", "a blocked card refuses the CORRECT PIN too, and "
+                                         "refuses BOTH correct PINs identically"),
+        ("unblock (correct PUK)", "9000", "the retry counter is restored"),
+        ("verify_pin (normal or duress)", "9000", "identical either way"),
+        ("sign_challenge", "9000", "handle_len(1) || handle || sig_len(2) || sig"),
+    ]
+    return {
+        "profile": cp.DOC_TYPE,
+        "class_byte": "80",
+        "note": ("Signatures and pairwise handles are NOT pinned here: they depend on keys, "
+                 "and pinning them would pin a key every implementer would need. The command "
+                 "encodings, the status-word protocol and response_body_hex below are the "
+                 "deterministic contract."),
+        "status_words": {
+            "9000": "success",
+            "63cX": "wrong PIN or PUK; X is the number of attempts remaining",
+            "6982": "security status not satisfied (no PIN verified)",
+            "6983": "authentication method blocked",
+            "6985": "conditions not satisfied (application not selected)",
+            "6a80": "wrong data (a malformed command, or a challenge under 16 bytes)",
+            "6d00": "instruction not supported",
+            "6e00": "class not supported",
+        },
+        "commands": [{"name": n, "why": w, "apdu_hex": h} for n, w, h in commands],
+        "session": [{"step": s_, "sw": sw, "meaning": m} for s_, sw, m in session],
+        "response_body": {
+            "why": ("What the card signs at presentation. Length-prefixed so no concatenation "
+                    "trick can shift the boundary between challenge and scope."),
+            "challenge_hex": challenge.hex(),
+            "reader_scope": "reader-a",
+            "handle_hex": handle.hex(),
+            "response_body_hex": cp.response_body(challenge, "reader-a", handle).hex(),
+        },
+    }
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     doc = build()
@@ -97,6 +166,14 @@ def main():
         json.dump(doc, fh, indent=2, sort_keys=True)
         fh.write("\n")
     print("wrote %s (%d cases)" % (path, len(doc["cases"])))
+
+    apdus = build_apdus()
+    path = os.path.join(OUT, "apdu-exchanges.json")
+    with open(path, "w") as fh:
+        json.dump(apdus, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    print("wrote %s (%d commands, %d session steps)"
+          % (path, len(apdus["commands"]), len(apdus["session"])))
     return 0
 
 
