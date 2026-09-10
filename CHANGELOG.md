@@ -5,6 +5,53 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.375 — 2026-09-10 (P6.7 closed: the other two specs)
+
+v9.374 graduated `meta/tla/` to checked and shipped the C1 purge-coverage
+spec. This adds the two P6.7 also named, and closes the row.
+
+**C2, and what the easy version would have been.**
+`chk_disclosure_token_consistency` requires `token_id IS NULL` on every
+ZERO_KNOWLEDGE verification event. Modelling *that* would prove a CHECK
+constraint holds, which it does by construction, and would say nothing about
+whether the holder is identifiable. The property worth proving is what an
+observer holding **every recorded row** can conclude, and Polaris records two
+things per zero-knowledge verification: the event, and a consumed nullifier
+that is derived from the holder's own secret.
+
+So the recorded value *does* vary with the holder. That is deliberate: it is
+how one relying party refuses a second claim. `C2ZeroKnowledgeUnlinkability`
+proves both halves hold at once, which is the whole design: one verifier
+recognises a repeat, and two verifiers pooling everything they hold still
+cannot tell they saw the same person.
+
+**Status freshness, and the bound that moves.** An offline verifier holding an
+assertion minted before a revocation cannot know about it, and no protocol
+makes it know. What `StatusFreshness` proves is that its ignorance is
+*bounded*: a verifier never accepts a credential more than one window after it
+was revoked. That is the claim offline verification actually makes. It is not
+"revocation is immediate", which would be false, and **the window is the
+exposure, stated in the units the operator sets it in**.
+
+**All three counterparts have the same shape**, and that shape is the reason
+for writing them. Each is a change that looks like a simplification, leaves
+everything local working, and moves a guarantee somewhere nobody is watching:
+
+- Drop the single-setter assumption on the purge carve-out, and a committed
+  DELETE can have no committed checkpoint.
+- Take the scope out of the nullifier, and one relying party can *still* refuse
+  a repeat, so the mechanism looks fine, while two of them can now link a
+  person.
+- Stop checking the window against the verifier's own ceiling, and the verifier
+  is still correct about the assertion it was handed, while the issuer now
+  decides its exposure.
+
+Four specs, 11 `MODELS` bindings resolved against the tree, three counterpart
+configurations required to fail. Writing `StatusFreshness` cost one detour:
+TLA+ will not compare a record with a string, so the obvious "record or none"
+sentinel made `TypeOK` itself fail to evaluate rather than fail to hold. The
+assertion the verifier holds is modelled as a set of at most one.
+
 ## v9.374 — 2026-09-10 (P6.7: the specs, actually checked)
 
 `meta/tla/` carried one TLA+ spec for years, described as "checked once to show

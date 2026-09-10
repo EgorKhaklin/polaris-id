@@ -13,8 +13,22 @@ not, and this file said so.
 
 | Spec | Property |
 |---|---|
-| [`C3OneActiveToken.tla`](C3OneActiveToken.tla) | No two ACTIVE credentials share an individual, under every interleaving of concurrent issue and revoke. Models the partial unique index and the `FOR UPDATE` locking in `uc1_issue_and_activate`. |
 | [`C1PurgeCoverage.tla`](C1PurgeCoverage.tla) | Every audit row that has left the table is covered by a committed checkpoint recording that it left. Models `reject_audit_modification`'s single DELETE carve-out and the transaction-scoped GUC that opens it. |
+| [`C2ZeroKnowledgeUnlinkability.tla`](C2ZeroKnowledgeUnlinkability.tla) | One relying party can refuse a repeat from the same holder, and two relying parties pooling everything they hold still cannot tell they saw the same person. Models the scoped nullifier and the consumed-nonce store. |
+| [`C3OneActiveToken.tla`](C3OneActiveToken.tla) | No two ACTIVE credentials share an individual, under every interleaving of concurrent issue and revoke. Models the partial unique index and the `FOR UPDATE` locking in `uc1_issue_and_activate`. |
+| [`StatusFreshness.tla`](StatusFreshness.tla) | A verifier never accepts a credential more than one window after it was revoked, and the bound is the one the VERIFIER set rather than the one the issuer minted. Models the P3.6 offline status assertion. |
+
+Each of the last three carries a counterpart configuration it is required to FAIL under, so
+none of the three properties is vacuous. What each counterpart shows is the same shape: a
+change that looks like a simplification, that leaves everything local working, and that moves
+a guarantee somewhere nobody is watching.
+
+- Drop the single-setter assumption on the purge carve-out and a committed DELETE can have no
+  committed checkpoint.
+- Take the scope out of the nullifier and one relying party can *still* refuse a repeat, so the
+  mechanism looks fine, while two of them can now link a person.
+- Stop checking the window against the verifier's own ceiling and the verifier is still correct
+  about the assertion it was handed, while the issuer now decides its exposure.
 
 ## What graduating them found
 
