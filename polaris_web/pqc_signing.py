@@ -440,6 +440,60 @@ def signature_over_message(message: bytes, agency_id=None) -> tuple:
     return hashlib.sha3_256(message).digest(), PLACEHOLDER_LABEL, None
 
 
+def signature_for_migration(token_value: str, algorithm: str, agency_id=None) -> tuple:
+    """Sign `token_value` under an EXPLICIT target parameter set (P7.6, the quantum event).
+
+    Every other signing entry point takes its algorithm from process-wide configuration,
+    which is right while one parameter set is operational. A migration is the case where two
+    are: the instance keeps issuing under the current algorithm while the existing population
+    is re-signed under the new one, so the target has to be an argument rather than an
+    environment variable.
+
+    The key comes from custody.get_custody_for_algorithm, which REFUSES when no key exists
+    for the requested set rather than signing under whatever key it has. That refusal is the
+    point: a signature made with ML-DSA-65 and stored against algorithm_id 2 is a false label
+    on a real signature in the audit-of-record, and every later verification would attempt
+    ML-DSA-87, fail, and look exactly like tampering.
+
+    Returns `(signature_bytes, algorithm_label, public_key_hex_or_none)`, matching
+    `signature_over_message`. With the flag off, the deterministic placeholder is returned
+    and labelled as such, so a dev-profile migration can be exercised end to end without
+    anything mistaking its output for a signature."""
+    flag_set = os.environ.get("POLARIS_USE_REAL_PQC", "0") == "1"
+    if not flag_set:
+        # The placeholder is per (token, algorithm): a migration that produced the same bytes
+        # for both parameter sets would let a drill "pass" while proving nothing changed.
+        return (hashlib.sha3_256(f"{algorithm}|{token_value}".encode()).digest(),
+                PLACEHOLDER_LABEL, None)
+    if not _OQS_AVAILABLE:
+        raise PQCUnavailableError(
+            "POLARIS_USE_REAL_PQC=1 but liboqs-python is not importable: "
+            f"{_OQS_IMPORT_ERROR}. Install per this module's docstring or unset the flag.")
+    if not second_witness_available():
+        raise SigningError(
+            "a migration signature requires the independent second witness; refusing to "
+            f"re-sign a population on one implementation ({_WITNESS_IMPORT_ERROR or 'none'})")
+    import oqs as _oqs  # type: ignore
+    digest = hashlib.sha3_256(token_value.encode("utf-8")).digest()
+    cust = custody.get_custody_for_algorithm(algorithm)
+    if cust is not None:
+        public_key, signature = cust.public_key(), cust.sign(digest)
+    else:
+        with _oqs.Signature(algorithm) as signer:
+            public_key = signer.generate_keypair()
+            signature = signer.sign(digest)
+    public_key_hex, signature_hex = public_key.hex(), signature.hex()
+    # Self-verify under BOTH witnesses before the row is written. A migration writes once
+    # across a whole population; a signature nobody checked at the moment it was made is a
+    # population-wide defect discovered by holders.
+    if not verify_both(token_value.encode("utf-8"), signature_hex, public_key_hex,
+                       require_witness=True, algorithm=algorithm):
+        raise SigningError(
+            f"a {algorithm} migration signature failed two-witness self-verification; "
+            "refusing to write it")
+    return signature, algorithm, public_key_hex
+
+
 def verify_stored_signature(
     token_value: str,
     signature_bytes: bytes,

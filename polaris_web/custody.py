@@ -456,12 +456,65 @@ def get_custody_for_agency(agency_id) -> Optional[KeyCustody]:
         return _agency_custody[path][1]
 
 
+# P7.6 (v9.365) — the migration signing key. A quantum event means re-signing a whole
+# population under a NEW parameter set while the instance keeps issuing under the current
+# one, so the target algorithm cannot come from process-wide configuration: both are live at
+# once. POLARIS_MIGRATION_SIGNING_KEY_FILE names a key file for the algorithm being migrated
+# TO, in the same shape the file driver already reads.
+_MIGRATION_KEY_ENV = "POLARIS_MIGRATION_SIGNING_KEY_FILE"
+_migration_custody: dict = {}
+
+
+class AlgorithmUnavailableError(CustodyError):
+    """No custodied key exists for the requested parameter set.
+
+    This is deliberately a REFUSAL and never a fallback. Signing under ML-DSA-65 and
+    recording the row as ML-DSA-87 would put a false algorithm label on a real signature in
+    the audit-of-record: every later verification would attempt the wrong parameter set and
+    read the mismatch as tampering, and the operator would learn about it from holders whose
+    credentials stopped verifying. A migration that cannot sign must stop, not guess."""
+
+
+def get_custody_for_algorithm(algorithm: str):
+    """The custody driver that signs under `algorithm`, or None for the ephemeral dev path.
+
+    Searched in order: the migration key file, then the process's own custody driver if its
+    parameter set already matches. A configured driver whose algorithm does NOT match raises
+    rather than falling back, per AlgorithmUnavailableError."""
+    if algorithm not in ALGORITHM_SIZES:
+        raise CustodyError(f"{algorithm!r} is not an accepted algorithm "
+                           f"({', '.join(ACCEPTED_ALGORITHMS)})")
+    path = os.environ.get(_MIGRATION_KEY_ENV)
+    if path and os.path.isfile(path):
+        with _lock:
+            cached = _migration_custody.get(path)
+            if cached is None or cached[0] != os.path.getmtime(path):
+                _migration_custody[path] = (os.path.getmtime(path), FileCustody(path))
+            driver = _migration_custody[path][1]
+        if driver.algorithm != algorithm:
+            raise AlgorithmUnavailableError(
+                f"{_MIGRATION_KEY_ENV} holds a {driver.algorithm} key but the migration "
+                f"targets {algorithm}; refusing to sign under the wrong parameter set")
+        return driver
+    current = get_custody()
+    if current is None:
+        return None                      # ephemeral: dev and test only
+    if current.algorithm != algorithm:
+        raise AlgorithmUnavailableError(
+            f"the configured custody key is {current.algorithm} and the migration targets "
+            f"{algorithm}. Provision a {algorithm} key and point {_MIGRATION_KEY_ENV} at it "
+            "(docs/operator/QUANTUM-EVENT.md); signing under the wrong parameter set would "
+            "write a false algorithm label into the audit-of-record")
+    return current
+
+
 def reset() -> None:
     global _current, _current_cfg
     with _lock:
         _current = None
         _current_cfg = None
         _agency_custody.clear()
+        _migration_custody.clear()
 
 
 def describe_current() -> Optional[dict]:

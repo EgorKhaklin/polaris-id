@@ -25,6 +25,7 @@ fails otherwise.
 | [`CHAOS-DRILLS.md`](CHAOS-DRILLS.md) | The chaos ledger, machine-appended: the standing program, its five induced failures with their recovery ceilings, and every weekly run's measured recoveries and page delivery |
 | [`FAILOVER.md`](FAILOVER.md) | The HA profile: Patroni-managed automated failover with its measured drill numbers and the split-brain analysis; the high-availability complement to DR.md |
 | [`SLOS.md`](SLOS.md) | The reference service objectives (availability, request latency, database latency) and the error budget, grounded in exposed metrics |
+| [`QUANTUM-EVENT.md`](QUANTUM-EVENT.md) | The day an algorithm falls: re-signing the whole population onto a new parameter set without any holder losing a credential that verifies, with the measured rate and where the time goes |
 | [`RUNBOOKS.md`](RUNBOOKS.md) | One response runbook per shipped alert: trigger, diagnosis, remediation; and the pager wiring |
 
 ## Reading order

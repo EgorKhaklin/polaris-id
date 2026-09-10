@@ -9324,6 +9324,135 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_quantum_event_readiness_check_discriminates(tmp_path):
+    # v9.365 (P7.6): the ways a population migration turns into an outage. Closing the
+    # migration window before the population is on the new algorithm; falling back to
+    # whatever key is loaded when the target parameter set has none, which writes a false
+    # label onto a real signature; two runners signing the same credentials; counting written
+    # rows with execute_values' rowcount, which pages and undercounts; and claiming the
+    # capability without ever measuring it.
+    MOD = ("import time\n"
+           "def pending_count(conn, a):\n    return 0\n"
+           "def migrate_batch(conn, a, n, batch_size=500):\n"
+           "    cur.execute(\"SELECT t.token_id FROM IdentityToken t WHERE t.status = "
+           "'ACTIVE' LIMIT %s FOR UPDATE OF t SKIP LOCKED\")\n"
+           "    rows = execute_values(cur, 'INSERT ... ON CONFLICT DO NOTHING RETURNING "
+           "signature_id', signed, fetch=True)\n"
+           "    written = len(rows)\n"
+           "def migrate_population(conn, a, n, batch_size=500, limit=None, progress=None):\n"
+           "    return {}\n"
+           "def deprecate_superseded(conn, a, grace_seconds=0):\n"
+           "    if pending_count(conn, a):\n        raise MigrationRefused('finish first')\n"
+           "def verifiability_report(conn):\n    return {}\n")
+    SIGN = "def signature_for_migration(token_value, algorithm, agency_id=None):\n    pass\n"
+    CUST = ("class AlgorithmUnavailableError(CustodyError):\n    pass\n"
+            "\ndef get_custody_for_algorithm(algorithm):\n"
+            "    if current.algorithm != algorithm:\n"
+            "        raise AlgorithmUnavailableError('wrong parameter set')\n"
+            "    return current\n")
+    CLI = "HANDLERS = {'migrate-population': cmd_migrate_population}\n"
+    DRILL = ("# closing the window before the population is migrated is REFUSED\n"
+             "# an interrupted run leaves the rest of the work standing\n"
+             "# NOBODY WAS DARK at any batch boundary\n"
+             "# two concurrent runners re-signed the population once, not twice\n"
+             "# a key for the WRONG parameter set is refused, never used\n"
+             "# re-signed per second, one runner\n"
+             "totals['sign_seconds'], totals['db_seconds']\n")
+    DOC = ("How many holders have a credential that\nverifies under nothing. Deprecation is a "
+           "separate pass. Nine tenths of the time is signing.\n")
+    good = {
+        'polaris_web/migration.py': MOD,
+        'polaris_web/pqc_signing.py': SIGN,
+        'polaris_web/custody.py': CUST,
+        'polaris_cli/polaris.py': CLI,
+        'scripts/polaris-quantum-event-drill.py': DRILL,
+        'docs/operator/QUANTUM-EVENT.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+    # And the prose check must not care where a line wrapped: DOC above splits the phrase.
+
+    # THE WINDOW CLOSED EARLY. The old signature outliving the migration IS the migration;
+    # without the refusal a partially migrated population strands holders.
+    write({'polaris_web/migration.py': MOD.replace(
+        "    if pending_count(conn, a):\n        raise MigrationRefused('finish first')\n",
+        "    pass\n")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "deprecating the old algorithm while credentials are unmigrated must be refused"
+
+    # THE FALLBACK KEY. Signing with ML-DSA-65 and storing the row as ML-DSA-87 puts a false
+    # label on a real signature; every later verification reads it as tampering.
+    write({'polaris_web/custody.py': CUST.replace(
+        "    if current.algorithm != algorithm:\n"
+        "        raise AlgorithmUnavailableError('wrong parameter set')\n", "")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "a custody key of the wrong parameter set must raise, never be used"
+    write({'polaris_web/custody.py': "def get_custody_for_algorithm(a):\n    return None\n"})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "custody must define the refusal at all"
+
+    # THE TARGET FROM PROCESS CONFIG. During a migration two parameter sets are live.
+    write({'polaris_web/pqc_signing.py': "def sign(message, agency_id=None):\n    pass\n"})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "signing must take the target algorithm as an argument"
+
+    # TWO RUNNERS ON THE SAME ROWS: the migration then scales with one worker.
+    write({'polaris_web/migration.py': MOD.replace(" FOR UPDATE OF t SKIP LOCKED", "")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "the batch select must SKIP LOCKED"
+    write({'polaris_web/migration.py': MOD.replace(" ON CONFLICT DO NOTHING", "")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "the insert must tolerate a conflict between racing runners"
+
+    # THE UNDERCOUNT. execute_values pages at 100, so rowcount reports the last page only.
+    write({'polaris_web/migration.py': MOD.replace("    written = len(rows)\n",
+                                                   "    written = cur.rowcount\n")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "a written count taken from cur.rowcount after execute_values undercounts by the page size"
+
+    # THE AUDIT-OF-RECORD. A revoked credential's signatures are not rewritten.
+    write({'polaris_web/migration.py': MOD.replace("t.status = 'ACTIVE'", "true")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "only ACTIVE credentials are re-signed"
+
+    # THE CLAIM WITHOUT THE NUMBER, and the number without its breakdown.
+    write({'scripts/polaris-quantum-event-drill.py':
+           DRILL.replace("# re-signed per second, one runner\n", "")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "the drill must measure the rate rather than assert the capability"
+    write({'scripts/polaris-quantum-event-drill.py':
+           DRILL.replace("totals['sign_seconds'], totals['db_seconds']\n", "")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "signing and database time must be reported separately"
+
+    # THE GAP BETWEEN ENDPOINTS. Sampling only before and after cannot see a window that
+    # opens and closes during the run.
+    write({'scripts/polaris-quantum-event-drill.py':
+           DRILL.replace("# NOBODY WAS DARK at any batch boundary\n", "")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "the unverifiable count must be sampled after every batch"
+    write({'scripts/polaris-quantum-event-drill.py':
+           DRILL.replace("# an interrupted run leaves the rest of the work standing\n", "")})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "resume must be demonstrated"
+
+    # THE OPERATOR SURFACE and the runbook.
+    write({'polaris_cli/polaris.py': "HANDLERS = {'migrate-algorithm': cmd}\n"})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "a per-token command is not a population migration"
+    write({'docs/operator/QUANTUM-EVENT.md': "Run the migration. It is fast.\n"})
+    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
+        "the runbook must open on the holders who are dark, not on throughput"
+
+
 def test_per_authority_isolation_check_discriminates(tmp_path):
     # v9.364 (P3.9): the shapes this row rots into. A policy whose cast reaches an empty
     # string, which takes the instance down rather than merely failing to isolate; a

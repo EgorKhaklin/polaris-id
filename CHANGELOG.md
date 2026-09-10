@@ -5,6 +5,62 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.365 — 2026-09-10 (P7.6: re-signing a population when an algorithm falls)
+
+Polaris exists because the algorithms in today's credentials will not hold.
+Every other part of the system treats that as a design premise. This ship
+treats it as an operation somebody has to perform, on a population, under time
+pressure, and measures what it costs.
+
+**UC-6 migrates one token; this migrates a country.** `polaris_web/migration.py`
+plus `polaris migrate-population` re-sign the whole ACTIVE population under a
+new parameter set, built out of the same constraints the per-token procedure
+relies on rather than around them. The unique constraint is the serialization
+point, so two runners racing one credential produce one row; the triggers still
+fire per row, so the database will not let a migration strand a token.
+
+**Nobody goes dark, and it is checked after every batch.** The number that
+matters is not throughput, it is how many holders have a credential that
+verifies under nothing. It is zero before the migration, after every batch
+during it, and after the window closes. The drill samples it at every batch
+boundary rather than at the ends, because a gap that opens and closes between
+two endpoints is invisible to a before-and-after check.
+
+**The window cannot be closed early, and that is a refusal.** The old signature
+keeps verifying until its deprecation date, and that interval IS the migration.
+Deprecating as you go leaves credentials that verify only under an algorithm
+fielded verifiers may not accept yet, and the holder finds out at a border while
+the console reports progress. `deprecate_superseded` refuses to run while any
+ACTIVE credential is unmigrated.
+
+**Resume is the default, not a feature.** The work remaining is a query
+("ACTIVE credentials with no active signature under the target algorithm"), not
+a cursor or a progress file. Kill the runner and run it again: it finishes what
+is left. Run sixty-four of them and they divide the population by
+`SKIP LOCKED` without coordinating.
+
+**A migration that cannot sign stops.** The target parameter set is an argument
+rather than process configuration, because during a migration two are live: the
+instance keeps issuing under the current algorithm while the population moves.
+`custody.get_custody_for_algorithm` refuses when no key exists for the target
+instead of using the key it has. Signing with ML-DSA-65 and recording the row as
+ML-DSA-87 would be a false label on a real signature in the audit-of-record, and
+every later verification would read the mismatch as tampering.
+
+**The measurement, under real ML-DSA-87 with one custodied key:** about 345
+credentials/second on a single runner, of which **91% is signing and 9% is the
+database**. 350M is ~11.7 days on one runner, ~4.4 hours on 64. The finding an
+operator needs is that lever: this migration is bounded by signing throughput,
+so buying database capacity for it buys almost nothing, and if the key lives in
+an HSM then that HSM's rate is the migration's speed limit. The runbook is
+[docs/operator/QUANTUM-EVENT.md](docs/operator/QUANTUM-EVENT.md).
+
+The scale drill also found a defect before it shipped: `execute_values` pages its
+argument at 100 rows and issues one statement per page, so `cur.rowcount`
+reported only the last page. A 250-row batch reported 100 written, and an
+operator running a national migration would have been reading a number that
+undercounts by the page size. The count now comes from `RETURNING`.
+
 ## v9.364 — 2026-09-10 (P3.9: per-authority isolation, and the part policies cannot fix)
 
 A review row, and the review found something. `AppUser` had no authority

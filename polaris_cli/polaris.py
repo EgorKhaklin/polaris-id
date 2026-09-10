@@ -11,34 +11,35 @@ Installed as `polaris-id`; from a checkout, run `python3 polaris_cli/polaris.py`
 Commands (this list is generated from the command registry, so it cannot
 drift from what the program accepts):
 
-    health             Schema-wide statistics (mirrors Atlas health strip)
-    list               Browse principal entities
-    inspect            Detailed token view with full history
-    query              Run a read-only SELECT against the database
-    issue              UC-1: issue and activate a new token
-    activate-reserve   UC-4: activate a reserve after loss
-    bind-device        UC-5: bind a device to an active token
-    warrant-audit      UC-7: warrant-authorized verification history
-    migrate-algorithm  UC-6: migrate a token to a new cryptographic algorithm
-    revoke             UC-8: revoke an ACTIVE token
-    recovery-initiate  UC-9 phase 1: open a catastrophic-loss recovery ceremony
-    recovery-complete  UC-9 phase 2: approve or reject a pending recovery request
-    transition         Apply a state-machine transition to a token
-    bulk-enroll        P2.4: stage an extract with COPY and issue the batch set-based
-    user-list          List application users (web auth accounts)
-    user-create        Create a new application user
-    user-passwd        Change a user's password (also clears lockout)
-    user-deactivate    Deactivate (soft-delete) a user account
-    quota-set          Set per-agency caps; 0 clears a cap
-    quota-show         Show per-agency caps (all agencies, or one)
-    retention-show     What retention is in force, and the cutoff it resolves to
-    retention-set      Record a retention decision, or adopt a named template
-    audit-log          Tail the authentication audit log
-    rp-register        Register a relying-party org for the /api/v1 verification API
-    rp-policy          Set a relying party's registered auth-broker policy (step-up, enrollment, context)
-    key-register       Register an authority signing key (P8.7b): it becomes the agency's current key
-    key-retire         Retire an authority key: an orderly rotation, effective from an instant
-    key-compromise     Declare an authority key compromised, untrusted from an instant
+    health              Schema-wide statistics (mirrors Atlas health strip)
+    list                Browse principal entities
+    inspect             Detailed token view with full history
+    query               Run a read-only SELECT against the database
+    issue               UC-1: issue and activate a new token
+    activate-reserve    UC-4: activate a reserve after loss
+    bind-device         UC-5: bind a device to an active token
+    warrant-audit       UC-7: warrant-authorized verification history
+    migrate-algorithm   UC-6: migrate a token to a new cryptographic algorithm
+    migrate-population  P7.6: re-sign the whole ACTIVE population under a new algorithm
+    revoke              UC-8: revoke an ACTIVE token
+    recovery-initiate   UC-9 phase 1: open a catastrophic-loss recovery ceremony
+    recovery-complete   UC-9 phase 2: approve or reject a pending recovery request
+    transition          Apply a state-machine transition to a token
+    bulk-enroll         P2.4: stage an extract with COPY and issue the batch set-based
+    user-list           List application users (web auth accounts)
+    user-create         Create a new application user
+    user-passwd         Change a user's password (also clears lockout)
+    user-deactivate     Deactivate (soft-delete) a user account
+    quota-set           Set per-agency caps; 0 clears a cap
+    quota-show          Show per-agency caps (all agencies, or one)
+    retention-show      What retention is in force, and the cutoff it resolves to
+    retention-set       Record a retention decision, or adopt a named template
+    audit-log           Tail the authentication audit log
+    rp-register         Register a relying-party org for the /api/v1 verification API
+    rp-policy           Set a relying party's registered auth-broker policy (step-up, enrollment, context)
+    key-register        Register an authority signing key (P8.7b): it becomes the agency's current key
+    key-retire          Retire an authority key: an orderly rotation, effective from an instant
+    key-compromise      Declare an authority key compromised, untrusted from an instant
 
 The database connection uses the same environment variables as the web
 application: POLARIS_DB_HOST, POLARIS_DB_NAME, POLARIS_DB_USER,
@@ -588,6 +589,100 @@ def cmd_bind_device(args):
 # ----------------------------------------------------------------------------
 # COMMAND: migrate-algorithm (UC-6)
 # ----------------------------------------------------------------------------
+
+def cmd_migrate_population(args):
+    """P7.6: re-sign the whole ACTIVE population under a new algorithm, resumably.
+
+    The day an algorithm falls, `migrate-algorithm` is the wrong tool: it is one token per
+    invocation. This is the same migration applied to a population, built on the same
+    constraints and triggers (polaris_web/migration.py explains why the set-based path is not
+    a weaker one), and it is resumable by construction: the work remaining is a query, not a
+    cursor, so an interrupted run is finished by running it again and two runners cannot
+    double-write.
+
+    Deprecating the old algorithm is a SEPARATE pass (--deprecate-old, run on its own) and is
+    refused while any credential is still unmigrated. See docs/operator/QUANTUM-EVENT.md."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                    "polaris_web"))
+    try:
+        import migration
+    except ImportError as exc:
+        sys.stderr.write(red(f"the migration module is unavailable: {exc}\n"))
+        sys.exit(2)
+
+    conn = connect()
+    try:
+        try:
+            target_id, target_name = migration.resolve_target(conn, args.to)
+        except migration.MigrationRefused as exc:
+            sys.stderr.write(red(f"{exc}\n"))
+            sys.exit(1)
+
+        before = migration.verifiability_report(conn)
+        pending = migration.pending_count(conn, target_id)
+        print(bold(f"Algorithm migration to {target_name} (algorithm_id {target_id})"))
+        print(f"  ACTIVE population      {before['total']}")
+        print(f"  already migrated       {before['total'] - pending}")
+        print(f"  to re-sign             {pending}")
+        if before["unverifiable"]:
+            # Refuse rather than proceed: a migration is not the place to discover this, and
+            # re-signing on top of it would bury the finding under a successful-looking run.
+            sys.stderr.write(red(
+                f"\n{before['unverifiable']} ACTIVE credential(s) have no signature that "
+                "verifies today. Fix that before migrating; a migration assumes it is adding "
+                "an algorithm to a working population, not repairing one.\n"))
+            sys.exit(1)
+
+        if args.deprecate_old:
+            try:
+                n = migration.deprecate_superseded(conn, target_id, args.grace_seconds)
+            except migration.MigrationRefused as exc:
+                sys.stderr.write(red(f"\nRefused: {exc}\n"))
+                sys.exit(1)
+            after = migration.verifiability_report(conn)
+            print(green(f"\nDeprecated {n} superseded signature(s); the window is closed."))
+            print(f"  unverifiable after     {after['unverifiable']}")
+            return
+
+        if args.dry_run:
+            print(dim("\n--dry-run: nothing signed."))
+            return
+        if pending == 0:
+            print(green("\nNothing to do: every ACTIVE credential already carries a "
+                        f"{target_name} signature."))
+            return
+
+        def progress(totals, batch):
+            done = totals["signed"]
+            rate = done / totals["seconds"] if totals["seconds"] > 0 else 0.0
+            left = max(pending - done, 0)
+            eta = left / rate if rate > 0 else float("inf")
+            sys.stdout.write("\r  %d/%d  %.0f/s  eta %s     "
+                             % (done, pending, rate,
+                                ("%.0fs" % eta) if eta != float("inf") else "?"))
+            sys.stdout.flush()
+
+        totals = migration.migrate_population(conn, target_id, target_name,
+                                              batch_size=args.batch, limit=args.limit,
+                                              progress=progress)
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        after_pending = migration.pending_count(conn, target_id)
+        after = migration.verifiability_report(conn)
+        rate = totals["signed"] / totals["seconds"] if totals["seconds"] > 0 else 0.0
+        print(green(f"Re-signed {totals['written']} credential(s) under {target_name} "
+                    f"in {totals['seconds']:.1f}s ({rate:.0f}/s)"))
+        print(f"  signing                {totals['sign_seconds']:.1f}s")
+        print(f"  database               {totals['db_seconds']:.1f}s")
+        print(f"  still to re-sign       {after_pending}")
+        print(f"  unverifiable           {after['unverifiable']}")
+        if after_pending:
+            print(dim("  Run again to continue; the remaining work is a query, not a cursor."))
+        else:
+            print(dim("  Next: close the window with --deprecate-old once fielded verifiers "
+                      f"accept {target_name}."))
+    finally:
+        conn.close()
+
 
 def cmd_migrate_algorithm(args):
     """UC-6 / R11-1 / M2-6: migrate a token to a new cryptographic algorithm.
@@ -1582,6 +1677,24 @@ def build_parser():
     p_6.add_argument('--deprecate-old', action='store_true',
         help='Also deprecate prior signatures (one-way operation)')
 
+    # migrate-population (P7.6, the quantum event)
+    p_mp = sub.add_parser('migrate-population',
+        help='P7.6: re-sign the whole ACTIVE population under a new algorithm, resumably')
+    p_mp.add_argument('--to', required=True,
+        help='Target algorithm NAME (e.g. ML-DSA-87) or id; a name is safer, an off-by-one id '
+             'would re-sign a population under the wrong parameter set silently')
+    p_mp.add_argument('--batch', type=int, default=500,
+        help='Credentials per transaction (default 500)')
+    p_mp.add_argument('--limit', type=int,
+        help='Stop after this many; how a migration is run inside a maintenance window')
+    p_mp.add_argument('--dry-run', action='store_true',
+        help='Report the remaining work and exit without signing')
+    p_mp.add_argument('--deprecate-old', action='store_true',
+        help='SECOND PASS: close the migration window. Refused while any credential is '
+             'still unmigrated')
+    p_mp.add_argument('--grace-seconds', type=int, default=1,
+        help='Seconds before the superseded signatures stop verifying (default 1)')
+
     # revoke (UC-8)
     p_8 = sub.add_parser('revoke', help='UC-8: revoke an ACTIVE token')
     p_8.add_argument('--token',              type=int, required=True)
@@ -1901,6 +2014,7 @@ HANDLERS = {
     'bind-device':      cmd_bind_device,
     'warrant-audit':    cmd_warrant_audit,
     'migrate-algorithm': cmd_migrate_algorithm,
+    'migrate-population': cmd_migrate_population,
     'revoke':           cmd_revoke,
     'recovery-initiate': cmd_recovery_initiate,
     'recovery-complete': cmd_recovery_complete,

@@ -249,6 +249,17 @@ jobs:
       - name: Per-authority isolation — the database refuses, not the query body
         run: python scripts/polaris-authority-isolation-drill.py
 
+      # v9.365 (P7.6) — the day an algorithm falls. This run is the SAFETY half: nobody is
+      # dark before the migration, after every batch during it, or after the window closes;
+      # closing that window early is refused; an interrupted run is finished by running it
+      # again; two runners divide the population instead of duplicating it. Signing is the
+      # placeholder here, so the RATE this prints is not the one to quote: the pqc-real job
+      # runs the same drill under real ML-DSA-87 for that. Builds and drops its own database.
+      - name: Quantum event — a population re-signed, nobody dark (safety)
+        run: python scripts/polaris-quantum-event-drill.py
+        env:
+          POLARIS_QE_POPULATION: '1200'
+
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
           COVERAGE_FLOOR: "74"
@@ -1500,6 +1511,23 @@ jobs:
   pqc-real:
     name: Real PQC (ML-DSA-65) sign + verify
     runs-on: ubuntu-latest
+
+    # v9.365 (P7.6): the quantum-event drill measures a population migration under REAL
+    # ML-DSA-87, so this job needs a database. The drill creates and drops its own; the
+    # service is only a server to create it in.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -1513,7 +1541,10 @@ jobs:
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
+          # postgresql-client: the quantum-event drill (v9.365) builds and drops its own
+          # database, so it needs psql/createdb/dropdb. Without them it exits 3, which
+          # fails this step rather than skipping quietly.
+          sudo apt-get install -y cmake ninja-build postgresql-client
           pip install liboqs-python
           # The independent second witness (v9.133): cryptography provides an
           # OpenSSL-backed ML-DSA-65, a DIFFERENT FIPS 204 implementation than liboqs.
@@ -1726,6 +1757,23 @@ jobs:
       # token value alike. No database.
       - name: W3C VC format — a result, not an identity, under its own cryptosuite
         run: python scripts/polaris-vc-format-drill.py
+
+      # v9.365 (P7.6) — the same drill under REAL ML-DSA-87 with a custodied key, which is
+      # where the number comes from: the rate a population is re-signed at, and the split
+      # between signing and database. The finding this job publishes is that the migration is
+      # bounded by SIGNING (about nine tenths of the work), so the lever is signing
+      # parallelism and not database capacity. Needs psql/createdb; the drill builds and drops
+      # its own database against the service above.
+      - name: Quantum event — a population re-signed under real ML-DSA-87 (measured)
+        run: python scripts/polaris-quantum-event-drill.py
+        env:
+          POLARIS_USE_REAL_PQC: '1'
+          POLARIS_DB_HOST: localhost
+          POLARIS_DB_PORT: '5432'
+          POLARIS_DB_USER: postgres
+          POLARIS_DB_PASSWORD: ci_password
+          PGPASSWORD: ci_password
+          POLARIS_QE_POPULATION: '2000'
 
       - name: Detached verifier — metamorphic fuzz (fail-closed, no crash)
         run: python scripts/polaris-verifier-fuzz.py

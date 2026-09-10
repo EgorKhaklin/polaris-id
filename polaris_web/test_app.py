@@ -11160,3 +11160,140 @@ class OperatorAuthorityScopeTests(PolarisTestCase):
             src = fh.read()
         self.assertIn("session['operator_agency_id']", src,
                       "login must record which authority the operator belongs to")
+
+
+class PopulationMigrationTests(PolarisTestCase):
+    """P7.6: the mass algorithm migration, at suite scale. The measured run at population
+    scale is scripts/polaris-quantum-event-drill.py; what belongs here is the behaviour that
+    should never regress quietly, on the seeded database, in seconds.
+
+    The refusals are the interesting half. A migration that runs is easy; a migration that
+    refuses to close its own window early, and refuses to sign under a key of the wrong
+    parameter set, is the one that does not strand holders."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _migration(self):
+        import migration
+        return migration
+
+    def test_the_target_algorithm_resolves_by_name(self):
+        # By NAME, because an operator acts on "we are moving to ML-DSA-87" and an off-by-one
+        # in a numeric id would re-sign a population under the wrong parameter set silently.
+        m = self._migration()
+        with self._new_conn() as conn:
+            by_name = m.resolve_target(conn, "ML-DSA-87")
+            by_id = m.resolve_target(conn, by_name[0])
+            self.assertEqual(by_name, by_id)
+            self.assertEqual(by_name[1], "ML-DSA-87")
+
+    def test_a_deprecated_algorithm_is_refused_as_a_target(self):
+        m = self._migration()
+        with self._new_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE CryptographicAlgorithm SET deprecation_date = "
+                            "CURRENT_TIMESTAMP - INTERVAL '1 day' WHERE name = 'ML-DSA-87'")
+            conn.commit()
+            with self.assertRaises(m.MigrationRefused):
+                m.resolve_target(conn, "ML-DSA-87")
+
+    def test_migrating_the_population_leaves_nobody_unverifiable(self):
+        m = self._migration()
+        with self._new_conn() as conn:
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+            self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            self.assertEqual(m.pending_count(conn, target_id), 0)
+            self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
+
+    def test_a_second_run_is_a_no_op(self):
+        # Resume is the default: the work remaining is a query, so re-running converges
+        # rather than double-writing.
+        m = self._migration()
+        with self._new_conn() as conn:
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            again = m.migrate_population(conn, target_id, target_name, batch_size=50)
+            self.assertEqual(again["written"], 0)
+            self.assertEqual(again["batches"], 0)
+
+    def test_closing_the_window_early_is_refused(self):
+        # THE safety property. The old signature staying valid until the last credential has
+        # a new one IS the migration window.
+        m = self._migration()
+        with self._new_conn() as conn:
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+            self.assertGreater(m.pending_count(conn, target_id), 0,
+                               "the fixture must have unmigrated credentials to refuse on")
+            with self.assertRaises(m.MigrationRefused):
+                m.deprecate_superseded(conn, target_id)
+            # And it closes once the population is migrated.
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            self.assertGreater(m.deprecate_superseded(conn, target_id, grace_seconds=60), 0)
+            self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
+
+    def test_a_limit_stops_the_run_and_leaves_the_rest_standing(self):
+        m = self._migration()
+        with self._new_conn() as conn:
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+            before = m.pending_count(conn, target_id)
+            if before < 2:
+                self.skipTest("the seeded population is too small to stop halfway")
+            totals = m.migrate_population(conn, target_id, target_name, batch_size=50, limit=1)
+            self.assertEqual(totals["written"], 1)
+            self.assertEqual(m.pending_count(conn, target_id), before - 1)
+            self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
+
+    def test_only_active_credentials_are_re_signed(self):
+        # Rewriting the signatures of a revoked credential would edit the audit-of-record to
+        # say something that was never true.
+        m = self._migration()
+        with self._new_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT token_id FROM IdentityToken WHERE status <> 'ACTIVE' "
+                            "LIMIT 1")
+                row = cur.fetchone()
+            if row is None:
+                self.skipTest("the seed holds no non-ACTIVE credential")
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM TokenSignature WHERE token_id = %s "
+                            "AND algorithm_id = %s", (row["token_id"], target_id))
+                self.assertEqual(cur.fetchone()["n"], 0,
+                                 "a non-ACTIVE credential must not be re-signed")
+
+    def test_a_key_for_the_wrong_parameter_set_is_refused(self):
+        # Signing with ML-DSA-65 and storing the row as ML-DSA-87 is a false label on a real
+        # signature: every later verification attempts the wrong set and reads the failure as
+        # tampering.
+        import json
+        import tempfile
+        import custody
+        path = os.path.join(tempfile.mkdtemp(), "wrong.json")
+        with open(path, "w") as fh:
+            json.dump({"algorithm": "ML-DSA-65", "secret_key_hex": "00",
+                       "public_key_hex": "00" * 1952}, fh)
+        old = os.environ.get("POLARIS_MIGRATION_SIGNING_KEY_FILE")
+        os.environ["POLARIS_MIGRATION_SIGNING_KEY_FILE"] = path
+        custody.reset()
+        try:
+            with self.assertRaises(custody.AlgorithmUnavailableError):
+                custody.get_custody_for_algorithm("ML-DSA-87")
+            # ...and the matching one is returned rather than refused.
+            self.assertIsNotNone(custody.get_custody_for_algorithm("ML-DSA-65"))
+        finally:
+            if old is None:
+                os.environ.pop("POLARIS_MIGRATION_SIGNING_KEY_FILE", None)
+            else:
+                os.environ["POLARIS_MIGRATION_SIGNING_KEY_FILE"] = old
+            custody.reset()
+
+    def test_the_placeholder_signature_differs_per_algorithm(self):
+        # A migration whose output was identical for both parameter sets would let a drill
+        # report success while proving nothing changed.
+        import pqc_signing
+        a, _, _ = pqc_signing.signature_for_migration("TOK-A", "ML-DSA-65")
+        b, _, _ = pqc_signing.signature_for_migration("TOK-A", "ML-DSA-87")
+        self.assertNotEqual(a, b)

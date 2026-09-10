@@ -10473,6 +10473,152 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_quantum_event_readiness(root: pathlib.Path) -> list[Finding]:
+    """A population can be re-signed when an algorithm falls, and no holder goes dark (P7.6).
+
+    Polaris exists because the algorithms in today's credentials will not hold. Every other
+    part of the system treats that as a premise; this is the part that treats it as an
+    operation somebody performs, on a population, under time pressure.
+
+    Four properties, each of which is a way the operation turns into an outage.
+
+    THE OLD SIGNATURE OUTLIVES THE MIGRATION. Deprecating the fallen algorithm while any
+    credential is still unmigrated leaves holders whose credential verifies only under an
+    algorithm fielded verifiers may not accept yet. They find out at a border; the operator
+    finds out from them. So deprecation is a second pass and it is REFUSED, not warned about,
+    while work remains.
+
+    A MIGRATION THAT CANNOT SIGN STOPS. The target parameter set cannot come from process
+    configuration, because during a migration two are live: the instance keeps issuing under
+    the current algorithm while the population moves to the new one. And when no key exists
+    for the target set, the answer is a refusal rather than the key that happens to be
+    loaded. A signature made with ML-DSA-65 and stored against ML-DSA-87 is a false label on a
+    real signature in the audit-of-record, and every later verification reads the mismatch as
+    tampering.
+
+    RESUME IS THE DEFAULT. A national migration outlives any process. The work remaining must
+    be defined by the data rather than by a cursor or a progress file, so an interrupted run
+    is finished by running it again and two runners cannot double-write.
+
+    AND THE COST IS MEASURED. "We can re-sign the population" is worth nothing without a
+    number, and the number has to come from a run rather than an estimate."""
+    name = "quantum_event_readiness"
+    mod = _read(root, "polaris_web/migration.py")
+    if not mod:
+        return _fail(name, "polaris_web/migration.py must carry the population migration path")
+    for fn in ("def pending_count", "def migrate_batch", "def migrate_population",
+               "def deprecate_superseded", "def verifiability_report"):
+        if fn not in mod:
+            return _fail(name, f"the migration module must expose {fn.split()[1]}()")
+
+    dep = mod.split("def deprecate_superseded")[1].split("\ndef ")[0]
+    if "pending_count(" not in dep or "MigrationRefused" not in dep:
+        return _fail(name,
+                     "deprecate_superseded must REFUSE while any ACTIVE credential lacks a "
+                     "signature under the target algorithm. Closing the window early leaves "
+                     "those holders with a credential that verifies under nothing, and they "
+                     "learn it at a border rather than the operator learning it at a console")
+
+    batch = mod.split("def migrate_batch")[1].split("\ndef ")[0]
+    if "SKIP LOCKED" not in batch:
+        return _fail(name,
+                     "the batch select must SKIP LOCKED, or two runners sign the same "
+                     "credentials and a population migration scales with one worker")
+    if "ON CONFLICT" not in batch:
+        return _fail(name,
+                     "the insert must tolerate a conflict: two runners racing one credential "
+                     "must produce one row, with the loser learning it wrote nothing")
+    # Comment lines stripped: the module explains this trap in prose, and a check that
+    # matched the explanation would fire on the fix.
+    batch_code = "\n".join(ln for ln in batch.splitlines() if not ln.lstrip().startswith("#"))
+    if "cur.rowcount" in batch_code:
+        return _fail(name,
+                     "written count must not come from cur.rowcount after execute_values: it "
+                     "pages its argument and reports only the LAST page, so a 250-row batch "
+                     "reported 100 and an operator ran a national migration reading a number "
+                     "that undercounts by the page size")
+    if "status = 'ACTIVE'" not in mod:
+        return _fail(name,
+                     "only ACTIVE credentials are re-signed; rewriting the signatures of a "
+                     "revoked or expired one would edit the audit-of-record to say something "
+                     "that was never true")
+
+    sign = _read(root, "polaris_web/pqc_signing.py")
+    if "def signature_for_migration" not in sign:
+        return _fail(name,
+                     "signing must accept an EXPLICIT target algorithm: during a migration two "
+                     "parameter sets are live at once, so the target cannot be process-wide "
+                     "configuration")
+    cust = _read(root, "polaris_web/custody.py")
+    if "class AlgorithmUnavailableError" not in cust or "def get_custody_for_algorithm" not in cust:
+        return _fail(name,
+                     "custody must resolve a key BY PARAMETER SET and refuse when none exists, "
+                     "rather than signing with whichever key is loaded")
+    resolver = cust.split("def get_custody_for_algorithm")[1].split("\ndef ")[0]
+    if "AlgorithmUnavailableError" not in resolver:
+        return _fail(name,
+                     "a custody key whose parameter set does not match the migration target "
+                     "must RAISE. Falling back writes a false algorithm label onto a real "
+                     "signature, and every later verification reads it as tampering")
+
+    cli = _read(root, "polaris_cli/polaris.py")
+    if "'migrate-population'" not in cli:
+        return _fail(name,
+                     "the operator needs a command: a national migration is run from a "
+                     "terminal over hours, not from a per-token endpoint")
+
+    drill = _read(root, "scripts/polaris-quantum-event-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-quantum-event-drill.py must run the migration at "
+                           "scale against a real database")
+    for needed, why in (("NOBODY WAS DARK at any batch boundary",
+                         "the unverifiable count must be sampled after EVERY batch: a gap that "
+                         "opens and closes between two endpoints is invisible to a "
+                         "before-and-after check"),
+                        ("an interrupted run leaves the rest of the work standing",
+                         "resume must be demonstrated, since a national migration outlives any "
+                         "single process"),
+                        ("two concurrent runners re-signed the population once, not twice",
+                         "the concurrency claim must be tested rather than asserted"),
+                        ("a key for the WRONG parameter set is refused, never used",
+                         "the refusal must be exercised"),
+                        ("closing the window before the population is migrated is REFUSED",
+                         "the ordering rule is the safety property; it must be asserted")):
+        if needed not in drill:
+            return _fail(name, why)
+    if "re-signed per second" not in drill:
+        return _fail(name,
+                     "the drill must MEASURE the rate: 'we can re-sign the population' is "
+                     "worth nothing without a number that came from a run")
+    if "sign_seconds" not in drill or "db_seconds" not in drill:
+        return _fail(name,
+                     "signing and database time must be reported separately: they scale "
+                     "differently, and an operator planning this is deciding which one to buy")
+
+    doc = _read(root, "docs/operator/QUANTUM-EVENT.md")
+    if not doc:
+        return _fail(name, "the runbook must be committed (docs/operator/QUANTUM-EVENT.md)")
+    # Whitespace collapsed: a prose check that depended on where a line happened to wrap
+    # would fail on a reflow that changed nothing.
+    low = " ".join(doc.lower().split())
+    for phrase, why in (("verifies under nothing",
+                         "the runbook must open on the number that matters, which is how many "
+                         "holders are dark rather than how fast the migration runs"),
+                        ("separate pass",
+                         "the runbook must say that deprecation is a second pass"),
+                        ("signing", "the runbook must say where the time goes")):
+        if phrase not in low:
+            return _fail(name, why)
+    return _ok(name,
+               "a population can be re-signed onto a new algorithm without any holder losing a "
+               "credential that verifies: the old signature outlives the migration and closing "
+               "that window early is refused rather than warned about, the target parameter set "
+               "is an argument rather than process configuration and a missing key stops the "
+               "migration instead of mislabelling a signature, resume is the default because "
+               "the work remaining is a query, two runners divide the population, and the drill "
+               "measures the rate and splits signing from database rather than estimating both")
+
+
 def check_per_authority_isolation(root: pathlib.Path) -> list[Finding]:
     """One authority's operators cannot read another's credentials, and the DATABASE says so (P3.9).
 
@@ -10704,6 +10850,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_quantum_event_readiness,
     check_per_authority_isolation,
     check_vc_format,
     check_mdoc_bridge,

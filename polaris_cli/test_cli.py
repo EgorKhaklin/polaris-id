@@ -1007,6 +1007,51 @@ class MigrateAlgorithmCommandTests(CLIBaseTestCase):
 # UC-9 recovery (v9.30.1 / item 9a)
 # ============================================================================
 
+class MigratePopulationCommandTests(CLIBaseTestCase):
+    """P7.6: the operator surface for the day an algorithm falls. A national migration is run
+    from a terminal over hours, resumably, so the command has to be safe to run twice, safe to
+    interrupt, and unwilling to close its own window early."""
+
+    def test_help_documents_the_two_passes(self):
+        r = run_cli('migrate-population', '--help')
+        for arg in ('--to', '--batch', '--limit', '--dry-run', '--deprecate-old',
+                    '--grace-seconds'):
+            self.assertIn(arg, r.stdout, f"migrate-population --help must document '{arg}'")
+
+    def test_dry_run_reports_the_work_and_signs_nothing(self):
+        first = run_cli('migrate-population', '--to', 'ML-DSA-87', '--dry-run')
+        self.assertIn('to re-sign', first.stdout)
+        second = run_cli('migrate-population', '--to', 'ML-DSA-87', '--dry-run')
+        # Identical twice: a dry run that changed anything would not be one.
+        self.assertEqual(
+            [ln for ln in first.stdout.splitlines() if 're-sign' in ln],
+            [ln for ln in second.stdout.splitlines() if 're-sign' in ln])
+
+    def test_an_unknown_algorithm_is_refused(self):
+        r = run_cli('migrate-population', '--to', 'ML-DSA-999', expect_success=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('no such algorithm', (r.stdout + r.stderr).lower())
+
+    def test_closing_the_window_early_is_refused_at_the_cli(self):
+        r = run_cli('migrate-population', '--to', 'ML-DSA-87', '--deprecate-old',
+                    expect_success=False)
+        self.assertNotEqual(r.returncode, 0)
+        out = (r.stdout + r.stderr).lower()
+        self.assertIn('refused', out)
+        self.assertIn('verifies under nothing', out,
+                      "the refusal must say what closing the window early would do to holders")
+
+    def test_the_migration_runs_then_reports_nothing_left(self):
+        run_cli('migrate-population', '--to', 'ML-DSA-87')
+        again = run_cli('migrate-population', '--to', 'ML-DSA-87')
+        self.assertIn('Nothing to do', again.stdout,
+                      "a completed migration must be safe to run again")
+        closed = run_cli('migrate-population', '--to', 'ML-DSA-87', '--deprecate-old')
+        self.assertIn('window is closed', closed.stdout)
+        self.assertIn('unverifiable after     0', closed.stdout,
+                      "nobody may be left without a signature that verifies")
+
+
 class RecoveryCommandTests(CLIBaseTestCase):
     """UC-9: catastrophic-loss recovery ceremony (initiate + complete).
     Two-phase commit: the CLI splits these into separate subcommands
