@@ -11066,3 +11066,97 @@ class StatusBundleTests(PolarisTestCase):
         blob = json.dumps(bundle).lower()
         for pii in ('legal_name', 'date_of_birth', 'individual_id', 'biometric', 'physical_serial', 'token_value'):
             self.assertNotIn(pii, blob, "a status bundle must carry no personal data")
+
+
+class OperatorAuthorityScopeTests(PolarisTestCase):
+    """P3.9: the application's half of per-authority isolation. The policies themselves are
+    proven against a real database by scripts/polaris-authority-isolation-drill.py, which drops
+    to the application role; these test suites connect as the owner, and an owner bypasses
+    row-level security, so asserting isolation here would pass vacuously.
+
+    What IS testable here is the half the app owns: that an operator is bound to an authority,
+    that the binding reaches the database session, that it comes from the authenticated session
+    rather than the request, and above all that an UNSCOPED session still works. That last one
+    is the regression that matters: the first form of these policies cast the operator setting
+    to INTEGER on every row, so an unscoped session raised
+    'invalid input syntax for type integer' and every unauthenticated route in the instance
+    returned a 500."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _setting(self, conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT current_setting('polaris.operator_agency_id', true) AS v")
+            return cur.fetchone()["v"]
+
+    def test_operator_can_be_bound_to_an_authority(self):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT column_name, is_nullable FROM information_schema.columns "
+                        "WHERE table_name='appuser' AND column_name='agency_id'")
+            col = cur.fetchone()
+        self.assertIsNotNone(col, "AppUser must carry the operator's authority")
+        # Nullable on purpose: an unbound operator is unscoped, which is the single-authority
+        # default and what every existing deployment relies on.
+        self.assertEqual(col["is_nullable"], "YES",
+                         "the binding must be optional, or every existing operator is broken "
+                         "by a migration that cannot know which authority they belong to")
+
+    def test_an_unscoped_session_reads_normally(self):
+        # THE REGRESSION. With an unguarded cast this raises rather than returning rows.
+        conn = flask_app.get_db()
+        try:
+            self.assertIn(self._setting(conn), (None, ""),
+                          "no logged-in operator means no scope")
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM IdentityToken")
+                self.assertGreaterEqual(cur.fetchone()["n"], 0)
+                cur.execute("SELECT count(*) AS n FROM VerificationEvent")
+                cur.fetchone()
+                cur.execute("SELECT count(*) AS n FROM TokenLifecycleEvent")
+                cur.fetchone()
+        finally:
+            conn.close()
+
+    def test_a_public_route_is_unaffected_by_the_policies(self):
+        # The same regression from the outside: an unauthenticated caller reading a policied
+        # table. A 500 here means the cast is back.
+        r = self.client.get('/api/v1/revocation-feed/1')
+        self.assertIn(r.status_code, (200, 404),
+                      "an unauthenticated read of a policied table must not raise")
+
+    def test_the_logged_in_operators_authority_reaches_the_database(self):
+        with self.client.session_transaction() as sess:
+            sess['logged_in'] = True
+            sess['operator_agency_id'] = 2
+        with flask_app.app.test_request_context('/'):
+            from flask import session as flask_session
+            flask_session['logged_in'] = True
+            flask_session['operator_agency_id'] = 2
+            conn = flask_app.get_db()
+            try:
+                self.assertEqual(self._setting(conn), "2",
+                                 "the operator's authority must reach the database session, or "
+                                 "the policies have nothing to scope by")
+            finally:
+                conn.close()
+
+    def test_the_scope_is_coerced_to_an_integer(self):
+        # The value reaches SQL. A session cookie is signed, but the coercion is what keeps a
+        # tampered or malformed value from ever being interpolated anywhere.
+        with flask_app.app.test_request_context('/'):
+            from flask import session as flask_session
+            flask_session['logged_in'] = True
+            flask_session['operator_agency_id'] = "3; DROP TABLE IdentityToken"
+            with self.assertRaises((ValueError, TypeError)):
+                flask_app.get_db()
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('identitytoken') AS t")
+            self.assertIsNotNone(cur.fetchone()["t"], "the table must still be there")
+
+    def test_login_records_the_authority_in_the_session(self):
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "security.py")) as fh:
+            src = fh.read()
+        self.assertIn("session['operator_agency_id']", src,
+                      "login must record which authority the operator belongs to")

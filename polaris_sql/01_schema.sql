@@ -208,6 +208,11 @@ CREATE TABLE AppUser (
     -- until a code is enrolled. Defined here so the canonical schema is complete;
     -- the matching migrations add these idempotently to deployed databases.
     recovery_code_hash       VARCHAR(64),
+    -- P3.9 (migration 012): the authority this operator acts for. NULL means unscoped,
+    -- which is correct for a single-authority instance and is the default. When set,
+    -- the application puts it in polaris.operator_agency_id and the row-level policies
+    -- at the end of this file filter on it. See docs/design/per-authority-isolation.md.
+    agency_id                INTEGER REFERENCES Agency(agency_id),
 
     CONSTRAINT chk_appuser_role
         CHECK (role IN ('admin', 'operator', 'auditor')),
@@ -1662,3 +1667,68 @@ COMMENT ON PROCEDURE uc_detach_event_partitions_before(timestamptz, text[]) IS
 
 -- Bootstrap the initial window (current month + 3) for a fresh database.
 CALL uc_ensure_event_partitions();
+
+-- ----------------------------------------------------------------------------
+-- P3.9 (v9.364, migration 012) — per-authority operator isolation.
+--
+-- An instance can hold many agencies: the schema permits it and the seed shows six. An
+-- operator was global, with no binding on AppUser and no scoping on any of the 74 operator
+-- routes; sixteen read credential or holder data with no issuing-agency filter. In the
+-- topology the ADR chose each authority runs its own instance, which makes a global operator
+-- correct, but nothing enforced that assumption.
+--
+-- Patching sixteen query bodies would be the application-level policy this schema exists to
+-- refuse, so the isolation is a database guarantee: a session setting the application sets
+-- per request, and policies that filter on it. A policy the database enforces cannot be
+-- forgotten by the seventeenth route.
+--
+-- WHERE IT IS WELL-DEFINED, AND WHERE IT IS NOT. A credential belongs to the authority that
+-- issued it and an event to the authority that acted, so those isolate cleanly. An INDIVIDUAL
+-- does not belong to an authority: a person is a person, and two authorities may both have
+-- issued to them over time. There is no honest per-authority policy for Individual, and
+-- inventing one would assert an ownership the model does not have. So in a shared instance
+-- these policies BOUND what an operator sees and do not achieve isolation, which is why the
+-- one-authority-per-instance topology is load-bearing rather than stylistic.
+-- docs/design/per-authority-isolation.md carries the review.
+--
+-- The setting is UNSET by default and every policy is permissive when it is empty, so a
+-- single-authority deployment, the unauthenticated API paths and the test suites are
+-- unaffected.
+-- ----------------------------------------------------------------------------
+ALTER TABLE IdentityToken ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS token_authority_isolation ON IdentityToken;
+CREATE POLICY token_authority_isolation ON IdentityToken
+    USING (
+        -- The cast must never see an empty string. An OR does not guarantee short-circuit
+        -- evaluation in Postgres, so a guard of the form `setting = '' OR col = setting::int`
+        -- still evaluates the cast and raises on an unscoped session. NULLIF turns the empty
+        -- or missing setting into NULL, and the coalesce then compares the column with itself,
+        -- which is true for every row. The isolation drill caught this before it shipped.
+        issuing_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            issuing_agency_id)
+    );
+
+ALTER TABLE VerificationEvent ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS verification_authority_isolation ON VerificationEvent;
+CREATE POLICY verification_authority_isolation ON VerificationEvent
+    USING (
+        requesting_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            requesting_agency_id)
+    );
+
+-- A lifecycle event's authority column is actor_agency_id: who ACTED, not who issued, and it
+-- is nullable because some transitions have no agency actor. A NULL actor stays visible to
+-- every operator rather than to none: hiding a transition nobody is recorded as having made
+-- would make the audit trail read as if it never happened, which is the opposite of what an
+-- append-only audit of record is for.
+ALTER TABLE TokenLifecycleEvent ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lifecycle_authority_isolation ON TokenLifecycleEvent;
+CREATE POLICY lifecycle_authority_isolation ON TokenLifecycleEvent
+    USING (
+        actor_agency_id IS NULL
+        OR actor_agency_id = coalesce(
+            NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,
+            actor_agency_id)
+    );

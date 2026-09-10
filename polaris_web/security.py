@@ -714,6 +714,11 @@ def login_user(user, get_conn=None):
     session['username']  = user['username']
     session['role']      = user['role']
     session['logged_in'] = True
+    # P3.9: the authority this operator acts for, or None for an unscoped operator, which is
+    # correct for a single-authority instance and is the default. app._apply_operator_scope
+    # puts it into the database session, where the row-level policies filter on it; the
+    # isolation is the database's, and this only says who is asking.
+    session['operator_agency_id'] = user.get('agency_id') if hasattr(user, 'get') else None
     session.permanent    = True
     # Issue a fresh CSRF token on login
     session['csrf_token'] = secrets.token_urlsafe(32)

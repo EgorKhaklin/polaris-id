@@ -593,8 +593,46 @@ def get_db(readonly=False):
     if readonly and DB_CONFIG_REPLICA is not None:
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG_REPLICA)
         conn.set_session(readonly=True)
+        _apply_operator_scope(conn)
         return conn
-    return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+    conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+    _apply_operator_scope(conn)
+    return conn
+
+
+def _apply_operator_scope(conn):
+    """P3.9: put the logged-in operator's authority into the session, for row-level security.
+
+    The isolation itself lives in the database (migration 012), not here. This function only
+    tells the database who is asking. That division is deliberate: sixteen operator routes
+    read credential data with no issuing-agency filter, and patching sixteen query bodies
+    would be exactly the application-level policy the schema exists to refuse. A policy the
+    database enforces cannot be forgotten by the seventeenth route.
+
+    Unset means unscoped, which is correct for a single-authority instance and is the default:
+    every policy is permissive when the setting is empty, so unauthenticated API paths, the
+    relying-party surface and the test suites are unaffected.
+    """
+    agency_id = None
+    try:
+        if session.get('logged_in'):
+            agency_id = session.get('operator_agency_id')
+    except RuntimeError:
+        # No request context (a CLI or a background task): unscoped, as before.
+        return
+    if agency_id is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            # Parameterised: this value reaches a SET, and a SET does not take placeholders in
+            # the usual position, so it is bound through set_config() instead of interpolated.
+            cur.execute("SELECT set_config('polaris.operator_agency_id', %s, false)",
+                        (str(int(agency_id)),))
+    except (ValueError, TypeError, psycopg2.Error):
+        # A binding that cannot be applied must not silently widen access: close the
+        # connection rather than serve the request unscoped.
+        conn.close()
+        raise
 
 
 def _replica_lag_seconds(conn):

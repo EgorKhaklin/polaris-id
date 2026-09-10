@@ -10473,6 +10473,133 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_per_authority_isolation(root: pathlib.Path) -> list[Finding]:
+    """One authority's operators cannot read another's credentials, and the DATABASE says so (P3.9).
+
+    The review that produced this found sixteen operator routes reading credential data with no
+    issuing-agency filter. Patching sixteen query bodies would have been exactly the
+    application-level policy the schema exists to refuse: it holds until the seventeenth route,
+    which nobody remembers to write. So the isolation is a row-level policy, and the application
+    only tells the database who is asking.
+
+    Three properties are pinned here, and each one is a way the feature could rot into a lie.
+
+    THE CAST MUST NEVER SEE AN EMPTY STRING. The obvious policy shape is
+    `setting = '' OR col = setting::int`. Postgres does not guarantee OR short-circuits, so the
+    cast is still evaluated on an unscoped session and the query dies with
+    "invalid input syntax for type integer". That is not a subtle failure: it takes down every
+    unauthenticated path in the instance. The drill caught it before it shipped, and this check
+    keeps the broken shape from coming back.
+
+    THE DEFAULT MUST STAY PERMISSIVE. An unscoped session sees everything. A single-authority
+    instance, the relying-party API and every test suite depend on it. A policy that quietly hid
+    rows from an unbound caller would be a silent behaviour change wearing the word "security".
+
+    THE SCOPE MUST NOT OUTLIVE THE REQUEST. The setting is applied at connection open with
+    `is_local=false`, which is safe only because `get_db` opens a fresh connection per request.
+    Put a connection pool behind it and one operator's authority is inherited by whoever picks
+    that connection up next, which is a cross-authority read with an audit trail blaming the
+    wrong person. So the pairing is checked, not assumed."""
+    name = "per_authority_isolation"
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    policies = ("token_authority_isolation", "verification_authority_isolation",
+                "lifecycle_authority_isolation")
+    for policy in policies:
+        if f"CREATE POLICY {policy}" not in schema:
+            return _fail(name, f"the schema must define the row-level policy {policy}")
+    if "AppUser" not in schema or "agency_id INTEGER REFERENCES Agency" not in schema:
+        return _fail(name,
+                     "an operator must be bound to an authority (AppUser.agency_id), or there is "
+                     "nothing for a policy to scope by")
+
+    # The empty-string cast. Any `current_setting(...)::INTEGER` that is not guarded by NULLIF
+    # is evaluated on an unscoped session and raises.
+    for source in ("polaris_sql/01_schema.sql",
+                   "polaris_sql/migrations/2026-09-10-012-per-authority-isolation.up.sql"):
+        text = _read(root, source)
+        if not text:
+            return _fail(name, f"{source} must exist: the policies are defined in both places")
+        for line in text.splitlines():
+            if "current_setting('polaris.operator_agency_id'" not in line:
+                continue
+            if "::INTEGER" in line.upper() and "NULLIF" not in line.upper():
+                return _fail(name,
+                             f"{source} casts the operator scope to INTEGER without a NULLIF "
+                             "guard. Postgres does not guarantee an OR short-circuits, so the "
+                             "cast is evaluated on an UNSCOPED session and every query raises "
+                             "'invalid input syntax for type integer'. That takes the instance "
+                             "down, not just the isolation")
+        if "coalesce(" not in text.lower():
+            return _fail(name,
+                         f"{source} must keep the unscoped default PERMISSIVE by comparing the "
+                         "column with itself when the setting is absent; a policy that hid rows "
+                         "from an unbound caller would be a silent behaviour change")
+
+    app = _read(root, "polaris_web/app.py")
+    if "def _apply_operator_scope" not in app:
+        return _fail(name, "the app must tell the database which authority is asking")
+    get_db = app.split("def get_db")[1].split("\ndef _apply_operator_scope")[0]
+    if get_db.count("_apply_operator_scope(conn)") < 2:
+        return _fail(name,
+                     "every connection get_db hands out must carry the operator scope, the "
+                     "read replica included; a scope applied on one path only means the same "
+                     "operator sees different rows depending on which route they hit")
+    if "fresh connection per request" not in get_db:
+        return _fail(name,
+                     "the scope is set with is_local=false, which is safe ONLY because get_db "
+                     "opens a fresh connection per request. Behind a pool the setting is "
+                     "inherited by the next request on that connection, which is a "
+                     "cross-authority read attributed to the wrong operator. If a pool is "
+                     "introduced, reset the scope on checkout and say so here")
+    scope = app.split("def _apply_operator_scope")[1].split("\ndef ")[0]
+    if "set_config(" not in scope or "%s" not in scope:
+        return _fail(name,
+                     "the authority must be bound through set_config() rather than interpolated "
+                     "into a SET statement")
+    if "int(agency_id)" not in scope:
+        return _fail(name, "the authority must be coerced to an integer before it reaches SQL")
+    if "session.get('operator_agency_id')" not in scope:
+        return _fail(name, "the scope must come from the authenticated session, not a request "
+                           "parameter: a caller who can name their own authority has none")
+    if "session['operator_agency_id']" not in _read(root, "polaris_web/security.py"):
+        return _fail(name, "login must record the operator's authority in the session")
+
+    drill = _read(root, "scripts/polaris-authority-isolation-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-authority-isolation-drill.py must prove the isolation "
+                           "against a real database")
+    if "SET LOCAL ROLE polaris_app" not in drill:
+        return _fail(name,
+                     "the drill must ask as the APPLICATION role: a superuser and the owner both "
+                     "bypass row-level security, so a drill run as either passes vacuously")
+    for needed, why in (("an UNSCOPED session sees every credential",
+                         "the permissive default must be asserted, not assumed"),
+                        ("not even by naming the other authority explicitly",
+                         "a count is weaker than the rows being unreachable when asked for "
+                         "directly"),
+                        ("holder identity is NOT isolated",
+                         "the limit must be demonstrated, so nobody reads these policies as "
+                         "achieving per-authority isolation in a shared instance")):
+        if needed not in drill:
+            return _fail(name, why)
+
+    doc = _read(root, "docs/design/per-authority-isolation.md")
+    if not doc:
+        return _fail(name, "the design record must be published "
+                           "(docs/design/per-authority-isolation.md)")
+    if "not owned by" not in doc.lower():
+        return _fail(name,
+                     "the design record must state the part policies cannot fix: a person is not "
+                     "owned by an authority, so holder identity cannot be isolated by one")
+    return _ok(name,
+               "one authority's operators cannot read another's credentials, and the database "
+               "enforces it rather than sixteen query bodies: the operator's authority comes from "
+               "the authenticated session and is bound through set_config, every connection "
+               "get_db hands out carries it, the unscoped default stays permissive, no policy "
+               "casts an empty setting to INTEGER, and the drill asks as the application role and "
+               "demonstrates the limit rather than stating it")
+
+
 def check_vc_format(root: pathlib.Path) -> list[Finding]:
     """The W3C VC representation is a FORMAT, and attests a result rather than an identity (P3.8).
 
@@ -10577,6 +10704,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_per_authority_isolation,
     check_vc_format,
     check_mdoc_bridge,
     check_plonky3_evaluation,

@@ -5,6 +5,52 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.364 — 2026-09-10 (P3.9: per-authority isolation, and the part policies cannot fix)
+
+A review row, and the review found something. `AppUser` had no authority
+binding at all, and **sixteen operator routes read credential data with no
+issuing-agency filter.** In a single-authority instance that is invisible and
+harmless. In a shared one it means any operator sees every authority's holders.
+
+**The fix is a database policy, not sixteen `WHERE` clauses.** Patching sixteen
+query bodies would be exactly the application-level policy the schema exists to
+refuse: it holds until the seventeenth route, which nobody remembers to write.
+So `IdentityToken`, `VerificationEvent` and `TokenLifecycleEvent` carry row-level
+policies keyed on a session setting, and the application's only job is to say
+who is asking. `scripts/polaris-authority-isolation-drill.py` drops to the
+application role and asks the database directly, because "the application filters
+by agency" is not the claim worth making.
+
+**The unscoped default stays permissive.** An unbound operator sees everything,
+which is what a single-authority instance, the relying-party surface and every
+test suite rely on. A policy that quietly hid rows from an unbound caller would
+be a silent behaviour change wearing the word "security".
+
+**One trap, recorded because it nearly shipped.** The natural way to write a
+permissive default is `setting = '' OR col = setting::int`. PostgreSQL does not
+guarantee `OR` short-circuits, so the cast runs on an unscoped session and the
+query dies with `invalid input syntax for type integer: ""`. That is not a
+failure of isolation, it is an outage: every query against the table raises, so
+an unauthenticated instance stops serving. The drill caught it on its first run.
+The shipped form is `col = coalesce(NULLIF(setting, '')::INTEGER, col)`, which
+never lets the cast see an empty string, and `check_per_authority_isolation`
+refuses any unguarded cast so it cannot come back.
+
+**What the review could not fix.** A person is not owned by an authority. Two
+authorities may both have issued to the same individual over time, and C3
+constrains credentials, not people. There is no honest per-authority policy for
+`Individual`, so in a shared instance these policies **bound** what an operator
+sees and do not achieve isolation. The drill asserts that limit rather than
+leaving it in prose. That changes the status of the topology decision: **one
+authority per instance is load-bearing, not stylistic.**
+
+Also pinned: the scope reaches every connection `get_db` hands out, the read
+replica included, and it comes from the authenticated session rather than the
+request. The scope is applied with `is_local=false`, which is safe only because
+`get_db` opens a fresh connection per request; the check holds that pairing, so
+introducing a pool without resetting the scope on checkout fails rather than
+silently handing one operator's authority to the next request.
+
 ## v9.363 — 2026-09-10 (P3.8: a verification result in the W3C VC data model)
 
 The sibling of the mdoc bridge, and the roadmap row's phrase "explicitly a

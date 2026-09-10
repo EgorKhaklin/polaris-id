@@ -239,6 +239,16 @@ jobs:
       - name: Status distribution — cached to the signed window, never past it
         run: python scripts/polaris-status-distribution-drill.py
 
+      # v9.364 (P3.9) — one authority's operators against another's data, asked of the
+      # DATABASE rather than the application. Sixteen operator routes read credential data
+      # with no issuing-agency filter, so the isolation is a row-level policy: the drill drops
+      # to the application role and shows the other authority's rows are unreachable even when
+      # named directly. It also asserts the permissive unscoped default (a single-authority
+      # instance depends on it) and demonstrates the limit, since holder identity is not
+      # isolated and no honest policy could say otherwise. Needs the loaded database.
+      - name: Per-authority isolation — the database refuses, not the query body
+        run: python scripts/polaris-authority-isolation-drill.py
+
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
           COVERAGE_FLOOR: "74"

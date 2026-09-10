@@ -9324,6 +9324,127 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_per_authority_isolation_check_discriminates(tmp_path):
+    # v9.364 (P3.9): the shapes this row rots into. A policy whose cast reaches an empty
+    # string, which takes the instance down rather than merely failing to isolate; a
+    # permissive default quietly turning restrictive; a scope applied to only one of the
+    # connections get_db hands out; and a drill run as an owner, which bypasses row-level
+    # security and so passes no matter what the policies say.
+    GOOD_POLICY = (
+        "CREATE POLICY token_authority_isolation ON IdentityToken\n"
+        "    USING (issuing_agency_id = coalesce(\n"
+        "        NULLIF(current_setting('polaris.operator_agency_id', true), '')::INTEGER,\n"
+        "        issuing_agency_id));\n"
+        "CREATE POLICY verification_authority_isolation ON VerificationRequest USING (true);\n"
+        "CREATE POLICY lifecycle_authority_isolation ON TokenLifecycleEvent USING (true);\n")
+    SCHEMA = ("CREATE TABLE AppUser (agency_id INTEGER REFERENCES Agency(agency_id));\n"
+              + GOOD_POLICY)
+    APP = ('def get_db(readonly=False):\n'
+           '    """Open a fresh connection per request."""\n'
+           "    if readonly:\n        conn = connect()\n"
+           "        _apply_operator_scope(conn)\n        return conn\n"
+           "    conn = connect()\n    _apply_operator_scope(conn)\n    return conn\n"
+           "\ndef _apply_operator_scope(conn):\n"
+           "    agency_id = session.get('operator_agency_id')\n"
+           "    cur.execute(\"SELECT set_config('polaris.operator_agency_id', %s, false)\",\n"
+           "                (str(int(agency_id)),))\n")
+    SECURITY = "session['operator_agency_id'] = user.get('agency_id')\n"
+    DRILL = ('cur.execute("SET LOCAL ROLE polaris_app")\n'
+             '# an UNSCOPED session sees every credential (the default)\n'
+             '# ...not even by naming the other authority explicitly\n'
+             '# holder identity is NOT isolated by authority (the stated limit)\n')
+    DOC = "A person is not owned by an authority.\n"
+    MIG = "polaris_sql/migrations/2026-09-10-012-per-authority-isolation.up.sql"
+    good = {
+        'polaris_sql/01_schema.sql': SCHEMA,
+        MIG: GOOD_POLICY,
+        'polaris_web/app.py': APP,
+        'polaris_web/security.py': SECURITY,
+        'scripts/polaris-authority-isolation-drill.py': DRILL,
+        'docs/design/per-authority-isolation.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+
+    # THE TRAP THAT ACTUALLY HAPPENED. `setting = '' OR col = setting::int` looks like it
+    # short-circuits and does not: the cast runs on an unscoped session and every query
+    # against the table raises. This is the shape the drill caught before it shipped.
+    UNGUARDED = (
+        "CREATE POLICY token_authority_isolation ON IdentityToken\n"
+        "    USING (coalesce(current_setting('polaris.operator_agency_id', true), '') = ''\n"
+        "        OR issuing_agency_id = "
+        "current_setting('polaris.operator_agency_id', true)::INTEGER);\n"
+        "CREATE POLICY verification_authority_isolation ON VerificationRequest USING (true);\n"
+        "CREATE POLICY lifecycle_authority_isolation ON TokenLifecycleEvent USING (true);\n")
+    write({MIG: UNGUARDED})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        ("an unguarded ::INTEGER cast on the operator scope must be REFUSED: it raises on "
+         "every unscoped session, which takes the instance down rather than failing to isolate")
+    write({'polaris_sql/01_schema.sql': SCHEMA.replace(GOOD_POLICY, UNGUARDED)})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "the schema copy of the policies must be held to the same rule as the migration"
+
+    # THE DEFAULT TURNING RESTRICTIVE. Without the self-comparison an unbound caller sees
+    # nothing, which is a silent behaviour change wearing the word "security".
+    write({MIG: GOOD_POLICY.replace("coalesce(\n        NULLIF", "(\n        NULLIF")
+                          .replace(",\n        issuing_agency_id));", ");")})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "a policy that hides rows from an UNSCOPED session must be refused"
+
+    # A SCOPE ON ONE PATH ONLY: the same operator would see different rows depending on
+    # whether the route reads the replica.
+    write({'polaris_web/app.py': APP.replace("        _apply_operator_scope(conn)\n"
+                                             "        return conn\n", "        return conn\n")})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "every connection get_db hands out must carry the scope, the read replica included"
+
+    # THE POOL. is_local=false is only safe on a fresh connection per request.
+    write({'polaris_web/app.py': APP.replace("Open a fresh connection per request.",
+                                             "Check a connection out of the pool.")})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        ("dropping the per-request-connection guarantee must be refused while the scope is "
+         "set with is_local=false: a pooled connection carries one operator's authority into "
+         "the next request")
+
+    # THE SCOPE FROM THE CALLER. An operator who can name their own authority has none.
+    write({'polaris_web/app.py': APP.replace("session.get('operator_agency_id')",
+                                             "request.args.get('agency_id')")})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "the authority must come from the authenticated session, never from the request"
+
+    # A DRILL RUN AS THE OWNER passes whatever the policies say: owner and superuser both
+    # bypass row-level security.
+    write({'scripts/polaris-authority-isolation-drill.py':
+           DRILL.replace('cur.execute("SET LOCAL ROLE polaris_app")\n', "")})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "a drill that does not drop to the application role proves nothing"
+
+    # THE LIMIT LEFT UNDEMONSTRATED, in the drill and in the record.
+    write({'scripts/polaris-authority-isolation-drill.py':
+           DRILL.replace("# holder identity is NOT isolated by authority (the stated limit)\n", "")})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "the drill must demonstrate that holder identity is NOT isolated"
+    write({'docs/design/per-authority-isolation.md': "Isolation is complete.\n"})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "the record must state that a person is not owned by an authority"
+
+    # And the binding itself.
+    write({'polaris_sql/01_schema.sql': GOOD_POLICY})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "without AppUser.agency_id there is nothing for a policy to scope by"
+    write({'polaris_web/security.py': "pass\n"})
+    assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
+        "login must record the operator's authority in the session"
+
+
 def test_vc_format_check_discriminates(tmp_path):
     # v9.363 (P3.8): the two drifts this row is exposed to. A verification result quietly
     # becoming a credential about a person, one convenient field at a time; and a proof
