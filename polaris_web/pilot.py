@@ -225,3 +225,66 @@ def consent_language(conn=None) -> str:
         "Ending this pilot requires a second, independent authority to co-sign the withdrawal "
         "of every credential. No single organisation running this pilot, including the one "
         "that enrolled you, can revoke everyone on its own.")
+
+# ---------------------------------------------------------------------------
+# The DPIA input pack
+# ---------------------------------------------------------------------------
+def dpia_inputs(conn):
+    """The facts a data-protection impact assessment needs that only the system can supply.
+
+    NOT a DPIA, and not a template for one. A DPIA is a legal instrument that names a
+    controller, a lawful basis and a jurisdiction; docs/PRODUCTION-READINESS.md says plainly
+    that it is counsel's work and not an engineering task, and shipping a fill-in-the-blanks
+    form would invite somebody to treat the blanks as the whole job.
+
+    What engineering CAN supply, and what a DPIA is usually wrong about, is the factual half:
+    which tables hold what, how long each class is kept, who can read it, and what survives a
+    wind-down. Those answers are derived here from the live schema and the effective retention
+    policy rather than transcribed, because a DPIA written from a hand-maintained inventory is
+    accurate on the day it is written and wrong from the next migration onward."""
+    pack = {"generated_from": "the live schema and the effective retention policy",
+            "not_a_dpia": ("A DPIA names a controller, a lawful basis and a jurisdiction. "
+                           "Those are counsel's and the deploying organisation's. This is the "
+                           "factual half a DPIA is usually wrong about."),
+            "consent_language": consent_language()}
+
+    with conn.cursor() as cur:
+        # What is held, by table, with row counts. Derived: a table added next year appears.
+        cur.execute("""
+            SELECT c.relname AS table_name, c.reltuples::BIGINT AS approx_rows
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+            ORDER BY c.relname
+        """)
+        pack["tables"] = [dict(r) for r in cur.fetchall()]
+
+        # The columns that hold identifying data, found by NAME across the whole schema. A
+        # DPIA that missed one of these would be missing the part that matters, and a
+        # hand-written list is exactly how one gets missed.
+        cur.execute("""
+            SELECT table_name, column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND (column_name ILIKE '%name%' OR column_name ILIKE '%birth%'
+                   OR column_name ILIKE '%biometric%' OR column_name ILIKE '%serial%'
+                   OR column_name ILIKE '%location%' OR column_name ILIKE '%address%'
+                   OR column_name ILIKE '%token_value%' OR column_name ILIKE '%duress%')
+            ORDER BY table_name, column_name
+        """)
+        pack["identifying_columns"] = [dict(r) for r in cur.fetchall()]
+
+        # How long each class is kept, from the effective policy rather than from prose.
+        cur.execute("""
+            SELECT table_class, jurisdiction, retention_days, justification
+            FROM RetentionPolicy WHERE superseded_at IS NULL
+            ORDER BY table_class, jurisdiction NULLS FIRST
+        """)
+        pack["retention"] = [dict(r) for r in cur.fetchall()]
+
+        # Who can read it.
+        cur.execute("SELECT role, count(*) AS accounts FROM AppUser WHERE is_active "
+                    "GROUP BY role ORDER BY role")
+        pack["operator_roles"] = [dict(r) for r in cur.fetchall()]
+
+    pack["residue_after_winddown"] = residue(conn)
+    return pack

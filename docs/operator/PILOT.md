@@ -90,14 +90,48 @@ in the report on the next run, whether or not anyone thought about it.
 Run it and put the output in your exit report. It is the honest answer to the question a
 participant, a regulator or your successor will actually ask.
 
-## 5. What this row does not yet ship
+## 5. One command
 
-P5.1 also names a one-command deployment profile, an ops pack, a metrics and reporting bundle
-and a DPIA template. Those are not done, and the roadmap row says so. What ships here is the
-rollback-and-erasure plan as a path that runs, and the consent language constrained by it,
-because those are the parts whose absence would let a pilot start on a promise the system
-cannot keep.
+```bash
+scripts/polaris-pilot.sh up                                   # the stack
+scripts/polaris-pilot.sh report                               # the pack below
+scripts/polaris-pilot.sh winddown --cosigner N --agency N     # end it
+scripts/polaris-pilot.sh down                                 # stop, data kept
+```
 
-For deployment today, use the existing profiles: [DEPLOYMENT.md](DEPLOYMENT.md),
-[KUBERNETES.md](KUBERNETES.md), [LINUX-SERVER.md](LINUX-SERVER.md). For the operational
-posture around a running instance, [OPERATIONS.md](OPERATIONS.md) and [PRIVACY.md](PRIVACY.md).
+`down` is not a wind-down. Stopping a pilot is not ending one, and the command says so.
+
+## 6. The pack you owe your DPO, before you start
+
+**Run `report` before you enrol anybody, not only at the end.** It prints, derived from the
+live schema rather than transcribed:
+
+- every table and roughly what it holds;
+- **every identifying column found by name across the whole schema**, which is the list a
+  hand-written inventory gets wrong. On the shipped seed it finds 77, including a `legal_name`
+  re-exposed through a view and the duress columns nobody wants enumerated;
+- the effective retention policy per class, from `RetentionPolicy` and not from prose;
+- who can read it, by role;
+- what survives a wind-down;
+- the consent language of §1.
+
+**This is not a DPIA and there is no template for one here.** A DPIA names a controller, a
+lawful basis and a jurisdiction; [PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md) says
+plainly that it is counsel's work and not an engineering task, and a fill-in-the-blanks form
+would invite somebody to treat the blanks as the whole job. What engineering can supply is the
+factual half a DPIA is usually wrong about, and supply it in a form that does not go stale on
+the next migration.
+
+## 7. What is reused rather than reinvented
+
+The **ops pack** is the existing runbooks: [OPERATIONS.md](OPERATIONS.md) for day two,
+[DR.md](DR.md) and [FAILOVER.md](FAILOVER.md) for recovery, [RUNBOOKS.md](RUNBOOKS.md) for
+alert response, [PRIVACY.md](PRIVACY.md) for the privacy posture,
+[QUANTUM-EVENT.md](QUANTUM-EVENT.md) for an algorithm migration. The **metrics bundle** is the
+shipped observability stack (`deploy/observability/`: Prometheus, the alert rules and their
+tests, the SLO recording rules, Grafana dashboards), which `up` brings with it. Deployment
+substrates other than compose are [KUBERNETES.md](KUBERNETES.md) and
+[LINUX-SERVER.md](LINUX-SERVER.md).
+
+Nothing in a pilot profile should be a second copy of those. A pilot that ran on its own
+parallel ops documentation would be a pilot whose findings do not transfer.

@@ -10586,6 +10586,37 @@ def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
         if needed not in drill:
             return _fail(name, why)
 
+    if "def dpia_inputs" not in mod:
+        return _fail(name,
+                     "the pack a DPIA needs must be DERIVED from the live schema. A pilot "
+                     "assessed from a hand-maintained inventory is accurate on the day it is "
+                     "written and wrong from the next migration onward")
+    dpia = mod.split("def dpia_inputs")[1].split("\ndef ")[0]
+    if "information_schema.columns" not in dpia:
+        return _fail(name,
+                     "the identifying columns must be found BY NAME across the whole schema. "
+                     "That list is the one a hand-written inventory gets wrong, and the "
+                     "columns it forgets are the ones that matter")
+    if "not_a_dpia" not in dpia:
+        return _fail(name,
+                     "the pack must refuse to be mistaken for a DPIA. A DPIA names a "
+                     "controller, a lawful basis and a jurisdiction; shipping a "
+                     "fill-in-the-blanks form invites somebody to treat the blanks as the "
+                     "whole job")
+
+    runner = _read(root, "scripts/polaris-pilot.sh")
+    if not runner:
+        return _fail(name, "P5.1 asks for one command; scripts/polaris-pilot.sh must be it")
+    if "winddown needs --cosigner" not in runner:
+        return _fail(name,
+                     "the wrapper must refuse a wind-down with no co-signer, and say why, "
+                     "rather than passing the omission down to a stack trace")
+    if "not a wind-down" not in runner:
+        return _fail(name,
+                     "`down` must say it is not a wind-down. Stopping a pilot is not ending "
+                     "one, and an operator who conflates them believes participants were "
+                     "erased when nothing was")
+
     doc = _read(root, "docs/operator/PILOT.md")
     if not doc:
         return _fail(name, "the pilot record must be published (docs/operator/PILOT.md)")
@@ -10596,9 +10627,15 @@ def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
                         ("arrange this before enrolling anybody",
                          "the co-signer prerequisite must be stated as a precondition rather "
                          "than discovered at the end"),
-                        ("does not yet ship",
-                         "the row is partial and the document must say which parts are absent "
-                         "rather than reading as a complete pilot kit")):
+                        ("before you enrol anybody, not only at the end",
+                         "the DPIA pack is for the start of a pilot; running it only at the "
+                         "end tells you what you already could not change"),
+                        ("this is not a dpia",
+                         "the document must refuse the reading that it supplies the "
+                         "assessment, which is counsel's"),
+                        ("reused rather than reinvented",
+                         "a pilot that ran on its own parallel ops documentation would be one "
+                         "whose findings do not transfer")):
         if phrase not in low:
             return _fail(name, why)
     return _ok(name,

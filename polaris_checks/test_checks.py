@@ -9348,6 +9348,9 @@ def test_pilot_winddown_check_discriminates(tmp_path):
            "        cur.execute('CALL uc8_revoke_token(%s, %s, %s, %s, %s)')\n"
            "    for person in people:\n"
            "        cur.execute('CALL uc_pseudonymize_individual(%s, %s, %s)')\n"
+           "\ndef dpia_inputs(conn):\n"
+           "    cur.execute('SELECT * FROM information_schema.columns')\n"
+           "    return {'not_a_dpia': 'that is counsel\\'s work'}\n"
            "\ndef consent_language(conn=None):\n"
            '    return ("We cannot promise your data will be deleted, because in this system "\n'
            '            "that would not be true. Records are append-only so that nobody, "\n'
@@ -9360,11 +9363,15 @@ def test_pilot_winddown_check_discriminates(tmp_path):
              "# the verification audit-of-record is STILL THERE\n"
              "# a table added later appears in the residue report unprompted\n"
              "# running the wind-down again is safe and a no-op\n")
-    DOC = ("Read the ending first. Arrange this before enrolling anybody. What this row\n"
-           "does not yet ship: the deployment profile and the DPIA template.\n")
+    RUNNER = ('echo "pilot: winddown needs --cosigner AGENCY_ID." >&2\n'
+              'echo "Stopped. Data kept: down is not a wind-down."\n')
+    DOC = ("Read the ending first. Arrange this before enrolling anybody. Run report\n"
+           "before you enrol anybody, not only at the end. This is not a DPIA and there\n"
+           "is no template. What is reused rather than reinvented: the runbooks.\n")
     good = {
         'polaris_web/pilot.py': MOD,
         'scripts/polaris-pilot-winddown-drill.py': DRILL,
+        'scripts/polaris-pilot.sh': RUNNER,
         'docs/operator/PILOT.md': DOC,
     }
 
@@ -9450,8 +9457,30 @@ def test_pilot_winddown_check_discriminates(tmp_path):
         write({'scripts/polaris-pilot-winddown-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
             f"the drill must assert: {needle}"
+    # THE DPIA PACK: derived, and refusing to be mistaken for the assessment.
+    write({'polaris_web/pilot.py': MOD.replace(
+        "    cur.execute('SELECT * FROM information_schema.columns')\n", "")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "identifying columns must be found by name across the whole schema"
+    write({'polaris_web/pilot.py': MOD.replace("not_a_dpia", "summary")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "the pack must refuse to be mistaken for a DPIA"
+    write({'polaris_web/pilot.py': MOD.replace("\ndef dpia_inputs(conn):\n", "\ndef other(conn):\n")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "the pack must exist at all"
+
+    # THE ONE COMMAND, and the two things it must not let an operator confuse.
+    write({'scripts/polaris-pilot.sh': RUNNER.replace(
+        'echo "pilot: winddown needs --cosigner AGENCY_ID." >&2\n', "")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "the wrapper must refuse a wind-down with no co-signer and say why"
+    write({'scripts/polaris-pilot.sh': RUNNER.replace("down is not a wind-down", "stopped")})
+    assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
+        "an operator who conflates `down` with a wind-down believes participants were erased"
+
     for phrase in ("Read the ending first.", "Arrange this before enrolling anybody.",
-                   "does not yet ship"):
+                   "before you enrol anybody, not only at the end",
+                   "This is not a DPIA", "reused rather than reinvented"):
         write({'docs/operator/PILOT.md': DOC.replace(phrase, "")})
         assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
             f"the record must state: {phrase}"

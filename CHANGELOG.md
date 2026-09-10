@@ -5,6 +5,45 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.378 — 2026-09-10 (P5.1 closed: the pack you owe before you start)
+
+v9.376 shipped the wind-down. This adds the rest and closes the row.
+
+**One command.** `scripts/polaris-pilot.sh` with `up`, `report`, `winddown` and
+`down`. Two refusals are built into it rather than left to a stack trace:
+`winddown` without `--cosigner` explains that a wind-down is a mass revocation
+and one authority cannot perform one, and `down` says in as many words that it
+is **not** a wind-down. Stopping a pilot is not ending one, and an operator who
+conflates them believes participants were erased when nothing was.
+
+**The DPIA input pack, and what it refuses to be.** `report` prints the factual
+half a DPIA is usually wrong about, derived from the live schema: every table,
+**every identifying column found by name across the whole schema**, the
+effective retention policy per class from `RetentionPolicy` rather than from
+prose, who can read it by role, what survives a wind-down, and the consent
+language.
+
+On the shipped seed that column search finds **77**, including a `legal_name`
+re-exposed through a view and the duress columns nobody wants enumerated. That
+is the list a hand-written inventory gets wrong, and the entries it forgets are
+the ones that matter.
+
+**It is not a DPIA and there is no template for one.** A DPIA names a
+controller, a lawful basis and a jurisdiction;
+[PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md) says plainly that it is
+counsel's work and not an engineering task. A fill-in-the-blanks form would
+invite somebody to treat the blanks as the whole job. What engineering can
+supply is the facts, in a form that does not go stale on the next migration,
+and `report` says so in its own output.
+
+**Run it before you enrol anybody**, not only at the end. Run at the end it
+tells you what you could no longer have changed.
+
+**The ops pack and metrics bundle are reused, not reinvented**: the existing
+runbooks and the shipped `deploy/observability/` stack, which `up` brings with
+it. A pilot running on its own parallel ops documentation would be one whose
+findings do not transfer.
+
 ## v9.377 — 2026-09-10 (triage says what it actually knows)
 
 v9.376's CI went red on the Docker image job, in a layer nothing in that ship

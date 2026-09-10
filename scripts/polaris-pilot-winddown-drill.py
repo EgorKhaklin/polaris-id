@@ -34,6 +34,12 @@ So this runs the wind-down against a real database and checks what it actually l
 
   IT IS IDEMPOTENT. A wind-down that cannot be re-run is one nobody dares run the first time.
 
+  AND IT SUPPLIES THE FACTS A DPIA IS USUALLY WRONG ABOUT. Not a DPIA: that names a
+  controller, a lawful basis and a jurisdiction, and is counsel's. What engineering can supply
+  is which tables hold what, which columns are identifying, how long each class is kept and who
+  can read it, all derived from the live schema so a DPIA written from it is not accurate only
+  on the day it was written.
+
   AND THE CONSENT LANGUAGE MATCHES. The drill asserts the paragraph does not promise deletion,
   because that word is where the gap between what a system does and what its operators believe
   becomes a promise to a person.
@@ -267,6 +273,27 @@ def main():
              "append-only" in words and "including us" in words, True)
         _row("...and that no single organisation can revoke everyone alone",
              "second, independent authority" in words, True)
+
+        # THE DPIA INPUT PACK. Facts, derived. Not a DPIA and not a template for one.
+        pack = pilot.dpia_inputs(conn)
+        _row("the DPIA pack enumerates the tables from the live schema",
+             len(pack["tables"]) > 20, True)
+        _row("...and finds identifying columns BY NAME across all of them",
+             len(pack["identifying_columns"]) > 10, True)
+        found = {(c["table_name"], c["column_name"]) for c in pack["identifying_columns"]}
+        _row("...including the obvious one a hand-written list would start with",
+             ("individual", "legal_name") in found, True)
+        _row("...and the ones it would forget: a VIEW that re-exposes a name",
+             any(t != "individual" and c == "legal_name" for t, c in found), True)
+        _row("...and duress, which is the column nobody wants enumerated",
+             any("duress" in c for _t, c in found), True)
+        _row("the pack carries the effective retention policy, not prose",
+             len(pack["retention"]) > 0, True)
+        _row("...and who can read it", len(pack["operator_roles"]) > 0, True)
+        _row("the pack refuses to be mistaken for a DPIA",
+             "counsel" in pack["not_a_dpia"].lower()
+             or "not an engineering task" in pack["not_a_dpia"].lower()
+             or "lawful basis" in pack["not_a_dpia"].lower(), True)
 
         print()
         print("  what a wound-down pilot still holds (from the schema, not a list)")
