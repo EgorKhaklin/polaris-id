@@ -36,6 +36,7 @@ and the posture documents see [reference/](../reference/README.md).
 
 | Document | The mechanism |
 |---|---|
+| [verifier-device.md](verifier-device.md) | The thing at the counter: what it reads over NFC and QR, the three facts it keeps apart, the replay a signature cannot refuse, the linkability an offline authorization check costs, and the measured QR ceiling |
 | [card-profile.md](card-profile.md) | The physical card as an object somebody else can implement: the on-card data model, the dual-signature layout, PIN and duress semantics, succession, and the limits each of those has |
 | [duress-codes.md](duress-codes.md) | The compulsion-resistant verification path |
 | [recovery-ceremony.md](recovery-ceremony.md) | Recovering an identity without a single point of compromise |

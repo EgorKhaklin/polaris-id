@@ -51,6 +51,16 @@ A pull request is ready when all of these hold:
 - `polaris_web/__version__.py`, the chart's `appVersion`, `CITATION.cff` and
   CHANGELOG.md are bumped in the same change (see the ship discipline in
   [CLAUDE.md](CLAUDE.md)).
+- A new **top-level directory** is added to the `At a glance` tree in
+  [docs/reference/SYSTEM-MAP.md](docs/reference/SYSTEM-MAP.md). `check_system_map`
+  compares that tree against *tracked* paths, so a brand-new directory is invisible
+  to a local check run until the commit that adds it: `git add` it and re-run the
+  checks before pushing, or CI finds it one commit later.
+- A new **drill wired into a CI job** is checked against what that job installs.
+  `pqc-real` deliberately installs a minimal set rather than `requirements.txt`, so
+  a drill that imports something it lacks exits 3, and in this repository a drill
+  exiting 3 in CI fails the step, which is correct: a missing precondition is a
+  failure, not a skip.
 
 ## Pre-commit hooks
 
@@ -111,6 +121,19 @@ enforces it. Index names follow the two existing conventions (`uq_*`,
   surveillance, unbounded retention or a coercion vector.
 - Documentation written without reading the code it describes.
 
+## Reading the CI result
+
+Two workflows run on every push: **`Polaris CI`** (the suites, the drills, the
+gates) and **`Pages`** (the site build). `gh run list --limit 1` returns whichever
+finished last, which is often `Pages`. Name the one you mean:
+
+```bash
+gh run list --workflow "Polaris CI" --limit 3 \
+   --json databaseId,headSha,status,conclusion
+```
+
+A green `Pages` run says nothing about whether the change passed.
+
 ## Security issues
 
 Do not file a public issue for a vulnerability. [SECURITY.md](SECURITY.md)
@@ -123,4 +146,4 @@ system is encouraged, provided the constitutional constraints are not weakened
 in the derivative; documenting a derivative to the same audit-of-record
 standard is asked for, not required by the license.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-09-10 (v9.348).*
+*Maintainer: Egor Khaklin. Last updated: 2026-09-10 (v9.369).*

@@ -5,6 +5,65 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.369 — 2026-09-10 (P4.5: the thing at the counter, and what a check costs)
+
+A border post, a bank counter, a pharmacy. `polaris_card/verifier_device.py`
+reads a card over NFC or a presentation over QR and decides, with connectivity
+or with none.
+
+**Three facts, kept apart.** Possession (the card signed *this device's*
+challenge just now), authenticity (the authority issued this card),
+authorization (the credential still stands inside a window this device
+accepts). All three are needed to accept and each is reported on its own,
+because a device that returns one boolean teaches its operator nothing about a
+refusal. **Possession alone is not acceptance**: a card revoked this morning
+still signs, and the device says so in as many words.
+
+**The replay a signature cannot refuse.** The challenge and the scope are inside
+the card's signature, so a response relayed to a *different* device fails. A
+response replayed to the *same* device does not: the signature over that
+challenge is perfectly valid the second time, and nothing about the bytes says
+they have been seen before. Only the device remembering its own outstanding
+challenges refuses that, so it does. A presentation refused for the wrong scope
+does **not** consume the challenge, or an attacker could burn the ones an
+honest holder is about to use.
+
+**The tension this row found, and reports rather than hides.** A P3.6 status
+assertion signs the `token_value` in the clear, because that is what binds it to
+a credential. So a device that checks authorization offline **learns the stable
+credential identifier**, and two such devices can tell they saw the same person.
+The card's key mode gives a per-verifier handle and gives up nothing, but
+nothing binds that handle to a status assertion. Every verdict therefore carries
+`linkability`, one of `pairwise`, `credential-linkable`, or `unknown`.
+
+It is recorded **before** the assertion is verified, and the drill caught that
+the first version did not. The device read the token value the moment it held
+the assertion; a failed verification does not un-disclose an identifier.
+Reporting linkability only on success would have been accounting for what the
+device *accepted* rather than for what it *learned*.
+
+**The QR ceiling, measured.** A presentation is 179 characters of base64url and
+fits comfortably. With a classical-only card object it is 495 and still fits.
+With a dual-signature card object it is **7,519**, past even the 4,296 an
+absolute-maximum version-40 QR code holds, never mind the ~1,800 a phone screen
+renders and a handheld scanner reads. **So the QR path cannot carry a
+post-quantum card object**, and a device that needs post-quantum authenticity
+needs NFC. That is a constraint with a number, not a preference.
+
+### The CI signal I had been misreading
+
+This repository runs two workflows per commit, `Polaris CI` and `Pages`, and
+`gh run list --limit 1` returns whichever finished last. For three ships
+(v9.365, v9.367, and the system-map fix between them) I watched the `Pages`
+run, saw success, and reported the ship as green when `Polaris CI` was red.
+
+The failure was one job in all three, and always the same: the quantum-event
+drill added in v9.365 was wired into the `pqc-real` job, which installs a
+minimal dependency set and not `psycopg2`, so the drill exited 3 and failed the
+step. Everything else in those runs was green. `psycopg2-binary` is now
+installed there, pinned from `requirements.txt` like the neighbouring pins, and
+the remaining drills in that job were audited for the same gap.
+
 ## v9.368 — 2026-09-10 (P4.3: a record becomes an object)
 
 Personalization is the moment a database record becomes an object in

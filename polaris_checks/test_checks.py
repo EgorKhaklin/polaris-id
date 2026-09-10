@@ -9324,6 +9324,135 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_verifier_device_check_discriminates(tmp_path):
+    # v9.369 (P4.5): the ways the thing at the counter starts lying. One boolean instead of
+    # three findings; a device that trusts a signature to refuse a replay it cannot refuse; a
+    # relayed presentation burning the honest holder's challenge; a second implementation of a
+    # decision the detached verifier already makes; and a verdict that reports linkability only
+    # when it accepted, which accounts for what it allowed rather than what it learned.
+    MOD = ('QR_MAX_ALPHANUMERIC = 4296\nQR_PRACTICAL_CHARS = 1800\n'
+           "\nclass VerifierDevice:\n"
+           "    def challenge(self):\n        return b''\n"
+           "\n    def _retire(self, challenge):\n"
+           "        if challenge in self._spent:\n"
+           "            raise DeviceRefusal('this challenge has already been answered')\n"
+           "\n    def read_nfc(self, card, pin):\n        return {}\n"
+           "\n    def qr_request(self):\n        return '', b''\n"
+           "\n    def read_qr(self, payload):\n        return {}\n"
+           "\n    def decide(self, presented, **kw):\n"
+           "        v = {'possession_proven': False, 'card_authentic': None,\n"
+           "             'authorization_fresh': None, 'linkability': 'unknown'}\n"
+           "        if presented['scope'] != self.scope:\n            return v\n"
+           "        self._retire(presented['challenge'])\n"
+           "        if status_assertion is not None:\n"
+           "            v['linkability'] = 'credential-linkable'\n"
+           "            sv = verify_status_assertion(status_assertion)\n"
+           "        v['note'] = 'the credential still stands is unknown'\n"
+           "        return v\n"
+           "\ndef qr_capacity_report(sizes):\n    return {}\n"
+           "\ndef _load_status_verifier():\n    return verify_status_assertion\n")
+    DRILL = ("# the SAME response replayed to the SAME device is refused\n"
+             "# ...and a response relayed to ANOTHER device is refused\n"
+             "# a REVOKED credential is refused even with a valid signature\n"
+             "# possession alone is NOT acceptance\n"
+             "# ...while a handle-only read stays PAIRWISE\n"
+             "# two devices cannot tell they saw the same card\n"
+             "# ...but a POST-QUANTUM card object does NOT, at any QR version\n")
+    DOC = ("Possession alone is not acceptance. The QR path cannot carry a post-quantum card\n"
+           "object. A device that checks authorization offline learns the stable credential\n"
+           "identifier.\n")
+    good = {
+        'polaris_card/verifier_device.py': MOD,
+        'scripts/polaris-verifier-device-drill.py': DRILL,
+        'docs/design/verifier-device.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_verifier_device(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+
+    # ONE BOOLEAN INSTEAD OF THREE FINDINGS.
+    for field in ("possession_proven", "card_authentic", "authorization_fresh",
+                  "linkability"):
+        # Every occurrence: a field named once in the dict and set again later is still
+        # reported, and the fixture has to actually remove it to test anything.
+        write({'polaris_card/verifier_device.py': MOD.replace(field, "gone")})
+        assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+            f"the verdict must report {field} on its own"
+    write({'polaris_card/verifier_device.py': MOD.replace(
+        "        v['note'] = 'the credential still stands is unknown'\n", "")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "possession alone must not accept, and the device must say why"
+
+    # THE REPLAY A SIGNATURE CANNOT REFUSE.
+    write({'polaris_card/verifier_device.py': MOD.replace("_spent", "_seen_elsewhere")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "the device must remember its own challenges"
+    write({'polaris_card/verifier_device.py': MOD.replace(
+        "            raise DeviceRefusal('this challenge has already been answered')\n",
+        "            raise DeviceRefusal('no')\n")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "a replayed challenge must be refused with its reason"
+
+    # THE RELAY THAT BURNS AN HONEST CHALLENGE.
+    write({'polaris_card/verifier_device.py': MOD.replace(
+        "        if presented['scope'] != self.scope:\n            return v\n"
+        "        self._retire(presented['challenge'])\n",
+        "        self._retire(presented['challenge'])\n"
+        "        if presented['scope'] != self.scope:\n            return v\n")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "the scope must be checked before the challenge is retired"
+    write({'polaris_card/verifier_device.py': MOD.replace(
+        "        if presented['scope'] != self.scope:\n            return v\n", "")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "a presentation for another verifier's scope must be refused"
+
+    # LINKABILITY REPORTED ONLY ON SUCCESS: accounting for what it accepted, not what it learned.
+    write({'polaris_card/verifier_device.py': MOD.replace(
+        "            v['linkability'] = 'credential-linkable'\n"
+        "            sv = verify_status_assertion(status_assertion)\n",
+        "            sv = verify_status_assertion(status_assertion)\n"
+        "            v['linkability'] = 'credential-linkable'\n")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "linkability must be recorded before the assertion is verified"
+
+    # THE SECOND IMPLEMENTATION, and the unmeasured ceiling.
+    write({'polaris_card/verifier_device.py': MOD.replace("_load_status_verifier", "_decide")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "the device must reuse the detached verifier rather than deciding twice"
+    write({'polaris_card/verifier_device.py': MOD.replace(
+        "\ndef qr_capacity_report(sizes):\n    return {}\n", "")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "the QR ceiling must be measured"
+    write({'polaris_card/verifier_device.py': MOD.replace("QR_MAX_ALPHANUMERIC = 4296\n", "")})
+    assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+        "the QR limit must be named, not implied"
+
+    # THE DRILL and the record.
+    for needle in ("# the SAME response replayed to the SAME device is refused",
+                   "# ...and a response relayed to ANOTHER device is refused",
+                   "# a REVOKED credential is refused even with a valid signature",
+                   "# possession alone is NOT acceptance",
+                   "# ...while a handle-only read stays PAIRWISE",
+                   "# two devices cannot tell they saw the same card",
+                   "# ...but a POST-QUANTUM card object does NOT, at any QR version"):
+        write({'scripts/polaris-verifier-device-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+            f"the drill must assert: {needle}"
+    for phrase in ("Possession alone is not acceptance.",
+                   "The QR path cannot carry a post-quantum card\nobject.",
+                   "learns the stable credential\nidentifier."):
+        write({'docs/design/verifier-device.md': DOC.replace(phrase, "")})
+        assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
+            f"the record must state: {phrase[:40]}"
+
+
 def test_card_personalization_check_discriminates(tmp_path):
     # v9.368 (P4.3): the ways personalization puts something wrong into the world. A key
     # injected rather than generated, which the authority can only promise it destroyed; a

@@ -73,6 +73,12 @@ initial report, extended for Critical findings as the patch warrants.
   wallet's presentation and QR framing
 - The verify SDKs (`sdk/python`, `sdk/typescript`) and the conformance suite
   (`conformance/`), which independent implementations build to
+- The physical layer (`polaris_card/`, P4): the card profile and its encoding, the
+  software token emulator and its APDU contract, the personalization flow, and the
+  reference verifier device. A finding that an emulator does not model a property of
+  real silicon (constant time, fault-injection resistance, key non-extractability) is
+  in scope as a documentation error only: those are properties of a certified part,
+  and the profile says so
 - The documentation, where an error would lead to an insecure deployment
 
 ### Out of scope
@@ -157,5 +163,5 @@ policy.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-10 (v9.348)*
+*Last updated: 2026-09-10 (v9.369)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

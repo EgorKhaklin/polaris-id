@@ -10473,6 +10473,137 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_verifier_device(root: pathlib.Path) -> list[Finding]:
+    """The thing at the counter decides honestly, and says what it learned (P4.5).
+
+    THREE FACTS, KEPT APART. Possession (the card signed THIS device's challenge just now),
+    authenticity (the authority issued this card), authorization (the credential still stands
+    inside a window this device accepts). All three are needed to accept, and each is reported
+    on its own, because a device that says only "no" teaches its operator nothing. Possession
+    alone is emphatically not acceptance: a card revoked this morning still signs.
+
+    THE REPLAY A SIGNATURE CANNOT REFUSE. The challenge and scope are inside the card's
+    signature, so a response relayed to a DIFFERENT device fails. Replayed to the SAME device
+    it does not: the signature over that challenge is perfectly valid the second time. Only
+    the device remembering its own outstanding challenges refuses that.
+
+    AND THE DEVICE REPORTS WHAT IT LEARNED, NOT ONLY WHAT IT ACCEPTED. A P3.6 status assertion
+    signs the token_value in the clear, so a device checking authorization offline learns the
+    stable credential identifier and can correlate its sightings with any other device holding
+    one. Every verdict therefore carries `linkability`, and it is set BEFORE the assertion is
+    verified: the device read the value the moment it held the assertion, and a failed
+    verification does not un-disclose an identifier."""
+    name = "verifier_device"
+    mod = _read(root, "polaris_card/verifier_device.py")
+    if not mod:
+        return _fail(name, "polaris_card/verifier_device.py must carry the reference device")
+    for fn in ("def challenge", "def read_nfc", "def qr_request", "def read_qr", "def decide"):
+        if fn not in mod:
+            return _fail(name, f"the device must expose {fn.split()[1]}()")
+
+    decide = mod.split("def decide")[1].split("\n\n# ---")[0]
+    # Bare identifiers: which quote style the source uses is not the property being checked.
+    for field, why in (("possession_proven", "the card signed this device's challenge"),
+                       ("card_authentic", "the authority issued this card"),
+                       ("authorization_fresh", "the credential still stands"),
+                       ("linkability", "what the device learned about the holder")):
+        if field not in decide:
+            return _fail(name,
+                         f"the verdict must report {field} separately: {why}. A device that "
+                         "returns one boolean teaches its operator nothing about a refusal")
+    if "still stands" not in decide:
+        return _fail(name,
+                     "possession alone must not accept, and the device must say why: a card "
+                     "revoked this morning still signs")
+
+    if "_retire" not in mod or "_spent" not in mod:
+        return _fail(name,
+                     "the device must remember its own challenges. A response replayed to the "
+                     "SAME device carries a signature that is perfectly valid the second time, "
+                     "so nothing but the device can refuse it")
+    retire = mod.split("def _retire")[1].split("\n    def ")[0]
+    if "already been answered" not in retire:
+        return _fail(name, "a replayed challenge must be refused with its reason")
+    scope_at, retire_at = decide.find("!= self.scope"), decide.find("self._retire")
+    if scope_at < 0:
+        return _fail(name,
+                     "a presentation made for another verifier's scope must be refused: a "
+                     "response relayed from another device is not a presentation to this one")
+    if 0 <= retire_at < scope_at:
+        return _fail(name,
+                     "the scope must be checked BEFORE the challenge is retired, or a relayed "
+                     "presentation burns challenges the honest holder is about to use, which "
+                     "is a denial of service against the exchange")
+
+    link_at = max(decide.find('v["linkability"] = "credential-linkable"'),
+                  decide.find("v['linkability'] = 'credential-linkable'"))
+    verify_at = decide.find("verify_status_assertion(")
+    if link_at < 0:
+        return _fail(name, "the device must report when it learned a stable identifier")
+    if 0 <= verify_at < link_at:
+        return _fail(name,
+                     "linkability must be recorded BEFORE the status assertion is verified. "
+                     "The device read the token value the moment it held the assertion, and a "
+                     "failed verification does not un-disclose an identifier: reporting it only "
+                     "on success accounts for what the device ACCEPTED rather than what it "
+                     "LEARNED")
+
+    if "def qr_capacity_report" not in mod:
+        return _fail(name,
+                     "the QR ceiling must be MEASURED. Whether a card object fits in a QR code "
+                     "decides the protocol rather than decorating it")
+    for const in ("QR_MAX_ALPHANUMERIC", "QR_PRACTICAL_CHARS"):
+        if const not in mod:
+            return _fail(name, f"the QR limit {const} must be named, not implied")
+    if "verify_status_assertion" not in mod or "_load_status_verifier" not in mod:
+        return _fail(name,
+                     "the device must reuse the DETACHED verifier for a status assertion. A "
+                     "second implementation of a decision that already has one is two answers "
+                     "to a question with nothing saying which is right")
+
+    drill = _read(root, "scripts/polaris-verifier-device-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-verifier-device-drill.py must run the device")
+    for needed, why in (("replayed to the SAME device is refused",
+                         "the replay a signature cannot refuse must be exercised"),
+                        ("relayed to ANOTHER device is refused",
+                         "the scope binding must be exercised"),
+                        ("REVOKED credential is refused",
+                         "a valid signature over a withdrawn credential must not accept"),
+                        ("possession alone is NOT acceptance",
+                         "the device must not treat a signing card as a valid one"),
+                        ("stays PAIRWISE",
+                         "the handle-only mode's privacy property must be asserted"),
+                        ("two devices cannot tell they saw the same card",
+                         "the pairwise claim must be tested across devices"),
+                        ("POST-QUANTUM card object does NOT",
+                         "the QR ceiling must be asserted, not just printed")):
+        if needed not in drill:
+            return _fail(name, why)
+
+    doc = _read(root, "docs/design/verifier-device.md")
+    if not doc:
+        return _fail(name, "the design record must be published (docs/design/verifier-device.md)")
+    low = " ".join(doc.lower().split())
+    for phrase, why in (("possession alone is not acceptance",
+                         "the record must state that a signing card is not a valid one"),
+                        ("cannot carry a post-quantum card object",
+                         "the record must state the QR ceiling as a constraint with a number"),
+                        ("learns the stable credential identifier",
+                         "the record must state the linkability an offline authorization check "
+                         "costs, rather than leaving it to be discovered")):
+        if phrase not in low:
+            return _fail(name, why)
+    return _ok(name,
+               "the device at the counter keeps possession, authenticity and authorization "
+               "apart and needs all three, refuses a response relayed to another device by the "
+               "scope and one replayed to itself by remembering its own challenges (which a "
+               "signature cannot do), does not let a refused scope burn a challenge, reuses the "
+               "detached verifier rather than deciding twice, reports what it LEARNED about the "
+               "holder before knowing whether it will accept, and records the measured QR "
+               "ceiling that puts a post-quantum card object out of reach of any QR version")
+
+
 def check_card_personalization(root: pathlib.Path) -> list[Finding]:
     """A record becomes an object, and the authority never holds the key that makes it answer (P4.3).
 
@@ -11301,6 +11432,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_verifier_device,
     check_card_personalization,
     check_card_emulator,
     check_card_profile,
