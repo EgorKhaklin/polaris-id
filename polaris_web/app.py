@@ -5394,6 +5394,91 @@ def _leaves_root(leaves):
     return hashlib.sha3_256('\n'.join(uniq).encode('utf-8')).hexdigest()
 
 
+# --- P2.6 (v9.358): status distribution -------------------------------------------------
+#
+# A signed status artifact is the one class of response where a cache is both wanted and
+# dangerous. Wanted, because a revocation feed is byte-identical for every consumer and a
+# national deployment cannot serve it from the primary a million times an hour; the whole
+# point of signing it is that an untrusted intermediary can carry it. Dangerous, because a
+# cached status is a status the issuer may already have withdrawn.
+#
+# The rule that resolves it: a cache directive is never a constant. It is derived from the
+# artifact's OWN `expires_at`, the window the issuer actually signed, so a cache physically
+# cannot outlive it. When the artifact expires the cache entry expires with it and the next
+# consumer goes back to the origin. Freshness rules are stated in docs/design/status-
+# distribution.md and pinned by check_status_distribution.
+
+def _artifact_max_age(body, now=None):
+    """Seconds of life the artifact has left, from the window it was signed with.
+
+    Returns None when the body carries no parseable window, which is the fail-closed answer:
+    an artifact whose expiry cannot be read must not be cached at all rather than cached for
+    a guessed interval.
+    """
+    from datetime import datetime, timezone
+    exp = (body or {}).get('expires_at') if isinstance(body, dict) else None
+    if not isinstance(exp, str):
+        return None
+    try:
+        s = exp[:-1] + '+00:00' if exp.endswith('Z') else exp
+        expires = datetime.fromisoformat(s)
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    ref = now or datetime.now(timezone.utc)
+    return max(0, int((expires - ref).total_seconds()))
+
+
+def _public_artifact(body, status=200):
+    """A signed status artifact any intermediary may carry, cached to its own window.
+
+    `max-age` is the artifact's remaining life and nothing else. A constant would let a cache
+    outlive the window the issuer signed, which is how a revoked credential keeps verifying.
+    An artifact already at or past its expiry is sent `no-store`: caching something every
+    verifier must reject helps nobody and only creates a stale copy to serve later.
+
+    Deliberately absent: `stale-while-revalidate` and `stale-if-error`. Both exist to serve a
+    known-stale body when the origin is slow or down, and a known-stale REVOCATION feed is
+    exactly the artifact an attacker wants served. A status origin that is down should fail,
+    and a verifier that cannot reach it should refuse rather than accept yesterday's answer.
+
+    The ETag is over the artifact's own canonical bytes, so an intermediary can revalidate
+    without the origin re-signing, and two consumers holding the same ETag hold the same
+    signed bytes.
+    """
+    resp = jsonify(body)
+    resp.status_code = status
+    max_age = _artifact_max_age(body)
+    if not max_age:
+        resp.headers['Cache-Control'] = 'no-store'
+    else:
+        resp.headers['Cache-Control'] = 'public, max-age=%d, must-revalidate' % max_age
+        resp.headers['ETag'] = '"%s"' % hashlib.sha3_256(
+            json.dumps(body, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()[:32]
+        exp = (body or {}).get('expires_at')
+        if isinstance(exp, str):
+            resp.headers['X-Polaris-Expires-At'] = exp
+    resp.headers['Vary'] = 'Accept-Encoding'
+    return resp
+
+
+def _private_artifact(body, status=200):
+    """An artifact minted for ONE holder: never cached anywhere, by anyone.
+
+    A status assertion, a holder binding and a timestamp are bound to the credential that
+    asked for them. A shared cache holding one would serve one holder's artifact to another,
+    which is a disclosure the signature cannot undo, so this is `no-store` rather than
+    `private`: `private` still permits the requester's own browser cache to keep it on disk,
+    and a holder's device is exactly where a coerced search looks.
+    """
+    resp = jsonify(body)
+    resp.status_code = status
+    resp.headers['Cache-Control'] = 'no-store'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
 @app.route('/api/v1/epoch/<int:epoch_id>/leaves')
 def api_v1_epoch_leaves(epoch_id):
     """P9.2: publish an epoch's leaf set, signed, so a holder can prove membership on their
@@ -5440,7 +5525,7 @@ def api_v1_epoch_leaves(epoch_id):
     body['max_window_seconds'] = _EPOCH_LEAVES_TTL
     # Outside the signed statement, committed to by leaves_root_hex.
     body['all_leaves_hex'] = leaves
-    return jsonify(body)
+    return _public_artifact(body)
 
 
 # --- P9.1 (v9.349): the holder key ---------------------------------------------------------
@@ -5617,7 +5702,9 @@ def api_v1_holder_key_bind():
     finally:
         conn.close()
     binding = _holder_binding_for(token_value, row)
-    return jsonify(binding or {'error': 'no_binding'}), (200 if binding else 500)
+    # P2.6: bound to ONE credential; a shared cache holding it would serve one holder's
+    # binding to another, which the signature cannot undo.
+    return _private_artifact(binding or {'error': 'no_binding'}, 200 if binding else 500)
 
 
 @app.route('/api/v1/holder-binding', methods=['POST'])
@@ -5684,7 +5771,9 @@ def api_v1_status_assertion():
     expires_at = (now + timedelta(seconds=_STATUS_ASSERTION_TTL)).isoformat().replace('+00:00', 'Z')
     statement = _status_assertion_statement(token_value, row['status'], issued_at, expires_at)
     sig_bytes, alg, pub = pqc_signing.signature_over_message(statement, agency_id=row['issuing_agency_id'])
-    return jsonify({
+    # P2.6: this assertion names ONE token_value. It is the artifact a shared cache must
+    # never hold, because serving it to a second consumer discloses the first's credential.
+    return _private_artifact({
         'format': _STATUS_ASSERTION_FORMAT,
         'token_value': token_value,
         'status': row['status'],
@@ -5891,7 +5980,7 @@ def api_v1_federation_manifest(agency_id):
     if not ag['signing_public_key_hex']:
         return jsonify(error='agency is not federated (no registered signing key)'), 404
     from datetime import datetime, timezone
-    return jsonify(_federation_manifest_body(ag, datetime.now(timezone.utc).replace(microsecond=0)))
+    return _public_artifact(_federation_manifest_body(ag, datetime.now(timezone.utc).replace(microsecond=0)))
 
 
 # --- P3.2b: epoch alignment + revocation propagation across authorities --------
@@ -5996,7 +6085,7 @@ def api_v1_epoch_checkpoint(agency_id):
     body = _epoch_checkpoint_body(ag, now)
     if body is None:
         return jsonify(error='no epoch has been closed yet'), 404
-    return jsonify(body)
+    return _public_artifact(body)
 
 
 def _revocation_feed_body(ag, now):
@@ -6056,7 +6145,7 @@ def api_v1_revocation_feed(agency_id):
         return jsonify(error='agency is not federated (no registered signing key)'), 404
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    return jsonify(_revocation_feed_body(ag, now))
+    return _public_artifact(_revocation_feed_body(ag, now))
 
 
 # --- P3.2c: the aggregate mirrored status feed (a federation status bundle) -----
@@ -6150,7 +6239,7 @@ def api_v1_federation_status_bundle(agency_id):
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                    'bundle minus members, signature_hex and public_key_hex; the member '
                                    'set is committed by members_root_hex)')
-    return jsonify(body)
+    return _public_artifact(body)
 
 
 # --- P8.2: the exchange receipt (evidence without retention) -------------------
@@ -6435,7 +6524,8 @@ def api_v1_timestamp(agency_id):
         # P8.5b: the caller's choice. Only now does anything persist: the timestamp's SHA3-256
         # in the append-only timestamp log, with the inclusion evidence stapled to the answer.
         _anchor_timestamp(ts)
-    return jsonify(ts)
+    # P2.6: minted for this caller's digest; never cached by anyone.
+    return _private_artifact(ts)
 
 
 # --- P8.3: the signed registry -- discovery over the Athena authority layer ---------------
@@ -6634,7 +6724,7 @@ def api_v1_registry(agency_id):
     body['max_window_seconds'] = _REGISTRY_TTL
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                    'registry minus signature_hex and public_key_hex)')
-    return jsonify(body)
+    return _public_artifact(body)
 
 
 # --- P8.2d: the EXCHANGE GATEWAY -- institution-to-institution exchange, mediated -----------
@@ -7164,7 +7254,7 @@ def api_v1_trust_list(agency_id):
     body['max_window_seconds'] = _TRUST_LIST_TTL
     body['digest_construction'] = ('SHA3-256(canonical statement: sorted-keys compact JSON of the '
                                    'trust list minus signature_hex and public_key_hex)')
-    return jsonify(body)
+    return _public_artifact(body)
 
 
 # --- P3.3: the transparency log over the audit-anchor roots --------------------

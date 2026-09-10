@@ -232,6 +232,13 @@ jobs:
       - name: Epoch pipeline at national depth — parity, two witnesses, ceilings
         run: python scripts/polaris-epoch-scale-drill.py
 
+      # v9.358 (P2.6) — a signed status crossing an untrusted cache. Every public artifact is
+      # cached to its OWN signed window and no further, none permits serving stale when the
+      # origin is unreachable, and every artifact that NAMES ONE CREDENTIAL is no-store, so a
+      # shared cache cannot serve one holder's to another. Needs the loaded database.
+      - name: Status distribution — cached to the signed window, never past it
+        run: python scripts/polaris-status-distribution-drill.py
+
       - name: Python suites under coverage + floor gate (DB, with ZK binary)
         env:
           COVERAGE_FLOOR: "74"

@@ -3335,6 +3335,72 @@ class ZKSnarkTests(PolarisTestCase):
             row = cur.fetchone()
             self.assertEqual(row['committed_count'], len(tokens))
 
+    def test_public_status_artifacts_cache_only_to_their_own_window(self):
+        # P2.6 (v9.358): a status artifact is the one response where a cache is both wanted
+        # and dangerous. max-age must be the artifact's OWN remaining life, never a constant,
+        # or a cache outlives the window the issuer signed and a revoked credential keeps
+        # verifying.
+        from datetime import datetime, timezone
+        for path in ('/api/v1/revocation-feed/1', '/api/v1/epoch-checkpoint/1',
+                     '/api/v1/federation-manifest/1', '/api/v1/trust-list/1',
+                     '/api/v1/federation-status-bundle/1'):
+            r = self.client.get(path)
+            if r.status_code != 200:
+                continue
+            cc = r.headers.get('Cache-Control', '')
+            self.assertIn('public', cc, '%s must be publicly cacheable' % path)
+            m = re.search(r'max-age=(\d+)', cc)
+            self.assertIsNotNone(m, '%s must carry a max-age' % path)
+            body = r.get_json()
+            exp = body['expires_at'].replace('Z', '+00:00')
+            remaining = (datetime.fromisoformat(exp)
+                         - datetime.now(timezone.utc)).total_seconds()
+            self.assertLessEqual(int(m.group(1)), remaining + 5,
+                                 '%s: a cache must not outlive the signed window' % path)
+            self.assertNotIn('stale-while-revalidate', cc,
+                             '%s: serving a known-stale status is the failure mode' % path)
+            self.assertNotIn('stale-if-error', cc, '%s: same' % path)
+            self.assertTrue(r.headers.get('ETag'), '%s must carry an ETag to revalidate on' % path)
+
+    def test_a_per_holder_artifact_is_never_cached(self):
+        # The other half, and the one that leaks if it is wrong: a status assertion names ONE
+        # token value, so a shared cache holding it serves one holder's credential to another.
+        import hashlib as _h
+        import psycopg2 as _pg
+        row = flask_app.query("SELECT token_id, token_value FROM IdentityToken "
+                              "WHERE issuing_agency_id = 1 AND status = 'ACTIVE' "
+                              "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
+        tv = row['token_value']
+        placeholder = _h.sha3_256(tv.encode('utf-8')).digest()
+        flask_app.query("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                        "signing_public_key_hex) VALUES (%s, 1, %s, NULL)",
+                        (row['token_id'], _pg.Binary(placeholder)), fetch='none')
+        r = self.client.post('/api/v1/status-assertion',
+                             json={'token_value': tv, 'signature_hex': placeholder.hex()})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        # security.py hardens further for a logged-in session ("no-store, no-cache,
+        # must-revalidate, private"), which is stronger; the substance is that no cache
+        # anywhere may keep it, so assert no-store rather than an exact string.
+        cc = r.headers.get('Cache-Control', '')
+        self.assertIn('no-store', cc,
+                      'a per-holder status assertion must never be stored by any cache')
+        self.assertNotIn('public', cc, 'and must never be marked publicly cacheable')
+        self.assertIn(tv, r.get_data(as_text=True),
+                      'the assertion names one credential, which is exactly why it is no-store')
+
+    def test_an_expired_artifact_is_not_cached_at_all(self):
+        # Caching something every verifier must reject only creates a stale copy to serve.
+        _artifact_max_age = flask_app._artifact_max_age
+        _public_artifact = flask_app._public_artifact
+        with flask_app.app.test_request_context():
+            resp = _public_artifact({'format': 'x', 'expires_at': '2020-01-01T00:00:00Z'})
+            self.assertEqual(resp.headers['Cache-Control'], 'no-store')
+        self.assertEqual(_artifact_max_age({'expires_at': '2020-01-01T00:00:00Z'}), 0)
+        # And an unreadable window is fail-closed, not a guessed interval.
+        self.assertIsNone(_artifact_max_age({'expires_at': 'not-an-instant'}))
+        self.assertIsNone(_artifact_max_age({}))
+        self.assertIsNone(_artifact_max_age(None))
+
     def test_closing_an_epoch_stores_no_inclusion_path(self):
         # P2.5 (v9.357): the path is 1.7 KB of plaintext per member that nothing read back,
         # roughly 17 GB of JSON at ten million members. The procedure accepts an entry

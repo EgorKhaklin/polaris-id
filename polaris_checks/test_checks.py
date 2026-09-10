@@ -8846,3 +8846,115 @@ def test_epoch_pipeline_scale_check_discriminates(tmp_path):
     (tmp_path / "docs/design/epoch-cadence.md").unlink()
     assert checks.check_epoch_pipeline_scale(tmp_path)[0].level == "FAIL", \
         "must FAIL without the published cadence spec"
+
+
+def test_status_distribution_check_discriminates(tmp_path):
+    # v9.358 (P2.6): each fixture below either lets a cache outlive the window an issuer
+    # signed, or moves an artifact that names one credential into a shared cache. The second
+    # is a privacy incident rather than a performance regression.
+    APP = (
+        'def _artifact_max_age(body, now=None):\n'
+        '    """Remaining life."""\n'
+        '    if not ok:\n        return None\n    return seconds\n'
+        '\ndef _public_artifact(body, status=200):\n'
+        '    """Cacheable to its own window."""\n'
+        '    m = _artifact_max_age(body)\n'
+        "    if not m:\n        resp.headers['Cache-Control'] = 'no-store'\n"
+        "    else:\n        resp.headers['Cache-Control'] = 'public, max-age=%d' % m\n"
+        "        resp.headers['ETag'] = tag\n    return resp\n"
+        '\ndef _private_artifact(body, status=200):\n'
+        '    """Never cached."""\n'
+        "    resp.headers['Cache-Control'] = 'no-store'\n    return resp\n"
+        "\ndef api_v1_status_assertion():\n    return _private_artifact(body)\n"
+        "\n@app.route('/x')\ndef api_v1_holder_key_bind():\n    return _private_artifact(b)\n"
+        "\n@app.route('/y')\ndef api_v1_timestamp(agency_id):\n    return _private_artifact(ts)\n"
+        "\n@app.route('/z')\ndef feeds():\n"
+        + "".join("    return _public_artifact(b%d)\n" % i for i in range(7))
+    )
+    DRILL = ("# max-age does not outlive the signed window\n"
+             "# and is no-store: it names ONE credential\n")
+    SPEC = "stale-while-revalidate is refused; no-store for per-holder; expires_at drives it\n"
+    good = {
+        'polaris_web/app.py': APP,
+        'scripts/polaris-status-distribution-drill.py': DRILL,
+        'docs/design/status-distribution.md': SPEC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_status_distribution(tmp_path)[0].level == "OK", "the well-formed tree must PASS"
+
+    # A constant max-age: eventually longer than some artifact's window, and then a revoked
+    # credential keeps verifying until the cache expires.
+    write({'polaris_web/app.py': APP.replace(
+        "        resp.headers['Cache-Control'] = 'public, max-age=%d' % m\n",
+        "        resp.headers['Cache-Control'] = 'public, max-age=86400'\n")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a literal max-age"
+
+    # The window stops driving it at all.
+    write({'polaris_web/app.py': APP.replace("    m = _artifact_max_age(body)\n", "    m = 300\n")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when max-age is not derived from the artifact's own window"
+
+    # Stale serving comes back: the cheapest attack is to make the origin unreachable.
+    write({'polaris_web/app.py': APP.replace(
+        "'public, max-age=%d' % m", "'public, max-age=%d, stale-if-error=600' % m")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the origin permits serving a stale status on error"
+    write({'polaris_web/app.py': APP.replace(
+        "'public, max-age=%d' % m", "'public, max-age=%d, stale-while-revalidate=60' % m")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the origin permits serving a stale status while revalidating"
+
+    # An expired artifact becomes cacheable.
+    write({'polaris_web/app.py': APP.replace(
+        "    if not m:\n        resp.headers['Cache-Control'] = 'no-store'\n", "    if False:\n        pass\n")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an expired or unreadable artifact is still cached"
+
+    # An unreadable window is guessed rather than refused.
+    write({'polaris_web/app.py': APP.replace("    if not ok:\n        return None\n", "")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an unparseable window does not fail closed"
+
+    # THE HALF THAT LEAKS: a per-holder artifact moves into the public form.
+    write({'polaris_web/app.py': APP.replace(
+        "def api_v1_status_assertion():\n    return _private_artifact(body)",
+        "def api_v1_status_assertion():\n    return _public_artifact(body)")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a status assertion, which names one credential, becomes publicly cacheable"
+    write({'polaris_web/app.py': APP.replace(
+        "def api_v1_timestamp(agency_id):\n    return _private_artifact(ts)",
+        "def api_v1_timestamp(agency_id):\n    return jsonify(ts)")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a per-holder timestamp is returned without the never-cached form"
+
+    # The private form stops being no-store.
+    write({'polaris_web/app.py': APP.replace(
+        "def _private_artifact(body, status=200):\n    \"\"\"Never cached.\"\"\"\n"
+        "    resp.headers['Cache-Control'] = 'no-store'\n",
+        "def _private_artifact(body, status=200):\n    \"\"\"Never cached.\"\"\"\n"
+        "    resp.headers['Cache-Control'] = 'private, max-age=60'\n")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a per-holder artifact is merely private rather than never stored"
+
+    # The public artifacts stop going through the cacheable form, so a CDN has nothing to go on.
+    write({'polaris_web/app.py': APP.replace("    return _public_artifact(b1)\n", "")})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a public status artifact bypasses the cacheable form"
+
+    # The drill stops asserting the rule.
+    write({'scripts/polaris-status-distribution-drill.py': "# and is no-store: it names ONE credential\n"})
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill no longer asserts the window bound"
+
+    # The freshness rules disappear.
+    (tmp_path / "docs/design/status-distribution.md").unlink()
+    assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
+        "must FAIL without the published freshness rules"

@@ -9980,7 +9980,127 @@ def check_epoch_pipeline_scale(root: pathlib.Path) -> list[Finding]:
                "sets against each other")
 
 
+
+def check_status_distribution(root: pathlib.Path) -> list[Finding]:
+    """A signed status crosses an untrusted network without a cache outliving it (P2.6).
+
+    Signing a status artifact is what lets a cache or a content-delivery network carry it: an
+    intermediary cannot forge a status any more than an aggregator can. But a cache
+    introduces the one failure signing does not prevent, which is TIME. A cached status is a
+    status the issuer may already have withdrawn.
+
+    THE RULE. A cache directive is never a constant. It is the artifact's own remaining life,
+    from the `expires_at` the issuer signed, so a cache physically cannot outlive that window.
+    A fixed `max-age` would eventually exceed some artifact's window and the symptom would be
+    a revoked credential that keeps verifying for a while, which is the failure this whole
+    layer exists to prevent.
+
+    NO STALE SERVING. `stale-while-revalidate` and `stale-if-error` exist to serve a
+    known-stale body when the origin is slow or unreachable, and a known-stale revocation feed
+    is precisely what an attacker wants served: the cheapest attack on this design is to make
+    the origin unreachable and let the network answer from yesterday. A status origin that is
+    down should fail.
+
+    THE SPLIT, WHICH IS THE HALF THAT LEAKS. A revocation feed is byte-identical for every
+    consumer; a status assertion NAMES ONE CREDENTIAL. A shared cache holding the second
+    would serve one holder's credential to another, and a signature cannot undo a disclosure.
+    Getting this backwards is a privacy incident rather than a performance regression, so both
+    halves are pinned: the per-holder artifacts must be `no-store`, and must never be marked
+    public."""
+    name = "status_distribution"
+    app = _read(root, "polaris_web/app.py")
+    for needed, why in (("def _artifact_max_age", "the remaining life of an artifact's own window"),
+                        ("def _public_artifact", "the cacheable form"),
+                        ("def _private_artifact", "the never-cached form")):
+        if needed not in app:
+            return _fail(name, f"polaris_web/app.py must define {why} ({needed})")
+
+    # THE RULE: max-age is computed, never a literal. Scan the CODE, not the docstring: the
+    # docstring names the directives it refuses, and a check that matched those words would
+    # fail on the explanation of why they are absent.
+    def _code_of(fn: str) -> str:
+        seg = app.split(f"def {fn}")[1].split("\ndef ")[0]
+        parts = seg.split('"""')
+        return parts[0] + "".join(parts[2:]) if len(parts) >= 3 else seg
+
+    body = _code_of("_public_artifact")
+    if "_artifact_max_age(body)" not in body:
+        return _fail(name,
+                     "_public_artifact must derive max-age from the artifact's OWN window; a "
+                     "constant lets a cache outlive the window the issuer signed, and a revoked "
+                     "credential keeps verifying until the cache expires")
+    if re.search(r"max-age=\d", body):
+        return _fail(name,
+                     "_public_artifact carries a LITERAL max-age; it must be the artifact's "
+                     "remaining life and nothing else")
+    if "no-store" not in body:
+        return _fail(name,
+                     "an artifact already past its expiry, or one whose window cannot be parsed, "
+                     "must be no-store: caching what every verifier must reject only creates a "
+                     "stale copy to serve later")
+    for banned in ("stale-while-revalidate", "stale-if-error"):
+        if banned in body:
+            return _fail(name,
+                         f"_public_artifact permits {banned}; serving a known-stale revocation "
+                         "feed when the origin is unreachable is the cheapest attack on this "
+                         "design, not a resilience feature")
+
+    # The fail-closed reading of an unparseable window.
+    age = _code_of("_artifact_max_age")
+    if "return None" not in age:
+        return _fail(name,
+                     "_artifact_max_age must return None when the window cannot be read, so the "
+                     "caller refuses to cache rather than guessing an interval")
+
+    # THE SPLIT. Every per-holder artifact goes through the private form.
+    private = _code_of("_private_artifact")
+    if "no-store" not in private:
+        return _fail(name, "_private_artifact must be no-store")
+    if "public" in private:
+        return _fail(name, "_private_artifact must never mark a per-holder artifact public")
+    for route, why in (("api_v1_status_assertion", "a status assertion names one token_value"),
+                       ("api_v1_holder_key_bind", "a holder binding names one credential"),
+                       ("api_v1_timestamp", "a timestamp is minted for one caller's digest")):
+        if f"def {route}" not in app:
+            continue
+        seg = app.split(f"def {route}")[1].split("\n@app.route")[0]
+        if "_private_artifact" not in seg:
+            return _fail(name,
+                         f"{route} must return through _private_artifact: {why}, and a shared "
+                         "cache holding it would serve one holder's credential to another")
+
+    # And every public artifact goes through the cacheable form rather than bare jsonify.
+    # Count CALL sites, not the definition line, or removing one still reads as seven.
+    if app.count("return _public_artifact(") < 7:
+        return _fail(name,
+                     "every public status artifact (revocation feed, epoch checkpoint, status "
+                     "bundle, federation manifest, trust list, registry, epoch leaves) must be "
+                     "returned through _public_artifact, or a CDN in front of this origin has "
+                     "nothing to go on")
+
+    drill = _read(root, "scripts/polaris-status-distribution-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-status-distribution-drill.py must prove both halves")
+    for needed, why in (("does not outlive the signed window", "the rule itself"),
+                        ("names ONE credential", "the half that leaks if it is backwards")):
+        if needed not in drill:
+            return _fail(name, f"the drill must assert {why}")
+    spec = _read(root, "docs/design/status-distribution.md")
+    if not spec:
+        return _fail(name, "the freshness rules must be published (docs/design/status-distribution.md)")
+    for needed in ("stale-while-revalidate", "no-store", "expires_at"):
+        if needed not in spec:
+            return _fail(name, f"the freshness rules must state {needed!r}")
+    return _ok(name,
+               "a signed status crosses an untrusted network safely: every public artifact is "
+               "cached to its OWN signed window and no further, none permits serving stale when "
+               "the origin is unreachable, each carries an ETag to revalidate on, an expired or "
+               "unreadable window is not cached at all, and every artifact that names one "
+               "credential is no-store so a shared cache cannot serve one holder's to another")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_status_distribution,
     check_epoch_pipeline_scale,
     check_agent_grant,
     check_pairwise_presentation,

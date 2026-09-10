@@ -5,6 +5,54 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.358 — 2026-09-10 (P2.6: a signed status through an untrusted cache)
+
+Signing a status artifact is what lets an untrusted intermediary carry it: a
+cache cannot forge a status any more than an aggregator can. That is the whole
+reason to sign a feed rather than answer a query. But a cache introduces the one
+failure signing does not prevent, which is time. A cached status is a status the
+issuer may already have withdrawn, and until now these endpoints emitted no cache
+directives at all, so a network in front of them had nothing to go on.
+
+**The rule: a cache directive is never a constant.** It is the artifact's own
+remaining life, computed from the `expires_at` the issuer signed, so a cache
+physically cannot outlive the window the issuer committed to. When the artifact
+expires the cache entry expires with it. A fixed `max-age` would eventually exceed
+some artifact's window, and the symptom would be a revoked credential that keeps
+verifying for a while, which is the failure this whole layer exists to prevent.
+
+Two corollaries, enforced rather than advised. An artifact already past its expiry
+is `no-store`, because caching what every verifier must reject only creates a stale
+copy to serve later. An artifact whose window cannot be parsed is `no-store` too,
+because guessing an interval for a body you did not understand is the same mistake
+with an extra step.
+
+**`stale-while-revalidate` and `stale-if-error` are refused.** Both exist to serve
+a known-stale body when the origin is slow or unreachable, and a known-stale
+revocation feed is precisely the artifact an attacker wants served: the cheapest
+attack on this design is to make the origin unreachable and let the network answer
+from yesterday. A status origin that is down should fail.
+
+**The split that would leak if it were backwards.** Seven artifacts are
+byte-identical for every consumer and are `public`, cached to their own window with
+a strong ETag to revalidate on. Three name one credential, and are `no-store`: a
+status assertion carries one `token_value`, so a shared cache holding it would
+serve one holder's credential to another, and a signature cannot undo a
+disclosure. They are `no-store` rather than `private` because `private` still lets
+the requester's own browser keep a copy on disk, and a holder's device is exactly
+where a coerced search looks. Both halves are pinned by the check and asserted by
+the drill.
+
+Freshness rules published at `docs/design/status-distribution.md`.
+`check_status_distribution` with a twelve-fixture detection test.
+
+**Not done here, and the roadmap row says so.** CDN placement, origin-shield
+topology and a measured cache hit rate at national volume are an operator's
+deployment. What ships is the property a CDN needs to be safe in front of this
+origin: no correct cache can serve a status past the window its issuer signed.
+
+---
+
 ## v9.357 — 2026-09-10 (P2.5: the epoch pipeline at national depth)
 
 An epoch tree is fixed-depth, and the obvious implementation pads the leaf vector
