@@ -39,6 +39,14 @@ INS_VERIFY_PIN = 0x20
 INS_UNBLOCK = 0x2C
 INS_GET_CARD_OBJECT = 0x30
 INS_SIGN_CHALLENGE = 0x34
+INS_GENERATE_KEYPAIR = 0x47              # personalization only, and only once
+INS_PUT_CARD_OBJECT = 0xDA               # personalization only, and only once
+
+# A card's lifecycle. BLANK accepts personalization; PERSONALIZED accepts nothing that would
+# change what the card is. There is no path back, and that is the point: a card that could be
+# re-personalized in the field is a forgery machine with a legitimate serial number.
+STATE_BLANK = "BLANK"
+STATE_PERSONALIZED = "PERSONALIZED"
 
 # ISO 7816-4 status words. 0x63Cx announcing the retry count is deliberate and standard: a
 # holder needs to know how many attempts are left, and it says nothing about WHICH PIN is
@@ -52,6 +60,7 @@ SW_WRONG_DATA = 0x6A80
 SW_INS_NOT_SUPPORTED = 0x6D00
 SW_CLA_NOT_SUPPORTED = 0x6E00
 SW_CONDITIONS_NOT_SATISFIED = 0x6985
+SW_ALREADY_PERSONALIZED = 0x6A89         # the command would change what the card already is
 
 MAX_PIN_TRIES = 3
 MAX_PUK_TRIES = 10
@@ -68,9 +77,10 @@ class SoftwareToken:
     implementable inside a secure element's toolchain, and this class stays honest about the
     fact that it is not the thing doing the cryptography."""
 
-    def __init__(self, *, card_object: bytes, normal_pin: str, duress_pin: str | None = None,
-                 puk: str, slot_secret_normal: bytes, slot_secret_duress: bytes | None = None,
-                 sign_with_slot=None):
+    def __init__(self, *, card_object: bytes | None, normal_pin: str,
+                 duress_pin: str | None = None, puk: str, slot_secret_normal: bytes,
+                 slot_secret_duress: bytes | None = None, sign_with_slot=None,
+                 generate_keypair=None):
         if duress_pin is not None and hmac.compare_digest(normal_pin, duress_pin):
             raise ValueError("the duress PIN must differ from the normal one")
         if duress_pin is not None and len(duress_pin) != len(normal_pin):
@@ -82,12 +92,16 @@ class SoftwareToken:
         if duress_pin is not None and slot_secret_duress is None:
             raise ValueError("a duress PIN needs its own key slot, or the two presentations "
                              "would be identical to the AUTHORITY as well as to the coercer")
-        cp.decode(card_object)           # refuse a card object this card could not present
+        if card_object is not None:
+            cp.decode(card_object)       # refuse a card object this card could not present
         self._card_object = card_object
+        self.state = STATE_PERSONALIZED if card_object is not None else STATE_BLANK
         self._pins = {"normal": normal_pin, "duress": duress_pin}
         self._puk = puk
         self._secrets = {"normal": slot_secret_normal, "duress": slot_secret_duress}
         self._sign = sign_with_slot
+        self._generate = generate_keypair
+        self._generated = False
         self.reset()
 
     # -- state ------------------------------------------------------------
@@ -129,9 +143,19 @@ class SoftwareToken:
         data = b""
         if len(apdu) > 4:
             lc = apdu[4]
-            if len(apdu) < 5 + lc:
-                return sw_bytes(SW_WRONG_LENGTH)
-            data = apdu[5:5 + lc]
+            if lc == 0 and len(apdu) >= 7:
+                # Extended length. A card object carrying a post-quantum key runs well past
+                # 255 bytes, and personalization is a bench operation where an extended APDU
+                # costs nothing. A short 0x00 with no body after it stays Le=0, as SELECT
+                # and GET CARD OBJECT send.
+                (lc,) = struct.unpack(">H", apdu[5:7])
+                if len(apdu) < 7 + lc:
+                    return sw_bytes(SW_WRONG_LENGTH)
+                data = apdu[7:7 + lc]
+            else:
+                if len(apdu) < 5 + lc:
+                    return sw_bytes(SW_WRONG_LENGTH)
+                data = apdu[5:5 + lc]
 
         if ins == INS_SELECT:
             return self._select()
@@ -148,6 +172,10 @@ class SoftwareToken:
             return self._get_card_object()
         if ins == INS_SIGN_CHALLENGE:
             return self._sign_challenge(data, p1, p2)
+        if ins == INS_GENERATE_KEYPAIR:
+            return self._generate_keypair()
+        if ins == INS_PUT_CARD_OBJECT:
+            return self._put_card_object(data)
         return sw_bytes(SW_INS_NOT_SUPPORTED)
 
     # -- commands ---------------------------------------------------------
@@ -196,6 +224,9 @@ class SoftwareToken:
         self._puk_tries -= 1
         return sw_bytes(SW_WRONG_PIN | max(self._puk_tries, 0))
 
+    def _blank(self):
+        return self._card_object is None
+
     def _get_card_object(self):
         """Identified mode: the whole signed object. Requires a verified PIN.
 
@@ -204,6 +235,8 @@ class SoftwareToken:
         has to ask for, rather than what a card volunteers."""
         if self._unlocked_slot is None:
             return sw_bytes(SW_SECURITY_NOT_SATISFIED)
+        if self._blank():
+            return sw_bytes(SW_CONDITIONS_NOT_SATISFIED)
         return self._card_object + sw_bytes(SW_OK)
 
     def _sign_challenge(self, data, p1, p2):
@@ -215,6 +248,10 @@ class SoftwareToken:
         The reader sees a well-formed response either way."""
         if self._unlocked_slot is None:
             return sw_bytes(SW_SECURITY_NOT_SATISFIED)
+        if self._blank():
+            # A card with no signed object has nothing a verifier could check a response
+            # against. Signing anyway would produce a response that looks like a credential.
+            return sw_bytes(SW_CONDITIONS_NOT_SATISFIED)
         if not data:
             return sw_bytes(SW_WRONG_LENGTH)
         scope_len = data[0]
@@ -239,6 +276,45 @@ class SoftwareToken:
         return (bytes([len(handle)]) + handle
                 + struct.pack(">H", len(signature)) + signature + sw_bytes(SW_OK))
 
+    def _generate_keypair(self):
+        """Generate both slot keypairs ON THE CARD and return only the public keys.
+
+        This is key GENERATION, not key injection, and the difference is the whole security
+        argument of personalization. An injected key existed somewhere else first: on the
+        personalization host, in its memory, possibly in a log or a core dump, and the
+        authority can only assert that it was destroyed. A generated key has no such history,
+        and the claim "the private key never left the card" is a fact about where it was made
+        rather than a promise about what was deleted.
+
+        BOTH slots are generated, always, whether or not the holder ever enrolls a duress PIN.
+        A card that only got a duress slot when one was wanted would make the slot's existence
+        a fact about the holder; because every card has one, the presence of a duress key in
+        the authority's records says nothing about anybody."""
+        if self.state != STATE_BLANK or self._generated:
+            # The CARD refuses, by its own rule. Leaving this to whatever backs the slots
+            # would make "a slot is generated once" a property of the personalization host,
+            # which is exactly the party the rule exists to constrain.
+            return sw_bytes(SW_ALREADY_PERSONALIZED)
+        if self._generate is None:
+            return sw_bytes(SW_CONDITIONS_NOT_SATISFIED)
+        normal_pub = self._generate("normal")
+        duress_pub = self._generate("duress")
+        self._generated = True
+        return (bytes([len(normal_pub)]) + normal_pub
+                + bytes([len(duress_pub)]) + duress_pub + sw_bytes(SW_OK))
+
+    def _put_card_object(self, data):
+        """Load the signed card object. Once, on a blank card, and never again."""
+        if self.state != STATE_BLANK:
+            return sw_bytes(SW_ALREADY_PERSONALIZED)
+        try:
+            cp.decode(data)              # the card refuses an object it could not present
+        except cp.CardProfileError:
+            return sw_bytes(SW_WRONG_DATA)
+        self._card_object = bytes(data)
+        self.state = STATE_PERSONALIZED
+        return sw_bytes(SW_OK)
+
 
 # ---------------------------------------------------------------------------
 # Command builders, so a reader is written once and works against silicon later.
@@ -255,6 +331,37 @@ def verify_pin(pin: str) -> bytes:
 def unblock(puk: str) -> bytes:
     raw = puk.encode("utf-8")
     return bytes([CLA, INS_UNBLOCK, 0x00, 0x80, len(raw)]) + raw
+
+
+def generate_keypair() -> bytes:
+    return bytes([CLA, INS_GENERATE_KEYPAIR, 0x00, 0x00, 0x00])
+
+
+def put_card_object(card_object: bytes) -> bytes:
+    if len(card_object) > 0xFFFF:
+        raise ValueError("a card object that large does not fit an extended APDU either")
+    # Extended-length: a card object with a post-quantum key runs past 255 bytes, and
+    # personalization is a bench operation where an extended APDU costs nothing.
+    return (bytes([CLA, INS_PUT_CARD_OBJECT, 0x00, 0x00, 0x00])
+            + struct.pack(">H", len(card_object)) + card_object)
+
+
+def parse_generated_keys(response: bytes):
+    """(normal_public, duress_public) from a GENERATE KEYPAIR response, or None."""
+    if not is_ok(response):
+        return None
+    body = payload(response)
+    if not body:
+        return None
+    n = body[0]
+    if len(body) < 1 + n + 1:
+        return None
+    normal = body[1:1 + n]
+    d = body[1 + n]
+    duress = body[2 + n:2 + n + d]
+    if len(duress) != d:
+        return None
+    return normal, duress
 
 
 def get_card_object() -> bytes:
@@ -334,6 +441,44 @@ def der_from_raw(signature: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 # A ready-made token, for everything downstream
 # ---------------------------------------------------------------------------
+def new_blank_token(*, normal_pin="1234", duress_pin="9999", puk="12345678"):
+    """A BLANK card: PINs set at manufacture, no keys, no object, nothing to present.
+
+    This is what arrives at a personalization station. It generates its own keypairs when
+    asked and hands back only the public halves; there is no path in this function or in
+    SoftwareToken through which a private key could be supplied from outside, which is what
+    makes "the private key never left the card" a fact about where it was made rather than a
+    promise about what was deleted.
+
+    Returned as `(token, slots)` where `slots` is the dict the card fills in as it generates,
+    so a TEST can check what the card kept. A personalization service never sees it."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
+    import hashlib
+
+    slots: dict = {}
+
+    def generate(slot):
+        if slot in slots:
+            raise RuntimeError("a slot is generated once")
+        slots[slot] = ec.generate_private_key(ec.SECP256R1())
+        return slots[slot].public_key().public_bytes(
+            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+
+    def sign_with_slot(slot, body):
+        from cryptography.hazmat.primitives import hashes
+        der = slots[slot].sign(hashlib.sha256(body).digest(),
+                               ec.ECDSA(asym_utils.Prehashed(hashes.SHA256())))
+        r, s_ = asym_utils.decode_dss_signature(der)
+        return r.to_bytes(32, "big") + s_.to_bytes(32, "big")
+
+    token = SoftwareToken(card_object=None, normal_pin=normal_pin, duress_pin=duress_pin,
+                          puk=puk, slot_secret_normal=os.urandom(32),
+                          slot_secret_duress=os.urandom(32), sign_with_slot=sign_with_slot,
+                          generate_keypair=generate)
+    return token, slots
+
+
 def new_software_token(*, token_value="POLARIS-EMULATOR-0001", issuing_authority=1,
                        activation_sequence=1, issued_at=1_757_000_000,
                        expires_at=1_914_766_400, normal_pin="1234", duress_pin="9999",

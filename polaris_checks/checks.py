@@ -10473,6 +10473,162 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_card_personalization(root: pathlib.Path) -> list[Finding]:
+    """A record becomes an object, and the authority never holds the key that makes it answer (P4.3).
+
+    Personalization is the only step where the authority's signature is applied to something
+    that then leaves its control. Everything after it is downstream of whether this step was
+    done right, and there is no recall.
+
+    KEY GENERATION, NOT KEY INJECTION. The card generates its own keypairs and exports only the
+    public halves. An injected key existed somewhere else first: on the personalization host,
+    in its memory, possibly in a log or a core dump, and the authority can only ASSERT that it
+    was destroyed. A generated key has no such history, so "the private key never left the
+    card" becomes a fact about where it was made rather than a promise about what was deleted.
+    The check holds the structural version of that: there must be no private-key column to
+    write one into, and no parameter to pass one through.
+
+    A CARD IS PERSONALIZED ONCE, AND A CREDENTIAL GETS ONE CARD. The card refuses a second
+    generation for the life of the part, by its own rule rather than by whatever backs its
+    slots; the database refuses a second card for one credential, by a unique index rather
+    than by a check somebody has to remember. Two live cards answering for one credential is a
+    revocation that only half works.
+
+    THE RECORD IS APPEND-ONLY. The 15th audit-of-record instance. A personalization that could
+    be edited afterwards is not a record of what was issued.
+
+    AND EVERY CARD CARRIES A DURESS SLOT. Whether or not the holder ever enrolls a duress PIN.
+    If a duress slot only existed when one was wanted, its presence in the authority's records
+    would be a fact about the holder rather than about the system."""
+    name = "card_personalization"
+    mod = _read(root, "polaris_card/personalization.py")
+    if not mod:
+        return _fail(name, "polaris_card/personalization.py must carry the flow")
+    if "def personalize" not in mod:
+        return _fail(name, "the service must expose personalize()")
+    flow = mod.split("def personalize")[1].split("\ndef ")[0]
+    if "generate_keypair" not in flow:
+        return _fail(name,
+                     "the card must GENERATE its own keypair. An injected key existed on the "
+                     "personalization host first, and the authority could only assert that it "
+                     "was destroyed")
+    for banned in ("private_key", "secret_key", "private_bytes"):
+        if banned in flow:
+            return _fail(name,
+                         f"personalize() must never handle a private key ({banned!r}); there "
+                         "must be no parameter through which one could be supplied, and that "
+                         "absence is the design rather than an omission")
+    for guard, why in (("!= \"ACTIVE\"", "a withdrawn credential must be refused: a signed "
+                                          "object for something the authority has taken back is "
+                                          "exactly what should not be in the world"),
+                       ("already_personalized", "a credential gets one card"),
+                       ("STATE_BLANK", "a card is personalized once for the life of the part")):
+        if guard not in flow:
+            return _fail(name, why)
+    if "issuer_verify" not in flow:
+        return _fail(name,
+                     "the card object must be verified BEFORE the row is written. A row in the "
+                     "audit-of-record saying a card was fine, for a card whose signature does "
+                     "not check, is worse than no row at all")
+
+    emu = _read(root, "polaris_card/emulator.py")
+    if "INS_GENERATE_KEYPAIR" not in emu or "STATE_PERSONALIZED" not in emu:
+        return _fail(name,
+                     "the card must have a personalization lifecycle: a blank card that can be "
+                     "personalized, and a personalized one that cannot be personalized again")
+    gen = emu.split("def _generate_keypair")[1].split("\n    def ")[0]
+    # The flag must appear in the REFUSAL CONDITION, not merely somewhere in the body: a
+    # version that sets `self._generated = True` but never tests it reads the same to a
+    # substring search and refuses nothing.
+    guard = gen.split("return sw_bytes(SW_ALREADY_PERSONALIZED)")[0]
+    if "self._generated" not in guard:
+        return _fail(name,
+                     "the CARD must refuse a second generation by its own rule. Leaving it to "
+                     "whatever backs the slots makes 'a slot is generated once' a property of "
+                     "the personalization host, which is the party the rule exists to constrain")
+    if "SW_ALREADY_PERSONALIZED = 0x" not in emu:
+        return _fail(name, "refusing a re-personalization needs its own status word, or a "
+                           "reader cannot tell it from a malformed command")
+
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if "CREATE TABLE IF NOT EXISTS CardPersonalization" not in schema \
+            and "CREATE TABLE CardPersonalization" not in schema:
+        return _fail(name, "the schema must define CardPersonalization")
+    # The CREATE TABLE body, not the first mention of the name: the header comment above it
+    # names the table several times, and splitting on the name grabs prose instead of columns.
+    create = re.search(r"CREATE TABLE (?:IF NOT EXISTS )?CardPersonalization\s*\((.*?)\n\);",
+                       schema, re.S)
+    if not create:
+        return _fail(name, "CardPersonalization must be a CREATE TABLE in 01_schema.sql")
+    table = create.group(1)
+    # Column NAMES, not a substring search of the whole body. "pin" appears inside words like
+    # "mapping"; and a required column named only in a CHECK constraint is not a column, so
+    # both the banned and the required lists are answered from the same extracted set.
+    columns = {m.group(1).lower() for m in
+               re.finditer(r"^\s{4}([a-z_]+)\s+[A-Z]", table, re.M)}
+    for banned in ("private_key", "secret_key", "normal_private_key", "duress_private_key",
+                   "pin", "puk", "duress_pin", "pin_hash"):
+        if banned in columns:
+            return _fail(name,
+                         f"the personalization record must have nowhere to write a {banned!r}: "
+                         "not 'we do not write one', but no column to write it into")
+    for needed, why in (("normal_public_key", "the authority must be able to verify a later "
+                                              "presentation, and a fingerprint cannot"),
+                        ("duress_public_key", "the authority is precisely who must be able to "
+                                              "tell a duress presentation apart")):
+        if needed not in columns:
+            return _fail(name, why)
+    if "card_slots_differ" not in schema:
+        return _fail(name,
+                     "the two slots must differ. A card whose duress key equalled its normal "
+                     "key would produce a presentation the AUTHORITY could not tell apart "
+                     "either, and the authority is the one party that has to")
+    if "idx_card_personalization_one_per_token" not in schema:
+        return _fail(name,
+                     "one card per credential must be a unique index rather than a check in "
+                     "application code: two live cards for one credential is a revocation that "
+                     "only half works")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    if "trg_card_personalization_append_only" not in triggers:
+        return _fail(name,
+                     "the personalization record must be append-only. It is the one step where "
+                     "the authority's signature goes onto something that then leaves its "
+                     "control; a record of that which can be edited is not a record")
+
+    drill = _read(root, "scripts/polaris-personalization-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-personalization-drill.py must run the flow against "
+                           "a real database")
+    if "session_replication_role" in drill:
+        return _fail(name,
+                     "the drill must not disable the append-only trigger to clean up after "
+                     "itself. A drill that turns off the audit-of-record to tidy up teaches "
+                     "the exact habit it exists to forbid; build a scratch database instead")
+    for needed, why in (("appears in NOTHING it produced",
+                         "the private key's absence must be ASSERTED against what the flow "
+                         "produced, recorded and returned, not assumed"),
+                        ("cannot be UPDATEd", "append-only must be proven against the database"),
+                        ("a second card for the same credential is refused",
+                         "one card per credential must be exercised"),
+                        ("refuses a second GENERATE KEYPAIR",
+                         "the card's one-shot rule must be exercised"),
+                        ("sees the DURESS slot when that PIN was used",
+                         "the authority's half of the duress mechanism must actually work "
+                         "from the keys this flow wrote down")):
+        if needed not in drill:
+            return _fail(name, why)
+    return _ok(name,
+               "a record becomes an object without the authority ever holding the key that "
+               "makes it answer: the card generates its own pair and there is no parameter to "
+               "inject one through and no column to record one in, the card refuses a second "
+               "personalization by its own rule and the database refuses a second card for one "
+               "credential by a unique index, a withdrawn credential is refused, the record is "
+               "the 15th append-only audit-of-record instance, every card carries a duress slot "
+               "recorded beside the normal one so its existence says nothing about the holder, "
+               "and the drill builds its own database rather than disabling the trigger to "
+               "clean up")
+
+
 def check_card_emulator(root: pathlib.Path) -> list[Finding]:
     """The card's BEHAVIOUR is fixed, so everything downstream can be built now (P4.2).
 
@@ -11145,6 +11301,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_card_personalization,
     check_card_emulator,
     check_card_profile,
     check_quantum_event_readiness,

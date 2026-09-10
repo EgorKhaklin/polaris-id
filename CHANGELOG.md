@@ -5,6 +5,57 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.368 — 2026-09-10 (P4.3: a record becomes an object)
+
+Personalization is the moment a database record becomes an object in
+somebody's pocket. It is the only step where the authority's signature is
+applied to something that then leaves its control, and there is no recall.
+
+**The card generates its own keys; nothing injects them.** An injected key
+existed somewhere else first: on the personalization host, in its memory,
+possibly in a log or a core dump, and the authority can only *assert* that it
+was destroyed. A generated key has no such history, so "the private key never
+left the card" becomes a fact about where it was made rather than a promise
+about what was deleted. `personalize()` has no parameter through which a
+private key could be supplied and `CardPersonalization` has no column to write
+one into. That absence is the design, and the drill asserts it directly: the
+private half of the key the card kept appears in nothing the flow produced,
+recorded or returned.
+
+**Every personalization is an audit-of-record event.** `CardPersonalization`
+is the 15th such instance, append-only by trigger. The drill tries an `UPDATE`
+and a `DELETE` and both are refused by the database rather than by the
+application.
+
+**A card is personalized once, and a credential gets one card.** The card
+refuses a second `GENERATE KEYPAIR` or `PUT CARD OBJECT` for the life of the
+part, **by its own rule** rather than by whatever backs its slots, because
+leaving that to the host would make it a property of exactly the party the
+rule exists to constrain. The database refuses a second card for one
+credential with a unique index. Two live cards answering for one credential is
+a revocation that only half works.
+
+**Every card carries a duress slot, whether or not the holder ever enrolls a
+duress PIN.** Both public keys are recorded in full, because the authority has
+to verify a later presentation and a fingerprint cannot do that, and because
+the authority is precisely who must be able to tell a duress presentation
+apart. If a duress slot only existed when one was wanted, its presence in the
+record would be a fact about the holder; because every card has one, it says
+nothing about anybody. A `CHECK` refuses a card whose two slots are equal.
+
+The card gained a lifecycle (`BLANK` to `PERSONALIZED`, no path back), on-card
+key generation, extended-length APDUs for objects past 255 bytes, and a blank
+card now refuses to sign at all: a card with no signed object has nothing a
+verifier could check a response against, so signing anyway would produce
+something that looks like a credential.
+
+Writing the detection test made the check materially stronger in three places.
+Each fixture removed one thing and the check still passed, because it was
+matching a mention rather than the thing: `self._generated` appearing in an
+assignment rather than in the guard, `SW_ALREADY_PERSONALIZED` in a `return`
+rather than in a definition, and `duress_public_key` in a `CHECK` constraint
+rather than as a column. All three now check what they meant to.
+
 ## v9.367 — 2026-09-10 (P4.2: the software token, and two things it taught the profile)
 
 P4.1 said what is on a card. This is what a card **does**:

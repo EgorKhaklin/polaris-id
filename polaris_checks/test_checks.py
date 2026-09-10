@@ -9324,6 +9324,148 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_card_personalization_check_discriminates(tmp_path):
+    # v9.368 (P4.3): the ways personalization puts something wrong into the world. A key
+    # injected rather than generated, which the authority can only promise it destroyed; a
+    # card that can be personalized again in the field; two live cards for one credential,
+    # which makes a revocation half-work; a withdrawn credential given a signed object; a
+    # record that can be edited afterwards; and a drill that disables the append-only trigger
+    # to tidy up, teaching the exact habit the record exists to prevent.
+    FLOW = ("def personalize(conn, token_id, card, *, issuer_sign, issuer_verify=None):\n"
+            "    if row['status'] != \"ACTIVE\":\n        raise PersonalizationRefused('x')\n"
+            "    if already_personalized(conn, token_id):\n"
+            "        raise PersonalizationRefused('one card per credential')\n"
+            "    if getattr(card, 'state', None) != em.STATE_BLANK:\n"
+            "        raise PersonalizationRefused('not blank')\n"
+            "    generated = em.parse_generated_keys(card.transmit(em.generate_keypair()))\n"
+            "    if issuer_verify is not None:\n        pass\n")
+    MOD = "def already_personalized(conn, token_id):\n    return False\n\n\n" + FLOW
+    EMU = ("INS_GENERATE_KEYPAIR = 0x47\nSTATE_BLANK = 'BLANK'\n"
+           "STATE_PERSONALIZED = 'PERSONALIZED'\nSW_ALREADY_PERSONALIZED = 0x6A89\n"
+           "\nclass T:\n"
+           "    def _generate_keypair(self):\n"
+           "        if self.state != STATE_BLANK or self._generated:\n"
+           "            return sw_bytes(SW_ALREADY_PERSONALIZED)\n"
+           "        self._generated = True\n        return b''\n")
+    SCHEMA = ("DROP TABLE IF EXISTS CardPersonalization   CASCADE;\n"
+              "CREATE TABLE IF NOT EXISTS CardPersonalization (\n"
+              "    personalization_id    SERIAL       PRIMARY KEY,\n"
+              "    token_id              INTEGER      NOT NULL,\n"
+              "    normal_public_key     BYTEA        NOT NULL,\n"
+              "    duress_public_key     BYTEA        NOT NULL,\n"
+              "    CONSTRAINT card_slots_differ CHECK (normal_public_key <> duress_public_key)\n"
+              ");\n"
+              "CREATE UNIQUE INDEX idx_card_personalization_one_per_token\n"
+              "    ON CardPersonalization (token_id);\n")
+    TRIGGERS = ("CREATE TRIGGER trg_card_personalization_append_only\n"
+                "    BEFORE UPDATE OR DELETE ON CardPersonalization\n"
+                "    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n")
+    DRILL = ("# the private key the card kept appears in NOTHING it produced\n"
+             "# the audit-of-record row cannot be UPDATEd\n"
+             "# a second card for the same credential is refused\n"
+             "# the card refuses a second GENERATE KEYPAIR\n"
+             "# ...and sees the DURESS slot when that PIN was used\n")
+    good = {
+        'polaris_card/personalization.py': MOD,
+        'polaris_card/emulator.py': EMU,
+        'polaris_sql/01_schema.sql': SCHEMA,
+        'polaris_sql/06_triggers.sql': TRIGGERS,
+        'scripts/polaris-personalization-drill.py': DRILL,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_card_personalization(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+
+    # KEY INJECTION. An injected key existed on the host first, and its destruction can only
+    # be asserted; a generated one has no such history.
+    write({'polaris_card/personalization.py': MOD.replace(
+        "    generated = em.parse_generated_keys(card.transmit(em.generate_keypair()))\n", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "the card must generate its own keypair"
+    for banned in ("private_key", "secret_key", "private_bytes"):
+        write({'polaris_card/personalization.py': MOD.replace(
+            "issuer_sign, issuer_verify=None", f"issuer_sign, {banned}=None")})
+        assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+            f"personalize() must have no {banned} parameter"
+
+    # THE FIELD-REPERSONALIZABLE CARD, and the rule living in the wrong place.
+    write({'polaris_card/personalization.py': MOD.replace(
+        "    if getattr(card, 'state', None) != em.STATE_BLANK:\n"
+        "        raise PersonalizationRefused('not blank')\n", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "a card is personalized once for the life of the part"
+    write({'polaris_card/emulator.py': EMU.replace(" or self._generated", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "the CARD must refuse a second generation by its own rule, not the host's"
+    write({'polaris_card/emulator.py': EMU.replace("SW_ALREADY_PERSONALIZED = 0x6A89\n", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "refusing a re-personalization needs its own status word"
+
+    # TWO CARDS FOR ONE CREDENTIAL, and a withdrawn credential.
+    write({'polaris_card/personalization.py': MOD.replace(
+        "    if already_personalized(conn, token_id):\n"
+        "        raise PersonalizationRefused('one card per credential')\n", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "a credential gets one card"
+    write({'polaris_sql/01_schema.sql': SCHEMA.replace(
+        "CREATE UNIQUE INDEX idx_card_personalization_one_per_token\n"
+        "    ON CardPersonalization (token_id);\n", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "one card per credential must be a unique index, not application code"
+    write({'polaris_card/personalization.py': MOD.replace(
+        "    if row['status'] != \"ACTIVE\":\n        raise PersonalizationRefused('x')\n", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "a withdrawn credential must be refused"
+
+    # THE OBJECT RECORDED WITHOUT BEING CHECKED.
+    write({'polaris_card/personalization.py': MOD.replace(
+        "    if issuer_verify is not None:\n        pass\n", "").replace(
+        ", issuer_verify=None", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "the object must be verified before the row is written"
+
+    # THE EDITABLE RECORD, and the columns that must not exist.
+    write({'polaris_sql/06_triggers.sql': "-- no trigger\n"})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "the personalization record must be append-only"
+    write({'polaris_sql/01_schema.sql': SCHEMA.replace(
+        "    duress_public_key     BYTEA        NOT NULL,\n",
+        "    duress_public_key     BYTEA        NOT NULL,\n"
+        "    duress_private_key    BYTEA,\n")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "there must be nowhere to write a private key"
+    write({'polaris_sql/01_schema.sql': SCHEMA.replace(
+        "    duress_public_key     BYTEA        NOT NULL,\n", "")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "the duress slot must be recorded: the authority is who must tell them apart"
+    write({'polaris_sql/01_schema.sql': SCHEMA.replace(
+        "    CONSTRAINT card_slots_differ CHECK (normal_public_key <> duress_public_key)\n",
+        "    CONSTRAINT nothing CHECK (true)\n")})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "the two slots must differ, or the authority cannot tell either"
+
+    # THE DRILL THAT DISABLES THE AUDIT-OF-RECORD TO TIDY UP.
+    write({'scripts/polaris-personalization-drill.py':
+           DRILL + "cur.execute('SET session_replication_role = replica')\n"})
+    assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+        "a drill must not turn off the append-only trigger to clean up after itself"
+    for needle in ("# the private key the card kept appears in NOTHING it produced",
+                   "# the audit-of-record row cannot be UPDATEd",
+                   "# a second card for the same credential is refused",
+                   "# the card refuses a second GENERATE KEYPAIR",
+                   "# ...and sees the DURESS slot when that PIN was used"):
+        write({'scripts/polaris-personalization-drill.py': DRILL.replace(needle + "\n", "")})
+        assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
+            f"the drill must assert: {needle}"
+
+
 def test_card_emulator_check_discriminates(tmp_path):
     # v9.367 (P4.2): the ways a card emulator stops modelling a card. Signing before a PIN,
     # which makes it an oracle; a retry counter reset by pulling the card, which makes a

@@ -11297,3 +11297,145 @@ class PopulationMigrationTests(PolarisTestCase):
         a, _, _ = pqc_signing.signature_for_migration("TOK-A", "ML-DSA-65")
         b, _, _ = pqc_signing.signature_for_migration("TOK-A", "ML-DSA-87")
         self.assertNotEqual(a, b)
+
+
+class CardPersonalizationTests(PolarisTestCase):
+    """P4.3: putting a credential onto a card, and the record of having done it.
+
+    The full flow under real signatures is scripts/polaris-personalization-drill.py, which
+    builds its own database. What belongs here is the part bound to THIS schema: that the
+    audit-of-record row is append-only, that a credential gets one card, and that the table
+    holds no private key and never could."""
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _card_bits(self):
+        # The repo root, so `polaris_card` imports as a package from inside polaris_web/.
+        # Without it these tests skip, and a suite that silently skips proves nothing.
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        try:
+            from polaris_card import emulator as em, personalization as pz
+        except ImportError as exc:
+            self.fail("polaris_card must be importable from the repo root: %s" % exc)
+        try:
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
+        except ImportError:
+            self.skipTest("the card slots need cryptography")
+        alg = ec.ECDSA(asym_utils.Prehashed(hashes.SHA256()))
+        issuer = ec.generate_private_key(ec.SECP256R1())
+        return em, pz, (lambda d: issuer.sign(d, alg))
+
+    def _active_token(self, conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' "
+                        "ORDER BY token_id LIMIT 1")
+            row = cur.fetchone()
+        if row is None:
+            self.skipTest("the seed holds no ACTIVE credential")
+        return row["token_id"]
+
+    def test_the_table_is_the_fifteenth_audit_of_record(self):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT tgname FROM pg_trigger WHERE tgrelid = "
+                        "'cardpersonalization'::regclass AND NOT tgisinternal")
+            names = {r["tgname"] for r in cur.fetchall()}
+        self.assertIn("trg_card_personalization_append_only", names,
+                      "personalization is the one step where the authority's signature goes "
+                      "onto something that then leaves its control; that record must not be "
+                      "editable afterwards")
+
+    def test_a_personalization_cannot_be_edited_or_removed(self):
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            card, _ = em.new_blank_token()
+            card.transmit(em.select())
+            pz.personalize(conn, token_id, card, issuer_sign=issuer_sign)
+            for sql in ("UPDATE CardPersonalization SET personalized_by = NULL WHERE token_id = %s",
+                        "DELETE FROM CardPersonalization WHERE token_id = %s"):
+                with self.subTest(sql=sql.split()[0]):
+                    with self.assertRaises(psycopg2.Error):
+                        with conn.cursor() as cur:
+                            cur.execute(sql, (token_id,))
+                    conn.rollback()
+
+    def test_a_credential_gets_one_card(self):
+        # Two live cards answering for one credential is a revocation that only half works.
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            first, _ = em.new_blank_token(); first.transmit(em.select())
+            pz.personalize(conn, token_id, first, issuer_sign=issuer_sign)
+            second, _ = em.new_blank_token(); second.transmit(em.select())
+            with self.assertRaises(pz.PersonalizationRefused):
+                pz.personalize(conn, token_id, second, issuer_sign=issuer_sign)
+            self.assertEqual(second.state, em.STATE_BLANK,
+                             "a refused personalization must not have touched the card")
+
+    def test_a_withdrawn_credential_is_refused(self):
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT token_id FROM IdentityToken WHERE status <> 'ACTIVE' "
+                            "ORDER BY token_id LIMIT 1")
+                row = cur.fetchone()
+            if row is None:
+                self.skipTest("the seed holds no non-ACTIVE credential")
+            card, _ = em.new_blank_token(); card.transmit(em.select())
+            with self.assertRaises(pz.PersonalizationRefused):
+                pz.personalize(conn, row["token_id"], card, issuer_sign=issuer_sign)
+
+    def test_every_card_carries_a_duress_slot_and_the_slots_differ(self):
+        # If a duress slot only existed when one was wanted, its presence in this table would
+        # be a fact about the holder. Because every card has one, it says nothing about anyone.
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            card, _ = em.new_blank_token(); card.transmit(em.select())
+            result = pz.personalize(conn, token_id, card, issuer_sign=issuer_sign)
+            self.assertTrue(result["duress_public_key"])
+            self.assertNotEqual(result["duress_public_key"], result["normal_public_key"])
+            self.assertNotIn(result["duress_public_key"], result["card_object"],
+                             "the duress key must not be readable off the card")
+            with self.assertRaises(psycopg2.Error):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO CardPersonalization (token_id, issuing_agency_id, "
+                        "credential_ref, profile_version, normal_public_key, duress_public_key, "
+                        "card_object_sha3_256) VALUES (%s, 1, %s, 1, %s, %s, %s)",
+                        (token_id, psycopg2.Binary(b"\x00" * 32), psycopg2.Binary(b"\x01" * 65),
+                         psycopg2.Binary(b"\x01" * 65), psycopg2.Binary(b"\x02" * 32)))
+            conn.rollback()
+
+    def test_the_table_holds_no_private_key_column(self):
+        # Not "we do not write one": there is nowhere to write one.
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'cardpersonalization'")
+            columns = {r["column_name"] for r in cur.fetchall()}
+        for banned in ("private_key", "secret_key", "normal_private_key", "duress_private_key",
+                       "pin", "puk", "duress_pin"):
+            self.assertNotIn(banned, columns)
+        self.assertIn("normal_public_key", columns)
+        self.assertIn("duress_public_key", columns)
+
+    def test_the_recorded_reference_is_not_the_token_value(self):
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT token_value FROM IdentityToken WHERE token_id = %s",
+                            (token_id,))
+                token_value = cur.fetchone()["token_value"]
+            card, _ = em.new_blank_token(); card.transmit(em.select())
+            pz.personalize(conn, token_id, card, issuer_sign=issuer_sign)
+            with conn.cursor() as cur:
+                cur.execute("SELECT credential_ref FROM CardPersonalization WHERE token_id = %s",
+                            (token_id,))
+                ref = bytes(cur.fetchone()["credential_ref"])
+        self.assertEqual(len(ref), 32)
+        self.assertNotIn(token_value.encode(), ref)

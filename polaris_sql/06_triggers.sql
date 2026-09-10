@@ -1067,3 +1067,16 @@ DROP TRIGGER IF EXISTS trg_holder_key_append_only ON HolderKeyEvent;
 CREATE TRIGGER trg_holder_key_append_only
     BEFORE UPDATE OR DELETE ON HolderKeyEvent
     FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();
+
+-- ----------------------------------------------------------------------------
+-- CardPersonalization is the 15th audit-of-record instance (P4.3). Personalization
+-- is the moment a database record becomes an object in somebody's pocket, and the
+-- only step where the authority's signature is applied to something that then
+-- leaves its control. That is exactly the record that must not be editable after
+-- the fact.
+-- ----------------------------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_card_personalization_append_only ON CardPersonalization;
+CREATE TRIGGER trg_card_personalization_append_only
+    BEFORE UPDATE OR DELETE ON CardPersonalization
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();

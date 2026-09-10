@@ -260,6 +260,16 @@ jobs:
         env:
           POLARIS_QE_POPULATION: '1200'
 
+      # v9.368 (P4.3) — a record becomes an object. The card GENERATES its own keys and the
+      # drill asserts the private half appears in nothing the flow produced, recorded or
+      # returned; the personalization is one append-only row an UPDATE and a DELETE are both
+      # refused against; the card refuses a second personalization for the life of the part
+      # and the database refuses a second card for the credential. Builds and drops its own
+      # database, because the only way to delete an audit-of-record row is to turn off the
+      # trigger, and a drill that does that teaches the habit it exists to forbid.
+      - name: Personalization — key generated on the card, recorded un-editably
+        run: python scripts/polaris-personalization-drill.py
+
       # v9.366 (P4.1) — the card profile's own suite: the encoder and decoder reproduce the
       # PUBLISHED VECTORS byte for byte, and every refusal holds (the record off the card by
       # name, unknown tags, repeated tags, descending tags, truncation, wrong doc type, wrong
