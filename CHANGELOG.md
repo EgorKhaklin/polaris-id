@@ -5,6 +5,37 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.355 — 2026-09-10 (a runnable path, and the holder arc written down)
+
+Two gaps left by P9.8 and P9.4, both about whether the work is reachable by the
+person who needs it.
+
+**A service can decide a grant from the command line.** `verify_agent_grant`
+existed only as a Python function, which makes it a library. The party who needs
+it is a service operator with a JSON file and a shell, and a capability reachable
+only from Python will not be used. The detached verifier now takes
+`--agent-grant`, with `--holder-binding`, `--credential`, `--agent-proof`,
+`--grant-revocation`, `--action`, `--service-nonce` and `--verifier-scope`, and
+prints each of the five links separately: "this grant was revoked" and "this agent
+does not hold the key it names" call for different responses at the service. Exit
+0 accepts, 2 refuses. `check_agent_grant` now requires the CLI.
+
+**The holder arc has a design doc.** `docs/design/holder-side-keys.md` gathers the
+four mechanisms P9 built, each with the bound it does NOT clear: the holder key and
+why its proof must not cover the presented code; proving locally and why a swapped
+anonymity set is a refusal rather than a note; the scoped nullifier and its two
+bounds, the issuer and the epoch; the pairwise handle and the difference between
+what a verifier stores and what it is shown; and the agent grant, whose revocation
+belongs to the holder alone. A closing section collects what the issuer still knows,
+because four mechanisms read together can sound like more than they are.
+
+`docs/design/auth-broker.md` still said the ID token's subject is a credential hash
+and called the resulting correlation permanent. That stopped being true at v9.353;
+it now describes the pairwise derivation, states the cost, and names what did not
+change.
+
+---
+
 ## v9.354 — 2026-09-10 (P9.8: delegation without the credential)
 
 A person wants an agent to act for them. What people actually do is hand over

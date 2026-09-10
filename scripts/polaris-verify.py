@@ -3656,6 +3656,16 @@ def main(argv=None):
     ap.add_argument("--trusted-anchor", help="an anchor public key hex the relying party trusts")
     ap.add_argument("--context", type=int, help="the presented context id (for --zk-proof)")
     ap.add_argument("--nonce", type=int, default=None, help="the challenge nonce the proof must carry")
+    ap.add_argument("--agent-grant", help="a polaris-agent-grant/1 JSON file (P9.8): decide an agent's "
+                                          "delegated authority OFFLINE")
+    ap.add_argument("--holder-binding", help="the issuer-signed holder-key binding the grant chains to")
+    ap.add_argument("--credential", help="the credential that binding is about")
+    ap.add_argument("--grant-revocation", help="a polaris-grant-revocation/1 the holder published")
+    ap.add_argument("--agent-proof", help="a polaris-agent-proof/1: the agent's signature over this action")
+    ap.add_argument("--action", help="the action the agent is asking to perform")
+    ap.add_argument("--service-nonce", help="the nonce THIS service issued for this request")
+    ap.add_argument("--verifier-scope", help="this verifier's own scope (P9.4): reports the pairwise "
+                                             "handle to key records by instead of the token value")
     args = ap.parse_args(argv)
 
     if args.selftest:
@@ -3663,6 +3673,41 @@ def main(argv=None):
     if args.verify_dir:
         return verify_dir(args.verify_dir)
 
+    if args.agent_grant:
+        # P9.8: a service decides an agent's authority with no network. Every link is
+        # reported, because "this grant was revoked" and "this agent does not hold the key it
+        # names" call for different responses at the service.
+        try:
+            grant = json.loads(open(args.agent_grant).read())
+            binding = json.loads(open(args.holder_binding).read()) if args.holder_binding else None
+            credential = json.loads(open(args.credential).read()) if args.credential else None
+            revocation = json.loads(open(args.grant_revocation).read()) if args.grant_revocation else None
+            agent_proof = json.loads(open(args.agent_proof).read()) if args.agent_proof else None
+            anchor = _load_anchor(args.issuer_anchor) if args.issuer_anchor else None
+        except (OSError, ValueError) as e:
+            print("could not read the grant / binding / credential / revocation / proof: %s" % e,
+                  file=sys.stderr)
+            return 3
+        verdict = verify_agent_grant(grant, binding=binding, credential=credential,
+                                     requested_action=args.action, revocation=revocation,
+                                     agent_proof=agent_proof, expected_nonce=args.service_nonce,
+                                     anchor_keys=anchor, verifier_scope=args.verifier_scope)
+        if args.json:
+            print(json.dumps(verdict, indent=2))
+        else:
+            print("usable:           %s" % verdict["usable"])
+            print("grant authentic:  %s" % verdict["grant_authentic"])
+            print("fresh:            %s" % verdict["fresh"])
+            print("principal bound:  %s" % verdict["principal_bound"])
+            print("action in scope:  %s" % verdict["action_in_scope"])
+            print("revoked:          %s" % verdict["revoked"])
+            print("agent proved:     %s" % verdict["agent_proved"])
+            if verdict["pairwise_handle"]:
+                print("handle:           %s (correlation: %s)"
+                      % (verdict["pairwise_handle"], verdict["correlation"]))
+            if verdict["note"]:
+                print("note:             %s" % verdict["note"])
+        return 0 if verdict["usable"] else 2
     if args.presentation or args.qr_frames:
         try:
             if args.qr_frames:

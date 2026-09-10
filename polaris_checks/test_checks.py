@@ -8651,6 +8651,9 @@ def test_agent_grant_check_discriminates(tmp_path):
                                                  "# correlation is exposed\n"),
         'docs/reference/WIRE-SPEC.md': "### polaris-agent-grant/1\n",
     }
+    good['scripts/polaris-verify.py'] = VERIFY + (
+        '\nap.add_argument("--agent-grant")\nap.add_argument("--action")\n'
+        'ap.add_argument("--service-nonce")\n')
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -8663,48 +8666,48 @@ def test_agent_grant_check_discriminates(tmp_path):
 
     # The limits leave the signed statement: a grant can be widened in transit and the
     # widened grant still verifies.
-    write({'scripts/polaris-verify.py': VERIFY.replace('"limits", ', "")})
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace('"limits", ', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the limits sit outside the grant's signature"
 
     # So does the action list.
-    write({'scripts/polaris-verify.py': VERIFY.replace('"actions", ', "")})
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace('"actions", ', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the actions sit outside the grant's signature"
 
     # A malformed action list stops collapsing to empty, so a grant naming nothing could be
     # read as naming everything.
-    write({'scripts/polaris-verify.py': VERIFY.replace(
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
         "    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []\n",
         "    actions = actions or ['*']\n")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a grant with no actions is not treated as granting nothing"
 
     # Anyone who can publish bytes can end someone else's delegation.
-    write({'scripts/polaris-verify.py': VERIFY.replace(
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
         '    note = "the revocation is signed by a key other than the grant\'s holder"\n', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a revocation need not be signed by the grant's own holder"
 
     # The grant becomes a bearer token: no agent key check.
-    write({'scripts/polaris-verify.py': VERIFY.replace(
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
         '    note = "the agent proof is signed by a key the grant does not name"\n', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the agent need not hold the key the grant names"
 
     # A captured proof replays at a second service.
-    write({'scripts/polaris-verify.py': VERIFY.replace('    note = "a replay"\n', "")})
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace('    note = "a replay"\n', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a proof is not bound to the service's own nonce"
 
     # A reason field appears on the revocation, and becomes a place to signal duress.
-    write({'scripts/polaris-verify.py': VERIFY.replace(
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
         '"revoked_at", "algorithm")', '"revoked_at", "reason", "algorithm")')})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a revocation's signed statement carries a reason field"
 
     # An unknown limit is ignored instead of refused.
-    write({'scripts/polaris-verify.py': VERIFY.replace(
+    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
         "    if unknown:\n        return False, 'refusing rather than ignoring them'\n", "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when an unrecognised limit is ignored rather than refused"
@@ -8724,3 +8727,9 @@ def test_agent_grant_check_discriminates(tmp_path):
     write({'scripts/polaris-agent-grant-drill.py': "# a stolen grant fails\n# correlation is exposed\n"})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the drill does not show the human's credential survives a revocation"
+
+    # A service can no longer decide a grant from the command line, so checking an agent's
+    # authority means writing Python, which means it will not be checked.
+    write({'scripts/polaris-verify.py': VERIFY})
+    assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the detached verifier has no --agent-grant CLI"

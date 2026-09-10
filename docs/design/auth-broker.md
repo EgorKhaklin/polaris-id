@@ -22,10 +22,24 @@ verifies offline: signature, audience, nonce, freshness, issuer trust.
 
 ## The guards that make it not a login product
 
-- **The subject is a credential hash.** `sub` is the SHA3-256 of the token value, the
-  commitment every other artifact uses; never a person identifier, never a token. It is
-  stable per credential and therefore correlatable across relying parties, which Polaris
-  documents as a permanent property rather than pretending otherwise.
+- **The subject is derived per relying party.** `sub` is
+  `SHA3-256("polaris-pairwise/1" || token_value || client_id)`; never a person identifier,
+  never a token. Stable at one relying party, so an account works across visits, and
+  unrecognisable at the next.
+
+  Until v9.353 it was the bare `SHA3-256(token_value)`: the same sixty-four characters at
+  every relying party in the system. Two of them comparing user tables matched people
+  exactly, forever, and neither had to do anything wrong, because the identifier they had
+  been handed was a global one. The subject is the value a relying party *writes down*, and
+  written-down values are the ones that get pooled, sold, subpoenaed and breached, which is
+  why this was the correlation handle that mattered most in practice.
+
+  The cost is the standard one for pairwise subjects and is worth stating: a relying party
+  that loses its registration and re-registers gets a new client id, and every one of its
+  accounts becomes a stranger. That is the price of not handing out a global identifier.
+  Note also what this does not do: a full-credential presentation still shows a verifier a
+  stable `token_value`, so cross-verifier correlation is bounded, not eliminated. See
+  [holder-side-keys.md](holder-side-keys.md).
 - **No claim beyond the vocabulary.** The token carries the context, the disclosure level,
   the assurance reached (`acr`: possession, or possession plus a verified ZK proof), the
   holder's enrollment status, and the instants. No name, no attribute, nothing the

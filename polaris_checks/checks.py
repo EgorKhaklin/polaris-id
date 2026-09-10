@@ -9842,6 +9842,14 @@ def check_agent_grant(root: pathlib.Path) -> list[Finding]:
     spec = _read(root, "docs/reference/WIRE-SPEC.md")
     if "polaris-agent-grant/1" not in spec:
         return _fail(name, "the normative wire spec must carry the delegation artifacts")
+    # A service must be able to decide a grant WITHOUT writing code. Engine over wrapper: a
+    # capability reachable only from Python is a library, and the party that needs this one
+    # is a service operator with a JSON file and a shell.
+    if '"--agent-grant"' not in verifier or '"--service-nonce"' not in verifier:
+        return _fail(name,
+                     "the detached verifier's CLI must decide a grant offline (--agent-grant, with "
+                     "--action and --service-nonce); a service that has to write Python to check an "
+                     "agent's authority will not check it")
     return _ok(name,
                "a person delegates to an agent without handing over their credential: the grant's "
                "actions and limits are inside the signed statement so widening it breaks the "

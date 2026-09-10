@@ -422,6 +422,15 @@ Without it a grant is a bearer token and whoever copies it in transit becomes th
 proof names the action and the service's own nonce, so a captured proof replays neither to a
 second service nor to a second action at the first.
 
+The detached verifier decides the whole chain from the command line, so a service does not
+have to write code to check an agent's authority:
+
+```
+polaris-verify.py --agent-grant grant.json --holder-binding binding.json \
+    --credential cred.json --agent-proof proof.json --grant-revocation rev.json \
+    --action read:status --service-nonce "$NONCE" --issuer-anchor anchor.json
+```
+
 A service verifying the chain MUST check all five links and MUST report which one failed,
 because "this grant was revoked" and "this agent does not hold the key it names" call for
 different responses: the issuer's signature on the credential, the issuer's signature on the
