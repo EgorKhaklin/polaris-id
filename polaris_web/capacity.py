@@ -26,6 +26,12 @@ at all: the table holds one row per token per epoch, so a 350M-credential popula
 HOW A FIGURE IS LABELLED IS THE POINT OF THE MODEL. Four kinds:
 
   MEASURED     a number from an actual run on real code (docs/reference/BENCHMARK.md).
+  EXTRAPOLATED a measured number carried somewhere it was not measured, under an assumption
+               printed beside it. The core counts below are this: the per-core verification
+               rate is measured on one core, and "six and a half cores" assumes those cores
+               add up. Roadmap P1.18 item 6 names that move by its worst form -- "no
+               one-core x8" -- and it is a move this file used to make while labelling the
+               result MEASURED.
   DERIVED      arithmetic on a MEASURED number, a stated target, or the schema itself. It
                carries no assumption anybody has to agree with. The two id-space blockers above
                are DERIVED, which is why they are not arguable.
@@ -51,6 +57,7 @@ SECONDS_PER_YEAR = 365.25 * 24 * 3600
 #: Provenance labels. See the module docstring; the distinction between DERIVED and
 #: ASSUMED is what separates a finding somebody must act on from one they can argue with.
 MEASURED = "MEASURED"
+EXTRAPOLATED = "EXTRAPOLATED"
 DERIVED = "DERIVED"
 ASSUMED = "ASSUMED"
 UNVALIDATED = "UNVALIDATED"
@@ -250,13 +257,17 @@ def throughput(targets=None, benchmark=None):
     return {
         "verification_sustained": {
             "cores": t["verification_sustained"] / b["verify_per_core_single_witness"],
-            "provenance": MEASURED,
-            "note": "single-witness verify-at-use; needs only the public key, so it fans "
-                    "out across cores and replicas without touching custody",
+            "per_core_measured": b["verify_per_core_single_witness"],
+            "provenance": EXTRAPOLATED,
+            "assumption": LINEAR_FANOUT,
+            "note": "single-witness verify-at-use. The PER-CORE rate is measured; the "
+                    "core COUNT is division",
         },
         "verification_peak": {
             "cores": t["verification_peak"] / b["verify_per_core_single_witness"],
-            "provenance": MEASURED,
+            "per_core_measured": b["verify_per_core_single_witness"],
+            "provenance": EXTRAPOLATED,
+            "assumption": LINEAR_FANOUT,
             "note": "same path at the peak target",
         },
         "enrollment_surge": {
@@ -274,6 +285,20 @@ def throughput(targets=None, benchmark=None):
         },
     }
 
+
+#: The assumption every core count here rests on. Plausible and unmeasured, and the
+#: difference between those two words is the whole reason this constant has a name.
+#: Verification needs only a public key: no custody, no private key, no shared state
+#: between requests, so nothing in the path obviously serialises. What is measured is
+#: one core. What is NOT measured is eight of them, or a fleet, or the network and the
+#: trust-list distribution that a real federated deployment puts in front of them.
+#: docs/reference/HA-VERIFICATION-REPORT.md carries what has actually been measured on
+#: a real multi-node topology, which is a two-member cluster and not a fleet.
+LINEAR_FANOUT = (
+    "verification fans out linearly across cores and replicas because it needs only a "
+    "public key and shares no state between requests. Plausible, and measured on ONE "
+    "core: the multiplication has never been run."
+)
 
 #: What the repository cannot establish, and what would establish it. Each entry is a
 #: reason a target CANNOT be reported met, however comfortable the other numbers look.
@@ -332,6 +357,11 @@ def validate(schema_sql, targets=None, benchmark=None,
                             f"{human_lifetime(r)}" for r in blockers))
         else:
             entry["verdict"] = "MET"
+            # A MET that rests on an extrapolation carries the extrapolation. The
+            # verdict and the assumption travel together or the verdict is a claim
+            # the reader cannot grade.
+            if entry["throughput"] and entry["throughput"].get("assumption"):
+                entry["rests_on"] = entry["throughput"]["assumption"]
         verdicts[key] = entry
     return {"targets": verdicts, "exhaustion": ex, "throughput": tp,
             "horizon_years": horizon_years}
@@ -368,6 +398,16 @@ def render_markdown(report):
     for key in order:
         lines.append(f"| {v[key]['statement']} | **{v[key]['verdict']}** |")
     blocked = [k for k in order if v[k]["verdict"] != "MET"]
+    resting = [k for k in order if v[k].get("rests_on")]
+    if resting:
+        lines += ["", "## What the MET verdicts rest on", ""]
+        seen = []
+        for key in resting:
+            note = v[key]["rests_on"]
+            if note in seen:
+                continue
+            seen.append(note)
+            lines.append(f"- {note}")
     if blocked:
         lines += ["", "## Why the verdicts that are not MET", ""]
         for key in blocked:
@@ -408,8 +448,12 @@ def render_markdown(report):
         "",
         "## Throughput",
         "",
-        f"- Sustained verification: {tp['verification_sustained']['cores']:.1f} cores.",
-        f"- Peak verification: {tp['verification_peak']['cores']:.1f} cores. "
+        f"- Sustained verification: {tp['verification_sustained']['cores']:.1f} cores "
+        f"({tp['verification_sustained']['provenance']}; "
+        f"{tp['verification_sustained']['per_core_measured']:,}/s per core is the "
+        f"measured part).",
+        f"- Peak verification: {tp['verification_peak']['cores']:.1f} cores "
+        f"({tp['verification_peak']['provenance']}). "
         f"{tp['verification_peak']['note']}.",
         f"- Enrollment surge: "
         f"{tp['enrollment_surge']['signer_seconds_per_day'] / 60:.1f} minutes of one "

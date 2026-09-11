@@ -10676,6 +10676,24 @@ def check_capacity_model(root: pathlib.Path) -> list[Finding]:
                          "and not the other is a model validating something nobody is "
                          "planning for")
 
+    # 3b. A core count is division, not a measurement (P1.18 item 6, "no one-core x8").
+    #     The per-core rate is measured on one core; "six and a half cores" assumes those
+    #     cores add up, and this model labelled that MEASURED until v9.387.
+    tp = cap.throughput()
+    for key in ("verification_sustained", "verification_peak"):
+        entry = tp.get(key, {})
+        if entry.get("provenance") != cap.EXTRAPOLATED:
+            return _fail(name,
+                         f"{key} reports its core count as {entry.get('provenance')!r}. The "
+                         "per-core rate is measured on ONE core; the core count is division, "
+                         "and labelling the multiplication as measured is the move the "
+                         "roadmap names as 'no one-core x8'")
+        if not entry.get("assumption"):
+            return _fail(name,
+                         f"{key} is extrapolated and names no assumption. An extrapolation "
+                         "without its assumption printed beside it is a measurement claim "
+                         "wearing a different word")
+
     survivor = cap.nearest_survivor(cap.validate(schema))
     tail = (f"; closest 32-bit column is {survivor['table']}.{survivor['column']} at "
             f"{cap.human_lifetime(survivor)}" if survivor else "")

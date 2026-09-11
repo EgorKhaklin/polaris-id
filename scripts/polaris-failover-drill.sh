@@ -393,23 +393,55 @@ wait_for 30 edge_ok >/dev/null || fail "stack not healthy at the end of the dril
 # failover (the four verify_recovered probes above). The drop count is reported
 # next to the write outages so the two are comparable.
 if [[ -n "${VERIFY_PID:-}" ]]; then kill -TERM "$VERIFY_PID" 2>/dev/null || true; wait "$VERIFY_PID" 2>/dev/null || true; VERIFY_PID=""; fi
-python3 - "$WORK/verify.json" <<'PYEOF'
+python3 - "$WORK/verify.json" "$WORK/verify-latency.json" <<'PYEOF'
 import json, sys
 s = json.load(open(sys.argv[1]))
 print(f"  verification under load across the failover sequence: {s['requests']} requests, "
       f"{s['served']} served, {s['drops']} dropped, breakdown {s['by']}")
 assert s["served"] >= 100, f"only {s['served']} verifications served across the drill: too few to certify"
+
+# v9.387 (roadmap P1.18 item 6) — the latency of verification ON THIS TOPOLOGY.
+#
+# The point of the item is "no one-core x8": stop reporting a single-core number
+# multiplied by a core count as though a fleet had been measured. So what is
+# printed here is what this two-member cluster actually did, at the rate this
+# drill actually offered, and NOTHING is extrapolated from it.
+#
+# The percentiles the sample cannot carry are reported as unavailable rather than
+# computed anyway. This drill offers ~2 rps on purpose (the per-scenario health
+# traffic already sits near the edge's per-IP budget), so a p99 here would be the
+# slowest single request wearing a statistic's name.
+lat = s.get("latency_ms", {})
+have = " ".join(f"{k}={lat[k]}ms" for k in ("p50", "p95", "p99") if lat.get(k) is not None)
+print(f"  verification latency on this topology (n={lat.get('n', 0)} served, "
+      f"{s.get('achieved_rps')}/s offered on {s.get('threads')} thread(s)): "
+      f"{have or 'no percentile the sample supports'}")
+for name, why in sorted(lat.get("_unavailable", {}).items()):
+    print(f"    {name} not reported: {why}")
+assert lat.get("p50") is not None, (
+    "no p50 for verification latency across the drill; the sample should be well "
+    f"past the floor at {s['served']} served")
+json.dump({"latency_ms": lat, "achieved_rps": s.get("achieved_rps"),
+           "threads": s.get("threads"), "served": s["served"]},
+          open(sys.argv[2], "w"), indent=2)
 print("  verification was served at rate throughout and recovered after every failover")
 PYEOF
-python3 - "$OUT" "$p1" "$out1" "$fails1" "$stall1" "$j1" "$d2" "$outcome2" "$p2" "$out2" "$fails2" "$stall2" "$j2" "$p3" "$out3" "$fails3" "$stall3" "$j3" "$stall4" "$r4" <<'PYEOF'
+python3 - "$OUT" "$WORK/verify-latency.json" "$p1" "$out1" "$fails1" "$stall1" "$j1" "$d2" "$outcome2" "$p2" "$out2" "$fails2" "$stall2" "$j2" "$p3" "$out3" "$fails3" "$stall3" "$j3" "$stall4" "$r4" <<'PYEOF'
 import json, sys
-o, p1, o1, f1, s1, j1, d2, oc2, p2, o2, f2, s2, j2, p3, o3, f3, s3, j3, s4, r4 = sys.argv[1:]
+o, lat_path, p1, o1, f1, s1, j1, d2, oc2, p2, o2, f2, s2, j2, p3, o3, f3, s3, j3, s4, r4 = sys.argv[1:]
 summary = {
     "leader_lost":           {"promoted_s": int(p1), "write_outage_s": float(o1), "failed_inserts": int(f1), "longest_stall_s": float(s1), "rejoined_s": int(j1)},
     "leader_cut_from_dcs":   {"demoted_s": int(d2), "outcome": oc2, "lease_held_again_s": int(p2), "write_outage_s": float(o2), "failed_inserts": int(f2), "longest_stall_s": float(s2), "rejoined_s": int(j2)},
     "switchover":            {"promoted_s": int(p3), "write_outage_s": float(o3), "failed_inserts": int(f3), "longest_stall_s": float(s3), "followed_s": int(j3)},
     "etcd_member_crashed":   {"leader_changed": False, "failed_inserts": 0, "longest_stall_s": float(s4), "restarted_s": int(r4)},
 }
+# v9.387 (P1.18 item 6): the verification latency measured ON THIS TOPOLOGY rides
+# in the uploaded summary, so the one number an operator can cite about a real
+# multi-node cluster is an artifact rather than a line in a log that scrolls away.
+try:
+    summary["verification"] = json.load(open(lat_path))
+except (OSError, ValueError):
+    pass
 json.dump(summary, open(o, "w"), indent=2); print(json.dumps(summary))
 PYEOF
 echo "== FAILOVER DRILL PASSED: the replica took over a lost leader, a leader without its lease stood down, a switchover was a short gap, and the quorum carried an etcd crash =="

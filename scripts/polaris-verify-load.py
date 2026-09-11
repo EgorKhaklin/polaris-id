@@ -36,6 +36,7 @@ drill bootstraps a real admin first and passes it here as --login USER:PASS.
 import argparse
 import http.cookiejar
 import json
+import math
 import signal
 import ssl
 import sys
@@ -85,15 +86,53 @@ def _post_login(opener, base, user, password, timeout=10.0):
 
 
 def _get_status(opener, url, timeout=5.0):
-    """GET url; return its HTTP status, or None on a transport failure."""
+    """GET url; return (HTTP status or None on transport failure, latency_ms)."""
+    t0 = time.perf_counter()
     try:
         with opener.open(url, timeout=timeout) as resp:
             resp.read(64 * 1024)
-            return resp.status
+            return resp.status, (time.perf_counter() - t0) * 1000.0
     except urllib.error.HTTPError as e:
-        return e.code
+        return e.code, (time.perf_counter() - t0) * 1000.0
     except (urllib.error.URLError, ConnectionError, TimeoutError):
-        return None
+        return None, (time.perf_counter() - t0) * 1000.0
+
+
+#: A percentile is only reported when the sample can carry it. A p99 taken over
+#: a hundred requests is the slowest request wearing a statistic's name, and the
+#: whole point of measuring the real topology (roadmap P1.18 item 6) is to stop
+#: reporting a number that sounds measured and is not. Below the floor the report
+#: says the percentile is unavailable and why, which is a fact an operator can act
+#: on: run a longer or heavier measurement.
+PERCENTILE_FLOORS = {"p50": 20, "p95": 100, "p99": 1000}
+
+
+def percentiles(samples, floors=None):
+    """Latency percentiles over a sample, omitting any the sample cannot support.
+
+    Returns {"n": int, "p50": float|None, ...} with a "_unavailable" mapping
+    naming the floor each omitted percentile failed. Nearest-rank, which needs no
+    interpolation assumption and lands on a request that actually happened.
+    """
+    floors = floors or PERCENTILE_FLOORS
+    ordered = sorted(samples)
+    n = len(ordered)
+    out = {"n": n}
+    unavailable = {}
+    for name, floor in sorted(floors.items()):
+        if n < floor:
+            out[name] = None
+            unavailable[name] = f"n={n}, needs {floor}"
+            continue
+        q = int(name[1:]) / 100.0
+        # Nearest-rank: the smallest value at or above the q-th fraction.
+        idx = min(n - 1, max(0, math.ceil(q * n) - 1))
+        out[name] = round(ordered[idx], 3)
+    out["_unavailable"] = unavailable
+    if n:
+        out["min"] = round(ordered[0], 3)
+        out["max"] = round(ordered[-1], 3)
+    return out
 
 
 def classify(status):
@@ -119,7 +158,7 @@ def run_once(base, user, password, token_ids, retries=5, sleep_s=1.0):
     for attempt in range(1, retries + 1):
         opener = build_opener()
         if _post_login(opener, base, user, password) == 302:
-            if _get_status(opener, base + f"/api/tokens/{tok}/verify") == 200:
+            if _get_status(opener, base + f"/api/tokens/{tok}/verify")[0] == 200:
                 print(f"verify recovered: /api/tokens/{tok}/verify = 200 "
                       f"(attempt {attempt})")
                 return 0
@@ -142,6 +181,12 @@ def run_continuous(base, user, password, token_ids, out, threads, interval):
         return 2
 
     stats = {"requests": 0, "served": 0, "drops": 0, "by": {}}
+    # Latency is collected for SERVED responses only. A 429 measures the edge's
+    # rate limiter and a transport failure measures the timeout setting; folding
+    # either into a percentile would report the harness's own configuration as
+    # though it were the system's behaviour.
+    served_ms = []
+    started = time.time()
     lock = threading.Lock()
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *a: stop.set())
@@ -152,12 +197,13 @@ def run_continuous(base, user, password, token_ids, out, threads, interval):
         while not stop.is_set():
             tok = token_ids[i % len(token_ids)]
             i += 1
-            status = _get_status(opener, base + f"/api/tokens/{tok}/verify")
+            status, latency_ms = _get_status(opener, base + f"/api/tokens/{tok}/verify")
             outcome, key = classify(status)
             with lock:
                 stats["requests"] += 1
                 if outcome == "served":
                     stats["served"] += 1
+                    served_ms.append(latency_ms)
                 elif outcome == "drop":
                     stats["drops"] += 1
                 stats["by"][key] = stats["by"].get(key, 0) + 1
@@ -170,10 +216,24 @@ def run_continuous(base, user, password, token_ids, out, threads, interval):
     while not stop.is_set():
         time.sleep(0.2)
     time.sleep(0.5)   # let in-flight requests land in the ledger
+    elapsed = max(1e-9, time.time() - started)
+    with lock:
+        stats["latency_ms"] = percentiles(served_ms)
+        stats["elapsed_s"] = round(elapsed, 2)
+        stats["achieved_rps"] = round(stats["served"] / elapsed, 2)
+        stats["threads"] = threads
     with open(out, "w") as fh:
         json.dump(stats, fh)
+    lat = stats["latency_ms"]
+    shown = " ".join(f"{k}={lat[k]}ms" for k in ("p50", "p95", "p99")
+                     if lat.get(k) is not None)
+    missing = " ".join(f"{k} unavailable ({why})"
+                       for k, why in sorted(lat["_unavailable"].items()))
     print(f"verify-load: {stats['served']} served, {stats['drops']} dropped "
-          f"of {stats['requests']} ({stats['by']})")
+          f"of {stats['requests']} ({stats['by']}); "
+          f"{stats['achieved_rps']}/s over {stats['elapsed_s']}s "
+          f"on {threads} thread(s); {shown or 'no percentiles'}"
+          + (f"; {missing}" if missing else ""))
     return 0
 
 

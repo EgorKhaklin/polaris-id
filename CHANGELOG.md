@@ -5,6 +5,48 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.387 — 2026-09-10 (P1.18 item 6: the model was doing the thing the item forbids)
+
+Roadmap P1.18 item 6 asks for verification latency measured on the real topology, and states the
+rule in four words: **no one-core x8**. Stop reporting a single-core measurement multiplied by a
+core count as though a fleet had been measured.
+
+P7.3's capacity model, shipped hours earlier, was doing exactly that. `verification_peak` divided
+the 50,000/s target by a measured 7,848/s per core, reported "6.4 cores", and labelled the whole
+thing MEASURED. The per-core rate is measured. The multiplication has never been run.
+
+Core counts are now EXTRAPOLATED under a named assumption -- verification fans out because it
+needs only a public key and shares no state, which is plausible and unmeasured, and the
+difference between those two words is why the constant has a name. The measured per-core figure
+is reported beside the quotient so a reader can see which half was measured. Every MET verdict
+now carries what it rests on, under its own heading, because a verdict and its assumption travel
+together or the verdict cannot be graded. `check_capacity_model` fails if a core count is ever
+relabelled MEASURED again, or extrapolated without naming its assumption.
+
+The measurement half: `polaris-verify-load.py` -- the harness the HA drills already run -- now
+records latency, and the failover drill publishes what this two-member cluster actually did, at
+the rate the drill actually offered, with nothing extrapolated from it.
+
+PERCENTILES ARE GATED ON WHAT THE SAMPLE CAN CARRY. p50 needs 20 samples, p95 needs 100, p99
+needs 1000. Below the floor the percentile is withheld with the reason, because a p99 over a
+hundred requests is the slowest single request wearing a statistic's name, which is the same
+error as one-core-x8 one level down. The drill offers ~2 rps on purpose (the health traffic
+already sits near the edge's per-IP budget), so it will report a p50 and say plainly that the
+p99 is not available and what would make it so. Latency is collected for SERVED responses only:
+a 429 measures the edge's rate limiter and a transport failure measures the timeout setting, and
+folding either into a percentile reports the harness's own configuration as the system's
+behaviour. Nearest-rank, so every number is a request that actually happened.
+
+Still owed on item 6: a committed report on a real multi-node topology driven by the synthetic
+nation (P2.14). That needs the Docker/Patroni stack and a load large enough to earn a p99, and
+writing the document without them would be the overstatement the item exists to stop.
+
+- `check_capacity_model` gains the extrapolation rule, with detection tests
+- six measured tests for the percentile floors in `scripts/test_verify_load.py`, three more in
+  `polaris_web/test_capacity.py`
+
+---
+
 ## v9.386 — 2026-09-10 (off by one in the control, right about the trap)
 
 The capacity drill's first ever execution, in v9.385's CI. Fourteen of its fifteen cases held

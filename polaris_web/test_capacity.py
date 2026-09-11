@@ -181,10 +181,31 @@ class ThroughputTests(unittest.TestCase):
 
     def test_peak_verification_is_a_handful_of_cores(self):
         tp = throughput()
-        self.assertEqual(tp["verification_peak"]["provenance"], MEASURED)
         self.assertAlmostEqual(tp["verification_peak"]["cores"],
                                50_000 / capacity.BENCHMARK["verify_per_core_single_witness"],
                                places=3)
+
+    def test_a_core_count_is_extrapolated_and_says_so(self):
+        """The per-core rate is measured; six and a half cores is division.
+
+        Roadmap P1.18 item 6 names this move by its worst form, "no one-core x8",
+        and this file made it while labelling the result MEASURED. The per-core
+        figure is still reported, so a reader can see which half was measured.
+        """
+        tp = throughput()
+        for key in ("verification_sustained", "verification_peak"):
+            self.assertEqual(tp[key]["provenance"], capacity.EXTRAPOLATED)
+            self.assertIn("measured on ONE core", tp[key]["assumption"])
+            self.assertEqual(tp[key]["per_core_measured"],
+                             capacity.BENCHMARK["verify_per_core_single_witness"])
+
+    def test_signing_is_measured_because_it_does_not_fan_out(self):
+        """The contrast that makes the label mean something.
+
+        Enrollment stays MEASURED: it is one signer's rate and the target needs
+        nine minutes of it, so nothing is being multiplied.
+        """
+        self.assertEqual(throughput()["enrollment_surge"]["provenance"], MEASURED)
 
     def test_enrollment_is_minutes_of_one_signer(self):
         tp = throughput()
@@ -243,6 +264,14 @@ class RealSchemaTests(unittest.TestCase):
             import re as _re
             quote = _re.sub(r"\s+", " ", target["quote"])
             self.assertIn(quote, text, f"{key} is not the roadmap's own words")
+
+    def test_a_met_verdict_carries_what_it_rests_on(self):
+        """A verdict and its assumption travel together or the verdict cannot be graded."""
+        v = validate(self.schema)["targets"]["verification_peak"]
+        self.assertEqual(v["verdict"], "MET")
+        self.assertIn("measured on ONE core", v["rests_on"])
+        md = capacity.render_markdown(validate(self.schema))
+        self.assertIn("What the MET verdicts rest on", md)
 
     def test_the_rendering_leads_with_what_is_not_met(self):
         md = capacity.render_markdown(validate(self.schema))
