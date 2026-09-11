@@ -5,6 +5,24 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.386 — 2026-09-10 (off by one in the control, right about the trap)
+
+The capacity drill's first ever execution, in v9.385's CI. Fourteen of its fifteen cases held
+on the first run, including the one that matters: a real verification row landed at event_id
+2,147,483,648, and narrowing the column back was refused once it had.
+
+The failure was in the drill's own control case. `setval(seq, n)` sets `last_value` to `n`, so
+the NEXT `nextval` returns `n + 1`; setting the half-widened sequence to `INT4_MAX - 1` and
+expecting the next insert to be `INT4_MAX - 1` was off by one. The insert correctly produced
+`INT4_MAX`, which is the last id that fits, and the insert after it was correctly refused.
+
+The control was right about the trap the whole time. Verified against a real sequence rather
+than by reasoning about it a second time: a `BIGINT` column whose sequence is still declared
+`AS integer` refuses with `nextval: reached maximum value of sequence` at exactly
+2,147,483,647, which is the half-finished widening the migration exists to avoid.
+
+---
+
 ## v9.385 — 2026-09-10 (the widening the schema alone could not tell me about)
 
 v9.384 widened five surrogate ids and broke nine CI jobs, all of them for one reason: every job

@@ -127,11 +127,14 @@ def main():
                         "OWNED BY drill_half_widened.id")
             cur.execute("ALTER TABLE drill_half_widened ALTER COLUMN id "
                         "SET DEFAULT nextval('drill_half_seq')")
+            # setval(seq, n) sets last_value to n, so the NEXT nextval returns n+1.
+            # Setting it to INT4_MAX - 1 puts the last id that still FITS on the next
+            # insert and the first that does not on the one after.
             cur.execute("SELECT setval('drill_half_seq', %s)", (INT4_MAX - 1,))
             conn.commit()
             cur.execute("INSERT INTO drill_half_widened DEFAULT VALUES RETURNING id")
-            case("control: bigint column, 32-bit sequence, first insert",
-                 cur.fetchone()["id"], INT4_MAX - 1)
+            case("control: bigint column, 32-bit sequence, the last id that fits",
+                 cur.fetchone()["id"], INT4_MAX)
             conn.commit()
             trapped = False
             try:
