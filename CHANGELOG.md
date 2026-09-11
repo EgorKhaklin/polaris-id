@@ -5,6 +5,49 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.404 — 2026-09-11 (the posture read the key exchange off a Dockerfile)
+
+PQC-POSTURE stated the TLS key exchange on the two internal hops by naming the OpenSSL version
+in each image's base: the app "libpq 3.0.20 (Debian Bookworm)", pgbouncer "3.3.7 (Alpine 3.20)",
+postgres "3.5.6". From those numbers it concluded both hops were classical and both were gated
+on rebuilding images.
+
+Every load-bearing part of that was wrong.
+
+The app does not use its base image's OpenSSL to reach the database. `psycopg2-binary` ships a
+manylinux wheel that vendors its own libpq and its own OpenSSL, 3.5.6, in a sibling directory,
+and that pair is the entire TLS path. The base image's 3.0.20 is never in it. On the other end
+the pgbouncer image had moved from Alpine 3.20 to 3.24, OpenSSL 3.3.7 to 3.5.8, and the document
+did not follow. Measured: the app-to-pooler hop negotiates X25519MLKEM768 with the driver's
+default offer, and has for some time. The posture called it classical the whole while.
+
+The second hop is gated, but not on what the document said. Both ends there already link OpenSSL
+3.5, and postgres still refuses a forced hybrid: through PostgreSQL 17 the server clamps its
+group list to `ssl_ecdh_curve`, one named EC curve, which cannot express a hybrid group. On
+postgres:18-alpine with `ssl_groups='X25519MLKEM768:...'` the same client negotiates the hybrid.
+So the gate is a postgres major. The OpenSSL the roadmap row was waiting for arrived and changed
+nothing, which is the kind of thing a document notices only if something measures it.
+
+`polaris-internal-kex-drill.sh` measures it. It boots the repo's own postgres and pgbouncer
+images, speaks the PostgreSQL SSLRequest preamble, and reads `SSL_get0_group_name()` off the
+finished handshake using THE SAME OpenSSL the driver links, located by walking psycopg2's own
+vendored library directory rather than by asking the system. Four cases: each hop, forced and
+unforced. Forcing matters, because "the server prefers the hybrid" and "the server would accept
+it" are different claims and the drill should not conflate them. The database's refusal is
+asserted too: that refusal is the evidence identifying postgres rather than a library as the
+limiter.
+
+The drill fails in EITHER direction. A hop falling back to classical is a loss. A hop quietly
+starting to negotiate the hybrid is a posture document going stale again, which is the defect
+this exists to catch.
+
+P0.11's first hop is closed. `check_internal_kex_measured` (229) pins the probe to the driver's
+library, the drill to both hops forced and unforced, the zero-case guard, the CI step, and the
+posture rows, with a positive control and ten verified detections. The check layer earned its
+keep on the way in: `check_postgres_probes_use_tcp` failed the new drill for probing readiness
+over the Unix socket, which the postgres entrypoint's temporary init-only server answers, so
+"ready" would have arrived before the real server was listening.
+
 ## v9.403 — 2026-09-11 (a drill that recorded no cases printed its guarantee and exited 0)
 
 The mutation work hardened the CHECKS. The drills are the other half of the verification layer,

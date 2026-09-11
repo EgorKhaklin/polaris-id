@@ -973,6 +973,19 @@ jobs:
           docker network rm vcanet >/dev/null 2>&1 || true
           echo "app<->DB verify-ca pinning round-trip OK (correct pin connects, wrong pin rejected, backend SSL)"
 
+      # v9.404 - what TLS GROUP do the internal hops actually negotiate? The
+      # posture used to answer that from base-image OpenSSL versions in the
+      # Dockerfiles, which is an inference about a handshake, and it was wrong:
+      # psycopg2-binary vendors its own OpenSSL 3.5 (the base image's 3.0.20 is
+      # never in the path) and the pgbouncer image had moved two Alpine releases.
+      # The app-to-pooler hop had been post-quantum for some time with nothing
+      # measuring it. The drill reads the group off the finished handshake with
+      # the driver's own library and fails when a hop stops matching the posture,
+      # in EITHER direction: a regression to classical is a loss, and a silent
+      # improvement is a document gone stale again.
+      - name: Internal-hop TLS key exchange, measured off the handshake
+        run: bash scripts/polaris-internal-kex-drill.sh
+
       # v9.126 — streaming-replication round-trip. Proves the replication config
       # Polaris ships (wal_level=replica + a REPLICATION role + the pg_hba line,
       # see docker-init.sh / check_replication_scaffolding) actually produces a

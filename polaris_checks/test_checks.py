@@ -11728,3 +11728,72 @@ def test_vc_format_check_discriminates(tmp_path):
     write({'docs/design/vc-format.md': "We support W3C Verifiable Credentials.\n"})
     assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
         "must FAIL when the record does not say the document attests a verification result"
+
+
+def test_internal_kex_measured_check_discriminates(tmp_path):
+    DRILL = ('set -euo pipefail\n'
+             'HYBRID=X25519MLKEM768\n'
+             '_cases_recorded=0\n'
+             '_case() {\n'
+             '    _cases_recorded=$((_cases_recorded + 1))\n'
+             '}\n'
+             '_case "a" "$HYBRID" "$(probe pb 6432)"\n'
+             '_case "b" "$HYBRID" "$(probe pb 6432 "$HYBRID")"\n'
+             '_case "c" "secp256r1" "$(probe pg 5432)"\n'
+             '_case "d" "handshake-failed" "$(probe pg 5432 "$HYBRID")"\n'
+             'if [ "$_cases_recorded" -eq 0 ]; then exit 1; fi\n')
+    PROBE = ('import ctypes\n'
+             'SSL_REQUEST_CODE = 80877103\n'
+             'root = "psycopg2_binary.libs"\n'
+             'g = ssl.SSL_get0_group_name(con)\n')
+    POSTURE = ('- app to pooler, measured by scripts/polaris-internal-kex-drill.sh\n'
+               '| X25519MLKEM768 hybrid (app to pgbouncer) | kex_transport | PQ_SECURE | ok |\n'
+               'the second hop waits on PostgreSQL 18 ssl_groups\n')
+    CI = "      - name: kex\n        run: bash scripts/polaris-internal-kex-drill.sh\n"
+    good = {
+        "scripts/polaris-internal-kex-drill.sh": DRILL,
+        "scripts/polaris_kex_probe.py": PROBE,
+        "docs/reference/PQC-POSTURE.md": POSTURE,
+        ".github/workflows/ci.yml": CI,
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write()
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # the probe asks the system OpenSSL instead of the one the driver links
+    write({"scripts/polaris_kex_probe.py": PROBE.replace("psycopg2_binary.libs", "/usr/lib")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when the probe does not use the driver's vendored OpenSSL"
+    # the probe stops reading the group off the handshake
+    write({"scripts/polaris_kex_probe.py": PROBE.replace("SSL_get0_group_name", "SSL_get_cipher")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when the probe does not read the negotiated group"
+    # only one hop, or only the default offer: fewer than four cases
+    write({"scripts/polaris-internal-kex-drill.sh": DRILL.replace('_case "c" "secp256r1" "$(probe pg 5432)"\n', "").replace('_case "d" "handshake-failed" "$(probe pg 5432 "$HYBRID")"\n', "")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when the drill covers fewer than both hops forced and unforced"
+    # the drill no longer refuses to report from zero cases
+    write({"scripts/polaris-internal-kex-drill.sh": DRILL.replace('if [ "$_cases_recorded" -eq 0 ]; then exit 1; fi\n', "")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when the drill would report a measurement from zero cases"
+    # the drill stops counting what it recorded
+    write({"scripts/polaris-internal-kex-drill.sh": DRILL.replace("_cases_recorded=$((_cases_recorded + 1))", "true")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not count its cases"
+    # the database's refusal is not asserted, so nothing identifies the real limiter
+    write({"scripts/polaris-internal-kex-drill.sh": DRILL.replace("handshake-failed", "whatever")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when the forced-hybrid refusal is not asserted"
+    # CI does not run it, so the measurement happens only by hand
+    write({".github/workflows/ci.yml": "      - name: something else\n        run: true\n"})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+    # the posture drifts back to calling the hop classical
+    write({"docs/reference/PQC-POSTURE.md": POSTURE.replace(
+        "| X25519MLKEM768 hybrid (app to pgbouncer) |", "| TLS ECDHE (app to pgbouncer) |")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when PQC-POSTURE still lists the app-to-pgbouncer hop as classical"
+    # the posture stops naming ssl_groups, so it implies OpenSSL would close hop two
+    write({"docs/reference/PQC-POSTURE.md": POSTURE.replace("ssl_groups", "a newer OpenSSL")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when PQC-POSTURE does not name the real gate on the second hop"
+    # the posture's numbers are unattributed
+    write({"docs/reference/PQC-POSTURE.md": POSTURE.replace("scripts/polaris-internal-kex-drill.sh", "a handshake")})
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when PQC-POSTURE does not name the drill its numbers came from"
+    # the drill is gone entirely
+    write()
+    (tmp_path / "scripts" / "polaris-internal-kex-drill.sh").unlink()
+    assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when the drill is absent"

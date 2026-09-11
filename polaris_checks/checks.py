@@ -10817,6 +10817,85 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_internal_kex_measured(root: pathlib.Path) -> list[Finding]:
+    """The internal hops' key exchange must be measured, not read off a Dockerfile (v9.404).
+
+    PQC-POSTURE stated the TLS group on the app-to-pooler and pooler-to-database hops by
+    reading base-image OpenSSL versions out of the Dockerfiles. That is an inference about a
+    running handshake, and it was wrong in both directions at once. The app does not use its
+    base image's OpenSSL for database connections: psycopg2-binary vendors its own libpq and
+    its own OpenSSL 3.5 beside it, and that pair is the whole TLS path. Meanwhile the pgbouncer
+    image had moved two Alpine releases without the document following. The app-to-pooler hop
+    had been negotiating X25519MLKEM768 for some time while the posture called it classical.
+
+    The fix is not a better inference. `polaris-internal-kex-drill.sh` boots the repo's own
+    images and reads SSL_get0_group_name() off the finished handshake with the driver's own
+    library, and the posture states what the drill measured. This check pins that arrangement:
+    the drill probes both hops forced AND unforced, the probe locates the driver's vendored
+    OpenSSL rather than the system's, the drill refuses to report from zero cases, CI runs it,
+    and the posture no longer calls the app-to-pooler hop classical."""
+    name = "internal_kex"
+    drill_rel = "scripts/polaris-internal-kex-drill.sh"
+    probe_rel = "scripts/polaris_kex_probe.py"
+    for rel in (drill_rel, probe_rel):
+        if not (root / rel).is_file():
+            return _fail(name, f"{rel} is absent; the internal hops' key exchange is stated by "
+                               "nothing that measures it")
+    drill = _read(root, drill_rel)
+    probe = _read(root, probe_rel)
+    posture = _read(root, "docs/reference/PQC-POSTURE.md")
+    ci = _read(root, ".github/workflows/ci.yml")
+
+    problems = []
+    # The probe must read the group off the handshake, using the library the DRIVER links.
+    # Asking the system OpenSSL is the same inference in a different costume.
+    if "SSL_get0_group_name" not in probe:
+        problems.append("the probe does not read the negotiated group off the handshake")
+    if "psycopg2_binary.libs" not in probe:
+        problems.append("the probe does not locate the driver's vendored OpenSSL, so it would "
+                        "measure a library the app never speaks TLS with")
+    if "80877103" not in probe:
+        problems.append("the probe does not send the postgres SSLRequest preamble, so it cannot "
+                        "reach TLS on a postgres or pgbouncer port")
+    # Both hops, and the forced case as well as the default. Default alone says what the
+    # server happens to prefer; forced alone says what it would accept.
+    if drill.count("_case ") < 4:
+        problems.append("the drill records fewer than four cases, so it cannot cover both hops "
+                        "forced and unforced")
+    if "$HYBRID" not in drill or "X25519MLKEM768" not in drill:
+        problems.append("the drill does not name the hybrid group it forces")
+    if "handshake-failed" not in drill:
+        problems.append("the drill does not assert the database's refusal of a forced hybrid, "
+                        "which is what identifies postgres rather than OpenSSL as the limiter")
+    counts = "_cases_recorded=$((_cases_recorded + 1))" in drill
+    refuses = re.search(r'\[ "\$_cases_recorded" -eq 0 \]', drill) is not None
+    if not (counts and refuses):
+        problems.append("the drill does not %s, so removing its cases would leave it printing "
+                        "a measurement it never took (v9.403)"
+                        % ("count the cases it records" if not counts
+                           else "refuse to report a verdict from zero cases"))
+    if "polaris-internal-kex-drill.sh" not in ci:
+        problems.append("CI does not run the drill, so the measurement happens only by hand")
+    # The posture must carry the measurement and say where it came from.
+    if "polaris-internal-kex-drill.sh" not in posture:
+        problems.append("PQC-POSTURE does not name the drill, so its numbers are unattributed")
+    if re.search(r"TLS ECDHE \(app to pgbouncer\)", posture):
+        problems.append("PQC-POSTURE still lists the app-to-pgbouncer hop as classical ECDHE")
+    if "X25519MLKEM768 hybrid (app to pgbouncer)" not in posture:
+        problems.append("PQC-POSTURE's algorithm table does not carry the measured app-to-pooler "
+                        "group")
+    if "ssl_groups" not in posture:
+        problems.append("PQC-POSTURE does not name ssl_groups as the pooler-to-database gate, so "
+                        "it still implies an OpenSSL upgrade would close that hop")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]))
+    return _ok(name,
+               "the internal hops' key exchange is measured off real handshakes with the "
+               "driver's own OpenSSL (both hops, forced and unforced), the drill refuses to "
+               "report from zero cases, CI runs it, and PQC-POSTURE states what it measured "
+               "rather than what the Dockerfiles imply")
+
+
 def check_drills_count_their_cases(root: pathlib.Path) -> list[Finding]:
     """A drill that records no cases still prints its summary and exits 0 (v9.403).
 
@@ -13611,6 +13690,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
+    check_internal_kex_measured,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,

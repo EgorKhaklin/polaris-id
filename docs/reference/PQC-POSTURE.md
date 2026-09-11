@@ -20,7 +20,8 @@ ledger. Nothing here asserts production-readiness.
 Polaris's thesis is a "post-quantum identity system." That thesis holds for the
 identity TOKEN and its proofs, and as of v9.136 for the client-to-edge TRANSPORT
 key exchange with modern clients (hybrid X25519MLKEM768, proven off a real
-handshake). It does not yet hold for the two INTERNAL transport hops, for the
+handshake), and as of v9.404 for the app-to-pooler INTERNAL hop (measured the
+same way). It does not yet hold for the pooler-to-database hop, for the
 certificate signatures, or for the OPERATOR-AUTH that gates the console. This
 document separates those layers without softening either side.
 
@@ -93,28 +94,44 @@ post-quantum or post-quantum-acceptable.
   clients, so harvest-now-decrypt-later exposure persists for any connection that
   does not negotiate ML-KEM (old clients, or an active downgrade of the offered
   groups).
+- **App-to-pooler TLS key exchange: X25519MLKEM768 hybrid (v9.404).** The app's
+  connection to pgbouncer negotiates the hybrid post-quantum group with the
+  driver's default offer, and accepts it when forced. What is PROVEN:
+  `scripts/polaris-internal-kex-drill.sh` boots the repo's own pgbouncer image,
+  speaks the PostgreSQL SSLRequest preamble, and reads
+  `SSL_get0_group_name()` off the finished handshake using THE SAME OpenSSL the
+  driver links. That last part is the whole point. This document previously said
+  this hop was classical, held back by "the app's libpq 3.0.20 (Debian Bookworm
+  base)". The app does not use the base image's libpq: `psycopg2-binary` ships a
+  manylinux wheel that vendors its own libpq and its own OpenSSL 3.5.6 beside it,
+  and that vendored pair is what every database connection speaks TLS with. The
+  base image's OpenSSL 3.0.20 never enters the path. On the server side pgbouncer
+  had moved from Alpine 3.20 to 3.24 (OpenSSL 3.3.7 to 3.5.8) without the document
+  following. Both ends had been ML-KEM-capable for some time; nothing measured it,
+  because the claim was derived from version numbers in Dockerfiles rather than
+  from a handshake. The drill runs in CI now, so the hop is asserted rather than
+  asserted about.
 
 ## What is still classical
 
 These surfaces are classical and quantum-vulnerable today. The threat differs by
 surface, and the realistic exposure is bounded but real.
 
-- **TLS key exchange on the two INTERNAL hops (app to pgbouncer, pgbouncer to
-  postgres): classical ECDHE, no hybrid ML-KEM.** The client-to-edge hop is now
-  hybrid post-quantum (see above); these two internal hops are not, and the
-  limiter is not a single component. ML-KEM requires OpenSSL 3.5 on both ends of a
-  hop. Measured versions: the app's libpq is OpenSSL 3.0.20 (Debian Bookworm
-  base), pgbouncer is OpenSSL 3.3.7 (Alpine 3.20 base), and postgres is OpenSSL
-  3.5.6 (Alpine 3.23 base). So the app-to-pgbouncer hop is held classical by BOTH
-  ends (the app's libpq 3.0.20 as client and pgbouncer 3.3.7 as server, the app's
-  Bookworm libpq being the older limiter), and the pgbouncer-to-postgres hop is
-  held classical by pgbouncer 3.3.7 as the client (postgres at 3.5.6 is already
-  capable). Threat: harvest-now-decrypt-later. Exposure: these hops carry only
-  notional data inside the deployment trust boundary, so the payoff is near nil.
-  Closing both hops is gated on rebuilding the app image on an OpenSSL 3.5+ base
-  (Debian Trixie or equivalent) AND pgbouncer on an OpenSSL 3.5+ base, then
-  confirming both ends of each hop negotiate ML-KEM. Low priority given the
-  notional, internal-only exposure.
+- **TLS key exchange on the INTERNAL pooler-to-database hop: classical ECDHE
+  (secp256r1), no hybrid ML-KEM.** Measured, not inferred:
+  `scripts/polaris-internal-kex-drill.sh` boots the repo's own postgres image and
+  reads the group off a finished handshake. Both ends already link OpenSSL 3.5
+  (postgres:16-alpine carries 3.5.6, pgbouncer 3.5.8), so the library is not the
+  limiter. The limiter is postgres itself: through PostgreSQL 17 the server clamps
+  its TLS group list to `ssl_ecdh_curve`, a SINGLE named EC curve, which cannot
+  express a hybrid group. A client that forces X25519MLKEM768 is refused with a
+  handshake-failure alert, and the drill asserts that refusal, because the refusal
+  is what identifies the real blocker. PostgreSQL 18 replaces that setting with
+  `ssl_groups`, which takes a list; with `ssl_groups='X25519MLKEM768:...'` the same
+  client and the same driver negotiate X25519MLKEM768 (measured against
+  postgres:18-alpine). So this hop is gated on the postgres major, not on any
+  image's OpenSSL. Threat: harvest-now-decrypt-later. Exposure: notional data
+  inside the deployment trust boundary, so the payoff is near nil.
 - **Edge certificate signature (Let's Encrypt CA, RSA 2048 or ECDSA P-256):
   classical, Shor-breakable forgery.** Exposure: the standard public-PKI gap
   shared by most of the classical web. The algorithm is chosen by the CA, not the
@@ -166,8 +183,8 @@ Status maps to the NIST IR 8547 timeline (deprecate classical public-key after
 | SHA-256 (recovery-code digest) | hashing | REDUCED_BUT_OK | Classical SHA-2 but a hash, not public-key; ~128-bit quantum preimage. No deadline. Acceptable as-is. |
 | ECDSA/EdDSA/RSA (WebAuthn MFA) | webauthn | MIGRATE_BY_2035 | Classical, Shor-breakable. Key is client-side authenticator, never sent, so no HNDL. Migration gated on FIDO/hardware, not Polaris; the relying party already offers and verifies ML-DSA-65 (v9.189), so no Polaris change is needed when authenticators ship it. |
 | X25519MLKEM768 hybrid (client to edge) | kex_transport | PQ_SECURE (modern clients) | Hybrid PQ KEX, server offers + selects it by default (proven off a real handshake, forced + default; asserted by the caddy-edge CI job). Closes HNDL for connections from modern (ML-KEM-capable) clients; old clients negotiate classical X25519 (no PQ). Opportunistic, not required. Safe if either X25519 or ML-KEM-768 holds. |
-| TLS ECDHE (app to pgbouncer) | kex_transport | MIGRATE_BY_2030 | Classical KEX, HNDL. Internal hop, notional data; payoff near nil. Gated on BOTH ends < OpenSSL 3.5: app libpq 3.0.20 (Bookworm) and pgbouncer 3.3.7 (Alpine 3.20). |
-| TLS ECDHE (pgbouncer to postgres) | kex_transport | MIGRATE_BY_2030 | Classical KEX, HNDL. Internal hop, notional data. Gated on pgbouncer 3.3.7 (client); postgres is already OpenSSL 3.5.6. |
+| X25519MLKEM768 hybrid (app to pgbouncer) | kex_transport | PQ_SECURE | Hybrid PQ KEX, negotiated by default and accepted when forced. Measured off a real handshake with the driver's own vendored OpenSSL 3.5.6 (psycopg2-binary) against the repo's pgbouncer image (OpenSSL 3.5.8); asserted by `polaris-internal-kex-drill.sh` in CI. Closes HNDL on this hop. Safe if either X25519 or ML-KEM-768 holds. |
+| TLS ECDHE, secp256r1 (pgbouncer to postgres) | kex_transport | MIGRATE_BY_2030 | Classical KEX, HNDL. Internal hop, notional data. Measured, and the forced-hybrid refusal measured with it: both ends link OpenSSL 3.5, so the limiter is postgres clamping its group list to `ssl_ecdh_curve` (one EC curve) through PG 17. Gated on PostgreSQL 18's `ssl_groups`, not on any image's OpenSSL. |
 | RSA 2048 + SHA-256 (internal self-signed certs) | cert_signature | MIGRATE_BY_2035 | Classical, Shor-breakable forgery, ~112-bit. Pinned, inside trust boundary. Migrate to ML-DSA or SLH-DSA when the stack verifies PQC chains. |
 | RSA 2048 / ECDSA P-256 (Let's Encrypt CA) | cert_signature | MIGRATE_BY_2035 | Classical, Shor-breakable forgery. CA chooses the algorithm; gated on public-PKI rollout. |
 
@@ -183,31 +200,19 @@ third-party-gated and are future work, not current defects.
    This closed harvest-now-decrypt-later for modern clients on the only hop with
    live content. Old clients still fall back to classical X25519 (opportunistic,
    not required).
-2. **P2, internal-hop TLS hybrid KEX.** Enable hybrid ML-KEM on the
-   app/pgbouncer/postgres hops. Concretely gated on rebuilding TWO images on an
-   OpenSSL 3.5+ base: the app (libpq 3.0.20 on Debian Bookworm) and pgbouncer
-   (3.3.7 on Alpine 3.20); postgres is already 3.5.6. Both ends of a hop need 3.5+,
-   so the app-to-pgbouncer hop needs both rebuilt. Lower urgency: notional data
-   inside the trust boundary. The app base bump (Bookworm to Trixie or a 3.13
-   image) is a deliberate refresh with its own regression surface, not a quick
-   swap. NIST: same 2030/2035 clock.
-3. **P3, internal self-signed cert signatures.** Reissue with ML-DSA (FIPS 204),
-   or SLH-DSA (FIPS 205, hash-based) for a non-lattice root, once OpenSSL verifies
-   PQC chains. Most self-controllable cert gap. NIST: deprecate 2030, disallow
-   2035.
-4. **P4, edge CA cert signature.** No direct action; track the Let's Encrypt and
-   CA-Browser PQC rollout, expected via hybrid/composite certs. Third-party-gated.
-5. **P5, WebAuthn COSE agility.** DONE on the relying-party side at v9.189:
-   ML-DSA-65 is offered first and verified. What remains is third-party-gated:
-   FIDO2/CTAP PQC profiles and authenticators that implement them (none as of
-   2026-09). HNDL does not apply because the key never leaves the authenticator.
-6. **P6, optional hygiene.** Optionally move the recovery-code digest from SHA-256
-   to SHA3-256 or SHA-384 for extra Grover margin. Hygiene, not a quantum
-   requirement; no deadline.
-7. **No action.** ML-DSA-65 signing, SHA3 hashing, Plonky2 ZK, scrypt, and the
-   session/CSRF symmetric layer are already post-quantum-secure or post-quantum
-   acceptable. Maintain ordinary parameter hygiene; do not quantum-panic a working
-   SHA3-256 or scrypt design.
+2. **P2, internal-hop TLS hybrid KEX. HALF DONE (v9.404).** The app-to-pooler
+   hop negotiates X25519MLKEM768 today, measured off a real handshake with the
+   driver's own OpenSSL and asserted by `polaris-internal-kex-drill.sh` in CI. It
+   got there without anyone enabling it: `psycopg2-binary` vendors OpenSSL 3.5.6
+   and the pgbouncer image moved to Alpine 3.24 (OpenSSL 3.5.8), and this document
+   went on describing the hop from the base-image versions in the Dockerfiles,
+   which were never the versions in the path. The remaining half, pooler to
+   database, is NOT gated on OpenSSL: both ends already link 3.5, and the drill
+   measures postgres refusing a forced hybrid anyway, because through PostgreSQL
+   17 the server clamps its groups to `ssl_ecdh_curve`, a single EC curve.
+   PostgreSQL 18's `ssl_groups` takes a list and negotiates the hybrid with the
+   same client, measured. So the gate is a postgres major upgrade. Lower urgency:
+   notional data, inside the trust boundary.
 
 ## Closing note
 
@@ -215,9 +220,12 @@ This is an audit of a notional, educational reference system. The data is
 non-real. The honest summary is that the identity token at the center of Polaris
 is post-quantum, and as of v9.136 so is the client-to-edge transport key exchange
 for modern clients (hybrid X25519MLKEM768, proven off a real handshake and
-asserted by the caddy-edge CI job), while the two internal transport hops, the
-certificate signatures, and the operator authentication that gates the console
-are still classical. The realistic exposure of those classical
+asserted by the caddy-edge CI job) and, as of v9.404, the app-to-pooler internal
+hop (measured the same way, asserted by the internal-kex drill). The
+pooler-to-database hop, the certificate signatures, and the operator
+authentication that gates the console are still classical, and the
+pooler-to-database hop waits on a postgres major, not on an image
+rebuild. The realistic exposure of those classical
 surfaces is bounded by the notional data, the internal-only reach of the internal
 hops, the client-side custody of the WebAuthn key, and the third-party gating of
 WebAuthn and public-PKI migration. Nothing here claims production-readiness; for

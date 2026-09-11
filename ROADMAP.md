@@ -90,7 +90,7 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 228 invariant
+release; CVE gates on dependencies and images; a coverage floor; 229 invariant
 checks (v9.403) each with a detection test; nineteen operator runbooks and ledgers; the protocol layer
 (P8, complete and released): a signed registry, trust lists, the exchange gateway with
 receipts, a timestamp authority, document signing with long-term validation, an auth broker,
@@ -141,8 +141,10 @@ funding, enrollment workforce, manufacturing, authorization to operate).
 (v9.160 to v9.175). One engineering limit is carried openly in the readiness
 ledger: edge and database recreation are window operations, measured against
 ceilings on every push since v9.240 (edge configuration changes are live
-reloads). Closing it is P2.7. The Caddy edge became fully non-root at v9.239. P0.11 (internal-hop hybrid KEX) stays `[EXT]` on
-OpenSSL 3.5 reaching the pgbouncer and postgres images.
+reloads). Closing it is P2.7. The Caddy edge became fully non-root at v9.239. P0.11 (internal-hop hybrid KEX) is half
+closed at v9.404: the app-to-pooler hop negotiates X25519MLKEM768 and is measured on every
+push; the pooler-to-database hop stays `[EXT]` on PostgreSQL 18's `ssl_groups`, which is
+the actual blocker (the OpenSSL the row used to name arrived and changed nothing).
 
 ---
 
@@ -237,10 +239,11 @@ command, and reproduce every artifact. Nothing on the known-debt list survives.
 | [x] P0.8 | Coverage measured and gated (v9.171) | M | low | - | Pinned by `check_coverage_gated` |
 | [x] P0.9 | Offsite backup, one command (v9.173) | M | low | - | Pinned by `check_offsite_backup_env_driven` |
 | [x] P0.10 | Pager integration for alerts (v9.175) | S | low | - | Pinned by `check_pager_integration` |
-| [ ] P0.11 | Internal-hop hybrid PQ KEX | M | ext | OpenSSL 3.5 in the pgbouncer/postgres images | Both internal hops negotiate hybrid KEX; the CI handshake proof extends to them; PQC-POSTURE updated |
+| [~] P0.11 | Internal-hop hybrid PQ KEX (half at v9.404) | M | ext | PostgreSQL 18 (`ssl_groups`) for the second hop | App to pooler: DONE, negotiates X25519MLKEM768 by default, measured off a real handshake with the driver's own vendored OpenSSL and asserted by `polaris-internal-kex-drill.sh` in CI. It had been true for some time; the posture was inferring it from base-image versions that were never in the path. Pooler to database: postgres clamps its group list to `ssl_ecdh_curve` (one EC curve) through PG 17 and refuses a forced hybrid even with OpenSSL 3.5 on both ends; measured working on postgres:18-alpine with `ssl_groups`. So the gate is the postgres major, NOT the images' OpenSSL, which arrived and changed nothing. Pinned by `check_internal_kex_measured` |
 
 Exit gate, met at v9.175 with P0.11 `[EXT]`: every other P0 row `[x]`; the
-carrying-debts paragraph in the inventory is empty of P0 items.
+carrying-debts paragraph in the inventory is empty of P0 items. P0.11's first
+hop closed at v9.404; its second waits on PostgreSQL 18.
 
 ---
 
@@ -532,7 +535,7 @@ select from here.
 
 | Row | Waiting on |
 |---|---|
-| P0.11 | OpenSSL 3.5 reaching the pgbouncer and postgres images |
+| P0.11 (second hop only) | PostgreSQL 18, for `ssl_groups`. The first hop closed at v9.404 |
 | P1.12 | A penetration-testing firm |
 | P4.6 | Secure-element vendors and silicon availability |
 | P5.2, P5.3 | An institution willing to run a pilot with consenting users |
