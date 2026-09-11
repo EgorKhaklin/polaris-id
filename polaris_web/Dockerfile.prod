@@ -26,7 +26,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Rust builder (Plonky2 ZK prover)
 # ---------------------------------------------------------------------------
-FROM rustlang/rust:nightly-bookworm-slim@sha256:28a36fae9485d8ca5d4f345ab8f89f1a530c7985381c0304efe259cec29f48ec AS zk-builder
+FROM rustlang/rust:nightly-bookworm-slim@sha256:b01284ea83d5df8485d772f8b02d8aaf8858fbe20a51fd20f51074bae58e01eb AS zk-builder
 
 ARG POLARIS_ZK_BUILD=1
 
