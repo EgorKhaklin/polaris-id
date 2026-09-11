@@ -11631,3 +11631,97 @@ class PilotWindDownTests(PolarisTestCase):
                         "the duress columns are the ones a hand-written list omits")
         self.assertIn("counsel", pack["not_a_dpia"].lower())
         self.assertIn("consent_language", pack)
+
+
+class CoexistenceSunsetTests(PolarisTestCase):
+    """P7.5: whether the credential being replaced can be withdrawn yet.
+
+    Sunsetting the alternative is the moment an identity system becomes compulsory. Until the
+    old credential stops being accepted, a person who cannot or will not hold the new one still
+    has a way through the door; afterwards they do not. These tests are mostly about what the
+    module REFUSES, because the refusals are the mechanism."""
+
+    def _cx(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        import coexistence
+        return coexistence
+
+    def _conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _ready(self, **overrides):
+        att = {"relying_parties_accepting": 1.0, "alternate_path_exists": True,
+               "alternate_path_is_usable": True, "legacy_still_issued_to_newcomers": True}
+        att.update(overrides)
+        return att
+
+    def test_a_verdict_without_the_operators_facts_is_refused(self):
+        cx = self._cx()
+        with self._conn() as conn:
+            with self.assertRaises(cx.SunsetRefused) as ctx:
+                cx.sunset_readiness(conn, phase="PREFERRED")
+            self.assertIn("this database does not hold", str(ctx.exception))
+            # The refusal must ask the QUESTIONS, not name the fields: a field gets filled in
+            # and a question gets considered.
+            self.assertIn("?", str(ctx.exception))
+
+    def test_no_alternate_path_blocks_regardless_of_adoption(self):
+        cx = self._cx()
+        with self._conn() as conn:
+            v = cx.sunset_readiness(conn, phase="PREFERRED",
+                                    attestations=self._ready(alternate_path_exists=False))
+        self.assertFalse(v["may_sunset"])
+        self.assertTrue(any("way through the door" in b for b in v["blockers"]))
+
+    def test_a_path_that_exists_on_paper_is_not_a_path(self):
+        cx = self._cx()
+        with self._conn() as conn:
+            v = cx.sunset_readiness(conn, phase="PREFERRED",
+                                    attestations=self._ready(alternate_path_is_usable=False))
+        self.assertFalse(v["may_sunset"])
+        self.assertTrue(any("excludes the people most likely to need it" in b
+                            for b in v["blockers"]))
+
+    def test_partial_relying_party_acceptance_blocks(self):
+        # The gap does not vanish; it transfers onto the holder, who finds it at the counter.
+        cx = self._cx()
+        with self._conn() as conn:
+            v = cx.sunset_readiness(conn, phase="PREFERRED",
+                                    attestations=self._ready(relying_parties_accepting=0.95))
+        self.assertFalse(v["may_sunset"])
+        self.assertTrue(any("95%" in b for b in v["blockers"]))
+
+    def test_skipping_a_phase_is_the_flag_day_this_plan_forbids(self):
+        cx = self._cx()
+        with self._conn() as conn:
+            for phase in ("PILOT", "ISSUING_ALONGSIDE", "SOLE"):
+                with self.subTest(phase=phase):
+                    v = cx.sunset_readiness(conn, phase=phase, attestations=self._ready())
+                    self.assertFalse(v["may_sunset"])
+                    self.assertTrue(any("flag-day" in b for b in v["blockers"]))
+
+    def test_an_unknown_phase_is_refused(self):
+        cx = self._cx()
+        with self._conn() as conn:
+            with self.assertRaises(cx.SunsetRefused):
+                cx.sunset_readiness(conn, phase="NEARLY_DONE", attestations=self._ready())
+
+    def test_the_share_carries_its_own_denominator_warning(self):
+        # The number counts people already enrolled. Everyone this authority has never met is
+        # outside the denominator, and they are exactly who a sunset strands.
+        cx = self._cx()
+        with self._conn() as conn:
+            supply = cx.supply_side(conn)
+        self.assertIn("denominator_warning", supply)
+        self.assertIn("never met", supply["denominator_warning"])
+        self.assertLessEqual(supply["enrolled_holding_share"], 1.0)
+
+    def test_a_clear_verdict_still_says_it_is_not_permission(self):
+        cx = self._cx()
+        with self._conn() as conn:
+            v = cx.sunset_readiness(conn, phase="PREFERRED", attestations=self._ready())
+        self.assertTrue(v["may_sunset"])
+        self.assertIn("not from the people affected", v["note"])
+        self.assertEqual(set(v["attested"]), set(cx.OPERATOR_ATTESTATIONS))

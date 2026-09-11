@@ -16,6 +16,7 @@ and the posture documents see [reference/](../reference/README.md).
 |---|---|
 | [threat-model.md](threat-model.md) | Which adversaries, reaching which surfaces, and what is deliberately out of scope |
 | [audit-of-record.md](audit-of-record.md) | Why the audit tables are append-only at the database, and what that costs |
+| [coexistence.md](coexistence.md) | Living beside the credential being replaced: the phases, and why the sunset is the moment an identity system becomes compulsory rather than a milestone a migration reaches |
 | [concurrency.md](concurrency.md) | Every race-prone path, the lock that serialises it, and the test that proves it |
 | [substrate.md](substrate.md) | Every primitive Polaris depends on, across its cryptographic, storage, network, runtime, hardware and human layers |
 | [two-witness-principle.md](two-witness-principle.md) | Why no cryptographic verdict is trusted from a single implementation |

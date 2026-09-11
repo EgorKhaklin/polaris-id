@@ -5,6 +5,59 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.381 — 2026-09-10 (P7.5: the sunset is the moment it becomes compulsory)
+
+A new national credential arrives beside a driving licence and a passport, and
+for years it is the second thing somebody carries. The dangerous moment in that
+period is not the cutover, which is undramatic: one more accepted credential at
+the counter.
+
+**The sunset is the moment an identity system becomes compulsory.** Until the
+old credential stops being accepted, a person who cannot or will not hold the
+new one still has a way through the door. Afterwards they do not, and nobody had
+to decide to make it mandatory. It happened because a migration reached its last
+milestone.
+
+So `polaris_web/coexistence.py` treats the sunset as a decision with a floor
+under it, and **refuses to compute a verdict from what the issuer can see**.
+
+**What the database holds is the supply side**: how many enrolled people hold an
+active credential, credential health, trust-list reach, whether epochs are
+actually published so offline verification has something to check against. All
+of it is about the authority's own readiness.
+
+**What it cannot hold decides whether anyone is harmed**: what share of relying
+parties accept it, whether a person without one can still obtain every service
+the old credential opened, whether that path is usable by somebody with no
+smartphone, no fixed address and no appetite for a government website *without
+having to explain themselves*, and whether somebody arriving tomorrow can still
+get the legacy credential.
+
+`sunset_readiness` takes those four as arguments and refuses without them. The
+refusal is the mechanism rather than a formality: an operator who has to type
+the answer has to have asked the question. It quotes the **questions**, not the
+field names, because a field gets filled in and a question gets considered.
+
+**Two blockers sit above every percentage**, checked before any adoption figure
+so the figure never looks like the deciding number: no alternate path at all,
+and a path that exists on paper. One requiring a smartphone, a fixed address or
+an explanation excludes the people most likely to need it, and counting it is
+how an exclusion gets recorded as a success.
+
+**The denominator nobody mentions.** `enrolled_holding_share` counts people the
+authority has *already enrolled*. Everyone it has never met sits outside that
+denominator, and they are exactly who a sunset strands. The figure carries that
+warning in its own output, because a number this reassuring gets quoted without
+it.
+
+And `may_sunset: true` says in its own text that it is not permission from the
+people affected. It means the engineering facts raise no objection; the decision
+stays one somebody makes and answers for.
+
+A prose check was tripped by bold markers inside a phrase, the third time
+formatting that changes nothing about a sentence has broken one (a line wrap, a
+string-literal seam, and now emphasis). Emphasis is normalised away now.
+
 ## v9.380 — 2026-09-10 (the tool that decides what to verify, verified)
 
 `polaris-ship.py plan` decides what a ship has to verify: which suites the

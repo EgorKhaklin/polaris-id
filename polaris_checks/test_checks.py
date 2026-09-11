@@ -9324,6 +9324,110 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 
 
+def test_coexistence_plan_check_discriminates(tmp_path):
+    # v9.381 (P7.5): the ways a sunset stops being a decision and becomes a milestone. A
+    # verdict computed from issuance numbers alone; attestations phrased as fields rather than
+    # questions, so they get filled in instead of considered; the alternate-path floor ordered
+    # after an adoption percentage, which invites the percentage to look like the deciding
+    # number; a path that exists on paper counting as a path; SOLE reachable without
+    # PREFERRED; and a holding share quoted without the denominator it excludes.
+    MOD = ('OPERATOR_ATTESTATIONS = {\n'
+           '    "relying_parties_accepting": "What share of relying parties accept it?",\n'
+           '    "alternate_path_exists": "Can a person without one still obtain services?",\n'
+           '    "alternate_path_is_usable": "Is that path usable without a smartphone?",\n'
+           '}\n'
+           "\ndef supply_side(conn):\n"
+           "    out = {}\n"
+           "    out['denominator_warning'] = 'counts people already enrolled'\n"
+           "    return out\n"
+           "\ndef sunset_readiness(conn, *, phase, attestations=None):\n"
+           "    missing = [k for k in OPERATOR_ATTESTATIONS if k not in attestations]\n"
+           "    if missing:\n        raise SunsetRefused('facts this database does not hold')\n"
+           "    if not attestations.get('alternate_path_exists'):\n"
+           "        blockers.append('way through the door')\n"
+           "    elif not attestations.get('alternate_path_is_usable'):\n"
+           "        blockers.append('excludes the people most likely to need it')\n"
+           "    if attestations.get('relying_parties_accepting') < 1.0:\n"
+           "        blockers.append('not every relying party')\n"
+           "    if phase != 'PREFERRED':\n        blockers.append('flag-day')\n"
+           "    return {'may_sunset': not blockers}\n")
+    SUITE = "class CoexistenceSunsetTests(PolarisTestCase):\n    pass\n"
+    DOC = ("The sunset is the moment an identity system becomes compulsory. An authority\n"
+           "computing readiness from issuance numbers would use the half of the picture that\n"
+           "flatters it. A clear verdict is **not** permission from the people affected.\n"
+           "No flag-day means every phase is entered while the previous one still works.\n")
+    good = {
+        'polaris_web/coexistence.py': MOD,
+        'polaris_web/test_app.py': SUITE,
+        'docs/design/coexistence.md': DOC,
+    }
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS, bold markers in the prose included"
+
+    # THE VERDICT COMPUTED FROM WHAT FLATTERS THE ISSUER.
+    write({'polaris_web/coexistence.py': MOD.replace(
+        "    if missing:\n        raise SunsetRefused('facts this database does not hold')\n",
+        "")})
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+        "a verdict must be refused when the operator's facts are absent"
+    write({'polaris_web/coexistence.py': MOD.replace("OPERATOR_ATTESTATIONS", "FIELDS")})
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+        "the facts the database cannot see must be named"
+    write({'polaris_web/coexistence.py': MOD.replace("?", ".")})
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+        "attestations must be questions; a field gets filled in and a question gets considered"
+
+    # THE FLOOR ORDERED AFTER THE PERCENTAGE.
+    reordered = MOD.replace(
+        "    if not attestations.get('alternate_path_exists'):\n"
+        "        blockers.append('way through the door')\n"
+        "    elif not attestations.get('alternate_path_is_usable'):\n"
+        "        blockers.append('excludes the people most likely to need it')\n"
+        "    if attestations.get('relying_parties_accepting') < 1.0:\n"
+        "        blockers.append('not every relying party')\n",
+        "    if attestations.get('relying_parties_accepting') < 1.0:\n"
+        "        blockers.append('not every relying party')\n"
+        "    if not attestations.get('alternate_path_exists'):\n"
+        "        blockers.append('way through the door')\n"
+        "    elif not attestations.get('alternate_path_is_usable'):\n"
+        "        blockers.append('excludes the people most likely to need it')\n")
+    write({'polaris_web/coexistence.py': reordered})
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+        "the alternate-path floor must be checked before any adoption figure"
+    write({'polaris_web/coexistence.py': MOD.replace("alternate_path_is_usable", "unused_key")})
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+        "a path that exists on paper must not count as a path"
+    write({'polaris_web/coexistence.py': MOD.replace("'PREFERRED'", "'ANY'")})
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+        "SOLE must be reachable only from PREFERRED"
+
+    # THE NUMBER QUOTED WITHOUT ITS DENOMINATOR.
+    write({'polaris_web/coexistence.py': MOD.replace(
+        "    out['denominator_warning'] = 'counts people already enrolled'\n", "")})
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+        "the holding share must carry the denominator it excludes"
+
+    # THE REFUSALS UNEXERCISED, and the record.
+    write({'polaris_web/test_app.py': "class Other:\n    pass\n"})
+    assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+        "the refusals must be exercised by a measured suite"
+    for phrase in ("moment an identity system becomes compulsory",
+                   "half of the picture that\nflatters it",
+                   "**not** permission from the people affected",
+                   "No flag-day"):
+        write({'docs/design/coexistence.md': DOC.replace(phrase, "")})
+        assert checks.check_coexistence_plan(tmp_path)[0].level == "FAIL", \
+            f"the record must state: {phrase}"
+
+
 def test_modules_are_measured_check_discriminates(tmp_path):
     # v9.379: a module exercised only by a drill counts ZERO toward the coverage floor while
     # looking thoroughly tested. proofing.py and pilot.py each shipped that way and the gate

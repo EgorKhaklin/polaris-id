@@ -10473,6 +10473,114 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_coexistence_plan(root: pathlib.Path) -> list[Finding]:
+    """A sunset verdict cannot be computed from what flatters the issuer (P7.5).
+
+    A new credential arrives beside the one it replaces, and for years it is the second thing
+    somebody carries. The dangerous moment in that period is not the cutover, which is
+    undramatic. It is the sunset: until the old credential stops being accepted, a person who
+    cannot or will not hold the new one still has a way through the door, and afterwards they
+    do not. Nobody decided to make it mandatory. A migration reached its last milestone.
+
+    THE VERDICT REFUSES WITHOUT THE FACTS THE DATABASE DOES NOT HOLD. What share of relying
+    parties accept it, whether an alternate path exists, whether that path is usable by
+    somebody with no smartphone and no fixed address, whether a newcomer can still get the
+    legacy credential: none of it is in any table. An authority computing readiness from
+    issuance numbers alone would be computing it from the half of the picture that flatters
+    it, and the half it skipped is the half that decides whether anyone is harmed. The refusal
+    is the mechanism, not a formality: an operator who has to type the answer has to have asked
+    the question.
+
+    AND TWO BLOCKERS SIT ABOVE EVERY PERCENTAGE. No alternate path, and a path that exists only
+    on paper. Neither is overridden by an adoption figure, because a sunset without somewhere
+    for the excluded to go is an exclusion mechanism whatever the numbers say."""
+    name = "coexistence_plan"
+    mod = _read(root, "polaris_web/coexistence.py")
+    if not mod:
+        return _fail(name, "polaris_web/coexistence.py must carry the phases and the verdict")
+    for fn in ("def sunset_readiness", "def supply_side"):
+        if fn not in mod:
+            return _fail(name, f"the module must expose {fn.split()[1]}()")
+    if "OPERATOR_ATTESTATIONS" not in mod:
+        return _fail(name,
+                     "the facts the database cannot see must be named. An authority computing "
+                     "readiness from issuance numbers alone computes it from the half of the "
+                     "picture that flatters it")
+    attest = mod.split("OPERATOR_ATTESTATIONS")[1].split("\n\n")[0]
+    if attest.count("?") < 3:
+        return _fail(name,
+                     "the attestations must be phrased as QUESTIONS rather than field names. A "
+                     "field gets filled in; a question gets considered")
+
+    verdict = mod.split("def sunset_readiness")[1].split("\ndef ")[0]
+    if "SunsetRefused" not in verdict or "missing" not in verdict:
+        return _fail(name,
+                     "a sunset verdict must be REFUSED when the operator's facts are absent, "
+                     "not computed with them defaulted")
+    code = "\n".join(ln for ln in verdict.splitlines() if not ln.lstrip().startswith("#"))
+    path_at = code.find("alternate_path_exists")
+    share_at = code.find("relying_parties_accepting")
+    if path_at < 0:
+        return _fail(name,
+                     "the absence of an alternate path must block a sunset: withdrawing the "
+                     "old credential then does not complete a migration, it removes somebody's "
+                     "way through the door")
+    if 0 <= share_at < path_at:
+        return _fail(name,
+                     "the alternate-path floor must be checked BEFORE any adoption figure. A "
+                     "sunset with nowhere for the excluded to go is an exclusion mechanism "
+                     "whatever the percentage says, and ordering it after invites the "
+                     "percentage to look like the deciding number")
+    if "alternate_path_is_usable" not in code:
+        return _fail(name,
+                     "a path that exists on paper must not count. One requiring a smartphone, "
+                     "a fixed address or an explanation excludes the people most likely to "
+                     "need it")
+    if "PREFERRED" not in code:
+        return _fail(name,
+                     "SOLE must be reachable only from PREFERRED; skipping a phase is the "
+                     "flag-day this plan exists to avoid")
+
+    supply = mod.split("def supply_side")[1].split("\ndef ")[0]
+    if "denominator_warning" not in supply:
+        return _fail(name,
+                     "the holding share must carry its own denominator warning. It counts "
+                     "people already ENROLLED, not the population; everyone the authority has "
+                     "never met is outside it, and they are exactly who a sunset strands")
+
+    suite = _read(root, "polaris_web/test_app.py")
+    if "CoexistenceSunsetTests" not in suite:
+        return _fail(name, "the refusals must be exercised by a measured suite")
+
+    doc = _read(root, "docs/design/coexistence.md")
+    if not doc:
+        return _fail(name, "the plan must be published (docs/design/coexistence.md)")
+    # Emphasis stripped along with the line wrapping. A prose check has now been tripped three
+    # separate ways by formatting that changes nothing about the sentence: a line wrap, a
+    # string-literal seam, and bold markers inside the phrase. What is being checked is that
+    # the document SAYS something, and `**not**` says it exactly as `not` does.
+    low = " ".join(doc.lower().replace("*", "").replace("_", " ").split())
+    for phrase, why in (("moment an identity system becomes compulsory",
+                         "the record must name what a sunset actually is, rather than "
+                         "describing it as the end of a migration"),
+                        ("half of the picture that flatters it",
+                         "the record must say why the operator's attestations are required"),
+                        ("not permission from the people affected",
+                         "a clear verdict must disclaim itself: sunset stays a decision "
+                         "somebody makes and answers for"),
+                        ("no flag-day",
+                         "the phase discipline must be stated")):
+        if phrase not in low:
+            return _fail(name, why)
+    return _ok(name,
+               "a sunset verdict refuses to be computed from what the issuer can see alone: "
+               "the four facts no table holds are asked as questions and required, the "
+               "alternate-path floor is checked before any adoption figure and a path that "
+               "exists only on paper does not count, SOLE is reachable only from PREFERRED, "
+               "the holding share carries the denominator it excludes, and a clear verdict "
+               "still says it is not permission from the people affected")
+
+
 def check_modules_are_measured(root: pathlib.Path) -> list[Finding]:
     """Every application module is reached by a MEASURED test, not only by a drill (P5.1).
 
@@ -12293,6 +12401,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_coexistence_plan,
     check_modules_are_measured,
     check_pilot_winddown,
     check_formal_specs,
