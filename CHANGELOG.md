@@ -5,6 +5,31 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.409 — 2026-09-11 (the drill was right that the counter moved and wrong that it mattered)
+
+The Atlas UI drill went red in CI on v9.406: "the counter kept climbing after Stop (240 -> 280)".
+Nothing in that ship touched the Atlas console, and the same drill passed on the next push, so
+it was a flake. A flake in a drill is this session's problem inverted: a drill reporting a
+failure it had not established costs exactly as much trust as one reporting a success it had
+not established.
+
+The mechanism is in `atlas-console.js`. `stop()` clears the ticker's interval and flips the
+class; it does not un-send a batch already in flight. When that response lands the counter jumps
+by one batch, which is 40 events, which is exactly the jump CI saw. The drill sampled the
+counter the instant the class flipped, so on a run where a batch was outstanding it recorded a
+number that was about to change and called the change a defect.
+
+Those events really did stream. The counter is right to show them. What the drill should assert
+is not that the counter never moves after Stop but that it STOPS: it now polls until two reads
+agree, with a deadline of several ticker intervals, and then requires it to stay there. That is
+a stronger claim than the old one, because a simulation that is genuinely still running never
+settles and fails on the deadline, whereas the old check could be satisfied by a single lucky
+sample between batches.
+
+`check_ui_drill` gained both halves: the settle wait, and the assertion that it does not resume
+after settling, since waiting for a number to stop moving is not on its own a claim that it
+stopped.
+
 ## v9.408 — 2026-09-11 (a privacy result is only as good as the attacker that failed to get it)
 
 `test_redaction_property.py` measures reconstruction risk: it runs an adversary against isolated

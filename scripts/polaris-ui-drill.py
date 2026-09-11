@@ -33,6 +33,14 @@ from playwright.sync_api import sync_playwright
 URL = os.environ.get("POLARIS_UI_URL", "http://127.0.0.1:5057").rstrip("/")
 USER = os.environ.get("POLARIS_UI_USER", "admin")
 PASS = os.environ.get("POLARIS_UI_PASS", "Admin@123!")
+#: How long to let the streamed counter settle after Stop, and how often to look.
+#: The console's ticker fires every 2500ms (atlas-console.js), so one in-flight
+#: batch lands within one interval; the deadline is several of those, wide enough
+#: that a slow runner never trips it and narrow enough that a simulation which is
+#: still running cannot hide inside it (it would add a batch every 2.5s forever).
+SIM_SETTLE_DEADLINE_S = 12.0
+SIM_SETTLE_POLL_S = 0.5
+
 OUT = pathlib.Path(os.environ.get("POLARIS_UI_OUT", "ui-drill-out"))
 
 
@@ -132,14 +140,38 @@ def main():
         page.wait_for_selector(".atlas-sim:not(.atlas-sim-on)", timeout=5000)
         if toggle.get_attribute("aria-pressed") != "false":
             fail("the toggle did not report aria-pressed=false after stopping")
-        # The counter must not keep climbing once stopped.
-        ct = page.query_selector("[data-atlas-sim-count]")
-        stopped_at = streamed_count(ct.text_content() if ct else "")
+        # The counter must STOP climbing. It is not required to stop in the same
+        # instant: stop() clears the ticker's interval, it does not un-send a
+        # batch already in flight, and when that response lands the counter
+        # jumps by one batch. Those events did stream, so the counter is right
+        # to show them. Asserting no movement at all made this drill red on a
+        # real run (v9.406 CI: "240 -> 280"), which is a drill reporting a
+        # failure it had not established.
+        #
+        # So wait for it to SETTLE, then require it to stay settled. A simulator
+        # that is genuinely still running never settles and fails on the
+        # deadline, which is a stronger statement than the old check made.
+        settled_at = None
+        deadline = time.time() + SIM_SETTLE_DEADLINE_S
+        previous = None
+        while time.time() < deadline:
+            ct = page.query_selector("[data-atlas-sim-count]")
+            n = streamed_count(ct.text_content() if ct else "")
+            if n is not None and previous is not None and n == previous:
+                settled_at = n
+                break
+            previous = n
+            time.sleep(SIM_SETTLE_POLL_S)
+        if settled_at is None:
+            fail(f"the counter never stopped climbing in "
+                 f"{SIM_SETTLE_DEADLINE_S:.0f}s after Stop (last read {previous}); "
+                 "the simulation loop is still running")
         time.sleep(3.0)
         ct = page.query_selector("[data-atlas-sim-count]")
         after_stop = streamed_count(ct.text_content() if ct else "")
-        if stopped_at is not None and after_stop is not None and after_stop > stopped_at:
-            fail(f"the counter kept climbing after Stop ({stopped_at:.0f} -> {after_stop:.0f})")
+        if after_stop is not None and after_stop > settled_at:
+            fail(f"the counter resumed climbing after settling at {settled_at:.0f} "
+                 f"({settled_at:.0f} -> {after_stop:.0f})")
         page.screenshot(path=str(OUT / "03-atlas-stopped.png"))
 
         # --- Trends tab (ship 7): the heatmap and the stacked series render ---

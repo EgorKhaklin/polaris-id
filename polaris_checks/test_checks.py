@@ -315,7 +315,10 @@ def test_ui_drill_check_discriminates(tmp_path):
           "read the sim counter (streamed) and the Overview aggregate\n"
           "n = page.query_selector('[data-ov-kpi=\"volume\"]')\n"
           "if not (last > first): fail('counter did not climb')\n"
-          "if not (kpi_after > kpi_before): fail('aggregate did not grow')\n")
+          "if not (kpi_after > kpi_before): fail('aggregate did not grow')\n"
+          "SIM_SETTLE_DEADLINE_S = 12.0\n"
+          "if settled_at is None: fail('the counter never stopped climbing')\n"
+          "if after_stop > settled_at: fail('resumed climbing after settling')\n")
     SH = ('#!/usr/bin/env bash\n'
           'POLARIS_SIM_MODE=1 python -m flask run &\n'
           'python -m playwright install chromium\n')
@@ -336,6 +339,17 @@ def test_ui_drill_check_discriminates(tmp_path):
 
     write()
     assert checks.check_ui_drill(tmp_path)[0].level == "OK", "must PASS on the full harness fixture"
+    # v9.409: Stop is sampled the instant the class flips, so a batch already in
+    # flight makes a correct run red (it did, in v9.406 CI: 240 -> 280)
+    write({"scripts/polaris-ui-drill.py": PY.replace("SIM_SETTLE_DEADLINE_S = 12.0\n", "")})
+    assert checks.check_ui_drill(tmp_path)[0].level == "FAIL", "must FAIL when the Stop check does not wait for the counter to settle"
+    write({"scripts/polaris-ui-drill.py": PY.replace(
+        "if settled_at is None: fail('the counter never stopped climbing')\n", "")})
+    assert checks.check_ui_drill(tmp_path)[0].level == "FAIL", "must FAIL when a counter that never settles is not a failure"
+    # settling is not on its own a claim that it stopped
+    write({"scripts/polaris-ui-drill.py": PY.replace(
+        "if after_stop > settled_at: fail('resumed climbing after settling')\n", "")})
+    assert checks.check_ui_drill(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not assert the counter stays settled"
     # CI does not run the drill
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_ui_drill(tmp_path)[0].level == "FAIL", "must FAIL when ci.yml does not run the UI drill"

@@ -5426,6 +5426,21 @@ def check_ui_drill(root: pathlib.Path) -> list[Finding]:
     if "last > first" not in py or "kpi_after > kpi_before" not in py:
         return _fail("ui_drill", "polaris-ui-drill.py must ASSERT the counter climbs (last > first) AND the "
                      "Overview aggregate grows (kpi_after > kpi_before), not just capture screenshots")
+    # v9.409 - and the Stop assertion must wait for the counter to SETTLE. The
+    # console's stop() clears the ticker's interval; it does not un-send a batch
+    # already in flight, and when that response lands the counter jumps by one
+    # batch. Sampling the instant the class flips made this drill red on a real
+    # run ("240 -> 280"), which is a drill reporting a failure it had not
+    # established. Settling first is also the stronger statement: a simulation
+    # that is still running never settles.
+    if "SIM_SETTLE_DEADLINE_S" not in py or "never stopped climbing" not in py:
+        return _fail("ui_drill", "polaris-ui-drill.py must wait for the streamed counter to SETTLE after "
+                     "Stop (a deadline, not an instant sample) and fail if it never does: a batch already "
+                     "in flight when Stop lands still arrives, so an instant sample makes the drill red on "
+                     "a correct run")
+    if "resumed climbing after settling" not in py:
+        return _fail("ui_drill", "polaris-ui-drill.py must still assert the counter does not RESUME after it "
+                     "settles; waiting for it to settle is not on its own a claim that it stopped")
     if "POLARIS_SIM_MODE=1" not in sh or "playwright install chromium" not in sh:
         return _fail("ui_drill", "polaris-ui-drill.sh must boot the app with SIM_MODE on and install Chromium "
                      "on demand (no standing dependency)")
@@ -5442,7 +5457,9 @@ def check_ui_drill(root: pathlib.Path) -> list[Finding]:
     return _ok("ui_drill",
                "a headless-browser harness (polaris-ui-drill.py/.sh, Playwright + Chromium) drives the "
                "Atlas live simulation in a real browser and asserts the counter climbs and the Overview "
-               "aggregate grows; the ui-drill CI job runs it on every push; SIM_MODE bypasses the "
+               "aggregate grows; Stop is checked by waiting for the counter to settle and then "
+               "requiring it to stay settled, so one in-flight batch does not make a correct run red; "
+               "the ui-drill CI job runs it on every push; SIM_MODE bypasses the "
                "aggregate cache so the charts refresh live")
 
 
