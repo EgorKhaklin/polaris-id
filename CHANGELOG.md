@@ -5,6 +5,31 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.391 — 2026-09-11 (the coverage total came back empty, which is not a coverage drop)
+
+v9.390's CI failed on `Python coverage % is below the floor 74%` -- with no number where the
+percentage should be. An empty total is not a coverage drop; it is a coverage measurement that
+did not happen, and the line above it said why:
+
+    No source for code: '/tmp/tmp1qpv9nhg/reject_everything.py'
+
+That is the stub verifier `check_conformance_suite` writes to probe the conformance runner.
+v9.389 moved it OUT of the repository and into a temp directory, to avoid leaving litter if the
+check is interrupted. The coverage harness enables subprocess tracing through a `sitecustomize`
+that fires on `COVERAGE_PROCESS_START`, so the stub was traced, its data was written, the temp
+directory was deleted, and `coverage report` found data for a file that no longer existed and
+emitted no total at all. Fixing one hygiene problem created another one layer down.
+
+The probe now runs with `COVERAGE_PROCESS_START` stripped from its environment. The stub is a
+fixture; its coverage was never wanted. The same strip is applied in the detection test, which
+survived only because pytest keeps its last few `tmp_path` directories -- luck, not design.
+
+REPRODUCED BEFORE AND AFTER, locally, under real subprocess tracing: without the strip, `No
+source for code` and no TOTAL line; with it, a TOTAL. The first version of this ship was
+reasoned about rather than reproduced, and reasoning is what produced the bug.
+
+---
+
 ## v9.390 — 2026-09-11 (a fixture that could not run the thing it was testing)
 
 v9.389 made `check_conformance_suite` probe the conformance runner by EXECUTING it against a

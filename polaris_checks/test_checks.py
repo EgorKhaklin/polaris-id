@@ -9458,9 +9458,15 @@ def test_conformance_positive_control_gate_discriminates(tmp_path):
         # dies, and the runner's "verifier exited" path also returns 2 -- so an
         # exit-code-only assertion passes for entirely the wrong reason.
         stub.write_text("import sys\nsys.stdin.read()\nprint(%r)\n" % json.dumps(verdict))
+        # OUTSIDE coverage. The harness traces subprocesses via a sitecustomize that
+        # fires on COVERAGE_PROCESS_START; a traced stub under a temp path records
+        # data for a file that is gone by report time, and `coverage report` then
+        # emits an EMPTY total that fails the floor gate with no number in it.
+        import os as _os
+        env = {k: v for k, v in _os.environ.items() if k != "COVERAGE_PROCESS_START"}
         return subprocess.run(
             [_sys.executable, str(runner), "--verifier", f"{_sys.executable} {stub}"],
-            capture_output=True, text=True, cwd=str(REPO), timeout=300)
+            capture_output=True, text=True, cwd=str(REPO), timeout=300, env=env)
 
     rejects = probe({"authentic": False})
     assert rejects.returncode == 2, (

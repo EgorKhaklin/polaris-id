@@ -21,6 +21,7 @@ Add a check by writing a `check_*` function and listing it in CHECKS.
 from __future__ import annotations
 
 import ast
+import os
 import pathlib
 import hashlib
 import json
@@ -9195,6 +9196,13 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
     #    The stub lives in a temp directory, never in the tree: a check that writes into
     #    the repository to do its work leaves litter behind the moment it is interrupted.
     import tempfile
+    # The probe runs OUTSIDE coverage. The coverage harness enables subprocess
+    # tracing through a sitecustomize that fires on COVERAGE_PROCESS_START, so a
+    # traced stub in a temp directory records data for a file that is deleted before
+    # `coverage report` runs -- which reports "No source for code" and then emits an
+    # EMPTY total, failing the floor gate with no number in it. That is what v9.390
+    # did. The stub is a fixture; its coverage was never wanted.
+    probe_env = {k: v for k, v in os.environ.items() if k != "COVERAGE_PROCESS_START"}
     try:
         with tempfile.TemporaryDirectory() as td:
             stub = pathlib.Path(td) / "reject_everything.py"
@@ -9203,7 +9211,8 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
             probe = subprocess.run(
                 [sys.executable, str(root / "conformance" / "run_conformance.py"),
                  "--verifier", f"{sys.executable} {stub}"],
-                capture_output=True, text=True, cwd=str(root), timeout=300)
+                capture_output=True, text=True, cwd=str(root), timeout=300,
+                env=probe_env)
     except Exception as exc:  # noqa: BLE001 - a runner that cannot run is a failure
         return _fail("conformance_suite", f"the conformance runner could not be probed: {exc}")
     if probe.returncode != 2 or "VOID" not in (probe.stderr + probe.stdout):
