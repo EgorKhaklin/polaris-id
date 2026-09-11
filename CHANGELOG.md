@@ -5,6 +5,53 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.396 — 2026-09-11 (P4.4: a code proves somebody reached a channel, and the table says only that)
+
+`EnrollmentCode` is the lifecycle under the cap v9.395 put on `ENROLLMENT_CODE` verification.
+What a code establishes stays narrow: somebody who could reach that channel returned the
+secret. Not that they are the applicant.
+
+IT IS NOT AN AUDIT-OF-RECORD TABLE, which is worth saying because every other table added this
+year was. A code is LIVE STATE -- it gets redeemed, its attempts get counted -- and an
+append-only rule would make redemption itself impossible. What it has instead is a ONE-WAY
+DOOR: the hash, channel, holder, issuing agency, issuance and expiry are fixed once written,
+`redeemed_at` leaves NULL exactly once and never returns, and `attempts` only climbs.
+Re-pointing a code at another person, extending a passed expiry, and resetting a counter about
+to lock all look administrative and are all refused by the trigger.
+
+THE ATTEMPT COUNTER CLIMBS ON A WRONG GUESS, which is the reason redemption finds the code by
+WHO IT WAS ISSUED TO rather than by the hash of what was presented. The second is simpler and
+counts nothing: a wrong guess matches no row, the counter never moves, and the bound never sees
+the brute force it exists for.
+
+THE CODE IS NEVER STORED. `issue()` returns the plaintext exactly once, the caller sends it,
+and nothing can produce it again -- there is no column that could hold one, checked as an
+absence, because a column that COULD hold a plaintext code is a column somebody eventually
+writes one into. Validity is capped at 30 days in the schema: a code that lives longer is a
+permanent credential in a mailbox.
+
+AND NONE OF IT ADDRESSES WHOSE MAILBOX IT IS. A posted code proves whoever opens that post
+controls the enrollment, and for somebody in a controlling household, a care setting or a
+shelter with shared post, that is not them. The channel is recorded because the coercion
+properties differ and nothing downstream can reconstruct it; the cap stops a high assurance
+level resting on it. The honest position is in the doc: this mechanism helps most people and
+fails the same population the trusted referee exists for.
+
+One defect found in the check rather than the code. A first draft read `redeem()`'s TEXT and
+was satisfied by the sentence "comparison is `hmac.compare_digest`" in its own docstring, so
+swapping the call for `==` passed. Stripping triple-quoted strings would have removed the SQL,
+which lives in them too, so the function is parsed and unparsed without its docstring. That is
+the fourth check this session satisfied by prose about the code rather than by the code.
+
+- `check_enrollment_code` with a seven-fixture detection test (226 checks), the wrong-guess
+  path and the constant-time comparison read from the parsed body
+- `polaris_web/enrollment_code.py`, `polaris_web/test_enrollment_code.py` (17 measured tests),
+  eleven new cases in the enrollment-proofing drill, all passing against a real database
+- migration 017, the 42nd table, `BIGSERIAL` from its first line
+- the enrollment-code section of [identity-proofing.md](docs/design/identity-proofing.md)
+
+---
+
 ## v9.395 — 2026-09-11 (a passport verified by posting a letter to it counted as a passport)
 
 Starting the enrollment-code process -- the last piece of P4.4 that needs no hardware -- meant

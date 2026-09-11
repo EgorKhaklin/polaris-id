@@ -9502,6 +9502,73 @@ def test_conformance_positive_control_gate_discriminates(tmp_path):
         "a run whose positive controls passed must not be declared void"
 
 
+def test_enrollment_code_check_discriminates(tmp_path):
+    # v9.396 (P4.4): the ways a one-time confirmation becomes something else. A validity
+    # with no ceiling; a column that could hold the code; an append-only rule that makes
+    # redemption impossible; a door that stops fixing who the code was issued to; a bound
+    # nothing counts toward; and a comparison that is not constant-time.
+    #
+    # The last one caught a defect in this check rather than in the code: a first draft
+    # read redeem()'s TEXT and was satisfied by the sentence "comparison is
+    # hmac.compare_digest" in its own docstring.
+    import shutil
+
+    def write(rel=None, old=None, new=None):
+        for f in ('polaris_web/enrollment_code.py', 'polaris_sql/01_schema.sql',
+                  'polaris_sql/06_triggers.sql'):
+            dst = tmp_path / f
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / f, dst)
+        if rel:
+            dst = tmp_path / rel
+            text = dst.read_text()
+            assert old in text, f"fixture string missing from {rel}"
+            dst.write_text(text.replace(old, new, 1))
+
+    write()
+    assert checks.check_enrollment_code(tmp_path)[0].level == "OK", \
+        "the real module, schema and trigger must PASS"
+
+    # A CODE THAT NEVER EXPIRES is a permanent credential in a mailbox, and the mailbox
+    # may not be the applicant's.
+    write('polaris_sql/01_schema.sql',
+          "    CONSTRAINT validity_is_bounded\n"
+          "        CHECK (expires_at <= issued_at + INTERVAL '30 days'),", "")
+    assert checks.check_enrollment_code(tmp_path)[0].level == "FAIL", \
+        "an unbounded validity must FAIL"
+
+    # A COLUMN THAT COULD HOLD THE CODE is a column somebody eventually writes one into.
+    write('polaris_sql/01_schema.sql', '    code_hash           VARCHAR(64)  NOT NULL,',
+          '    code_hash           VARCHAR(64)  NOT NULL,\n'
+          '    code_plaintext      VARCHAR(64),')
+    assert checks.check_enrollment_code(tmp_path)[0].level == "FAIL", \
+        "a column that could hold a plaintext code must FAIL"
+
+    # AN APPEND-ONLY WALL where a door is needed: redemption itself becomes impossible.
+    write('polaris_sql/06_triggers.sql', 'BEFORE UPDATE ON EnrollmentCode',
+          'BEFORE UPDATE OR DELETE ON EnrollmentCode')
+    assert checks.check_enrollment_code(tmp_path)[0].level == "FAIL", \
+        "an append-only EnrollmentCode must FAIL: a code that cannot be redeemed is not one"
+
+    # THE DOOR STOPS FIXING THE HOLDER. Re-pointing a code looks administrative.
+    write('polaris_sql/06_triggers.sql',
+          '       OR NEW.individual_id IS DISTINCT FROM OLD.individual_id\n', '')
+    assert checks.check_enrollment_code(tmp_path)[0].level == "FAIL", \
+        "a door that lets a code be re-pointed at another person must FAIL"
+
+    # A BOUND NOTHING COUNTS TOWARD.
+    write('polaris_web/enrollment_code.py', 'SET    attempts = attempts + 1',
+          'SET    attempts = attempts')
+    assert checks.check_enrollment_code(tmp_path)[0].level == "FAIL", \
+        "redemption that never increments the counter must FAIL"
+
+    # A COMPARISON THAT IS NOT CONSTANT-TIME, with the docstring still saying it is.
+    write('polaris_web/enrollment_code.py', 'hmac.compare_digest(code["code_hash"], digest)',
+          '(code["code_hash"] == digest)')
+    assert checks.check_enrollment_code(tmp_path)[0].level == "FAIL", \
+        "a plain == comparison must FAIL even though the docstring still promises otherwise"
+
+
 def test_trusted_referee_check_discriminates(tmp_path):
     # v9.394 (P4.4): the referee path is the anti-exclusion mechanism in enrollment and the
     # easiest way to mint an assurance level from nothing, and they are the same table. The

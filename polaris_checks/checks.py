@@ -10653,6 +10653,105 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_enrollment_code(root: pathlib.Path) -> list[Finding]:
+    """The secret sent to a channel, and the lifecycle that keeps what it proves narrow (P4.4).
+
+    A code establishes that SOMEBODY WHO COULD REACH THAT CHANNEL returned the secret. Not that
+    they are the applicant, which is why ENROLLMENT_CODE verification is capped at FAIR
+    (v9.395). This is the lifecycle under that cap, and it is where a code stops being a
+    one-time confirmation and becomes something else.
+
+    THE CODE IS NEVER STORED. There is no column that could hold one, and the check verifies
+    that as an absence: a leaked enrollment database should be a pile of hashes, and a column
+    that COULD hold a plaintext code is a column somebody eventually writes one into.
+
+    IT IS LIVE STATE, NOT AN AUDIT RECORD, and the difference is why it has a ONE-WAY DOOR
+    rather than an append-only wall. A code gets redeemed and its attempts counted; append-only
+    would make redemption itself impossible. So the trigger fixes the hash, channel, holder,
+    issuance and expiry, lets redeemed_at leave NULL exactly once, and lets attempts only
+    climb. Re-pointing a code at another person, extending a passed expiry and resetting a
+    counter about to lock all look administrative and are all refused.
+
+    AND THE ATTEMPT COUNTER CLIMBS ON A WRONG GUESS, which is why redemption finds the code by
+    who it was issued to rather than by the hash of what was presented. Looking it up by the
+    presented hash counts nothing: a wrong guess matches no row, the counter never moves, and
+    the bound never sees the brute force it exists for."""
+    name = "enrollment_code"
+    mod_path = root / "polaris_web" / "enrollment_code.py"
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    if not mod_path.is_file():
+        return _fail(name, "polaris_web/enrollment_code.py must carry the lifecycle")
+    if not schema or not triggers:
+        return _fail(name, "01_schema.sql and 06_triggers.sql must both be present")
+    if "CREATE TABLE IF NOT EXISTS EnrollmentCode" not in schema:
+        return _fail(name, "EnrollmentCode must be in the base schema, not only a migration")
+    table = schema[schema.index("CREATE TABLE IF NOT EXISTS EnrollmentCode"):]
+    table = table[:table.index("\n);")]
+
+    for constraint in ("code_hash_is_sha256_hex", "expires_after_it_is_issued",
+                       "validity_is_bounded", "redeemed_inside_its_validity",
+                       "attempts_are_bounded", "a_redeemed_code_names_its_proofing"):
+        if constraint not in table:
+            return _fail(name,
+                         f"the database does not hold {constraint}. A route that forgets to "
+                         "check is the reason these are constraints rather than conventions")
+    for leak in ("code_plain", "code_value", "plaintext", "secret"):
+        if leak in table.lower():
+            return _fail(name,
+                         f"EnrollmentCode has a column mentioning {leak!r}. The code is never "
+                         "stored: a leaked enrollment database should be a pile of hashes")
+
+    # A one-way DOOR, not an append-only wall: append-only would make redemption
+    # impossible, and a code that cannot be redeemed is not a code.
+    if "enrollment_code_one_way_door" not in triggers:
+        return _fail(name,
+                     "EnrollmentCode has no one-way-door trigger. It is live state, so the "
+                     "transitions are the guarantee: the hash, channel, holder, issuance and "
+                     "expiry fixed, redeemed_at leaving NULL once, attempts only climbing")
+    if "BEFORE UPDATE OR DELETE ON EnrollmentCode" in triggers:
+        return _fail(name,
+                     "EnrollmentCode is under an append-only trigger, which makes redemption "
+                     "itself impossible. It is live state and needs a door, not a wall")
+    door = triggers[triggers.index("enrollment_code_one_way_door"):]
+    door = door[:door.index("$$ LANGUAGE plpgsql;")] if "$$ LANGUAGE plpgsql;" in door else door
+    for immutable in ("code_hash", "individual_id", "channel", "expires_at"):
+        if immutable not in door:
+            return _fail(name,
+                         f"the one-way door does not fix {immutable}. Re-pointing a code at "
+                         "another person or extending a passed expiry looks administrative and "
+                         "is the whole attack")
+
+    # The wrong-guess path is EXERCISED where it can be: redemption must look the code
+    # up by individual, because a lookup by presented hash counts no failures.
+    # Parsed, then unparsed without its docstring. A first draft of this check read the
+    # function's TEXT and was satisfied by the sentence "comparison is
+    # hmac.compare_digest" in redeem's own docstring, so swapping the call for `==`
+    # passed -- a check on prose about the code rather than on the code. Stripping
+    # triple-quoted strings instead would have removed the SQL, which lives in them too.
+    src = mod_path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(src)
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "redeem")
+    except (SyntaxError, StopIteration):
+        return _fail(name, "polaris_web/enrollment_code.py must expose redeem()")
+    body = fn.body[1:] if ast.get_docstring(fn) else fn.body
+    code = "\n".join(ast.unparse(stmt) for stmt in body)
+    if "attempts = attempts + 1" not in code:
+        return _fail(name,
+                     "redemption never increments the attempt counter. A bound nothing counts "
+                     "toward is not a bound, and a wrong guess is exactly what should count")
+    if "compare_digest" not in code:
+        return _fail(name, "the presented code is not compared with hmac.compare_digest")
+    return _ok(name,
+               "an enrollment code proves somebody reached a channel and nothing more: it is "
+               "never stored, its validity and attempt bound are database floors, a wrong guess "
+               "moves the counter because redemption looks the code up by who it was issued to, "
+               "and the one-way door lets it be redeemed exactly once without letting anybody "
+               "re-point, extend or un-count it")
+
+
 def check_trusted_referee(root: pathlib.Path) -> list[Finding]:
     """The path for people with no documents, and the forgery channel it would otherwise be (P4.4).
 
@@ -13202,6 +13301,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_enrollment_code,
     check_trusted_referee,
     check_review_packet,
     check_capacity_model,

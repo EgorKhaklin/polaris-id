@@ -105,10 +105,7 @@ currently supports.
   the checking is a vendor integration behind that interface.
 - **The 800-63-4 control mapping.** This provides the mechanism and the record. The
   control-by-control mapping with evidence per control is P6.2, and it is unblocked by this.
-- **The enrollment-code process.** `ENROLLMENT_CODE` is a verification method and is now
-  CAPPED (see below); the surrounding lifecycle -- issuing a code to a channel, its expiry,
-  single use, and a bound on redemption attempts -- is still open under P4.4. Trusted referees
-  shipped at v9.394, in [trusted-referee.md](trusted-referee.md).
+- **The kiosk build.** Covered above: deployment packaging, still open under P4.4.
 
 ## How it was verified caps what it contributes
 
@@ -140,6 +137,47 @@ solve that. It stops the system recording a high assurance level on the strength
 
 Both capped methods were in the vocabulary from v9.371 and **no test used either**, which is
 where an overstatement hides: a vocabulary entry nothing exercises.
+
+---
+
+## The enrollment code
+
+A code is a secret sent to a channel the applicant nominated, which they return. What it
+establishes is narrow and worth stating before the mechanism: **somebody who could reach that
+channel returned the secret.** Not that they are the applicant. That is the whole reason
+`ENROLLMENT_CODE` is capped at `FAIR` above; `EnrollmentCode` is the lifecycle under the cap
+rather than an argument for raising it.
+
+| Property | Where it lives |
+| --- | --- |
+| The code is never stored, only a SHA-256 of it | No column could hold one, checked as an absence |
+| Validity is at most 30 days | `validity_is_bounded` |
+| Redeemed only inside its validity | `redeemed_inside_its_validity` |
+| At most 5 wrong guesses | `attempts_are_bounded`, and the module counts them |
+| A redemption names the proofing it fed | `a_redeemed_code_names_its_proofing` |
+| Single use, and never un-redeemed | `enrollment_code_one_way_door` |
+
+**This is not an audit-of-record table**, and the difference is the design. A code is live
+state: it gets redeemed and its attempts counted, so an append-only rule would make redemption
+itself impossible. What it has instead is a **one-way door**. The hash, channel, holder,
+issuing agency, issuance and expiry are fixed once written; `redeemed_at` leaves `NULL` exactly
+once; `attempts` only climbs. Re-pointing a code at another person, extending a passed expiry
+and resetting a counter about to lock all look administrative, and all three are refused.
+
+**The attempt counter climbs on a wrong guess**, which is why redemption finds the code by *who
+it was issued to* rather than by the hash of what was presented. Looking it up by the presented
+hash would be simpler and would count nothing: a wrong guess matches no row, the counter never
+moves, and the bound never sees the brute force it exists for.
+
+`issue()` returns the plaintext exactly once and nothing stores it. That is what makes "never
+stored" true rather than aspirational: there is nowhere to read it back from.
+
+**None of this addresses whose mailbox it is.** A posted code proves whoever opens that post
+controls the enrollment, and for a person in a controlling household, a care setting or a
+shelter with shared post, that is not them. The channel is recorded because the coercion
+properties differ and nothing downstream can reconstruct it, and the cap stops a high assurance
+level resting on it -- but the honest position is that this mechanism helps most people and
+fails the same population the [trusted referee](trusted-referee.md) exists for.
 
 ---
 

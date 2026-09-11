@@ -1104,6 +1104,59 @@ CREATE TRIGGER trg_referee_vouching_append_only
     FOR EACH ROW
     EXECUTE FUNCTION reject_audit_modification();
 
+-- ----------------------------------------------------------------------------
+-- EnrollmentCode is NOT an audit-of-record table, and the difference is the
+-- point (P4.4, v9.396). A code is live state: it gets redeemed and its attempts
+-- get counted, so an append-only rule would make redemption impossible.
+--
+-- What it has instead is a ONE-WAY DOOR. A code has exactly three legal
+-- transitions and this refuses everything else, including the ones that look
+-- administrative: re-pointing a code at a different person, extending an expiry
+-- that has passed, or quietly resetting an attempt counter that is about to lock.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION enrollment_code_one_way_door()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.code_hash IS DISTINCT FROM OLD.code_hash
+       OR NEW.individual_id IS DISTINCT FROM OLD.individual_id
+       OR NEW.issued_by_agency_id IS DISTINCT FROM OLD.issued_by_agency_id
+       OR NEW.channel IS DISTINCT FROM OLD.channel
+       OR NEW.issued_at IS DISTINCT FROM OLD.issued_at
+       OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
+        RAISE EXCEPTION
+            'an enrollment code is fixed once issued: its hash, channel, holder, '
+            'issuing agency, issuance and expiry cannot be changed. Issue a new code.'
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- Redeemed exactly once, and never un-redeemed.
+    IF OLD.redeemed_at IS NOT NULL
+       AND NEW.redeemed_at IS DISTINCT FROM OLD.redeemed_at THEN
+        RAISE EXCEPTION
+            'this enrollment code was already redeemed at %; a code is single use'
+            , OLD.redeemed_at
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- The attempt counter only climbs. Resetting it is how a brute-force bound
+    -- stops being one.
+    IF NEW.attempts < OLD.attempts THEN
+        RAISE EXCEPTION
+            'the attempt count on an enrollment code cannot be lowered (% -> %)'
+            , OLD.attempts, NEW.attempts
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_enrollment_code_one_way_door ON EnrollmentCode;
+CREATE TRIGGER trg_enrollment_code_one_way_door
+    BEFORE UPDATE ON EnrollmentCode
+    FOR EACH ROW
+    EXECUTE FUNCTION enrollment_code_one_way_door();
+
 DROP TRIGGER IF EXISTS trg_card_personalization_append_only ON CardPersonalization;
 CREATE TRIGGER trg_card_personalization_append_only
     BEFORE UPDATE OR DELETE ON CardPersonalization

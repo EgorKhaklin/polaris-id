@@ -237,6 +237,78 @@ def main():
         _row("...and there is NO COLUMN to write any of them into", banned, [])
         _row("what IS recorded is the classification", "strength" in columns, True)
 
+        # v9.396: the enrollment-code lifecycle, against the same database. A code
+        # proves somebody reached a channel and nothing more, so what matters here is
+        # that it stays single-use, short-lived and countable.
+        sys.path.insert(0, os.path.join(ROOT, "polaris_web"))
+        import enrollment_code as ec
+        code_id, plaintext = ec.issue(conn, individual_id=people[0], agency_id=agency,
+                                      channel="POSTAL", validity_days=7)
+        conn.commit()
+        _row("a code is issued and its plaintext returned once", bool(plaintext), True)
+        with conn.cursor() as cur:
+            cur.execute("SELECT code_hash FROM EnrollmentCode WHERE code_id = %s", (code_id,))
+            stored = cur.fetchone()["code_hash"]
+        _row("...and what is STORED is a hash, not the code",
+            stored != plaintext and len(stored) == 64, True)
+
+        wrong = 0
+        try:
+            ec.redeem(conn, individual_id=people[0], presented="WRON-GCOD-E999",
+                      proofing_id=None)
+        except ec.CodeRefused:
+            wrong = 1
+        conn.commit()
+        with conn.cursor() as cur:
+            cur.execute("SELECT attempts FROM EnrollmentCode WHERE code_id = %s", (code_id,))
+            after = cur.fetchone()["attempts"]
+        _row("a WRONG guess is refused", wrong, 1)
+        _row("...and moves the attempt counter, which is the whole bound", after, 1)
+
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO EnrollmentProofing
+                           (individual_id, recorded_by_agency_id, presence, derived_ial)
+                           VALUES (%s, %s, 'IN_PERSON', 'IAL1') RETURNING proofing_id""",
+                        (people[0], agency))
+            code_pf = cur.fetchone()["proofing_id"]
+        conn.commit()
+        redeemed = ec.redeem(conn, individual_id=people[0],
+                             presented=plaintext.lower().replace("-", " "),
+                             proofing_id=code_pf)
+        conn.commit()
+        _row("the right code redeems, however it was typed back", redeemed, code_id)
+
+        twice = 0
+        try:
+            ec.redeem(conn, individual_id=people[0], presented=plaintext,
+                      proofing_id=code_pf)
+        except ec.CodeRefused:
+            twice = 1
+        conn.commit()
+        _row("...and cannot be redeemed a second time", twice, 1)
+
+        # The one-way door, met directly rather than through the module.
+        def door(sql):
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (code_id,))
+                conn.commit()
+                return 0
+            except psycopg2.Error:
+                conn.rollback()
+                return 1
+        _row("re-pointing a code at another person is refused",
+            door("UPDATE EnrollmentCode SET individual_id = 2 WHERE code_id = %s"), 1)
+        _row("...extending its expiry is refused",
+            door("UPDATE EnrollmentCode SET expires_at = expires_at + INTERVAL '5 days' "
+                 "WHERE code_id = %s"), 1)
+        _row("...and so is lowering the attempt count",
+            door("UPDATE EnrollmentCode SET attempts = 0 WHERE code_id = %s"), 1)
+        _row("a code valid for a year is refused by the schema",
+            door("INSERT INTO EnrollmentCode (individual_id, issued_by_agency_id, code_hash, "
+                 "channel, expires_at) SELECT 1, %s, repeat('c',64), 'POSTAL', "
+                 "CURRENT_TIMESTAMP + INTERVAL '365 days'"), 1)
+
         print()
         if _ok_all:
             print("OK: an enrollment now records what it rested on, and the assurance level is "

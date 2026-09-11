@@ -55,6 +55,7 @@
 -- database stopped at its plain CREATE TABLE. check_schema_reload_idempotent pins
 -- the list against every CREATE TABLE below.
 DROP TABLE IF EXISTS EnrollmentEvidence    CASCADE;
+DROP TABLE IF EXISTS EnrollmentCode        CASCADE;
 DROP TABLE IF EXISTS RefereeVouching       CASCADE;
 DROP TABLE IF EXISTS EnrollmentProofing    CASCADE;
 DROP TABLE IF EXISTS CardPersonalization   CASCADE;
@@ -1493,6 +1494,58 @@ CREATE INDEX IF NOT EXISTS idx_vouching_by_referee
     ON RefereeVouching (referee_individual_id, vouched_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vouching_by_proofing
     ON RefereeVouching (proofing_id);
+
+-- ----------------------------------------------------------------------------
+-- EnrollmentCode (P4.4, v9.396): the secret an authority sends to a channel so
+-- the applicant can prove they control it. Which is ALL it proves -- not that
+-- they are the applicant -- which is why ENROLLMENT_CODE verification is capped
+-- at FAIR (v9.395). This table is the lifecycle under that cap.
+--
+-- NOT an audit-of-record table. A code is live state: it gets redeemed and its
+-- attempts counted, so an append-only rule would make redemption impossible.
+-- What it has is a ONE-WAY DOOR (see enrollment_code_one_way_door in
+-- 06_triggers.sql): the hash, channel, holder, issuance and expiry are immutable,
+-- redeemed_at moves from NULL exactly once, and attempts only climbs.
+--
+-- There is NO COLUMN for the code itself. A leaked enrollment database should not
+-- be a pile of usable codes, and a column that could hold a plaintext code is a
+-- column somebody eventually writes one into.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS EnrollmentCode (
+    code_id             BIGSERIAL    PRIMARY KEY,
+    individual_id       INTEGER      NOT NULL REFERENCES Individual(individual_id),
+    issued_by_agency_id INTEGER      NOT NULL REFERENCES Agency(agency_id),
+    code_hash           VARCHAR(64)  NOT NULL,
+    channel             VARCHAR(24)  NOT NULL
+        CHECK (channel IN ('POSTAL', 'SMS', 'EMAIL', 'IN_PERSON_HANDOVER')),
+    issued_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at          TIMESTAMP    NOT NULL,
+    redeemed_at         TIMESTAMP,
+    attempts            INTEGER      NOT NULL DEFAULT 0,
+    proofing_id         INTEGER      REFERENCES EnrollmentProofing(proofing_id),
+
+    CONSTRAINT code_hash_is_sha256_hex
+        CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT expires_after_it_is_issued
+        CHECK (expires_at > issued_at),
+    -- A code valid for a year is a permanent credential in a mailbox, and the
+    -- mailbox may not be the applicant's.
+    CONSTRAINT validity_is_bounded
+        CHECK (expires_at <= issued_at + INTERVAL '30 days'),
+    CONSTRAINT redeemed_inside_its_validity
+        CHECK (redeemed_at IS NULL OR redeemed_at <= expires_at),
+    CONSTRAINT attempts_are_not_negative
+        CHECK (attempts >= 0),
+    CONSTRAINT attempts_are_bounded
+        CHECK (attempts <= 5),
+    CONSTRAINT a_redeemed_code_names_its_proofing
+        CHECK ((redeemed_at IS NULL) = (proofing_id IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_enrollment_code_hash
+    ON EnrollmentCode (code_hash);
+CREATE INDEX IF NOT EXISTS idx_enrollment_code_individual
+    ON EnrollmentCode (individual_id, issued_at DESC);
 
 COMMENT ON TABLE EnrollmentProofing IS
   'P4.4: one identity-proofing event per row, and the assurance level its evidence supports. '
