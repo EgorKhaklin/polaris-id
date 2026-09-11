@@ -44,7 +44,22 @@ A pull request is ready when all of these hold:
   `python3 scripts/polaris-compat-suite.py` (the current verifiers must hold every
   frozen case, and a pinned older verifier must never accept what the suite rejects).
 - `./scripts/polaris-preflight.sh` reports READY; it runs the checks and the link
-  checker as the pre-ship gate.
+  checker as the pre-ship gate. **Install `ruff` first.** CI runs `ruff check .` as
+  the FIRST step of the product-test job, so a single unused import fails the whole
+  run before a test executes. Without ruff the preflight lints nothing and says so
+  loudly; do not read past that line.
+- **Check a schema change against a real database before pushing.** The application
+  suites need Flask and psycopg2, but loading the SQL needs only `psql`:
+  `createdb polaris_t && psql -v ON_ERROR_STOP=1 -d polaris_t -f polaris_sql/00_load_all.sql`,
+  then apply `polaris_sql/migrations/*.up.sql`. Test the UPGRADE path too, not just a
+  fresh load: check out the previous schema into a scratch directory, load that, then
+  apply the new migrations and the object-sync file list from `polaris-migrate.sh`.
+  A column type change touches three things its definition does not show -- functions
+  that declare it in a `RETURNS TABLE`, views that depend on it (and their GRANTS,
+  which a `DROP VIEW` removes silently), and the SEQUENCE, which keeps its 32-bit
+  ceiling after the column becomes `BIGINT`.
+- **Do not pipe a gate into `tail` inside an `&&` chain.** A pipeline's exit status is
+  its last command, so `pytest ... | tail -2 && git commit` commits on a red suite.
 - New behaviour carries a test that fails without it. A new invariant carries
   a `check_*` in `polaris_checks/checks.py` with a detection test in
   `polaris_checks/test_checks.py` proving it fails on a broken fixture.
@@ -146,4 +161,4 @@ system is encouraged, provided the constitutional constraints are not weakened
 in the derivative; documenting a derivative to the same audit-of-record
 standard is asked for, not required by the license.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-09-10 (v9.369).*
+*Maintainer: Egor Khaklin. Last updated: 2026-09-11 (v9.390).*

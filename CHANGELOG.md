@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.390 — 2026-09-11 (a fixture that could not run the thing it was testing)
+
+v9.389 made `check_conformance_suite` probe the conformance runner by EXECUTING it against a
+stub verifier that rejects everything. Its existing detection test builds a synthetic tree whose
+`run_conformance.py` is a two-line stub, so the probe could not run and the test's control case
+broke.
+
+The fixture now carries a real minimal runner -- it parses `--verifier`, scores `cases.json`,
+and implements the positive-control gate -- and the test gains the perturbation that matters: a
+runner with the gate removed must FAIL the check. Before this, the gate was verified only by
+hand against the real tree.
+
+I pushed v9.389 without seeing that failure, because the command piped pytest into `tail` and
+the `&&` that followed read `tail`'s exit code, not pytest's. A pipeline's status is its LAST
+command unless you ask for `PIPESTATUS`, and a gate whose result is discarded by a pipe is not
+a gate. That one is now in CONTRIBUTING.md, alongside the other two this session cost: install
+`ruff` before trusting the preflight, and check a schema change against a real database with
+`psql` even when the application suites cannot run locally.
+
+The twenty-minor freshness gate came due on SECURITY.md and CONTRIBUTING.md in the same ship,
+and re-reading them found something to fix rather than a stamp to bump. SECURITY.md now points
+a researcher at [REVIEW-PACKET.md](docs/REVIEW-PACKET.md) before they start, so they can tell an
+accepted limitation from a defect before spending a day on one.
+
+---
+
 ## v9.389 — 2026-09-11 (thirty-five conformance cases passed because nothing could be verified)
 
 Item 7 of P1.18 asks what a newcomer actually experiences, so I ran the four commands the README

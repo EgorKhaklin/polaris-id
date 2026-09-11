@@ -38,6 +38,15 @@ Include:
 **Response:** initial acknowledgement within 5 business days, severity
 assessment within 10 business days.
 
+**Before you start, read [docs/REVIEW-PACKET.md](docs/REVIEW-PACKET.md).** It says
+what each subsystem is supposed to guarantee, what mechanism holds it, and -- in the
+column that matters -- what does NOT stand in the way. It also lists the known
+limitations, each with a witness in the tree, so you can tell an accepted limitation
+from a defect before spending a day on it, and twelve guarantee-attack prompts that
+name the attacks the maintainers would most like attempted. Nothing on that page has
+been reviewed by anybody outside this repository, which is the reason it is written
+down at all.
+
 **Fix, by severity:**
 
 - **Critical** (breaks C1 to C10 in a deployable configuration): patch
@@ -163,5 +172,5 @@ policy.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-10 (v9.369)*
+*Last updated: 2026-09-11 (v9.390)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*
