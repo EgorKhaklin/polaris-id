@@ -219,6 +219,25 @@ def main():
 
     print()
     if _ok_all:
+        # v9.393: the summary states what RAN. The table above already reports the
+        # post-quantum leg as unavailable when liboqs is absent -- a note rather than a
+        # case, because a row comparing a value with itself asserts nothing -- but the
+        # closing paragraph is the part a reader quotes, and it was claiming the
+        # dual-algorithm property in either case. Two of this session's finds were tools
+        # reporting a result they had not established; this was a third, quieter one.
+        if not pq:
+            print("PARTIAL: the classical half holds -- a card object verifies only under the "
+                  "authority that issued it, no single-field edit and no flipped wire byte "
+                  "survives the signature, the duress key appears nowhere in the object, a "
+                  "duress response has the same shape as a normal one, two readers cannot tell "
+                  "they saw the same card, and the published vectors still describe this "
+                  "encoder.")
+            print("\n  NOT EXERCISED: every claim about the TRANSITIONAL card. Whether a valid "
+                  "signature under one algorithm rescues a forged one under the other, in "
+                  "either direction, needs both legs, and liboqs is not installed here. CI runs "
+                  "this drill in the pqc-real job, where it is. Install it to check that half: "
+                  "`pip install liboqs-python`.")
+            return 0
         print("OK: a card object is a credential rather than a badge. It verifies only under "
               "the authority that issued it, no single-field edit and no flipped wire byte "
               "survives the signature, and on a transitional card a valid signature under one "

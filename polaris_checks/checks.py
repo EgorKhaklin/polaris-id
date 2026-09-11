@@ -12467,6 +12467,13 @@ def check_card_emulator(root: pathlib.Path) -> list[Finding]:
 def check_card_profile(root: pathlib.Path) -> list[Finding]:
     """The card is specified as an object somebody else can implement (P4.1).
 
+    ITS DRILL DOES NOT CLAIM WHAT IT DID NOT RUN (v9.393). The transitional-card cases need
+    both signature legs, and liboqs is absent outside the pqc-real job. The drill has always
+    reported the post-quantum leg as unavailable in its table -- a note rather than a case,
+    because a row comparing a value with itself asserts nothing -- but its closing paragraph,
+    the part a reader quotes, asserted the dual-algorithm property either way. That is checked
+    here by RUNNING the drill with the backend forced absent.
+
     The schema modelled a card from the first version: serials, biometric binding type, duress
     hash, succession. What it did not have was an encoding, and a card profile that exists only
     as prose is a profile two implementers read differently.
@@ -12489,6 +12496,33 @@ def check_card_profile(root: pathlib.Path) -> list[Finding]:
     AND THE VECTORS ARE THE CONTRACT. An implementer writing an applet in C has no other way to
     check agreement, so the vectors are published, generated from the encoder rather than
     hand-written, and checked back against it."""
+    # Forced absent by shadowing `oqs` with a module that refuses to import, so the
+    # probe works in CI where liboqs IS installed. The drill catches the ImportError
+    # and runs its classical half, which is the path under test.
+    import tempfile
+    probe_env = {k: v for k, v in os.environ.items() if k != "COVERAGE_PROCESS_START"}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            (pathlib.Path(td) / "oqs.py").write_text(
+                "raise ImportError('forced absent by check_card_profile')\n", encoding="utf-8")
+            probe_env["PYTHONPATH"] = td + os.pathsep + probe_env.get("PYTHONPATH", "")
+            run = subprocess.run(
+                [sys.executable, str(root / "scripts" / "polaris-card-profile-drill.py")],
+                capture_output=True, text=True, cwd=str(root), timeout=300, env=probe_env)
+    except Exception as exc:  # noqa: BLE001
+        return _fail("card_profile", f"the card drill could not be probed: {exc}")
+    out = run.stdout + run.stderr
+    if "post-quantum leg" in out and "unavailable" in out:
+        if "NOT EXERCISED" not in out:
+            return _fail("card_profile",
+                         "with the post-quantum leg unavailable the drill still closes with an "
+                         "unqualified OK. The transitional-card claims need both legs, and the "
+                         "closing paragraph is the part a reader quotes")
+        if "does not rescue a forged one" in out:
+            return _fail("card_profile",
+                         "the drill asserts the dual-algorithm property while reporting the "
+                         "post-quantum leg unavailable: it did not run that case")
+
     name = "card_profile"
     mod = _read(root, "polaris_card/card_profile.py")
     if not mod:

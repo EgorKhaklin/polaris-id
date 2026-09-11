@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.393 — 2026-09-11 (a third tool claiming what it had not run, quieter than the other two)
+
+Having found the same defect twice on the newcomer path, I swept the tools that verify signatures
+and ran each one with no post-quantum backend. Most behave correctly: `polaris-kat-verify.py`
+exits 3 saying it needs liboqs, `polaris-verify.py --verify-dir` SKIPS each case and exits
+non-zero, and `polaris-pairwise-drill.py` is hash-based and genuinely needs nothing.
+
+`polaris-card-profile-drill.py` exited 0 and closed with a paragraph asserting that "on a
+transitional card a valid signature under one algorithm does not rescue a forged one under the
+other, in either direction" -- a claim that needs BOTH signature legs, on a machine that has one.
+
+Its case table was already honest. It reports `post-quantum leg: unavailable` and, in a comment
+worth keeping, explains why that is a note rather than a case: "a row comparing a value with
+itself would pass regardless and assert nothing." The gap was between the table and the summary,
+and the summary is the part a reader quotes.
+
+The drill now closes with PARTIAL when the post-quantum leg is missing, lists what the classical
+half does establish, and names what was NOT exercised and how to exercise it. It still exits 0,
+because the classical half proves what it proves and the drill's design deliberately says so --
+this was an overstatement, not a missing precondition.
+
+`check_card_profile` pins it by RUNNING the drill with `oqs` shadowed by a module that refuses to
+import, which works in CI where liboqs IS installed. It fails if the drill closes with an
+unqualified OK while reporting the leg unavailable, or asserts the dual-algorithm property it
+skipped. Three ways of breaking it are verified.
+
+Three tools, three days apart in the same session, all reporting a result they had not
+established. The first two scored rejections from a verifier that rejects everything; this one
+just kept talking past the end of its evidence.
+
+---
+
 ## v9.392 — 2026-09-11 (twenty-four of forty-four cases held, and that was the second one)
 
 Finishing P1.18 item 7 meant running the last two commands the README gives a newcomer. One was
