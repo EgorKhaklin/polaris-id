@@ -39,8 +39,10 @@ def test_every_check_returns_findings_and_does_not_crash():
 
 def test_csp_check_fails_on_unsafe_inline(tmp_path):
     (tmp_path / "polaris_web").mkdir()
-    (tmp_path / "polaris_web" / "security.py").write_text(
-        "CSP = \"script-src 'self' 'unsafe-inline'\"\n")
+    sec = tmp_path / "polaris_web" / "security.py"
+    sec.write_text("CSP = \"script-src 'self'\"\n")
+    assert checks.check_csp_forbids_unsafe_inline(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    sec.write_text("CSP = \"script-src 'self' 'unsafe-inline'\"\n")
     out = checks.check_csp_forbids_unsafe_inline(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when CSP enables 'unsafe-inline' for scripts"
 
@@ -50,7 +52,10 @@ def test_fk_cascade_check_scans_migrations(tmp_path):
     (tmp_path / "polaris_sql").mkdir()
     (tmp_path / "polaris_sql" / "migrations").mkdir()
     (tmp_path / "polaris_sql" / "01_schema.sql").write_text("CREATE TABLE A (id SERIAL);\n")
-    (tmp_path / "polaris_sql" / "migrations" / "y.up.sql").write_text(
+    mig = tmp_path / "polaris_sql" / "migrations" / "y.up.sql"
+    mig.write_text("ALTER TABLE B ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES A(id);\n")
+    assert checks.check_no_fk_cascade(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    mig.write_text(
         "ALTER TABLE B ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES A(id) ON DELETE CASCADE;\n")
     out = checks.check_no_fk_cascade(tmp_path)
     assert out[0].level == "FAIL", "must FAIL on a cascade in a migration, not only 01_schema.sql"
@@ -58,14 +63,20 @@ def test_fk_cascade_check_scans_migrations(tmp_path):
 
 def test_fk_cascade_check_fails_on_cascade(tmp_path):
     (tmp_path / "polaris_sql").mkdir()
-    (tmp_path / "polaris_sql" / "x.sql").write_text(
-        "ALTER TABLE T ADD FOREIGN KEY (a) REFERENCES U(id) ON DELETE CASCADE;\n")
+    sql = tmp_path / "polaris_sql" / "x.sql"
+    sql.write_text("ALTER TABLE T ADD FOREIGN KEY (a) REFERENCES U(id);\n")
+    assert checks.check_no_fk_cascade(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    sql.write_text("ALTER TABLE T ADD FOREIGN KEY (a) REFERENCES U(id) ON DELETE CASCADE;\n")
     out = checks.check_no_fk_cascade(tmp_path)
     assert out[0].level == "FAIL", "must FAIL on a destructive ON DELETE CASCADE"
 
 
 def test_gitignore_trailing_comment_check_fails(tmp_path):
-    (tmp_path / ".gitignore").write_text("polaris.env   # operator secrets\n")
+    ignore = tmp_path / ".gitignore"
+    ignore.write_text("polaris.env\n")
+    assert checks.check_gitignore_no_trailing_comments(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    assert checks.check_secrets_file_ignored(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    ignore.write_text("polaris.env   # operator secrets\n")
     out = checks.check_gitignore_no_trailing_comments(tmp_path)
     assert out[0].level == "FAIL", "must FAIL on a trailing inline comment"
     # and the secrets check must catch the now-disabled pattern
@@ -76,14 +87,20 @@ def test_gitignore_trailing_comment_check_fails(tmp_path):
 def test_changelog_version_mismatch_fails(tmp_path):
     (tmp_path / "polaris_web").mkdir()
     (tmp_path / "polaris_web" / "__version__.py").write_text('__version__ = "9.99"\n')
-    (tmp_path / "CHANGELOG.md").write_text("## v1.00 — old\n")
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text("## v9.99 — today\n")
+    assert checks.check_changelog_matches_version(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    changelog.write_text("## v1.00 — old\n")
     out = checks.check_changelog_matches_version(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when CHANGELOG top != __version__"
 
 
 def test_debug_artifact_check_fails(tmp_path):
     (tmp_path / "polaris_web").mkdir()
-    (tmp_path / "polaris_web" / "x.py").write_text("def f():\n    breakpoint()\n")
+    mod = tmp_path / "polaris_web" / "x.py"
+    mod.write_text("def f():\n    pass\n")
+    assert checks.check_no_debug_artifacts(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    mod.write_text("def f():\n    breakpoint()\n")
     out = checks.check_no_debug_artifacts(tmp_path)
     assert out[0].level == "FAIL", "must FAIL on a breakpoint() in source"
 
@@ -377,7 +394,14 @@ def test_signing_key_generation_check_discriminates(tmp_path):
 
 def test_c2_zk_null_check_fails_without_constraint(tmp_path):
     (tmp_path / "polaris_sql").mkdir()
-    (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
+    schema = tmp_path / "polaris_sql" / "01_schema.sql"
+    schema.write_text(
+        "CREATE TABLE VerificationEvent (token_id INTEGER, disclosure_level VARCHAR,\n"
+        "  CONSTRAINT chk_disclosure_token_consistency CHECK (\n"
+        "    (disclosure_level = 'ZERO_KNOWLEDGE' AND token_id IS NULL) OR\n"
+        "    (disclosure_level <> 'ZERO_KNOWLEDGE' AND token_id IS NOT NULL)));\n")
+    assert checks.check_c2_zk_token_null(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    schema.write_text(
         "CREATE TABLE VerificationEvent (token_id INTEGER, disclosure_level VARCHAR);\n")
     out = checks.check_c2_zk_token_null(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when the ZK->token_id NULL CHECK is absent"
@@ -385,8 +409,10 @@ def test_c2_zk_null_check_fails_without_constraint(tmp_path):
 
 def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
     (tmp_path / "polaris_web").mkdir()
-    (tmp_path / "polaris_web" / "security.py").write_text(
-        "n = read_count()\nexecute('UPDATE AppUser SET failed_login_count = %s', n + 1)\n")
+    sec = tmp_path / "polaris_web" / "security.py"
+    sec.write_text("execute('UPDATE AppUser SET failed_login_count = failed_login_count + 1')\n")
+    assert checks.check_c4_atomic_failed_login(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    sec.write_text("n = read_count()\nexecute('UPDATE AppUser SET failed_login_count = %s', n + 1)\n")
     out = checks.check_c4_atomic_failed_login(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when the increment is not a single atomic UPDATE"
 
@@ -416,15 +442,21 @@ def test_c8_atlas_caps_check_fails_without_constants(tmp_path):
 
 def test_c9_concurrency_check_fails_without_threading_tests(tmp_path):
     (tmp_path / "polaris_web").mkdir()
-    (tmp_path / "polaris_web" / "test_app.py").write_text("class FooTests:\n    pass\n")
+    suite = tmp_path / "polaris_web" / "test_app.py"
+    suite.write_text("import threading\n\nclass ConcurrencyTests:\n"
+                     "    def t(self):\n        threading.Thread(target=f).start()\n")
+    assert checks.check_c9_concurrency_threading(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    suite.write_text("class FooTests:\n    pass\n")
     out = checks.check_c9_concurrency_threading(tmp_path)
     assert out[0].level == "FAIL", "must FAIL without a ConcurrencyTests class using threading"
 
 
 def test_c10_no_money_check_fails_on_money_table(tmp_path):
     (tmp_path / "polaris_sql").mkdir()
-    (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
-        "CREATE TABLE MonetaryClaim (id SERIAL, balance NUMERIC);\n")
+    schema = tmp_path / "polaris_sql" / "01_schema.sql"
+    schema.write_text("CREATE TABLE Individual (individual_id SERIAL);\n")
+    assert checks.check_c10_no_money_tables(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    schema.write_text("CREATE TABLE MonetaryClaim (id SERIAL, balance NUMERIC);\n")
     out = checks.check_c10_no_money_tables(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when the schema defines a monetary table"
 
@@ -435,7 +467,11 @@ def test_open_redirect_guard_fails_on_naive_guard(tmp_path):
     # meant to replace — the one the backslash trick (/\\host) slips past.
     (tmp_path / "polaris_web" / "security.py").write_text(
         "def is_safe_next_url(u):\n    return bool(u)\n")
-    (tmp_path / "polaris_web" / "app.py").write_text(
+    app = tmp_path / "polaris_web" / "app.py"
+    app.write_text("next_url = request.args.get('next', '')\n"
+                   "if is_safe_next_url(next_url):\n    return redirect(next_url)\n")
+    assert checks.check_open_redirect_guard(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    app.write_text(
         "next_url = request.args.get('next', '')\n"
         "if next_url.startswith('/') and not next_url.startswith('//'):\n"
         "    return redirect(next_url)\n")
@@ -445,7 +481,11 @@ def test_open_redirect_guard_fails_on_naive_guard(tmp_path):
 
 def test_cookie_secure_check_fails_when_opt_in_only(tmp_path):
     (tmp_path / "polaris_web").mkdir()
-    (tmp_path / "polaris_web" / "app.py").write_text(
+    app = tmp_path / "polaris_web" / "app.py"
+    app.write_text("app.config['SESSION_COOKIE_SECURE'] = _PRODUCTION or "
+                   "os.environ.get('POLARIS_COOKIE_SECURE', '').lower() in ('1', 'true')\n")
+    assert checks.check_cookie_secure_in_production(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    app.write_text(
         "app.config['SESSION_COOKIE_SECURE'] = "
         "os.environ.get('POLARIS_COOKIE_SECURE', '').lower() in ('1', 'true')\n")
     out = checks.check_cookie_secure_in_production(tmp_path)
@@ -491,8 +531,10 @@ def test_table_count_check_fails_on_doc_drift(tmp_path):
 
 def test_local_clock_check_fails_on_utcnow(tmp_path):
     (tmp_path / "polaris_web").mkdir()
-    (tmp_path / "polaris_web" / "app.py").write_text(
-        "if epoch['valid_until'] < datetime.utcnow():\n    pass\n")
+    app = tmp_path / "polaris_web" / "app.py"
+    app.write_text("if epoch['valid_until'] < db_now():\n    pass\n")
+    assert checks.check_local_clock_convention(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    app.write_text("if epoch['valid_until'] < datetime.utcnow():\n    pass\n")
     out = checks.check_local_clock_convention(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when app.py compares boundaries against utcnow()"
 
@@ -500,11 +542,19 @@ def test_local_clock_check_fails_on_utcnow(tmp_path):
 def test_operator_script_argv_check_fails_without_validation(tmp_path):
     (tmp_path / "scripts").mkdir()
     # A purge script that interpolates --actor-user-id with no numeric guard.
+    guards = {
+        "polaris-purge.sh": 'ACTOR_USER_ID="$2"\nif [[ ! "$ACTOR_USER_ID" =~ ^[0-9]+$ ]]; then exit 1; fi\n'
+                            'psql -c "CALL uc_archive_purge(p_actor_user_id := ${ACTOR_USER_ID})"\n',
+        "polaris-migrate.sh": 'ACTOR_USER_ID="$2"\nif [[ ! "$ACTOR_USER_ID" =~ ^[0-9]+$ ]]; then exit 1; fi\n',
+        "polaris-archive.sh": 'CUTOFF_DAYS="$1"\nif [[ ! "$CUTOFF_DAYS" =~ ^[0-9]+$ ]]; then exit 1; fi\n',
+        "polaris-recover-admin.sh": 'TARGET="$1"\nif [[ ! "$TARGET" =~ ^[a-z0-9._-]{3,50}$ ]]; then exit 1; fi\n',
+    }
+    for name, body in guards.items():
+        (tmp_path / "scripts" / name).write_text("#!/usr/bin/env bash\n" + body)
+    assert checks.check_operator_scripts_validate_argv(tmp_path)[0].level == "OK", "must PASS on the good fixture"
     (tmp_path / "scripts" / "polaris-purge.sh").write_text(
         '#!/usr/bin/env bash\nACTOR_USER_ID="$2"\n'
         'psql -c "CALL uc_archive_purge(p_actor_user_id := ${ACTOR_USER_ID})"\n')
-    for name in ("polaris-recover-admin.sh", "polaris-migrate.sh", "polaris-archive.sh"):
-        (tmp_path / "scripts" / name).write_text("#!/usr/bin/env bash\n# no validation\n")
     out = checks.check_operator_scripts_validate_argv(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when an operator script interpolates argv without regex validation"
 
@@ -512,10 +562,12 @@ def test_operator_script_argv_check_fails_without_validation(tmp_path):
 def test_migration_drift_check_fails_on_column_missing_from_schema(tmp_path):
     (tmp_path / "polaris_sql").mkdir()
     (tmp_path / "polaris_sql" / "migrations").mkdir()
-    (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
-        "CREATE TABLE AppUser (user_id SERIAL PRIMARY KEY);\n")
+    schema = tmp_path / "polaris_sql" / "01_schema.sql"
+    schema.write_text("CREATE TABLE AppUser (user_id SERIAL PRIMARY KEY, secret_drift_col TEXT);\n")
     (tmp_path / "polaris_sql" / "migrations" / "x.up.sql").write_text(
         "ALTER TABLE AppUser ADD COLUMN secret_drift_col TEXT;\n")
+    assert checks.check_no_migration_column_drift(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    schema.write_text("CREATE TABLE AppUser (user_id SERIAL PRIMARY KEY);\n")
     out = checks.check_no_migration_column_drift(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when a migration adds a column missing from 01_schema.sql"
 
@@ -11797,3 +11849,57 @@ def test_internal_kex_measured_check_discriminates(tmp_path):
     write()
     (tmp_path / "scripts" / "polaris-internal-kex-drill.sh").unlink()
     assert checks.check_internal_kex_measured(tmp_path)[0].level == "FAIL", "must FAIL when the drill is absent"
+
+
+def test_detection_controls_check_discriminates(tmp_path):
+    GOOD = ('from polaris_checks import checks\n\n\n'
+            'def test_a_check_discriminates(tmp_path):\n'
+            '    write_good(tmp_path)\n'
+            '    assert checks.check_a(tmp_path)[0].level == "OK", "must PASS on the good fixture"\n'
+            '    write_bad(tmp_path)\n'
+            '    assert checks.check_a(tmp_path)[0].level == "FAIL", "must FAIL when broken"\n\n\n'
+            'def test_b_check_discriminates(tmp_path):\n'
+            '    out = checks.check_b(tmp_path)\n'
+            '    assert out[0].level == "OK", "must PASS on the good fixture"\n'
+            '    write_bad(tmp_path)\n'
+            '    out = checks.check_b(tmp_path)\n'
+            '    assert out[0].level == "FAIL", "must FAIL when broken"\n')
+    # The floor exists so the check cannot pass by recognising nothing, so the fixture has to
+    # clear it; the two hand-written tests above carry the shapes, the filler carries the count.
+    FILLER = "".join(
+        'def test_f%d_check_discriminates(tmp_path):\n'
+        '    assert checks.check_f%d(tmp_path)[0].level == "OK", "good"\n'
+        '    assert checks.check_f%d(tmp_path)[0].level == "FAIL", "bad"\n\n\n' % (i, i, i)
+        for i in range(160))
+    rel = "polaris_checks/test_checks.py"
+    def write(body):
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write(GOOD + "\n\n" + FILLER)
+    assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # the direct form loses its control
+    write(GOOD.replace('    assert checks.check_a(tmp_path)[0].level == "OK", "must PASS on the good fixture"\n', "")
+          + "\n\n" + FILLER)
+    assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "FAIL", "must FAIL when a test only ever asserts FAIL"
+    # the bound-variable form loses its control
+    write(GOOD.replace('    assert out[0].level == "OK", "must PASS on the good fixture"\n', "")
+          + "\n\n" + FILLER)
+    assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "FAIL", "must FAIL when the control is missing behind a bound variable"
+    # a control for a DIFFERENT check is not a control for this one
+    write(GOOD.replace('assert checks.check_a(tmp_path)[0].level == "OK"',
+                       'assert checks.check_something_else(tmp_path)[0].level == "OK"')
+          + "\n\n" + FILLER)
+    assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "FAIL", "must FAIL when the positive control names a different check"
+    # the control is commented out rather than removed
+    write(GOOD.replace('    assert checks.check_a(tmp_path)[0].level == "OK", "must PASS on the good fixture"',
+                       '    # assert checks.check_a(tmp_path)[0].level == "OK"')
+          + "\n\n" + FILLER)
+    assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "FAIL", "must FAIL when the control is commented out"
+    # the floor: a tree whose detection tests the parse no longer recognises
+    write(GOOD)
+    assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "FAIL", "must FAIL when too few detection tests are recognised, rather than pass by finding nothing"
+    # the file does not parse at all
+    write("def test_x(tmp_path:\n")
+    assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "FAIL", "must FAIL when the test file does not parse"
+    # the file is gone
+    (tmp_path / rel).unlink()
+    assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "FAIL", "must FAIL when the test file is absent"

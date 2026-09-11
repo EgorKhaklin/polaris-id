@@ -5,6 +5,31 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.405 — 2026-09-11 (a detection test that only ever asserts FAIL has not established that it detects)
+
+The README says every check is "paired with a detection test proving it fails on a broken
+fixture". That is half a proof. The other half, the half that makes the first half mean
+anything, is the test also asserting the check PASSES on the same fixture unmutated.
+
+Without it a FAIL is not attributable to the defect the test injected. A check that reads five
+files can fail on a synthetic tree because three of them are missing, and the mutation the test
+carefully wrote is then decorative: the test would pass with the mutation deleted.
+
+Measured: 212 of the 227 detection tests already asserted OK on a good fixture first. Fifteen did
+not, all of them early tests from the first checks in the layer. Each of the fifteen was then
+re-checked by substituting the REAL repository's content at every path the fixture wrote and
+deleting the synthetic ones, which is the strongest control available without writing the good
+fixture by hand: every one of them passed. So they did discriminate. They were right by luck, and
+nothing was holding the property in place.
+
+All fifteen now write the good fixture first and assert OK on it, which meant working out what
+"good" is for each one and, in three cases, finding that the shape guessed from the failure
+message was not the shape the check wants. `check_detection_tests_have_a_positive_control` (230)
+holds the property for the next one: every test that asserts a check FAILs must assert the SAME
+check passes on the unmutated fixture. A control naming a different check is not a control; a
+control commented out is not a control; and the check carries a floor on how many detection tests
+it recognises, so a broken parse fails rather than passing by finding nothing.
+
 ## v9.404 — 2026-09-11 (the posture read the key exchange off a Dockerfile)
 
 PQC-POSTURE stated the TLS key exchange on the two internal hops by naming the OpenSSL version

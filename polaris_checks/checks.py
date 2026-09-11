@@ -10817,6 +10817,87 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_detection_tests_have_a_positive_control(root: pathlib.Path) -> list[Finding]:
+    """A detection test that only ever asserts FAIL has not established that it detects (v9.405).
+
+    The README's claim about this layer is that every check is "paired with a detection test
+    proving it fails on a broken fixture". Half of that is a test asserting FAIL on a mutated
+    tree. The other half, which is the half that makes the first half mean anything, is the
+    test also asserting the check passes on the SAME fixture unmutated. Without it a FAIL is
+    not attributable to the injected defect: a check can fail on a synthetic tree because
+    three files it reads are missing, and the mutation the test wrote is then decorative.
+
+    Measured when this was written: 212 of the 227 detection tests already asserted OK on a
+    good fixture first; 15 did not. Those 15 turned out to discriminate anyway (each was
+    re-checked by substituting the real repo's content at the paths the fixture wrote, which
+    made every one of them pass), so this ships as a guard against the next one rather than as
+    a repair. That is the point: the property held by luck and nothing was keeping it.
+
+    The control must name the SAME check the FAIL names. Asserting that some other check is
+    happy with the fixture says nothing about this one."""
+    name = "detection_controls"
+    rel = "polaris_checks/test_checks.py"
+    src = _read(root, rel)
+    if not src:
+        return _fail(name, f"{rel} is absent; the check layer's detection claim rests on nothing")
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:
+        return _fail(name, f"{rel} does not parse: {exc}")
+
+    def levels(fn):
+        """(checks this test asserts FAIL for, checks it asserts OK for)."""
+        var_to_check: dict[str, str] = {}
+        fail: set[str] = set()
+        ok: set[str] = set()
+        for node in ast.walk(fn):
+            # `out = checks.check_x(tmp)` and `first = checks.check_x(tmp)[0]` both bind a
+            # name that a later assert reads the level off.
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)):
+                m = re.match(r"checks\.(check_\w+)\(", ast.unparse(node.value))
+                if m:
+                    var_to_check[node.targets[0].id] = m.group(1)
+            if isinstance(node, ast.Assert):
+                text = ast.unparse(node.test)
+                m = re.search(r"""==\s*['"](OK|FAIL)['"]""", text)
+                if not m:
+                    continue
+                named = set(re.findall(r"checks\.(check_\w+)\(", text))
+                if not named:
+                    v = re.match(r"(\w+)[\[.]", text)
+                    named = {var_to_check[v.group(1)]} if v and v.group(1) in var_to_check else set()
+                (fail if m.group(1) == "FAIL" else ok).update(named)
+        return fail, ok
+
+    uncontrolled, total = [], 0
+    for node in tree.body:
+        if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+            continue
+        if not any(a.arg == "tmp_path" for a in node.args.args):
+            continue
+        fail, ok = levels(node)
+        if not fail:
+            continue
+        total += 1
+        for missing in sorted(fail - ok):
+            uncontrolled.append(f"{node.name} ({missing})")
+    if uncontrolled:
+        return _fail(name,
+                     "detection test(s) assert FAIL without first asserting the same check "
+                     "passes on the unmutated fixture, so the FAIL is not attributable to the "
+                     "defect they injected: " + ", ".join(uncontrolled[:5])
+                     + (f" (+{len(uncontrolled) - 5} more)" if len(uncontrolled) > 5 else ""))
+    if total < 150:
+        return _fail(name,
+                     f"only {total} detection tests were recognised; the parse has broken and "
+                     "this check is passing by finding nothing to check")
+    return _ok(name,
+               f"all {total} detection tests assert the check PASSES on the good fixture before "
+               "asserting it fails on the mutated one, so each FAIL is attributable to the "
+               "defect the test injected rather than to an incomplete tree")
+
+
 def check_internal_kex_measured(root: pathlib.Path) -> list[Finding]:
     """The internal hops' key exchange must be measured, not read off a Dockerfile (v9.404).
 
@@ -13691,6 +13772,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
+    check_detection_tests_have_a_positive_control,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,
