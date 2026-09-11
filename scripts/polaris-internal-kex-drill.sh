@@ -78,17 +78,36 @@ docker rm -f "$PG" "$PB" >/dev/null 2>&1 || true
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=polaris-kex \
     -keyout "$WORK/server.key" -out "$WORK/server.crt" >/dev/null 2>&1
-chmod 600 "$WORK/server.key"
-# The postgres image runs as uid 70 (alpine) and refuses a key it does not own.
-chmod 644 "$WORK/server.crt"
 printf 'polariskex' > "$WORK/polaris_db_password"
 
+# Boot WITHOUT TLS first, then install the key inside the container and reload.
+# A bind-mounted key is owned by the host user, and postgres refuses a private
+# key "owned by" anyone but the database user or root, so the mount that works
+# on a developer's Docker Desktop fails on a Linux runner. The verify-ca step in
+# this workflow solves it the same way.
 docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=polariskex \
-    -v "$WORK/server.crt:/tmp/server.crt:ro" -v "$WORK/server.key:/tmp/server.key:ro" \
-    "$PG_IMAGE" -c ssl=on -c ssl_cert_file=/tmp/server.crt -c ssl_key_file=/tmp/server.key >/dev/null
+    "$PG_IMAGE" >/dev/null
 
 for _ in $(seq 1 60); do docker exec "$PG" pg_isready -q -h 127.0.0.1 2>/dev/null && break; sleep 1; done
 docker exec "$PG" pg_isready -q -h 127.0.0.1 || { echo "polaris-internal-kex-drill: postgres did not come up" >&2; docker logs "$PG" 2>&1 | tail -20; exit 1; }
+
+docker cp "$WORK/server.crt" "$PG:/tmp/server.crt" >/dev/null
+docker cp "$WORK/server.key" "$PG:/tmp/server.key" >/dev/null
+docker exec -u root "$PG" sh -c 'cp /tmp/server.crt /var/lib/postgresql/data/server.crt \
+    && cp /tmp/server.key /var/lib/postgresql/data/server.key \
+    && chown postgres:postgres /var/lib/postgresql/data/server.crt /var/lib/postgresql/data/server.key \
+    && chmod 600 /var/lib/postgresql/data/server.key'
+docker exec -e PGPASSWORD=polariskex "$PG" psql -U postgres -q \
+    -c "ALTER SYSTEM SET ssl=on" -c "ALTER SYSTEM SET ssl_cert_file='server.crt'" \
+    -c "ALTER SYSTEM SET ssl_key_file='server.key'" -c "SELECT pg_reload_conf()" >/dev/null
+for _ in $(seq 1 30); do
+    docker exec -e PGPASSWORD=polariskex "$PG" psql -U postgres -tAc "SHOW ssl" 2>/dev/null \
+        | tr -d '[:space:]' | grep -qx on && break
+    sleep 1
+done
+docker exec -e PGPASSWORD=polariskex "$PG" psql -U postgres -tAc "SHOW ssl" 2>/dev/null \
+    | tr -d '[:space:]' | grep -qx on \
+    || { echo "polaris-internal-kex-drill: postgres did not come up with TLS on" >&2; docker logs "$PG" 2>&1 | tail -20; exit 1; }
 
 docker build -q -f polaris_web/Dockerfile.pgbouncer -t polaris-pgbouncer:kexdrill polaris_web >/dev/null
 docker run -d --name "$PB" --network "$NET" \

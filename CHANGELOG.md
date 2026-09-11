@@ -5,6 +5,21 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.406 — 2026-09-11 (the key that worked on a laptop and not on a runner)
+
+v9.404's internal-kex drill bind-mounted a freshly minted server key into the postgres
+container. That works on Docker Desktop, whose bind mounts are remapped so the file appears
+owned by the container's user, and fails on a Linux runner, where the file keeps the host uid
+and postgres refuses to start: "private key file must be owned by the database user or root".
+Green locally, red in CI, which is the shape of every bind-mount ownership bug.
+
+The drill now boots postgres without TLS, copies the key IN with `docker cp`, chowns it to the
+database user inside the container, turns ssl on with ALTER SYSTEM and waits for `SHOW ssl` to
+come back on before probing. That is the pattern the verify-ca step in the same job already
+used; the new drill should have started from it.
+
+The measurement is unchanged: four cases, both hops, forced and unforced.
+
 ## v9.405 — 2026-09-11 (a detection test that only ever asserts FAIL has not established that it detects)
 
 The README says every check is "paired with a detection test proving it fails on a broken
