@@ -27,17 +27,13 @@ name would leave the check reading an unmutated copy and "surviving" for no inte
 Those are reported as skipped with the count, rather than counted as passes -- a drill that
 inflated its own coverage would be the same error one level up.
 
-WHAT IT IS TODAY IS A RATCHET, NOT A GATE, and the difference is stated rather than hidden.
-71 of 75 fully mutated checks currently survive. The cause is one line: `_read` hands checks
-the comments along with the code. Stripping there takes the number to ZERO -- measured, not
-estimated -- and breaks 58 detection-test fixtures that carry their property in a comment,
-which is a repair of its own size. So this drill fails when the number GROWS, and the number
-comes down in the ship that fixes the fixtures.
+IT GATES AT ZERO. When this drill was written, 71 of 75 fully mutated checks survived, because
+`_read` handed every check the comments along with the code. Stripping there fixed all 71 at
+once and broke 58 detection-test fixtures that carried their own property in a comment -- those
+fixtures were repaired in the same ship, since a fixture that states its property in a comment
+is testing the thing this drill exists to forbid.
 
-A ratchet is the honest shape for a finding bigger than the ship that found it. Reporting 71 and
-gating at 71 says what is true; gating at zero today would mean deleting the drill tomorrow.
-
-Exits non-zero if the count of surviving checks exceeds the recorded baseline. No database.
+Exits non-zero if any fully mutated check still passes. No database.
 """
 from __future__ import annotations
 
@@ -52,10 +48,11 @@ sys.path.insert(0, str(ROOT))
 
 MUTABLE_SUFFIXES = (".py", ".sql", ".sh", ".yml", ".yaml")
 
-#: Checks that pass on a tree where their own property has been commented out, as of
-#: v9.398. This number must not grow, and the ship that makes `_read` strip comments
-#: takes it to zero. It is a measurement, not a target: see the module docstring.
-SPELLING_PINNED_BASELINE = 71
+#: Checks that pass on a tree where their own property has been commented out. It was
+#: 71 of 75 at v9.398, when `_read` still handed checks the comments along with the
+#: code. It is ZERO, and a zero baseline is the only one worth having: any check that
+#: starts surviving this mutation fails the build on the push that makes it survive.
+SPELLING_PINNED_BASELINE = 0
 IGNORE = shutil.ignore_patterns(".git", "node_modules", "target", "__pycache__",
                                 ".hypothesis", "venv", ".ruff_cache")
 

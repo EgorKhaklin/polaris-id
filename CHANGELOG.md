@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.399 — 2026-09-11 (seventy-one to zero: the checks now read code, not the comments beside it)
+
+v9.398 measured the exposure and ratcheted it. This closes it.
+
+`_read` -- the helper every check reads files through -- now strips comments for the languages
+that have them, so a check greps the CODE. `_read_path` does the same for globbed files, and
+`_read_raw` remains for the checks whose property IS the prose: a required header, a stated
+reason, a document's wording. The mutation drill gates at zero and 0 of 75 survive.
+
+THE 58 FIXTURES WERE THE WHOLE JOB, and they were worth repairing rather than exempting: a
+detection-test fixture that states its property in a comment is testing exactly the thing the
+drill forbids. Most were mechanical -- a fixture line that said `"# polaris-registry/1"` now
+says it as content -- and each repair was verified by re-running its own test, which asserts
+both directions, so a repair that made the control pass while breaking a perturbation could not
+hide. Three needed hand work: a needle inside a trailing comment in a multi-line fixture string,
+a protocol label carried in a leading comment, and a `good_grants` fixture that listed the
+append-only tables in a SQL comment (`-- tables: ...`) rather than in the REVOKE statement the
+check reads. That last one is the clearest case for the change: the fixture was asserting the
+grant existed by mentioning the tables NEXT TO one.
+
+Getting the stripper right took four corrections, all of them mine. A SHEBANG is not a comment,
+and blanking it broke the check that reads a module docstring after it. In YAML and shell a `#`
+opens a comment only at line start or after whitespace, so `PKCS#11` is a value -- stripping it
+turned a CI step name into `name: PKCS`. Blanking a comment line to EMPTY changed the file's
+blank-line structure, and a check that slices a route body on a `\n\n\n` boundary began
+reading a truncated one, so a whole-line comment keeps its marker. And string literals had to
+survive, since the SQL a check greps lives inside them.
+
+What the drill still cannot see is now the first thing the review packet points a reviewer at:
+nine checks read files it cannot enumerate, it only mutates what a check GREPS for, and it
+cannot tell a vacuously-true check from one that is watching something.
+
+---
+
 ## v9.398 — 2026-09-11 (seventy-one of seventy-five checks pass on a tree where the property is gone)
 
 The review packet's last attack prompt says: if a check can be made to pass on a broken tree,

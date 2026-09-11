@@ -84,22 +84,22 @@ who breaks any of these has found something worth the engagement.
 | A-9 | A published statistic does not disclose a small count | `check:transparency_program`, `drill:scripts/polaris-transparency-report-drill.py` | recovery of a withheld cell from a published report, or a series of reports whose combination recovers one |
 | A-10 | The system cannot reach a state where a holder has no verifiable credential | `check:quantum_event_readiness`, `drill:scripts/polaris-quantum-event-drill.py` | a window, however brief, in which an ACTIVE credential verifies under nothing |
 | A-11 | An offline verifier refuses a credential revoked before its epoch | `check:offline_verification`, `check:status_distribution` | acceptance of a credential whose revocation was published before the verifier's epoch |
-| A-12 | The check layer detects its own violations | `check:controls_as_attacks`, `check:attacks_run`, `drill:scripts/polaris-check-mutation-drill.py` | a check that passes against a tree where the property it names is false. Part of this is now machine-checked: the mutation drill comments out every line carrying a check's own search strings and re-runs it. **71 of 75 checks currently survive that**, which is the honest state; the drill ratchets the number and the fix is known |
+| A-12 | The check layer detects its own violations | `check:controls_as_attacks`, `check:attacks_run`, `drill:scripts/polaris-check-mutation-drill.py` | a check that passes against a tree where the property it names is false. Part of this is now machine-checked: the mutation drill comments out every line carrying a check's own search strings and re-runs it. 71 of 75 checks survived that when it was written; **none do now**, and the drill gates at zero |
 
 A-12 is still the one to start with. Every other guarantee on this page is believed because a
 check says so, and the checks are written by the same hand as the code. If a check can be made
 to pass on a broken tree, everything above it is worth less than it looks.
 
-That was not rhetorical. Running the attack in v9.398 found that **71 of 75 checks pass on a
-tree where the property they name has been commented out.** The cause is one line: the helper
-every check reads files through hands them the comments along with the code, so the words
-survive where the code does not.
+That was not rhetorical. Running the attack found that **71 of 75 checks passed on a tree where
+the property they name had been commented out.** The cause was one line: the helper every check
+reads files through handed them the comments along with the code, so the words survived where
+the code did not. Stripping there fixed all 71, and the 58 detection-test fixtures that carried
+their own property in a comment were repaired in the same ship -- a fixture that states its
+property in a comment is testing the thing the drill forbids.
 
-Stripping comments there takes the number to zero -- measured, not estimated -- and breaks 58
-detection-test fixtures that carry their own property in a comment, so the repair is a ship of
-its own. Until then the drill RATCHETS: the number cannot grow, and it is printed on every run
-rather than described. Two further limits: nine checks read files the drill cannot enumerate,
-and it only mutates strings a check greps for, so a check that computes rather than greps is
-untested by it.
-
-A reviewer looking for the weakest thing on this page should start here.
+The drill now gates at zero on every push. **Its limits are where a reviewer should look
+next:** nine checks read files the drill cannot enumerate, so they are skipped rather than
+counted; it only mutates strings a check GREPS for, so a check that computes rather than greps
+is untested by it; and it cannot tell a check that is vacuously true from one that is watching
+something. Two checks were found passing because the mutation removed their subject entirely,
+and there is no reason to think those were the last two.

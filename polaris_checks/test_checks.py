@@ -177,11 +177,11 @@ def test_verification_load_certified_check_discriminates(tmp_path):
            "    if status == 200: return \"served\", \"ok\"\n"
            "    if status == 429: return \"tolerated\", \"http_429\"\n"
            "    return \"drop\", \"transport\"\n"
-           "# GET /api/tokens/<id>/verify after POST /login; supports --once\n")
-    TEST = "def test_classify(): pass\n# also covers run_once\n"
+           "GET /api/tokens/<id>/verify after POST /login; supports --once\n")
+    TEST = "def test_classify(): pass\nalso covers run_once\n"
     COV = 'run "$ROOT/scripts" unittest test_verify_load\n'
     ROLLING = ('python3 scripts/polaris-verify-load.py --out "$WORK/verify.json"\n'
-               '# assert 0 verification requests dropped across the rollover\n')
+               'assert 0 verification requests dropped across the rollover\n')
     FAILOVER = ('python3 scripts/polaris-verify-load.py --out "$WORK/verify.json"\n'
                 'verify_recovered || fail "1"\n'
                 'verify_recovered || fail "2"\n'
@@ -295,7 +295,7 @@ def test_ui_drill_check_discriminates(tmp_path):
     # SIM_MODE. The good fixture has all of it; each perturbation removes one.
     PY = ("from playwright.sync_api import sync_playwright\n"
           "toggle = page.query_selector('[data-atlas-sim-toggle]')\n"
-          "# read the sim counter (streamed) and the Overview aggregate\n"
+          "read the sim counter (streamed) and the Overview aggregate\n"
           "n = page.query_selector('[data-ov-kpi=\"volume\"]')\n"
           "if not (last > first): fail('counter did not climb')\n"
           "if not (kpi_after > kpi_before): fail('aggregate did not grow')\n")
@@ -571,7 +571,7 @@ def test_holder_side_prover_check_discriminates(tmp_path):
                                       "def verify_epoch_leaves(b):\n    return _leaves_root(b)\n"
                                       "def member_index(b, seed):\n    return None\n"),
         'scripts/polaris-wallet.py': "from_instance = None\nverify_epoch_leaves(e)\n",
-        'sdk/python/polaris_verify/__init__.py': '# "polaris-epoch-leaves/1"\n',
+        'sdk/python/polaris_verify/__init__.py': '"polaris-epoch-leaves/1"\n',
         'sdk/typescript/src/index.ts': '// "polaris-epoch-leaves/1"\n',
         'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": ['
             '{"name": "a", "artifact": "epoch-leaves", "expect": {"authentic": true}}, '
@@ -680,7 +680,7 @@ def test_attestation_signed_check_discriminates(tmp_path):
         'polaris_sql/06_triggers.sql': "RAISE EXCEPTION 'an attestation signature cannot be replaced once recorded';\n",
         'polaris_web/app.py': "def _attestation_statement(body):\n    pass\ndef _sign_attestation(cur, attestation_id):\n    pass\nsigned = _sign_attestation(cur, row['attestation_id'])\n'signature_hex': a.get('attestation_signature_hex')\n",
         'scripts/polaris-verify.py': "def verify_attestation(att, attesting_agency_id=None, expected_key=None):\n    return {'attester_matches': None, 'key_matches': None}\ndef verify_cross_authority(pack, ctx, ms, require_signed_attestation=False):\n    pass\n",
-        'sdk/python/polaris_verify/__init__.py': "# polaris-trust-attestation/1\ndef verify_attestation(att, attesting_agency_id=None, expected_key=None):\n    pass\n",
+        'sdk/python/polaris_verify/__init__.py': "polaris-trust-attestation/1\ndef verify_attestation(att, attesting_agency_id=None, expected_key=None):\n    pass\n",
         'sdk/typescript/src/index.ts': '// "polaris-trust-attestation/1"\nexport function verifyAttestation(a, b, c) { return null; }\n',
         'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": ['
                                   '{"name": "ok", "artifact": "trust-attestation", "expect": {"authentic": true}}, '
@@ -781,7 +781,11 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
             + ("SECURITY DEFINER\n" if proc_definer else "")
             + "AS $$ BEGIN NULL; END; $$;\n")
 
-    good_grants = (f"REVOKE UPDATE, DELETE ON ... -- tables: {base_tables}\n")
+    # A real REVOKE naming the tables, not a comment listing them: the check reads
+    # 09_grants.sql for the statement, and a comment is not one (v9.399).
+    good_grants = ("REVOKE UPDATE, DELETE ON "
+                   + ", ".join(" ".join(base_tables).split())
+                   + " FROM polaris_app;\n")
 
     # 1. No REVOKE at all -> FAIL.
     write("GRANT SELECT ON ALL TABLES TO polaris_app;\n", True, True)
@@ -859,14 +863,14 @@ def test_coercion_evidence_retained_check_discriminates(tmp_path):
     sql.mkdir(); web.mkdir()
 
     GOOD_SCHEMA = (
-        "-- requesting_purpose_text is the anti-coercion evidentiary trail,\n"
-        "-- RETAINED on every disclosure level (unlike requestor_location).\n"
+        "requesting_purpose_text is the anti-coercion evidentiary trail,\n"
+        "RETAINED on every disclosure level (unlike requestor_location).\n"
         "    requesting_purpose_text VARCHAR(280),\n")
 
     def write(schema, app="SELECT requesting_purpose_text FROM VerificationEvent;\n"):
         (sql / "01_schema.sql").write_text(schema)
-        (sql / "11_atlas.sql").write_text("-- atlas\n")
-        (sql / "05_procedures.sql").write_text("-- procs\n")
+        (sql / "11_atlas.sql").write_text("atlas\n")
+        (sql / "05_procedures.sql").write_text("procs\n")
         (web / "app.py").write_text(app)
 
     # 1. Column missing entirely -> FAIL.
@@ -875,7 +879,7 @@ def test_coercion_evidence_retained_check_discriminates(tmp_path):
         "must FAIL when the coercion-evidence column is missing"
 
     # 2. Stale FALSE comment claiming ZK redaction, right before the column -> FAIL.
-    write("-- Like requestor_location, it is redacted for ZERO_KNOWLEDGE rows at read.\n"
+    write("Like requestor_location, it is redacted for ZERO_KNOWLEDGE rows at read.\n"
           "    requesting_purpose_text VARCHAR(280),\n")
     assert checks.check_coercion_evidence_retained(tmp_path)[0].level == "FAIL", \
         "must FAIL when the schema falsely documents the trail as ZK-redacted"
@@ -2447,9 +2451,9 @@ def test_encryption_at_rest_posture_check_discriminates(tmp_path):
     sql = tmp_path / "polaris_sql"
     op.mkdir(parents=True)
     sql.mkdir(parents=True)
-    GOOD_SCHEMA = "proof_path JSONB NOT NULL,\n-- v1 stores proof_path in plaintext\n"
+    GOOD_SCHEMA = "proof_path JSONB NOT NULL,\nv1 stores proof_path in plaintext\n"
     GOOD_DOC = (
-        "# at-rest posture\n"
+        "at-rest posture\n"
         "Polaris does **not** encrypt the live database at rest.\n"
         "Sensitive at rest: Individual.legal_name, Individual.date_of_birth, and\n"
         "TokenStateEpochLeaf.proof_path (stored in plaintext, schema-acknowledged).\n"
@@ -4412,7 +4416,7 @@ def test_distributed_tracing_check_discriminates(tmp_path):
                 '{"expr": "polaris_duress_events_total"}]}]}')
     TRACES = ('{"uid": "polaris-traces", "title": "x", "panels": [{"targets": ['
               '{"queryType": "traceql", "query": "{span.polaris.request_id=\\"$id\\"}"}]}]}')
-    DRILL = ("POST /v1/traces\nassert rid.encode() in payload  # X-Request-ID join\n"
+    DRILL = ("POST /v1/traces\nassert rid.encode() in payload  X-Request-ID join\n"
              "assert MARKER.encode() not in payload\n")
     good = {
         "polaris_web/tracing.py": TRACING,
@@ -5266,12 +5270,12 @@ $$;
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     (scripts / "polaris-archive.sh").write_text(
-        "# --from-policy resolves a cutoff per class\n"
+        "--from-policy resolves a cutoff per class\n"
         'MANIFEST=\'{"cutoff_by_class": {}}\'\n')
     (scripts / "polaris-purge.sh").write_text(
-        "# reads cutoff_by_class from MANIFEST.json and passes p_class_cutoffs\n"
+        "reads cutoff_by_class from MANIFEST.json and passes p_class_cutoffs\n"
         "import hashlib  # component verification\n")
-    (scripts / "polaris-retention-drill.sh").write_text("# the chain, end to end\n")
+    (scripts / "polaris-retention-drill.sh").write_text("the chain, end to end\n")
     (scripts / "polaris-rotate-logs.sh").write_text("polaris-archive.sh --from-policy\n")
     (scripts / "polaris-cron-install.sh").write_text(
         "0 2 1 1 *   ${SCRIPTS_DIR}/polaris-rotate-logs.sh --dest ${BACKUP_DEST} --actor-user-id ${ROTATE_ACTOR}\n")
@@ -5305,7 +5309,7 @@ $$;
         "must FAIL when the purge reads the policy but silently narrows instead of refusing"
 
     (sql / "05_procedures.sql").write_text(good_proc)
-    (sql / "06_triggers.sql").write_text("-- no immutability trigger\n")
+    (sql / "06_triggers.sql").write_text("no immutability trigger\n")
     assert checks.check_retention_engine(tmp_path)[0].level == "FAIL", \
         "must FAIL when a retention decision can be edited in place"
 
@@ -5317,7 +5321,7 @@ $$;
         "must FAIL when RetentionPolicy is outside the append-only privilege boundary"
 
     (sql / "09_grants.sql").write_text("REVOKE UPDATE, DELETE ON RetentionPolicy FROM polaris_app;\n")
-    (sql / "02_indexes.sql").write_text("-- no uniqueness on the effective policy\n")
+    (sql / "02_indexes.sql").write_text("no uniqueness on the effective policy\n")
     assert checks.check_retention_engine(tmp_path)[0].level == "FAIL", \
         "must FAIL when two effective policies could disagree for one table class"
 
@@ -5351,11 +5355,11 @@ $$;
 """)
     scripts = tmp_path / "scripts"
     scripts.mkdir()
-    archive_ok = "# --from-policy\ncutoff_by_class\n"
-    purge_ok = "# cutoff_by_class from MANIFEST.json, passes p_class_cutoffs\nimport hashlib\n"
+    archive_ok = "--from-policy\ncutoff_by_class\n"
+    purge_ok = "cutoff_by_class from MANIFEST.json, passes p_class_cutoffs\nimport hashlib\n"
     (scripts / "polaris-archive.sh").write_text(archive_ok)
     (scripts / "polaris-purge.sh").write_text(purge_ok)
-    (scripts / "polaris-retention-drill.sh").write_text("# drill\n")
+    (scripts / "polaris-retention-drill.sh").write_text("drill\n")
     rotate_ok = "polaris-archive.sh --from-policy\n"
     cron_ok = "0 2 1 1 *   ${SCRIPTS_DIR}/polaris-rotate-logs.sh --dest ${BACKUP_DEST} --actor-user-id ${ROTATE_ACTOR}\n"
     (scripts / "polaris-rotate-logs.sh").write_text(rotate_ok)
@@ -5366,17 +5370,17 @@ $$;
     assert checks.check_retention_engine(tmp_path)[0].level == "OK", \
         "must PASS when the per-class chain is complete"
 
-    (scripts / "polaris-archive.sh").write_text("# one cutoff for everything\n")
+    (scripts / "polaris-archive.sh").write_text("one cutoff for everything\n")
     assert checks.check_retention_engine(tmp_path)[0].level == "FAIL", \
         "must FAIL when the archive cannot be taken from the retention policy"
 
     (scripts / "polaris-archive.sh").write_text(archive_ok)
-    (scripts / "polaris-purge.sh").write_text("# ignores cutoff_by_class\nimport hashlib\n")
+    (scripts / "polaris-purge.sh").write_text("ignores cutoff_by_class\nimport hashlib\n")
     assert checks.check_retention_engine(tmp_path)[0].level == "FAIL", \
         "must FAIL when the purge ignores the manifest's per-class cutoffs"
 
     (scripts / "polaris-purge.sh").write_text(
-        "# cutoff_by_class from MANIFEST.json, passes p_class_cutoffs\n# no hashing\n")
+        "cutoff_by_class from MANIFEST.json, passes p_class_cutoffs\n# no hashing\n")
     assert checks.check_retention_engine(tmp_path)[0].level == "FAIL", \
         "must FAIL when the purge deletes without verifying the archive against its manifest"
 
@@ -5385,7 +5389,7 @@ $$;
     assert checks.check_retention_engine(tmp_path)[0].level == "FAIL", \
         "must FAIL when nothing exercises the chain end to end"
 
-    (scripts / "polaris-retention-drill.sh").write_text("# drill\n")
+    (scripts / "polaris-retention-drill.sh").write_text("drill\n")
     (wf / "ci.yml").write_text("      - run: echo nothing\n")
     assert checks.check_retention_engine(tmp_path)[0].level == "FAIL", \
         "must FAIL when the drill exists but CI never runs it"
@@ -5608,7 +5612,7 @@ def test_no_scifi_schema_check_discriminates(tmp_path):
         good + "CREATE TABLE QuantumObserverBinding (binding_id SERIAL);\n")
     assert checks.check_no_scifi_schema(tmp_path)[0].level == "FAIL", "must FAIL if QuantumObserverBinding returns"
     (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
-        good + "-- a wavefunction collapse record and the no-cloning theorem\n")
+        good + "a wavefunction collapse record and the no-cloning theorem\n")
     assert checks.check_no_scifi_schema(tmp_path)[0].level == "FAIL", "must FAIL on sci-fi vocabulary"
 
 
@@ -6012,7 +6016,7 @@ def test_holder_wallet_check_discriminates(tmp_path):
         "def use_verifier():\n"
         "    return verify_pack  # offline verification via the detached verifier\n"
         "COMMANDS = ['enroll', 'show', 'verify', 'present', 'prove-membership']\n"
-        "# derives the leaf from token_id\n"
+        "derives the leaf from token_id\n"
     )
     TEST = (
         "def test_present_and_duress_are_indistinguishable(self):\n    pass\n"
@@ -6300,7 +6304,7 @@ def test_inter_authority_protocol_check_discriminates(tmp_path):
     # v9.296 (P3.2): a signed federation manifest, verified offline (standalone), with
     # self-consistency + freshness + per-context key-bound attestation, run in CI. Each
     # perturbation removes one leg.
-    good = {'polaris_web/app.py': "@app.route('/api/v1/federation-manifest/<int:agency_id>')\ndef api_v1_federation_manifest(agency_id):\n    _manifest_statement(body)\n    pqc_signing.signature_over_message(stmt)\n    return jsonify(anchors=[], attestations=[])\n", 'scripts/polaris-verify.py': "import json, hashlib\n# polaris-federation-manifest/1\ndef _manifest_canonical(m):\n    return b''\ndef verify_manifest(m, now=None, max_window_seconds=None, trusted_anchors=None):\n    fresh = True  # declared active anchors self-consistency\n    return {'fresh': fresh}\ndef verify_cross_authority(pack, context_id, trusted_manifests, now=None, max_window_seconds=None, trusted_anchors=None):\n    x = ('attested_public_key_hex', context_id)\n    return {'decision': 'accept'}\n", 'scripts/polaris-federation-manifest-drill.py': 'def main():\n    verify_cross_authority(p, 1, [m])\n', '.github/workflows/ci.yml': '      - run: python scripts/polaris-federation-manifest-drill.py\n', 'docs/design/inter-authority-protocol.md': '# inter-authority protocol v1\nthe federation manifest.\n', 'polaris_web/test_app.py': 'class FederationManifestTests:\n    def t(self): pass\n'}
+    good = {'polaris_web/app.py': "@app.route('/api/v1/federation-manifest/<int:agency_id>')\ndef api_v1_federation_manifest(agency_id):\n    _manifest_statement(body)\n    pqc_signing.signature_over_message(stmt)\n    return jsonify(anchors=[], attestations=[])\n", 'scripts/polaris-verify.py': "import json, hashlib\nFORMAT = 'polaris-federation-manifest/1'\ndef _manifest_canonical(m):\n    return b''\ndef verify_manifest(m, now=None, max_window_seconds=None, trusted_anchors=None):\n    fresh = True  # rule below\n    RULE = 'declared active anchors self-consistency'\n    return {'fresh': fresh}\ndef verify_cross_authority(pack, context_id, trusted_manifests, now=None, max_window_seconds=None, trusted_anchors=None):\n    x = ('attested_public_key_hex', context_id)\n    return {'decision': 'accept'}\n", 'scripts/polaris-federation-manifest-drill.py': 'def main():\n    verify_cross_authority(p, 1, [m])\n', '.github/workflows/ci.yml': '      - run: python scripts/polaris-federation-manifest-drill.py\n', 'docs/design/inter-authority-protocol.md': '# inter-authority protocol v1\nthe federation manifest.\n', 'polaris_web/test_app.py': 'class FederationManifestTests:\n    def t(self): pass\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -6344,15 +6348,15 @@ def test_epoch_revocation_propagation_check_discriminates(tmp_path):
         'polaris_web/app.py': (
             "@app.route('/api/v1/epoch-checkpoint/<int:agency_id>')\n"
             "def api_v1_epoch_checkpoint(agency_id):\n"
-            "    _epoch_checkpoint_statement(body)  # over TokenStateEpoch\n"
+            "    _epoch_checkpoint_statement(body)  over TokenStateEpoch\n"
             "    pqc_signing.signature_over_message(stmt)\n"
             "@app.route('/api/v1/revocation-feed/<int:agency_id>')\n"
             "def api_v1_revocation_feed(agency_id):\n"
-            "    _revocation_feed_statement(body)  # over RevocationList\n"
+            "    _revocation_feed_statement(body)  over RevocationList\n"
         ),
         'scripts/polaris-verify.py': (
             "import json, hashlib\n"
-            "# polaris-epoch-checkpoint/1 polaris-revocation-feed/1\n"
+            "polaris-epoch-checkpoint/1 polaris-revocation-feed/1\n"
             "def _epoch_checkpoint_canonical(cp): return b''\n"
             "def _revocation_feed_canonical(f): return b''\n"
             "def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=None): return {}\n"
@@ -6426,24 +6430,24 @@ def test_status_bundle_check_discriminates(tmp_path):
         ),
         'scripts/polaris-verify.py': (
             "import json, hashlib\n"
-            "# polaris-federation-status-bundle/1\n"
+            "polaris-federation-status-bundle/1\n"
             "def _status_bundle_canonical(b): return b''\n"
             "def bundle_members_root(members): return ''\n"
             "def verify_status_bundle(b, now=None, max_window_seconds=None, publisher_key=None):\n"
-            "    commitment_ok = True  # members_root recomputed and checked\n"
+            "    commitment_ok = True  members_root recomputed and checked\n"
             "    return {'commitment_ok': commitment_ok, 'members': []}\n"
             "def verify_cross_authority(pack, ctx, tm, revocation_feed=None): return {'decision': 'accept'}\n"
             "def verify_cross_authority_via_bundle(pack, ctx, tm, bundle, **kw):\n"
-            "    in_bundle = False  # 'not present in the status bundle' is fail-closed\n"
+            "    in_bundle = False  'not present in the status bundle' is fail-closed\n"
             "    return verify_cross_authority(pack, ctx, tm, revocation_feed=None)\n"
         ),
-        'polaris_web/test_canonical_equivalence.py': "# polaris-federation-status-bundle/1\n",
+        'polaris_web/test_canonical_equivalence.py': "polaris-federation-status-bundle/1\n",
         'scripts/polaris-federation-status-bundle-drill.py': (
-            "def main():\n    verify_cross_authority_via_bundle(p, 1, [m], b)  # aggregator cannot forge\n"
+            "def main():\n    verify_cross_authority_via_bundle(p, 1, [m], b)  aggregator cannot forge\n"
         ),
         'scripts/polaris-federation-instances-drill.py': (
             "def main():\n    b = hub_bundle(members); _status_bundle_canonical(b)\n"
-            "    verify_cross_authority_via_bundle(pack, ctx, [m], b)  # hub holds no peer key\n"
+            "    verify_cross_authority_via_bundle(pack, ctx, [m], b)  hub holds no peer key\n"
         ),
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-federation-status-bundle-drill.py\n',
         'polaris_web/test_app.py': 'class StatusBundleTests:\n    def t(self): pass\n',
@@ -6504,8 +6508,8 @@ def test_verifier_fuzz_check_discriminates(tmp_path):
             "    verify_status_assertion(x); verify_sth(x); verify_status_bundle(x)\n"
             "    verify_cross_authority(x); verify_cross_authority_via_bundle(x)\n"
             "    verify_cross_authority_zk(x)\n"
-            "    # classes: bitflip, mutate:field, cross-type, adv-object\n"
-            "    # asserts a wrongly-ACCEPTED case and any raised exception is a break\n"
+            "    classes: bitflip, mutate:field, cross-type, adv-object\n"
+            "    asserts a wrongly-ACCEPTED case and any raised exception is a break\n"
         ),
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-verifier-fuzz.py\n',
         'scripts/polaris-verify.py': 'import json, hashlib\n',
@@ -6550,18 +6554,18 @@ def test_cross_authority_zk_check_discriminates(tmp_path):
     good = {
         'scripts/polaris-verify.py': (
             "import json, hashlib, subprocess\n"
-            "# the polaris-zk binary is invoked as a subprocess; --zk-proof CLI mode\n"
-            "def _zk_verify_proof(b, zk_binary=None): return None  # abstain when no binary\n"
+            "the polaris-zk binary is invoked as a subprocess; --zk-proof CLI mode\n"
+            "def _zk_verify_proof(b, zk_binary=None): return None  abstain when no binary\n"
             "def verify_zk_against_root(b, r, e, c):\n"
-            "    pi = b.get('public_inputs'); pi.get('epoch_root_hex')  # bind to the trusted root\n"
+            "    pi = b.get('public_inputs'); pi.get('epoch_root_hex')  bind to the trusted root\n"
             "def verify_epoch_checkpoint(cp): return {}\n"
             "def verify_manifest(m): return {}\n"
             "def verify_cross_authority_zk(p, cp, ctx, tm):\n"
-            "    verify_epoch_checkpoint(cp); verify_manifest(tm[0])  # attested_public_key_hex, in-context\n"
+            "    verify_epoch_checkpoint(cp); verify_manifest(tm[0])  attested_public_key_hex, in-context\n"
             "    return {'decision': 'abstain'}\n"
         ),
         'scripts/polaris-cross-authority-zk-drill.py': (
-            "def main():\n    verify_cross_authority_zk(p, cp, 1, [m])  # accept/reject/abstain matrix\n"
+            "def main():\n    verify_cross_authority_zk(p, cp, 1, [m])  accept/reject/abstain matrix\n"
         ),
         'polaris_zk/fixtures/cross-authority-zk.json': '{"proof": {}}\n',
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-cross-authority-zk-drill.py\n',
@@ -6710,7 +6714,7 @@ def test_wire_spec_check_discriminates(tmp_path):
 def test_trust_lifecycle_check_discriminates(tmp_path):
     # v9.328 (P8.7b): the trust-service lifecycle; each perturbation removes one leg.
     APP = ("@app.route('/api/v1/trust-list/<int:agency_id>')\ndef api_v1_trust_list(agency_id):\n"
-           "    _trust_list_statement(body)  # polaris-trust-list/1 ; AuthorityKeyCurrent\n"
+           "    _trust_list_statement(body)  polaris-trust-list/1 ; AuthorityKeyCurrent\n"
            "    'anchors': [{'status': k['status']} for k in _authority_keys(agency_id, ag['signing_public_key_hex'])]\n"
            "    'status': _key_status(a['agency_id'], a['signing_public_key_hex'])\n"
            "    'keys': _authority_keys(a['agency_id'], a['signing_public_key_hex'])\n")
@@ -6733,10 +6737,10 @@ def test_trust_lifecycle_check_discriminates(tmp_path):
         'sdk/python/polaris_verify/__init__.py': '"polaris-trust-list/1": ["format"]\n',
         'sdk/typescript/src/index.ts': '"polaris-trust-list/1": ["format"]\n',
         'scripts/polaris-verifier-fuzz.py': "V.verify_trust_list(o)\n",
-        'scripts/polaris-trust-lifecycle-drill.py': "# COMPROMISE\nV.key_status_at(tl, k, t)\n",
+        'scripts/polaris-trust-lifecycle-drill.py': "COMPROMISE\nV.key_status_at(tl, k, t)\n",
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-trust-lifecycle-drill.py\n',
         'scripts/polaris-federation-instances-drill.py': "'/api/v1/trust-list/1'; 'INSERT INTO AuthorityKeyEvent'; V.verify_cross_authority(p, c, m, trust_list=tl)\n",
-        'docs/reference/DATA-MODEL.md': "### `AuthorityKeyEvent`\n",
+        'docs/reference/DATA-MODEL.md': "##`AuthorityKeyEvent`\n",
     }
 
     def write(overrides=None):
@@ -6768,9 +6772,9 @@ def test_trust_lifecycle_check_discriminates(tmp_path):
 def test_wallet_presentation_check_discriminates(tmp_path):
     # v9.327 (P8.6): the wallet protocol surface; each perturbation removes one leg.
     VER = ("import json\n"
-           "def verify_presentation(p, **k):\n    # presented_code_present: never interpreted\n    return {'usable_offline': False, 'presented_code_present': False}\n"
-           "def encode_presentation_frames(p, frame_bytes=1800): return ['PLRS1/1/0/x/y']  # polaris-qr/1\n"
-           "def decode_presentation_frames(f): return None, 'x'  # polaris-presentation/1\n"
+           "def verify_presentation(p, **k):\n    presented_code_present: never interpreted\n    return {'usable_offline': False, 'presented_code_present': False}\n"
+           "def encode_presentation_frames(p, frame_bytes=1800): return ['PLRS1/1/0/x/y']  polaris-qr/1\n"
+           "def decode_presentation_frames(f): return None, 'x'  polaris-presentation/1\n"
            "ap.add_argument(\"--presentation\"); ap.add_argument(\"--qr-frames\")\n")
     good = {
         'scripts/polaris-verify.py': VER,
@@ -6780,7 +6784,7 @@ def test_wallet_presentation_check_discriminates(tmp_path):
         'scripts/polaris-verifier-fuzz.py': "V.verify_presentation(o)\n",
         'scripts/polaris-presentation-drill.py': "V.decode_presentation_frames(f); 'polaris-wallet.py'\n",
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-presentation-drill.py\n',
-        'docs/design/wallet-protocol.md': "# wallet\nThe browser bridge and native clients are out of scope for a reference implementation.\n",
+        'docs/design/wallet-protocol.md': "wallet\nThe browser bridge and native clients are out of scope for a reference implementation.\n",
     }
 
     def write(overrides=None):
@@ -6817,7 +6821,7 @@ def test_auth_broker_check_discriminates(tmp_path):
         "@app.route('/api/v1/auth/token', methods=['POST'])\n"
         "def api_v1_auth_token():\n"
         "    _pkce_challenge(verifier); query('INSERT INTO AuthCodeConsumed (code_hash) VALUES (%s)')\n"
-        "    _id_token_statement(tok)  # polaris-id-token/1\n"
+        "    _id_token_statement(tok)  polaris-id-token/1\n"
     )
     good = {
         'polaris_web/app.py': APP,
@@ -6881,7 +6885,7 @@ def test_document_signing_check_discriminates(tmp_path):
         "@app.route('/api/v1/sign/<int:agency_id>', methods=['POST'])\n"
         "@app.route('/api/v1/sign/<int:agency_id>/holder', methods=['POST'])\n"
         "def api_v1_sign_holder(agency_id):\n"
-        "    _signed_document_statement(doc)  # polaris-signed-document/1 ; the document itself is never sent\n"
+        "    _signed_document_statement(doc)  polaris-signed-document/1 ; the document itself is never sent\n"
         "    row = _possession_authenticated(token_value, presented)\n"
         "    if row['status'] != 'ACTIVE': return 403\n"
         "    on_behalf_of = {'credential_hash': hashlib.sha3_256(token_value.encode()).hexdigest()}\n"
@@ -6901,7 +6905,7 @@ def test_document_signing_check_discriminates(tmp_path):
         'sdk/python/polaris_verify/__init__.py': '"polaris-signed-document/1": ["format"]\n',
         'sdk/typescript/src/index.ts': '"polaris-signed-document/1": ["format"]\n',
         'scripts/polaris-verifier-fuzz.py': "V.verify_signed_document(o)\n",
-        'scripts/polaris-document-signing-drill.py': "# KEY RETIREMENT\nV.attach_ltv(doc)\n",
+        'scripts/polaris-document-signing-drill.py': "KEY RETIREMENT\nV.attach_ltv(doc)\n",
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-document-signing-drill.py\n',
         'scripts/polaris-federation-instances-drill.py': "base_b + '/api/v1/sign/1/holder'; 'polaris-wallet.py'\n",
         'polaris_web/test_app.py': "class DocumentSigningTests(PolarisTestCase): pass\n",
@@ -6941,12 +6945,12 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     APP = (
         "@app.route('/api/v1/exchange/<int:target_agency_id>', methods=['POST'])\n"
         "def api_v1_exchange(target_agency_id):\n"
-        "    # polaris-exchange-request/1 ; placeholder signature is not authentication\n"
-        "    # the requester key is not a registered authority on this instance\n"
+        "    polaris-exchange-request/1 ; placeholder signature is not authentication\n"
+        "    the requester key is not a registered authority on this instance\n"
         "    ok = pqc_signing.verify_both(_exchange_request_statement(env), sig, key)\n"
         "    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n"
-        "    _consume_exchange_nonce(k, n)  # INSERT INTO ExchangeNonce\n"
-        "    up = _exchange_upstreams()[kind]  # POLARIS_EXCHANGE_UPSTREAMS; A URL never comes from a request\n"
+        "    _consume_exchange_nonce(k, n)  INSERT INTO ExchangeNonce\n"
+        "    up = _exchange_upstreams()[kind]  POLARIS_EXCHANGE_UPSTREAMS; A URL never comes from a request\n"
         "    urllib.request.urlopen(up)\n"
         "    _build_exchange_receipt(target, target_agency_id, f, occurred_at=str(env.get('issued_at')))\n"
         "_REGISTRY_SERVICES = [{'kind': 'exchange'}]\n'exchange_kinds'\n"
@@ -7006,7 +7010,7 @@ def test_registry_check_discriminates(tmp_path):
     APP = (
         "@app.route('/api/v1/registry/<int:agency_id>')\n"
         "def api_v1_registry(agency_id):\n"
-        "    _registry_statement(body)  # polaris-registry/1\n"
+        "    _registry_statement(body)  polaris-registry/1\n"
         "    query('FROM v_athena_agency'); query('FROM v_athena_trust_agreement'); query('FROM v_athena_proof_policy')\n"
         "_REGISTRY_SERVICES = []\n"
         "_PROTOCOL_FORMATS = {\n    'polaris-federation-manifest': 1,\n    'polaris-epoch-checkpoint': 1,\n    'polaris-revocation-feed': 1,\n    'polaris-status-assertion': 1,\n    'polaris-transparency-sth': 1,\n    'polaris-federation-status-bundle': 1,\n    'polaris-exchange-receipt': 1,\n    'polaris-exchange-mint': 1,\n    'polaris-timestamp': 1,\n    'polaris-registry': 1,\n    'polaris-exchange-request': 1,\n    'polaris-signed-document': 1,\n    'polaris-id-token': 1,\n    'polaris-presentation': 1,\n    'polaris-qr': 1,\n    'polaris-trust-list': 1,\n    'polaris-trust-attestation': 1,\n    'polaris-holder-binding': 1,\n    'polaris-holder-proof': 1,\n    'polaris-epoch-leaves': 1,\n    'polaris-agent-grant': 1,\n    'polaris-grant-revocation': 1,\n    'polaris-agent-proof': 1,\n    'polaris-authenticity-pack': 1,\n    'polaris-transparency-cosignature': 1,\n    'polaris-transparency-publication': 1,\n    'polaris-published-head': 1,\n}\n"
@@ -7016,7 +7020,7 @@ def test_registry_check_discriminates(tmp_path):
         'scripts/polaris-verify.py': (
             "import json\n"
             "def _registry_canonical(r): return b''\n"
-            "def verify_registry(r, **k):\n    # not signed by the key it lists for its own publisher\n    return {}\n"
+            "def verify_registry(r, **k):\n    not signed by the key it lists for its own publisher\n    return {}\n"
             "def registry_service(r, kind): return None\n"
             "def registry_authority(r, k): return None\n"
             "def registry_trusts(r, k, c): return []\n"
@@ -7082,9 +7086,9 @@ def test_receipt_transparency_check_discriminates(tmp_path):
         ),
         'scripts/polaris-verify.py': "import json\ndef receipt_hash(r): return ''\ndef verify_receipt_inclusion(r, p, s, log_key=None): return {}\n",
         'scripts/polaris-transparency-monitor.py': 'ap.add_argument("--log", choices=("anchors", "receipts"))\n',
-        'scripts/polaris-federation-instances-drill.py': 'V.verify_receipt_inclusion(receipt, p, s)  # "--log", "receipts"\n',
+        'scripts/polaris-federation-instances-drill.py': 'V.verify_receipt_inclusion(receipt, p, s)  "--log", "receipts"\n',
         'polaris_web/test_app.py': "class ExchangeReceiptLogTests(PolarisTestCase): pass\n",
-        'docs/reference/DATA-MODEL.md': "### `ExchangeReceiptLog`\n",
+        'docs/reference/DATA-MODEL.md': "##`ExchangeReceiptLog`\n",
     }
 
     def write(overrides=None):
@@ -7127,8 +7131,8 @@ def test_timestamp_authority_check_discriminates(tmp_path):
         'polaris_web/app.py': (
             "@app.route('/api/v1/timestamp/<int:agency_id>', methods=['POST'])\n"
             "def api_v1_timestamp(agency_id):\n"
-            "    _timestamp_statement(ts)  # polaris-timestamp/1\n"
-            "    # the content itself is never sent\n"
+            "    _timestamp_statement(ts)  polaris-timestamp/1\n"
+            "    the content itself is never sent\n"
             "    security.rate_limiter.allow('tsa:%d' % agency_id, 600, 60)\n"
         ),
         'scripts/polaris-verify.py': (
@@ -7190,14 +7194,14 @@ def test_exchange_mint_signed_auth_check_discriminates(tmp_path):
         "    if abs(dt) > _EXCHANGE_MINT_WINDOW: return 401\n"
         "    security.rate_limiter.allow('exmint:%d' % agency_id, 120, 60)\n"
         "    ok = pqc_signing.verify_both(_exchange_mint_statement(mint), sig, key, require_witness=True)\n"
-        "    # polaris-exchange-mint/1\n"
+        "    polaris-exchange-mint/1\n"
     )
     good = {
         'polaris_web/app.py': APP,
         'scripts/polaris-verify.py': "def _exchange_mint_canonical(m): return b''\n",
         'polaris_web/test_canonical_equivalence.py': "flask_app._exchange_mint_statement\n",
         'docs/reference/WIRE-SPEC.md': "polaris-exchange-mint/1\n",
-        'scripts/polaris-federation-instances-drill.py': "base_b + '/api/v1/exchange-receipt/1/signed'  # NO session\n",
+        'scripts/polaris-federation-instances-drill.py': "base_b + '/api/v1/exchange-receipt/1/signed'  NO session\n",
         'polaris_web/test_app.py': "self.client.post('/api/v1/exchange-receipt/1/signed'); assertEqual(r.status_code, 503)\n",
     }
 
@@ -7219,15 +7223,15 @@ def test_exchange_mint_signed_auth_check_discriminates(tmp_path):
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the freshness window"
     write({'polaris_web/app.py': APP.replace("exmint:", "nolimit:")})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the per-responder rate bound"
-    write({'scripts/polaris-verify.py': "# nothing\n"})
+    write({'scripts/polaris-verify.py': "nothing\n"})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the client-side canonical builder"
-    write({'polaris_web/test_canonical_equivalence.py': "# nothing\n"})
+    write({'polaris_web/test_canonical_equivalence.py': "nothing\n"})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if the statement is not oracle-pinned"
-    write({'docs/reference/WIRE-SPEC.md': "# spec\n"})
+    write({'docs/reference/WIRE-SPEC.md': "spec\n"})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if not in the wire spec"
-    write({'scripts/polaris-federation-instances-drill.py': "# no minting here\n"})
+    write({'scripts/polaris-federation-instances-drill.py': "no minting here\n"})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not prove it over HTTP"
-    write({'polaris_web/test_app.py': "# no refusal test\n"})
+    write({'polaris_web/test_app.py': "no refusal test\n"})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the fail-closed unit test"
 
 
@@ -7303,24 +7307,24 @@ def test_exchange_receipt_check_discriminates(tmp_path):
     good = {
         'scripts/polaris-verify.py': (
             "import json, hashlib\n"
-            "# polaris-exchange-receipt/1\n"
+            "polaris-exchange-receipt/1\n"
             "def _exchange_receipt_canonical(r): return b''\n"
             "def verify_exchange_receipt(r, **k):\n"
-            "    r.get('request_hash'); r.get('response_hash')  # commit by hash, not content\n"
-            "    # attested_public_key_hex in a trusted manifest -> requester_authorized\n"
+            "    r.get('request_hash'); r.get('response_hash')  commit by hash, not content\n"
+            "    attested_public_key_hex in a trusted manifest -> requester_authorized\n"
             "    return {'requester_authorized': None}\n"
         ),
         'polaris_web/app.py': (
             "@app.route('/api/v1/exchange-receipt/<int:agency_id>', methods=['POST'])\n"
             "def api_v1_exchange_receipt(agency_id):\n"
-            "    _exchange_receipt_statement(body)  # AgencyTrustAttestation authorizes the requester\n"
+            "    _exchange_receipt_statement(body)  AgencyTrustAttestation authorizes the requester\n"
             "    pqc_signing.signature_over_message(stmt)\n"
-            "    # hashes only: the payload is never sent\n"
+            "    hashes only: the payload is never sent\n"
         ),
-        'polaris_web/test_canonical_equivalence.py': "# polaris-exchange-receipt/1\n",
-        'docs/reference/WIRE-SPEC.md': "# spec\nMUST ... polaris-exchange-receipt/1\n",
+        'polaris_web/test_canonical_equivalence.py': "polaris-exchange-receipt/1\n",
+        'docs/reference/WIRE-SPEC.md': "spec\nMUST ... polaris-exchange-receipt/1\n",
         'scripts/polaris-exchange-receipt-drill.py': (
-            "def main():\n    verify_exchange_receipt(r)  # evidence without retention\n"
+            "def main():\n    verify_exchange_receipt(r)  evidence without retention\n"
         ),
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-exchange-receipt-drill.py\n',
     }
@@ -7375,9 +7379,9 @@ def test_federation_two_instances_check_discriminates(tmp_path):
             "os.environ['POLARIS_USE_REAL_PQC'] = '1'\n"
             "A = os.environ.get('POLARIS_FED_A_DB', 'polaris_fa')\n"
             "B = os.environ.get('POLARIS_FED_B_DB', 'polaris_fb')\n"
-            "# boots each instance with gunicorn; AgencyTrustAttestation drives the\n"
-            "# attestation revocation; base URL http://127.0.0.1:PORT ; endpoints:\n"
-            "#   /api/v1/federation-manifest/ /api/v1/epoch-checkpoint/ /api/v1/revocation-feed/\n"
+            "boots each instance with gunicorn; AgencyTrustAttestation drives the\n"
+            "attestation revocation; base URL http://127.0.0.1:PORT ; endpoints:\n"
+            "  /api/v1/federation-manifest/ /api/v1/epoch-checkpoint/ /api/v1/revocation-feed/\n"
             "def main():\n"
             "    verify_cross_authority(pack, 1, [manifest])  # revocation flips the decision\n"
         ),
@@ -7476,7 +7480,7 @@ def test_transparency_log_check_discriminates(tmp_path):
     good = {
         "scripts/polaris-verify.py": (
             "import json, hashlib\n"
-            "# polaris-transparency-sth/1\n"
+            "polaris-transparency-sth/1\n"
             "def merkle_tree_head(e): return b''\n"
             "def verify_consistency(m,n,r1,r2,p): return True\n"
             "def verify_inclusion(i,n,l,r,p): return True\n"
@@ -7486,16 +7490,16 @@ def test_transparency_log_check_discriminates(tmp_path):
         ),
         "polaris_web/app.py": (
             "@app.route('/api/v1/transparency/sth')\ndef sth():\n"
-            "    _sth_statement(body); pqc_signing.signature_over_message(x)  # AnchorBatch\n"
+            "    _sth_statement(body); pqc_signing.signature_over_message(x)  AnchorBatch\n"
             "@app.route('/api/v1/transparency/consistency/<int:m>/<int:n>')\ndef cons(m,n): pass\n"
             "@app.route('/api/v1/transparency/proof/<int:i>')\ndef pf(i): pass\n"
             "@app.route('/api/v1/transparency/entries')\ndef ent(): pass\n"
         ),
         "polaris_web/anchoring.py": "def log_tree_head(e): pass\ndef log_consistency_proof(m,e): pass\n",
         "scripts/polaris-transparency-monitor.py": "verify_log_consistency\nprint('ALERT: x')\n",
-        "scripts/polaris-transparency-drill.py": "verify_log_consistency\n# runs scripts/polaris-transparency-monitor.py\n",
+        "scripts/polaris-transparency-drill.py": "verify_log_consistency\nruns scripts/polaris-transparency-monitor.py\n",
         ".github/workflows/ci.yml": "      - run: python scripts/polaris-transparency-drill.py\n",
-        "docs/design/transparency-log.md": "# transparency log\n",
+        "docs/design/transparency-log.md": "transparency log\n",
     }
 
     def write(overrides=None):
@@ -7537,7 +7541,7 @@ def test_transparency_gossip_check_discriminates(tmp_path):
     good = {
         "scripts/polaris-verify.py": (
             "import json, hashlib\n"
-            "# polaris-transparency-cosignature/1\n"
+            "polaris-transparency-cosignature/1\n"
             "def _cosignature_canonical(c): return b''\n"
             "def verify_cosignature(c, witness_key=None): return {}\n"
             "def verify_witnessed_checkpoint(s, cs, tw, threshold=1, issuer_key=None): return {}\n"
@@ -7545,12 +7549,12 @@ def test_transparency_gossip_check_discriminates(tmp_path):
         ),
         "scripts/polaris-transparency-witness.py": (
             "def cosign(head, key_file): pass\n"
-            "# uses verify_equivocation on the gossip pool\n"
+            "uses verify_equivocation on the gossip pool\n"
             "print('ALERT: equivocation')\n"
         ),
         "scripts/polaris-transparency-gossip-drill.py": (
             "verify_witnessed_checkpoint\nverify_equivocation\n"
-            "# runs scripts/polaris-transparency-witness.py\n"
+            "runs scripts/polaris-transparency-witness.py\n"
         ),
         ".github/workflows/ci.yml": "      - run: python scripts/polaris-transparency-gossip-drill.py\n",
     }
@@ -7587,17 +7591,17 @@ def test_transparency_publication_check_discriminates(tmp_path):
     good = {
         "scripts/polaris-verify.py": (
             "import json, hashlib\n"
-            "# polaris-transparency-publication/1\n"
+            "polaris-transparency-publication/1\n"
             "def _publication_entry(a, b, c): return ''\n"
             "def verify_publication(log_sth, receipt, ledger_key): return {'published': False}\n"
         ),
         "scripts/polaris-transparency-ledger.py": (
             "import anchoring\n"
-            "# POLARIS_LEDGER_BACKEND selects the driver (file default)\n"
+            "POLARIS_LEDGER_BACKEND selects the driver (file default)\n"
             "anchoring.log_tree_head; anchoring.log_inclusion_proof\n"
         ),
         "scripts/polaris-transparency-publication-drill.py": (
-            "verify_publication\n# runs scripts/polaris-transparency-ledger.py\n"
+            "verify_publication\nruns scripts/polaris-transparency-ledger.py\n"
         ),
         ".github/workflows/ci.yml": "      - run: python scripts/polaris-transparency-publication-drill.py\n",
     }
@@ -7781,7 +7785,7 @@ def test_conformance_suite_check_discriminates(tmp_path):
     # v9.289 (P3.5): the verification conformance suite + Python reference SDK.
     # Standalone SDK (real ML-DSA + OAuth online), a language-agnostic runner, cases
     # covering authentic/not/untrusted-issuer, run in CI. Each perturbation removes a leg.
-    good = {'sdk/python/polaris_verify/__init__.py': "# \"polaris-exchange-receipt/1\" \"polaris-exchange-mint/1\"\nimport hashlib, urllib.request\ndef verify_authenticity(pack, anchors=None):\n    hashlib.sha3_256(b'')\n    from cryptography.hazmat.primitives.asymmetric import mldsa\n    mldsa.MLDSA65PublicKey\ndef verify_status_assertion(a, now=None):\n    return None\ndef verify_signed_artifact(o, now=None):\n    return None\ndef verify_cross_authority(p, ctx, ms, trusted_anchors=None, revocation_feed=None, now=None):\n    return None\ndef verify_inclusion(i, n, leaf, root, proof):\n    return True\ndef verify_cosignature(c, witness_key=None):\n    return None\ndef verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=1):\n    return None\nclass PolarisVerifier:\n    def _t(self):\n        return ('/api/v1/oauth/token', '/api/v1/verify')\n", 'sdk/python/polaris_verify/conformance.py': 'from . import verify_authenticity, verify_status_assertion, verify_signed_artifact, verify_cross_authority\n# dispatch on the case artifact\n', 'conformance/run_conformance.py': "import argparse, json, os, subprocess, sys\nFLAGS = ('--verifier', '--self', 'issuer_trusted')\ndef main():\n    ap = argparse.ArgumentParser()\n    ap.add_argument('--verifier'); ap.add_argument('--self', action='store_true', dest='use_self')\n    ap.add_argument('--json', action='store_true')\n    a = ap.parse_args()\n    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))\n    cases = json.load(open(os.path.join(root, 'conformance', 'cases.json')))['cases']\n    results = []\n    for c in cases:\n        p = subprocess.run(a.verifier, input='{}', capture_output=True, text=True, shell=True)\n        if p.returncode != 0:\n            return 2\n        got = json.loads(p.stdout.strip().splitlines()[-1])\n        ok = all((bool(got.get(k)) == v) if k == 'authentic' else (got.get(k) == v)\n                 for k, v in c['expect'].items())\n        results.append({'expect': c['expect'], 'pass': ok})\n    positives = [r for r in results if r['expect'].get('authentic') is True]\n    if positives and not any(r['pass'] for r in positives):\n        print('VOID: no positive control passed', file=sys.stderr)\n        return 2\n    return 1 if any(not r['pass'] for r in results) else 0\nsys.exit(main())\n", 'conformance/SPEC.md': '# contract\nstdin authentic issuer_trusted\n', 'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": [{"name": "a", "expect": {"authentic": true, "issuer_trusted": null}}, {"name": "b", "expect": {"authentic": true, "issuer_trusted": false}}, {"name": "c", "expect": {"authentic": false, "issuer_trusted": null}}, {"name": "sa", "artifact": "status-assertion", "expect": {"authentic": true}}, {"name": "cp", "artifact": "epoch-checkpoint", "expect": {"authentic": true}}, {"name": "fd", "artifact": "revocation-feed", "expect": {"authentic": true}}, {"name": "mf", "artifact": "federation-manifest", "expect": {"authentic": true}}, {"name": "bn", "artifact": "federation-status-bundle", "expect": {"authentic": true}}, {"name": "ca", "artifact": "cross-authority", "expect": {"decision": "accept"}}, {"name": "an1", "artifact": "timestamp-anchor", "expect": {"anchored": true, "witnessed": true}}, {"name": "an2", "artifact": "timestamp-anchor", "expect": {"anchored": true, "witnessed": false}}, {"name": "an3", "artifact": "timestamp-anchor", "expect": {"anchored": false, "witnessed": null}}]}', '.github/workflows/ci.yml': '      - run: python conformance/run_conformance.py --self\n', 'sdk/python/test_sdk.py': 'class ConformanceRunnerTest:\n    def t(self): pass\n', 'scripts/polaris-compat-suite.py': "def positive_controls(cases):\n    return [c for c in cases if c['expect'].get('authentic') is True\n            or c['expect'].get('decision') == 'accept']\ndef run_is_void(cases, held_names):\n    positives = positive_controls(cases)\n    return bool(positives) and not any(c['name'] in held_names for c in positives)\ndef report():\n    print('VOID: not one of the frozen cases that expect a GENUINE artifact held')\n"}
+    good = {'sdk/python/polaris_verify/__init__.py': "\"polaris-exchange-receipt/1\" \"polaris-exchange-mint/1\"\nimport hashlib, urllib.request\ndef verify_authenticity(pack, anchors=None):\n    hashlib.sha3_256(b'')\n    from cryptography.hazmat.primitives.asymmetric import mldsa\n    mldsa.MLDSA65PublicKey\ndef verify_status_assertion(a, now=None):\n    return None\ndef verify_signed_artifact(o, now=None):\n    return None\ndef verify_cross_authority(p, ctx, ms, trusted_anchors=None, revocation_feed=None, now=None):\n    return None\ndef verify_inclusion(i, n, leaf, root, proof):\n    return True\ndef verify_cosignature(c, witness_key=None):\n    return None\ndef verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=1):\n    return None\nclass PolarisVerifier:\n    def _t(self):\n        return ('/api/v1/oauth/token', '/api/v1/verify')\n", 'sdk/python/polaris_verify/conformance.py': 'from . import verify_authenticity, verify_status_assertion, verify_signed_artifact, verify_cross_authority\n# dispatch on the case artifact\n', 'conformance/run_conformance.py': "import argparse, json, os, subprocess, sys\nFLAGS = ('--verifier', '--self', 'issuer_trusted')\ndef main():\n    ap = argparse.ArgumentParser()\n    ap.add_argument('--verifier'); ap.add_argument('--self', action='store_true', dest='use_self')\n    ap.add_argument('--json', action='store_true')\n    a = ap.parse_args()\n    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))\n    cases = json.load(open(os.path.join(root, 'conformance', 'cases.json')))['cases']\n    results = []\n    for c in cases:\n        p = subprocess.run(a.verifier, input='{}', capture_output=True, text=True, shell=True)\n        if p.returncode != 0:\n            return 2\n        got = json.loads(p.stdout.strip().splitlines()[-1])\n        ok = all((bool(got.get(k)) == v) if k == 'authentic' else (got.get(k) == v)\n                 for k, v in c['expect'].items())\n        results.append({'expect': c['expect'], 'pass': ok})\n    positives = [r for r in results if r['expect'].get('authentic') is True]\n    if positives and not any(r['pass'] for r in positives):\n        print('VOID: no positive control passed', file=sys.stderr)\n        return 2\n    return 1 if any(not r['pass'] for r in results) else 0\nsys.exit(main())\n", 'conformance/SPEC.md': 'contract\nstdin authentic issuer_trusted\n', 'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": [{"name": "a", "expect": {"authentic": true, "issuer_trusted": null}}, {"name": "b", "expect": {"authentic": true, "issuer_trusted": false}}, {"name": "c", "expect": {"authentic": false, "issuer_trusted": null}}, {"name": "sa", "artifact": "status-assertion", "expect": {"authentic": true}}, {"name": "cp", "artifact": "epoch-checkpoint", "expect": {"authentic": true}}, {"name": "fd", "artifact": "revocation-feed", "expect": {"authentic": true}}, {"name": "mf", "artifact": "federation-manifest", "expect": {"authentic": true}}, {"name": "bn", "artifact": "federation-status-bundle", "expect": {"authentic": true}}, {"name": "ca", "artifact": "cross-authority", "expect": {"decision": "accept"}}, {"name": "an1", "artifact": "timestamp-anchor", "expect": {"anchored": true, "witnessed": true}}, {"name": "an2", "artifact": "timestamp-anchor", "expect": {"anchored": true, "witnessed": false}}, {"name": "an3", "artifact": "timestamp-anchor", "expect": {"anchored": false, "witnessed": null}}]}', '.github/workflows/ci.yml': '      - run: python conformance/run_conformance.py --self\n', 'sdk/python/test_sdk.py': 'class ConformanceRunnerTest:\n    def t(self): pass\n', 'scripts/polaris-compat-suite.py': "def positive_controls(cases):\n    return [c for c in cases if c['expect'].get('authentic') is True\n            or c['expect'].get('decision') == 'accept']\ndef run_is_void(cases, held_names):\n    positives = positive_controls(cases)\n    return bool(positives) and not any(c['name'] in held_names for c in positives)\ndef report():\n    print('VOID: not one of the frozen cases that expect a GENUINE artifact held')\n"}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -8006,7 +8010,7 @@ def test_algorithm_agility_check_discriminates(tmp_path):
     VER = ('_ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627)}\n'
            "def _accepted_alg(a): return isinstance(a, str) and a in _ACCEPTED\n"
            "def _two_witness_verify(digest, sig, pk, alg=_ALG): return None\n"
-           "# selftest: a genuine ML-DSA-44 pack is refused (below the floor)\n")
+           "selftest: a genuine ML-DSA-44 pack is refused (below the floor)\n")
     TS = "import { ml_dsa65, ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';\nexport const ACCEPTED_ALGORITHMS = {};\nfunction verifierFor(a) { return null; }\n"
     good = {
         'polaris_web/custody.py': ('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")\nALGORITHM_SIZES = {"ML-DSA-65": (1952, 3309), "ML-DSA-87": (2592, 4627)}\n'
@@ -8021,13 +8025,13 @@ def test_algorithm_agility_check_discriminates(tmp_path):
         'sdk/typescript/src/index.ts': TS,
         'conformance/cases.json': '{"cases": [{"name": "pack-mldsa87-valid"}, {"name": "pack-mldsa44-unaccepted"}, {"name": "status-assertion-mldsa87-active"}, {"name": "trust-list-migration"}, {"name": "trust-list-migration-retired-signer"}]}\n',
         'conformance/vectors/pack-mldsa87-valid.json': '{"algorithm": "ML-DSA-87"}\n',
-        'conformance/make_algorithm_vectors.py': "# generator\n",
+        'conformance/make_algorithm_vectors.py': "generator\n",
         'scripts/polaris-verifier-fuzz.py': '_FUZZ_ALG = os.environ.get("POLARIS_FUZZ_ALGORITHM", "ML-DSA-65")\n',
         '.github/workflows/ci.yml': "      - run: python scripts/polaris-verifier-fuzz.py\n        env:\n          POLARIS_FUZZ_ALGORITHM: ML-DSA-87\n",
         'scripts/polaris-federation-instances-drill.py': 'ALG_A = os.environ.get("POLARIS_DRILL_ALGORITHM_A", "ML-DSA-87")\n',
         'polaris_cli/polaris.py': "_KEY_ALGORITHM_BY_HEX_LENGTH = {3904: 'ML-DSA-65', 5184: 'ML-DSA-87'}\np.add_argument('--algorithm')\n",
         'docs/reference/WIRE-SPEC.md': "accepted: ML-DSA-65, ML-DSA-87; ML-DSA-44 MUST be rejected\n",
-        'docs/design/algorithm-migration.md': "# Algorithm migration\n",
+        'docs/design/algorithm-migration.md': "Algorithm migration\n",
         'docs/reference/PQC-POSTURE.md': "| ML-DSA-87 (accepted parameter set) | signing | PQ_SECURE | accepted |\n",
     }
     def write(overrides=None):
@@ -8057,17 +8061,17 @@ def test_protocol_versioning_check_discriminates(tmp_path):
            "    'protocol': {'formats': dict(_PROTOCOL_FORMATS), 'versions': _protocol_versions()}\n"
            "    bad = _format_check(mint, _EXCHANGE_MINT_FORMAT, 'mint')\n    bad = _format_check(env, _EXCHANGE_REQUEST_FORMAT, 'envelope')\n")
     frozen_files = {"cases.json": '{"cases": [{"name": "a", "since": "9.314"}]}\n', "vectors/a.json": "{}\n",
-                    "verifiers/polaris-verify-v9.317.py": "def verify_pack(p, a=None): return {}\n", "FREEZE.md": "# frozen\n"}
+                    "verifiers/polaris-verify-v9.317.py": "def verify_pack(p, a=None): return {}\n", "FREEZE.md": "frozen\n"}
     sums = "".join("%s  %s\n" % (_h.sha256(v.encode()).hexdigest(), k) for k, v in frozen_files.items())
     good = {
         'polaris_web/app.py': APP,
         'scripts/polaris-verify.py': '_VERIFIER_VERSION = "9.330"\ndef registry_speaks(reg, f): return False\n',
         'conformance/frozen/v1/SHA256SUMS': sums,
         'conformance/cases.json': '{"cases": [{"name": "a", "since": "9.314", "expect": {"authentic": true}}]}\n',
-        'scripts/polaris-compat-suite.py': "# predated fail-closed SHA256SUMS\ndef decide(V, case): return {}, None\n",
+        'scripts/polaris-compat-suite.py': "predated fail-closed SHA256SUMS\ndef decide(V, case): return {}, None\n",
         '.github/workflows/ci.yml': "      - run: python scripts/polaris-compat-suite.py\n",
         'docs/reference/WIRE-SPEC.md': "unsupported_format_version; a producer MUST NOT emit an unadvertised version; major.minor\n",
-        'docs/design/protocol-versioning.md': "# Protocol versioning\n",
+        'docs/design/protocol-versioning.md': "Protocol versioning\n",
     }
     good.update({"conformance/frozen/v1/" + k: v for k, v in frozen_files.items()})
     def write(overrides=None):
@@ -8097,12 +8101,12 @@ def test_exchange_trust_directional_check_discriminates(tmp_path):
            "def a():\n    att = _exchange_attestation(agency_id, req_key, context_id)\n"
            "    if not _exchange_attestation(target_agency_id, req_key, context_id):\n"
            "        return 'trust is directional'\n"
-           "# the RESPONDER attests an authorized exchange occurred\n")
+           "the RESPONDER attests an authorized exchange occurred\n")
     good = {
         'polaris_web/app.py': APP,
         'polaris_web/test_app.py': "def test_exchange_authorization_is_the_responders_own_attestation(self): pass\n",
-        'scripts/polaris-federation-instances-drill.py': "# trust is directional, not transitive\n",
-        'scripts/polaris-verify.py': "# participation is proven by the envelope it signed\n",
+        'scripts/polaris-federation-instances-drill.py': "trust is directional, not transitive\n",
+        'scripts/polaris-verify.py': "participation is proven by the envelope it signed\n",
         'docs/design/exchange-receipt.md': "A receipt alone cannot prove\nthe requester took part\n",
         'docs/reference/API.md': "its own valid `AgencyTrustAttestation`\n",
     }
@@ -8133,7 +8137,7 @@ def test_ltv_timestamp_trust_check_discriminates(tmp_path):
     good = {
         'scripts/polaris-verify.py': VER,
         'polaris_web/app.py': "tid = fields.get('timestamp_agency_id')\n",
-        'scripts/polaris-document-signing-drill.py': "# SELF-issued timestamp; does NOT trust; without trusted timestamp-authority anchors\n",
+        'scripts/polaris-document-signing-drill.py': "SELF-issued timestamp; does NOT trust; without trusted timestamp-authority anchors\n",
         'scripts/polaris-trust-lifecycle-drill.py': "V.verify_signed_document(doc, timestamp_anchors=TSA)\n",
         'docs/reference/WIRE-SPEC.md': "MUST come from a timestamp authority the verifier trusts\n",
         'docs/design/document-signing.md': "timestamp_anchors\n",
@@ -8151,7 +8155,7 @@ def test_ltv_timestamp_trust_check_discriminates(tmp_path):
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp is verified without anchors"
     write({'scripts/polaris-verify.py': VER.replace(' and L["timestamp_independent"]', "")})
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL if a self-issued timestamp counts"
-    write({'scripts/polaris-document-signing-drill.py': "# only the happy path\n"})
+    write({'scripts/polaris-document-signing-drill.py': "only the happy path\n"})
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL without the negative drill cases"
     write({'docs/reference/WIRE-SPEC.md': "any authentic timestamp\n"})
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL without the normative rule"
@@ -8164,7 +8168,7 @@ def test_qr_resource_bounds_check_discriminates(tmp_path):
            "    d = zlib.decompressobj()\n    raw = d.decompress(data, _QR_MAX_DECOMPRESSED)\n    if d.unconsumed_tail or not d.eof: pass\n")
     good = {
         'scripts/polaris-verify.py': VER,
-        'scripts/polaris-presentation-drill.py': "# DECOMPRESSION BOMB; compressed-size bound; too many frames\n",
+        'scripts/polaris-presentation-drill.py': "DECOMPRESSION BOMB; compressed-size bound; too many frames\n",
         'docs/reference/WIRE-SPEC.md': "A receiver MUST bound what it accepts\n",
     }
     def write(overrides=None):
@@ -8177,7 +8181,7 @@ def test_qr_resource_bounds_check_discriminates(tmp_path):
     assert first.level == "OK", "must PASS on the full fixture: " + first.message
     write({'scripts/polaris-verify.py': VER.replace("d.decompress(data, _QR_MAX_DECOMPRESSED)", "zlib.decompress(data)")})
     assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL on an unbounded inflater"
-    write({'scripts/polaris-presentation-drill.py': "# happy path only\n"})
+    write({'scripts/polaris-presentation-drill.py': "happy path only\n"})
     assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL without the bomb drill"
     write({'docs/reference/WIRE-SPEC.md': "frames may be any size\n"})
     assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL without the normative bounds"
@@ -8295,13 +8299,13 @@ def test_timestamp_transparency_check_discriminates(tmp_path):
         'polaris_sql/migrations/2026-09-09-007-timestamp-log.down.sql': "DROP TABLE IF EXISTS TimestampLog;\n",
         'polaris_web/app.py': APP,
         'scripts/polaris-verify.py': VER,
-        'scripts/polaris-timestamp-transparency-drill.py': "# AFTER THE THEFT; SPLIT VIEW; QUORUM; the residual risk, stated\n",
+        'scripts/polaris-timestamp-transparency-drill.py': "AFTER THE THEFT; SPLIT VIEW; QUORUM; the residual risk, stated\n",
         '.github/workflows/ci.yml': "      - run: python scripts/polaris-timestamp-transparency-drill.py\n",
         'scripts/polaris-federation-instances-drill.py': '{"anchor": True}; V.verify_timestamp_anchor(x)\n',
-        'polaris_web/test_app.py': "class TimestampLogTests: pass  # retains nothing\n",
+        'polaris_web/test_app.py': "class TimestampLogTests: pass  retains nothing\n",
         'polaris_web/test_check_constraints.py': '"TimestampLog",\n',
         'docs/reference/WIRE-SPEC.md': "`anchor` polaris-timestamp-log quorum\n",
-        'docs/design/timestamp-transparency.md': "# Timestamp transparency\n",
+        'docs/design/timestamp-transparency.md': "Timestamp transparency\n",
         'docs/design/timestamp-authority.md': "keeps no per-request record unless the caller asks for an anchor\n",
         'docs/PRODUCTION-READINESS.md': "one digest per anchored timestamp\n",
         'docs/reference/DATA-MODEL.md': "TimestampLog\n",
@@ -8570,7 +8574,7 @@ def test_pairwise_presentation_check_discriminates(tmp_path):
         'sdk/python/polaris_verify/__init__.py': "def pairwise_handle(k, s):\n    return None\n",
         'sdk/typescript/src/index.ts': "export function pairwiseHandle(k, s) { return null; }\n",
         'scripts/polaris-wallet.py': "args.verifier_scope\n",
-        'scripts/polaris-pairwise-drill.py': "# asserts correlation is exposed for a plain one\n",
+        'scripts/polaris-pairwise-drill.py': "asserts correlation is exposed for a plain one\n",
     }
 
     def write(overrides=None):
@@ -8627,7 +8631,7 @@ def test_pairwise_presentation_check_discriminates(tmp_path):
         "must FAIL when the wallet cannot present to a named verifier"
 
     # The drill stops asserting the bound and becomes an advertisement.
-    write({'scripts/polaris-pairwise-drill.py': "# the handles differ, great\n"})
+    write({'scripts/polaris-pairwise-drill.py': "the handles differ, great\n"})
     assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the drill does not assert that a plain presentation is exposed"
 
@@ -8668,12 +8672,12 @@ def test_agent_grant_check_discriminates(tmp_path):
         'scripts/polaris-wallet.py': ("def cmd_grant(args):\n    sign_locally()\n"
                                       "\ndef cmd_revoke_grant(args):\n    sign_locally()\n"),
         'sdk/python/polaris_verify/__init__.py': ('def grant_covers(g, a): return False\n'
-                                                  '# "polaris-agent-grant/1"\n'),
+                                                  '"polaris-agent-grant/1"\n'),
         'sdk/typescript/src/index.ts': ('export function grantCovers(g, a) { return false; }\n'
                                         '// "polaris-agent-grant/1"\n'),
         'scripts/polaris-verifier-fuzz.py': '("agent-grant", g_agent_grant, None),\n',
-        'scripts/polaris-agent-grant-drill.py': ("# a stolen grant fails\n# credential untouched\n"
-                                                 "# correlation is exposed\n"),
+        'scripts/polaris-agent-grant-drill.py': ("a stolen grant fails\ncredential untouched\n"
+                                                 "correlation is exposed\n"),
         'docs/reference/WIRE-SPEC.md': "### polaris-agent-grant/1\n",
     }
     good['scripts/polaris-verify.py'] = VERIFY + (
@@ -8749,7 +8753,7 @@ def test_agent_grant_check_discriminates(tmp_path):
         "must FAIL when an SDK does not expose the scope check"
 
     # The drill stops asserting that a revoked grant leaves the credential usable.
-    write({'scripts/polaris-agent-grant-drill.py': "# a stolen grant fails\n# correlation is exposed\n"})
+    write({'scripts/polaris-agent-grant-drill.py': "a stolen grant fails\ncorrelation is exposed\n"})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the drill does not show the human's credential survives a revocation"
 
@@ -8896,8 +8900,8 @@ def test_status_distribution_check_discriminates(tmp_path):
         "\n@app.route('/z')\ndef feeds():\n"
         + "".join("    return _public_artifact(b%d)\n" % i for i in range(7))
     )
-    DRILL = ("# max-age does not outlive the signed window\n"
-             "# and is no-store: it names ONE credential\n")
+    DRILL = ("max-age does not outlive the signed window\n"
+             "and is no-store: it names ONE credential\n")
     SPEC = "stale-while-revalidate is refused; no-store for per-holder; expires_at drives it\n"
     good = {
         'polaris_web/app.py': APP,
@@ -8975,7 +8979,7 @@ def test_status_distribution_check_discriminates(tmp_path):
         "must FAIL when a public status artifact bypasses the cacheable form"
 
     # The drill stops asserting the rule.
-    write({'scripts/polaris-status-distribution-drill.py': "# and is no-store: it names ONE credential\n"})
+    write({'scripts/polaris-status-distribution-drill.py': "and is no-store: it names ONE credential\n"})
     assert checks.check_status_distribution(tmp_path)[0].level == "FAIL", \
         "must FAIL when the drill no longer asserts the window bound"
 
@@ -9108,9 +9112,9 @@ def test_cost_model_check_discriminates(tmp_path):
     # v9.360 (P2.10): each fixture below either turns the model back into a table, or drops
     # a caveat whose absence makes the figure wrong in the direction that gets a project
     # funded and then stranded.
-    SCRIPT = ("# MEASURED from BENCHMARK.md\nVERIFY_PER_CORE = 7848\n"
-              "# COMPUTED from FIPS 204\nSIG = 3309\n"
-              "# ASSUMED, the deployment's own\n# PRICED, a list price on a date\n"
+    SCRIPT = ("MEASURED from BENCHMARK.md\nVERIFY_PER_CORE = 7848\n"
+              "COMPUTED from FIPS 204\nSIG = 3309\n"
+              "ASSUMED, the deployment's own\nPRICED, a list price on a date\n"
               "ap.add_argument('--persons')\nap.add_argument('--verifications-per-person')\n"
               "ap.add_argument('--retention-years')\nap.add_argument('--price-vcpu-hour')\n")
     BENCH = "| single-witness | ~7,848 verifications/s per core |\n"
@@ -9262,9 +9266,9 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
               '    v = {"digests_match": None, "issuer_authentic": False, "reader_interop": None}\n'
               '    _two_witness_verify(d, s, p, a)\n    return v\n'
               '\ndef _cbor_sig_structure(p, y):\n    return b"Signature1"\n')
-    DRILL = ("# an INDEPENDENT reader checks every digest\n"
-             "# refusing to emit the token value in an mdoc\n"
-             "# the docType is Polaris, never the mDL\n")
+    DRILL = ("an INDEPENDENT reader checks every digest\n"
+             "refusing to emit the token value in an mdoc\n"
+             "the docType is Polaris, never the mDL\n")
     DOC = "This is a format bridge, not a trust bridge.\n"
     good = {
         'polaris_web/mdoc.py': MOD,
@@ -9339,7 +9343,7 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
     # The drill stops testing interop against an independent implementation, so it is a round
     # trip with itself.
     write({'scripts/polaris-mdoc-bridge-drill.py': DRILL.replace(
-        "# an INDEPENDENT reader checks every digest\n", "")})
+        "an INDEPENDENT reader checks every digest\n", "")})
     assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the drill does not test interop with an independent CBOR implementation"
 
@@ -10086,13 +10090,13 @@ def test_pilot_winddown_check_discriminates(tmp_path):
            '            "that would not be true. Records are append-only so that nobody, "\n'
            '            "including us, can erase them. Ending this pilot requires a "\n'
            '            "second, independent authority to co-sign.")\n')
-    DRILL = ("# a wind-down with no co-signer is REFUSED\n"
-             "# self_refused = 'cannot co-sign its own' in str(exc)\n"
-             "# ...before anything was revoked\n"
-             "# no participant's name is readable anywhere in Individual\n"
-             "# the verification audit-of-record is STILL THERE\n"
-             "# a table added later appears in the residue report unprompted\n"
-             "# running the wind-down again is safe and a no-op\n")
+    DRILL = ("a wind-down with no co-signer is REFUSED\n"
+             "self_refused = 'cannot co-sign its own' in str(exc)\n"
+             "...before anything was revoked\n"
+             "no participant's name is readable anywhere in Individual\n"
+             "the verification audit-of-record is STILL THERE\n"
+             "a table added later appears in the residue report unprompted\n"
+             "running the wind-down again is safe and a no-op\n")
     RUNNER = ('echo "pilot: winddown needs --cosigner AGENCY_ID." >&2\n'
               'echo "Stopped. Data kept: down is not a wind-down."\n')
     DOC = ("Read the ending first. Arrange this before enrolling anybody. Run report\n"
@@ -10177,13 +10181,13 @@ def test_pilot_winddown_check_discriminates(tmp_path):
         "a listed residue report stops being true the first time a table is added"
 
     # THE DRILL and the record.
-    for needle in ("# a wind-down with no co-signer is REFUSED",
-                   "# self_refused = 'cannot co-sign its own' in str(exc)",
-                   "# ...before anything was revoked",
-                   "# no participant's name is readable anywhere in Individual",
-                   "# the verification audit-of-record is STILL THERE",
-                   "# a table added later appears in the residue report unprompted",
-                   "# running the wind-down again is safe and a no-op"):
+    for needle in ("a wind-down with no co-signer is REFUSED",
+                   "self_refused = 'cannot co-sign its own' in str(exc)",
+                   "...before anything was revoked",
+                   "no participant's name is readable anywhere in Individual",
+                   "the verification audit-of-record is STILL THERE",
+                   "a table added later appears in the residue report unprompted",
+                   "running the wind-down again is safe and a no-op"):
         write({'scripts/polaris-pilot-winddown-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
             f"the drill must assert: {needle}"
@@ -10230,9 +10234,9 @@ def test_formal_specs_check_discriminates(tmp_path):
     SPEC_B = ("---- MODULE SpecTwo ----\n"
               "\\* MODELS: some_proc IN polaris_sql/05_procedures.sql\n"
               "Init == TRUE\n====\n")
-    DRILL = ("# every spec's filename matches its module name\n"
-             "# every MODELS binding resolves against the tree\n"
-             "# every counterpart configuration DOES violate its invariant\n")
+    DRILL = ("every spec's filename matches its module name\n"
+             "every MODELS binding resolves against the tree\n"
+             "every counterpart configuration DOES violate its invariant\n")
     RUNNER = 'TLA_VERSION="${POLARIS_TLA_VERSION:-v1.7.4}"\n'
     README = ("These are model-checked in CI on every push. What a model check does not tell\n"
               "you: that the model matches the system. Both are bounded explorations.\n")
@@ -10300,9 +10304,9 @@ def test_formal_specs_check_discriminates(tmp_path):
         "an unpinned checker can change semantics under the claim it supports"
 
     # THE DRILL that declares bindings without resolving them, or stops requiring failure.
-    for needle in ("# every spec's filename matches its module name",
-                   "# every MODELS binding resolves against the tree",
-                   "# every counterpart configuration DOES violate its invariant"):
+    for needle in ("every spec's filename matches its module name",
+                   "every MODELS binding resolves against the tree",
+                   "every counterpart configuration DOES violate its invariant"):
         write({'scripts/polaris-tla-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
             f"the drill must carry: {needle}"
@@ -10433,11 +10437,11 @@ def test_assurance_mapping_check_discriminates(tmp_path):
            + "| something not built | GAP | Not built, and here is the reason it is not. |\n"
            + "\n**Highest holder AAL claimed: AAL2.**\n**Highest FAL claimed: FAL1.**\n"
            + "\n**One** rows above are GAP or EXTERNAL.\n")
-    DRILL = ("# every citation in the mapping resolves\n"
-             "# every cited check PASSES against this tree\n"
-             "# every GAP, WAIVED and PARTIAL row carries a reason\n"
-             "# the stated gap count matches the rows\n"
-             "# It cannot tell you the mapping is CORRECT: that is an assessor's judgement.\n")
+    DRILL = ("every citation in the mapping resolves\n"
+             "every cited check PASSES against this tree\n"
+             "every GAP, WAIVED and PARTIAL row carries a reason\n"
+             "the stated gap count matches the rows\n"
+             "It cannot tell you the mapping is CORRECT: that is an assessor's judgement.\n")
     good = {
         'docs/reference/NIST-800-63-MAPPING.md': DOC,
         'scripts/polaris-assurance-mapping-drill.py': DRILL,
@@ -10486,15 +10490,15 @@ def test_assurance_mapping_check_discriminates(tmp_path):
         "five rows is not IAL, AAL and FAL"
 
     # THE DRILL that finds without running, or omits a guarantee.
-    for needle in ("# every citation in the mapping resolves",
-                   "# every cited check PASSES against this tree",
-                   "# every GAP, WAIVED and PARTIAL row carries a reason",
-                   "# the stated gap count matches the rows"):
+    for needle in ("every citation in the mapping resolves",
+                   "every cited check PASSES against this tree",
+                   "every GAP, WAIVED and PARTIAL row carries a reason",
+                   "the stated gap count matches the rows"):
         write({'scripts/polaris-assurance-mapping-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
             f"the drill must carry: {needle}"
     write({'scripts/polaris-assurance-mapping-drill.py': DRILL.replace(
-        "# It cannot tell you the mapping is CORRECT: that is an assessor's judgement.\n", "")})
+        "It cannot tell you the mapping is CORRECT: that is an assessor's judgement.\n", "")})
     assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
         "the drill must state its own limit, or it implies the same overclaim the document avoids"
 
@@ -10561,13 +10565,13 @@ def test_enrollment_proofing_check_discriminates(tmp_path):
               ");\n")
     TRIGGERS = ("CREATE TRIGGER trg_enrollment_proofing_append_only ...;\n"
                 "CREATE TRIGGER trg_enrollment_evidence_append_only ...;\n")
-    DRILL = ("# every combination in the evidence table derives its level\n"
-             "# a SUPERIOR piece nobody validated contributes nothing\n"
-             "# ...and neither does one validated but not bound to the applicant\n"
-             "# a high-quality capture that failed liveness does not reach IAL3\n"
-             "# claiming a level the evidence does not support is REFUSED\n"
-             "# ...and there is NO COLUMN to write any of them into\n"
-             "# re-proofing that finds LESS lowers the current level\n")
+    DRILL = ("every combination in the evidence table derives its level\n"
+             "a SUPERIOR piece nobody validated contributes nothing\n"
+             "...and neither does one validated but not bound to the applicant\n"
+             "a high-quality capture that failed liveness does not reach IAL3\n"
+             "claiming a level the evidence does not support is REFUSED\n"
+             "...and there is NO COLUMN to write any of them into\n"
+             "re-proofing that finds LESS lowers the current level\n")
     DOC = ("The level is derived, never asserted. What keeps this from being a second identity\n"
            "database is that the document has no column. Liveness is not optional, because a\n"
            "photograph scores excellently. The kiosk build and its supervision model remain\n"
@@ -10675,13 +10679,13 @@ def test_enrollment_proofing_check_discriminates(tmp_path):
             f"{trig} must exist"
 
     # THE DRILL and the record.
-    for needle in ("# every combination in the evidence table derives its level",
-                   "# a SUPERIOR piece nobody validated contributes nothing",
-                   "# ...and neither does one validated but not bound to the applicant",
-                   "# a high-quality capture that failed liveness does not reach IAL3",
-                   "# claiming a level the evidence does not support is REFUSED",
-                   "# ...and there is NO COLUMN to write any of them into",
-                   "# re-proofing that finds LESS lowers the current level"):
+    for needle in ("every combination in the evidence table derives its level",
+                   "a SUPERIOR piece nobody validated contributes nothing",
+                   "...and neither does one validated but not bound to the applicant",
+                   "a high-quality capture that failed liveness does not reach IAL3",
+                   "claiming a level the evidence does not support is REFUSED",
+                   "...and there is NO COLUMN to write any of them into",
+                   "re-proofing that finds LESS lowers the current level"):
         write({'scripts/polaris-enrollment-proofing-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
             f"the drill must assert: {needle}"
@@ -10714,10 +10718,10 @@ def test_duress_on_card_check_discriminates(tmp_path):
            "        if normal_ok or duress_ok:\n            return b''\n")
     DRILL = ("OBSERVABLE_GAP = 10e-6\n"
              "def permutation_test(a, b):\n    return 0, 1, 0\n"
-             "# a duress PIN costs no observable time over the normal one\n"
-             "# a card WITH a duress PIN costs no observable time over one without\n"
-             "# ...and the duress comparison is the WHOLE right-hand side, unguarded\n"
-             "# correct vs wrong: median gap (not a leak, see below)\n")
+             "a duress PIN costs no observable time over the normal one\n"
+             "a card WITH a duress PIN costs no observable time over one without\n"
+             "...and the duress comparison is the WHOLE right-hand side, unguarded\n"
+             "correct vs wrong: median gap (not a leak, see below)\n")
     DOC = ("A second PIN, of the same length as the first, entered at the same pinpad.\n"
            "The mechanism signals. It does not prevent. A duress PIN is used once, years\n"
            "later, so recall under stress is what sets its length. Offline, nothing is\n"
@@ -10786,10 +10790,10 @@ def test_duress_on_card_check_discriminates(tmp_path):
         "def permutation_test(a, b):\n    return 0, 1, 0\n", "")})
     assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
         "the measurement must calibrate itself against noise"
-    for needle in ("# a duress PIN costs no observable time over the normal one",
-                   "# a card WITH a duress PIN costs no observable time over one without",
-                   "# ...and the duress comparison is the WHOLE right-hand side, unguarded",
-                   "# correct vs wrong: median gap (not a leak, see below)"):
+    for needle in ("a duress PIN costs no observable time over the normal one",
+                   "a card WITH a duress PIN costs no observable time over one without",
+                   "...and the duress comparison is the WHOLE right-hand side, unguarded",
+                   "correct vs wrong: median gap (not a leak, see below)"):
         write({'scripts/polaris-duress-timing-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_duress_on_card(tmp_path)[0].level == "FAIL", \
             f"the drill must carry: {needle}"
@@ -10829,13 +10833,13 @@ def test_verifier_device_check_discriminates(tmp_path):
            "        return v\n"
            "\ndef qr_capacity_report(sizes):\n    return {}\n"
            "\ndef _load_status_verifier():\n    return verify_status_assertion\n")
-    DRILL = ("# the SAME response replayed to the SAME device is refused\n"
-             "# ...and a response relayed to ANOTHER device is refused\n"
-             "# a REVOKED credential is refused even with a valid signature\n"
-             "# possession alone is NOT acceptance\n"
-             "# ...while a handle-only read stays PAIRWISE\n"
-             "# two devices cannot tell they saw the same card\n"
-             "# ...but a POST-QUANTUM card object does NOT, at any QR version\n")
+    DRILL = ("the SAME response replayed to the SAME device is refused\n"
+             "...and a response relayed to ANOTHER device is refused\n"
+             "a REVOKED credential is refused even with a valid signature\n"
+             "possession alone is NOT acceptance\n"
+             "...while a handle-only read stays PAIRWISE\n"
+             "two devices cannot tell they saw the same card\n"
+             "...but a POST-QUANTUM card object does NOT, at any QR version\n")
     DOC = ("Possession alone is not acceptance. The QR path cannot carry a post-quantum card\n"
            "object. A device that checks authorization offline learns the stable credential\n"
            "identifier.\n")
@@ -10913,13 +10917,13 @@ def test_verifier_device_check_discriminates(tmp_path):
         "the QR limit must be named, not implied"
 
     # THE DRILL and the record.
-    for needle in ("# the SAME response replayed to the SAME device is refused",
-                   "# ...and a response relayed to ANOTHER device is refused",
-                   "# a REVOKED credential is refused even with a valid signature",
-                   "# possession alone is NOT acceptance",
-                   "# ...while a handle-only read stays PAIRWISE",
-                   "# two devices cannot tell they saw the same card",
-                   "# ...but a POST-QUANTUM card object does NOT, at any QR version"):
+    for needle in ("the SAME response replayed to the SAME device is refused",
+                   "...and a response relayed to ANOTHER device is refused",
+                   "a REVOKED credential is refused even with a valid signature",
+                   "possession alone is NOT acceptance",
+                   "...while a handle-only read stays PAIRWISE",
+                   "two devices cannot tell they saw the same card",
+                   "...but a POST-QUANTUM card object does NOT, at any QR version"):
         write({'scripts/polaris-verifier-device-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_verifier_device(tmp_path)[0].level == "FAIL", \
             f"the drill must assert: {needle}"
@@ -10967,11 +10971,11 @@ def test_card_personalization_check_discriminates(tmp_path):
     TRIGGERS = ("CREATE TRIGGER trg_card_personalization_append_only\n"
                 "    BEFORE UPDATE OR DELETE ON CardPersonalization\n"
                 "    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n")
-    DRILL = ("# the private key the card kept appears in NOTHING it produced\n"
-             "# the audit-of-record row cannot be UPDATEd\n"
-             "# a second card for the same credential is refused\n"
-             "# the card refuses a second GENERATE KEYPAIR\n"
-             "# ...and sees the DURESS slot when that PIN was used\n")
+    DRILL = ("the private key the card kept appears in NOTHING it produced\n"
+             "the audit-of-record row cannot be UPDATEd\n"
+             "a second card for the same credential is refused\n"
+             "the card refuses a second GENERATE KEYPAIR\n"
+             "...and sees the DURESS slot when that PIN was used\n")
     good = {
         'polaris_card/personalization.py': MOD,
         'polaris_card/emulator.py': EMU,
@@ -11039,7 +11043,7 @@ def test_card_personalization_check_discriminates(tmp_path):
         "the object must be verified before the row is written"
 
     # THE EDITABLE RECORD, and the columns that must not exist.
-    write({'polaris_sql/06_triggers.sql': "-- no trigger\n"})
+    write({'polaris_sql/06_triggers.sql': "no trigger\n"})
     assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
         "the personalization record must be append-only"
     write({'polaris_sql/01_schema.sql': SCHEMA.replace(
@@ -11063,11 +11067,11 @@ def test_card_personalization_check_discriminates(tmp_path):
            DRILL + "cur.execute('SET session_replication_role = replica')\n"})
     assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
         "a drill must not turn off the append-only trigger to clean up after itself"
-    for needle in ("# the private key the card kept appears in NOTHING it produced",
-                   "# the audit-of-record row cannot be UPDATEd",
-                   "# a second card for the same credential is refused",
-                   "# the card refuses a second GENERATE KEYPAIR",
-                   "# ...and sees the DURESS slot when that PIN was used"):
+    for needle in ("the private key the card kept appears in NOTHING it produced",
+                   "the audit-of-record row cannot be UPDATEd",
+                   "a second card for the same credential is refused",
+                   "the card refuses a second GENERATE KEYPAIR",
+                   "...and sees the DURESS slot when that PIN was used"):
         write({'scripts/polaris-personalization-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_card_personalization(tmp_path)[0].level == "FAIL", \
             f"the drill must assert: {needle}"
@@ -11107,12 +11111,12 @@ def test_card_emulator_check_discriminates(tmp_path):
     VECTORS = ('{"commands": [], "session": [], "status_words": {}, '
                '"response_body_hex": "00"}\n')
     SUITE = "with open('vectors/apdu-exchanges.json') as fh:\n    doc = json.load(fh)\n"
-    DRILL = ("# a reader built only from the published vectors completes a presentation\n"
-             "# ...a captured response replayed under a fresh challenge is refused\n"
-             "# ...and relayed to a different reader is refused\n"
-             "# three wrong PINs block the card\n"
-             "# a duress presentation walks the same commands as a normal one\n"
-             "# ...and exactly one response length, the same for both slots\n")
+    DRILL = ("a reader built only from the published vectors completes a presentation\n"
+             "...a captured response replayed under a fresh challenge is refused\n"
+             "...and relayed to a different reader is refused\n"
+             "three wrong PINs block the card\n"
+             "a duress presentation walks the same commands as a normal one\n"
+             "...and exactly one response length, the same for both slots\n")
     good = {
         'polaris_card/emulator.py': MOD,
         'polaris_card/vectors/apdu-exchanges.json': VECTORS,
@@ -11204,12 +11208,12 @@ def test_card_emulator_check_discriminates(tmp_path):
         "the suite must walk the published session against a real card"
 
     # THE DRILL's individual claims.
-    for needle in ("# a reader built only from the published vectors completes a presentation",
-                   "# ...a captured response replayed under a fresh challenge is refused",
-                   "# ...and relayed to a different reader is refused",
-                   "# three wrong PINs block the card",
-                   "# a duress presentation walks the same commands as a normal one",
-                   "# ...and exactly one response length, the same for both slots"):
+    for needle in ("a reader built only from the published vectors completes a presentation",
+                   "...a captured response replayed under a fresh challenge is refused",
+                   "...and relayed to a different reader is refused",
+                   "three wrong PINs block the card",
+                   "a duress presentation walks the same commands as a normal one",
+                   "...and exactly one response length, the same for both slots"):
         write({'scripts/polaris-card-emulator-drill.py': DRILL.replace(needle + "\n", "")})
         assert checks.check_card_emulator(tmp_path)[0].level == "FAIL", \
             f"the drill must assert: {needle}"
@@ -11248,13 +11252,13 @@ def test_card_profile_check_discriminates(tmp_path):
            "\ndef response_body(challenge, reader_scope, handle):\n    return b''\n")
     VECTORS = ('{"profile": "id.polaris.card.1", "cases": [{"signing_body_hex": "00", '
                '"signing_digest_hex": "00", "card_object_hex": "00"}]}\n')
-    MAKE = "# regenerates the vectors from the encoder\n"
+    MAKE = "regenerates the vectors from the encoder\n"
     SUITE = "def test_vectors():\n    assert case['card_object_hex']\n"
-    DRILL = ("# ...and is REFUSED under another authority's key\n"
-             "# no single-field edit survives the issuer signature\n"
-             "# a good classical signature does NOT rescue a bad post-quantum one\n"
-             "# ...and two readers cannot tell they saw the same card\n"
-             "# the duress key does not appear in the card object anywhere\n")
+    DRILL = ("...and is REFUSED under another authority's key\n"
+             "no single-field edit survives the issuer signature\n"
+             "a good classical signature does NOT rescue a bad post-quantum one\n"
+             "...and two readers cannot tell they saw the same card\n"
+             "the duress key does not appear in the card object anywhere\n")
     DOC = ("An offline verifier cannot raise a duress alarm. A card cannot prove offline\n"
            "that it is the current one. Unlinkable proof of membership needs the holder's\n"
            "phone.\n")
@@ -11395,12 +11399,12 @@ def test_quantum_event_readiness_check_discriminates(tmp_path):
             "        raise AlgorithmUnavailableError('wrong parameter set')\n"
             "    return current\n")
     CLI = "HANDLERS = {'migrate-population': cmd_migrate_population}\n"
-    DRILL = ("# closing the window before the population is migrated is REFUSED\n"
-             "# an interrupted run leaves the rest of the work standing\n"
-             "# NOBODY WAS DARK at any batch boundary\n"
-             "# two concurrent runners re-signed the population once, not twice\n"
-             "# a key for the WRONG parameter set is refused, never used\n"
-             "# re-signed per second, one runner\n"
+    DRILL = ("closing the window before the population is migrated is REFUSED\n"
+             "an interrupted run leaves the rest of the work standing\n"
+             "NOBODY WAS DARK at any batch boundary\n"
+             "two concurrent runners re-signed the population once, not twice\n"
+             "a key for the WRONG parameter set is refused, never used\n"
+             "re-signed per second, one runner\n"
              "totals['sign_seconds'], totals['db_seconds']\n")
     DOC = ("How many holders have a credential that\nverifies under nothing. Deprecation is a "
            "separate pass. Nine tenths of the time is signing.\n")
@@ -11469,7 +11473,7 @@ def test_quantum_event_readiness_check_discriminates(tmp_path):
 
     # THE CLAIM WITHOUT THE NUMBER, and the number without its breakdown.
     write({'scripts/polaris-quantum-event-drill.py':
-           DRILL.replace("# re-signed per second, one runner\n", "")})
+           DRILL.replace("re-signed per second, one runner\n", "")})
     assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
         "the drill must measure the rate rather than assert the capability"
     write({'scripts/polaris-quantum-event-drill.py':
@@ -11480,11 +11484,11 @@ def test_quantum_event_readiness_check_discriminates(tmp_path):
     # THE GAP BETWEEN ENDPOINTS. Sampling only before and after cannot see a window that
     # opens and closes during the run.
     write({'scripts/polaris-quantum-event-drill.py':
-           DRILL.replace("# NOBODY WAS DARK at any batch boundary\n", "")})
+           DRILL.replace("NOBODY WAS DARK at any batch boundary\n", "")})
     assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
         "the unverifiable count must be sampled after every batch"
     write({'scripts/polaris-quantum-event-drill.py':
-           DRILL.replace("# an interrupted run leaves the rest of the work standing\n", "")})
+           DRILL.replace("an interrupted run leaves the rest of the work standing\n", "")})
     assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
         "resume must be demonstrated"
 
@@ -11523,9 +11527,9 @@ def test_per_authority_isolation_check_discriminates(tmp_path):
            "                (str(int(agency_id)),))\n")
     SECURITY = "session['operator_agency_id'] = user.get('agency_id')\n"
     DRILL = ('cur.execute("SET LOCAL ROLE polaris_app")\n'
-             '# an UNSCOPED session sees every credential (the default)\n'
-             '# ...not even by naming the other authority explicitly\n'
-             '# holder identity is NOT isolated by authority (the stated limit)\n')
+             'an UNSCOPED session sees every credential (the default)\n'
+             '...not even by naming the other authority explicitly\n'
+             'holder identity is NOT isolated by authority (the stated limit)\n')
     DOC = "A person is not owned by an authority.\n"
     MIG = "polaris_sql/migrations/2026-09-10-012-per-authority-isolation.up.sql"
     good = {
@@ -11602,7 +11606,7 @@ def test_per_authority_isolation_check_discriminates(tmp_path):
 
     # THE LIMIT LEFT UNDEMONSTRATED, in the drill and in the record.
     write({'scripts/polaris-authority-isolation-drill.py':
-           DRILL.replace("# holder identity is NOT isolated by authority (the stated limit)\n", "")})
+           DRILL.replace("holder identity is NOT isolated by authority (the stated limit)\n", "")})
     assert checks.check_per_authority_isolation(tmp_path)[0].level == "FAIL", \
         "the drill must demonstrate that holder identity is NOT isolated"
     write({'docs/design/per-authority-isolation.md': "Isolation is complete.\n"})
@@ -11638,9 +11642,9 @@ def test_vc_format_check_discriminates(tmp_path):
               '    v = {"structure_valid": False, "proof_authentic": False,\n'
               '         "verifier_interop": None}\n'
               "    if p.get('cryptosuite') != _VC_CRYPTOSUITE:\n        return v\n    return v\n")
-    DRILL = ("# a credential relabelled to a registered suite is refused\n"
-             "# refusing an identity attribute in the subject\n"
-             "# with no verifier scope the subject carries NO id\n")
+    DRILL = ("a credential relabelled to a registered suite is refused\n"
+             "refusing an identity attribute in the subject\n"
+             "with no verifier scope the subject carries NO id\n")
     DOC = "This attests a verification result, not an identity.\n"
     good = {
         'polaris_web/vc.py': MOD,
@@ -11716,7 +11720,7 @@ def test_vc_format_check_discriminates(tmp_path):
 
     # The drill stops asserting the relabel refusal.
     write({'scripts/polaris-vc-format-drill.py': DRILL.replace(
-        "# a credential relabelled to a registered suite is refused\n", "")})
+        "a credential relabelled to a registered suite is refused\n", "")})
     assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
         "must FAIL when the drill does not assert that a relabelled suite is refused"
 

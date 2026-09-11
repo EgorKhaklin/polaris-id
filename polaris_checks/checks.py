@@ -109,11 +109,12 @@ def _strip_comments_for(rel: str, text: str) -> str:
 def _read(root: pathlib.Path, rel: str) -> str:
     """A file's CODE, with comments stripped for the languages that have them.
 
-    Every check that greps a file goes through here, and until v9.398 they grepped the
-    comments too. A mutation pass over the layer found that commenting out the matched
-    line -- leaving its words in the comment, which is exactly what
-    `# temporarily disabled: <the thing>` looks like -- left 24 of 24 sampled checks
-    passing. The guarantee was gone and nothing turned red.
+    Every check that greps a file goes through here, and until v9.399 they grepped the
+    comments too. Commenting out the matched line -- leaving its words in the comment,
+    which is exactly what `# temporarily disabled: <the thing>` looks like -- left 71 of
+    75 checks passing. The guarantee was gone and nothing turned red.
+    `scripts/polaris-check-mutation-drill.py` runs that mutation on every push and the
+    count is now zero.
 
     Use `_read_raw` where the PROSE is the property: a required header, a stated
     reason, a `coverage:exempt` marker, a document.
@@ -121,11 +122,7 @@ def _read(root: pathlib.Path, rel: str) -> str:
     p = root / rel
     if not p.is_file():
         return ""
-    # NOT stripped here yet -- see scripts/polaris-check-mutation-drill.py. Stripping
-    # comments in this one helper takes 71 of 75 checks from passing-on-a-broken-tree to
-    # zero, and breaks 58 detection-test fixtures that carry their property in a comment.
-    # That repair is a ship of its own; this one measures the exposure and ratchets it.
-    return p.read_text(encoding="utf-8", errors="replace")
+    return _strip_comments_for(rel, p.read_text(encoding="utf-8", errors="replace"))
 
 
 def _read_path(p: pathlib.Path) -> str:
