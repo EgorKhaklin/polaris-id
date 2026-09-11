@@ -11097,6 +11097,73 @@ def check_unique_rules_are_tested_exhaustively(root: pathlib.Path) -> list[Findi
                "fixture table is cross-checked against the catalog in both directions")
 
 
+def check_zk_witnesses_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
+    """Two independent witnesses is a claim about the tests, not about the code (v9.419).
+
+    The engine's guarantee is that a proof which should be rejected is rejected, established twice:
+    once by the Plonky2 verifier in Rust, once by an independent Python witness that re-derives the
+    same facts. The value of the second one is entirely in its disagreeing when the first is wrong,
+    and a differential between two implementations is satisfied when both are wrong in the same
+    direction.
+
+    So each is switched off and a suite must go red. Measured: the Rust verifier returning
+    Ok(true) fails 8 of its 22 tests, all of them rejection cases; `check_claim` returning ACCEPT
+    fails 13 of 54.
+
+    The third mutation is the one worth having. `check_claim`'s docstring says it re-derives the
+    leaf opening and the nullifier because "a witness that only re-checked membership would have
+    gone on agreeing with a Rust verifier that had quietly stopped constraining the nullifier to
+    the leaf's secret". This removes exactly that half and requires the four tests named after it
+    to fail, which turns the docstring's reason for existing into something checked rather than
+    stated."""
+    name = "zk_mutation"
+    rel = "scripts/polaris-zk-mutation-drill.py"
+    if not (root / rel).is_file():
+        return _fail(name, f"{rel} is absent; the two-witness claim rests on tests nothing "
+                           "measures")
+    drill = _read(root, rel)
+    ci = _read(root, ".github/workflows/ci.yml")
+    problems = []
+    # Both witnesses, or it is a drill for one of them.
+    if "polaris_zk/src/lib.rs" not in drill and "LIB_RS" not in drill:
+        problems.append("the drill does not mutate the Rust verifier")
+    if "witness2" not in drill:
+        problems.append("the drill does not mutate the second witness")
+    if "cargo" not in drill:
+        problems.append("the drill does not run the Rust suite, so half the claim is unmeasured")
+    # The sharp mutation: the weakening the witness exists to prevent.
+    if "secret_hex" not in drill:
+        problems.append("the drill no longer removes the re-derivation, which is the exact "
+                        "weakening check_claim's docstring says the second witness exists to "
+                        "catch, and therefore the only mutation that tests its reason for being")
+    if "MISSING" not in drill:
+        problems.append("the drill does not fail when the code it mutates has moved, so it could "
+                        "report success having edited nothing")
+    if "_cases_recorded" not in drill:
+        problems.append("the drill does not count its cases (v9.403)")
+    if "polaris-zk-mutation-drill.py" not in ci:
+        problems.append("CI does not run the drill, so the mutation happens only by hand")
+    # The witness must still carry the property the drill removes.
+    witness = _read(root, "polaris_zk/witness2/verifier.py")
+    if "derive_nullifier" not in witness or "leaf_commitment" not in witness:
+        problems.append("the second witness no longer re-derives the nullifier and the leaf "
+                        "opening, so it has become the membership-only witness its docstring "
+                        "warns about")
+    mutations = len(re.findall(r'(?m)^\s+\("[^"]+", (?:LIB_RS|WITNESS),', drill))
+    if "_cases_recorded += 1" not in drill:
+        mutations = 0
+    if not mutations or mutations < 3:
+        problems.append(f"only {mutations} mutations are declared; the drill has been emptied "
+                        "and this check is passing by finding nothing")
+    if problems:
+        return _fail(name, "; ".join(problems[:3]))
+    return _ok(name,
+               f"the engine's two witnesses are mutation-tested: {mutations} mutations, each "
+               "switching one of them off, and each must turn a suite red. The third removes the "
+               "re-derivation the second witness exists for, so its own stated reason is checked "
+               "rather than asserted")
+
+
 def check_triggers_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
     """A coverage number nobody re-measures is a coverage number that decays (v9.413).
 
@@ -14446,6 +14513,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_route_guards_are_derived_not_listed,
     check_csrf_exemptions_do_not_trust_the_session,
     check_unique_rules_are_tested_exhaustively,
+    check_zk_witnesses_are_mutation_tested,
     check_triggers_are_mutation_tested,
     check_property_suite_identifies_its_refusals,
     check_benchmark_measures_growth,

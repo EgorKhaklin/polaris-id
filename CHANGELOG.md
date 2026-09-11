@@ -5,6 +5,36 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.419 — 2026-09-11 (two independent witnesses is a claim about the tests)
+
+The constraints were mutation-tested at v9.407 and the triggers at v9.413, both of them asking
+whether the DATABASE's guarantees were tested. This asks it of the engine's.
+
+The answer is the best in the tree, and it is worth saying so plainly because most of this arc has
+found the opposite. Stub the Plonky2 verifier to return Ok(true) and 8 of its 22 Rust tests fail,
+every one of them a rejection case: tampered root, cross-epoch, cross-context, replayed nonce,
+forged nullifier, rescoped proof, malformed input. Stub the second witness's `check_claim` to
+return ACCEPT and 13 of 54 fail.
+
+The third mutation is the one worth having. `check_claim`'s docstring says it re-derives the leaf
+opening and the nullifier because "a witness that only re-checked membership would have gone on
+agreeing with a Rust verifier that had quietly stopped constraining the nullifier to the leaf's
+secret". That is a claim about why the second witness exists. Removing exactly that half, and
+leaving membership and public-input binding intact, turns four tests red, and they are the four
+named after it, including `test_the_second_witness_catches_an_unconstrained_nullifier`. The
+docstring is backed.
+
+`polaris-zk-mutation-drill.py` keeps all three true. It runs in about seventeen seconds, restores
+both files through a loop that continues past a failure, and fails if the code it mutates has
+MOVED rather than reporting success having edited nothing. Verified in both failure directions: a
+mutation nothing catches reports SURVIVES, and a target that no longer exists reports MISSING.
+
+The reason a drill is the right shape here rather than a document: "two independent witnesses" is
+worth exactly as much as the tests that would catch one of them saying yes to everything, and a
+differential between two implementations is satisfied when both are wrong in the same direction.
+`check_zk_witnesses_are_mutation_tested` (241) pins both witnesses, the Rust suite actually
+running, the re-derivation mutation, the moved-target guard, and the CI step.
+
 ## v9.418 — 2026-09-11 ("CSRF does not apply here" is a claim, and it expires quietly)
 
 v9.417 made the guards publish what they enforce. The CSRF marker went with them and nothing read

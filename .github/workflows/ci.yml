@@ -549,6 +549,16 @@ jobs:
           test -n "$ROOT" || { echo "compute-root empty"; exit 1; }
           python3 -m pytest polaris_zk/witness2/test_witness2.py polaris_web/test_zk_second_witness.py -v
 
+      # v9.419 - and would either witness notice being switched off? "Two
+      # independent witnesses" is worth exactly as much as the tests that would
+      # catch one saying yes to everything, and a differential is satisfied when
+      # both are wrong the same way. Three mutations: the Rust verifier accepts
+      # everything, the second witness accepts everything, and the second witness
+      # is weakened to the membership-only check its own docstring says is not
+      # enough. Each must turn a suite red. About twenty seconds.
+      - name: ZK mutation drill (disable a witness, a suite must notice)
+        run: python3 scripts/polaris-zk-mutation-drill.py
+
       # The disaster-recovery path (backup -> restore) is operator-critical and,
       # like the Docker images, was never exercised in CI — a broken restore is
       # only discovered during an actual disaster. v9.100 fixed the restore

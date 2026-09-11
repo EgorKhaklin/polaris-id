@@ -12470,3 +12470,64 @@ def test_csrf_exemptions_check_discriminates(tmp_path):
     write()
     (tmp_path / "polaris_web" / "app.py").unlink()
     assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL when app.py is absent"
+
+
+def test_zk_mutation_check_discriminates(tmp_path):
+    DRILL = ('LIB_RS = ROOT / "polaris_zk" / "src" / "lib.rs"\n'
+             'WITNESS = ROOT / "polaris_zk" / "witness2" / "verifier.py"\n'
+             '_cases_recorded = 0\n'
+             'def _rust():\n    subprocess.run(["cargo", "test", "--release"])\n'
+             'MUTATIONS = [\n'
+             '    ("the Rust verifier accepts everything", LIB_RS,\n'
+             '     ("a", "b"), _rust, "why"),\n'
+             '    ("the second witness accepts everything", WITNESS,\n'
+             '     ("c", "d"), _w, "why"),\n'
+             '    ("the second witness stops re-deriving", WITNESS,\n'
+             '     (\'secret_hex\', \'if False\'), _w, "why"),\n'
+             ']\n'
+             '_cases_recorded += 1\n'
+             'print("MISSING  the code this mutates is gone")\n')
+    WIT = "def check_claim(w, c, cl):\n    leaf_commitment(s, i)\n    derive_nullifier(s, x, y)\n"
+    CI = "      - name: zk\n        run: python3 scripts/polaris-zk-mutation-drill.py\n"
+    good = {"scripts/polaris-zk-mutation-drill.py": DRILL,
+            "polaris_zk/witness2/verifier.py": WIT,
+            ".github/workflows/ci.yml": CI}
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write()
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # only one witness is mutated
+    write({"scripts/polaris-zk-mutation-drill.py": DRILL.replace("LIB_RS", "SOMETHING")})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the Rust verifier is not mutated"
+    write({"scripts/polaris-zk-mutation-drill.py": DRILL.replace("witness2", "elsewhere")})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the second witness is not mutated"
+    # the Rust suite is not run, so half the claim is unmeasured
+    write({"scripts/polaris-zk-mutation-drill.py": DRILL.replace("cargo", "echo")})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the Rust suite is never run"
+    # the sharp mutation goes away
+    write({"scripts/polaris-zk-mutation-drill.py": DRILL.replace("secret_hex", "something_else")})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the re-derivation weakening is no longer mutated"
+    # a moved target stops being a failure
+    write({"scripts/polaris-zk-mutation-drill.py": DRILL.replace('print("MISSING  the code this mutates is gone")\n', "")})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill could edit nothing and report success"
+    # the drill stops counting its cases
+    write({"scripts/polaris-zk-mutation-drill.py": DRILL.replace("_cases_recorded += 1", "pass")})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not count its cases"
+    # the witness itself becomes the membership-only one its docstring warns about
+    write({"polaris_zk/witness2/verifier.py": WIT.replace("derive_nullifier(s, x, y)", "pass")})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the second witness stops re-deriving the nullifier"
+    # CI does not run it
+    write({".github/workflows/ci.yml": "      - name: other\n        run: true\n"})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+    # the mutation list is emptied, which satisfies the assertions above vacuously
+    write({"scripts/polaris-zk-mutation-drill.py": DRILL.replace(
+        '    ("the second witness accepts everything", WITNESS,\n     ("c", "d"), _w, "why"),\n', "").replace(
+        '    ("the second witness stops re-deriving", WITNESS,\n     (\'secret_hex\', \'if False\'), _w, "why"),\n',
+        '    # secret_hex witness2\n')})
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when too few mutations are declared, rather than pass by finding nothing"
+    # the drill is gone
+    write()
+    (tmp_path / "scripts" / "polaris-zk-mutation-drill.py").unlink()
+    assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill is absent"
