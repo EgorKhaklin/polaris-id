@@ -8347,6 +8347,10 @@ def test_ship_tool_check_discriminates(tmp_path):
     assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if every failure is called a flake"
     (tmp_path / "scripts" / "polaris-ship.py").write_text(src.replace('        if (m, c) in serial:\n', '        if False:\n'))
     assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if the serial classes are no longer pinned to one shard"
+    # v9.416: an image that moved registries must not be called a flake. Rerunning
+    # a vanished repository can never clear, so the advice would be wrong forever.
+    (tmp_path / "scripts" / "polaris-ship.py").write_text(src.replace("UPSTREAM_SIGNATURES = [", "UPSTREAM_SIGNATURES = []\n_UNUSED = ["))
+    assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if a vanished image registry is not called an upstream change"
 
 
 def test_timestamp_transparency_check_discriminates(tmp_path):

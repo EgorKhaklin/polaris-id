@@ -8092,6 +8092,12 @@ def check_ship_tool(root: pathlib.Path) -> list[Finding]:
         ver = mod.verification_for(["polaris_web/custody.py", "docs/x.md"])
         flake = mod.classify_failure_log("E: Failed to fetch https://example.invalid/Packages.gz  Hash Sum mismatch")[0]
         real = mod.classify_failure_log("AssertionError: the verdict changed")[0]
+        # v9.416: an image that moved registries reads exactly like a flake, because
+        # Docker says the same thing for a missing repository and a rate limit. A
+        # tool that calls it a flake sends somebody to rerun it forever.
+        gone = mod.classify_failure_log(
+            "docker: Error response from daemon: pull access denied for minio/minio, "
+            "repository does not exist or may require 'docker login': denied")[0]
         units = [("m", "A", 10), ("m", "B", 5), ("m", "C", 1), ("m", "S", 3)]
         shards = mod.distribute(units, 3, {("m", "S")})
         blocks = mod._failure_blocks("FAIL: test_x (m.C)\n----------\nTraceback\n  boom\n\n==========\nERROR: test_y (m.D)\n----------\nTraceback\n  bang\n\n----------\nRan 2 tests\n")
@@ -8101,8 +8107,11 @@ def check_ship_tool(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "changed_routes must flag the route that calls a changed helper and drills_for_routes must match a parameterised path (got %r, %r)" % (cr, dr))
     if len(ver) != 1 or "custody" not in ver[0]["why"] or not any("verifier-fuzz" in x for x in ver[0]["run"]):
         return _fail(name, "verification_for must select the signing verification for polaris_web/custody.py and nothing for a document (got %r)" % (ver,))
-    if flake != "flake" or real != "investigate":
-        return _fail(name, "classify_failure_log must call the apt index hash mismatch a flake and an assertion a failure to investigate (got %r, %r)" % (flake, real))
+    if flake != "flake" or real != "investigate" or gone != "upstream":
+        return _fail(name, "classify_failure_log must call the apt index hash mismatch a flake, an "
+                     "assertion a failure to investigate, and a vanished image registry an UPSTREAM "
+                     "change rather than a flake, since rerunning it can never clear "
+                     "(got %r, %r, %r)" % (flake, real, gone))
     placed = sorted(u for sh in shards for u in sh)
     if placed != sorted(units) or ("m", "S", 3) not in shards[0] or ("m", "A", 10) in shards[0]:
         return _fail(name, "distribute must place every class once, the serial class in shard 0 and the heaviest class elsewhere (got %r)" % (shards,))

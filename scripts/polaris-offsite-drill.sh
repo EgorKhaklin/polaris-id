@@ -34,8 +34,18 @@ RES=polaris-offsite-res
 WORK="$(mktemp -d)"
 PG_IMAGE="${POLARIS_PG_IMAGE:-polaris-postgres:drill}"
 # Digest-pinned (the repo's standard): a mutated tag cannot change the drill.
-MINIO_IMAGE="minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
-MC_IMAGE="minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727"
+#
+# v9.416 - from quay.io, not Docker Hub. MinIO retired `minio/minio` there and
+# the pull began failing with "repository does not exist or may require docker
+# login", which is what Docker Hub says for a missing repository and for a rate
+# limit alike, so it reads like a flake and is not one. The same removal took
+# bitnami/pgbouncer out from under the prod compose at v9.110.
+#
+# The DIGESTS are unchanged. quay.io serves the identical manifests, so this is a
+# registry move and not a version bump: the drill runs the same bytes it ran
+# before, which is the whole point of pinning by digest rather than by tag.
+MINIO_IMAGE="quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+MC_IMAGE="quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727"
 
 BUCKET=polaris-backups
 # MinIO's stock test credentials: not secrets. A real run never has these in a

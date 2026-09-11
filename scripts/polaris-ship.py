@@ -442,9 +442,33 @@ FLAKE_SIGNATURES = [
      "and rerun the failed jobs if it builds"),
 ]
 
+#: Failures that are NOT flakes and that rerunning will never clear: something
+#: upstream changed and the tree has to follow it. Kept separate from the table
+#: above on purpose, because the advice is the opposite one. v9.416: MinIO
+#: retired `minio/minio` from Docker Hub and the drill's pull started failing
+#: with a message Docker also uses for a rate limit, so it reads exactly like a
+#: flake. Rerunning it would have failed forever.
+UPSTREAM_SIGNATURES = [
+    ("registry-removal",
+     r"pull access denied for \S+, repository does not exist or may require 'docker login'",
+     "an image the tree pulls is no longer at that registry. This is NOT a flake and rerunning "
+     "will not clear it: find where the image moved and re-point the reference, keeping the "
+     "DIGEST if the new registry serves the same manifest, which makes it a registry move "
+     "rather than a version bump. Precedent: bitnami/pgbouncer at v9.110, minio/minio at "
+     "v9.416"),
+]
+
 
 def classify_failure_log(text):
-    """A failed run's log against the known flake signatures: ('flake', name, advice) or ('investigate', None, None)."""
+    """A failed run's log against the known signatures.
+
+    ('flake', name, advice)      rerun it
+    ('upstream', name, advice)   rerunning cannot help; the tree has to change
+    ('investigate', None, None)  nobody has chased this one yet
+    """
+    for name, pattern, advice in UPSTREAM_SIGNATURES:
+        if re.search(pattern, text):
+            return ("upstream", name, advice)
     for name, pattern, advice in FLAKE_SIGNATURES:
         if re.search(pattern, text):
             return ("flake", name, advice)
@@ -488,6 +512,10 @@ def triage(run_id=None, out=None):
         print("  verdict: known flake [%s]: %s" % (name, advice), file=out)
         print("  gh run rerun %s --failed" % run_id, file=out)
         return 0
+    if verdict == "upstream":
+        print("  verdict: upstream change [%s]: %s" % (name, advice), file=out)
+        print("  do NOT rerun; fix the reference and push", file=out)
+        return 1
     print("  verdict: investigate (no known flake signature matched)", file=out)
     shown = {}
     for line in log.splitlines():

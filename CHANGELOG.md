@@ -5,6 +5,30 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.416 — 2026-09-11 (the image did not break, it moved)
+
+CI went red on the offsite drill: `pull access denied for minio/minio, repository does not exist
+or may require 'docker login'`. MinIO retired `minio/minio` from Docker Hub, the same way Bitnami
+retired `bitnami/pgbouncer` out from under the prod compose at v9.110.
+
+The drill pins by DIGEST, and that is what made the repair a one-line change instead of a
+version bump: quay.io serves the identical manifests, both of them, so the references move
+registry and the drill runs the same bytes it ran before. Verified by pulling each pinned digest
+from quay.io and then running the whole drill, which recovers a database from S3 over verified
+TLS and still does.
+
+The more useful half is what `triage` said about it: "investigate (no known flake signature
+matched)". That message is Docker's for a missing repository AND for a rate limit, so it reads
+exactly like the apt-index and Go-proxy flakes already in the table, and the advice for those is
+to rerun. Rerunning a repository that no longer exists fails forever.
+
+So the tool now separates the two. `UPSTREAM_SIGNATURES` is a second table whose verdict is the
+OPPOSITE advice: this is not a flake, do not rerun, find where the image moved and re-point it,
+keeping the digest if the new registry serves the same manifest. `check_ship_tool` requires that
+classification, with a perturbation that turns the upstream table off and expects the check to
+fail, because a tool that calls a permanent break a flake is worse than one that says it does
+not know.
+
 ## v9.415 — 2026-09-11 (the third mechanism, measured the same way as the other two)
 
 MISSION names three ways a guarantee lives in the database: a trigger, a CHECK constraint, and a
