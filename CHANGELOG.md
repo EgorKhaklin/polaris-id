@@ -5,6 +5,36 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.413 — 2026-09-11 (a coverage number nobody re-measures is a coverage number that decays)
+
+v9.411 dropped each of the 37 triggers and found 14 that nothing noticed. v9.412 covered them.
+Neither of those facts stays true on its own, so the measurement is now a drill that runs.
+
+`polaris-trigger-mutation-drill.py` is the sibling of the constraint drill. The mutation goes in
+BOTH places, which is the method lesson this session paid for twice: the catalog alone loses to
+the next test that calls `reload_sample_data()` and re-runs `06_triggers.sql`, and the file alone
+loses to a migration that recreates the trigger after that file has run. Both, and the trigger
+stays gone for the length of the run. Each is restored from `pg_get_triggerdef` and the catalog
+count is checked at the end.
+
+Fast mode runs the two cheap suites per trigger: all 37 in 35 seconds, so it runs on every push.
+Eleven triggers are caught only by the application suite, which takes three and a half minutes
+per invocation, and re-checking those would turn 35 seconds into forty minutes. They are DECLARED
+instead, in `APP_SUITE_COVERS`.
+
+A declaration is a claim, and this session has been mostly about claims nothing re-measures, so
+it does not stand alone: `trigger-sweep.yml` runs weekly with `--exhaustive` and re-establishes
+the list by running the application suite against every trigger the fast suites miss. Without
+that workflow, `APP_SUITE_COVERS` would be a list asserting coverage that nothing verifies, which
+is the failure the drill exists to catch, one level up. `check_triggers_are_mutation_tested` (236)
+therefore fails if the sweep workflow is gone.
+
+The default mode's real gate is classification, not just coverage. A trigger caught by neither
+the fast suites nor the declaration is a FAILURE, and the message says what to do about it:
+either it is untested, or its coverage lives in the application suite and belongs in the list,
+which is a claim to verify with `--exhaustive` rather than assert. Verified: removing one name
+from the declaration makes the drill report that trigger UNTESTED and exit 1.
+
 ## v9.412 — 2026-09-11 (C1 is claimed once per table, so it is tested once per table)
 
 v9.411 left 14 of 37 triggers covered by nothing: drop one and the whole database suite stayed

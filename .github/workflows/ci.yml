@@ -405,6 +405,17 @@ jobs:
       - name: Constraint mutation drill (drop each named constraint, the suite must notice)
         run: python scripts/polaris-constraint-mutation-drill.py
 
+      # v9.413 - the same question of the TRIGGERS, which is where C1 lives. The
+      # first run of this measurement found 14 of 37 covered by nothing; v9.412
+      # covered them. This is what keeps that true, because a coverage number
+      # nobody re-measures is one that decays. Fast mode runs the two cheap
+      # suites per trigger (about 35s for all 37); the eleven whose coverage
+      # lives in the application suite are declared rather than re-checked here,
+      # and the weekly trigger-sweep workflow re-establishes that list with
+      # --exhaustive.
+      - name: Trigger mutation drill (drop each trigger, something must notice)
+        run: python scripts/polaris-trigger-mutation-drill.py
+
       # v9.275 (roadmap PE.5) — attacks that MUST fail, run every release. The db
       # suite issues a real signed token, revokes it through the real uc8
       # procedure, and asserts /verify treats it as authentic-but-NOT-authoritative

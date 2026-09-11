@@ -12190,3 +12190,61 @@ def test_append_only_tested_check_discriminates(tmp_path):
     # the suite is gone
     (tmp_path / rel).unlink()
     assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when the constraint suite is absent"
+
+
+def test_trigger_mutation_check_discriminates(tmp_path):
+    DRILL = ('TEST_DB_MARKER = "test"\n'
+             '_cases_recorded = 0\n'
+             'APP_SUITE_COVERS = {\n'
+             + "".join('    "trg_t%d",\n' % i for i in range(6))
+             + '}\n'
+             'def go(exhaustive):\n'
+             '    TRIGGERS_SQL.write_text(original + DROP)\n'
+             '    cur.execute("DROP TRIGGER IF EXISTS x ON y")\n'
+             '    cur.execute("SELECT pg_get_triggerdef(oid) FROM pg_trigger")\n'
+             'ap.add_argument("--exhaustive", action="store_true")\n')
+    CI = "      - name: triggers\n        run: python scripts/polaris-trigger-mutation-drill.py\n"
+    SWEEP = "name: Trigger sweep (exhaustive)\non:\n  schedule:\n    - cron: \"23 4 * * 2\"\n"
+    good = {
+        "scripts/polaris-trigger-mutation-drill.py": DRILL,
+        ".github/workflows/ci.yml": CI,
+        ".github/workflows/trigger-sweep.yml": SWEEP,
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write()
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # the drill stops dropping anything
+    write({"scripts/polaris-trigger-mutation-drill.py": DRILL.replace("DROP TRIGGER", "SELECT")})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not drop the triggers"
+    # it restores from a definition it made up rather than from the catalog
+    write({"scripts/polaris-trigger-mutation-drill.py": DRILL.replace("pg_get_triggerdef", "guess_def")})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the restore is not read from the catalog"
+    # it stops mutating the source, so a reload puts the trigger back mid-run
+    write({"scripts/polaris-trigger-mutation-drill.py": DRILL.replace("TRIGGERS_SQL.write_text", "pass  #")})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the mutation would be undone by reload_sample_data"
+    # the application-suite declaration goes away
+    write({"scripts/polaris-trigger-mutation-drill.py": DRILL.replace("APP_SUITE_COVERS", "SOMETHING")})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when fast mode cannot tell a declared trigger from an untested one"
+    # nothing re-establishes the declaration
+    write({".github/workflows/trigger-sweep.yml": "name: something else\n"})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the exhaustive sweep no longer runs"
+    # the test-database guard goes away
+    write({"scripts/polaris-trigger-mutation-drill.py": DRILL.replace("TEST_DB_MARKER", "ANY_DB")})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill would drop triggers in any database"
+    # it stops counting its cases
+    write({"scripts/polaris-trigger-mutation-drill.py": DRILL.replace("_cases_recorded", "_n")})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not count its cases"
+    # CI does not run it
+    write({".github/workflows/ci.yml": "      - name: other\n        run: true\n"})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+    # the declaration is emptied, which satisfies the assertions above vacuously
+    write({"scripts/polaris-trigger-mutation-drill.py":
+           DRILL.replace("".join('    "trg_t%d",\n' % i for i in range(6)), '    "trg_t0",\n')})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when too few declared triggers are found, rather than pass by finding nothing"
+    # the drill is gone
+    write()
+    (tmp_path / "scripts" / "polaris-trigger-mutation-drill.py").unlink()
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill is absent"

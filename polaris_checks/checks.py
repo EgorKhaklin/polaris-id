@@ -10834,6 +10834,66 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_triggers_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
+    """A coverage number nobody re-measures is a coverage number that decays (v9.413).
+
+    v9.411 dropped each of the 37 triggers and found 14 that nothing noticed. v9.412 covered
+    them. Neither of those facts stays true on its own, so the measurement became a drill.
+
+    Two things make it honest rather than decorative. The mutation goes in BOTH the catalog and
+    `06_triggers.sql`: the file alone loses to a migration that recreates the trigger after that
+    file runs, and the catalog alone loses to the next test that calls reload_sample_data(). And
+    the eleven triggers whose coverage lives in the application suite are DECLARED in fast mode
+    rather than re-checked, which is a claim, so a weekly workflow re-establishes the list with
+    --exhaustive. Without that workflow the declaration would be a list asserting coverage that
+    nothing re-measures, which is the failure the drill exists to catch, one level up."""
+    name = "trigger_mutation"
+    rel = "scripts/polaris-trigger-mutation-drill.py"
+    if not (root / rel).is_file():
+        return _fail(name, f"{rel} is absent; the triggers are the mechanism C1 lives in and "
+                           "nothing re-measures whether anything tests them")
+    drill = _read(root, rel)
+    ci = _read(root, ".github/workflows/ci.yml")
+    sweep = _read(root, ".github/workflows/trigger-sweep.yml")
+    problems = []
+    if "DROP TRIGGER" not in drill:
+        problems.append("the drill does not drop the triggers, so it is not a mutation test")
+    if "pg_get_triggerdef" not in drill:
+        problems.append("the drill does not capture each trigger's definition from the catalog, "
+                        "so what it restores is not what it removed")
+    # The two-sided mutation is the method lesson and it is easy to lose in a refactor.
+    if "TRIGGERS_SQL.write_text" not in drill:
+        problems.append("the drill no longer mutates 06_triggers.sql, so the next reload_sample_data "
+                        "puts the trigger back mid-run and the measurement means nothing")
+    if "APP_SUITE_COVERS" not in drill:
+        problems.append("the drill no longer separates triggers covered by the application suite "
+                        "from those covered by the fast ones, so its fast mode cannot be trusted")
+    if "--exhaustive" not in drill or "exhaustive" not in sweep:
+        problems.append("nothing re-establishes APP_SUITE_COVERS: without the exhaustive sweep "
+                        "that list asserts coverage that nothing re-measures")
+    if not sweep:
+        problems.append(".github/workflows/trigger-sweep.yml is absent, so the exhaustive half "
+                        "never runs")
+    if "TEST_DB_MARKER" not in drill:
+        problems.append("the drill does not refuse to run against a non-test database")
+    if "_cases_recorded" not in drill:
+        problems.append("the drill does not count its cases (v9.403)")
+    if "polaris-trigger-mutation-drill.py" not in ci:
+        problems.append("CI does not run the drill, so the mutation happens only by hand")
+    if problems:
+        return _fail(name, "; ".join(problems[:3]))
+    declared = len(re.findall(r'(?m)^\s+"trg_\w+",', drill))
+    if declared < 5:
+        return _fail(name, f"only {declared} triggers are declared as application-suite covered; "
+                           "the parse has broken and this check is passing by finding nothing")
+    return _ok(name,
+               "every trigger is dropped and something must go red: the mutation goes in both the "
+               "catalog and 06_triggers.sql so a reload cannot undo it, each trigger is restored "
+               f"from the catalog's own definition, and the {declared} whose coverage lives in the "
+               "application suite are re-established weekly by the exhaustive sweep rather than "
+               "asserted")
+
+
 def check_append_only_tables_are_tested_exhaustively(root: pathlib.Path) -> list[Finding]:
     """C1 is claimed once per table, so it must be tested once per table (v9.412).
 
@@ -14120,6 +14180,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_trust_ladder_is_bound_to_the_code,
     check_property_suite_cannot_skip_its_subject,
     check_append_only_tables_are_tested_exhaustively,
+    check_triggers_are_mutation_tested,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,
