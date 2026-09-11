@@ -131,24 +131,53 @@ def _existing_verification_event():
         return cur.fetchone()
 
 
+#: What each guarantee raises, and the words that identify it as THAT guarantee.
+#: v9.414 - every negative test below used to end `except psycopg2.Error:
+#: conn.rollback()`, which accepts ANY database error as proof. An INSERT refused
+#: for a NOT NULL, a bad enum, an FK, or a typo in the test itself read exactly like
+#: the invariant holding. Naming the error and a marker in its message is the same
+#: discipline the constraint suite applies with constraint_name=.
+C1_APPEND_ONLY = (psycopg2.errors.InsufficientPrivilege, 'append-only')
+C2_DISCLOSURE = (psycopg2.errors.CheckViolation, 'chk_disclosure_token_consistency')
+C3_ONE_ACTIVE = (psycopg2.errors.UniqueViolation, 'uq_one_active_per_person')
+
+
+class _GuardedCase(unittest.TestCase):
+    """Run a statement the database must refuse, and check WHICH refusal it was.
+
+    Deliberately no commit. A trigger, a CHECK and a unique index all raise at
+    statement time, so the commit never contributed to detection; what it did do
+    was persist the violating row on the day the guarantee was absent. That is how
+    this was found: with C3's partial unique index dropped, the suite committed a
+    second ACTIVE token for one person and the index could not be rebuilt.
+    """
+
+    def assert_refused(self, cur, conn, guarantee, sql, params=(), because=''):
+        exc_type, marker = guarantee
+        try:
+            with self.assertRaises(exc_type) as caught:
+                cur.execute(sql, params)
+        finally:
+            conn.rollback()
+        self.assertIn(
+            marker, str(caught.exception),
+            f"the statement was refused, but not by {marker}{because}: {caught.exception}")
+
+
 # =============================================================================
 # C1 — APPEND-ONLY AUDIT
 # =============================================================================
-class C1_AppendOnlyProperties(unittest.TestCase):
+class C1_AppendOnlyProperties(_GuardedCase):
     @given(event_type=st.sampled_from(VALID_LIFECYCLE_TYPES))
     @HYPOTHESIS_SETTINGS
     def test_update_lifecycle_event_type_always_fails(self, event_type):
         evt = _existing_lifecycle_event()
         with closing(_get_connection()) as conn, conn.cursor() as cur:
-            try:
-                cur.execute(
-                    "UPDATE TokenLifecycleEvent SET event_type = %s WHERE event_id = %s",
-                    (event_type, evt['event_id'])
-                )
-                conn.commit()
-                self.fail(f"UPDATE succeeded with event_type={event_type} — C1 violated")
-            except psycopg2.Error:
-                conn.rollback()
+            self.assert_refused(
+                cur, conn, C1_APPEND_ONLY,
+                "UPDATE TokenLifecycleEvent SET event_type = %s WHERE event_id = %s",
+                (event_type, evt['event_id']),
+                f" (event_type={event_type})")
 
     @given(reason=st.text(min_size=0, max_size=60,
                           alphabet=st.characters(blacklist_categories=('Cs',),
@@ -157,15 +186,11 @@ class C1_AppendOnlyProperties(unittest.TestCase):
     def test_update_lifecycle_reason_always_fails(self, reason):
         evt = _existing_lifecycle_event()
         with closing(_get_connection()) as conn, conn.cursor() as cur:
-            try:
-                cur.execute(
-                    "UPDATE TokenLifecycleEvent SET reason_code = %s WHERE event_id = %s",
-                    (reason[:60], evt['event_id'])
-                )
-                conn.commit()
-                self.fail(f"UPDATE reason succeeded with {reason!r} — C1 violated")
-            except psycopg2.Error:
-                conn.rollback()
+            self.assert_refused(
+                cur, conn, C1_APPEND_ONLY,
+                "UPDATE TokenLifecycleEvent SET reason_code = %s WHERE event_id = %s",
+                (reason[:60], evt['event_id']),
+                f" (reason={reason!r})")
 
     @HYPOTHESIS_SETTINGS
     @given(noise=st.text(min_size=0, max_size=64,
@@ -174,12 +199,10 @@ class C1_AppendOnlyProperties(unittest.TestCase):
     def test_delete_lifecycle_event_always_fails(self, noise):
         evt = _existing_lifecycle_event()
         with closing(_get_connection()) as conn, conn.cursor() as cur:
-            try:
-                cur.execute("DELETE FROM TokenLifecycleEvent WHERE event_id = %s", (evt['event_id'],))
-                conn.commit()
-                self.fail(f"DELETE succeeded (noise={noise!r}) — C1 violated")
-            except psycopg2.Error:
-                conn.rollback()
+            self.assert_refused(
+                cur, conn, C1_APPEND_ONLY,
+                "DELETE FROM TokenLifecycleEvent WHERE event_id = %s", (evt['event_id'],),
+                f" (noise={noise!r})")
             cur.execute("SELECT event_id FROM TokenLifecycleEvent WHERE event_id = %s", (evt['event_id'],))
             self.assertIsNotNone(cur.fetchone(),
                 f"event {evt['event_id']} disappeared after failed DELETE — C1 violated")
@@ -189,75 +212,64 @@ class C1_AppendOnlyProperties(unittest.TestCase):
     def test_update_verification_event_always_fails(self, disclosure):
         evt = _existing_verification_event()
         with closing(_get_connection()) as conn, conn.cursor() as cur:
-            try:
-                cur.execute(
-                    "UPDATE VerificationEvent SET disclosure_level = %s WHERE event_id = %s",
-                    (disclosure, evt['event_id'])
-                )
-                conn.commit()
-                self.fail(f"UPDATE succeeded with disclosure={disclosure} — C1 violated")
-            except psycopg2.Error:
-                conn.rollback()
+            self.assert_refused(
+                cur, conn, C1_APPEND_ONLY,
+                "UPDATE VerificationEvent SET disclosure_level = %s WHERE event_id = %s",
+                (disclosure, evt['event_id']),
+                f" (disclosure={disclosure})")
 
     @HYPOTHESIS_SETTINGS
-    @given(event_id=st.integers(min_value=1, max_value=100000))
-    def test_delete_verification_event_always_fails(self, event_id):
+    @given(noise=st.text(min_size=0, max_size=32,
+                          alphabet=st.characters(blacklist_categories=('Cs',),
+                                                  blacklist_characters='\x00')))
+    def test_delete_verification_event_always_fails(self, noise):
+        # v9.414 - this drew event_id from 1..100000 and returned quietly when the
+        # draw missed. Against ten real ids that is a hit expectation of 0.0015 over
+        # fifteen examples: the test did nothing, and reported OK for doing it. It
+        # now deletes a row that exists.
+        evt = _existing_verification_event()
         with closing(_get_connection()) as conn, conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM VerificationEvent WHERE event_id = %s", (event_id,))
-            if cur.fetchone() is None:
-                return
-            try:
-                cur.execute("DELETE FROM VerificationEvent WHERE event_id = %s", (event_id,))
-                conn.commit()
-                self.fail(f"DELETE succeeded for event_id={event_id} — C1 violated")
-            except psycopg2.Error:
-                conn.rollback()
+            self.assert_refused(
+                cur, conn, C1_APPEND_ONLY,
+                "DELETE FROM VerificationEvent WHERE event_id = %s", (evt['event_id'],),
+                f" (noise={noise!r})")
+            cur.execute("SELECT event_id FROM VerificationEvent WHERE event_id = %s",
+                        (evt['event_id'],))
+            self.assertIsNotNone(cur.fetchone(),
+                f"event {evt['event_id']} disappeared after a refused DELETE: C1 violated")
 
 
 # =============================================================================
 # C2 — ZK → token_id NULL (and inverse: FULL → token_id NOT NULL)
 # =============================================================================
-class C2_DisclosureTypingProperties(unittest.TestCase):
+class C2_DisclosureTypingProperties(_GuardedCase):
     @HYPOTHESIS_SETTINGS
     @given(lat=LAT, lon=LON)
     def test_zk_with_non_null_token_id_always_rejected(self, lat, lon):
         holder = _existing_active_holder()
         _, token_id = holder
         with closing(_get_connection()) as conn, conn.cursor() as cur:
-            try:
-                cur.execute("""
-                    INSERT INTO VerificationEvent
-                        (token_id, requesting_agency_id, context_id,
-                         disclosure_level, outcome,
-                         latitude, longitude, event_timestamp)
-                    VALUES (%s, 1, 1, 'ZERO_KNOWLEDGE', 'SUCCESS',
-                            %s, %s, now())
-                """, (token_id, lat, lon))
-                conn.commit()
-                self.fail(
-                    f"INSERT succeeded with disclosure=ZERO_KNOWLEDGE and "
-                    f"token_id={token_id} (lat={lat}, lon={lon}) — C2 violated"
-                )
-            except psycopg2.errors.CheckViolation:
-                conn.rollback()
-            except psycopg2.Error:
-                conn.rollback()
+            self.assert_refused(
+                cur, conn, C2_DISCLOSURE,
+                "INSERT INTO VerificationEvent "
+                "  (token_id, requesting_agency_id, context_id, disclosure_level, outcome, "
+                "   latitude, longitude, event_timestamp) "
+                "VALUES (%s, 1, 1, 'ZERO_KNOWLEDGE', 'SUCCESS', %s, %s, now())",
+                (token_id, lat, lon),
+                f" (token_id={token_id}, lat={lat}, lon={lon})")
 
     @HYPOTHESIS_SETTINGS
     @given(outcome=st.sampled_from(VALID_OUTCOMES))
     def test_full_with_null_token_id_always_rejected(self, outcome):
         with closing(_get_connection()) as conn, conn.cursor() as cur:
-            try:
-                cur.execute("""
-                    INSERT INTO VerificationEvent
-                        (token_id, requesting_agency_id, context_id,
-                         disclosure_level, outcome, event_timestamp)
-                    VALUES (NULL, 1, 1, 'FULL', %s, now())
-                """, (outcome,))
-                conn.commit()
-                self.fail("INSERT succeeded with disclosure=FULL and token_id=NULL — C2 inverse violated")
-            except psycopg2.Error:
-                conn.rollback()
+            self.assert_refused(
+                cur, conn, C2_DISCLOSURE,
+                "INSERT INTO VerificationEvent "
+                "  (token_id, requesting_agency_id, context_id, disclosure_level, outcome, "
+                "   event_timestamp) "
+                "VALUES (NULL, 1, 1, 'FULL', %s, now())",
+                (outcome,),
+                f" (outcome={outcome})")
 
     @HYPOTHESIS_SETTINGS
     @given(lat=LAT, lon=LON, outcome=st.sampled_from(VALID_OUTCOMES))
@@ -285,7 +297,7 @@ class C2_DisclosureTypingProperties(unittest.TestCase):
 # =============================================================================
 # C3 — ONE ACTIVE TOKEN PER INDIVIDUAL
 # =============================================================================
-class C3_OneActivePerIndividualProperties(unittest.TestCase):
+class C3_OneActivePerIndividualProperties(_GuardedCase):
     @HYPOTHESIS_SETTINGS
     @given(
         token_value_suffix=st.text(min_size=4, max_size=16,
@@ -301,29 +313,20 @@ class C3_OneActivePerIndividualProperties(unittest.TestCase):
         holder = _existing_active_holder()
         individual_id, _existing = holder
         with closing(_get_connection()) as conn, conn.cursor() as cur:
-            try:
-                cur.execute("""
-                    INSERT INTO IdentityToken
-                        (token_value, physical_serial, biometric_binding_type,
-                         individual_id, issuing_agency_id, algorithm_id,
-                         status, issued_date, activated_date)
-                    VALUES (%s, %s, %s, %s, 1, 1,
-                            'ACTIVE', now(), now())
-                """, (
-                    f"PROP-T-{token_value_suffix}",
-                    f"PROP-S-{physical_serial_suffix}",
-                    biometric,
-                    individual_id,
-                ))
-                conn.commit()
-                self.fail(
-                    f"INSERT of second ACTIVE token for individual {individual_id} "
-                    f"succeeded — C3 violated"
-                )
-            except psycopg2.errors.UniqueViolation:
-                conn.rollback()
-            except psycopg2.Error:
-                conn.rollback()
+            # v9.414 - this used to commit before calling self.fail. On the day C3's
+            # partial unique index was absent that committed a second ACTIVE token
+            # for one person, permanently, and the index could not be rebuilt
+            # afterwards. The refusal is raised at execute; the commit only ever
+            # made the failure destructive.
+            self.assert_refused(
+                cur, conn, C3_ONE_ACTIVE,
+                "INSERT INTO IdentityToken "
+                "  (token_value, physical_serial, biometric_binding_type, individual_id, "
+                "   issuing_agency_id, algorithm_id, status, issued_date, activated_date) "
+                "VALUES (%s, %s, %s, %s, 1, 1, 'ACTIVE', now(), now())",
+                (f"PROP-T-{token_value_suffix}", f"PROP-S-{physical_serial_suffix}",
+                 biometric, individual_id),
+                f" (individual {individual_id})")
 
     @HYPOTHESIS_SETTINGS
     @given(suffix=st.text(min_size=4, max_size=16,
@@ -335,24 +338,25 @@ class C3_OneActivePerIndividualProperties(unittest.TestCase):
         holder = _existing_active_holder()
         individual_id, _existing = holder
         with closing(_get_connection()) as conn, conn.cursor() as cur:
+            # v9.414 - the catch-all that used to close this test swallowed EVERY
+            # other database error, so an INSERT refused for a NOT NULL, a duplicate
+            # token_value or a typo in the statement read as "RESERVE was accepted".
+            # A happy-path test that passes when the operation fails is worse than no
+            # test: let the error out, and it names itself.
             try:
-                cur.execute("""
-                    INSERT INTO IdentityToken
-                        (token_value, physical_serial, biometric_binding_type,
-                         individual_id, issuing_agency_id, algorithm_id,
-                         status, issued_date)
-                    VALUES (%s, %s, 'NONE', %s, 1, 1,
-                            'RESERVE', now())
-                """, (f"PROP-RT-{suffix}", f"PROP-RS-{suffix}", individual_id))
-                conn.rollback()
-            except psycopg2.errors.UniqueViolation as exc:
+                cur.execute(
+                    "INSERT INTO IdentityToken "
+                    "  (token_value, physical_serial, biometric_binding_type, individual_id, "
+                    "   issuing_agency_id, algorithm_id, status, issued_date) "
+                    "VALUES (%s, %s, 'NONE', %s, 1, 1, 'RESERVE', now())",
+                    (f"PROP-RT-{suffix}", f"PROP-RS-{suffix}", individual_id))
+            except psycopg2.Error as exc:
                 conn.rollback()
                 self.fail(
-                    f"RESERVE token for individual {individual_id} was rejected "
-                    f"by unique index ({exc}) — partial-index should only fire on ACTIVE"
-                )
-            except psycopg2.Error:
-                conn.rollback()
+                    f"a RESERVE token for individual {individual_id}, who already holds an "
+                    f"ACTIVE one, was rejected ({exc.__class__.__name__}: {exc}). The partial "
+                    f"index must fire only on ACTIVE, or succession cannot work.")
+            conn.rollback()
 
 
 if __name__ == '__main__':

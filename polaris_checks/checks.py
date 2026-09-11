@@ -10834,6 +10834,70 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_property_suite_identifies_its_refusals(root: pathlib.Path) -> list[Finding]:
+    """"The database said no" is not evidence for WHICH rule said it (v9.414).
+
+    Every negative test in the property suite used to end `except psycopg2.Error: conn.rollback()`.
+    That accepts any database error as proof of the invariant: an INSERT refused for a NOT NULL,
+    a bad enum, a foreign key, or a typo in the test's own SQL read exactly like C1, C2 or C3
+    holding. It is the same defect the constraint suite avoids by passing `constraint_name=`, and
+    the append-only tests by checking the refusal says "append-only".
+
+    Each guarantee names itself: C1 raises insufficient_privilege saying append-only, C2 raises a
+    check violation on `chk_disclosure_token_consistency`, C3 a unique violation on
+    `uq_one_active_per_person`. The tests assert the type AND the marker.
+
+    The commit went with it. A trigger, a CHECK and a unique index all raise at statement time, so
+    committing never contributed to detection; what it did was persist the violating row on the
+    day the guarantee was absent. Found exactly that way: with C3's partial unique index dropped,
+    the suite committed a second ACTIVE token for one person and the index could not be rebuilt.
+
+    And a happy-path test must not swallow failure. `test_reserve_token_for_active_individual`
+    ended with the same catch-all, so a RESERVE insert refused for any reason at all reported that
+    RESERVE tokens are accepted."""
+    name = "property_refusals"
+    rel = "polaris_web/test_invariants_property.py"
+    suite = _read(root, rel)
+    if not suite:
+        return _fail(name, f"{rel} is absent; C1 to C3 have no property evidence")
+    problems = []
+    for const, why in (("C1_APPEND_ONLY", "C1's append-only refusal"),
+                       ("C2_DISCLOSURE", "C2's disclosure-typing refusal"),
+                       ("C3_ONE_ACTIVE", "C3's one-active-token refusal")):
+        if const not in suite:
+            problems.append(f"{why} is no longer named, so any database error would pass for it")
+    for marker in ("chk_disclosure_token_consistency", "uq_one_active_per_person", "append-only"):
+        if marker not in suite:
+            problems.append(f"the suite no longer names {marker!r}, so it cannot tell that "
+                            "refusal from any other")
+    if "def assert_refused" not in suite:
+        problems.append("the helper that checks WHICH refusal happened is gone")
+    elif "self.assertIn(" not in suite.split("def assert_refused", 1)[1].split("\n    def ", 1)[0]:
+        problems.append("assert_refused no longer checks the refusal's message, so it accepts "
+                        "the right exception type raised for the wrong reason")
+    # The broad-accept shape: a bare `except psycopg2.Error:` whose whole body is a rollback.
+    swallowed = re.findall(r"except psycopg2\.Error:\s*\n\s*conn\.rollback\(\)\s*\n(?!\s*self\.fail)",
+                           suite)
+    if swallowed:
+        problems.append(f"{len(swallowed)} test(s) still treat ANY database error as proof of "
+                        "the invariant")
+    # The destructive shape: commit the violating statement, then fail.
+    if re.search(r"conn\.commit\(\)\s*\n\s*self\.fail\(", suite):
+        problems.append("a test still commits the violating statement before failing, which "
+                        "persists the violation on the day the guarantee is absent")
+    uses = suite.count("self.assert_refused(")
+    if uses < 6:
+        problems.append(f"only {uses} refusals are identified; the suite has been emptied and "
+                        "this check is passing by finding nothing")
+    if problems:
+        return _fail(name, "; ".join(problems[:3]))
+    return _ok(name,
+               f"all {uses} negative property tests assert WHICH rule refused them, by exception "
+               "type and by a marker in the message, and none commits the violating statement "
+               "first, so a refusal for an unrelated reason fails instead of reading as the "
+               "invariant holding")
+
+
 def check_triggers_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
     """A coverage number nobody re-measures is a coverage number that decays (v9.413).
 
@@ -14181,6 +14245,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_property_suite_cannot_skip_its_subject,
     check_append_only_tables_are_tested_exhaustively,
     check_triggers_are_mutation_tested,
+    check_property_suite_identifies_its_refusals,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,

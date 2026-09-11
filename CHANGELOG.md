@@ -5,6 +5,49 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.414 — 2026-09-11 ("the database said no" is not evidence for which rule said it)
+
+The third mechanism MISSION names, after the triggers and the CHECK constraints, is the unique
+index. Dropping each one and seeing what notices was meant to be a short measurement. It stopped
+on the second index, because `uq_one_active_per_person` could not be rebuilt afterwards: while it
+was absent the test suite had inserted and COMMITTED a second ACTIVE token for one person. C3, one
+identity per person, violated permanently by the suite that exists to prove it.
+
+That commit was in the test. Every negative property test had the shape "do the forbidden thing,
+commit, and call self.fail if we got here". The commit never contributed to detection, because a
+trigger, a CHECK and a unique index all raise at statement time. All it did was make the failure
+destructive on the one day it mattered.
+
+Pulling that thread found the larger defect. Every one of those tests ended
+`except psycopg2.Error: conn.rollback()`, which accepts ANY database error as proof of the
+invariant. An INSERT refused for a NOT NULL, a bad enum, a foreign key, or a typo in the test's
+own SQL read exactly like C1, C2 or C3 holding. It is the defect the constraint suite avoids by
+passing `constraint_name=` and the append-only tests by checking the refusal says "append-only",
+and the property suite, which is the evidence for the three CONSTITUTIONAL invariants, had none
+of it.
+
+Each guarantee names itself now: C1 raises insufficient_privilege saying append-only, C2 a check
+violation on `chk_disclosure_token_consistency`, C3 a unique violation on
+`uq_one_active_per_person`. The tests assert the type AND the marker. Verified by changing one
+marker to a word the refusal does not contain, which turns five tests red.
+
+Two more, found on the way:
+
+`test_delete_verification_event_always_fails` drew its target from `st.integers(1, 100000)` and
+returned quietly when the draw missed an existing row. Against ten real event ids that is an
+expected 0.0015 hits over fifteen examples. The test has done nothing since it was written, and
+reported OK for doing it. It now deletes a row that exists.
+
+`test_reserve_token_for_active_individual_always_accepted` is a HAPPY-path test, and it ended with
+the same catch-all. A RESERVE insert refused for any reason whatsoever reported that RESERVE
+tokens are accepted. A positive test that passes when the operation fails is worse than no test;
+the error is now allowed out, where it names itself.
+
+Re-run of the experiment that started this: with C3's index dropped the suite goes red, and
+leaves zero duplicate ACTIVE tokens behind. The index rebuilds cleanly.
+`check_property_suite_identifies_its_refusals` (237) pins the constants, the markers, the message
+assertion, the absence of the swallow-everything shape, and the absence of a commit before a fail.
+
 ## v9.413 — 2026-09-11 (a coverage number nobody re-measures is a coverage number that decays)
 
 v9.411 dropped each of the 37 triggers and found 14 that nothing noticed. v9.412 covered them.

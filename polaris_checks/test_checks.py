@@ -12248,3 +12248,60 @@ def test_trigger_mutation_check_discriminates(tmp_path):
     write()
     (tmp_path / "scripts" / "polaris-trigger-mutation-drill.py").unlink()
     assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill is absent"
+
+
+def test_property_refusals_check_discriminates(tmp_path):
+    SUITE = (
+        "C1_APPEND_ONLY = (psycopg2.errors.InsufficientPrivilege, 'append-only')\n"
+        "C2_DISCLOSURE = (psycopg2.errors.CheckViolation, 'chk_disclosure_token_consistency')\n"
+        "C3_ONE_ACTIVE = (psycopg2.errors.UniqueViolation, 'uq_one_active_per_person')\n\n\n"
+        "class _GuardedCase:\n"
+        "    def assert_refused(self, cur, conn, guarantee, sql, params=(), because=''):\n"
+        "        exc_type, marker = guarantee\n"
+        "        with self.assertRaises(exc_type) as caught:\n"
+        "            cur.execute(sql, params)\n"
+        "        self.assertIn(marker, str(caught.exception))\n\n"
+        "    def a(self):\n        self.assert_refused(cur, conn, C1_APPEND_ONLY, 'UPDATE x')\n"
+        "    def b(self):\n        self.assert_refused(cur, conn, C1_APPEND_ONLY, 'DELETE x')\n"
+        "    def c(self):\n        self.assert_refused(cur, conn, C1_APPEND_ONLY, 'UPDATE y')\n"
+        "    def d(self):\n        self.assert_refused(cur, conn, C1_APPEND_ONLY, 'DELETE y')\n"
+        "    def e(self):\n        self.assert_refused(cur, conn, C2_DISCLOSURE, 'INSERT z')\n"
+        "    def f(self):\n        self.assert_refused(cur, conn, C2_DISCLOSURE, 'INSERT w')\n"
+        "    def g(self):\n        self.assert_refused(cur, conn, C3_ONE_ACTIVE, 'INSERT t')\n"
+        "    def h(self):\n"
+        "        try:\n            cur.execute('INSERT reserve')\n"
+        "        except psycopg2.Error as exc:\n            conn.rollback()\n            self.fail(str(exc))\n"
+        "        conn.rollback()\n")
+    rel = "polaris_web/test_invariants_property.py"
+    def write(body):
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write(SUITE)
+    assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # a test goes back to accepting any database error as proof
+    write(SUITE.replace("    def h(self):\n", "    def swallow(self):\n"
+                        "        try:\n            cur.execute('UPDATE q')\n"
+                        "        except psycopg2.Error:\n            conn.rollback()\n\n"
+                        "    def h(self):\n"))
+    assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "FAIL", "must FAIL when a test treats any database error as proof of the invariant"
+    # a test commits the violating statement before failing
+    write(SUITE.replace("    def h(self):\n", "    def destructive(self):\n"
+                        "        cur.execute('INSERT dup')\n        conn.commit()\n"
+                        "        self.fail('violated')\n\n    def h(self):\n"))
+    assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "FAIL", "must FAIL when a test commits the violating statement before failing"
+    # a guarantee stops being named
+    write(SUITE.replace("C3_ONE_ACTIVE = (psycopg2.errors.UniqueViolation, 'uq_one_active_per_person')",
+                        "C3_ONE_ACTIVE = (psycopg2.Error, 'something')"))
+    assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "FAIL", "must FAIL when C3's refusal marker is gone"
+    # the helper stops checking the message, so the right type raised for the wrong reason passes
+    write(SUITE.replace("        self.assertIn(marker, str(caught.exception))\n", ""))
+    assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "FAIL", "must FAIL when the refusal's message is no longer checked"
+    # the helper is gone entirely
+    write(SUITE.replace("    def assert_refused(self, cur, conn, guarantee, sql, params=(), because=''):",
+                        "    def something_else(self, cur, conn, guarantee, sql, params=(), because=''):"))
+    assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "FAIL", "must FAIL when the refusal helper is removed"
+    # the suite is emptied of refusals, which satisfies the assertions above vacuously
+    write(SUITE.split("    def a(self):")[0] + "    def a(self):\n        pass\n")
+    assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "FAIL", "must FAIL when too few refusals are identified, rather than pass by finding nothing"
+    # the suite is gone
+    (tmp_path / rel).unlink()
+    assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "FAIL", "must FAIL when the property suite is absent"
