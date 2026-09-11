@@ -5149,6 +5149,38 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 class ConcurrencyTests(PolarisTestCase):
+    #: The deliberate delay each concurrent worker holds, so two that block each other
+    #: take twice as long as two that do not.
+    PARALLEL_SLEEP = 0.3
+
+    def _serial_baseline(self):
+        """One worker's round trip: the sleep plus this machine's overhead, measured now.
+
+        The parallelism assertions used to compare against an ABSOLUTE threshold -- two
+        0.3s sleeps serialized would be 0.6s, so under 0.55s meant parallel. That holds
+        until a loaded runner's overhead exceeds a whole sleep, and on 2026-09-11 it did:
+        a genuinely parallel run took 0.616s and the suite called it serialized.
+
+        Measuring one worker here absorbs whatever the machine is doing, so the
+        comparison is between two numbers taken seconds apart on the same hardware
+        rather than between a number and a guess made when the test was written.
+        """
+        import time
+        t0 = time.perf_counter()
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pg_sleep(%s)", (self.PARALLEL_SLEEP,))
+            conn.commit()
+        return time.perf_counter() - t0
+
+    def _assertRanInParallel(self, elapsed, baseline, what):
+        """Two workers ran concurrently if together they cost less than one plus most
+        of another sleep. Serialized, they cost one plus a WHOLE extra sleep."""
+        ceiling = baseline + self.PARALLEL_SLEEP * 0.6
+        self.assertLess(
+            elapsed, ceiling,
+            f"{what} should run in parallel; elapsed={elapsed:.3f}s, "
+            f"one worker alone took {baseline:.3f}s on this machine, so a serialized "
+            f"pair would cost about {baseline + self.PARALLEL_SLEEP:.3f}s")
     """Tests for the v6 concurrency hardening. Run a handful of operations
     in parallel against the live database and assert the invariants hold."""
 
@@ -5513,6 +5545,7 @@ class ConcurrencyTests(PolarisTestCase):
                 with outcomes_lock: outcomes.append(('err', agency_id, str(e)))
 
         import time
+        baseline = self._serial_baseline()
         t0 = time.perf_counter()
         threads = [
             threading.Thread(target=revoke, args=(2, tid_a)),
@@ -5526,11 +5559,7 @@ class ConcurrencyTests(PolarisTestCase):
         successes = [o for o in outcomes if o[0] == 'ok']
         self.assertEqual(len(successes), 2,
             f"Both cross-agency revocations should succeed: {outcomes}")
-        # Parallelism check: if they were serialized, total would be ~0.6s
-        # (2 × 0.3s sleep). Parallel should be ~0.3s + overhead. Assert <
-        # 0.55s for headroom against test-machine variability.
-        self.assertLess(elapsed, 0.55,
-            f"Cross-agency revocations should run in parallel; elapsed={elapsed:.3f}s")
+        self._assertRanInParallel(elapsed, baseline, 'Cross-agency revocations')
 
     # -------------------------------------------------------------------
     # R11-2 / M2-7 — pg_advisory_xact_lock on claimed_individual_id
@@ -5670,6 +5699,7 @@ class ConcurrencyTests(PolarisTestCase):
                 with outcomes_lock: outcomes.append(('err', rid, str(e)))
 
         import time
+        baseline = self._serial_baseline()
         t0 = time.perf_counter()
         threads = [
             threading.Thread(target=complete, args=(rid_a, 'A')),
@@ -5682,9 +5712,7 @@ class ConcurrencyTests(PolarisTestCase):
         successes = [o for o in outcomes if o[0] == 'ok']
         self.assertEqual(len(successes), 2,
             f"Both cross-individual recoveries should succeed: {outcomes}")
-        # Parallelism check: if serialized, total ≈ 0.6s; parallel ≈ 0.3s.
-        self.assertLess(elapsed, 0.55,
-            f"Cross-individual recoveries should run in parallel; elapsed={elapsed:.3f}s")
+        self._assertRanInParallel(elapsed, baseline, 'Cross-individual recoveries')
 
     # -------------------------------------------------------------------
     # R11-1 / M2-6 — pg_advisory_xact_lock on token_id serializes
@@ -5888,6 +5916,7 @@ class ConcurrencyTests(PolarisTestCase):
                 conn.commit()
 
         import time
+        baseline = self._serial_baseline()
         t0 = time.perf_counter()
         threads = [
             threading.Thread(target=migrate, args=(tid_a, 'A')),
@@ -5898,8 +5927,7 @@ class ConcurrencyTests(PolarisTestCase):
         elapsed = time.perf_counter() - t0
 
         # If serialized: ~0.6s; if parallel: ~0.3s.
-        self.assertLess(elapsed, 0.55,
-            f"Cross-token migrations should run in parallel; elapsed={elapsed:.3f}s")
+        self._assertRanInParallel(elapsed, baseline, 'Cross-token migrations')
 
     # -------------------------------------------------------------------
     # R10-2 / M2-2 — Per-algorithm advisory-lock on close_anchor_batch.

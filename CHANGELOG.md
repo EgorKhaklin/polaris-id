@@ -5,6 +5,35 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.397 — 2026-09-11 (a genuinely parallel run measured 0.616s and the suite called it serialized)
+
+v9.395's CI failed on one assertion:
+
+    0.6155689969999685 not less than 0.55 : Cross-individual recoveries should run in
+    parallel; elapsed=0.616s
+
+Three concurrency tests hold a `pg_sleep(0.3)` in each of two threads, so two workers that
+block each other take about 0.6s and two that do not take about 0.3s. Each asserted an
+ABSOLUTE ceiling of 0.55s, chosen when the tests were written as "0.6 minus headroom".
+
+That holds until a loaded runner's overhead exceeds a whole sleep, and here it did: the
+overhead was 0.316s, the parallel run cost 0.616s, and the suite reported a correctly parallel
+execution as a serialization failure. The code under test was right and the measurement was
+wrong, which is the harder direction to notice.
+
+The assertions are now self-calibrating. `_serial_baseline()` times ONE worker immediately
+before the timed section -- the same sleep, the same connection path, the same machine, seconds
+apart -- and `_assertRanInParallel` requires the pair to cost less than that baseline plus most
+of another sleep. Serialized, a pair costs the baseline plus a WHOLE extra sleep, so the two
+cases stay separated however slow the hardware is. The failure message now prints the baseline
+and what a serialized pair would have cost on that machine, so the next person to read it is
+told whether the run was slow or the code was wrong.
+
+No flake signature was added to the ship tool for this. That table is for flakes that are still
+live, and the point of fixing the measurement is that this one is not.
+
+---
+
 ## v9.396 — 2026-09-11 (P4.4: a code proves somebody reached a channel, and the table says only that)
 
 `EnrollmentCode` is the lifecycle under the cap v9.395 put on `ENROLLMENT_CODE` verification.
