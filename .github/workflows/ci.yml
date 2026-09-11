@@ -321,6 +321,15 @@ jobs:
       - name: Transparency report — no withheld figure is recoverable by subtraction
         run: python scripts/polaris-transparency-report-drill.py
 
+      # v9.398 — the check layer, ATTACKED. Every guarantee here is believed because a check
+      # says so, and the checks are written by the same hand as the code; the review packet's
+      # A-12 asks a reviewer to break that layer. This runs the attack on every push. For each
+      # check it comments out every line carrying the check's own search strings -- leaving the
+      # words in the comment, which is what `# temporarily disabled: <the thing>` looks like --
+      # and re-runs it. Before v9.398, 71 of 75 still passed. No database.
+      - name: Check layer — no check passes on a tree where its property is commented out
+        run: python scripts/polaris-check-mutation-drill.py
+
       # v9.388 (P1.18 item 8) — the external-review packet, RE-CHECKED IN BOTH DIRECTIONS.
       # Every citation resolves and every cited check runs, which is the discipline the 800-63
       # mapping already uses. The new half is the limitations: each carries a WITNESS, a file

@@ -58,6 +58,15 @@ A pull request is ready when all of these hold:
   that declare it in a `RETURNS TABLE`, views that depend on it (and their GRANTS,
   which a `DROP VIEW` removes silently), and the SEQUENCE, which keeps its 32-bit
   ceiling after the column becomes `BIGINT`.
+- **Read files through `_read`, not `read_text`.** `_read` strips comments for languages
+  that have them, which is what stops a check passing on `# temporarily disabled: <the
+  thing>`. Use `_read_path` for globbed files and `_read_raw` only where the PROSE is the
+  property (a required header, a stated reason, a document's wording).
+  `scripts/polaris-check-mutation-drill.py` comments out every line carrying a check's own
+  search strings and re-runs it; a check that still passes fails the build.
+- **A check must not pass by finding nothing.** "Every X does Y" is vacuously true when
+  there are no X, so a check that scans for offenders should fail when its subject is
+  absent entirely -- a migration runner with no psql call, a workflow with no installs.
 - **A check that EXERCISES code needs a fixture that can run.** Checks increasingly load a
   module and call it, rather than searching its text, because a check on a rule's spelling
   passes when the rule is switched off. The cost is that the check's detection test builds a

@@ -2212,7 +2212,7 @@ def test_pqc_second_witness_check_discriminates(tmp_path):
         "def verify_stored_signature(t, s, k):\n    return verify_both(t, s, k)\n"
         "def verify_token_signature(t, s, a):\n    return verify_both(t, s, anchor)\n"
     )
-    GOOD_CI = "jobs:\n  pqc-real:\n    steps:\n      run: python -m unittest SecondWitnessTests\n"
+    GOOD_CI = "jobs:\n  pqc-real:\n    steps:\n      run: python -m unittest test_pqc_signing\n"
 
     def write(pqc, ci=GOOD_CI):
         (web / "pqc_signing.py").write_text(pqc)
@@ -3441,7 +3441,7 @@ def test_pager_integration_check_discriminates(tmp_path):
         "deploy/observability/alertmanager.yml": AM,
         "deploy/observability/prometheus.yml": "alerting:\n  alertmanagers:\n    - static_configs:\n"
                                                "        - targets: ['alertmanager:9093']\n",
-        "scripts/polaris-page-drill.sh": ("promtool check rules x\namtool check-config alertmanager.yml\n"
+        "scripts/polaris-page-drill.sh": ("docker run --entrypoint promtool img check rules x\ndocker run --entrypoint amtool img check-config alertmanager.yml\n"
                                           "polaris_duress_events_total 1\ngrep PolarisDuressEvent webhook\n"),
         ".github/workflows/ci.yml": "steps:\n  - run: bash scripts/polaris-page-drill.sh\n",
         "docs/operator/RUNBOOKS.md": "## Paging\nmount pager_webhook_url\n",

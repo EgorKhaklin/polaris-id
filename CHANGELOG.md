@@ -5,6 +5,58 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.398 — 2026-09-11 (seventy-one of seventy-five checks pass on a tree where the property is gone)
+
+The review packet's last attack prompt says: if a check can be made to pass on a broken tree,
+everything above it is worth less than it looks, so start there. This session had already found
+FOUR checks satisfied by prose rather than code -- a docstring, a comment, a sentence describing
+what a step does -- which is a pattern rather than four accidents. So the attack was run on
+ourselves.
+
+For every check, comment out each line carrying one of that check's own search strings, leaving
+the words in the comment, and re-run it. That is not an adversarial mutation; it is the shape of
+
+    # temporarily disabled: security.record_audit_access(...)
+
+which is how a guarantee actually disappears -- somebody turns a line off while debugging and
+the gate keeps saying green.
+
+**71 of 75 fully mutated checks still pass.**
+
+The cause is one line. Every check reads files through `_read`, and `_read` returns the comments
+along with the code, so a search string survives wherever its code does not. Stripping comments
+there takes the number to ZERO -- measured, both directions -- and breaks 58 detection-test
+fixtures that carry their own property in a comment. That repair is a ship of its own size, so
+this one lands the measurement and the ratchet: the drill fails when the number GROWS, prints it
+on every run, and the review packet says 71 rather than describing the problem in the abstract.
+
+A ratchet is the honest shape for a finding bigger than the ship that found it. Gating at zero
+today would mean deleting the drill tomorrow.
+
+FOUR THINGS WERE FOUND ON THE WAY and are fixed here, three of them in checks that were passing
+for the wrong reason. The pqc-real job runs `unittest test_pqc_signing`, which CONTAINS
+SecondWitnessTests; the check looked for the class name, which appears only in the comment above
+the step, and would have kept passing if the step were deleted. The pager drill runs promtool as
+a container entrypoint; the check looked for the literal phrase "promtool check rules", which
+appears only in the file's header comment. Both properties held; neither check was watching
+them. And a cron-line regex used `\s+`, which matches NEWLINES: it could take five tokens from
+five different lines and call them a cron line, and had been finding the real one by luck of
+ordering.
+
+TWO MORE PASSED BECAUSE THE MUTATION REMOVED THEIR SUBJECT. "No duplicated pins" is vacuously
+true of a workflow that installs nothing, and "every psql call redirects stdin" is vacuously
+true of a migration runner that calls no psql. Both now fail when their subject is absent
+entirely, which is the rule already written into `check_audited_reads_are_logged`: a check must
+not pass by finding nothing to check.
+
+- `scripts/polaris-check-mutation-drill.py` on every push, ratcheted at 71, reporting the 9
+  checks it cannot reach rather than counting them as passes
+- the review packet's A-12 now carries the number and points a reviewer at it as the weakest
+  thing on the page
+- the `_read` / `_read_path` / `_read_raw` rule and the vacuous-pass rule in CONTRIBUTING.md
+
+---
+
 ## v9.397 — 2026-09-11 (a genuinely parallel run measured 0.616s and the suite called it serialized)
 
 v9.395's CI failed on one assertion:

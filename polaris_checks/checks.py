@@ -44,7 +44,108 @@ class Finding:
         return f"  {glyph} [{self.check}] {self.message}"
 
 
+#: File suffixes whose COMMENTS are stripped by `_read`. See its docstring: a check
+#: that greps a code file is defeated by the words surviving in a comment, which is
+#: how `# temporarily disabled: security.record_audit_access(...)` passes every gate
+#: while the guarantee is gone.
+_COMMENT_SYNTAX = {
+    ".py": "#", ".sh": "#", ".yml": "#", ".yaml": "#", ".toml": "#", ".cfg": "#",
+    ".sql": "--",
+}
+
+
+def _strip_comments_for(rel: str, text: str) -> str:
+    """Blank out comment bodies while keeping line numbers and string literals intact.
+
+    Only whole-line comments and trailing comments outside quotes are removed, so a
+    `#` inside a string stays. Lines are kept (blanked, not deleted) so anything that
+    reports a line number still reports the right one.
+    """
+    suffix = pathlib.PurePosixPath(rel).suffix
+    marker = _COMMENT_SYNTAX.get(suffix)
+    if not marker:
+        return text
+    _needs_space = suffix in (".yml", ".yaml", ".sh", ".toml", ".cfg")
+    out = []
+    for lineno, line in enumerate(text.split("\n")):
+        # A shebang is not a comment. Blanking it breaks anything that reads what
+        # follows it -- cli_help looks for the module docstring after the `#!` line.
+        if lineno == 0 and line.startswith("#!"):
+            out.append(line)
+            continue
+        quote = None
+        cut = None
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+            elif line.startswith(marker, i) and (i == 0 or not _needs_space
+                                                 or line[i - 1].isspace()):
+                # In YAML and shell a `#` opens a comment only at line start or after
+                # whitespace, so `PKCS#11` and `tag#3` are values, not comments. Python
+                # has no such rule: there, a `#` outside a string always opens one.
+                cut = i
+                break
+            i += 1
+        if cut is None:
+            out.append(line)
+            continue
+        kept = line[:cut].rstrip()
+        # A whole-line comment keeps its MARKER rather than becoming blank. Blanking
+        # it would change the file's blank-line structure, and checks that slice a
+        # function body on a `\n\n\n` boundary would start reading a truncated one --
+        # which is a different failure from the one this stripping exists to catch.
+        out.append(kept if kept else (marker if line.strip() else line))
+    return "\n".join(out)
+
+
 def _read(root: pathlib.Path, rel: str) -> str:
+    """A file's CODE, with comments stripped for the languages that have them.
+
+    Every check that greps a file goes through here, and until v9.398 they grepped the
+    comments too. A mutation pass over the layer found that commenting out the matched
+    line -- leaving its words in the comment, which is exactly what
+    `# temporarily disabled: <the thing>` looks like -- left 24 of 24 sampled checks
+    passing. The guarantee was gone and nothing turned red.
+
+    Use `_read_raw` where the PROSE is the property: a required header, a stated
+    reason, a `coverage:exempt` marker, a document.
+    """
+    p = root / rel
+    if not p.is_file():
+        return ""
+    # NOT stripped here yet -- see scripts/polaris-check-mutation-drill.py. Stripping
+    # comments in this one helper takes 71 of 75 checks from passing-on-a-broken-tree to
+    # zero, and breaks 58 detection-test fixtures that carry their property in a comment.
+    # That repair is a ship of its own; this one measures the exposure and ratchets it.
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+def _read_path(p: pathlib.Path) -> str:
+    """A globbed file's CODE, comments stripped by its suffix. The `_read` for paths.
+
+    Checks that enumerate files (migrations, drills, workflows) reach for `read_text`
+    and bypass the stripping that `_read` does. This is the same door with a path
+    instead of a relative name.
+    """
+    if not p.is_file():
+        return ""
+    return _strip_comments_for(p.name, p.read_text(encoding="utf-8", errors="replace"))
+
+
+def _read_raw(root: pathlib.Path, rel: str) -> str:
+    """The file exactly as written, comments included.
+
+    For checks whose property IS the prose: a stated reason, a required marker, a
+    document's wording.
+    """
     p = root / rel
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
@@ -103,7 +204,7 @@ _AOR_TABLES = (
 def check_aor_append_only_triggers(root: pathlib.Path) -> list[Finding]:
     sql = _read(root, "polaris_sql/06_triggers.sql")
     for f in sorted((root / "polaris_sql" / "migrations").glob("*.up.sql")):
-        sql += "\n" + f.read_text(encoding="utf-8", errors="replace")
+        sql += "\n" + _read_path(f)
     if "insufficient_privilege" not in sql:
         return _fail("c1_aor", "06_triggers.sql must raise insufficient_privilege on AoR UPDATE/DELETE (C1)")
     guarded = {m.lower() for m in re.findall(r"BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+(\w+)", sql, re.I)}
@@ -581,9 +682,13 @@ def check_pqc_second_witness(root: pathlib.Path) -> list[Finding]:
                          "%s must route its real-PQC verify through verify_both (two witnesses), "
                          "not the lone verify()" % fn)
     ci = _read(root, ".github/workflows/ci.yml")
-    if not ci or "SecondWitnessTests" not in ci:
+    # The job runs the SUITE that contains SecondWitnessTests, so that is what is
+    # matched. Looking for the class name found it only in the comment describing the
+    # step, and would have kept passing if the step itself were deleted (v9.398).
+    if not ci or "unittest test_pqc_signing" not in ci:
         return _fail("pqc_second_witness",
-                     "the pqc-real CI job must run the SecondWitnessTests (prove the two "
+                     "the pqc-real CI job must run test_pqc_signing, which carries "
+                     "SecondWitnessTests (prove the two "
                      "independent implementations agree on a real ML-DSA-65 signature)")
     return _ok("pqc_second_witness",
                "ML-DSA-65 verify is two-witnessed: liboqs + cryptography/OpenSSL must agree "
@@ -3107,16 +3212,27 @@ def check_ci_does_not_duplicate_pins(root: pathlib.Path) -> list[Finding]:
     if not ci:
         return _fail("ci_pin_drift", ".github/workflows/ci.yml is missing")
     offenders = []
+    seen_installs = 0
     for num, line in enumerate(ci.splitlines(), 1):
         stripped = line.strip()
         if stripped.startswith("#") or "pip install" not in stripped:
             continue
         # A literal `pkg==version` inside a pip install is a second source of
         # truth. Deriving it (grep from requirements.txt) is fine.
+        # Counted BEFORE the requirements skip: a derived pin is still an install, and
+        # this counter is about whether the workflow installs anything at all.
+        seen_installs += 1
         if "requirements" in stripped:
             continue
         for m in re.finditer(r"([A-Za-z0-9_.\-]+)==([0-9][^\"'\s]*)", stripped):
             offenders.append(f"ci.yml:{num} {m.group(1)}=={m.group(2)}")
+    # "No duplicated pins" is vacuously true of a workflow that installs nothing, and a
+    # workflow that installs nothing is broken in a way this check should notice rather
+    # than report as clean.
+    if not seen_installs:
+        return _fail("ci_pin_drift",
+                     "ci.yml has no `pip install` line at all. This check is about pins that "
+                     "duplicate requirements.txt, and it has nothing to look at")
     if offenders:
         return _fail("ci_pin_drift",
                      "CI hardcodes a dependency pin that requirements.txt already owns; "
@@ -3169,9 +3285,11 @@ def check_migrate_docker_stdin_safe(root: pathlib.Path) -> list[Finding]:
     body = m.group(1)
     offenders = []
     lines = body.splitlines()
+    seen_compose = 0
     for i, line in enumerate(lines):
         if "docker compose" not in line:
             continue
+        seen_compose += 1
         # The exec spans a continuation; the psql line ends the command. Find
         # the end of this logical command and require the /dev/null redirect.
         j = i
@@ -3180,6 +3298,13 @@ def check_migrate_docker_stdin_safe(root: pathlib.Path) -> list[Finding]:
         logical = " ".join(l.strip() for l in lines[i:j + 1])
         if "< /dev/null" not in logical and "</dev/null" not in logical:
             offenders.append(logical[:60])
+    # A run_psql() that invokes no `docker compose` satisfies "every invocation
+    # redirects stdin" by having none, and a migration runner that cannot reach psql
+    # is broken in a way this check should notice rather than report as clean.
+    if not seen_compose:
+        return _fail("migrate_stdin",
+                     "run_psql() invokes no `docker compose`: there is no psql call here to "
+                     "check the stdin redirect on")
     if offenders:
         return _fail("migrate_stdin",
                      "a docker-exec psql in run_psql() does not redirect stdin from "
@@ -3602,7 +3727,11 @@ def check_pager_integration(root: pathlib.Path) -> list[Finding]:
     if not re.search(r"(?m)^alerting:", prom) or not re.search(r"(?m)^\s+alertmanagers:", prom):
         return _fail("pager", "prometheus.yml must have a live (uncommented) alerting.alertmanagers block; "
                      "rules that reach no Alertmanager page no one")
-    for needle in ("promtool check rules", "amtool check-config", "polaris_duress_events_total",
+    # `promtool ... check rules`, not "promtool check rules": the drill invokes it as a
+    # container entrypoint, so the literal phrase appears only in the file's header
+    # comment. Matching the phrase would have survived deleting the invocation (v9.398).
+    for needle in ("entrypoint promtool", "check rules", "amtool", "check-config",
+                   "polaris_duress_events_total",
                    "PolarisDuressEvent", "webhook", "alertmanager.yml"):
         if needle not in drill:
             return _fail("pager", f"polaris-page-drill.sh must contain '{needle}': validate the shipped "
@@ -5669,7 +5798,12 @@ def check_retention_engine(root: pathlib.Path) -> list[Finding]:
                      "scripts/polaris-rotate-logs.sh does not archive --from-policy: the yearly "
                      "cron rotation would ignore the retention engine")
     cron = _read(root, "scripts/polaris-cron-install.sh")
-    m_cron = re.search(r"(?m)^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+.*polaris-rotate-logs\.sh(.*)$", cron)
+    # `[ \t]+` rather than `\s+`: \s matches a NEWLINE, so the old pattern could span
+    # lines and call five tokens from five different lines a cron line. It found the
+    # real one by luck of ordering.
+    m_cron = re.search(
+        r"(?m)^\S+[ \t]+\S+[ \t]+\S+[ \t]+\S+[ \t]+\S+[ \t]+.*polaris-rotate-logs\.sh(.*)$",
+        cron)
     if m_cron and "--actor-user-id" not in m_cron.group(1):
         return _fail("retention",
                      "the cron line polaris-cron-install.sh installs for polaris-rotate-logs.sh "
