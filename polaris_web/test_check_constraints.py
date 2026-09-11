@@ -1316,5 +1316,301 @@ class TestRetentionEngine(_CheckBase):
                 ("file:///tmp/inside-window.tar.zst", "b" * 64, admin["user_id"]))
 
 
+# ============================================================================
+# Append-only, exhaustively (v9.412)
+#
+# C1 says the audit of record cannot be edited. The mechanism is a trigger, one
+# per table, and v9.411 measured how many of them anything actually tested: of
+# 37 top-level triggers, 14 could be dropped from the schema with all 757
+# database tests still green. Twelve of those were append-only guards.
+#
+# The shape below is table-driven ON PURPOSE, and the last test in the class is
+# the reason: it reads the append-only triggers out of the CATALOG and requires
+# the fixture table to name every one. A new audit-of-record table therefore
+# cannot be added without either covering it here or failing this suite, which
+# is the property a hand-written list of tests does not have.
+# ============================================================================
+
+#: The guard functions that mean "this table is append-only". Read from pg_proc
+#: rather than listed by trigger name, because a trigger can be renamed and the
+#: guarantee is carried by what it calls.
+APPEND_ONLY_GUARDS = (
+    'reject_audit_modification',
+    'reject_auth_code_modification',
+    'reject_authority_key_event_modification',
+    'reject_checkpoint_modification',
+    'reject_exchange_nonce_modification',
+    'reject_receipt_log_modification',
+    'reject_schema_version_modification',
+    'reject_timestamp_log_modification',
+)
+
+#: Phrases that identify a refusal as THE append-only guarantee rather than, say,
+#: a missing GRANT, which raises the same SQLSTATE and would otherwise read as C1
+#: being enforced when it is only being unreachable.
+APPEND_ONLY_REFUSALS = ('append-only', 'un-consumed', 'immutable', 'single use',
+                        'audit-of-record', 'append rather than mutate', 'never be')
+
+#: table -> (primary key column, SQL that creates one row and returns that key).
+#: The row is only a subject to attack; it does not have to be meaningful, only
+#: legal. Where a table's row depends on another (evidence and vouching both
+#: hang off a proofing record), the statement builds the chain.
+_PROOFING = ("INSERT INTO EnrollmentProofing (individual_id, recorded_by_agency_id, presence, "
+             "derived_ial) VALUES (1, 1, 'IN_PERSON', 'IAL2') RETURNING proofing_id")
+_HEX64 = "repeat('a', 64)"
+
+APPEND_ONLY_FIXTURES = {
+    'anchorbatch': ('batch_id', None),
+    'auditaccesslog': ('access_id',
+        "INSERT INTO AuditAccessLog (accessed_table) VALUES ('VerificationEvent') RETURNING access_id"),
+    'authauditlog': ('audit_id',
+        "INSERT INTO AuthAuditLog (event_type) VALUES ('LOGIN_SUCCESS') RETURNING audit_id"),
+    'authcodeconsumed': ('code_hash',
+        "INSERT INTO AuthCodeConsumed (code_hash) VALUES (repeat('b', 64)) RETURNING code_hash"),
+    'authoritykeyevent': ('event_id',
+        f"INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, event) "
+        f"VALUES (1, {_HEX64}, 'registered') RETURNING event_id"),
+    'cardpersonalization': ('personalization_id',
+        "INSERT INTO CardPersonalization (token_id, issuing_agency_id, credential_ref, "
+        "profile_version, normal_public_key, duress_public_key, card_object_sha3_256) "
+        "VALUES (1, 1, decode(repeat('00',32),'hex'), 1, decode(repeat('11',32),'hex'), "
+        "decode(repeat('22',32),'hex'), decode(repeat('33',32),'hex')) RETURNING personalization_id"),
+    'duressevent': ('event_id',
+        "INSERT INTO DuressEvent (token_id, context_id, requesting_agency_id) "
+        "VALUES (1, 1, 1) RETURNING event_id"),
+    'enrollmentevidence': ('evidence_id',
+        # A chained fixture needs a CTE: INSERT ... RETURNING is not a scalar subquery.
+        f"WITH p AS ({_PROOFING}) "
+        "INSERT INTO EnrollmentEvidence (proofing_id, evidence_type, strength, validation_method, "
+        "verification_method, validated, verified) "
+        "SELECT p.proofing_id, 'PASSPORT', 'STRONG', 'VISUAL_INSPECTION', 'BIOMETRIC_COMPARISON', "
+        "true, true FROM p RETURNING evidence_id"),
+    'enrollmentproofing': ('proofing_id', _PROOFING),
+    'enrollmentstatusevent': ('event_id', None),
+    'exchangenonce': ('nonce',
+        "INSERT INTO ExchangeNonce (requester_key_hash, nonce) "
+        "VALUES (repeat('c', 64), 'append-only-fixture-nonce') RETURNING nonce"),
+    'exchangereceiptlog': ('seq',
+        "INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (repeat('d', 64)) RETURNING seq"),
+    'holderkeyevent': ('event_id',
+        f"INSERT INTO HolderKeyEvent (token_id, public_key_hex, event) "
+        f"VALUES (1, {_HEX64}, 'bound') RETURNING event_id"),
+    'individualerasureevent': ('erasure_id',
+        "INSERT INTO IndividualErasureEvent (individual_id, pseudonym_assigned, erased_by_user_id, "
+        "reason) VALUES (1, 'PSEUDO-APPEND-ONLY-TEST', 1, 'append-only fixture') RETURNING erasure_id"),
+    'lifecyclearchivecheckpoint': ('checkpoint_id', None),
+    'refereevouching': ('vouching_id',
+        f"WITH p AS ({_PROOFING}) "
+        "INSERT INTO RefereeVouching (proofing_id, referee_individual_id, applicant_individual_id, "
+        "referee_ial, relationship, vouched_ial) "
+        "SELECT p.proofing_id, 2, 1, 'IAL2', 'EMPLOYER', 'IAL2' FROM p RETURNING vouching_id"),
+    'schema_version': ('event_id',
+        "INSERT INTO schema_version (name, event_type, file_sha256) "
+        "VALUES ('2026-09-11-999-append-only-fixture', 'applied', repeat('a', 64)) RETURNING event_id"),
+    'timestamplog': ('seq',
+        "INSERT INTO TimestampLog (timestamp_hash) VALUES (repeat('e', 64)) RETURNING seq"),
+    'tokenlifecycleevent': ('event_id', None),
+    'tokenstateepochleaf': ('leaf_id', None),
+    'verificationevent': ('event_id', None),
+}
+
+
+class TestEveryAppendOnlyTableRefusesEdits(_CheckBase):
+    """C1, once per table that claims it, rather than once for the tables
+    somebody happened to write a test for."""
+
+    def _a_row_in(self, cur, table, pk, make):
+        """The key of an existing row, or of one created for the purpose.
+
+        Deliberately NOT a skip. A table with no row and no way to make one
+        cannot demonstrate append-only, and a suite that reports OK for that has
+        reported a guarantee it did not test (v9.411)."""
+        cur.execute(f"SELECT {pk} FROM {table} ORDER BY 1 LIMIT 1")
+        row = cur.fetchone()
+        if row is not None:
+            return row[pk]
+        self.assertIsNotNone(
+            make,
+            f"{table} is empty and no fixture statement is declared for it, so its "
+            f"append-only trigger cannot be exercised. Add the INSERT rather than "
+            f"letting the guarantee go untested.")
+        cur.execute(make)
+        return cur.fetchone()[pk]
+
+    def _refuses(self, statement, verb):
+        for table, (pk, make) in sorted(APPEND_ONLY_FIXTURES.items()):
+            with self.subTest(table=table):
+                try:
+                    with self.conn.cursor() as cur:
+                        key = self._a_row_in(cur, table, pk, make)
+                        # The guards RAISE with insufficient_privilege, which is the
+                        # right code: this is not a row failing a rule, it is an
+                        # operation the table does not offer.
+                        with self.assertRaises(
+                                pg_errors.InsufficientPrivilege,
+                                msg=f"{table} accepted a {verb}; C1 is not enforced there"
+                        ) as caught:
+                            cur.execute(statement(table, pk), (key,))
+                        # And refused for the RIGHT reason. A privilege error from a
+                        # missing GRANT would otherwise read as C1 being enforced.
+                        message = str(caught.exception).lower()
+                        self.assertTrue(
+                            any(phrase in message for phrase in APPEND_ONLY_REFUSALS),
+                            f"{table} refused the {verb}, but not as an append-only table: "
+                            f"{caught.exception}")
+                finally:
+                    # The refusal aborts the transaction, and the fixture row must
+                    # not survive into the next table's turn either way.
+                    self.conn.rollback()
+
+    def test_every_append_only_table_refuses_update(self):
+        self._refuses(lambda t, pk: f"UPDATE {t} SET {pk} = {pk} WHERE {pk} = %s", "UPDATE")
+
+    def test_every_append_only_table_refuses_delete(self):
+        self._refuses(lambda t, pk: f"DELETE FROM {t} WHERE {pk} = %s", "DELETE")
+
+    def test_the_fixture_table_covers_every_append_only_trigger_in_the_catalog(self):
+        """The anti-vacuity anchor: the two tests above prove nothing about a
+        table nobody listed, so the list is checked against the database."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+            SELECT DISTINCT c.relname
+              FROM pg_trigger t
+              JOIN pg_class c ON c.oid = t.tgrelid
+              JOIN pg_proc  p ON p.oid = t.tgfoid
+             WHERE c.relnamespace = 'public'::regnamespace
+               AND NOT t.tgisinternal
+               AND NOT c.relispartition
+               AND p.proname = ANY(%s)
+            """, (list(APPEND_ONLY_GUARDS),))
+            live = {r['relname'] for r in cur.fetchall()}
+        listed = set(APPEND_ONLY_FIXTURES)
+        self.assertEqual(
+            live - listed, set(),
+            "table(s) carry an append-only trigger but are not in APPEND_ONLY_FIXTURES, so "
+            "nothing above tested them")
+        self.assertEqual(
+            listed - live, set(),
+            "table(s) are listed as append-only but carry no append-only trigger in the "
+            "database, so the tests above are asserting against a guarantee that is gone")
+        self.assertGreaterEqual(
+            len(live), 20,
+            f"only {len(live)} append-only triggers were found in the catalog; the query has "
+            "broken and these tests are passing by finding nothing")
+
+
+# ============================================================================
+# The three guards that are not append-only (v9.412)
+#
+# v9.411's trigger sweep left 14 triggers covered by nothing. Twelve were
+# append-only and are covered by the class above. These are the other two, plus
+# the enrollment code's one-way door, which is append-only in one direction only
+# and so does not belong in the table-driven class.
+# ============================================================================
+
+class TestRevocationListStatusGuard(_CheckBase):
+    """A token can only be listed as revoked if it IS revoked."""
+
+    def test_a_live_token_cannot_be_added_to_the_revocation_list(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' "
+                        "ORDER BY token_id LIMIT 1")
+            live = cur.fetchone()
+            self.assertIsNotNone(live, "no ACTIVE token in the sample data; broken fixture")
+            with self.assertRaises(pg_errors.CheckViolation) as caught:
+                cur.execute(
+                    "INSERT INTO RevocationList (token_id, revoked_by_agency_id, effective_date, "
+                    "reason_code) VALUES (%s, 1, CURRENT_DATE, 'COMPROMISED')", (live['token_id'],))
+            self.assertIn('RevocationList', str(caught.exception))
+
+    def test_a_revoked_token_can_be_added(self):
+        """The positive half. Without it the test above would also pass against a
+        trigger that refused every insert."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status IN "
+                        "('REVOKED', 'LOST', 'EXPIRED') ORDER BY token_id LIMIT 1")
+            dead = cur.fetchone()
+            self.assertIsNotNone(dead, "no REVOKED/LOST/EXPIRED token in the sample data")
+            cur.execute(
+                "INSERT INTO RevocationList (token_id, revoked_by_agency_id, effective_date, "
+                "reason_code) VALUES (%s, 1, CURRENT_DATE, 'COMPROMISED') RETURNING revocation_id",
+                (dead['token_id'],))
+            self.assertIsNotNone(cur.fetchone()['revocation_id'])
+
+
+class TestPredecessorBelongsToTheSameIndividual(_CheckBase):
+    """A replacement token cannot inherit from somebody else's token. Without
+    this, a replacement chain is a way to move a credential between people."""
+
+    _NEW = ("INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type, "
+            "individual_id, issuing_agency_id, algorithm_id, predecessor_token_id) "
+            "VALUES (%s, %s, 'NONE', %s, 1, 1, %s) RETURNING token_id")
+
+    def test_a_predecessor_belonging_to_another_individual_is_refused(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT token_id, individual_id FROM IdentityToken ORDER BY token_id LIMIT 2")
+            rows = cur.fetchall()
+            self.assertEqual(len(rows), 2, "fewer than two tokens in the sample data")
+            other, mine = rows[0], rows[1]
+            self.assertNotEqual(other['individual_id'], mine['individual_id'],
+                                "the first two sample tokens share a holder; this test needs two")
+            with self.assertRaises(pg_errors.CheckViolation) as caught:
+                cur.execute(self._NEW, ('TKN-PRED-XIND', 'SER-PRED-XIND',
+                                        mine['individual_id'], other['token_id']))
+            self.assertIn('predecessor', str(caught.exception).lower())
+
+    def test_a_predecessor_belonging_to_the_same_individual_is_accepted(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT token_id, individual_id FROM IdentityToken ORDER BY token_id LIMIT 1")
+            mine = cur.fetchone()
+            cur.execute(self._NEW, ('TKN-PRED-SAME', 'SER-PRED-SAME',
+                                    mine['individual_id'], mine['token_id']))
+            self.assertIsNotNone(cur.fetchone()['token_id'])
+
+
+class TestEnrollmentCodeOneWayDoor(_CheckBase):
+    """A code is fixed once issued, redeemed at most once, and its attempt
+    counter only climbs. Append-only in one direction, which is why it is not in
+    the table-driven class above."""
+
+    _ISSUE = ("INSERT INTO EnrollmentCode (individual_id, issued_by_agency_id, code_hash, "
+              "channel, expires_at) VALUES (1, 1, repeat('f', 64), 'POSTAL', "
+              "CURRENT_TIMESTAMP + INTERVAL '1 day') RETURNING code_id")
+
+    def test_the_code_hash_cannot_be_changed(self):
+        with self.conn.cursor() as cur:
+            cur.execute(self._ISSUE)
+            code_id = cur.fetchone()['code_id']
+            with self.assertRaises(pg_errors.CheckViolation) as caught:
+                cur.execute("UPDATE EnrollmentCode SET code_hash = repeat('0', 64) "
+                            "WHERE code_id = %s", (code_id,))
+            self.assertIn('fixed once issued', str(caught.exception))
+
+    def test_a_redeemed_code_cannot_be_un_redeemed(self):
+        with self.conn.cursor() as cur:
+            cur.execute(self._ISSUE)
+            code_id = cur.fetchone()['code_id']
+            # A redeemed code must name the proofing it produced, so the redemption
+            # has to be a real one to get the door shut behind it.
+            cur.execute(_PROOFING)
+            proofing_id = cur.fetchone()['proofing_id']
+            cur.execute("UPDATE EnrollmentCode SET redeemed_at = CURRENT_TIMESTAMP, "
+                        "proofing_id = %s WHERE code_id = %s", (proofing_id, code_id))
+            with self.assertRaises(pg_errors.CheckViolation) as caught:
+                cur.execute("UPDATE EnrollmentCode SET redeemed_at = NULL WHERE code_id = %s",
+                            (code_id,))
+            self.assertIn('single use', str(caught.exception))
+
+    def test_the_attempt_counter_cannot_be_reset(self):
+        """Resetting the counter is how a brute-force bound stops being one."""
+        with self.conn.cursor() as cur:
+            cur.execute(self._ISSUE)
+            code_id = cur.fetchone()['code_id']
+            cur.execute("UPDATE EnrollmentCode SET attempts = attempts + 2 WHERE code_id = %s",
+                        (code_id,))
+            with self.assertRaises(pg_errors.CheckViolation):
+                cur.execute("UPDATE EnrollmentCode SET attempts = 0 WHERE code_id = %s", (code_id,))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

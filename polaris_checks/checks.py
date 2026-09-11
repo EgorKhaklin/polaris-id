@@ -10834,6 +10834,64 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_append_only_tables_are_tested_exhaustively(root: pathlib.Path) -> list[Finding]:
+    """C1 is claimed once per table, so it must be tested once per table (v9.412).
+
+    v9.411 measured the triggers the way v9.407 measured the constraints: drop each one and
+    see whether anything goes red. Fourteen of 37 were covered by nothing, twelve of them
+    append-only guards on audit-of-record tables, which is the mechanism C1 IS.
+
+    The repair is table-driven on purpose. A hand-written test per table covers the tables
+    somebody remembered; the class here reads the append-only triggers out of the CATALOG and
+    requires its fixture table to name every one, so a new audit-of-record table cannot be added
+    without either covering it or failing the suite. The fixtures create their subject rather
+    than skipping when a table is empty, which is the v9.411 rule: four tables looked populated
+    only because earlier tests had left rows in them.
+
+    All fourteen are now caught: each was dropped from a freshly built database and the suites
+    went red."""
+    name = "append_only_tested"
+    rel = "polaris_web/test_check_constraints.py"
+    suite = _read(root, rel)
+    if not suite:
+        return _fail(name, f"{rel} is absent; C1's per-table evidence is gone")
+    problems = []
+    if "APPEND_ONLY_FIXTURES" not in suite or "APPEND_ONLY_GUARDS" not in suite:
+        problems.append("the table-driven append-only fixtures are gone, so C1 is tested only "
+                        "on the tables somebody wrote a test for")
+    # The catalog cross-check is the anti-vacuity anchor: without it the fixture table can
+    # silently fall behind the schema and the tests pass on a shrinking subset.
+    if "pg_trigger" not in suite or "p.proname = ANY(%s)" not in suite:
+        problems.append("the fixture table is no longer cross-checked against the catalog, so a "
+                        "new append-only table would simply go untested")
+    for needle, why in (("live - listed", "a table with an append-only trigger that nothing lists"),
+                        ("listed - live", "a listed table whose trigger has disappeared")):
+        if needle not in suite:
+            problems.append(f"the catalog cross-check no longer detects {why}")
+    # Both directions of the edit, and the reason for the refusal.
+    for needle, why in (("refuses_update", "the UPDATE half"), ("refuses_delete", "the DELETE half"),
+                        ("APPEND_ONLY_REFUSALS", "the check that the refusal is the append-only "
+                                                 "guarantee and not a missing GRANT")):
+        if needle not in suite:
+            problems.append(f"{why} is gone")
+    # A fixture that skips instead of building its subject puts the v9.411 hole back.
+    if "is empty and no fixture statement is declared" not in suite:
+        problems.append("an empty table no longer fails the suite, so a table whose rows happen "
+                        "to be absent stops being tested without anything saying so")
+    fixtures = len(re.findall(r"(?m)^\s+'\w+': \('\w+',", suite))
+    if fixtures < 20:
+        problems.append(f"only {fixtures} append-only tables are listed; the parse has broken "
+                        "and this check is passing by finding nothing")
+    if problems:
+        return _fail(name, "; ".join(problems[:3]))
+    return _ok(name,
+               f"all {fixtures} append-only tables are tested for both UPDATE and DELETE, each "
+               "refusal is checked to be the append-only guarantee rather than a missing grant, "
+               "an empty table fails rather than quietly going untested, and the fixture table is "
+               "cross-checked against the catalog in both directions so a new audit-of-record "
+               "table cannot be added without covering it")
+
+
 def check_property_suite_cannot_skip_its_subject(root: pathlib.Path) -> list[Finding]:
     """A property test that skips for want of a row has stopped proving anything (v9.411).
 
@@ -14061,6 +14119,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_redaction_adversary_is_not_flattered,
     check_trust_ladder_is_bound_to_the_code,
     check_property_suite_cannot_skip_its_subject,
+    check_append_only_tables_are_tested_exhaustively,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,

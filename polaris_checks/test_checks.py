@@ -12138,3 +12138,55 @@ def test_property_no_skip_check_discriminates(tmp_path):
     # the suite is gone
     (tmp_path / rel).unlink()
     assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "FAIL", "must FAIL when the property suite is absent"
+
+
+def test_append_only_tested_check_discriminates(tmp_path):
+    SUITE = (
+        "APPEND_ONLY_GUARDS = ('reject_audit_modification',)\n"
+        "APPEND_ONLY_REFUSALS = ('append-only',)\n"
+        "APPEND_ONLY_FIXTURES = {\n"
+        + "".join("    't%d': ('pk%d', None),\n" % (i, i) for i in range(22))
+        + "}\n\n\n"
+        "class TestEveryAppendOnlyTableRefusesEdits:\n"
+        "    def _a_row_in(self, cur, table, pk, make):\n"
+        "        self.assertIsNotNone(make, f'{table} is empty and no fixture statement is declared')\n"
+        "    def test_every_append_only_table_refuses_update(self): pass\n"
+        "    def test_every_append_only_table_refuses_delete(self): pass\n"
+        "    def test_catalog(self):\n"
+        "        cur.execute('SELECT c.relname FROM pg_trigger t WHERE p.proname = ANY(%s)', (g,))\n"
+        "        self.assertEqual(live - listed, set())\n"
+        "        self.assertEqual(listed - live, set())\n")
+    rel = "polaris_web/test_check_constraints.py"
+    def write(body):
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write(SUITE)
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # the fixture table goes away, so C1 is tested only where somebody wrote a test
+    write(SUITE.replace("APPEND_ONLY_FIXTURES = {", "SOMETHING_ELSE = {"))
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL without the table-driven fixtures"
+    # the catalog cross-check goes away, so a new append-only table just goes untested
+    write(SUITE.replace("cur.execute('SELECT c.relname FROM pg_trigger t WHERE p.proname = ANY(%s)', (g,))\n", ""))
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when the fixture table is not cross-checked against the catalog"
+    # it stops noticing a table the catalog has and the list does not
+    write(SUITE.replace("        self.assertEqual(live - listed, set())\n", ""))
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when an unlisted append-only table would not be noticed"
+    # it stops noticing a listed table whose trigger has gone
+    write(SUITE.replace("        self.assertEqual(listed - live, set())\n", ""))
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when a vanished trigger would not be noticed"
+    # only one half of the edit is tested
+    write(SUITE.replace("    def test_every_append_only_table_refuses_delete(self): pass\n", ""))
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when only UPDATE is tested"
+    # the refusal is no longer checked to be the append-only one
+    write(SUITE.replace("APPEND_ONLY_REFUSALS = ('append-only',)\n", ""))
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when a missing GRANT would read as C1 being enforced"
+    # an empty table stops failing the suite
+    write(SUITE.replace("        self.assertIsNotNone(make, f'{table} is empty and no fixture statement is declared')\n",
+                        "        return None\n"))
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when an empty table quietly goes untested"
+    # the fixture table is emptied, which satisfies everything above vacuously
+    write(SUITE.replace("".join("    't%d': ('pk%d', None),\n" % (i, i) for i in range(22)),
+                        "    't0': ('pk0', None),\n"))
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when too few append-only tables are listed, rather than pass by finding nothing"
+    # the suite is gone
+    (tmp_path / rel).unlink()
+    assert checks.check_append_only_tables_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when the constraint suite is absent"

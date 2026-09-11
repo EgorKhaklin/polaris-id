@@ -5,6 +5,47 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.412 — 2026-09-11 (C1 is claimed once per table, so it is tested once per table)
+
+v9.411 left 14 of 37 triggers covered by nothing: drop one and the whole database suite stayed
+green. Twelve were append-only guards on audit-of-record tables, which is the mechanism C1 IS.
+All 14 are now caught, each verified by dropping it from a freshly built database and watching
+the suites go red.
+
+The repair is table-driven, and the third test in the class is the reason. A hand-written test
+per table covers the tables somebody remembered; this one reads the append-only triggers out of
+the CATALOG and requires its fixture table to name every one, in both directions. A new
+audit-of-record table cannot be added without either covering it or failing the suite, and a
+listed table whose trigger disappears fails too.
+
+The fixtures create their subject rather than skipping, which is v9.411's rule, and it earned
+itself immediately: four tables looked populated on the database this was written against, and
+were empty on a freshly built one. The rows had been left there by earlier test runs. A skip
+would have hidden that; the assertion named the four tables and asked for their INSERT.
+
+Each refusal is checked to be the append-only guarantee and not merely an error. The guards raise
+`insufficient_privilege`, which is the right code (this is not a row failing a rule, it is an
+operation the table does not offer) and is also what a missing GRANT raises, so the message has to
+say what refused.
+
+Three more tests cover the guards that are not append-only: RevocationList refuses a token that is
+still live, with the positive half as well so the test would not also pass against a trigger that
+refused everything; a replacement token cannot inherit a predecessor belonging to a different
+person, which would otherwise be a way to move a credential between people; and the enrollment
+code's one-way door, where the hash is fixed once issued, a redeemed code cannot be un-redeemed,
+and the attempt counter cannot be reset, because resetting it is how a brute-force bound stops
+being one.
+
+One thing this did NOT find, recorded because it looked like a defect for a while: the reload path
+is correct. `06_triggers.sql` drops and recreates the 33 triggers it owns, `04_data.sql` does not
+touch triggers at all, and the four triggers defined elsewhere are created once at load and
+survive. What was broken was this session's mutation harness, which restored by re-running
+`06_triggers.sql` and therefore could not put back a trigger that file does not own.
+
+`check_append_only_tables_are_tested_exhaustively` (235) pins the shape: both halves of the edit,
+the refusal reason, the empty-table assertion, the catalog cross-check in both directions, and a
+floor on how many tables are listed.
+
 ## v9.411 — 2026-09-11 (a skipped test prints OK)
 
 v9.407 mutation-tested the CHECK constraints and found all 46 load-bearing. MISSION names three
