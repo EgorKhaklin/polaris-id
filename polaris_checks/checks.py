@@ -10834,6 +10834,81 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_trust_ladder_is_bound_to_the_code(root: pathlib.Path) -> list[Finding]:
+    """The anti-trust ladder must name mechanisms that exist, and stop where it stops (v9.410).
+
+    `meta/trust-ladder.md` states the argument that produces C1 to C10: find what the system is
+    trusting, refuse to trust it, replace the trust with a mechanism. Applied repeatedly the move
+    reaches a rung that no mechanism can discharge, which is today's model of computation.
+
+    A document like that is exactly the kind that rots into an essay. Two things stop it. Every
+    settled rung must name an object that RESOLVES in this tree, because a rung with no mechanism
+    is an opinion; and the boundary section must survive, because the value of the ladder is
+    entirely in its top rung being labelled a question rather than a feature. A ladder that
+    quietly starts implying Polaris has physics-based security is worse than no ladder.
+
+    The non-creation ledger is held to the same standard from both ends: it must name the
+    surfaces where Polaris records nothing AND the ones where it records something an unbounded
+    adversary would want. A ledger that lists only the wins is an advertisement."""
+    name = "trust_ladder"
+    rel = "meta/trust-ladder.md"
+    doc = _read_raw(root, rel)          # the PROSE is the property here
+    if not doc:
+        return _fail(name, f"{rel} is absent")
+    problems = []
+
+    # Every mechanism the ladder names must exist. A path is checked as a path; a check_* name
+    # is checked against the layer; a SQL identifier against the schema and triggers.
+    sql = _read(root, "polaris_sql/01_schema.sql") + _read(root, "polaris_sql/06_triggers.sql")
+    known_checks = {c.__name__ for c in CHECKS}
+    missing = []
+    for ref in sorted(set(re.findall(r"`([A-Za-z0-9_./-]+)`", doc))):
+        if ref.startswith("check_"):
+            if ref not in known_checks:
+                missing.append(f"{ref} (no such check)")
+        elif "/" in ref or ref.endswith((".py", ".sh", ".md", ".sql")):
+            if not (root / ref).exists():
+                missing.append(f"{ref} (no such path)")
+        elif re.fullmatch(r"(chk|trg|uq)_\w+|enrollment_code_one_way_door", ref):
+            if ref not in sql:
+                missing.append(f"{ref} (not in the schema or triggers)")
+    if missing:
+        problems.append("the ladder names mechanism(s) that do not exist, so those rungs are "
+                        "opinions rather than positions: " + ", ".join(missing[:4]))
+
+    # The boundary is the load-bearing half. Without it the ladder reads as a claim.
+    if "## What Polaris does not claim" not in doc:
+        problems.append("the boundary section is gone; without it the ladder reads as a claim "
+                        "that Polaris has security beyond what it implements")
+    for phrase, why in (
+            ("no** temporal cryptography", "the disclaimer of temporal cryptography"),
+            ("FIPS 204 ML-DSA-65", "the statement of what the cryptography actually is"),
+            ("is a question this document declines to answer",
+             "the statement that the top rung is a question, not a feature")):
+        if phrase not in doc:
+            problems.append(f"the boundary no longer carries {why}")
+
+    # The ledger must cut both ways.
+    if "the honest other half" not in doc:
+        problems.append("the non-creation ledger no longer states what Polaris DOES record, "
+                        "which makes it an advertisement rather than a ledger")
+    if "harvest now, decrypt later" not in doc:
+        problems.append("the ladder no longer connects its open rung to the engineering form of "
+                        "the same problem, which is the part that produces work")
+    # A ladder that lost its rungs would pass every test above by having nothing to check.
+    rungs = len(re.findall(r"(?m)^\| [1-9] \|", doc))
+    if rungs < 6:
+        problems.append(f"only {rungs} rungs were found; the ladder has been emptied and this "
+                        "check is passing by finding nothing")
+    if problems:
+        return _fail(name, "; ".join(problems[:3]))
+    return _ok(name,
+               f"the trust ladder's {rungs} rungs each name a mechanism that resolves in this "
+               "tree, its open rung is labelled a question rather than a feature, the boundary "
+               "states what Polaris does not claim, and the non-creation ledger records what is "
+               "kept as well as what is never made")
+
+
 def check_redaction_adversary_is_not_flattered(root: pathlib.Path) -> list[Finding]:
     """A privacy result is only as good as the attacker that failed to get it (v9.408).
 
@@ -13929,6 +14004,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_detection_tests_have_a_positive_control,
     check_constraint_suite_is_mutation_tested,
     check_redaction_adversary_is_not_flattered,
+    check_trust_ladder_is_bound_to_the_code,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,

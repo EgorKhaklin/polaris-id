@@ -12031,3 +12031,66 @@ def test_redaction_adversary_check_discriminates(tmp_path):
     # the suite is gone
     (tmp_path / rel).unlink()
     assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "FAIL", "must FAIL when the suite is absent"
+
+
+def test_trust_ladder_check_discriminates(tmp_path):
+    LADDER = (
+        "# The trust ladder\n\n"
+        "| # | Normally trusted | Refused by | Mechanism |\n"
+        "|---|---|---|---|\n"
+        "| 1 | The user's input | Server-side enforcement | `check_csp_forbids_unsafe_inline` |\n"
+        "| 2 | The operator | An audit of record | `chk_real_constraint` |\n"
+        "| 3 | The application code | Guarantees below it | `polaris_checks/checks.py` |\n"
+        "| 4 | The test suite | Mutation | `polaris_checks/checks.py` |\n"
+        "| 5 | Today's cryptography | A registry | `polaris_checks/checks.py` |\n"
+        "| 6 | Today's model of computation | Nothing. This rung is open | See below |\n\n"
+        "the honest other half, because a ledger that lists only the wins is an advertisement\n"
+        "its practical form has a name: harvest now, decrypt later\n\n"
+        "## What Polaris does not claim\n\n"
+        "- Polaris implements **no** temporal cryptography and nothing physics-based.\n"
+        "- The cryptography here is standard: FIPS 204 ML-DSA-65 and standard TLS 1.3.\n"
+        "- Rung 6 is a question this document declines to answer, not a feature.\n")
+    rel = "meta/trust-ladder.md"
+    def write(body):
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+        sql = tmp_path / "polaris_sql"; sql.mkdir(exist_ok=True)
+        (sql / "01_schema.sql").write_text("CONSTRAINT chk_real_constraint CHECK (true)\n")
+        (sql / "06_triggers.sql").write_text("-- triggers\n")
+        (tmp_path / "polaris_checks").mkdir(exist_ok=True)
+        (tmp_path / "polaris_checks" / "checks.py").write_text("# the layer\n")
+    write(LADDER)
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # a rung names a check that does not exist
+    write(LADDER.replace("`check_csp_forbids_unsafe_inline`", "`check_no_such_check_anywhere`"))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when a rung names a check that does not exist"
+    # a rung names a constraint the schema does not define
+    write(LADDER.replace("`chk_real_constraint`", "`chk_invented_constraint`"))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when a rung names a constraint the schema does not define"
+    # a rung names a path that is not there
+    write(LADDER.replace("`polaris_checks/checks.py` |\n| 4", "`scripts/polaris-nonexistent.py` |\n| 4"))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when a rung names a path that does not exist"
+    # the boundary section is gone, so the ladder reads as a claim
+    write(LADDER.replace("## What Polaris does not claim", "## Notes"))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the boundary section is removed"
+    # the disclaimer of temporal cryptography is gone
+    write(LADDER.replace("**no** temporal cryptography", "several kinds of temporal cryptography"))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the temporal-cryptography disclaimer is removed"
+    # the open rung stops being labelled a question
+    write(LADDER.replace("Rung 6 is a question this document declines to answer, not a feature.",
+                         "Rung 6 is solved by Polaris."))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the open rung is presented as a feature"
+    # what Polaris actually does implement stops being named
+    write(LADDER.replace("FIPS 204 ML-DSA-65", "something post-quantum"))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the boundary stops naming the real cryptography"
+    # the ledger lists only the wins
+    write(LADDER.replace("the honest other half, because a ledger that lists only the wins is an advertisement\n", ""))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the ledger stops recording what Polaris does store"
+    # the open rung loses its engineering form
+    write(LADDER.replace("its practical form has a name: harvest now, decrypt later\n", ""))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the open rung is not connected to harvest-now-decrypt-later"
+    # the rungs are gone, so every other assertion above is vacuously satisfied
+    write(LADDER.split("| 1 |")[0] + LADDER.split("| 6 | Today's model of computation | Nothing. This rung is open | See below |\n")[1])
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the ladder has been emptied of rungs, rather than pass by finding nothing"
+    # the file is gone
+    (tmp_path / rel).unlink()
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the ladder is absent"

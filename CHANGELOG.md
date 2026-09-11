@@ -5,6 +5,53 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.410 — 2026-09-11 (the ladder, and where it stops)
+
+Polaris makes one move over and over: find what the system is currently trusting, refuse to
+trust it, replace the trust with a mechanism. Don't trust the user, so enforce disclosure server
+side. Don't trust the operator, so make the audit append-only in a trigger. Don't trust the
+application code, so put the guarantees under it in the schema. Don't trust the tests that prove
+the code, so mutate the constraints and require the tests to notice. Don't trust today's
+cryptography, so put the algorithm in a registry with a migration path.
+
+Applied to its own output, the move eventually reaches a rung no mechanism can discharge: today's
+model of computation. "Post-quantum" means secure against the standard quantum model. It does not
+mean secure against a model nobody has written, and nothing that can be built inside this
+repository makes it mean that.
+
+`meta/trust-ladder.md` writes the ladder down, binds every settled rung to the object in this tree
+that carries it, and says plainly that the top rung is a question rather than a feature.
+
+The reason it is worth writing down is not the top rung. It is that the top rung produces an
+instruction you can act on today. If the adversary's computation cannot be bounded, every
+protection resting on computational difficulty has an expiry date nobody can name; the one thing
+outside that category is information that was never recorded, because an absent fact is not hard
+to recover, it is not there. That is already the rule on the surfaces where it matters: the
+zero-knowledge event stores no token link, the presentation carries no identifier stable across
+verifiers, the enrollment and duress codes exist only as hashes, and the transparency report has
+no cumulative total to subtract from.
+
+The document carries the other half of that ledger too, because a ledger listing only the wins is
+an advertisement. Polaris records legal names, dates of birth, the token link on non-ZK events,
+event locations and the epoch tree, and an adversary with unbounded future computation and a copy
+of the database gets all of it. None of that is a defect; the point is that the answer to "what
+would a future adversary get" is read rather than guessed.
+
+And the open rung already has an engineering name: harvest now, decrypt later. That is "future
+computation recovers present information" with no appeal to physics, and v9.404 measured it per
+hop off a real handshake rather than assuming it from a Dockerfile.
+
+`check_trust_ladder_is_bound_to_the_code` (233) holds the document to the tree: every mechanism a
+rung names must resolve, as a path, a check in the layer, or an identifier in the schema; the
+boundary section must keep stating what Polaris does NOT claim, which is no temporal cryptography,
+no physics-based security, and standard named primitives; the ledger must keep both halves; and
+the rung count has a floor, so a ladder emptied of rungs fails rather than satisfying every other
+assertion vacuously.
+
+The tree implements none of the speculation and nothing in it depends on the question having an
+answer. Delete the top rung and no guarantee in MISSION.md weakens. That is the test a
+philosophical document has to pass to belong in an engineering repository.
+
 ## v9.409 — 2026-09-11 (the drill was right that the counter moved and wrong that it mattered)
 
 The Atlas UI drill went red in CI on v9.406: "the counter kept climbing after Stop (240 -> 280)".
