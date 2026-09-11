@@ -310,6 +310,16 @@ jobs:
       - name: Transparency report — no withheld figure is recoverable by subtraction
         run: python scripts/polaris-transparency-report-drill.py
 
+      # v9.388 (P1.18 item 8) — the external-review packet, RE-CHECKED IN BOTH DIRECTIONS.
+      # Every citation resolves and every cited check runs, which is the discipline the 800-63
+      # mapping already uses. The new half is the limitations: each carries a WITNESS, a file
+      # and a string that must still be present for the limitation to hold, so FIXING one fails
+      # the build until the entry is removed. A limitations list that can only be appended to is
+      # a confession nobody maintains, and a stale one tells a reviewer the system is weaker
+      # than it is, which nobody catches because it reads as modesty. No database.
+      - name: Review packet — every citation resolves and every limitation is still true
+        run: python scripts/polaris-review-packet-drill.py
+
       # v9.372 (P6.2) — the 800-63 mapping, RESOLVED. A control mapping is the easiest document
       # in a project to write and the easiest to let rot: a table of claims about a codebase,
       # maintained by hand, read by people who cannot check it, going stale the first time

@@ -5,6 +5,49 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.388 — 2026-09-10 (P1.18 item 8: a limitations list that fails the build when a limitation is fixed)
+
+Item 8 asks for an external-review packet: a threat matrix for the existing subsystems, blunt
+known-limitations, and guarantee-attack prompts. `docs/REVIEW-PACKET.md` is that, and the part
+worth describing is how it is kept true.
+
+EVERY CITATION RESOLVES AND EVERY CITED CHECK RUNS. Thirty-six checks and several drills are
+named across twelve subsystems and twelve attack prompts, and naming one that fails is the same
+as naming one that is gone. That half is the discipline the 800-63 mapping already uses, and it
+caught a bad citation on the drill's first execution: a PQC drill that does not exist under that
+name.
+
+THE LIMITATIONS ARE CHECKED IN THE OTHER DIRECTION, and that is the new idea. Each of the eleven
+carries a WITNESS -- a file and a string that must still be present for the limitation to hold.
+Implement the external ledger backend and the witness string goes; the drill fails; the entry
+has to be removed. A limitations list that can only be appended to is a confession nobody
+maintains. An out-of-date one is worse than that: it tells a reviewer the system is WEAKER than
+it is, and nobody catches it, because a stale limitation reads as modesty.
+
+THE MATRIX MUST NAME WHAT DOES NOT STAND IN THE WAY. Every threat row carries a residual column
+and the drill fails a row that leaves it thin. A row with a mechanism and no residual is the half
+of the picture that reassures, and it is the half a reviewer can already read off the check
+names. So the packet says that the two-witness rule is about the correctness of a signature and
+not the legitimacy of the decision to issue; that a stale epoch accepts a credential revoked
+since; that a superuser on the database host is outside the append-only boundary entirely; that
+nobody outside the authority can detect an access that was never recorded; and that two colluding
+authorities clear the mass-revocation bound.
+
+AND THE PACKET SAYS ON ITS OWN FIRST PAGE THAT NOBODY HAS REVIEWED IT. Every guarantee it lists
+is checked by machinery written by the same hand as the guarantee, and a packet that opens with
+its controls and omits that sentence is committing the failure it exists to prevent. The last
+attack prompt follows from it: A-12 asks a reviewer to break the check layer itself, because if a
+check can be made to pass on a tree where its property is false, everything above it is worth
+less than it looks.
+
+- `check_review_packet` with a five-fixture detection test, and
+  `scripts/polaris-review-packet-drill.py` on every push (224 checks)
+- six verified detections in the drill, including the one that matters: a limitation that has
+  been FIXED fails the build
+- [REVIEW-PACKET.md](docs/REVIEW-PACKET.md)
+
+---
+
 ## v9.387 — 2026-09-10 (P1.18 item 6: the model was doing the thing the item forbids)
 
 Roadmap P1.18 item 6 asks for verification latency measured on the real topology, and states the

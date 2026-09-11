@@ -10565,6 +10565,82 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_review_packet(root: pathlib.Path) -> list[Finding]:
+    """The packet handed to an external reviewer cannot quietly stop being true (P1.18 item 8).
+
+    A review packet is a set of claims about a codebase, written once and read by somebody who
+    cannot check them. It rots the way every such document rots: a check is renamed, a drill
+    deleted, a limitation fixed, and the page keeps saying what it said. Nothing turns red; the
+    document becomes untrue, and it is most untrue exactly where it matters, in the hands of the
+    reviewer it was written for.
+
+    So every citation resolves and every cited check runs -- the discipline the 800-63 mapping
+    already uses. The new half is the limitations, and it runs in the OTHER DIRECTION. Each
+    carries a WITNESS: a file and a string that must still be present for the limitation to hold.
+    Fix the limitation and the witness goes, the drill fails, and the entry has to be removed.
+
+    THAT DIRECTION IS THE POINT. A limitations list that can only be appended to is a confession
+    nobody maintains, and an out-of-date one tells a reviewer the system is WEAKER than it is --
+    dishonesty that nobody catches because it reads as modesty.
+
+    And the packet must say, in its own first paragraph, that nothing in it has been reviewed by
+    anybody outside this repository. Every guarantee it lists is checked by machinery written by
+    the same hand as the guarantee. A packet that opens with its controls and omits that sentence
+    is committing the failure it exists to prevent."""
+    name = "review_packet"
+    doc = _read(root, "docs/REVIEW-PACKET.md")
+    drill = root / "scripts" / "polaris-review-packet-drill.py"
+    if not doc:
+        return _fail(name, "docs/REVIEW-PACKET.md must exist: the packet is the deliverable")
+    if not drill.is_file():
+        return _fail(name,
+                     "scripts/polaris-review-packet-drill.py must exist. A packet nothing "
+                     "re-checks is a document that was true once")
+
+    for heading in ("## 1. Threat matrix by subsystem", "## 2. Known limitations",
+                    "## 3. Guarantee-attack prompts"):
+        if heading not in doc:
+            return _fail(name, f"the packet must carry the section {heading!r}")
+
+    flat = re.sub(r"\s+", " ", doc)
+    if "has been reviewed by anybody outside this repository" not in flat:
+        return _fail(name,
+                     "the packet must say that nothing in it has been externally reviewed. Every "
+                     "guarantee it lists is checked by machinery written by the same hand as the "
+                     "guarantee, and a packet that omits that is the failure it exists to prevent")
+
+    witnesses = re.findall(r"`witness:([^:`]+(?::[^:`]+)*)::([^`]+)`", doc)
+    if len(witnesses) < 5:
+        return _fail(name,
+                     f"only {len(witnesses)} limitation(s) carry a witness. A limitation without "
+                     "one cannot be checked for having been FIXED, which is the direction that "
+                     "keeps the list honest")
+    stale = []
+    for rel, needle in witnesses:
+        target = root / rel
+        if not target.is_file() or needle not in target.read_text(encoding="utf-8"):
+            stale.append(f"{rel}::{needle[:30]}")
+    if stale:
+        return _fail(name,
+                     "a limitation's witness no longer resolves, so the limitation is either "
+                     "fixed or misstated and the entry must go: " + "; ".join(stale[:3]))
+
+    cited = set(re.findall(r"`check:([A-Za-z0-9_]+)`", doc))
+    known = {f.__name__.replace("check_", "") for f in CHECKS}
+    missing = sorted(cited - known)
+    if missing:
+        return _fail(name, "the packet cites checks that do not exist: " + ", ".join(missing[:4]))
+    if len(cited) < 10:
+        return _fail(name,
+                     f"the packet cites only {len(cited)} checks. A packet that points at almost "
+                     "nothing gives a reviewer nothing to aim at")
+    return _ok(name,
+               f"the packet carries a threat matrix, {len(witnesses)} witnessed limitations and "
+               f"attack prompts; every one of its {len(cited)} cited checks exists, every "
+               "limitation is still true, and it says on its own first page that nobody outside "
+               "this repository has reviewed any of it")
+
+
 def check_capacity_model(root: pathlib.Path) -> list[Finding]:
     """No id space runs out before the national targets are reached (P7.3).
 
@@ -12838,6 +12914,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_review_packet,
     check_capacity_model,
     check_transparency_program,
     check_audited_reads_are_logged,

@@ -9428,6 +9428,66 @@ def test_coexistence_plan_check_discriminates(tmp_path):
             f"the record must state: {phrase}"
 
 
+def test_review_packet_check_discriminates(tmp_path):
+    # v9.388 (P1.18 item 8): the ways a review packet stops being true. The real packet is the
+    # fixture because the check resolves its witnesses against real files -- a synthetic one
+    # would be testing a document nobody hands to a reviewer.
+    #
+    # The fixed-limitation case is the one worth having. Every other rot here makes the packet
+    # look BETTER than the system; that one makes it look WORSE, and nobody catches it because
+    # an out-of-date limitation reads as modesty.
+    import shutil
+    WITNESSED = ['polaris_web/kms_standin.py', 'polaris_web/capacity.py',
+                 'polaris_web/transparency.py', 'polaris_web/coexistence.py',
+                 'polaris_web/proofing.py', 'README.md', 'docs/RED-TEAM-SCOPE.md',
+                 'scripts/polaris-transparency-ledger.py', 'scripts/polaris-verify-load.py',
+                 'polaris_sql/01_schema.sql']
+
+    def write(old=None, new=None):
+        for rel in ['docs/REVIEW-PACKET.md',
+                    'scripts/polaris-review-packet-drill.py'] + WITNESSED:
+            dst = tmp_path / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / rel, dst)
+        if old:
+            dst = tmp_path / 'docs/REVIEW-PACKET.md'
+            text = dst.read_text()
+            assert old in text, "fixture string missing from the packet"
+            dst.write_text(text.replace(old, new))
+
+    write()
+    assert checks.check_review_packet(tmp_path)[0].level == "OK", \
+        "the real packet must PASS: every witness resolves and every cited check exists"
+
+    # A LIMITATION THAT WAS FIXED. The entry has to go, and until it does the packet
+    # understates the system to the one audience that should not be misled either way.
+    write('witness:polaris_web/kms_standin.py::stand-in',
+          'witness:polaris_web/kms_standin.py::a real managed service')
+    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
+        "a limitation whose witness has gone must FAIL: it is fixed, or it was never true"
+
+    # THE PACKET STOPS SAYING NOBODY HAS REVIEWED IT.
+    write('has been reviewed by anybody outside this repository',
+          'has been audited by three independent firms')
+    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
+        "a packet that drops the unreviewed admission must FAIL"
+
+    # A CITED CHECK THAT DOES NOT EXIST. The commonest rot: a rename.
+    write('`check:audited_reads_are_logged`', '`check:audited_reads_are_definitely_logged`')
+    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
+        "a citation naming a check that does not exist must FAIL"
+
+    # A SECTION DELETED.
+    write('## 3. Guarantee-attack prompts', '## 3. Some further thoughts')
+    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
+        "a packet missing one of its three sections must FAIL"
+
+    # THE WITNESSES STRIPPED, which would leave the limitations uncheckable.
+    write('`witness:', '`formerly:')
+    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
+        "limitations with no witnesses must FAIL: nothing could tell they were fixed"
+
+
 def test_capacity_model_check_discriminates(tmp_path):
     # v9.384 (P7.3): the ways a capacity model stops meaning anything. The real module is the
     # fixture, because the check LOADS and RUNS it -- a synthetic stand-in would be a second
