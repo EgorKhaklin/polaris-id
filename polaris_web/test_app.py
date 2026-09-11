@@ -11523,6 +11523,48 @@ class IdentityProofingTests(PolarisTestCase):
                 "verification_method": "BIOMETRIC_COMPARISON",
                 "validated": validated, "verified": verified}
 
+    def _verified_by(self, method, strength="SUPERIOR"):
+        piece = self._piece(strength)
+        piece["verification_method"] = method
+        return piece
+
+    def test_how_it_was_verified_caps_what_it_contributes(self):
+        """v9.395: the methods are not interchangeable at the job verification does.
+
+        Until this, any method that was not NONE let evidence contribute its full
+        nominal strength. A passport "verified" by posting a code to the address on it
+        counted exactly as much as one verified against the face of the person holding
+        it, and one SUPERIOR is IAL2, so that single record produced an IAL2 enrollment.
+        """
+        pf = self._pf()
+        self.assertEqual(pf.effective_strength(self._verified_by("BIOMETRIC_COMPARISON")),
+                         "SUPERIOR")
+        self.assertEqual(pf.effective_strength(self._verified_by("ENROLLMENT_CODE")), "FAIR")
+        self.assertEqual(pf.effective_strength(self._verified_by("KNOWLEDGE_BASED")), "WEAK")
+
+    def test_a_posted_code_alone_does_not_carry_an_ial2_enrollment(self):
+        """It proves somebody at that address opened a letter.
+
+        Which is real evidence and is not evidence that the applicant is the document's
+        holder -- and the address is exactly what a controlling household or a monitored
+        shelter takes from somebody, the same population the referee path exists for.
+        """
+        pf = self._pf()
+        self.assertEqual(pf.derive_ial([self._verified_by("ENROLLMENT_CODE")]), "IAL1")
+        self.assertEqual(pf.derive_ial([self._verified_by("ENROLLMENT_CODE")] * 2), "IAL1",
+                         "two weak bindings do not make a strong one")
+
+    def test_a_ceiling_never_raises_a_weak_document(self):
+        """The cap is a ceiling, not a level: FAIR evidence stays FAIR."""
+        pf = self._pf()
+        self.assertEqual(
+            pf.effective_strength(self._verified_by("ENROLLMENT_CODE", "WEAK")), "WEAK")
+
+    def test_a_strong_method_carries_no_ceiling(self):
+        pf = self._pf()
+        self.assertNotIn("BIOMETRIC_COMPARISON", pf.VERIFICATION_CEILING)
+        self.assertNotIn("PHYSICAL_COMPARISON", pf.VERIFICATION_CEILING)
+
     def test_the_level_is_derived_from_the_evidence(self):
         pf = self._pf()
         self.assertEqual(pf.derive_ial([]), "IAL1")

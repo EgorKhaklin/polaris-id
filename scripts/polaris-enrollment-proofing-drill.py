@@ -88,10 +88,11 @@ def main():
         cfg["password"] = env["PGPASSWORD"]
     conn = psycopg2.connect(cursor_factory=RealDictCursor, **cfg)
 
-    def piece(strength, validated=True, verified=True, kind="PASSPORT"):
+    def piece(strength, validated=True, verified=True, kind="PASSPORT",
+              verification="BIOMETRIC_COMPARISON"):
         return {"evidence_type": kind, "strength": strength,
                 "validation_method": "DIGITAL_SIGNATURE_CHECK",
-                "verification_method": "BIOMETRIC_COMPARISON",
+                "verification_method": verification,
                 "validated": validated, "verified": verified}
 
     print("what an enrollment rested on")
@@ -118,6 +119,18 @@ def main():
             ([piece(T), piece(T)], "REMOTE_UNSUPERVISED", None, "IAL2", "two STRONG reach IAL2"),
             ([piece(T), piece(F), piece(F)], "REMOTE_UNSUPERVISED", None, "IAL2",
              "one STRONG and two FAIR reach IAL2"),
+            # v9.395: HOW it was verified caps what it contributes. A posted code proves
+            # somebody at that address opened a letter; knowledge-based answers prove
+            # access to a credit file. Neither proves the document is the applicant's,
+            # and both used to let a SUPERIOR document carry an IAL2 enrollment alone.
+            ([piece(S, verification="ENROLLMENT_CODE")], "REMOTE_UNSUPERVISED", None, "IAL1",
+             "a SUPERIOR document verified only by a posted code is IAL1"),
+            ([piece(S, verification="ENROLLMENT_CODE")] * 2, "REMOTE_UNSUPERVISED", None,
+             "IAL1", "two of them are still IAL1: weak bindings do not add up"),
+            ([piece(S, verification="KNOWLEDGE_BASED")], "REMOTE_UNSUPERVISED", None, "IAL1",
+             "...and knowledge-based answers are weaker still"),
+            ([piece(S, verification="ENROLLMENT_CODE"), piece(S)], "REMOTE_UNSUPERVISED", None,
+             "IAL2", "a second document verified to the person does reach IAL2"),
             ([piece(T), piece(F)], "REMOTE_UNSUPERVISED", None, "IAL1",
              "one STRONG and one FAIR does not"),
             ([piece(S), piece(S)], "IN_PERSON", live, "IAL3", "two SUPERIOR in person reach IAL3"),

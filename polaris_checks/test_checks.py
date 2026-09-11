@@ -10445,17 +10445,26 @@ def test_enrollment_proofing_check_discriminates(tmp_path):
     # time, until the enrollment archive is a second identity database behind the first.
     MOD = ('FORBIDDEN_EVIDENCE_FIELDS = frozenset({"document_number", "scan",\n'
            '                                       "biometric_template", "date_of_birth"})\n'
-           'EVIDENCE_FIELDS = ("evidence_type", "strength")\n'
+           'EVIDENCE_FIELDS = ("evidence_type", "strength", "validation_method",\n'
+           '                   "verification_method", "validated", "verified")\n'
            'IAL_LEVELS = ("IAL1", "IAL2", "IAL3")\n'
            "\ndef check_evidence(evidence):\n"
            "    forbidden = set(evidence) & FORBIDDEN_EVIDENCE_FIELDS\n"
            "    if forbidden:\n        raise ProofingRefused('refusing to record')\n"
            "    unknown = set(evidence) - set(EVIDENCE_FIELDS)\n"
            "    if unknown:\n        raise ProofingRefused('unknown')\n"
+           "VERIFICATION_CEILING = {'ENROLLMENT_CODE': 'FAIR', 'KNOWLEDGE_BASED': 'WEAK'}\n"
+           "STRENGTHS = ('UNACCEPTABLE', 'WEAK', 'FAIR', 'STRONG', 'SUPERIOR')\n"
            "\ndef effective_strength(evidence):\n"
            "    if not evidence.get('validated') or not evidence.get('verified'):\n"
-           "        return 'UNACCEPTABLE'\n    return evidence['strength']\n"
+           "        return 'UNACCEPTABLE'\n"
+           "    ceiling = VERIFICATION_CEILING.get(evidence.get('verification_method'))\n"
+           "    if ceiling and STRENGTHS.index(evidence['strength']) > STRENGTHS.index(ceiling):\n"
+           "        return ceiling\n"
+           "    return evidence['strength']\n"
            "\ndef derive_ial(evidence_list, presence=None, biometric_collected=False):\n"
+           "    if any(effective_strength(e) == 'SUPERIOR' for e in evidence_list):\n"
+           "        return 'IAL2'\n"
            "    return 'IAL1'\n"
            "\ndef why_not_higher(evidence_list, presence=None, biometric_collected=False):\n"
            "    return 'more evidence'\n"
@@ -10513,6 +10522,23 @@ def test_enrollment_proofing_check_discriminates(tmp_path):
     write()
     assert checks.check_enrollment_proofing(tmp_path)[0].level == "OK", \
         "the well-formed tree must PASS"
+
+    # v9.395: the verification ceiling removed, so a SUPERIOR document "verified" by
+    # posting a letter to the address on it carries an IAL2 enrollment on its own.
+    write({"polaris_web/proofing.py": MOD.replace(
+        "VERIFICATION_CEILING = {'ENROLLMENT_CODE': 'FAIR', 'KNOWLEDGE_BASED': 'WEAK'}",
+        "VERIFICATION_CEILING = {}")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a weak verification method lets evidence count at full strength"
+
+    # ...and over-capping is a defect too: capping the method that actually binds a
+    # document to a person pushes operators toward the weaker paths.
+    write({"polaris_web/proofing.py": MOD.replace(
+        "VERIFICATION_CEILING = {'ENROLLMENT_CODE': 'FAIR', 'KNOWLEDGE_BASED': 'WEAK'}",
+        "VERIFICATION_CEILING = {'ENROLLMENT_CODE': 'FAIR', 'KNOWLEDGE_BASED': 'WEAK', "
+        "'BIOMETRIC_COMPARISON': 'FAIR'}")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a biometric comparison is capped"
 
     # THE LEVEL AS A LABEL.
     write({'polaris_web/proofing.py': MOD.replace(

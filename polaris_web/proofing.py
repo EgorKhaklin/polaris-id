@@ -45,6 +45,31 @@ VALIDATION_METHODS = ("NONE", "VISUAL_INSPECTION", "PHYSICAL_SECURITY_FEATURES",
 VERIFICATION_METHODS = ("NONE", "PHYSICAL_COMPARISON", "BIOMETRIC_COMPARISON",
                         "ENROLLMENT_CODE", "KNOWLEDGE_BASED")
 
+#: THE CEILING EACH VERIFICATION METHOD PUTS ON THE EVIDENCE IT VERIFIED (v9.395).
+#:
+#: Validation asks whether a document is genuine. Verification asks whether it is THIS
+#: person's, and the methods are not interchangeable at that job. Until v9.395 they were:
+#: any method that was not NONE let evidence contribute its full nominal strength, so a
+#: passport "verified" by posting a code to the address on it counted exactly as much as
+#: one verified against the face of the person holding it. One SUPERIOR is IAL2, so that
+#: single record produced an IAL2 enrollment.
+#:
+#: ENROLLMENT_CODE proves somebody at that address received a letter. It is real evidence
+#: -- an attacker needs physical control of a channel -- and it is not evidence that the
+#: applicant is the document's holder. Worse, the address is exactly what a controlling
+#: household, a care setting or a monitored shelter takes from somebody, which is the same
+#: population the trusted-referee path exists for.
+#:
+#: KNOWLEDGE_BASED is weaker still: the answers live in credit files and breach dumps, so
+#: the barrier is a database rather than a mailbox.
+#:
+#: Methods absent from this mapping have no ceiling. A biometric compared to the person in
+#: front of you is the binding the whole step is for.
+VERIFICATION_CEILING = {
+    "ENROLLMENT_CODE": "FAIR",
+    "KNOWLEDGE_BASED": "WEAK",
+}
+
 # Where the applicant was when this happened. IAL3 requires in-person or a supervised remote
 # session; the distinction is not a formality, because an unsupervised remote session is one an
 # attacker can run against a coerced or absent applicant.
@@ -110,12 +135,24 @@ def effective_strength(evidence: dict) -> str:
     claim, not evidence. Evidence that was validated but not verified to the applicant also
     contributes nothing, because a genuine document belonging to somebody else is exactly the
     attack that step exists to stop. Recording the nominal strength and quietly counting it
-    anyway is how an IAL2 enrollment ends up resting on a photocopy."""
+    anyway is how an IAL2 enrollment ends up resting on a photocopy.
+
+    AND HOW IT WAS VERIFIED CAPS IT. The methods are not interchangeable: a posted code
+    proves somebody at an address opened a letter, knowledge-based answers prove access to
+    a credit file, and a biometric comparison proves the document belongs to the person in
+    the room. Counting all three at the document's nominal strength is the same error one
+    level down -- see VERIFICATION_CEILING."""
     check_evidence(evidence)
     if not evidence.get("validated") or not evidence.get("verified"):
         return "UNACCEPTABLE"
     if evidence["validation_method"] == "NONE" or evidence["verification_method"] == "NONE":
         return "UNACCEPTABLE"
+    # A weak binding to the applicant caps what the evidence contributes, however strong
+    # the document itself is. A genuine passport verified by a posted code is a genuine
+    # passport and an unproven claim that it is this person's.
+    ceiling = VERIFICATION_CEILING.get(evidence["verification_method"])
+    if ceiling is not None and _rank(evidence["strength"]) > _rank(ceiling):
+        return ceiling
     return evidence["strength"]
 
 

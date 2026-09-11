@@ -105,9 +105,43 @@ currently supports.
   the checking is a vendor integration behind that interface.
 - **The 800-63-4 control mapping.** This provides the mechanism and the record. The
   control-by-control mapping with evidence per control is P6.2, and it is unblocked by this.
-- **Trusted referees and enrollment codes** for applicants who cannot present evidence
-  themselves. `ENROLLMENT_CODE` exists as a verification method; the surrounding process does
-  not.
+- **The enrollment-code process.** `ENROLLMENT_CODE` is a verification method and is now
+  CAPPED (see below); the surrounding lifecycle -- issuing a code to a channel, its expiry,
+  single use, and a bound on redemption attempts -- is still open under P4.4. Trusted referees
+  shipped at v9.394, in [trusted-referee.md](trusted-referee.md).
+
+## How it was verified caps what it contributes
+
+Validation asks whether a document is genuine. Verification asks whether it is **this
+person's**, and the methods are not interchangeable at that job.
+
+Until v9.395 they were treated as if they were. Any verification method that was not `NONE`
+let evidence contribute its full nominal strength, so a passport "verified" by posting a code
+to the address printed on it counted exactly as much as one verified against the face of the
+person holding it. One `SUPERIOR` piece reaches IAL2, so that single record produced an IAL2
+enrollment.
+
+| Verification method | Ceiling | Why |
+| --- | --- | --- |
+| `BIOMETRIC_COMPARISON` | none | The binding the step exists for |
+| `PHYSICAL_COMPARISON` | none | A trained operator comparing the document to the person |
+| `ENROLLMENT_CODE` | `FAIR` | Proves somebody at that address opened a letter. An attacker needs physical control of a channel, which is real -- and it is not evidence that the applicant is the document's holder |
+| `KNOWLEDGE_BASED` | `WEAK` | The answers live in credit files and breach dumps, so the barrier is a database rather than a mailbox |
+
+The ceiling never raises anything: `FAIR` evidence verified by a posted code stays `FAIR`.
+And the strong methods carry no ceiling on purpose, because capping the method that actually
+binds a document to a person would push operators toward the weaker paths.
+
+**The address is the part worth dwelling on.** A code sent to somebody's home proves whoever
+opens that post controls the enrollment. For most people that is them. For a person in a
+controlling household, a care setting, or a shelter with shared post, it is not -- and that is
+the same population the [trusted referee](trusted-referee.md) path exists for. The cap does not
+solve that. It stops the system recording a high assurance level on the strength of it.
+
+Both capped methods were in the vocabulary from v9.371 and **no test used either**, which is
+where an overstatement hides: a vocabulary entry nothing exercises.
+
+---
 
 ## Proven by
 

@@ -11889,6 +11889,14 @@ def check_enrollment_proofing(root: pathlib.Path) -> list[Finding]:
     supports is refused; claiming below it is allowed, because an authority may hold itself to
     less than it could assert and refusing that pushes operators to overstate.
 
+    AND HOW IT WAS VERIFIED CAPS WHAT IT CONTRIBUTES (v9.395). Validation asks whether a
+    document is genuine; verification asks whether it is THIS person's, and the methods are not
+    interchangeable at that job. Until v9.395 any method that was not NONE let evidence count
+    at its full nominal strength, so a passport "verified" by posting a code to the address on
+    it counted as much as one verified against the face of the person holding it -- and one
+    SUPERIOR is IAL2, so that single record produced an IAL2 enrollment. Both weak methods were
+    in the vocabulary and no test used either, which is where an overstatement hides.
+
     EVIDENCE NOBODY CHECKED IS NOT EVIDENCE. Validation asks whether the document is genuine;
     verification asks whether it belongs to the person in front of you. A genuine passport
     belonging to somebody else passes the first and fails the second, so a piece that fails
@@ -11903,6 +11911,39 @@ def check_enrollment_proofing(root: pathlib.Path) -> list[Finding]:
     scan, no template, no date of birth: refused by name AND with no column to write them into.
     That is what keeps an enrollment archive from being a second identity database sitting
     behind the first, which is the most attractive target an identity system builds."""
+    # The ceiling is EXERCISED. A constant can be read; a derivation cannot be faked by
+    # a comment, and the property is what derive_ial does with it.
+    pf_path = root / "polaris_web" / "proofing.py"
+    if not pf_path.is_file():
+        return _fail("enrollment_proofing", "polaris_web/proofing.py is missing")
+    pf = types.ModuleType("polaris_proofing_probe")
+    pf.__file__ = str(pf_path)
+    try:
+        exec(compile(pf_path.read_text(encoding="utf-8"), pf.__file__, "exec"), pf.__dict__)
+    except Exception as exc:  # noqa: BLE001
+        return _fail("enrollment_proofing", f"polaris_web/proofing.py does not load: {exc}")
+    doc = {"evidence_type": "PASSPORT", "strength": "SUPERIOR",
+           "validation_method": "DIGITAL_SIGNATURE_CHECK", "validated": True, "verified": True}
+    for weak in ("ENROLLMENT_CODE", "KNOWLEDGE_BASED"):
+        piece = dict(doc, verification_method=weak)
+        if pf.effective_strength(piece) == "SUPERIOR":
+            return _fail("enrollment_proofing",
+                         f"a SUPERIOR document verified only by {weak} still contributes "
+                         "SUPERIOR. A posted code proves somebody at an address opened a "
+                         "letter and knowledge-based answers prove access to a credit file; "
+                         "neither proves the document is the applicant's")
+        if pf.derive_ial([piece]) != "IAL1":
+            return _fail("enrollment_proofing",
+                         f"one document verified only by {weak} reaches "
+                         f"{pf.derive_ial([piece])}. That is an assurance level resting on a "
+                         "binding the method does not make")
+    strong = dict(doc, verification_method="BIOMETRIC_COMPARISON")
+    if pf.effective_strength(strong) != "SUPERIOR":
+        return _fail("enrollment_proofing",
+                     "a document verified against the applicant's biometric is capped. The "
+                     "ceiling is for methods that do not bind the document to the person, and "
+                     "capping the one that does would push operators toward the weaker paths")
+
     name = "enrollment_proofing"
     mod = _read(root, "polaris_web/proofing.py")
     if not mod:

@@ -58,6 +58,13 @@ A pull request is ready when all of these hold:
   that declare it in a `RETURNS TABLE`, views that depend on it (and their GRANTS,
   which a `DROP VIEW` removes silently), and the SEQUENCE, which keeps its 32-bit
   ceiling after the column becomes `BIGINT`.
+- **A check that EXERCISES code needs a fixture that can run.** Checks increasingly load a
+  module and call it, rather than searching its text, because a check on a rule's spelling
+  passes when the rule is switched off. The cost is that the check's detection test builds a
+  synthetic tree, and that tree's stand-in module must now implement the property well enough
+  to be exercised. Three checks broke their own detection tests this way before the pattern
+  was written down: add the behaviour to the fixture in the same change, and add the
+  perturbation that removes it.
 - **Do not pipe a gate into `tail` inside an `&&` chain.** A pipeline's exit status is
   its last command, so `pytest ... | tail -2 && git commit` commits on a red suite.
 - New behaviour carries a test that fails without it. A new invariant carries

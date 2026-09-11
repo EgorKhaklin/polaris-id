@@ -5,6 +5,46 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.395 — 2026-09-11 (a passport verified by posting a letter to it counted as a passport)
+
+Starting the enrollment-code process -- the last piece of P4.4 that needs no hardware -- meant
+asking what a code actually contributes. It contributes an IAL2 enrollment, on its own, and
+that is wrong.
+
+`effective_strength` returned a piece of evidence's full nominal strength as soon as its
+validation and verification methods were both something other than `NONE`. So a `SUPERIOR`
+passport "verified" by posting a code to the address printed on it counted exactly as much as
+one verified against the face of the person holding it. One `SUPERIOR` reaches IAL2. One
+record, one letter, IAL2.
+
+VALIDATION ASKS WHETHER A DOCUMENT IS GENUINE; VERIFICATION ASKS WHETHER IT IS THIS PERSON'S,
+and the methods are not interchangeable at the second job. `ENROLLMENT_CODE` now caps the
+contribution at `FAIR`: it proves somebody at that address opened a letter, which is real
+evidence -- an attacker needs physical control of a channel -- and is not evidence that the
+applicant is the document's holder. `KNOWLEDGE_BASED` caps at `WEAK`, because its answers live
+in credit files and breach dumps, so the barrier is a database rather than a mailbox. The
+strong methods carry no ceiling on purpose: capping the one that actually binds a document to
+a person would push operators toward the weaker paths.
+
+The address is the part worth dwelling on. A code sent to somebody's home proves whoever opens
+that post controls the enrollment, and for a person in a controlling household, a care setting
+or a shelter with shared post, that is not them -- the same population v9.394's referee path
+exists for. The cap does not solve that. It stops the system recording a high assurance level
+on the strength of it.
+
+BOTH CAPPED METHODS WERE IN THE VOCABULARY SINCE v9.371 AND NO TEST USED EITHER. That is where
+an overstatement hides: a vocabulary entry nothing exercises. Every test and every drill case
+reached for `BIOMETRIC_COMPARISON`, so the flattening never showed.
+
+- the ceiling EXERCISED by `check_enrollment_proofing` rather than read, with three verified
+  detections including over-capping a strong method
+- four measured tests and four drill cases; the drill fails naming the case when the cap is
+  removed
+- the enrollment-code LIFECYCLE (issuing to a channel, expiry, single use, a bound on
+  redemption attempts) is still open under P4.4, alongside the kiosk build
+
+---
+
 ## v9.394 — 2026-09-11 (P4.4: the anti-exclusion mechanism and the forgery channel are the same table)
 
 Every combination in 800-63A starts from documents. A person with none -- no fixed address, a
