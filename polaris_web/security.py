@@ -1066,7 +1066,16 @@ ROLES = ('admin', 'operator', 'auditor')
 
 
 def login_required(view_func):
-    """Reject anonymous requests. CWE-306 mitigation."""
+    """Reject anonymous requests. CWE-306 mitigation.
+
+    The wrapper carries `__polaris_requires_login__` so the guard is
+    INTROSPECTABLE at runtime (v9.417). Before that, the only record of which
+    routes were protected was a list written by hand in the test suite, which
+    named 15 of the 74 routes that carry this decorator; the other 59 could have
+    lost their guard with nothing going red. A test can now read the route table
+    and exercise every guard that is actually installed, which is a different
+    claim from every guard somebody remembered.
+    """
     @functools.wraps(view_func)
     def wrapped(*args, **kwargs):
         if not session.get('logged_in'):
@@ -1077,6 +1086,7 @@ def login_required(view_func):
                        detail=f"{request.method} {request.path}")
             return redirect(url_for('login', next=_relative_next()))
         return view_func(*args, **kwargs)
+    wrapped.__polaris_requires_login__ = True
     return wrapped
 
 
@@ -1100,6 +1110,11 @@ def require_role(*allowed_roles):
                               f"path={request.path}")
                 abort(403)
             return view_func(*args, **kwargs)
+        # v9.417: the allowed set, readable from the route table. A role matrix
+        # written by hand is a second source of truth and it had already drifted:
+        # it named 10 of the 27 routes this decorator guards.
+        wrapped.__polaris_roles__ = frozenset(allowed_roles)
+        wrapped.__polaris_requires_login__ = True
         return wrapped
     return decorator
 
@@ -1145,6 +1160,7 @@ def csrf_protect(view_func):
                        detail=f"{request.method} {request.path}")
                 abort(403)
         return view_func(*args, **kwargs)
+    wrapped.__polaris_csrf_protected__ = True
     return wrapped
 
 

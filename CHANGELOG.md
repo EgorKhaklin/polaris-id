@@ -5,6 +5,37 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.417 — 2026-09-11 (the access-control matrix was a list somebody wrote)
+
+Two hand-written lists in the test suite stood for the application's access control.
+`PROTECTED_PATHS` named 15 paths against the 74 routes carrying `@login_required`. `ROLE_MATRIX`
+named 10 against the 27 carrying `@require_role`, under a comment saying its sets "must match the
+@require_role decorators". Nothing compared either with the code, and both had drifted: 61
+guarded routes appeared in neither, and stripping every guard from `app.py` turned only 15 of 654
+tests red.
+
+The guards now record what they enforce, on the wrapper, so the matrix is read off the route
+table. `functools.wraps` carries the inner decorator's attributes outward, so a route stacked
+`@login_required` over `@require_role` publishes both; verified against the live app, where 47
+login-only plus 27 role-gated is exactly the 74 in the source.
+
+Every installed guard is exercised in both directions. An excluded role must get 403. A permitted
+role must NOT, because a guard that refused everybody would pass the first test on its own. Path
+parameters are filled with whatever satisfies the converter, since the guards fire before the view
+body and a route with a nonsense id still answers from the decorator.
+
+Then the new tests failed their own mutation, which is the part worth keeping. Delete
+`@login_required` from `/dashboard` and that route simply drops out of the derived matrix, leaving
+nothing to check: both mutations passed against the first draft. A test that derives its subject
+cannot see something that is no longer there. So the shape is pinned too, generated from the route
+table rather than written by hand: the role map for all 27 gates, and the count of login-only
+routes. Re-run with those in place, both mutations fail.
+
+The lists they replace are deleted rather than left alongside, because the whole defect was having
+two sources of truth for the same contract. `check_route_guards_are_derived_not_listed` (239) pins
+the published attributes, the route-table enumeration, both directions, the pinned shape, and the
+absence of the two lists.
+
 ## v9.416 — 2026-09-11 (the image did not break, it moved)
 
 CI went red on the offsite drill: `pull access denied for minio/minio, repository does not exist

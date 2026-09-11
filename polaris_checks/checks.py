@@ -10907,6 +10907,70 @@ def check_property_suite_identifies_its_refusals(root: pathlib.Path) -> list[Fin
                "invariant holding")
 
 
+def check_route_guards_are_derived_not_listed(root: pathlib.Path) -> list[Finding]:
+    """The access-control matrix must come from the routes, not from a list somebody wrote (v9.417).
+
+    Two hand-written lists in the test suite stood for the application's access control.
+    PROTECTED_PATHS named 15 paths against the 74 routes carrying `@login_required`. ROLE_MATRIX
+    named 10 against the 27 carrying `@require_role`, under a comment saying its sets had to match
+    the decorators. Nothing compared either with the code, and both had drifted: 61 guarded routes
+    appeared in neither.
+
+    The guards now record what they enforce on the wrapper, so the matrix is read off the route
+    table and every installed guard is exercised, in both directions: an excluded role must get
+    403, and a permitted one must not, since a guard that refused everybody would pass the first
+    test alone.
+
+    A derived test has its own failure mode, and this one had it. Remove `@login_required` from a
+    route and that route drops out of the matrix, leaving nothing to check: both mutations passed
+    against the first draft. So the SHAPE is pinned as well, generated rather than written, and a
+    guard that disappears shows up as a count that no longer matches."""
+    name = "route_guards"
+    sec = _read(root, "polaris_web/security.py")
+    suite = _read(root, "polaris_web/test_app.py")
+    if not sec or not suite:
+        return _fail(name, "polaris_web/security.py or test_app.py is absent")
+    problems = []
+    # The decorators must publish their contract, or nothing can derive the matrix.
+    for marker, why in (("__polaris_requires_login__", "which routes require a session"),
+                        ("__polaris_roles__", "which roles each gated route admits")):
+        if marker not in sec:
+            problems.append(f"security.py no longer records {why} on the wrapper, so the route "
+                            "table cannot be read for it")
+    if "__polaris_requires_login__" not in suite or "__polaris_roles__" not in suite:
+        problems.append("the suite no longer reads the guards off the route table")
+    if "url_map.iter_rules" not in suite:
+        problems.append("the suite no longer enumerates the route table, so it is back to "
+                        "checking the routes somebody listed")
+    # Both directions, and the pinned shape that makes a removed guard visible.
+    for needle, why in (
+            ("an excluded role must get 403", "the refusal direction"),
+            ("is allowed on", "the admission direction, without which a guard that refused "
+                              "everybody would pass"),
+            ("ROLE_GATES", "the pinned map, without which a route becoming more permissive is "
+                           "invisible"),
+            ("EXPECTED_LOGIN_ONLY", "the pinned count, without which a removed guard simply "
+                                    "drops out of the derived matrix")):
+        if needle not in suite:
+            problems.append(f"{why} is gone")
+    # And the lists it replaced must stay gone, or there are two sources of truth again.
+    for dead in ("PROTECTED_PATHS = [", "ROLE_MATRIX = {"):
+        if dead in suite:
+            problems.append(f"{dead.split(' =')[0]} is back; a hand-written path list is the "
+                            "second source of truth this replaced")
+    gates = len(re.findall(r"(?m)^\s+'/[^']*': \('", suite))
+    if gates < 20:
+        problems.append(f"only {gates} role gates are pinned; the parse has broken and this "
+                        "check is passing by finding nothing")
+    if problems:
+        return _fail(name, "; ".join(problems[:3]))
+    return _ok(name,
+               f"the access-control matrix is read off the route table rather than listed: every "
+               f"installed guard is exercised in both directions, and the shape is pinned "
+               f"({gates} role gates plus the login-only count) so a guard that is removed or "
+               "widened fails instead of quietly leaving the derived matrix")
+
+
 def check_unique_rules_are_tested_exhaustively(root: pathlib.Path) -> list[Finding]:
     """The third mechanism, measured the same way as the other two (v9.415).
 
@@ -14309,6 +14373,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_trust_ladder_is_bound_to_the_code,
     check_property_suite_cannot_skip_its_subject,
     check_append_only_tables_are_tested_exhaustively,
+    check_route_guards_are_derived_not_listed,
     check_unique_rules_are_tested_exhaustively,
     check_triggers_are_mutation_tested,
     check_property_suite_identifies_its_refusals,

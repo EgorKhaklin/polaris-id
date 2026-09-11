@@ -12360,3 +12360,61 @@ def test_unique_rules_tested_check_discriminates(tmp_path):
     # the suite is gone
     (tmp_path / rel).unlink()
     assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when the constraint suite is absent"
+
+
+def test_route_guards_check_discriminates(tmp_path):
+    SEC = ("def login_required(view_func):\n"
+           "    wrapped.__polaris_requires_login__ = True\n"
+           "    return wrapped\n\n\n"
+           "def require_role(*allowed_roles):\n"
+           "    wrapped.__polaris_roles__ = frozenset(allowed_roles)\n"
+           "    return wrapped\n")
+    SUITE = ("class RouteGuardMatrixTests:\n"
+             "    EXPECTED_LOGIN_ONLY = 47\n"
+             "    ROLE_GATES = {\n"
+             + "".join("        '/r%d': ('admin',),\n" % i for i in range(27))
+             + "    }\n"
+             "    def _guarded(self):\n"
+             "        for rule in flask_app.app.url_map.iter_rules():\n"
+             "            getattr(v, '__polaris_requires_login__', False)\n"
+             "            getattr(v, '__polaris_roles__', None)\n"
+             "    def test_refuses(self):\n"
+             "        self.assertEqual(r.status_code, 403, 'an excluded role must get 403')\n"
+             "    def test_admits(self):\n"
+             "        self.assertNotEqual(r.status_code, 403, f'{role} is allowed on {url}')\n")
+    good = {"polaris_web/security.py": SEC, "polaris_web/test_app.py": SUITE}
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write()
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # the decorators stop publishing what they enforce
+    write({"polaris_web/security.py": SEC.replace("__polaris_roles__", "_roles")})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when the role gate is not readable from the route table"
+    write({"polaris_web/security.py": SEC.replace("__polaris_requires_login__", "_login")})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when the login guard is not readable from the route table"
+    # the suite stops enumerating the route table
+    write({"polaris_web/test_app.py": SUITE.replace("url_map.iter_rules", "SOME_LIST")})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when the suite stops reading the route table"
+    # the admission direction goes away, so a guard refusing everybody would pass
+    write({"polaris_web/test_app.py": SUITE.replace("        self.assertNotEqual(r.status_code, 403, f'{role} is allowed on {url}')\n", "")})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when only the refusal direction is tested"
+    # the pinned map goes away, so a widened route is invisible
+    write({"polaris_web/test_app.py": SUITE.replace("ROLE_GATES", "SOME_GATES")})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL without the pinned role map"
+    # the pinned count goes away, so a removed guard just leaves the matrix
+    write({"polaris_web/test_app.py": SUITE.replace("EXPECTED_LOGIN_ONLY", "SOME_COUNT")})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL without the pinned login-only count"
+    # a hand-written path list comes back
+    write({"polaris_web/test_app.py": SUITE + "\n    PROTECTED_PATHS = [\n        '/a',\n    ]\n"})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when a hand-written path list returns"
+    write({"polaris_web/test_app.py": SUITE + "\n    ROLE_MATRIX = {\n        '/a': ('admin',),\n    }\n"})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when a hand-written role matrix returns"
+    # the pinned map is emptied, which satisfies the assertions above vacuously
+    write({"polaris_web/test_app.py": SUITE.replace(
+        "".join("        '/r%d': ('admin',),\n" % i for i in range(27)), "        '/r0': ('admin',),\n")})
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when too few gates are pinned, rather than pass by finding nothing"
+    # security.py is gone
+    (tmp_path / "polaris_web" / "security.py").unlink()
+    assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when security.py is absent"

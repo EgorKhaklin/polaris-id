@@ -4467,32 +4467,10 @@ class F01_AuthenticationTests(UnauthenticatedTestCase):
     # `/demo` is public when DEMO_MODE is on (synthetic walkthrough; no real
     # holder data) and 404 otherwise; DemoGateTests covers both. All other
     # paths below require authentication.
-    PROTECTED_PATHS = [
-        '/atlas',
-        '/individuals',
-        '/individuals/new',
-        '/individuals/1/edit',
-        '/agencies',
-        '/agencies/new',
-        '/tokens',
-        '/tokens/2',
-        '/verifications',
-        '/verifications/new',
-        '/sql',
-        '/uc1/issue',
-        '/uc4/activate-reserve',
-        '/uc5/bind-device',
-        '/uc7/warrant-audit',
-    ]
-
-    def test_anonymous_redirected_from_every_protected_route(self):
-        """Every protected GET must 302 to /login when not authenticated."""
-        for path in self.PROTECTED_PATHS:
-            r = self.client.get(path)
-            self.assertEqual(r.status_code, 302,
-                             f"GET {path} should redirect to /login")
-            self.assertIn('/login', r.headers.get('Location', ''),
-                          f"GET {path} redirected to wrong location")
+    # v9.417: PROTECTED_PATHS and the walk over it are gone. The list named 15
+    # paths against 74 routes carrying @login_required, and nothing compared the
+    # two. RouteGuardMatrixTests reads the route table instead, so what is checked
+    # is what the application installs.
 
     def test_login_page_accessible_anonymously(self):
         """The login page itself must be reachable without auth."""
@@ -5049,32 +5027,12 @@ class F11_AuditLoggingTests(PolarisTestCase):
 class RoleBasedAccessControlTests(PolarisTestCase):
     """Role enforcement across the route matrix."""
 
-    # Path → roles allowed (sets must match the @require_role decorators)
-    ROLE_MATRIX = {
-        '/dashboard': ('admin', 'operator', 'auditor'),
-        '/atlas': ('admin', 'operator', 'auditor'),
-        '/individuals/new': ('admin',),
-        '/agencies/new': ('admin',),
-        '/uc1/issue': ('admin', 'operator'),
-        '/uc4/activate-reserve': ('admin', 'operator'),
-        '/uc5/bind-device': ('admin', 'operator'),
-        '/uc7/warrant-audit': ('admin', 'auditor'),
-        '/sql': ('admin', 'auditor'),
-        '/verifications/new': ('admin', 'operator'),
-    }
+    # v9.417: ROLE_MATRIX and the walk over it are gone. It named 10 paths
+    # against 27 routes carrying @require_role, with a comment saying the sets
+    # had to match the decorators, and nothing compared them.
+    # RouteGuardMatrixTests reads the allowed set off each route instead, and
+    # pins the whole map so a route becoming more permissive fails.
 
-    def test_each_role_can_access_only_what_it_should(self):
-        for role in ('admin', 'operator', 'auditor'):
-            self._logout()
-            self._login(role)
-            for path, allowed in self.ROLE_MATRIX.items():
-                r = self.client.get(path)
-                if role in allowed:
-                    self.assertEqual(r.status_code, 200,
-                        f"{role} should access {path} (got {r.status_code})")
-                else:
-                    self.assertEqual(r.status_code, 403,
-                        f"{role} should NOT access {path} (got {r.status_code})")
 
     def test_navigation_only_shows_allowed_links(self):
         """The nav bar is role-gated — operator shouldn't see SQL Console."""
@@ -9346,6 +9304,173 @@ class DistributedTracingTests(UnauthenticatedTestCase):
                             'trace context must not leak across requests '
                             '(the teardown detach is load-bearing)')
 
+
+
+class RouteGuardMatrixTests(PolarisTestCase):
+    """Every guard the application actually installs, exercised once (v9.417).
+
+    This replaces two hand-written lists. PROTECTED_PATHS named 15 paths against
+    74 routes carrying @login_required, and ROLE_MATRIX named 10 against 27
+    carrying @require_role, each with a comment saying it had to match the
+    decorators. Neither did, and nothing compared them. Sixty-one guarded routes
+    could have lost their guard with the whole suite green.
+
+    The matrix is read from the route table instead: the decorators record what
+    they enforce on the wrapper, so what is tested here is what is installed,
+    not what somebody remembered to list.
+    """
+
+    ROLES = ('admin', 'operator', 'auditor')
+
+    #: The application's access-control contract, written down. A test that DERIVES
+    #: its subject from the route table cannot notice a guard that is no longer
+    #: there: remove @login_required from /dashboard and that route simply drops
+    #: out of the matrix, leaving nothing to check. Both mutations were run against
+    #: an earlier draft of this class and both passed. So the shape is pinned too.
+    #:
+    #: These numbers and this map are GENERATED from the route table, not written
+    #: by hand, which is what the two lists they replace were. Changing a guard is
+    #: meant to fail here: updating the line is the moment somebody confirms the
+    #: new exposure is intended.
+    EXPECTED_LOGIN_ONLY = 47
+    ROLE_GATES = {
+        '/agencies/<int:ag_id>/delete': ('admin',),
+        '/agencies/<int:ag_id>/edit': ('admin',),
+        '/agencies/new': ('admin',),
+        '/api/anchor/batch': ('admin',),
+        '/api/atlas/subject': ('admin', 'auditor'),
+        '/api/atlas/subjects/search': ('admin', 'auditor'),
+        '/api/duress/events': ('admin', 'auditor'),
+        '/api/duress/record': ('admin', 'operator'),
+        '/api/federation/attest': ('admin',),
+        '/api/federation/revoke': ('admin',),
+        '/api/zk/epoch/close': ('admin',),
+        '/duress': ('admin', 'auditor'),
+        '/individuals/<int:ind_id>/delete': ('admin',),
+        '/individuals/<int:ind_id>/edit': ('admin',),
+        '/individuals/new': ('admin',),
+        '/sql': ('admin', 'auditor'),
+        '/tokens/<int:tok_id>/delete': ('admin',),
+        '/tokens/<int:tok_id>/transition': ('admin', 'operator'),
+        '/uc1/issue': ('admin', 'operator'),
+        '/uc4/activate-reserve': ('admin', 'operator'),
+        '/uc5/bind-device': ('admin', 'operator'),
+        '/uc6/migrate': ('admin', 'operator'),
+        '/uc7/warrant-audit': ('admin', 'auditor'),
+        '/uc8/revoke': ('admin', 'operator'),
+        '/uc9/decide/<int:recovery_id>': ('admin',),
+        '/uc9/initiate-recovery': ('admin', 'operator'),
+        '/verifications/new': ('admin', 'operator'),
+    }
+
+    def test_the_installed_guards_are_exactly_the_ones_recorded(self):
+        """The anti-vacuity anchor for this whole class."""
+        gated, login_only = {}, 0
+        for rule, roles in self._guarded_rules():
+            if roles:
+                gated[rule.rule] = tuple(sorted(roles))
+            else:
+                login_only += 1
+        self.assertEqual(
+            gated, dict(self.ROLE_GATES),
+            "the role gates installed on the routes differ from the ones recorded here. A route "
+            "that became MORE permissive is the dangerous direction; update the map only after "
+            "confirming the new exposure is intended.")
+        self.assertEqual(
+            login_only, self.EXPECTED_LOGIN_ONLY,
+            f"{login_only} routes carry @login_required without a role gate, and "
+            f"{self.EXPECTED_LOGIN_ONLY} are recorded. A guard that was removed shows up here as "
+            "a smaller number, which is the only place it can show up: the tests below derive "
+            "their subject from the route table and an absent guard leaves them nothing to test.")
+
+    #: Guards fire BEFORE the view body, so a path parameter only has to satisfy
+    #: the URL converter; it does not have to name a row that exists. A route
+    #: whose id is nonsense still answers 302 or 403 from the decorator.
+    _SAMPLES = ((r'<int:[^>]+>', '1'), (r'<path:[^>]+>', 'x'), (r'<[^>]+>', 'x'))
+
+    def _url(self, rule):
+        path = rule.rule
+        for pattern, value in self._SAMPLES:
+            path = re.sub(pattern, value, path)
+        return path
+
+    def _guarded_rules(self):
+        """(rule, allowed_roles or None) for every route that installs a guard."""
+        out = []
+        for rule in flask_app.app.url_map.iter_rules():
+            view = flask_app.app.view_functions.get(rule.endpoint)
+            if view is None or not getattr(view, '__polaris_requires_login__', False):
+                continue
+            out.append((rule, getattr(view, '__polaris_roles__', None)))
+        return out
+
+    def _request(self, rule, url):
+        method = 'GET' if 'GET' in rule.methods else 'POST'
+        return self.client.open(url, method=method)
+
+    def test_every_login_guarded_route_refuses_an_anonymous_request(self):
+        self._logout()
+        rules = self._guarded_rules()
+        self.assertGreaterEqual(
+            len(rules), 60,
+            f"only {len(rules)} guarded routes were discovered from the route table; the "
+            "decorators have stopped recording what they enforce and this test is passing "
+            "by finding nothing")
+        for rule, _roles in rules:
+            url = self._url(rule)
+            with self.subTest(route=rule.rule):
+                r = self._request(rule, url)
+                self.assertIn(
+                    r.status_code, (302, 401, 403),
+                    f"anonymous {rule.methods & {'GET', 'POST'}} {url} returned "
+                    f"{r.status_code}; the guard did not fire")
+                if r.status_code == 302:
+                    self.assertIn('/login', r.headers.get('Location', ''),
+                                  f"anonymous {url} redirected somewhere other than /login")
+
+    def test_every_role_gated_route_refuses_a_role_it_excludes(self):
+        gated = [(rule, roles) for rule, roles in self._guarded_rules() if roles]
+        self.assertGreaterEqual(
+            len(gated), 20,
+            f"only {len(gated)} role-gated routes were discovered; the decorator has stopped "
+            "recording its allowed set and this test is passing by finding nothing")
+        # A route open to every role has no role to exclude. That is legitimate,
+        # but it is counted and reported rather than skipped past.
+        open_to_all = [r.rule for r, roles in gated if set(self.ROLES) <= set(roles)]
+        for role in self.ROLES:
+            self._logout()
+            self._login(role)
+            for rule, roles in gated:
+                if role in roles:
+                    continue
+                url = self._url(rule)
+                with self.subTest(route=rule.rule, role=role):
+                    r = self._request(rule, url)
+                    self.assertEqual(
+                        r.status_code, 403,
+                        f"{role} got {r.status_code} from {url}, which is gated to "
+                        f"{sorted(roles)}; an excluded role must get 403")
+        self.assertLessEqual(
+            len(open_to_all), 8,
+            f"{len(open_to_all)} role-gated routes admit every role, which makes the decorator "
+            f"decorative on them: {open_to_all}")
+
+    def test_every_role_gated_route_admits_a_role_it_allows(self):
+        """The other direction. Without it, a guard that refused everybody would
+        pass the test above."""
+        gated = [(rule, roles) for rule, roles in self._guarded_rules() if roles]
+        for role in self.ROLES:
+            self._logout()
+            self._login(role)
+            for rule, roles in gated:
+                if role not in roles or 'GET' not in rule.methods:
+                    continue
+                url = self._url(rule)
+                with self.subTest(route=rule.rule, role=role):
+                    r = self.client.get(url)
+                    self.assertNotEqual(
+                        r.status_code, 403,
+                        f"{role} is allowed on {url} (gated to {sorted(roles)}) and got 403")
 
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
