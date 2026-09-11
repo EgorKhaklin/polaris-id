@@ -10817,6 +10817,70 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_redaction_adversary_is_not_flattered(root: pathlib.Path) -> list[Finding]:
+    """A privacy result is only as good as the attacker that failed to get it (v9.408).
+
+    `test_redaction_property.py` measures reconstruction risk by running an adversary against
+    isolated zero-knowledge events and asserting its success rate is no better than chance.
+    Every weakness in the adversary flatters that result, and the assertion's shape decided
+    which weaknesses were visible.
+
+    Two were not. The rate bound was ONE-SIDED (`success_rate <= baseline + slack`), which a
+    score of zero satisfies: an adversary that returned no guess at all reported that isolated
+    ZK events resist reconstruction. And the uniformity sanity check iterated the adversary's
+    OWN counts, so a holder it never picked was never checked, its rate being exactly the zero
+    the loop could not see; an adversary that skipped two of eighteen holders passed the entire
+    suite.
+
+    The baseline was also computed from a hardcoded population of 10 while the adversary drew
+    from an observed 18, overstating chance by a factor of two and loosening the bound with it.
+    At 200 events a side channel had to more than DOUBLE the success rate to be seen.
+
+    So: the attempt is asserted before the rate, the bound is two-sided and derived from the
+    binomial sigma at the OBSERVED population, the uniformity loop walks the population, and
+    the event count is set by the resolution it buys. Verified against a biased adversary, a
+    dead one, and a realistic side channel that reaches 1.68x chance, all three of which the
+    suite passed before."""
+    name = "redaction_adversary"
+    rel = "polaris_web/test_redaction_property.py"
+    suite = _read(root, rel)
+    if not suite:
+        return _fail(name, f"{rel} is absent; the reconstruction-resistance claim rests on "
+                           "nothing")
+    problems = []
+    if "class UniformGuessAdversary" not in suite:
+        problems.append("the uniform-guess adversary is gone; this check has nothing to pin")
+    if re.search(r"baseline\s*=\s*1\.0\s*/\s*self\.POPULATION_SIZE", suite):
+        problems.append("the baseline is computed from the hardcoded POPULATION_SIZE rather "
+                        "than the population the adversary actually draws from, which "
+                        "overstates chance and loosens the bound by the same factor")
+    if "n_population = len(adv._all_holders())" not in suite:
+        problems.append("the resistance test does not take its population from the adversary, "
+                        "so its baseline is a guess about the fixture")
+    if re.search(r"assertLessEqual\(\s*success_rate", suite):
+        problems.append("the success-rate bound is one-sided, and a score of zero satisfies it: "
+                        "an adversary that has been broken would report the privacy result")
+    if not re.search(r"assertAlmostEqual\(\s*success_rate", suite):
+        problems.append("the success rate is not held to a two-sided bound around chance")
+    if "if g is None" not in suite:
+        problems.append("the test does not assert the adversary actually guessed, so a silent "
+                        "None reports resistance from an attacker that never attacked")
+    if "for holder_id in adv._all_holders():" not in suite:
+        problems.append("the uniformity check iterates the adversary's own counts, so a holder "
+                        "it never picks is never checked and a biased adversary passes")
+    if not re.search(r"sigma\s*=\s*math\.sqrt", suite):
+        problems.append("the bound is a picked constant rather than derived from the binomial "
+                        "sigma at the observed population and event count")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]))
+    return _ok(name,
+               "the reconstruction adversary is asserted to have actually guessed, its success "
+               "rate is held to a two-sided bound derived from the binomial sigma at the "
+               "OBSERVED population, and the uniformity check walks that population rather than "
+               "the adversary's own counts, so an adversary that has been weakened fails "
+               "instead of reporting a privacy result")
+
+
 def check_constraint_suite_is_mutation_tested(root: pathlib.Path) -> list[Finding]:
     """The suite that proves the constraints exist must go red when one is gone (v9.407).
 
@@ -13847,6 +13911,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_internal_kex_measured,
     check_detection_tests_have_a_positive_control,
     check_constraint_suite_is_mutation_tested,
+    check_redaction_adversary_is_not_flattered,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,

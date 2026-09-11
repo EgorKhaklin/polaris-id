@@ -30,6 +30,7 @@ the sample DB is in pristine state at test start.
 
 import os
 import unittest
+import math
 import random
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -240,7 +241,13 @@ class RedactionPropertyTests(unittest.TestCase):
     Each test stands alone (transaction-rolled back at the end)."""
 
     POPULATION_SIZE = 10
-    EVENTS_TOTAL = 200
+    # v9.408 - the event count IS the test's resolution. The bound below is four
+    # binomial sigma, and sigma shrinks as 1/sqrt(events): at 200 events a leak
+    # had to more than DOUBLE the adversary's success rate before this test
+    # could see it (2.17x the baseline), which is not a useful detector of a
+    # side channel. At 2000 it sees 1.37x, and the suite still runs in under a
+    # second. The number is stated here rather than left to be derived.
+    EVENTS_TOTAL = 2000
 
     def test_zk_only_sequence_resists_reconstruction(self):
         """§4 — Isolated ZK events. Adversary success rate ≤ 1/N + slack."""
@@ -267,19 +274,53 @@ class RedactionPropertyTests(unittest.TestCase):
                 ground_truth.append((event_row, ind_id))
 
             adv = UniformGuessAdversary(conn, seed=42)
-            correct = sum(1 for evt, true_id in ground_truth
-                          if adv.guess_holder(evt) == true_id)
+            guesses = [adv.guess_holder(evt) for evt, _ in ground_truth]
+
+            # v9.408 - an adversary that guesses NOTHING scores zero, and zero
+            # satisfies any "no better than chance" bound. The privacy result
+            # would then be reported by an attacker that never attacked, so the
+            # attempt is asserted before the rate is.
+            self.assertEqual(
+                [g for g in guesses if g is None], [],
+                f"the adversary returned no guess for "
+                f"{sum(1 for g in guesses if g is None)} of {len(guesses)} "
+                f"events; a success rate computed from that measures the "
+                f"adversary, not the redaction"
+            )
+
+            correct = sum(1 for g, (_evt, true_id) in zip(guesses, ground_truth)
+                          if g == true_id)
             success_rate = correct / len(ground_truth)
-            baseline   = 1.0 / self.POPULATION_SIZE
-            # Allow generous slack: with 200 events and N=10 holders the
-            # baseline is 0.10; binomial 95% CI on a fair coin around 0.10 is
-            # ~[0.06, 0.14]. We allow up to 0.20 to absorb finite-sample noise.
-            self.assertLessEqual(
-                success_rate, baseline + 0.10,
-                f"UniformGuessAdversary success rate {success_rate:.3f} "
-                f"materially exceeds baseline {baseline:.3f}. "
-                f"This either indicates a side-channel leak or a bug "
-                f"in the adversary that gives it more info than it should have."
+            # The baseline is 1/N over the population the ADVERSARY draws from,
+            # which is the synthetic holders PLUS the ones the sample data
+            # already enrolled. Using POPULATION_SIZE understated N (10 against
+            # an observed 18) and so overstated the baseline, which loosened the
+            # bound below by the same factor.
+            n_population = len(adv._all_holders())
+            self.assertGreater(n_population, self.POPULATION_SIZE - 1,
+                               "the adversary's population is smaller than the "
+                               "holders this test just enrolled; fixture broken")
+            baseline = 1.0 / n_population
+
+            # Two-sided, and derived rather than picked. A one-sided "at most
+            # baseline + slack" is satisfied by an adversary that has been
+            # weakened, which is the direction that flatters the result; a rate
+            # far BELOW chance is evidence about the attacker, not the system.
+            # Four binomial standard deviations at the observed N and event
+            # count. That is the test's resolution and it is worth stating
+            # plainly: with N=18 and 2000 events the ceiling is about 1.37x the
+            # baseline, so a side channel has to lift the adversary's success
+            # rate by more than a third before this test can see it. Tightening
+            # it further means more events, not a smaller constant.
+            sigma = math.sqrt(baseline * (1.0 - baseline) / len(ground_truth))
+            self.assertAlmostEqual(
+                success_rate, baseline, delta=4 * sigma,
+                msg=f"UniformGuessAdversary success rate {success_rate:.4f} is "
+                    f"more than 4 sigma ({4 * sigma:.4f}) from the uniform "
+                    f"baseline {baseline:.4f} over N={n_population}. Above it: "
+                    f"a side-channel leak, or an adversary given more "
+                    f"information than it should have. Below it: the adversary "
+                    f"is broken, and the privacy result it reports is vacuous."
             )
         finally:
             conn.rollback()
@@ -444,7 +485,15 @@ class RedactionPropertyTests(unittest.TestCase):
             # gives ±1.96 * sqrt(p*(1-p)/N) ≈ ±0.014 for p=0.10. Use 0.03
             # to absorb any per-holder bias while still failing if the
             # adversary's distribution is meaningfully non-uniform.
-            for holder_id, count in counts.items():
+            #
+            # v9.408 - iterate the POPULATION, not the counts. Iterating the
+            # counts checks only the holders the adversary happened to pick, so
+            # a holder it never picks is never checked: its empirical rate is
+            # zero, and zero is exactly the value the loop cannot see. Verified
+            # before the fix: an adversary that skipped two of eighteen holders
+            # passed this test, and passed the whole suite with it.
+            for holder_id in adv._all_holders():
+                count = counts.get(holder_id, 0)
                 empirical_p = count / trials
                 self.assertAlmostEqual(
                     empirical_p, expected_p, delta=0.03,

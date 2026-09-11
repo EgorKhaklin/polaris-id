@@ -11969,3 +11969,51 @@ def test_constraint_mutation_check_discriminates(tmp_path):
     write()
     (tmp_path / "scripts" / "polaris-constraint-mutation-drill.py").unlink()
     assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill is absent"
+
+
+def test_redaction_adversary_check_discriminates(tmp_path):
+    GOOD = ("import math\n\n\n"
+            "class UniformGuessAdversary:\n"
+            "    def guess_holder(self, e):\n        return 1\n\n\n"
+            "class RedactionPropertyTests:\n"
+            "    def test_resists(self):\n"
+            "        guesses = [adv.guess_holder(e) for e, _ in ground_truth]\n"
+            "        self.assertEqual([g for g in guesses if g is None], [])\n"
+            "        n_population = len(adv._all_holders())\n"
+            "        baseline = 1.0 / n_population\n"
+            "        sigma = math.sqrt(baseline * (1.0 - baseline) / len(ground_truth))\n"
+            "        self.assertAlmostEqual(success_rate, baseline, delta=4 * sigma)\n\n"
+            "    def test_uniform(self):\n"
+            "        for holder_id in adv._all_holders():\n"
+            "            count = counts.get(holder_id, 0)\n"
+            "            self.assertAlmostEqual(count / trials, expected_p, delta=0.03)\n")
+    rel = "polaris_web/test_redaction_property.py"
+    def write(body):
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write(GOOD)
+    assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # the bound goes back to one-sided, which a score of zero satisfies
+    write(GOOD.replace("self.assertAlmostEqual(success_rate, baseline, delta=4 * sigma)",
+                       "self.assertLessEqual(success_rate, baseline + 0.10)"))
+    assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "FAIL", "must FAIL when the success-rate bound is one-sided"
+    # the baseline goes back to the hardcoded population
+    write(GOOD.replace("        n_population = len(adv._all_holders())\n        baseline = 1.0 / n_population",
+                       "        baseline = 1.0 / self.POPULATION_SIZE"))
+    assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "FAIL", "must FAIL when the baseline comes from a hardcoded population rather than the adversary's"
+    # the adversary is no longer asserted to have guessed
+    write(GOOD.replace("        self.assertEqual([g for g in guesses if g is None], [])\n", ""))
+    assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "FAIL", "must FAIL when a silent None would still report resistance"
+    # the uniformity check goes back to iterating the adversary's own counts
+    write(GOOD.replace("        for holder_id in adv._all_holders():\n            count = counts.get(holder_id, 0)\n",
+                       "        for holder_id, count in counts.items():\n"))
+    assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "FAIL", "must FAIL when a holder the adversary never picks is never checked"
+    # the bound becomes a picked constant again
+    write(GOOD.replace("        sigma = math.sqrt(baseline * (1.0 - baseline) / len(ground_truth))\n",
+                       "        sigma = 0.05\n"))
+    assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "FAIL", "must FAIL when the bound is picked rather than derived from the binomial sigma"
+    # the adversary itself is gone, so there is nothing to pin
+    write(GOOD.replace("class UniformGuessAdversary:", "class SomethingElse:"))
+    assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "FAIL", "must FAIL when the uniform-guess adversary is absent"
+    # the suite is gone
+    (tmp_path / rel).unlink()
+    assert checks.check_redaction_adversary_is_not_flattered(tmp_path)[0].level == "FAIL", "must FAIL when the suite is absent"

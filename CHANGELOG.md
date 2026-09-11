@@ -5,6 +5,41 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.408 — 2026-09-11 (a privacy result is only as good as the attacker that failed to get it)
+
+`test_redaction_property.py` measures reconstruction risk: it runs an adversary against isolated
+zero-knowledge events and asserts its success rate is no better than chance. Every weakness in
+the adversary flatters that result, so the shape of the assertion decides which weaknesses are
+visible. Two were not.
+
+The rate bound was one-sided, `success_rate <= baseline + slack`, and a score of zero satisfies
+it. An adversary that returned no guess at all reported that isolated ZK events resist
+reconstruction. Verified: with `guess_holder` stubbed to return None, the resistance test passed.
+
+The uniformity sanity check, whose docstring says "each holder gets ~1/N share", iterated the
+adversary's OWN counts. A holder the adversary never picks contributes no entry, so its
+empirical rate is exactly the zero the loop cannot see. Verified: an adversary that skipped two
+of eighteen holders passed that test, and passed the whole suite with it.
+
+There was a third thing under those two. The baseline was `1 / POPULATION_SIZE` with
+POPULATION_SIZE = 10, while the adversary draws from every enrolled holder, an observed 18. The
+sample data's own holders were never counted. That overstated chance by nearly a factor of two
+and loosened the bound by the same factor, and the sanity test three hundred lines below had
+already written down why that is dangerous: "an N-mismatch here would mask a real regression".
+
+So: the attempt is asserted before the rate; the baseline comes from the population the
+adversary actually draws from; the bound is two-sided and derived from the binomial sigma rather
+than picked; and the uniformity loop walks the population instead of the counts. The event count
+went from 200 to 2000 because the event count IS the resolution: four sigma at 200 events could
+only see a leak that more than DOUBLED the success rate, which is not a detector of anything. At
+2000 it sees 1.37x, and the suite still runs in under a second.
+
+Checked against three adversaries the old suite passed: a biased one that ignores two holders, a
+dead one that guesses nothing, and a realistic side channel that learns which holders are active
+and reaches 1.68x chance. All three now fail. `check_redaction_adversary_is_not_flattered` (232)
+pins each part, since every one of them is a way for the result to get better by the attacker
+getting worse.
+
 ## v9.407 — 2026-09-11 (drop the constraint and see whether the suite notices)
 
 MISSION's first claim is that the guarantees live in the DATABASE, not in application code: a
