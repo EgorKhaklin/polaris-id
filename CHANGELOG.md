@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.415 — 2026-09-11 (the third mechanism, measured the same way as the other two)
+
+MISSION names three ways a guarantee lives in the database: a trigger, a CHECK constraint, and a
+unique index. v9.407 mutation-tested the constraints, v9.411 through v9.413 the triggers. This
+finishes the set.
+
+Twelve of the seventeen non-primary-key unique indexes were covered by nothing. Dropping
+`identitytoken_token_value_key`, which is what stops two people holding the same token value, left
+the whole database suite green. So did `uq_active_attestation` and
+`uq_one_pending_recovery_per_individual`, both PARTIAL indexes encoding real rules rather than key
+uniqueness.
+
+The duplicate is built by COPYING an existing row rather than writing one, and that is what lets
+one small table cover every rule: a copy of a valid row satisfies every NOT NULL, CHECK and
+foreign key by construction, so uniqueness is the only thing left for it to violate. For a partial
+index the copy is taken from the rows the index actually covers, read from `pg_get_expr(indpred)`.
+Where a table carries several unique indexes the copy is perturbed, because otherwise the wrong
+index fires first and the test passes while proving something else; the assertion names the index
+for the same reason. All 17 verified: each dropped from a freshly built database, each caught.
+
+The catalog cross-check earned itself on its first run by failing, because
+`uq_effective_retention_policy` was not in the fixture table.
+
+The measurement that produced these numbers was wrong twice before it was right, and both were
+caught by controls rather than by inspection. The first sweep built test ids as
+`test_app.test_name` without the class, so unittest errored on every one and every index looked
+covered; the baseline control was RED, which said the run proved nothing. The second was sound.
+Nothing was reported from either until the control came back green.
+
+`check_unique_rules_are_tested_exhaustively` (238) pins the fixtures, the named refusal, the
+empty-table assertion, the catalog cross-check in both directions, and a floor on the count.
+
 ## v9.414 — 2026-09-11 ("the database said no" is not evidence for which rule said it)
 
 The third mechanism MISSION names, after the triggers and the CHECK constraints, is the unique

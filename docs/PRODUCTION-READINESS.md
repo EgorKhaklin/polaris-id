@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v9.394): not production-ready for real identity data.** Every
+**Status (v9.415): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
@@ -40,6 +40,25 @@ existed, because the read sits behind a stored procedure and nothing looking for
 SELECT found it. **And somebody with no documents can now be enrolled** through a
 trusted referee -- bounded, co-signed past a threshold, and invisible on the credential
 itself, because a person who needed one should not carry a mark for it at every counter.
+
+Three facts from v9.403 to v9.415, all of them about the tests rather than the system, which is
+the point. **The verification layer was asked the question it asks everything else**: not "does
+it pass" but "would it notice". It often would not. Twenty-two drills printed their whole verdict
+paragraph from zero recorded cases. Fourteen of the 37 database triggers, and twelve of the 17
+non-primary-key unique indexes, could be dropped from the schema with the entire suite green,
+including the index that stops two people holding the same token value. All three mechanisms
+MISSION names are now mutation-tested on every push, and the triggers' full sweep runs weekly.
+**The suite that proves C3 was the thing violating it.** Every negative property test did the
+forbidden thing, COMMITTED, and then failed; with the one-active-token index absent that left a
+permanent duplicate and the index could not be rebuilt. The same tests ended `except
+psycopg2.Error`, which accepts any database error as proof, so a refusal for a missing column read
+exactly like the invariant holding. **And a security claim was inferred rather than measured**:
+PQC-POSTURE stated the internal hops' key exchange from base-image OpenSSL versions, and one hop
+had been post-quantum for some time while the document called it classical. It is read off a real
+handshake now.
+
+None of that changed what the system does. All of it changed what is known about it, which is the
+only thing this ledger is for.
 
 Four earlier facts, still true. **The physical layer is a specification, an emulator and published
 vectors, not a card.** `polaris_card/` defines the on-card object, speaks ISO

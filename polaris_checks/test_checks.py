@@ -12305,3 +12305,54 @@ def test_property_refusals_check_discriminates(tmp_path):
     # the suite is gone
     (tmp_path / rel).unlink()
     assert checks.check_property_suite_identifies_its_refusals(tmp_path)[0].level == "FAIL", "must FAIL when the property suite is absent"
+
+
+def test_unique_rules_tested_check_discriminates(tmp_path):
+    SUITE = (
+        "UNIQUE_RULE_FIXTURES = {\n"
+        + "".join("    'ix%d': (None, {}),\n" % i for i in range(17))
+        + "}\n\n\n"
+        "class TestEveryUniqueRuleRefusesADuplicate:\n"
+        "    def _copy(self, cur, index_name, perturb):\n"
+        "        self.assertIsNotNone(seed, f'{table} is empty and no seed is declared')\n"
+        "    def test_refuses(self):\n"
+        "        with self.assertRaises(pg_errors.UniqueViolation) as caught:\n"
+        "            cur.execute(statement)\n"
+        "        self.assertIn(index_name, str(caught.exception),\n"
+        "                      f'refused, but by a different rule than {index_name}')\n"
+        "    def test_catalog(self):\n"
+        "        cur.execute('SELECT c.relname FROM pg_index i WHERE i.indisunique AND NOT i.indisprimary')\n"
+        "        self.assertEqual(live - listed, set())\n"
+        "        self.assertEqual(listed - live, set())\n")
+    rel = "polaris_web/test_check_constraints.py"
+    def write(body):
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write(SUITE)
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # the fixture table goes away
+    write(SUITE.replace("UNIQUE_RULE_FIXTURES = {", "SOMETHING_ELSE = {"))
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL without the table-driven uniqueness fixtures"
+    # the catalog cross-check goes away
+    write(SUITE.replace("i.indisunique AND NOT i.indisprimary", "true"))
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when the fixture table is not cross-checked against the catalog"
+    # an unlisted index would not be noticed
+    write(SUITE.replace("        self.assertEqual(live - listed, set())\n", ""))
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when an unlisted unique index would go unnoticed"
+    # a vanished index would not be noticed
+    write(SUITE.replace("        self.assertEqual(listed - live, set())\n", ""))
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when a vanished index would go unnoticed"
+    # the duplicate no longer has to raise a unique violation
+    write(SUITE.replace("pg_errors.UniqueViolation", "Exception"))
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when any exception counts as the rule holding"
+    # it stops checking WHICH rule refused
+    write(SUITE.replace("                      f'refused, but by a different rule than {index_name}')\n", "                      'refused')\n"))
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when the wrong index firing first would read as a pass"
+    # an empty table stops failing
+    write(SUITE.replace("        self.assertIsNotNone(seed, f'{table} is empty and no seed is declared')\n", "        pass\n"))
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when an empty table quietly goes untested"
+    # the fixture table is emptied, which satisfies everything above vacuously
+    write(SUITE.replace("".join("    'ix%d': (None, {}),\n" % i for i in range(17)), "    'ix0': (None, {}),\n"))
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when too few rules are listed, rather than pass by finding nothing"
+    # the suite is gone
+    (tmp_path / rel).unlink()
+    assert checks.check_unique_rules_are_tested_exhaustively(tmp_path)[0].level == "FAIL", "must FAIL when the constraint suite is absent"

@@ -10898,6 +10898,62 @@ def check_property_suite_identifies_its_refusals(root: pathlib.Path) -> list[Fin
                "invariant holding")
 
 
+def check_unique_rules_are_tested_exhaustively(root: pathlib.Path) -> list[Finding]:
+    """The third mechanism, measured the same way as the other two (v9.415).
+
+    MISSION names three ways a guarantee lives in the database: a trigger, a CHECK constraint,
+    and a unique index. v9.407 mutation-tested the constraints, v9.411 to v9.413 the triggers.
+    The indexes were the last, and twelve of the seventeen non-primary-key ones were covered by
+    nothing: drop `identitytoken_token_value_key` and the whole suite stayed green.
+
+    The duplicate is built by COPYING an existing row rather than writing one, which is what lets
+    one small table cover every rule: a copy of a valid row satisfies every NOT NULL, CHECK and
+    foreign key by construction, so uniqueness is the only thing left for it to violate. Where a
+    table carries several unique indexes the copy is perturbed, because otherwise the wrong index
+    fires first and the test passes while proving something else, and the assertion names the
+    index for the same reason.
+
+    The catalog cross-check is what keeps it exhaustive. It earned that immediately: it failed on
+    the first run because `uq_effective_retention_policy` was not in the fixture table."""
+    name = "unique_rules_tested"
+    rel = "polaris_web/test_check_constraints.py"
+    suite = _read(root, rel)
+    if not suite:
+        return _fail(name, f"{rel} is absent; the schema's uniqueness rules have no evidence")
+    problems = []
+    if "UNIQUE_RULE_FIXTURES" not in suite:
+        problems.append("the table-driven uniqueness fixtures are gone, so the rules are tested "
+                        "only where somebody wrote a test")
+    if "indisunique" not in suite or "NOT i.indisprimary" not in suite:
+        problems.append("the fixture table is no longer cross-checked against the catalog, so a "
+                        "new unique index would simply go untested")
+    for needle, why in (("live - listed", "an index the catalog has that nothing lists"),
+                        ("listed - live", "a listed index the database no longer defines")):
+        if needle not in suite:
+            problems.append(f"the catalog cross-check no longer detects {why}")
+    if "UniqueViolation" not in suite:
+        problems.append("the duplicate is no longer required to raise a unique violation")
+    # Naming the index is what stops the wrong rule firing first from reading as a pass.
+    if "but by a different rule than" not in suite:
+        problems.append("the test does not check WHICH rule refused the duplicate, so on a table "
+                        "with several unique indexes the wrong one firing would pass")
+    if "is empty and no seed is declared" not in suite:
+        problems.append("an empty table no longer fails, so a rule whose rows happen to be absent "
+                        "stops being tested without anything saying so")
+    block = suite.split("UNIQUE_RULE_FIXTURES = {", 1)
+    listed = len(re.findall(r"(?m)^\s+'\w+': \(", block[1].split("\n}", 1)[0])) if len(block) == 2 else 0
+    if listed < 15:
+        problems.append(f"only {listed} uniqueness rules are listed; the parse has broken and "
+                        "this check is passing by finding nothing")
+    if problems:
+        return _fail(name, "; ".join(problems[:3]))
+    return _ok(name,
+               f"all {listed} of the schema's non-primary-key uniqueness rules are exercised by "
+               "copying a valid row, each refusal is checked to be THAT rule rather than another "
+               "index on the same table, an empty table fails rather than going untested, and the "
+               "fixture table is cross-checked against the catalog in both directions")
+
+
 def check_triggers_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
     """A coverage number nobody re-measures is a coverage number that decays (v9.413).
 
@@ -14244,6 +14300,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_trust_ladder_is_bound_to_the_code,
     check_property_suite_cannot_skip_its_subject,
     check_append_only_tables_are_tested_exhaustively,
+    check_unique_rules_are_tested_exhaustively,
     check_triggers_are_mutation_tested,
     check_property_suite_identifies_its_refusals,
     check_benchmark_measures_growth,

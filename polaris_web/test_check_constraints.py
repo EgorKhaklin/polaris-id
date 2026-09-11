@@ -1612,5 +1612,155 @@ class TestEnrollmentCodeOneWayDoor(_CheckBase):
                 cur.execute("UPDATE EnrollmentCode SET attempts = 0 WHERE code_id = %s", (code_id,))
 
 
+# ============================================================================
+# Uniqueness, exhaustively (v9.415)
+#
+# The third mechanism MISSION names, after the trigger and the CHECK, is the
+# unique index. Measured the same way as the other two: drop each one and see
+# whether anything goes red. Twelve of the seventeen non-primary-key unique
+# indexes were covered by nothing, including identitytoken_token_value_key and
+# two PARTIAL indexes that encode real rules rather than key uniqueness (one
+# active attestation per pair, one pending recovery per person).
+#
+# The duplicate is built by COPYING an existing row rather than by writing one,
+# which is what makes this cover twelve rules in one small table: a copy of a
+# valid row satisfies every NOT NULL, CHECK and foreign key by construction, so
+# the only thing it can violate is uniqueness. Where a table carries more than
+# one unique index the copy must be perturbed, or the wrong one fires first and
+# the test would pass while proving something else.
+# ============================================================================
+
+#: index -> (seed statement for an empty table or None, {column: expression} to
+#: perturb so a DIFFERENT unique index on the same table does not fire first).
+UNIQUE_RULE_FIXTURES = {
+    # One unique index on the table: a plain copy names it.
+    'uq_active_attestation': (None, {}),
+    'uq_effective_retention_policy': (None, {}),
+    'uq_one_pending_recovery_per_individual': (None, {}),
+    'blockchainanchor_did_key': (None, {}),
+    'cryptographicalgorithm_name_key': (None, {}),
+    'devicebinding_device_fingerprint_key': (None, {}),
+    'uq_one_leaf_per_token_per_epoch': (None, {}),
+    'verificationcontext_context_type_key': (None, {}),
+    'appuser_username_key': (None, {}),
+    'timestamplog_timestamp_hash_key': (
+        "INSERT INTO TimestampLog (timestamp_hash) VALUES (repeat('9', 64))", {}),
+    'exchangereceiptlog_receipt_hash_key': (
+        "INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (repeat('8', 64))", {}),
+    'relyingparty_client_id_key': (
+        "INSERT INTO RelyingParty (client_id, client_secret_hash, org_name) "
+        "VALUES ('rp_uniqueness_probe_0001', repeat('7', 64), 'Uniqueness Probe')", {}),
+    'idx_card_personalization_one_per_token': (
+        "INSERT INTO CardPersonalization (token_id, issuing_agency_id, credential_ref, "
+        "profile_version, normal_public_key, duress_public_key, card_object_sha3_256) "
+        "VALUES (1, 1, decode(repeat('00',32),'hex'), 1, decode(repeat('11',32),'hex'), "
+        "decode(repeat('22',32),'hex'), decode(repeat('33',32),'hex'))", {}),
+    # IdentityToken carries three. Each needs the other two stepped out of the way.
+    'identitytoken_token_value_key': (None, {
+        'physical_serial': "'SER-UNIQ-PROBE-A'"}),
+    'identitytoken_physical_serial_key': (None, {
+        'token_value': "'TKN-UNIQ-PROBE-B'"}),
+    'one_signature_per_algorithm_per_token': (None, {}),
+    'uq_one_active_per_person': (None, {
+        'token_value': "'TKN-UNIQ-PROBE-C'", 'physical_serial': "'SER-UNIQ-PROBE-C'"}),
+}
+
+
+class TestEveryUniqueRuleRefusesADuplicate(_CheckBase):
+    """Every uniqueness rule the schema states, exercised once."""
+
+    def _copy_statement(self, cur, index_name, perturb):
+        """INSERT a copy of one existing row, minus the primary key.
+
+        Copying is the point. A row written by hand has to satisfy every other
+        constraint on the table before it can reach the unique index; a copy of a
+        row already in the table satisfies all of them by construction.
+        """
+        cur.execute("""
+            SELECT i.indrelid::regclass::text AS tbl, i.indpred IS NOT NULL AS partial
+              FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+             WHERE c.relnamespace = 'public'::regnamespace AND c.relname = %s
+        """, (index_name,))
+        row = cur.fetchone()
+        self.assertIsNotNone(row, f"{index_name} is not an index in this database")
+        table = row['tbl']
+        cur.execute("""
+            SELECT a.attname FROM pg_attribute a
+             WHERE a.attrelid = %s::regclass AND a.attnum > 0 AND NOT a.attisdropped
+               AND a.attidentity = ''
+               AND NOT EXISTS (SELECT 1 FROM pg_index i
+                                WHERE i.indrelid = a.attrelid AND i.indisprimary
+                                  AND a.attnum = ANY(i.indkey))
+             ORDER BY a.attnum
+        """, (table,))
+        cols = [r['attname'] for r in cur.fetchall()]
+        select = ", ".join(perturb.get(c, f'"{c}"') for c in cols)
+        target = ", ".join(f'"{c}"' for c in cols)
+        # A partial index only fires on the rows it covers, so copy one of those.
+        where = ""
+        if row['partial']:
+            cur.execute("SELECT pg_get_expr(indpred, indrelid) AS pred FROM pg_index i "
+                        "JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = %s",
+                        (index_name,))
+            where = " WHERE " + cur.fetchone()['pred']
+        return table, f"INSERT INTO {table} ({target}) SELECT {select} FROM {table}{where} LIMIT 1"
+
+    def test_every_unique_rule_refuses_a_duplicate(self):
+        for index_name, (seed, perturb) in sorted(UNIQUE_RULE_FIXTURES.items()):
+            with self.subTest(index=index_name):
+                try:
+                    with self.conn.cursor() as cur:
+                        table, statement = self._copy_statement(cur, index_name, perturb)
+                        cur.execute(f"SELECT count(*) AS n FROM {table}")
+                        if cur.fetchone()['n'] == 0:
+                            self.assertIsNotNone(
+                                seed,
+                                f"{table} is empty and no seed is declared for {index_name}, so "
+                                f"the rule cannot be exercised. Add the INSERT rather than "
+                                f"letting the guarantee go untested.")
+                            cur.execute(seed)
+                        with self.assertRaises(
+                                pg_errors.UniqueViolation,
+                                msg=f"a duplicate row was accepted; {index_name} is not "
+                                    f"enforced") as caught:
+                            cur.execute(statement)
+                        # And it must be THIS rule that refused. On a table with several
+                        # unique indexes the wrong one firing would pass while proving
+                        # something else.
+                        self.assertIn(
+                            index_name, str(caught.exception),
+                            f"the duplicate was refused, but by a different rule than "
+                            f"{index_name}: {caught.exception}")
+                finally:
+                    self.conn.rollback()
+
+    def test_the_fixture_table_covers_every_unique_index_in_the_catalog(self):
+        """The anti-vacuity anchor, as for the append-only tables: the test above
+        proves nothing about an index nobody listed."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.relname
+                  FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+                 WHERE c.relnamespace = 'public'::regnamespace
+                   AND i.indisunique AND NOT i.indisprimary
+                   AND NOT EXISTS (SELECT 1 FROM pg_class p JOIN pg_inherits h
+                                          ON h.inhrelid = i.indrelid WHERE p.oid = h.inhparent)
+            """)
+            live = {r['relname'] for r in cur.fetchall()}
+        listed = set(UNIQUE_RULE_FIXTURES)
+        self.assertEqual(
+            live - listed, set(),
+            "unique index(es) exist that UNIQUE_RULE_FIXTURES does not list, so nothing above "
+            "tested them")
+        self.assertEqual(
+            listed - live, set(),
+            "index(es) are listed that the database does not define, so the test above is "
+            "asserting against a rule that is gone")
+        self.assertGreaterEqual(
+            len(live), 15,
+            f"only {len(live)} unique indexes were found; the query has broken and these tests "
+            "are passing by finding nothing")
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
