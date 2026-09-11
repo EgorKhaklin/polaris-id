@@ -5,6 +5,50 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.385 — 2026-09-10 (the widening the schema alone could not tell me about)
+
+v9.384 widened five surrogate ids and broke nine CI jobs, all of them for one reason: every job
+loads the schema, and `uc7_warrant_audit` declares `RETURNS TABLE (event_id INTEGER, ...)`
+while now receiving a `BIGINT`. Postgres refuses with "structure of query does not match
+function result type" the first time the procedure file is loaded.
+
+Widening a column is not a one-line change, and the three things it touches are all invisible
+from the column definition:
+
+FIVE ROW-RETURNING FUNCTIONS declare these ids in their result columns, and `CREATE OR REPLACE`
+CANNOT change a function's return type. They are now dropped by the migration and recreated by
+the object sync -- and they are FOUND rather than listed. A `TABLE`-returning function's result
+columns are `OUT` arguments in the catalog, so the ones exposing a widened id as 32-bit can be
+asked for by name and type. The first draft listed five signatures by hand and four of them
+were wrong, which is worse than useless: `DROP FUNCTION IF EXISTS` with a signature that does
+not match says "does not exist, skipping" and leaves the broken function in place.
+
+THREE VIEWS depend on these columns, and Postgres refuses `ALTER COLUMN TYPE` while they do.
+The migration captures each view's definition AND ITS GRANTS from the live catalog, drops it,
+alters, and recreates it. From the catalog rather than from a copy in the migration, because a
+copy is right the day it is written and wrong the first time somebody edits the view.
+`polaris_app` holds real privileges on all three, and losing them would take the application
+down in a way that looks nothing like a migration problem.
+
+THE COLUMN WORK IS NOW CONDITIONAL on a target still being `integer`, so applying this to a
+database loaded from the current schema touches no view at all. The sequence widening stays
+unconditional, because a sequence left at the 32-bit ceiling under a 64-bit column is the
+half-finished state the whole migration exists to avoid.
+
+AND THE MIGRATION SAYS IT IS NOT ZERO-DOWNTIME rather than implying otherwise. Between
+`--up` and `--sync-objects` those functions do not exist; `polaris-deploy.sh` runs both before
+rolling either colour, so the gap is seconds, but it is not zero. With the partition rewrite
+underneath it, this belongs in a maintenance window -- which is the argument for running it
+before there is anything in the table.
+
+The underlying failure was mine: I verified the widening against the schema file and the model,
+and never loaded it into a database, because no local interpreter here has Flask. Loading the
+SQL needs only `psql`, which was available the whole time. Both paths are now exercised
+locally before pushing: a fresh load, and an upgrade from the pre-widening schema through the
+migration and the object sync, ending with a real row inserted at event_id 2,147,483,648.
+
+---
+
 ## v9.384 — 2026-09-10 (P7.3: the targets are met and the column ran out of integers)
 
 The roadmap states four national planning targets and says in the same sentence that they are

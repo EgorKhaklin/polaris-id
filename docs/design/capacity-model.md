@@ -92,6 +92,21 @@ that the declared target matches what the statement sets, and that **no foreign 
 the column** -- a parent widened to `BIGINT` under a child still declaring `INTEGER` would
 accept ids the child cannot hold.
 
+**The migration is not zero-downtime, and the declaration does not pretend it is.** The
+column change is an expand, but the five row-returning functions that expose these ids
+declare their result columns explicitly, and `CREATE OR REPLACE` cannot change a return type
+-- so they are dropped and the object sync recreates them, leaving a gap of seconds in which
+`uc7_warrant_audit` and the four Atlas readers do not exist. `polaris-deploy.sh` runs the
+migration and the sync before rolling either colour, so the gap is bounded; it is not zero.
+Combined with the partition rewrite, this belongs in a maintenance window.
+
+Those functions are found from the catalog rather than listed: a `TABLE`-returning function's
+result columns are `OUT` arguments, so the ones exposing a widened id as 32-bit can be asked
+for by name and type. A hand-written list is worse than useless here, because
+`DROP FUNCTION IF EXISTS` with a signature that does not match reports "does not exist,
+skipping" and leaves exactly the broken function it was meant to remove. Four of the five in
+the first draft did that.
+
 The down-migration narrows back and **can fail**, which is correct. There is no safe narrowing
 of a value that no longer fits, and coping by truncating would rewrite identifiers on rows C1
 makes permanent.

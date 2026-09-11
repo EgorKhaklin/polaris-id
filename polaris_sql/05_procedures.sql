@@ -424,7 +424,7 @@ CREATE OR REPLACE FUNCTION uc7_warrant_audit(
     p_window_end         TIMESTAMP DEFAULT 'infinity',
     p_context_filter     VARCHAR(40) DEFAULT NULL  -- if non-null, restrict to one context
 ) RETURNS TABLE (
-    event_id           INTEGER,
+    event_id          BIGINT,
     event_timestamp    TIMESTAMP,
     context_type       VARCHAR(40),
     requesting_agency  VARCHAR(200),

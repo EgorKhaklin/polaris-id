@@ -211,7 +211,7 @@ CREATE OR REPLACE FUNCTION atlas_points_verifications(
     p_contexts  TEXT      DEFAULT NULL,
     p_agencies  TEXT      DEFAULT NULL          -- CSV of agency_id, e.g. '1,4'
 ) RETURNS TABLE (
-    event_id          INTEGER,
+    event_id         BIGINT,
     lat               DOUBLE PRECISION,
     lon               DOUBLE PRECISION,
     event_timestamp   TIMESTAMP,
@@ -290,7 +290,7 @@ CREATE OR REPLACE FUNCTION atlas_points_lifecycles(
     p_event_types TEXT      DEFAULT NULL,
     p_agencies    TEXT      DEFAULT NULL          -- CSV of agency_id (actor agency)
 ) RETURNS TABLE (
-    event_id        INTEGER,
+    event_id       BIGINT,
     lat             DOUBLE PRECISION,
     lon             DOUBLE PRECISION,
     event_timestamp TIMESTAMP,
@@ -450,7 +450,7 @@ CREATE OR REPLACE FUNCTION atlas_recent_events(
     p_limit     INTEGER   DEFAULT 50
 ) RETURNS TABLE (
     kind            TEXT,    -- 'verification' or 'lifecycle'
-    event_id        INTEGER,
+    event_id       BIGINT,
     event_timestamp TIMESTAMP,
     token_id        INTEGER,
     holder_name     TEXT,
@@ -1207,7 +1207,7 @@ CREATE OR REPLACE FUNCTION atlas_records(
     p_contexts   TEXT      DEFAULT NULL,
     p_agencies   TEXT      DEFAULT NULL
 ) RETURNS TABLE (
-    event_id        INTEGER,
+    event_id       BIGINT,
     event_timestamp TIMESTAMP,
     agency_name     TEXT,
     category        TEXT,     -- verification: context; lifecycle: event_type

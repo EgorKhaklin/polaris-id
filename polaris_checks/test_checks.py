@@ -9542,8 +9542,8 @@ def test_expand_contract_check_grades_declared_widenings(tmp_path):
     # THE COLUMN IS REFERENCED BY A FOREIGN KEY. A parent widened to BIGINT while a child
     # still declares INTEGER accepts ids the child cannot hold -- exactly the rolling-deploy
     # breakage the policy exists to prevent.
-    write('ALTER TABLE TokenSignature         ALTER COLUMN signature_id TYPE BIGINT;',
-          'ALTER TABLE IdentityToken ALTER COLUMN token_id TYPE BIGINT;')
+    write('    ALTER TABLE TokenSignature      ALTER COLUMN signature_id TYPE BIGINT;',
+          '    ALTER TABLE IdentityToken ALTER COLUMN token_id TYPE BIGINT;')
     dst = tmp_path / MIG
     dst.write_text(dst.read_text().replace(
         '-- widens: TokenSignature.signature_id INTEGER -> BIGINT',
