@@ -26,6 +26,7 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Callable
 
@@ -9176,6 +9177,43 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
     cases; passing them is what "conformant" means. The SDK is standalone (an
     external org installs it) and the suite RUNS in CI, not a document that says it
     would."""
+    # 0. A NEGATIVE CASE IS EVIDENCE ONLY WHEN THE POSITIVE CONTROL HOLDS (v9.389).
+    #
+    #    A verifier with no post-quantum backend reports authentic=False to every case.
+    #    Every case expecting a REJECTION then passes, and on a machine with no liboqs
+    #    35 of 71 cases passed while proving nothing: "a tampered signature is refused"
+    #    means nothing from a verifier that refuses an untampered one too. The runner
+    #    must declare such a run VOID rather than score it, and the rule must name no
+    #    cause -- a missing library, a misconfigured backend and a future regression all
+    #    produce the same false reassurance.
+    runner = _read(root, "conformance/run_conformance.py")
+    if not runner:
+        return _fail("conformance_suite", "conformance/run_conformance.py is missing")
+    #    Checked by RUNNING the rule against a stub verifier that rejects everything,
+    #    not by finding the word VOID in the file. The behaviour is the property; the
+    #    spelling is not, and a check on the spelling is satisfied by a comment.
+    #    The stub lives in a temp directory, never in the tree: a check that writes into
+    #    the repository to do its work leaves litter behind the moment it is interrupted.
+    import tempfile
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            stub = pathlib.Path(td) / "reject_everything.py"
+            stub.write_text("import json, sys\njson.loads(sys.stdin.read())\n"
+                            'print(json.dumps({"authentic": False}))\n', encoding="utf-8")
+            probe = subprocess.run(
+                [sys.executable, str(root / "conformance" / "run_conformance.py"),
+                 "--verifier", f"{sys.executable} {stub}"],
+                capture_output=True, text=True, cwd=str(root), timeout=300)
+    except Exception as exc:  # noqa: BLE001 - a runner that cannot run is a failure
+        return _fail("conformance_suite", f"the conformance runner could not be probed: {exc}")
+    if probe.returncode != 2 or "VOID" not in (probe.stderr + probe.stdout):
+        return _fail("conformance_suite",
+                     "a verifier that rejects EVERY case was scored as a conformance result "
+                     f"(exit {probe.returncode}) instead of being declared void. Every case "
+                     "expecting a rejection passes against such a verifier -- 35 of 71 did, on a "
+                     "machine with no post-quantum backend -- and a negative result is evidence "
+                     "only when the positive control holds")
+
     # 1. The Python reference SDK: real ML-DSA authenticity + the online contract,
     #    standalone (only a standard crypto library + stdlib, no Polaris imports).
     sdk = _read(root, "sdk/python/polaris_verify/__init__.py")

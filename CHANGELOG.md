@@ -5,6 +5,43 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.389 — 2026-09-11 (thirty-five conformance cases passed because nothing could be verified)
+
+Item 7 of P1.18 asks what a newcomer actually experiences, so I ran the four commands the README
+tells them to run. The third one, `conformance/run_conformance.py --self`, printed
+`FAIL: 36/71` on a machine without liboqs installed.
+
+THE 36 FAILURES WERE NOT THE PROBLEM. THE 35 PASSES WERE. Every case expecting a GENUINE
+artifact failed, and every case expecting a REJECTION passed -- because the verifier had no
+post-quantum backend and was reporting `authentic=False` to everything. A suite that scores
+"a tampered signature is refused" as a pass, from a verifier that also refuses an untampered
+one, is measuring nothing and reporting a majority green.
+
+The runner now declares such a run VOID: if not one case expecting a genuine artifact passed,
+the rejection cases proved nothing and there is no verdict to report. The rule names no cause,
+which is what makes it durable -- a missing library, a misconfigured backend and a future
+regression all produce the same false reassurance, and a rule that names none of them catches
+all three. It adds a diagnosis when it can (the missing `liboqs-python`) without depending on
+it, so a newcomer who skipped the install step is told so instead of reading a wall of failures.
+
+`check_conformance_suite` verifies this by RUNNING the runner against a stub verifier that
+rejects everything and requiring exit 2, not by finding the word VOID in the file. A check on
+the spelling is satisfied by a comment. The probe stub is written to a temp directory rather
+than into `conformance/`, because a check that writes into the repository to do its work leaves
+litter the moment it is interrupted.
+
+The detection test caught one of these errors in itself. It embedded the stub's verdict with
+`json.dumps` into Python source, which put `false` in the file; the stub died; and the runner's
+"verifier exited" path ALSO returns 2, so the exit-code assertion passed for entirely the wrong
+reason. The assertion that the output actually says VOID is what caught it. That is the same
+failure as the one this ship is about, one level up.
+
+- the positive-control gate in `conformance/run_conformance.py`, pinned behaviourally by
+  `check_conformance_suite` with a two-path detection test (rejects-everything is void;
+  accepts-everything is nonconformant, which is a verdict and not void)
+
+---
+
 ## v9.388 — 2026-09-10 (P1.18 item 8: a limitations list that fails the build when a limitation is fixed)
 
 Item 8 asks for an external-review packet: a threat matrix for the existing subsystems, blunt

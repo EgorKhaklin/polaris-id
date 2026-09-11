@@ -151,6 +151,32 @@ def main(argv=None):
               % ("PASS" if ok else "FAIL", name, summary,
                  " ".join("%s=%s" % (k, v) for k, v in expect.items())))
 
+    # THE POSITIVE CONTROLS DECIDE WHETHER ANY OF THIS IS EVIDENCE.
+    #
+    # A verifier that cannot verify anything reports authentic=False to every case.
+    # Every case expecting authentic=False then PASSES -- for the wrong reason. Run
+    # this suite on a machine with no post-quantum backend and 35 of 71 cases pass
+    # while proving nothing at all: "a tampered signature is rejected" is only
+    # evidence when an untampered one is accepted.
+    #
+    # So the run is VOID when no positive control passed. The rule names no cause,
+    # which is what makes it durable: a missing library, a misconfigured backend and
+    # a future regression all produce the same false reassurance, and all are caught.
+    positives = [r for r in results if r["expect"].get("authentic") is True]
+    if positives and not any(r["pass"] for r in positives):
+        diagnosis = ""
+        try:
+            import oqs  # noqa: F401 - availability probe only
+        except ImportError:
+            diagnosis = ("\n  The likely cause is a missing post-quantum backend: "
+                         "`pip install liboqs-python cryptography`.")
+        print("\n  VOID: not one of the %d cases that expect a GENUINE artifact passed, "
+              "so the\n  %d case(s) that expect a REJECTION passed only because this verifier "
+              "rejects\n  everything. A negative result is evidence when the positive control "
+              "holds, and\n  it did not.%s"
+              % (len(positives), len(results) - len(positives), diagnosis), file=sys.stderr)
+        return 2
+
     if args.json:
         print(json.dumps({"total": len(cases), "failures": failures, "results": results}))
     if failures:

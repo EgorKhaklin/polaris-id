@@ -9428,6 +9428,49 @@ def test_coexistence_plan_check_discriminates(tmp_path):
             f"the record must state: {phrase}"
 
 
+def test_conformance_positive_control_gate_discriminates(tmp_path):
+    # v9.389: 35 of 71 conformance cases passed on a machine with no post-quantum backend.
+    # They passed because the verifier reported authentic=False to everything, so every case
+    # expecting a REJECTION matched. "A tampered signature is refused" is not evidence from a
+    # verifier that refuses an untampered one too.
+    #
+    # The gate is behavioural and cause-free: if no case expecting a GENUINE artifact passed,
+    # the run is void. A missing library, a misconfigured backend and a future regression all
+    # produce the same false reassurance, and naming none of them catches all three.
+    import json
+    import subprocess
+    import sys as _sys
+
+    runner = REPO / "conformance" / "run_conformance.py"
+
+    def probe(verdict):
+        stub = tmp_path / "stub.py"
+        # The verdict is embedded as a JSON STRING and printed verbatim. Embedding
+        # json.dumps() output as a Python literal puts `false` in the source, the stub
+        # dies, and the runner's "verifier exited" path also returns 2 -- so an
+        # exit-code-only assertion passes for entirely the wrong reason.
+        stub.write_text("import sys\nsys.stdin.read()\nprint(%r)\n" % json.dumps(verdict))
+        return subprocess.run(
+            [_sys.executable, str(runner), "--verifier", f"{_sys.executable} {stub}"],
+            capture_output=True, text=True, cwd=str(REPO), timeout=300)
+
+    rejects = probe({"authentic": False})
+    assert rejects.returncode == 2, (
+        "a verifier that rejects EVERY case must be declared void, not scored: it makes every "
+        "rejection case pass while proving nothing")
+    assert "VOID" in rejects.stderr + rejects.stdout, \
+        "a void run must say so, not merely exit non-zero"
+
+    # The gate must fire on the ABSENCE of a passing positive control, not on the presence of
+    # failures. A verifier that accepts everything fails every rejection case and is simply
+    # nonconformant -- a real verdict, and not void.
+    accepts = probe({"authentic": True, "fresh": True, "active": True, "issuer_trusted": True})
+    assert accepts.returncode == 1, \
+        "a verifier that accepts everything is nonconformant, which is a verdict, not a void run"
+    assert "VOID" not in accepts.stderr + accepts.stdout, \
+        "a run whose positive controls passed must not be declared void"
+
+
 def test_review_packet_check_discriminates(tmp_path):
     # v9.388 (P1.18 item 8): the ways a review packet stops being true. The real packet is the
     # fixture because the check resolves its witnesses against real files -- a synthetic one
