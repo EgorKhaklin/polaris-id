@@ -45,7 +45,15 @@ NEEDS_REASON = ("GAP", "WAIVED", "PARTIAL")
 _ok_all = True
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def _row(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     global _ok_all
     ok = got == want
     _ok_all &= ok
@@ -177,6 +185,10 @@ def main():
     _row("...and the highest FAL", "highest fal claimed" in low, True)
 
     print()
+    if not _cases_recorded:
+        print("FAIL: this drill recorded NO cases. It tested nothing and would "
+              "have printed its summary regardless.", file=sys.stderr)
+        return 1
     if _ok_all:
         print("OK: every claim in the assurance mapping points at something that exists and "
               "passes today. Each cited check was RUN, not merely found; each cited test class, "

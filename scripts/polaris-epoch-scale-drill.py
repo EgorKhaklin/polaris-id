@@ -46,7 +46,15 @@ MEM_CEILING_MB = 512
 PRODUCTION_DEPTH = 24
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def _row(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     ok = got == want
     print("  %-64s %-12s %-12s %s" % (label[:64], str(got)[:12], str(want)[:12], "OK" if ok else "FAIL"))
     return ok
@@ -170,6 +178,10 @@ def main():
 
     print()
     if ok:
+        if not _cases_recorded:
+            print("FAIL: this drill recorded NO cases. It tested nothing and would "
+                  "have printed its summary regardless.", file=sys.stderr)
+            return 1
         print("OK: the epoch pipeline runs at the national depth. The zero padding is folded into "
               "precomputed per-level hashes instead of materialised, so a root costs O(members + "
               "depth) rather than O(2^depth) and a thousand members no longer pay for sixteen "

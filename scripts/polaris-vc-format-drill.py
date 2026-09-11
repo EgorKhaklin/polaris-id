@@ -30,7 +30,15 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "polaris_web"))
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def _row(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     ok = got == want
     print("  %-66s %-10s %-10s %s" % (label[:66], str(got)[:10], str(want)[:10], "OK" if ok else "FAIL"))
     return ok
@@ -151,6 +159,10 @@ def main():
 
     print()
     if ok:
+        if not _cases_recorded:
+            print("FAIL: this drill recorded NO cases. It tested nothing and would "
+                  "have printed its summary regardless.", file=sys.stderr)
+            return 1
         print("OK: a verification result carries in the W3C Verifiable Credentials data model. A "
               "general reader parses the document, reads its window and finds its proof; it cannot "
               "verify that proof, because the cryptosuite is Polaris's own and every registered "

@@ -43,7 +43,15 @@ sys.path.insert(0, os.path.join(ROOT, "polaris_card"))
 _ok_all = True
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def _row(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     global _ok_all
     ok = got == want
     _ok_all &= ok
@@ -218,6 +226,10 @@ def main():
          doc["profile"] == cp.DOC_TYPE and doc["profile_version"] == cp.PROFILE_VERSION, True)
 
     print()
+    if not _cases_recorded:
+        print("FAIL: this drill recorded NO cases. It tested nothing and would "
+              "have printed its summary regardless.", file=sys.stderr)
+        return 1
     if _ok_all:
         # v9.393: the summary states what RAN. The table above already reports the
         # post-quantum leg as unavailable when liboqs is absent -- a note rather than a

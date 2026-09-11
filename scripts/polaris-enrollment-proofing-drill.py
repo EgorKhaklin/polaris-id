@@ -44,7 +44,15 @@ DB = os.environ.get("POLARIS_PROOFING_DB", "polaris_proofing_drill")
 _ok_all = True
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def _row(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     global _ok_all
     ok = got == want
     _ok_all &= ok
@@ -310,6 +318,10 @@ def main():
                  "CURRENT_TIMESTAMP + INTERVAL '365 days'"), 1)
 
         print()
+        if not _cases_recorded:
+            print("FAIL: this drill recorded NO cases. It tested nothing and would "
+                  "have printed its summary regardless.", file=sys.stderr)
+            return 1
         if _ok_all:
             print("OK: an enrollment now records what it rested on, and the assurance level is "
                   "derived from that evidence rather than typed by whoever ran the session. "

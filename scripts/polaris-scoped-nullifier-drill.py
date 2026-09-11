@@ -53,7 +53,15 @@ SCOPE_CLINIC = 0x9A17_C11C
 SCOPE_LIBRARY = 0x11B2_A2E5
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def _row(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     ok = got == want
     print("  %-62s %-10s %-10s %s" % (label[:62], str(got)[:10], str(want)[:10], "OK" if ok else "FAIL"))
     return ok
@@ -163,6 +171,10 @@ def main():
 
     print()
     if ok:
+        if not _cases_recorded:
+            print("FAIL: this drill recorded NO cases. It tested nothing and would "
+                  "have printed its summary regardless.", file=sys.stderr)
+            return 1
         print("OK: one human, once per scope. A relying party recognises a second proof from the "
               "same person in its own scope and epoch and refuses it, while a second relying party "
               "sees a value it cannot correlate with the first -- because the epoch leaf is a "

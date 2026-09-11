@@ -10817,6 +10817,56 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_drills_count_their_cases(root: pathlib.Path) -> list[Finding]:
+    """A drill that records no cases still prints its summary and exits 0 (v9.403).
+
+    Every drill ends by printing what it proved: "a presentation carries no value a relying
+    party should key its records by", "a card object is a credential rather than a badge". Those
+    sentences are printed from a verdict variable that starts TRUE and is only ever narrowed by
+    the cases. Remove or short-circuit the cases -- which is what a refactor does by accident --
+    and the variable is never narrowed, the paragraph prints in full, and the drill exits 0.
+
+    Reproduced before it was fixed: neutralising all sixteen recording calls in the pairwise
+    drill left it printing its guarantee and exiting 0.
+
+    So each drill counts what it recorded and refuses to report a verdict from nothing. The
+    guard is deliberately `== 0` rather than a per-drill minimum: zero is the accident that
+    actually happens, and a per-drill expected count would either rot or fire on a drill that
+    legitimately skips a leg (the card profile skips its post-quantum half without liboqs)."""
+    name = "drill_case_counts"
+    drills = sorted((root / "scripts").glob("polaris-*drill.py"))
+    if not drills:
+        return _fail(name, "no drills found under scripts/; the parse has broken")
+    missing, guarded = [], 0
+    for d in drills:
+        src = _read_path(d)
+        has_helper = re.search(r"(?m)^def (case|_row|row|_case)\(", src)
+        has_verdict = re.search(r'print\("(PASS|OK)', src)
+        if not has_helper or not has_verdict:
+            continue                      # a different shape; nothing to pin here
+        # Both halves, not the name: an earlier draft looked for the identifier and was
+        # satisfied by the references left behind when the declaration was renamed.
+        counts = "_cases_recorded += 1" in src
+        refuses = re.search(r"if not _cases_recorded\b", src) is not None
+        if not (counts and refuses):
+            missing.append("%s (%s)" % (d.name, "no counter" if not counts else "no guard"))
+        else:
+            guarded += 1
+    if missing:
+        return _fail(name,
+                     "drill(s) print a verdict without counting what they recorded, so removing "
+                     "their cases would leave them reporting a guarantee they never tested: "
+                     + ", ".join(missing[:5]))
+    if guarded < 15:
+        return _fail(name,
+                     f"only {guarded} drills carry the case counter; the shape detection has "
+                     "broken and this check is passing by finding nothing to check")
+    return _ok(name,
+               f"{guarded} drills count the cases they record and refuse to print a verdict "
+               "from none, so a refactor that removes a drill's cases fails the drill instead "
+               "of leaving it printing the guarantee it stopped testing")
+
+
 def check_benchmark_measures_growth(root: pathlib.Path) -> list[Finding]:
     """A benchmark that times an aggregate once has measured a point, not a curve (P2.14 S5).
 
@@ -13560,6 +13610,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_drills_count_their_cases,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,

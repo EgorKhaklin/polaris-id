@@ -51,7 +51,15 @@ def _load(name, rel):
     return m
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def _row(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     ok = got == want
     print("  %-66s %-8s %-8s %s" % (label[:66], str(got)[:8], str(want)[:8], "OK" if ok else "FAIL"))
     return ok
@@ -219,6 +227,10 @@ def main():
 
     print()
     if ok:
+        if not _cases_recorded:
+            print("FAIL: this drill recorded NO cases. It tested nothing and would "
+                  "have printed its summary regardless.", file=sys.stderr)
+            return 1
         print("OK: a person delegates to an agent without handing over their credential. The grant "
               "names its actions, states its limits inside the signed statement so widening it "
               "breaks the signature, expires on its own, and is ended by the holder's own key "

@@ -5,6 +5,37 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.403 — 2026-09-11 (a drill that recorded no cases printed its guarantee and exited 0)
+
+The mutation work hardened the CHECKS. The drills are the other half of the verification layer,
+and the same question had not been asked of them: can a drill report a guarantee it never tested?
+
+It can. Every drill ends by printing what it proved -- "a presentation carries no value a relying
+party should key its records by", "a card object is a credential rather than a badge" -- from a
+verdict variable that starts TRUE and is only ever narrowed by the cases. Neutralising all
+sixteen recording calls in the pairwise drill left it printing that sentence in full and exiting
+0. Nothing tested, guarantee reported.
+
+That is not an adversarial mutation either. It is what a refactor does by accident, and it is the
+same shape as the three checks this session found passing because their subject had been removed.
+
+Twenty-two drills now count what they recorded and refuse to print a verdict from none. The
+guard is `== 0` rather than a per-drill minimum on purpose: zero is the accident that actually
+happens, and an expected count would either rot or fire on a drill that legitimately skips a leg
+-- the card profile skips its post-quantum half when liboqs is absent, and v9.393 was spent
+making it say so.
+
+The remaining 23 drills have a different shape (no case helper, or a shell wrapper) and are not
+pinned by this. `check_drills_count_their_cases` says how many it covers and fails if that number
+collapses, so the check cannot start passing by finding nothing to check -- which is the rule
+this session has now applied to checks, to drills, and to the benchmark.
+
+- `check_drills_count_their_cases` (228 checks), pinning the counter AND the guard rather than
+  the identifier: an earlier draft was satisfied by the references left behind when the
+  declaration was renamed
+
+---
+
 ## v9.402 — 2026-09-11 (P2.14 S5: the benchmark measured a point and called it a curve)
 
 The national simulation's hardening loop says each benchmark finding becomes a focused ship. So

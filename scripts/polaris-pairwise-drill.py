@@ -52,7 +52,15 @@ def _verifier():
     return mod
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def _row(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     ok = got == want
     print("  %-64s %-10s %-10s %s" % (label[:64], str(got)[:10], str(want)[:10], "OK" if ok else "FAIL"))
     return ok
@@ -141,6 +149,10 @@ def main():
 
     print()
     if ok:
+        if not _cases_recorded:
+            print("FAIL: this drill recorded NO cases. It tested nothing and would "
+                  "have printed its summary regardless.", file=sys.stderr)
+            return 1
         print("OK: a presentation carries no value a relying party should key its records by that is "
               "stable across verifiers. The login subject and the presentation handle are both "
               "derived under the relying party's own scope: stable where an account needs it, "

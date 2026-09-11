@@ -53,7 +53,15 @@ WIDENED = [
 _ok_all = True
 
 
+#: Cases this drill actually recorded. A drill whose cases are removed or
+#: short-circuited in a refactor prints its whole summary and exits 0 anyway,
+#: which is a guarantee reported by something that tested nothing (v9.403).
+_cases_recorded = 0
+
+
 def case(label, got, want):
+    global _cases_recorded
+    _cases_recorded += 1
     global _ok_all
     good = got == want
     _ok_all = _ok_all and good
@@ -182,6 +190,10 @@ def main():
             case("narrowing back REFUSES once a value no longer fits", refused, True)
 
         print()
+        if not _cases_recorded:
+            print("FAIL: this drill recorded NO cases. It tested nothing and would "
+                  "have printed its summary regardless.", file=sys.stderr)
+            return 1
         if _ok_all:
             print("PASS: every widened column and its SEQUENCE are 64-bit, proven by "
                   "inserting across the old ceiling rather than by reading a type name.")
