@@ -8178,15 +8178,33 @@ def uc7_warrant_audit():
     if request.method == 'POST':
         try:
             individual_id = int(request.form['individual_id'])
+            window_start = request.form.get('window_start') or '1970-01-01 00:00:00'
+            window_end   = request.form.get('window_end')   or '2099-12-31 23:59:59'
+            context_filter = request.form.get('context_filter') or None
             results = query("""
                 SELECT * FROM uc7_warrant_audit(%s, %s, %s, %s)
                 ORDER BY event_timestamp
-            """, (
-                individual_id,
-                request.form.get('window_start') or '1970-01-01 00:00:00',
-                request.form.get('window_end')   or '2099-12-31 23:59:59',
-                request.form.get('context_filter') or None,
-            ))
+            """, (individual_id, window_start, window_end, context_filter))
+
+            # v9.382 (P7.7) — Audit-of-record. This is the most invasive read the
+            # system offers: one named person's entire verification history. It
+            # reads VerificationEvent, which is in AUDIT_TABLES_TRACKED, and it
+            # went unlogged for as long as it existed because the read is behind a
+            # stored procedure, so nothing looking for a SELECT in this file found
+            # it. check_audited_reads_are_logged now pins the general case.
+            #
+            # Records the QUERY, never the RESULTS. An audit-of-audit that copied
+            # the subject's history would double the exposure it exists to police,
+            # and the warrant already authorises exactly one copy.
+            security.record_audit_access(
+                get_db, 'VerificationEvent',
+                filter_criteria={'route': '/uc7/warrant-audit',
+                                 'individual_id': individual_id,
+                                 'window_start': str(window_start),
+                                 'window_end': str(window_end),
+                                 'context_filter': context_filter},
+                result_row_count=len(results),
+            )
         except (psycopg2.Error, ValueError) as e:
             flash(db_error_to_message(e), 'error')
 

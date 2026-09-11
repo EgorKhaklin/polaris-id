@@ -5,6 +5,69 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.382 — 2026-09-10 (P7.7: an authority cannot publish what it never recorded)
+
+Building the public transparency program began by asking what was recordable about the
+warrant-authorized verification history, and the answer was nothing.
+
+`AuditAccessLog` has recorded reads of the four tables holding people's histories since v9.20,
+and eight routes called the helper that writes it. THE WARRANT-AUDIT ROUTE DID NOT, and it is
+the single most invasive read the system offers: one named person's entire verification
+history, on an authority's say-so. It escaped because the read is behind a function name.
+Every other read of `VerificationEvent` is a `SELECT` in `app.py`; UC-7 selects from
+`uc7_warrant_audit()`, the table appears only in `05_procedures.sql`, and the route reads as if
+it touched nothing. A reviewer hunting unlogged reads would have had to already know which
+procedures return that table's rows.
+
+The route now records the access, and `check_audited_reads_are_logged` states the rule where
+the evasion lives: a stored procedure that RETURNS ROWS SOURCED FROM a tracked audit table is
+an audited read, and every route calling one must log. Procedures that only count or purge
+internally are not caught, because they hand the caller nothing. The check fails if it finds no
+such procedure at all, since a broken parse must not pass by finding nothing to check. The row
+records the QUERY and never the RESULTS: an audit-of-audit that copied the subject's history
+would double the exposure it exists to police, and the warrant already authorises one copy.
+
+`polaris_web/transparency.py` + `polaris-id transparency-report` then publish the program.
+EVERY FIGURE SAYS WHERE IT CAME FROM, because two claims that look identical on the page are
+not the same claim: a reader with the public log can recompute the anchor cadence and catch an
+authority that misstates it, and nobody outside can derive the warrant-audit counts at all.
+Counts of people are suppressed; counts of the system's own operations are not, since no person
+is disclosed by them and blurring them would hide the operator's failures behind a privacy
+control. The anchor figures publish the longest GAP, graded against a maximum the authority
+declares, because an authority that anchored nine hundred times and then went dark for nine
+days has a nine-day hole the count alone hides.
+
+AND SUPPRESSING A SMALL COUNT IS NOT PROTECTING IT. Withhold the cell reading 3, publish the
+total beside the two that survived, subtract, and the 3 is back with a marker beside it
+claiming it was protected. So every withheld cell's feasible interval is computed against
+everything published, here and in every earlier report, and THE REPORT IS NOT GENERATED when a
+small cell has been narrowed to one value. Three things fall out of making that check real:
+the two kinds of withheld cell are known to lie in different ranges (`[0, k)` for a cell
+withheld because it is small, `[k, total]` for one withheld to protect another) and treating
+them alike makes the arithmetic look infeasible and withholds the whole table; withholding the
+total is the LAST resort, after complementary suppression, because the total is what an
+oversight reader came for; and there is no running total across periods, since republished each
+quarter it looks like one figure and is many, which would publish every per-period margin
+without anybody deciding to. That last rule also makes republishing free: a period's
+suppression depends on nothing outside it, so it recomputes to the same answer and publication
+is sticky without storing which decisions were sticky.
+
+The drill attacks the report AS PUBLISHED rather than inspecting the logic, over thousands of
+random tables and a growing multi-quarter series with the adversary holding every report the
+program ever issued. It enumerates reachable sums rather than recomputing the module's own
+closed-form bounds, because two different algorithms agreeing is evidence and one agreeing with
+itself is not. Run against naive primary-only suppression it recovers exact figures from 4,273
+tables.
+
+- `check_audited_reads_are_logged` and `check_transparency_program`, each with a detection test
+  (222 checks)
+- `polaris_web/transparency.py`, `polaris_web/test_transparency.py` (36 measured tests),
+  `scripts/polaris-transparency-report-drill.py` on every push, `polaris-id
+  transparency-report`
+- [transparency-program.md](docs/design/transparency-program.md)
+
+---
+
 ## v9.381 — 2026-09-10 (P7.5: the sunset is the moment it becomes compulsory)
 
 A new national credential arrives beside a driving licence and a passport, and

@@ -1397,6 +1397,66 @@ class UC7Tests(PolarisTestCase):
         # Confirm we DO see SELECTIVE and FULL pills (sanity: results are populated)
         self.assertTrue('FULL' in results_section or 'SELECTIVE' in results_section)
 
+    # v9.382 (P7.7) — the audit-of-record for the warrant audit itself.
+    #
+    # This route reads VerificationEvent through uc7_warrant_audit(), so it is a
+    # read of a tracked audit table and must leave an AuditAccessLog row. It did
+    # not until v9.382: the read is behind a procedure name, so nothing looking
+    # for a SELECT in app.py found it, and the most invasive query in the system
+    # was the one query of that table nobody could see being run.
+
+    def _warrant_audit_rows(self):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM AuditAccessLog "
+                            "WHERE filter_criteria_jsonb->>'route' = %s "
+                            "ORDER BY access_id", ('/uc7/warrant-audit',))
+                return cur.fetchall()
+        finally:
+            conn.close()
+
+    def test_a_warrant_audit_records_that_it_happened(self):
+        before = len(self._warrant_audit_rows())
+        self._post('/uc7/warrant-audit', data={'individual_id': '3'})
+        rows = self._warrant_audit_rows()
+        self.assertEqual(len(rows), before + 1,
+                         "a warrant audit must leave an AuditAccessLog row; the "
+                         "authority cannot publish statistics about a power whose "
+                         "use it does not record")
+        row = rows[-1]
+        self.assertEqual(row['accessed_table'], 'VerificationEvent')
+        self.assertEqual(row['filter_criteria_jsonb']['individual_id'], 3)
+        self.assertEqual(row['result_row_count'], 2)
+
+    def test_the_audit_row_records_the_query_and_not_the_results(self):
+        """An audit-of-audit that copied the history would double the exposure.
+
+        The warrant authorises exactly one copy of the subject's verification
+        history. The row says who asked, about whom, and over what window; it
+        does not restate what came back.
+        """
+        self._post('/uc7/warrant-audit', data={
+            'individual_id': '3',
+            'window_start': '2020-01-01 00:00:00',
+            'window_end': '2030-01-01 00:00:00',
+        })
+        criteria = self._warrant_audit_rows()[-1]['filter_criteria_jsonb']
+        self.assertEqual(criteria['window_start'], '2020-01-01 00:00:00')
+        self.assertNotIn('James Chen', str(criteria))
+        for leaked in ('legal_name', 'token_value', 'event_id', 'requestor_location'):
+            self.assertNotIn(leaked, criteria,
+                             f"the audit row restates {leaked} from the results")
+
+    def test_a_rejected_request_records_no_access(self):
+        """No rows were read, so nothing was accessed. A log that counted
+        refused attempts as accesses would inflate every published figure."""
+        before = len(self._warrant_audit_rows())
+        self._post('/uc7/warrant-audit', data={'individual_id': 'not-an-id'})
+        self.assertEqual(len(self._warrant_audit_rows()), before,
+                         "a request that never ran the query must not be logged "
+                         "as an access")
+
 
 # ============================================================================
 # UC-8 / R11-6 / M2-11 — BOUNDED REVOCATION ("constitutional limits on

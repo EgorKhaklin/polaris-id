@@ -11,35 +11,36 @@ Installed as `polaris-id`; from a checkout, run `python3 polaris_cli/polaris.py`
 Commands (this list is generated from the command registry, so it cannot
 drift from what the program accepts):
 
-    health              Schema-wide statistics (mirrors Atlas health strip)
-    list                Browse principal entities
-    inspect             Detailed token view with full history
-    query               Run a read-only SELECT against the database
-    issue               UC-1: issue and activate a new token
-    activate-reserve    UC-4: activate a reserve after loss
-    bind-device         UC-5: bind a device to an active token
-    warrant-audit       UC-7: warrant-authorized verification history
-    migrate-algorithm   UC-6: migrate a token to a new cryptographic algorithm
-    migrate-population  P7.6: re-sign the whole ACTIVE population under a new algorithm
-    revoke              UC-8: revoke an ACTIVE token
-    recovery-initiate   UC-9 phase 1: open a catastrophic-loss recovery ceremony
-    recovery-complete   UC-9 phase 2: approve or reject a pending recovery request
-    transition          Apply a state-machine transition to a token
-    bulk-enroll         P2.4: stage an extract with COPY and issue the batch set-based
-    user-list           List application users (web auth accounts)
-    user-create         Create a new application user
-    user-passwd         Change a user's password (also clears lockout)
-    user-deactivate     Deactivate (soft-delete) a user account
-    quota-set           Set per-agency caps; 0 clears a cap
-    quota-show          Show per-agency caps (all agencies, or one)
-    retention-show      What retention is in force, and the cutoff it resolves to
-    retention-set       Record a retention decision, or adopt a named template
-    audit-log           Tail the authentication audit log
-    rp-register         Register a relying-party org for the /api/v1 verification API
-    rp-policy           Set a relying party's registered auth-broker policy (step-up, enrollment, context)
-    key-register        Register an authority signing key (P8.7b): it becomes the agency's current key
-    key-retire          Retire an authority key: an orderly rotation, effective from an instant
-    key-compromise      Declare an authority key compromised, untrusted from an instant
+    health               Schema-wide statistics (mirrors Atlas health strip)
+    list                 Browse principal entities
+    inspect              Detailed token view with full history
+    query                Run a read-only SELECT against the database
+    issue                UC-1: issue and activate a new token
+    activate-reserve     UC-4: activate a reserve after loss
+    bind-device          UC-5: bind a device to an active token
+    warrant-audit        UC-7: warrant-authorized verification history
+    migrate-algorithm    UC-6: migrate a token to a new cryptographic algorithm
+    migrate-population   P7.6: re-sign the whole ACTIVE population under a new algorithm
+    transparency-report  P7.7: generate the public transparency report for a period
+    revoke               UC-8: revoke an ACTIVE token
+    recovery-initiate    UC-9 phase 1: open a catastrophic-loss recovery ceremony
+    recovery-complete    UC-9 phase 2: approve or reject a pending recovery request
+    transition           Apply a state-machine transition to a token
+    bulk-enroll          P2.4: stage an extract with COPY and issue the batch set-based
+    user-list            List application users (web auth accounts)
+    user-create          Create a new application user
+    user-passwd          Change a user's password (also clears lockout)
+    user-deactivate      Deactivate (soft-delete) a user account
+    quota-set            Set per-agency caps; 0 clears a cap
+    quota-show           Show per-agency caps (all agencies, or one)
+    retention-show       What retention is in force, and the cutoff it resolves to
+    retention-set        Record a retention decision, or adopt a named template
+    audit-log            Tail the authentication audit log
+    rp-register          Register a relying-party org for the /api/v1 verification API
+    rp-policy            Set a relying party's registered auth-broker policy (step-up, enrollment, context)
+    key-register         Register an authority signing key (P8.7b): it becomes the agency's current key
+    key-retire           Retire an authority key: an orderly rotation, effective from an instant
+    key-compromise       Declare an authority key compromised, untrusted from an instant
 
 The database connection uses the same environment variables as the web
 application: POLARIS_DB_HOST, POLARIS_DB_NAME, POLARIS_DB_USER,
@@ -589,6 +590,69 @@ def cmd_bind_device(args):
 # ----------------------------------------------------------------------------
 # COMMAND: migrate-algorithm (UC-6)
 # ----------------------------------------------------------------------------
+
+def cmd_transparency_report(args):
+    """P7.7: generate the public transparency report, or refuse to.
+
+    Publishes four things: the anchor cadence, the audit results, the cadence of the program
+    itself, and aggregate statistics on the warrant-authorized verification history -- the most
+    invasive power the system has, and the one nobody outside can see being used.
+
+    Every figure says whether a reader can recompute it. The anchor cadence they can, from the
+    public transparency log. The warrant-audit counts they cannot, and the report says so beside
+    the numbers rather than at the bottom.
+
+    Counts of people below the threshold are withheld, and so is any cell whose publication
+    would let a reader recover a withheld one by subtraction. If that cannot be arranged the
+    report is NOT generated: a suppression marker over a figure the reader can already compute
+    is worse than no marker at all. See docs/design/transparency-program.md."""
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        from polaris_web import transparency
+    except ImportError as exc:
+        sys.stderr.write(red(f"the transparency module is unavailable: {exc}\n"))
+        sys.exit(2)
+
+    conn = connect()
+    try:
+        def q(sql, params=None):
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, params or ())
+                return cur.fetchall()
+
+        warrant = transparency.query_warrant_audits(q)
+        distinct = transparency.query_distinct_subjects(q)
+        anchors = transparency.query_anchor_cadence(q)
+
+        checks = {"total": 0, "passed": 0, "failed": 0}
+        if args.checks_passed is not None and args.checks_total is not None:
+            checks = {"total": args.checks_total, "passed": args.checks_passed,
+                      "failed": args.checks_total - args.checks_passed}
+
+        start = datetime.strptime(args.since, "%Y-%m-%d").date()
+        try:
+            report = transparency.build_report(
+                args.period, warrant, distinct, anchors, checks, start,
+                published_periods=args.published or (),
+                anchor_cadence_target_hours=args.anchor_target_hours)
+        except transparency.InvertibleReport as exc:
+            sys.stderr.write(red(
+                f"REFUSED: {exc}\n"
+                "A withheld figure the reader can already compute is not withheld. The report "
+                "was not generated rather than carry a marker that claims otherwise.\n"))
+            sys.exit(1)
+
+        if args.json:
+            print(transparency.canonical_json(report).decode())
+        else:
+            print(transparency.render_markdown(report))
+        sys.stderr.write(
+            f"digest {report['digest']}\n"
+            "Anchor this digest in the transparency log: a report the authority can revise "
+            "after publication is not evidence of anything.\n")
+    finally:
+        conn.close()
+
 
 def cmd_migrate_population(args):
     """P7.6: re-sign the whole ACTIVE population under a new algorithm, resumably.
@@ -1695,6 +1759,24 @@ def build_parser():
     p_mp.add_argument('--grace-seconds', type=int, default=1,
         help='Seconds before the superseded signatures stop verifying (default 1)')
 
+    # transparency-report (P7.7, the public program)
+    p_tr = sub.add_parser('transparency-report',
+        help='P7.7: generate the public transparency report for a period')
+    p_tr.add_argument('--period', required=True,
+        help='The period this report covers, e.g. 2026-Q3')
+    p_tr.add_argument('--since', required=True,
+        help='Date the program began (YYYY-MM-DD); periods since then with no report are '
+             'listed in the report, because a missing period is part of the record')
+    p_tr.add_argument('--published', action='append',
+        help='A period already published; repeatable. Used only to compute the gaps')
+    p_tr.add_argument('--anchor-target-hours', type=float,
+        help='The longest anchoring gap this authority commits to. Nothing in the database '
+             'knows it, so it is declared; declaring none publishes that fact instead')
+    p_tr.add_argument('--checks-total', type=int, help='Checks in the suite')
+    p_tr.add_argument('--checks-passed', type=int, help='Checks that passed')
+    p_tr.add_argument('--json', action='store_true',
+        help='Emit the canonical JSON the digest is taken over, rather than markdown')
+
     # revoke (UC-8)
     p_8 = sub.add_parser('revoke', help='UC-8: revoke an ACTIVE token')
     p_8.add_argument('--token',              type=int, required=True)
@@ -2015,6 +2097,7 @@ HANDLERS = {
     'warrant-audit':    cmd_warrant_audit,
     'migrate-algorithm': cmd_migrate_algorithm,
     'migrate-population': cmd_migrate_population,
+    'transparency-report': cmd_transparency_report,
     'revoke':           cmd_revoke,
     'recovery-initiate': cmd_recovery_initiate,
     'recovery-complete': cmd_recovery_complete,

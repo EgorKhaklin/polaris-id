@@ -20,6 +20,7 @@ Add a check by writing a `check_*` function and listing it in CHECKS.
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import hashlib
 import json
@@ -10473,6 +10474,212 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
+    """A read of an audited table must leave a row even when it hides behind a procedure (P7.7).
+
+    AuditAccessLog records who read the four tables that hold people's histories. Eight routes
+    called the helper. The warrant-audit route did not, and it is the single most invasive read
+    the system offers: one named person's entire verification history, on an authority's say-so.
+
+    IT ESCAPED BECAUSE THE READ WAS BEHIND A FUNCTION NAME. Every other read of VerificationEvent
+    is a SELECT in app.py, so anybody auditing the file by eye or by grep finds it. UC-7 selects
+    from uc7_warrant_audit(), the table appears only in 05_procedures.sql, and the route reads as
+    if it touched nothing. A review looking for unlogged reads of a table would have had to know
+    which procedures return that table's rows.
+
+    So the rule is stated where the evasion lives: a stored procedure that RETURNS ROWS SOURCED
+    FROM a tracked audit table is an audited read, and every route calling it must log. Procedures
+    that merely count or purge internally are not caught, because they hand the caller nothing.
+
+    The check refuses to pass vacuously. If it finds no such procedure at all it fails, since that
+    means the parse broke rather than that the system stopped exposing audit data."""
+    name = "audited_reads_are_logged"
+    sec = _read(root, "polaris_web/security.py")
+    proc = _read(root, "polaris_sql/05_procedures.sql")
+    app = _read(root, "polaris_web/app.py")
+    if not sec or not proc or not app:
+        return _fail(name, "security.py, 05_procedures.sql and app.py must all be present")
+
+    m = re.search(r"AUDIT_TABLES_TRACKED\s*=\s*\(([^)]*)\)", sec)
+    if not m:
+        return _fail(name,
+                     "security.py must name the audited tables in AUDIT_TABLES_TRACKED. Reading "
+                     "the list from the source is what stops a table being added there and "
+                     "silently escaping this check")
+    tracked = re.findall(r"['\"](\w+)['\"]", m.group(1))
+    if not tracked:
+        return _fail(name, "AUDIT_TABLES_TRACKED parsed empty")
+
+    # Procedures that hand a tracked table's rows to their caller.
+    exposing = []
+    parts = re.split(r"(?im)^CREATE OR REPLACE (?:FUNCTION|PROCEDURE)\s+(\w+)", proc)
+    for k in range(1, len(parts), 2):
+        pname, body = parts[k], parts[k + 1]
+        if not re.search(r"(?i)RETURNS\s+(?:TABLE|SETOF)\b", body):
+            continue
+        if any(re.search(r"(?i)\b(?:FROM|JOIN)\s+" + t + r"\b", body) for t in tracked):
+            exposing.append(pname)
+    if not exposing:
+        return _fail(name,
+                     "found no stored procedure returning rows from an audited table. The parse "
+                     "has broken; this check must not pass by finding nothing to check")
+
+    # Top-level route bodies in app.py, comments stripped so a mention of the
+    # helper in prose cannot satisfy the requirement to call it.
+    blocks = re.split(r"(?m)^def\s+(\w+)\s*\(", app)
+    for k in range(1, len(blocks), 2):
+        fname, body = blocks[k], blocks[k + 1]
+        code = "\n".join(ln for ln in body.splitlines()
+                          if not ln.lstrip().startswith("#"))
+        for pname in exposing:
+            if not re.search(r"(?i)(?:FROM|CALL)\s+" + pname + r"\s*\(", code):
+                continue
+            if "record_audit_access(" not in code:
+                return _fail(name,
+                             f"{fname}() reads audited rows through {pname}() and records no "
+                             "AuditAccessLog row. A read that hides behind a procedure name is "
+                             "still a read of somebody's history, and the most invasive one in "
+                             "the system is exactly where the omission is least visible")
+    return _ok(name,
+               f"every route reading audited rows through {len(exposing)} row-returning "
+               "procedure(s) leaves an AuditAccessLog row; the tracked list is read from "
+               "security.py rather than restated here")
+
+
+def check_transparency_program(root: pathlib.Path) -> list[Finding]:
+    """A published figure says where it came from, and a withheld one stays withheld (P7.7).
+
+    An authority publishing statistics about its own most invasive power is making two claims at
+    once, and they are not the same kind of claim. The anchor cadence is recomputable by anybody
+    who replicated the transparency log: misstate it and you are caught from outside. The
+    warrant-audit counts come from the authority's own log and nobody outside can derive them.
+    Both belong in the report; printing them in the same typeface without saying which is which
+    is how a transparency report becomes a press release.
+
+    AND SUPPRESSING SMALL COUNTS IS NOT ENOUGH ON ITS OWN. Withhold the cell that reads 3, publish
+    the total beside the cells that survived, and the 3 is recovered by subtraction while the
+    table still carries a marker claiming it was protected. So the module computes, for every
+    withheld small cell, the interval of values still consistent with everything published here
+    and in every earlier report, and the report is not generated when any of them has been
+    narrowed to one value.
+
+    The ordering requirements are the substance. The invertibility re-check must run BEFORE the
+    report is digested, or a report that fails it has already been committed to. And withholding
+    a total must be the LAST resort, after complementary suppression is exhausted, because the
+    total is the figure an oversight reader came for.
+
+    THE LAST REQUIREMENT IS ABOUT TIME. Each period is suppressed on its own and no running total
+    is published across periods, because a cumulative figure republished every quarter looks like
+    one number and is many: the reader keeps the last one and subtracts, and the program ends up
+    publishing every per-period margin without ever deciding to. That is also what makes
+    republishing an old quarter free, since its suppression depends on nothing outside it and
+    recomputes to the same answer."""
+    name = "transparency_program"
+    mod = _read(root, "polaris_web/transparency.py")
+    if not mod:
+        return _fail(name, "polaris_web/transparency.py must carry the published figures")
+    for fn in ("def suppress", "def assert_not_invertible", "def feasible_interval",
+               "def build_report", "def render_markdown", "def missing_periods"):
+        if fn not in mod:
+            return _fail(name, f"the module must expose {fn.split()[1]}()")
+
+    if "SOURCE_PUBLIC" not in mod or "SOURCE_OPERATOR_ATTESTED" not in mod:
+        return _fail(name,
+                     "every figure must say whether a reader can recompute it. An authority whose "
+                     "interesting numbers are all operator-attested has written a press release")
+
+    report = mod.split("def build_report")[1].split("\ndef ")[0]
+    code = "\n".join(ln for ln in report.splitlines() if not ln.lstrip().startswith("#"))
+    # Parsed rather than pattern-matched: the figures are nested dicts, and a
+    # substring count would be satisfied by a "source" key one level down.
+    try:
+        tree = ast.parse(mod)
+    except SyntaxError as exc:
+        return _fail(name, f"polaris_web/transparency.py does not parse: {exc}")
+    figures_node = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for k, v in zip(node.keys, node.values):
+            if isinstance(k, ast.Constant) and k.value == "figures":
+                figures_node = v
+    if not isinstance(figures_node, ast.Dict) or not figures_node.keys:
+        return _fail(name, "build_report must assemble a 'figures' mapping")
+    for k, v in zip(figures_node.keys, figures_node.values):
+        fname = getattr(k, "value", "?")
+        if isinstance(v, ast.Dict):
+            has = any(isinstance(kk, ast.Constant) and kk.value == "source"
+                      for kk in v.keys)
+        elif isinstance(v, ast.Call):
+            has = any(kw.arg == "source" for kw in v.keywords)
+        else:
+            has = False
+        if not has:
+            return _fail(name,
+                         f"the figure {fname!r} carries no source. Each figure must say whether a "
+                         "reader can recompute it, not just the report as a whole: a reader grades "
+                         "the anchor cadence and the warrant counts differently, and cannot if the "
+                         "report does not tell them apart")
+    if "assert_not_invertible" not in code or "report_digest" not in code:
+        return _fail(name,
+                     "build_report must re-check invertibility independently and digest the result")
+    if code.index("assert_not_invertible") > code.index("report_digest"):
+        return _fail(name,
+                     "the invertibility re-check must run BEFORE the report is digested. A report "
+                     "digested first has already been committed to by the time it is found unsafe")
+    if "by_period" not in code or "for pname in sorted(" not in code:
+        return _fail(name,
+                     "each period must be suppressed on its own. A single pass over the whole "
+                     "series shares one equation across quarters, so what Q3 publishes can undo "
+                     "the arithmetic that protected a cell in Q1")
+    flat_note = re.sub(r'"\s*\n\s*"', "", code)
+    if "no running total across periods" not in flat_note:
+        return _fail(name,
+                     "the report must say it publishes no running total across periods. A "
+                     "cumulative figure republished each quarter looks like one number and is "
+                     "many: the reader keeps the last one and subtracts")
+
+    sup = mod.split("def suppress")[1].split("\ndef ")[0]
+    supcode = "\n".join(ln for ln in sup.splitlines() if not ln.lstrip().startswith("#"))
+    if "InvertibleReport" not in supcode:
+        return _fail(name,
+                     "suppression must refuse rather than publish a table whose withheld cells "
+                     "are already determined by what earlier reports made public")
+    loop = supcode.split("while True:")[-1]
+    if "nxt" not in loop or "total = None" not in loop:
+        return _fail(name,
+                     "suppression must try complementary suppression and, failing that, "
+                     "withholding the total")
+    if loop.index("nxt") > loop.index("total = None"):
+        return _fail(name,
+                     "withholding the grand total must be the LAST resort, after complementary "
+                     "suppression. The total is the figure an oversight reader came for, and "
+                     "dropping it first spends the headline to save a cell")
+
+    ap = mod.split("def _apriori")[1].split("\ndef ")[0]
+    apcode = "\n".join(ln for ln in ap.splitlines() if not ln.lstrip().startswith("#"))
+    if "threshold - 1" not in apcode or "return threshold," not in apcode:
+        return _fail(name,
+                     "a cell withheld for being small and a cell withheld to protect another are "
+                     "known to lie in DIFFERENT ranges: [0, threshold) and [threshold, total]. "
+                     "Treating them alike makes the arithmetic look infeasible and withholds the "
+                     "whole table")
+
+    # String-literal concatenation puts a seam wherever the source wrapped, so
+    # the sentence is read as the reader sees it, not as the file stores it.
+    flat = re.sub(r'"\s*\n\s*"', "", mod)
+    for phrase in ("cannot show an access that was never recorded",):
+        if phrase not in flat:
+            return _fail(name,
+                         "the report must state its own limit: it counts the accesses that were "
+                         "recorded and cannot show one that was not")
+    return _ok(name,
+               "every figure carries PUBLIC or OPERATOR_ATTESTED; withheld small cells are "
+               "re-checked for recoverability before the report is digested, complementary "
+               "suppression is tried before the total is withheld, and the report states that it "
+               "cannot show an access nobody recorded")
+
+
 def check_coexistence_plan(root: pathlib.Path) -> list[Finding]:
     """A sunset verdict cannot be computed from what flatters the issuer (P7.5).
 
@@ -12401,6 +12608,8 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_transparency_program,
+    check_audited_reads_are_logged,
     check_coexistence_plan,
     check_modules_are_measured,
     check_pilot_winddown,

@@ -9428,6 +9428,181 @@ def test_coexistence_plan_check_discriminates(tmp_path):
             f"the record must state: {phrase}"
 
 
+def test_audited_reads_are_logged_check_discriminates(tmp_path):
+    # v9.382 (P7.7): the read that hid behind a function name. Every other read of an audited
+    # table is a SELECT in app.py, so a grep finds it. UC-7 selected from a stored procedure,
+    # the table appeared only in the SQL file, and the route read as if it touched nothing --
+    # which is how the most invasive query in the system went unlogged for as long as it
+    # existed. The fixtures: the route stops logging; the call survives only as a comment;
+    # and the procedure parse finds nothing, which must FAIL rather than pass vacuously.
+    SEC = ("AUDIT_TABLES_TRACKED = (\n"
+           "    'TokenLifecycleEvent',\n    'VerificationEvent',\n"
+           "    'AuthAuditLog',\n    'DuressEvent',\n)\n\n"
+           "def record_audit_access(get_conn, accessed_table, **kw):\n    pass\n")
+    SQL = ("CREATE OR REPLACE FUNCTION uc7_warrant_audit(p_id INTEGER)\n"
+           "RETURNS TABLE (event_id INTEGER)\nLANGUAGE plpgsql\nAS $$\nBEGIN\n"
+           "    RETURN QUERY SELECT ve.event_id FROM VerificationEvent ve;\nEND;\n$$;\n\n"
+           "CREATE OR REPLACE PROCEDURE uc_archive_purge()\nLANGUAGE plpgsql\nAS $$\n"
+           "BEGIN\n    DELETE FROM VerificationEvent;\nEND;\n$$;\n")
+    APP = ("def uc7_warrant_audit():\n"
+           "    results = query('SELECT * FROM uc7_warrant_audit(%s)', (iid,))\n"
+           "    security.record_audit_access(get_db, 'VerificationEvent',\n"
+           "                                 result_row_count=len(results))\n"
+           "    return render_template('uc7.html')\n")
+    good = {'polaris_web/security.py': SEC, 'polaris_sql/05_procedures.sql': SQL,
+            'polaris_web/app.py': APP}
+
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    write()
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
+        "a route that logs its read through the procedure must PASS"
+
+    # THE ROUTE STOPS LOGGING. The exact state the tree was in before v9.382.
+    write({'polaris_web/app.py': APP.replace(
+        "    security.record_audit_access(get_db, 'VerificationEvent',\n"
+        "                                 result_row_count=len(results))\n", "")})
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "FAIL", \
+        "a route reading audited rows through a procedure and logging nothing must FAIL"
+
+    # THE CALL SURVIVES ONLY AS A COMMENT. A mention is not a call.
+    write({'polaris_web/app.py': APP.replace(
+        "    security.record_audit_access(get_db, 'VerificationEvent',\n"
+        "                                 result_row_count=len(results))\n",
+        "    # security.record_audit_access(get_db, 'VerificationEvent')\n")})
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "FAIL", \
+        "a commented-out call must not satisfy the requirement to make one"
+
+    # NOTHING TO CHECK. A parse that finds no row-returning procedure has broken;
+    # passing there would make the check silently vacuous forever after.
+    write({'polaris_sql/05_procedures.sql': SQL.replace(
+        "FROM VerificationEvent ve", "FROM SomeUnauditedView ve")})
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "FAIL", \
+        "finding no audited-read procedure must FAIL rather than pass vacuously"
+
+    # A PROCEDURE THAT ONLY DELETES HANDS THE CALLER NOTHING, so a route calling it
+    # is not an audited read and is not required to log.
+    write({'polaris_web/app.py': APP + (
+        "\ndef purge():\n    execute('CALL uc_archive_purge()')\n")})
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
+        "a procedure that returns no rows to its caller is not an audited read"
+
+
+def test_transparency_program_check_discriminates(tmp_path):
+    # v9.382 (P7.7): the ways a transparency report stops being evidence. A figure printed
+    # without saying whether a reader can recompute it; the invertibility re-check running
+    # after the digest, so an unsafe report has already been committed to; the total dropped
+    # before complementary suppression, spending the headline to save a cell; a cell withheld
+    # for being small treated like one withheld to protect it, which makes the arithmetic look
+    # infeasible; one pass over the whole series instead of one per period; and a running total
+    # republished each quarter, which is every per-period margin by subtraction.
+    MOD = ('SOURCE_PUBLIC = "PUBLIC"\n'
+           'SOURCE_OPERATOR_ATTESTED = "OPERATOR_ATTESTED"\n'
+           "\ndef feasible_interval(residual, bounds, index):\n    return 0, 0\n"
+           "\ndef _apriori(cell, threshold, cap):\n"
+           "    if cell.count < threshold:\n        return 0, threshold - 1\n"
+           "    return threshold, cap\n"
+           "\ndef missing_periods(published, start, through):\n    return []\n"
+           "\ndef suppress(cells, threshold=5, previously_published=()):\n"
+           "    while True:\n"
+           "        if not bad:\n            return table\n"
+           "        nxt = candidates()\n"
+           "        if nxt:\n            continue\n"
+           "        if total is not None:\n            total = None\n            continue\n"
+           "        raise InvertibleReport('already determined')\n"
+           "\ndef assert_not_invertible(table, cells, threshold=5):\n    return None\n"
+           "\ndef build_report(period, rows):\n"
+           "    by_period = group(rows)\n"
+           "    for pname in sorted(by_period):\n"
+           "        tables[pname] = suppress(by_period[pname])\n"
+           "        assert_not_invertible(tables[pname], by_period[pname])\n"
+           "    report = {\n"
+           '        "figures": {\n'
+           '            "warrant_audits": {"by_period": tables, "source": SOURCE_OPERATOR_ATTESTED},\n'
+           '            "anchor_cadence": {"by_period": anchors, "source": SOURCE_PUBLIC},\n'
+           '            "audit_results": dict(check_results, source=SOURCE_PUBLIC),\n'
+           "        },\n"
+           '        "notes": {"no_cumulative_total": "There is deliberately "\n'
+           '                                         "no running total across periods."},\n'
+           "    }\n"
+           '    report["digest"] = report_digest(report)\n'
+           "    return report\n"
+           "\ndef render_markdown(report):\n"
+           '    return "It cannot show an access that was never recorded."\n')
+
+    def write(body):
+        f = tmp_path / 'polaris_web/transparency.py'
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body)
+
+    write(MOD)
+    assert checks.check_transparency_program(tmp_path)[0].level == "OK", \
+        "the well-formed module must PASS, string-literal seams in the prose included"
+
+    # A FIGURE WITHOUT A SOURCE. The reader grades an independently recomputable
+    # figure differently from one that rests on the authority's word.
+    write(MOD.replace('"anchor_cadence": {"by_period": anchors, "source": SOURCE_PUBLIC},',
+                      '"anchor_cadence": {"by_period": anchors},'))
+    assert checks.check_transparency_program(tmp_path)[0].level == "FAIL", \
+        "a figure published without its source must FAIL"
+
+    # THE DIGEST BEFORE THE RE-CHECK. A report digested first has been committed
+    # to by the time it is found unsafe.
+    write(MOD.replace(
+        "        assert_not_invertible(tables[pname], by_period[pname])\n", "")
+        .replace('    report["digest"] = report_digest(report)\n',
+                 '    report["digest"] = report_digest(report)\n'
+                 "    assert_not_invertible(tables, cells)\n"))
+    assert checks.check_transparency_program(tmp_path)[0].level == "FAIL", \
+        "digesting before the invertibility re-check must FAIL"
+
+    # THE TOTAL DROPPED FIRST. Both protect; the total is what an oversight
+    # reader came for, so it is the last thing spent.
+    write(MOD.replace(
+        "        nxt = candidates()\n"
+        "        if nxt:\n            continue\n"
+        "        if total is not None:\n            total = None\n            continue\n",
+        "        if total is not None:\n            total = None\n            continue\n"
+        "        nxt = candidates()\n"
+        "        if nxt:\n            continue\n"))
+    assert checks.check_transparency_program(tmp_path)[0].level == "FAIL", \
+        "withholding the total before trying complementary suppression must FAIL"
+
+    # THE TWO KINDS OF WITHHELD CELL TREATED ALIKE. A cell withheld to protect
+    # another is known NOT to be small, and pretending otherwise makes the
+    # arithmetic look infeasible and withholds the whole table.
+    write(MOD.replace(
+        "    if cell.count < threshold:\n        return 0, threshold - 1\n"
+        "    return threshold, cap\n", "    return 0, cap\n"))
+    assert checks.check_transparency_program(tmp_path)[0].level == "FAIL", \
+        "collapsing the primary and complementary a-priori ranges must FAIL"
+
+    # ONE PASS OVER THE SERIES. Then the quarters share an equation and what Q3
+    # publishes can undo the arithmetic that protected a cell in Q1.
+    write(MOD.replace("    for pname in sorted(by_period):\n", "    if True:\n")
+             .replace("    by_period = group(rows)\n", "    cells = group(rows)\n"))
+    assert checks.check_transparency_program(tmp_path)[0].level == "FAIL", \
+        "suppressing the whole series in one pass must FAIL"
+
+    # THE RUNNING TOTAL. Republished each quarter it looks like one figure and is
+    # many, because the reader keeps the last one and subtracts.
+    write(MOD.replace('"There is deliberately "\n'
+                      '                                         "no running total across periods."',
+                      '"Totals accumulate across periods."'))
+    assert checks.check_transparency_program(tmp_path)[0].level == "FAIL", \
+        "dropping the no-running-total commitment must FAIL"
+
+    # THE REPORT THAT DOES NOT STATE ITS OWN LIMIT.
+    write(MOD.replace("It cannot show an access that was never recorded.",
+                      "These figures are complete."))
+    assert checks.check_transparency_program(tmp_path)[0].level == "FAIL", \
+        "a report that does not say it cannot show an unrecorded access must FAIL"
+
+
 def test_modules_are_measured_check_discriminates(tmp_path):
     # v9.379: a module exercised only by a drill counts ZERO toward the coverage floor while
     # looking thoroughly tested. proofing.py and pilot.py each shipped that way and the gate

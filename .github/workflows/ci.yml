@@ -289,6 +289,17 @@ jobs:
       - name: Pilot wind-down — undone, and honest about what remains
         run: python scripts/polaris-pilot-winddown-drill.py
 
+      # v9.382 (P7.7) — the transparency report, ATTACKED. Suppressing small counts is the part
+      # everybody does; checking that the suppression survived publication is the part that
+      # decides whether a withheld cell was withheld. The drill takes the report as published
+      # and plays a reader who wants the numbers: it enumerates reachable sums (deliberately a
+      # different algorithm from the module's closed-form bounds, so the attack is not the
+      # formula confirming itself) over thousands of random tables and over a growing
+      # multi-quarter series, holding every report the program ever published. No database:
+      # the adversary needs only what a member of the public would have.
+      - name: Transparency report — no withheld figure is recoverable by subtraction
+        run: python scripts/polaris-transparency-report-drill.py
+
       # v9.372 (P6.2) — the 800-63 mapping, RESOLVED. A control mapping is the easiest document
       # in a project to write and the easiest to let rot: a table of claims about a codebase,
       # maintained by hand, read by people who cannot check it, going stale the first time
