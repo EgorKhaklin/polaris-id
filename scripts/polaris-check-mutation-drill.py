@@ -80,12 +80,62 @@ def needles_of(fn):
     return out
 
 
-def opaque_inputs(fn):
-    """True when the check reads files this harness cannot enumerate."""
+def _dir_of(node):
+    """Reconstruct `root / 'a' / 'b'` into a relative path, or None if it is not that.
+
+    Only literal joins off `root` are resolved. Anything computed stays unresolvable and
+    the check that uses it is reported as skipped rather than quietly half-mutated.
+    """
+    parts = []
+    while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        if not isinstance(node.right, ast.Constant) or not isinstance(node.right.value, str):
+            return None
+        parts.append(node.right.value)
+        node = node.left
+    if isinstance(node, ast.Name) and node.id == "root":
+        return "/".join(reversed(parts))
+    return None
+
+
+def globs_of(fn):
+    """Literal `<dir>.glob("pattern")` calls a check makes, as (dir, pattern) pairs.
+
+    A check that enumerates migrations or workflows is testable after all: the pattern is
+    a constant and the directory is a literal join off `root`. Resolving these was the
+    difference between the drill skipping a C1 check and mutating it.
+    """
+    out = []
     for node in ast.walk(fn):
-        if isinstance(node, ast.Attribute) and node.attr in ("glob", "rglob", "read_text",
-                                                             "iterdir", "walk"):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("glob", "rglob") and node.args
+                and isinstance(node.args[0], ast.Constant)):
+            base = _dir_of(node.func.value)
+            if base is not None:
+                out.append((base, node.args[0].value))
+    return out
+
+
+def opaque_inputs(fn):
+    """True when the check reads files this harness cannot enumerate.
+
+    A `glob` whose directory and pattern are both literal is NOT opaque: `globs_of`
+    resolves it. Everything else -- a computed path, a bare `read_text`, an `iterdir` --
+    leaves inputs the mutation cannot reach, and a check with those is skipped and
+    counted rather than mutated halfway and called a survivor.
+    """
+    resolvable = {id(node) for node in ast.walk(fn)
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                  and node.func.attr in ("glob", "rglob") and node.args
+                  and isinstance(node.args[0], ast.Constant)
+                  and _dir_of(node.func.value) is not None}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Attribute) and node.attr in ("read_text", "iterdir", "walk"):
             return True
+        if isinstance(node, ast.Attribute) and node.attr in ("glob", "rglob"):
+            parent = next((c for c in ast.walk(fn)
+                           if isinstance(c, ast.Call) and c.func is node), None)
+            if parent is None or id(parent) not in resolvable:
+                return True
     return False
 
 
@@ -109,6 +159,13 @@ def main():
     print()
     for name, fn in sorted(fns.items()):
         files, needles = reads_of(fn), needles_of(fn)
+        # `glob_dir`, not `base`: `base` is the pristine tree copy, and shadowing it here
+        # made the next copytree read from "".
+        for glob_dir, pattern in globs_of(fn):
+            d = ROOT / glob_dir
+            if d.is_dir():
+                files += [str(f.relative_to(ROOT)) for f in sorted(d.glob(pattern))
+                          if f.is_file()]
         if not files or not needles:
             skipped_nothing += 1
             continue

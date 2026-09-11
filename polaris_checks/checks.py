@@ -301,7 +301,7 @@ def check_no_fk_cascade(root: pathlib.Path) -> list[Finding]:
         # migration is just as destructive as one in 01_schema.sql.
         files = sorted(sqldir.glob("*.sql")) + sorted((sqldir / "migrations").glob("*.sql"))
     for p in files:
-        text = re.sub(r"--[^\n]*", "", p.read_text(errors="replace"))  # strip line comments
+        text = re.sub(r"--[^\n]*", "", _read_path(p))  # strip line comments
         for m in re.finditer(r"ON\s+(DELETE|UPDATE)\s+CASCADE", text, re.I):
             offenders.append(f"{p.name}: ON {m.group(1).upper()} CASCADE")
     if offenders:
@@ -426,7 +426,7 @@ def check_no_debug_artifacts(root: pathlib.Path) -> list[Finding]:
         for p in sorted(d.rglob("*.py")) if d.is_dir() else []:
             if "venv" in p.parts or p.name.startswith("test_"):
                 continue
-            for i, line in enumerate(p.read_text(errors="replace").splitlines(), 1):
+            for i, line in enumerate(_read_path(p).splitlines(), 1):
                 if re.search(r"\b(pdb\.set_trace|breakpoint)\s*\(", line):
                     offenders.append(f"{p.relative_to(root)}:{i}")
     if offenders:
@@ -1262,12 +1262,22 @@ def check_prod_images_digest_pinned(root: pathlib.Path) -> list[Finding]:
     if not compose:
         return _fail("image_digests", "polaris_web/docker-compose.prod.yml is missing")
     unpinned = []
+    seen_images = 0
     for m in re.finditer(r"(?m)^\s*image:\s*(\S+)", compose):
         img = m.group(1).strip().strip('"').strip("'")
         if img.startswith("polaris-"):
             continue  # built locally via `build:`, no registry digest to pin
+        seen_images += 1
         if "@sha256:" not in img:
             unpinned.append(img)
+    # "Every third-party image is digest-pinned" is vacuously true of a compose file with
+    # no third-party images, and this counts THOSE rather than all of them: the locally
+    # built polaris-* ones are skipped above, so counting every image: line would let a
+    # file with nothing but local builds satisfy a check about registry pins.
+    if not seen_images:
+        return _fail("image_digests",
+                     "polaris_web/docker-compose.prod.yml declares no third-party image at "
+                     "all; there is nothing here to check a registry digest pin on")
     if unpinned:
         return _fail("image_digests",
                      "prod-compose third-party image(s) are tag-pinned, not digest-pinned: "
@@ -1287,12 +1297,12 @@ def check_prod_images_digest_pinned(root: pathlib.Path) -> list[Finding]:
         df = next((p for p in candidates if p.is_file()), None)
         if df is None:
             return _fail("image_digests", f"prod compose names {rel}, which does not exist")
-        for fm in re.finditer(r"(?m)^\s*FROM\s+(\S+)", df.read_text(encoding="utf-8")):
+        for fm in re.finditer(r"(?m)^\s*FROM\s+(\S+)", _read_path(df)):
             base = fm.group(1)
             if base.lower() == "scratch" or "@sha256:" in base:
                 continue
             # A FROM that names an earlier stage (AS builder) is not a pull.
-            if re.search(rf"(?m)^\s*FROM\s+\S+\s+AS\s+{re.escape(base)}\b", df.read_text(encoding="utf-8"), re.I):
+            if re.search(rf"(?m)^\s*FROM\s+\S+\s+AS\s+{re.escape(base)}\b", _read_path(df), re.I):
                 continue
             unpinned_from.append(f"{df.name}: {base}")
     if unpinned_from:
@@ -1301,7 +1311,7 @@ def check_prod_images_digest_pinned(root: pathlib.Path) -> list[Finding]:
                      + "; ".join(unpinned_from) + " — pin every FROM as name:tag@sha256:<digest>; "
                      "Dependabot's docker ecosystem keeps the pins current")
     dep = root / ".github" / "dependabot.yml"
-    if not dep.is_file() or "docker" not in dep.read_text():
+    if not dep.is_file() or "docker" not in _read_path(dep):
         return _fail("image_digests",
                      "add the docker ecosystem to .github/dependabot.yml so the pinned digests get "
                      "security bumps (a frozen digest never updates on its own)")
@@ -2299,9 +2309,9 @@ def _schema_table_counts(root: pathlib.Path) -> tuple[int, int]:
         for p in sorted(sql_dir.glob("[0-9]*.sql")):
             if "test" in p.name or "constraints" in p.name or "substrate" in p.name:
                 continue  # self-test files create scratch tables, not schema
-            deployed |= set(re.findall(pat, p.read_text(encoding="utf-8", errors="replace"), re.M))
+            deployed |= set(re.findall(pat, _read_path(p), re.M))
         for p in sorted((sql_dir / "migrations").glob("*.up.sql")) if (sql_dir / "migrations").is_dir() else []:
-            deployed |= set(re.findall(pat, p.read_text(encoding="utf-8", errors="replace"), re.M))
+            deployed |= set(re.findall(pat, _read_path(p), re.M))
     return len(base), len(deployed)
 
 
@@ -2443,7 +2453,7 @@ def _code_corpus(root: pathlib.Path) -> str:
             continue
         for p in sorted(d.iterdir()):
             if p.is_file() and p.suffix in (".sql", ".py"):
-                parts.append(p.read_text(encoding="utf-8", errors="replace"))
+                parts.append(_read_path(p))
     return "\n".join(parts)
 
 
@@ -2601,7 +2611,7 @@ def check_docs_index_coverage(root: pathlib.Path) -> list[Finding]:
         if not index.is_file():
             missing.append(f"{d.relative_to(root)}/README.md (no index)")
             continue
-        text = index.read_text(encoding="utf-8", errors="replace")
+        text = _read_path(index)
         for m in members:
             if not re.search(r"\]\(" + re.escape(m.name) + r"\)", text):
                 missing.append(str(m.relative_to(root)))
@@ -2959,7 +2969,7 @@ def check_no_migration_column_drift(root: pathlib.Path) -> list[Finding]:
     missing = []
     if mig_dir.is_dir():
         for path in sorted(mig_dir.glob("*.up.sql")):
-            text = path.read_text(encoding="utf-8")
+            text = _read_path(path)
             for m in re.finditer(r"ADD COLUMN(?:\s+IF NOT EXISTS)?\s+(\w+)", text, re.I):
                 col = m.group(1)
                 if not re.search(rf"\b{re.escape(col)}\b", schema):
@@ -3025,7 +3035,7 @@ def check_template_endpoints_resolve(root: pathlib.Path) -> list[Finding]:
     if tpl_dir.is_dir():
         for tpl in sorted(tpl_dir.glob("*.html")):
             names = re.findall(r"url_for\(\s*'([A-Za-z_][A-Za-z_0-9]*)'",
-                               tpl.read_text(encoding="utf-8"))
+                               _read_path(tpl))
             for name in names:
                 if name not in endpoints:
                     missing.append(f"{tpl.name} -> {name}")
@@ -3097,7 +3107,7 @@ def check_no_grep_q_transaction_scrape(root: pathlib.Path) -> list[Finding]:
     sdir = root / "scripts"
     if sdir.is_dir():
         for sh in sorted(sdir.glob("*.sh")):
-            text = sh.read_text(encoding="utf-8", errors="replace")
+            text = _read_path(sh)
             for num, line in enumerate(text.splitlines(), 1):
                 if line.lstrip().startswith("#"):
                     continue
@@ -3128,7 +3138,7 @@ def check_psql_status_capture_set_e_safe(root: pathlib.Path) -> list[Finding]:
     sdir = root / "scripts"
     if sdir.is_dir():
         for sh in sorted(sdir.glob("*.sh")):
-            text = sh.read_text(encoding="utf-8", errors="replace")
+            text = _read_path(sh)
             if "set -e" not in text:
                 continue
             lines = text.splitlines()
@@ -3251,7 +3261,7 @@ def check_ci_ssl_probe_aggregated(root: pathlib.Path) -> list[Finding]:
     offenders = []
     if wfdir.is_dir():
         for wf in sorted(wfdir.glob("*.yml")):
-            text = wf.read_text(encoding="utf-8", errors="replace")
+            text = _read_path(wf)
             for num, line in enumerate(text.splitlines(), 1):
                 if "pg_stat_ssl" not in line or line.lstrip().startswith("#"):
                     continue
@@ -3989,7 +3999,7 @@ def _fk_targets(root: pathlib.Path) -> set:
     files = sorted(sqldir.glob("*.sql")) + sorted((sqldir / "migrations").glob("*.sql"))
     for f in files:
         for m in re.finditer(r"REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)",
-                             f.read_text(encoding="utf-8"), re.I):
+                             _read_path(f), re.I):
             out.add((m.group(1).lower(), m.group(2).lower()))
     return out
 
@@ -4016,7 +4026,11 @@ def check_migrations_expand_contract(root: pathlib.Path) -> list[Finding]:
     referenced = _fk_targets(root)
     offenders = []
     for up in ups:
-        text = up.read_text()
+        # RAW on purpose. This check reads both halves of a migration: the DDL, which is
+        # code, and the `-- phase: contract` / `-- expands:` / `-- widens:` headers, which
+        # are declarations written AS comments because that is what migration metadata is.
+        # `_read_path` would strip exactly the thing being graded.
+        text = up.read_text(encoding="utf-8", errors="replace")
         code = _strip_sql_comments(text)
         widens = _declared_widenings(text)
         # A migration that already declares itself a contract has taken the harder
@@ -4431,7 +4445,7 @@ def check_postgres_probes_use_tcp(root: pathlib.Path) -> list[Finding]:
         for path in sorted(root.glob(pattern)):
             if not path.is_file():
                 continue
-            for n, code in _postgres_probe_lines(path.read_text(encoding="utf-8")):
+            for n, code in _postgres_probe_lines(_read_path(path)):
                 probes += 1
                 if not _PROBE_HOST_FLAG.search(code):
                     offenders.append(f"{path.relative_to(root)}:{n}")
@@ -4532,7 +4546,7 @@ def check_session_origin_hardening(root: pathlib.Path) -> list[Finding]:
     ups = list((root / "polaris_sql" / "migrations").glob("*-operator-session.up.sql"))
     if not ups:
         return _fail("session_hardening", "no operator-session migration in polaris_sql/migrations/")
-    mig = ups[0].read_text(encoding="utf-8")
+    mig = _read_path(ups[0])
     if "CREATE TABLE IF NOT EXISTS OperatorSession" not in mig:
         return _fail("session_hardening", f"{ups[0].name} does not create OperatorSession idempotently")
     for ev in ("NETWORK_POLICY_DENIED", "SESSION_EVICTED", "SESSION_EXPIRED", "SESSION_REVOKED",
@@ -4581,7 +4595,7 @@ def check_schema_reload_idempotent(root: pathlib.Path) -> list[Finding]:
     sources = [("01_schema.sql", schema)]
     mig_dir = root / "polaris_sql" / "migrations"
     if mig_dir.is_dir():
-        sources += [(p.name, p.read_text(encoding="utf-8")) for p in sorted(mig_dir.glob("*.up.sql"))]
+        sources += [(p.name, _read_path(p)) for p in sorted(mig_dir.glob("*.up.sql"))]
     missing = []
     for rel, text in sources:
         # v9.245: partitions ("CREATE TABLE X PARTITION OF Y") drop with their
@@ -4633,7 +4647,7 @@ def check_abuse_controls(root: pathlib.Path) -> list[Finding]:
     ups = list((root / "polaris_sql" / "migrations").glob("*-agency-quota.up.sql"))
     if not ups or not ups[0].with_name(ups[0].name.replace(".up.sql", ".down.sql")).exists():
         return _fail("abuse_controls", "the agency-quota migration pair is missing")
-    mig = ups[0].read_text(encoding="utf-8")
+    mig = _read_path(ups[0])
     if "CREATE TABLE IF NOT EXISTS AgencyQuota" not in mig or "enforce_agency_quota" not in mig:
         return _fail("abuse_controls", f"{ups[0].name} must create AgencyQuota idempotently and install the trigger")
     idx = _read(root, "polaris_sql/02_indexes.sql")
@@ -5430,7 +5444,7 @@ def check_image_builds_are_retried(root: pathlib.Path) -> list[Finding]:
     helper = root / "scripts/polaris-image-build.sh"
     if not helper.is_file():
         return _fail("image_builds", "scripts/polaris-image-build.sh is missing")
-    body = helper.read_text(encoding="utf-8", errors="replace")
+    body = _read_path(helper)
     for needle, why in (("POLARIS_BUILD_ATTEMPTS", "the attempt count must be a knob"),
                         ("POLARIS_VERSION=", "the build must stamp the shipping version"),
                         ("__version__.py", "the version must come from the canonical file")):
@@ -5441,7 +5455,7 @@ def check_image_builds_are_retried(root: pathlib.Path) -> list[Finding]:
     if not workflows:
         return _fail("image_builds", "no workflows found under .github/workflows")
     for wf in workflows:
-        text = wf.read_text(encoding="utf-8", errors="replace")
+        text = _read_path(wf)
         for lineno, line in enumerate(text.splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#"):
@@ -5463,7 +5477,7 @@ def check_image_builds_are_retried(root: pathlib.Path) -> list[Finding]:
 
     dockerfiles = sorted((root / "polaris_web").glob("Dockerfile.*"))
     for df in dockerfiles:
-        text = df.read_text(encoding="utf-8", errors="replace")
+        text = _read_path(df)
         if 'LABEL org.opencontainers.image.version="${POLARIS_VERSION}"' not in text:
             return _fail("image_builds",
                          f"polaris_web/{df.name} must label its version from the POLARIS_VERSION "
@@ -5542,7 +5556,7 @@ def check_css_animations_resolve(root: pathlib.Path) -> list[Finding]:
         return _fail("css_animations", "no stylesheet found under polaris_web/static")
     checked = 0
     for path in css_files:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = _read_path(path)
         defined = set(re.findall(r"@keyframes\s+([A-Za-z_][\w-]*)", text))
         used: set[str] = set()
         for decl in re.findall(r"\banimation(?:-name)?\s*:\s*([^;}]+)", text):
@@ -5680,7 +5694,7 @@ def check_paper_pdf_is_current(root: pathlib.Path) -> list[Finding]:
                      "docs/paper/rendered-from.txt is missing: the PDF cannot be shown to "
                      "match its source")
     recorded = {}
-    for line in stamp.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in _read_path(stamp).splitlines():
         parts = line.split()
         if len(parts) == 2:
             recorded[parts[1].lstrip("*")] = parts[0].lower()
@@ -6576,7 +6590,7 @@ def check_detached_verifier(root: pathlib.Path) -> list[Finding]:
     have_valid = have_tampered = have_placeholder = False
     for p in packs:
         try:
-            obj = json.loads(p.read_text(encoding="utf-8"))
+            obj = json.loads(_read_path(p))
         except Exception as e:
             return _fail("detached_verifier", f"vectors/{p.name} is not valid JSON ({e})")
         if obj.get("format") != "polaris-authenticity-pack/1":
@@ -7109,7 +7123,7 @@ def check_kat_conformance(root: pathlib.Path) -> list[Finding]:
     if not path.is_file():
         return _fail("kat_conformance", "vectors/kat/mldsa_65_verify.json (the conformance vectors) is missing")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_read_path(path))
     except Exception as e:
         return _fail("kat_conformance", f"the KAT vectors are not valid JSON ({e})")
     prov = data.get("provenance") or {}
@@ -7851,7 +7865,7 @@ def check_holder_side_prover(root: pathlib.Path) -> list[Finding]:
     if "polaris-epoch-leaves/1" not in py_sdk or "polaris-epoch-leaves/1" not in ts_sdk:
         return _fail("holder_side_prover", "both SDKs must know the published anonymity set")
     try:
-        cases = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+        cases = json.loads(_read_path(root / "conformance" / "cases.json"))
     except Exception as e:  # noqa: BLE001
         return _fail("holder_side_prover", f"conformance/cases.json is not valid JSON ({e})")
     ep = [c for c in cases.get("cases", []) if c.get("artifact") == "epoch-leaves"]
@@ -7929,7 +7943,7 @@ def check_holder_key_binding(root: pathlib.Path) -> list[Finding]:
         return _fail("holder_key", "both SDKs must decide the holder chain, or it is available only to whoever "
                                    "runs Polaris's own verifier")
     try:
-        cases = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+        cases = json.loads(_read_path(root / "conformance" / "cases.json"))
     except Exception as e:  # noqa: BLE001
         return _fail("holder_key", f"conformance/cases.json is not valid JSON ({e})")
     chain = [c for c in cases.get("cases", []) if c.get("artifact") == "holder-chain"]
@@ -8004,7 +8018,7 @@ def check_attestation_signed(root: pathlib.Path) -> list[Finding]:
     if "polaris-trust-attestation/1" not in py_sdk or "polaris-trust-attestation/1" not in ts_sdk:
         return _fail("attestation_signed", "both SDKs must know the polaris-trust-attestation/1 signed-field list")
     try:
-        cases = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+        cases = json.loads(_read_path(root / "conformance" / "cases.json"))
     except Exception as e:  # noqa: BLE001
         return _fail("attestation_signed", f"conformance/cases.json is not valid JSON ({e})")
     atts = [c for c in cases.get("cases", []) if c.get("artifact") == "trust-attestation"]
@@ -8990,7 +9004,12 @@ def check_no_named_reference_systems(root: pathlib.Path) -> list[Finding]:
         if any(d in _NAMED_REF_SKIP_DIRS for d in parts) or rel in _NAMED_REF_EXEMPT:
             continue
         try:
-            text = f.read_text(encoding="utf-8", errors="ignore")
+            # RAW, and this is the clearest case for the escape hatch in the tree. The
+            # rule is that the reference country is not named ANYWHERE -- a comment is
+            # part of the repository somebody reads. Stripping comments here would have
+            # made the check pass on exactly the text it exists to forbid, and its own
+            # detection test says so: "must FAIL on a named country in a code comment".
+            text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         in_comparison = False
@@ -9448,7 +9467,7 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
     # 3. The cases: real JSON, versioned, covering authentic AND not-authentic AND an
     #    untrusted-issuer verdict.
     try:
-        manifest = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+        manifest = json.loads(_read_path(root / "conformance" / "cases.json"))
     except Exception as e:
         return _fail("conformance_suite", f"conformance/cases.json is not valid JSON ({e})")
     if manifest.get("format") != "polaris-conformance/1":
@@ -9714,7 +9733,7 @@ def check_commitment_mismatch_is_a_refusal(root: pathlib.Path) -> list[Finding]:
             return _fail(name, f"{sdk} must check the published set against leaves_root_hex; a verifier that "
                                "skips the commitment accepts a swapped anonymity set")
     try:
-        cases = json.loads((root / "conformance" / "cases.json").read_text(encoding="utf-8"))
+        cases = json.loads(_read_path(root / "conformance" / "cases.json"))
     except Exception as e:  # noqa: BLE001
         return _fail(name, f"conformance/cases.json is not valid JSON ({e})")
     swapped = [c for c in cases.get("cases", [])
@@ -10860,7 +10879,7 @@ def check_enrollment_code(root: pathlib.Path) -> list[Finding]:
     # hmac.compare_digest" in redeem's own docstring, so swapping the call for `==`
     # passed -- a check on prose about the code rather than on the code. Stripping
     # triple-quoted strings instead would have removed the SQL, which lives in them too.
-    src = mod_path.read_text(encoding="utf-8")
+    src = _read_path(mod_path)
     try:
         tree = ast.parse(src)
         fn = next(n for n in ast.walk(tree)
@@ -10952,7 +10971,7 @@ def check_trusted_referee(root: pathlib.Path) -> list[Finding]:
     ref = types.ModuleType("polaris_referee_probe")
     ref.__file__ = str(mod_path)
     try:
-        exec(compile(mod_path.read_text(encoding="utf-8"), ref.__file__, "exec"), ref.__dict__)
+        exec(compile(_read_path(mod_path), ref.__file__, "exec"), ref.__dict__)
     except Exception as exc:  # noqa: BLE001
         return _fail(name, f"polaris_web/referee.py does not load: {exc}")
 
@@ -11061,7 +11080,7 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
     stale = []
     for rel, needle in witnesses:
         target = root / rel
-        if not target.is_file() or needle not in target.read_text(encoding="utf-8"):
+        if not target.is_file() or needle not in _read_path(target):
             stale.append(f"{rel}::{needle[:30]}")
     if stale:
         return _fail(name,
@@ -11127,7 +11146,7 @@ def check_capacity_model(root: pathlib.Path) -> list[Finding]:
     cap = types.ModuleType("polaris_capacity_check")
     cap.__file__ = str(mod_path)
     try:
-        exec(compile(mod_path.read_text(encoding="utf-8"), str(mod_path), "exec"),
+        exec(compile(_read_path(mod_path), str(mod_path), "exec"),
              cap.__dict__)
     except Exception as exc:  # noqa: BLE001 - a model that will not load is a failure
         return _fail(name, f"polaris_web/capacity.py does not load: {exc}")
@@ -11853,7 +11872,7 @@ def check_formal_specs(root: pathlib.Path) -> list[Finding]:
     # THE ASSUMPTION THE C1 RESULT RESTS ON, enforced where it can actually be broken.
     setters = []
     for sql in sorted((root / "polaris_sql").glob("*.sql")):
-        for line in sql.read_text().splitlines():
+        for line in _read_path(sql).splitlines():
             stripped = line.strip()
             if stripped.startswith("--"):
                 continue
@@ -12149,7 +12168,7 @@ def check_enrollment_proofing(root: pathlib.Path) -> list[Finding]:
     pf = types.ModuleType("polaris_proofing_probe")
     pf.__file__ = str(pf_path)
     try:
-        exec(compile(pf_path.read_text(encoding="utf-8"), pf.__file__, "exec"), pf.__dict__)
+        exec(compile(_read_path(pf_path), pf.__file__, "exec"), pf.__dict__)
     except Exception as exc:  # noqa: BLE001
         return _fail("enrollment_proofing", f"polaris_web/proofing.py does not load: {exc}")
     doc = {"evidence_type": "PASSPORT", "strength": "SUPERIOR",

@@ -98,7 +98,7 @@ their own property in a comment were repaired in the same ship -- a fixture that
 property in a comment is testing the thing the drill forbids.
 
 The drill now gates at zero on every push. **Its limits are where a reviewer should look
-next:** nine checks read files the drill cannot enumerate, so they are skipped rather than
+next:** four checks read files the drill cannot enumerate, so they are skipped rather than
 counted; it only mutates strings a check GREPS for, so a check that computes rather than greps
 is untested by it; and it cannot tell a check that is vacuously true from one that is watching
 something. Two checks were found passing because the mutation removed their subject entirely,

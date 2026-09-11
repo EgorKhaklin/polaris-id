@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.400 — 2026-09-11 (the forty-odd file reads that went around the stripping)
+
+v9.399 made `_read` strip comments, which covered every check that names a file. Forty-odd reads
+did not go through it: a `glob` over the migrations, a `read_text` on a path a check had built
+itself. Those kept grepping the comments, and the mutation drill could not reach them either, so
+they were reported as skipped -- honest, and still untested.
+
+Thirty-nine are converted to `_read_path`, and the drill now resolves literal `glob` calls
+(`root / "polaris_sql" / "migrations"` with a constant pattern) so the files they enumerate are
+mutated too. It fully mutates 79 checks now rather than 75, and skips 4 rather than 9.
+
+TWO READS STAY RAW, AND BOTH ARE THE ESCAPE HATCH WORKING. `check_migrations_expand_contract`
+grades the `-- phase: contract` and `-- widens:` headers, which are declarations written AS
+comments because that is what migration metadata is; stripping would remove exactly the thing
+being graded. And `check_no_named_reference_systems` is the clearest case in the tree: the rule
+is that the reference country is not named ANYWHERE, and a comment is part of the repository
+somebody reads. Its own detection test says so -- "must FAIL on a named country in a code
+comment" -- and that test is what caught the conversion.
+
+Widening the drill's reach surfaced one more vacuous pass, and a subtler one than the earlier
+two. `check_prod_images_digest_pinned` skips locally-built `polaris-*` images, since they have
+no registry digest to pin. Comment out the lines carrying `@sha256:` and the only images left
+are the local ones it skips, so it judges nothing and passes. Counting every `image:` line would
+not have caught it: the guard has to count the check's actual SUBJECT, which is third-party
+images.
+
+Two of my own errors on the way, both from the automated conversion: a regex greedy enough to
+turn `for i, line in enumerate(...)` into a call assignment, and a loop variable named `base`
+that shadowed the pristine tree copy, so the next `copytree` read from `""`.
+
+---
+
 ## v9.399 — 2026-09-11 (seventy-one to zero: the checks now read code, not the comments beside it)
 
 v9.398 measured the exposure and ratcheted it. This closes it.
