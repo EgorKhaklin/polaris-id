@@ -9428,6 +9428,130 @@ def test_coexistence_plan_check_discriminates(tmp_path):
             f"the record must state: {phrase}"
 
 
+def test_capacity_model_check_discriminates(tmp_path):
+    # v9.384 (P7.3): the ways a capacity model stops meaning anything. The real module is the
+    # fixture, because the check LOADS and RUNS it -- a synthetic stand-in would be a second
+    # model to keep correct, and the thing under test is whether this one can be broken
+    # without the check noticing.
+    import shutil
+    srcs = ['polaris_web/capacity.py', 'polaris_sql/01_schema.sql',
+            'docs/reference/BENCHMARK.md', 'ROADMAP.md']
+
+    def write(rel=None, old=None, new=None):
+        for f in srcs:
+            dst = tmp_path / f
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / f, dst)
+        if rel:
+            dst = tmp_path / rel
+            text = dst.read_text()
+            assert old in text, f"fixture string missing from {rel}"
+            dst.write_text(text.replace(old, new, 1))
+
+    write()
+    assert checks.check_capacity_model(tmp_path)[0].level == "OK", \
+        "the live schema must PASS: no sequence runs out before the national targets"
+
+    # A 32-BIT ID BACK ON THE VERIFICATION PATH. Two billion is five days at the stated
+    # sustained target. Nothing is slow when a sequence is exhausted; every insert fails.
+    write('polaris_sql/01_schema.sql',
+          '    event_id         BIGSERIAL,', '    event_id         SERIAL,')
+    assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
+        "a SERIAL on VerificationEvent must FAIL: it lasts five days at the stated target"
+
+    # A MEASURED CONSTANT THAT NO LONGER MATCHES THE BENCHMARK. A hand-copied number is
+    # what keeps the old figure after a re-benchmark.
+    write('polaris_web/capacity.py',
+          '"verify_per_core_single_witness": 7848',
+          '"verify_per_core_single_witness": 9999')
+    assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
+        "a measured constant that is not in BENCHMARK.md must FAIL"
+
+    # A TARGET THAT IS NO LONGER THE ROADMAP'S. A model validating something nobody is
+    # planning for validates nothing.
+    write('polaris_web/capacity.py', '"quote": "350M persons"', '"quote": "400M persons"')
+    assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
+        "a target not quoted from ROADMAP.md must FAIL"
+
+    # AN UNVALIDATED TARGET REPORTED MET. Checked by RUNNING the model: an earlier draft
+    # looked for a mention of UNVALIDATED_LINKS, and disabling the branch left the mention
+    # on the next line, which passed. A check that a name appears is a check on spelling.
+    write('polaris_web/capacity.py',
+          '        if key in UNVALIDATED_LINKS:', '        if False:')
+    assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
+        "reporting a target met that nothing can establish must FAIL"
+
+    # NOTHING LEFT TO ADMIT. An empty UNVALIDATED_LINKS makes the guard above vacuous.
+    write('polaris_web/capacity.py',
+          'UNVALIDATED_LINKS = {\n    "availability": (',
+          'UNVALIDATED_LINKS = {}\n_RETIRED = {\n    "availability": (')
+    assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
+        "a model admitting nothing it cannot establish must FAIL"
+
+    # THE SCHEMA PARSE BREAKS. Finding no sequence columns at all must fail rather than
+    # pass by having nothing to check.
+    write('polaris_web/capacity.py', '(BIGSERIAL|SERIAL)', '(NOTHINGSERIAL)')
+    assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
+        "analysing no sequence columns must FAIL rather than pass vacuously"
+
+
+def test_expand_contract_check_grades_declared_widenings(tmp_path):
+    # v9.384 (P7.3): ALTER COLUMN TYPE is destructive DDL in general, and widening is the
+    # exception -- old code reading a wider column reads the same values. The exception has
+    # to be CLAIMED, because the old type is in neither the migration (an ALTER names only
+    # its target) nor 01_schema.sql (which carries the new type once it lands). These are the
+    # ways a claim can be wrong: undeclared, contradicted by the statement, pointing at a
+    # column a foreign key references, or a narrowing wearing a widening's label.
+    import shutil
+    MIG = 'polaris_sql/migrations/2026-09-10-015-widen-surrogate-ids.up.sql'
+
+    def write(old=None, new=None):
+        for f in ('polaris_sql/01_schema.sql',
+                  'polaris_sql/migrations/README.md', MIG):
+            dst = tmp_path / f
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / f, dst)
+        if old:
+            dst = tmp_path / MIG
+            text = dst.read_text()
+            assert old in text, "fixture string missing from the migration"
+            dst.write_text(text.replace(old, new, 1))
+
+    write()
+    assert checks.check_migrations_expand_contract(tmp_path)[0].level == "OK", \
+        "a declared widening of a column no foreign key references must PASS"
+
+    # UNDECLARED. The checker will not infer a claim nobody made.
+    write('-- widens: VerificationEvent.event_id INTEGER -> BIGINT\n', '')
+    assert checks.check_migrations_expand_contract(tmp_path)[0].level == "FAIL", \
+        "a type change with no widening declaration must FAIL"
+
+    # THE DECLARATION CONTRADICTS THE STATEMENT.
+    write('-- widens: VerificationEvent.event_id INTEGER -> BIGINT',
+          '-- widens: VerificationEvent.event_id INTEGER -> INTEGER')
+    assert checks.check_migrations_expand_contract(tmp_path)[0].level == "FAIL", \
+        "a declared target type that the statement does not set must FAIL"
+
+    # A NARROWING WEARING A WIDENING'S LABEL. Not in the allow-list, so it falls through
+    # to the contract rule, which this migration does not satisfy.
+    write('-- widens: VerificationEvent.event_id INTEGER -> BIGINT',
+          '-- widens: VerificationEvent.event_id BIGINT -> INTEGER')
+    assert checks.check_migrations_expand_contract(tmp_path)[0].level == "FAIL", \
+        "a narrowing declared as a widening must FAIL"
+
+    # THE COLUMN IS REFERENCED BY A FOREIGN KEY. A parent widened to BIGINT while a child
+    # still declares INTEGER accepts ids the child cannot hold -- exactly the rolling-deploy
+    # breakage the policy exists to prevent.
+    write('ALTER TABLE TokenSignature         ALTER COLUMN signature_id TYPE BIGINT;',
+          'ALTER TABLE IdentityToken ALTER COLUMN token_id TYPE BIGINT;')
+    dst = tmp_path / MIG
+    dst.write_text(dst.read_text().replace(
+        '-- widens: TokenSignature.signature_id INTEGER -> BIGINT',
+        '-- widens: IdentityToken.token_id INTEGER -> BIGINT'))
+    assert checks.check_migrations_expand_contract(tmp_path)[0].level == "FAIL", \
+        "widening a column a foreign key references must FAIL"
+
+
 def test_audited_reads_are_logged_check_discriminates(tmp_path):
     # v9.382 (P7.7): the read that hid behind a function name. Every other read of an audited
     # table is a SELECT in app.py, so a grep finds it. UC-7 selected from a stored procedure,

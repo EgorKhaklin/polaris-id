@@ -175,6 +175,41 @@ of the roll (migrations apply before the app colours are recreated). So every
   with destructive DDL that lacks these two lines, or whose `expands` target
   does not exist. `.down.sql` files are reverts and are exempt.
 
+### Widening a column is an expand, not a contract
+
+`ALTER COLUMN ... TYPE` is destructive DDL in general, because reshaping a column
+under running code is how a rolling deploy breaks. Making a column WIDER is the
+exception: old code reading a wider column reads the same values, and every value
+it could hold before still fits.
+
+The exception has to be claimed rather than inferred, because the old type is not
+recoverable from the migration (an `ALTER` names only its target) or from
+`01_schema.sql` (which carries the new type once the migration lands). So the
+migration states it:
+
+```sql
+-- widens: VerificationEvent.event_id INTEGER -> BIGINT
+```
+
+`check_migrations_expand_contract` then verifies three things, and fails closed on
+anything it does not recognise:
+
+1. the pair is a recognised widening (`_SAFE_WIDENINGS`: smallint to integer or
+   bigint, integer to bigint, real to double precision);
+2. the declared target type matches the type the statement actually sets;
+3. **no foreign key references the column.** A parent widened to `BIGINT` while a
+   child still declares `INTEGER` would accept ids the child cannot hold, which is
+   precisely the rolling-deploy breakage the policy exists to prevent.
+
+A migration that already declares `phase: contract` needs no widening declaration:
+it has taken the harder route and named its expand step, and the contract rule
+covers its type changes.
+
+The reverse direction is never exempt. A `.down.sql` that narrows a column back can
+fail with "integer out of range", and that failure is correct: there is no safe
+narrowing of a value that no longer fits, and coping by truncating would rewrite
+identifiers on rows C1 makes permanent.
+
 The rule is what makes `polaris-deploy.sh`'s rolling mode safe; see
 `docs/operator/OPERATIONS.md`, "Deploy".
 

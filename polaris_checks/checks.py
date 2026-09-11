@@ -3813,6 +3813,58 @@ _DESTRUCTIVE_DDL = re.compile(
     re.I)
 
 
+#: Type changes that only make a column WIDER. The expand-contract policy exists
+#: because a rolling deploy runs OLD code against the NEW schema, and old code does
+#: not break when a column it reads gets more room: every value it could hold before
+#: it can still hold, and the new values it may now see are surrogate integers it
+#: passes through. Narrowing is the dangerous direction and stays destructive.
+#:
+#: The exemption is deliberately small and fails closed: a pair not listed here is
+#: treated as destructive however obviously safe it looks.
+_SAFE_WIDENINGS = {
+    ("SMALLINT", "INTEGER"), ("SMALLINT", "BIGINT"),
+    ("INT", "BIGINT"), ("INTEGER", "BIGINT"),
+    ("REAL", "DOUBLE PRECISION"),
+}
+
+
+def _declared_widenings(text: str) -> dict:
+    """`-- widens: Table.column OLD -> NEW` headers, as {(table, column): (old, new)}.
+
+    The migration has to SAY what it is widening. The old type is not recoverable
+    from the SQL (an ALTER names only the target) and not recoverable from
+    01_schema.sql either, since that file already carries the new type once the
+    migration lands. So the author states the claim and the check grades it,
+    rather than the check inferring a claim nobody made.
+    """
+    out = {}
+    for m in re.finditer(
+            r"(?mi)^--\s*widens:\s*(\w+)\.(\w+)\s+([A-Z ]+?)\s*->\s*([A-Z ]+?)\s*$", text):
+        out[(m.group(1).lower(), m.group(2).lower())] = (
+            m.group(3).strip().upper(), m.group(4).strip().upper())
+    return out
+
+
+def _fk_targets(root: pathlib.Path) -> set:
+    """Every (table, column) any foreign key in the schema or migrations points at.
+
+    The widening exemption is only sound for a column nothing references. A parent
+    widened to BIGINT while a child still declares INTEGER would take inserts the
+    child cannot hold, which is exactly the rolling-deploy breakage the policy
+    exists to prevent.
+    """
+    sqldir = root / "polaris_sql"
+    out = set()
+    if not sqldir.is_dir():
+        return out
+    files = sorted(sqldir.glob("*.sql")) + sorted((sqldir / "migrations").glob("*.sql"))
+    for f in files:
+        for m in re.finditer(r"REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)",
+                             f.read_text(encoding="utf-8"), re.I):
+            out.add((m.group(1).lower(), m.group(2).lower()))
+    return out
+
+
 def _strip_sql_comments(sql: str) -> str:
     sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
     return "\n".join(l.split("--", 1)[0] for l in sql.splitlines())
@@ -3832,10 +3884,47 @@ def check_migrations_expand_contract(root: pathlib.Path) -> list[Finding]:
                      "(`-- phase: contract` + `-- expands: <id>` headers)")
     ups = sorted(p for p in mig_dir.glob("*.up.sql"))
     ids = {p.name[:-len(".up.sql")] for p in ups}
+    referenced = _fk_targets(root)
     offenders = []
     for up in ups:
         text = up.read_text()
-        m = _DESTRUCTIVE_DDL.search(_strip_sql_comments(text))
+        code = _strip_sql_comments(text)
+        widens = _declared_widenings(text)
+        # A migration that already declares itself a contract has taken the harder
+        # route and named its expand step; the contract rule below covers its type
+        # changes. Demanding a widening declaration there too would be asking the
+        # author to claim a narrowing is a widening in order to pass.
+        declared_contract = bool(
+            re.search(r"(?m)^--\s*phase:\s*contract\b", text, re.I)
+            and re.search(r"(?m)^--\s*expands:\s*\S+", text))
+        # A declared, allow-listed widening of a column nothing references is an
+        # EXPAND, not a contract: old code reading a wider column reads the same
+        # values. Each one is verified against its declaration and struck from the
+        # statement before the destructive scan, so anything left is genuinely
+        # reshaping something the previous code depended on.
+        for alter in ([] if declared_contract else re.finditer(
+                r"(?i)ALTER\s+TABLE\s+(\w+)\s+ALTER\s+COLUMN\s+(\w+)\s+"
+                r"(?:SET\s+DATA\s+)?TYPE\s+([A-Za-z ]+)", code)):
+            table, col, newtype = (alter.group(1).lower(), alter.group(2).lower(),
+                                   alter.group(3).strip().upper())
+            declared = widens.get((table, col))
+            if declared is None:
+                offenders.append(f"{up.name}: {table}.{col} changes type with no "
+                                 "`-- widens: Table.column OLD -> NEW` declaration")
+                continue
+            old_t, new_t = declared
+            if (old_t, new_t) not in _SAFE_WIDENINGS:
+                continue    # not a recognised widening: leave it to the contract rule
+            if new_t != newtype:
+                offenders.append(f"{up.name}: {table}.{col} declares a widening to "
+                                 f"{new_t} but the statement changes it to {newtype}")
+                continue
+            if (table, col) in referenced:
+                offenders.append(f"{up.name}: {table}.{col} is widened but a foreign key "
+                                 "references it, so a child column would still be narrow")
+                continue
+            code = code.replace(alter.group(0), " ")
+        m = _DESTRUCTIVE_DDL.search(code)
         if not m:
             continue
         phase = re.search(r"(?m)^--\s*phase:\s*(\w+)", text)
@@ -3848,7 +3937,9 @@ def check_migrations_expand_contract(root: pathlib.Path) -> list[Finding]:
         return _fail("expand_contract", "destructive DDL outside the contract phase (old code would break during a "
                      "rolling deploy): " + "; ".join(offenders[:4]))
     return _ok("expand_contract", f"expand-contract policy holds across {len(ups)} up-migrations (destructive DDL only "
-               "in declared contract migrations that name their earlier expand step)")
+               "in declared contract migrations that name their earlier expand step; a declared "
+               "int-to-bigint widening of a column no foreign key references is an expand, since "
+               "old code reading a wider column reads the same values)")
 
 
 def check_zero_downtime_deploy(root: pathlib.Path) -> list[Finding]:
@@ -10474,6 +10565,127 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_capacity_model(root: pathlib.Path) -> list[Finding]:
+    """No id space runs out before the national targets are reached (P7.3).
+
+    The roadmap states four planning targets and says in the same breath that they are to be
+    validated rather than asserted. Validating them found that every THROUGHPUT target clears
+    by more than an order of magnitude -- 50,000 verifications a second is about six and a half
+    cores of a measured 7,848 per core -- and that the system could not have run for a week at
+    the sustained target, because `VerificationEvent.event_id` was a 32-bit `SERIAL`. Two
+    billion is five days at 5,000 a second and twelve hours at the peak.
+
+    NOTHING IS SLOW WHEN A SEQUENCE IS EXHAUSTED. Every insert on the path fails, and on the
+    verification path that is the whole service. A capacity model that reported core counts
+    would have said the system was ten times faster than it needed to be, which was true and
+    was not the question.
+
+    So this recomputes the arithmetic from the live schema every push. A `SERIAL` reintroduced
+    on a table that grows with national traffic fails here rather than in the fifth year of a
+    rollout. The two figures that matter carry no assumption: one row per verification at a
+    target quoted from the roadmap, and one leaf per credential per epoch, which exhausts on
+    the sixth closure of a 350M population whatever the cadence.
+
+    It also resolves every MEASURED constant against docs/reference/BENCHMARK.md. A capacity
+    model is only as good as the numbers it was built on, and a hand-copied constant is exactly
+    the thing that keeps the old number after a re-benchmark."""
+    name = "capacity_model"
+    mod_path = root / "polaris_web" / "capacity.py"
+    if not mod_path.is_file():
+        return _fail(name, "polaris_web/capacity.py must carry the model")
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    bench = _read(root, "docs/reference/BENCHMARK.md")
+    if not schema or not bench:
+        return _fail(name, "01_schema.sql and docs/reference/BENCHMARK.md must both be present")
+
+    # Compiled from source rather than imported. importlib's loader consults
+    # __pycache__, and bytecode is reused when the source's mtime-to-the-second and
+    # SIZE both match -- so two different versions of this file written in the same
+    # second at the same length load as the same module, and a changed constant reads
+    # as unchanged. It also writes a .pyc into polaris_web/ as a side effect of
+    # running a check. Compiling the text avoids both.
+    import types
+    cap = types.ModuleType("polaris_capacity_check")
+    cap.__file__ = str(mod_path)
+    try:
+        exec(compile(mod_path.read_text(encoding="utf-8"), str(mod_path), "exec"),
+             cap.__dict__)
+    except Exception as exc:  # noqa: BLE001 - a model that will not load is a failure
+        return _fail(name, f"polaris_web/capacity.py does not load: {exc}")
+
+    for fn in ("sequence_columns", "exhaustion", "throughput", "validate"):
+        if not hasattr(cap, fn):
+            return _fail(name, f"the model must expose {fn}()")
+
+    # 1. Every measured constant is the figure the benchmark actually published.
+    digits = set(re.findall(r"[\d,]{3,}", bench))
+    digits = {int(d.replace(",", "")) for d in digits if d.strip(",").isdigit()
+              or d.replace(",", "").isdigit()}
+    for key, value in cap.BENCHMARK.items():
+        if int(value) not in digits:
+            return _fail(name,
+                         f"the model's MEASURED {key} = {value:,} does not appear in "
+                         "docs/reference/BENCHMARK.md. A capacity model is only as good as "
+                         "the numbers under it, and a hand-copied constant is what keeps the "
+                         "old figure after a re-benchmark")
+
+    # 2. No sequence runs out inside the horizon.
+    rows = cap.exhaustion(schema)
+    if not rows:
+        return _fail(name,
+                     "the model analysed no sequence columns at all. The schema parse has "
+                     "broken; this check must not pass by finding nothing to check")
+    doomed = [r for r in rows if r["exhausts_within_horizon"]]
+    if doomed:
+        worst = doomed[0]
+        return _fail(name,
+                     f"{worst['table']}.{worst['column']} is {worst['width']} and runs out of "
+                     f"integers in {cap.human_lifetime(worst)} at the stated national targets "
+                     f"({worst['why']}). Nothing is slow when a sequence is exhausted: every "
+                     "insert on the path fails")
+
+    # 3. An unvalidated link can never be reported as met.
+    #
+    # Checked by RUNNING the model rather than by finding the constant's name in it.
+    # An earlier draft of this check looked for a mention of UNVALIDATED_LINKS, and
+    # disabling the branch that consults it left the mention on the line below,
+    # which passed. A check that a name appears is a check on spelling.
+    if not cap.UNVALIDATED_LINKS:
+        return _fail(name,
+                     "UNVALIDATED_LINKS is empty, so this check cannot fire. A model with "
+                     "nothing it admits it cannot establish has stopped admitting")
+    report = cap.validate(schema)
+    for key in cap.UNVALIDATED_LINKS:
+        got = report["targets"].get(key, {}).get("verdict")
+        if got != cap.UNVALIDATED:
+            return _fail(name,
+                         f"the {key} target is reported {got!r}, but nothing in this "
+                         "repository can establish it. A target must not become met because "
+                         "its other numbers look comfortable")
+
+    # 4. The targets in the model are the targets the roadmap states.
+    # Whitespace-normalised: the roadmap wraps these phrases mid-sentence, and a
+    # target quoted correctly must not fail because the line broke somewhere else.
+    roadmap = re.sub(r"\s+", " ", _read(root, "ROADMAP.md"))
+    for key, target in cap.TARGETS.items():
+        quote = re.sub(r"\s+", " ", target.get("quote", ""))
+        if not quote or quote not in roadmap:
+            return _fail(name,
+                         f"the model's {key} target is not quoted from ROADMAP.md "
+                         f"({quote!r} does not appear there). A target reworded in one place "
+                         "and not the other is a model validating something nobody is "
+                         "planning for")
+
+    survivor = cap.nearest_survivor(cap.validate(schema))
+    tail = (f"; closest 32-bit column is {survivor['table']}.{survivor['column']} at "
+            f"{cap.human_lifetime(survivor)}" if survivor else "")
+    return _ok(name,
+               f"every sequence in the schema outlasts the {cap.DEFAULT_HORIZON_YEARS}-year "
+               "horizon at the roadmap's stated national targets, every MEASURED constant "
+               "resolves to the published benchmark, and a target nothing can establish is "
+               "never reported met" + tail)
+
+
 def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     """A read of an audited table must leave a row even when it hides behind a procedure (P7.7).
 
@@ -12608,6 +12820,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_capacity_model,
     check_transparency_program,
     check_audited_reads_are_logged,
     check_coexistence_plan,

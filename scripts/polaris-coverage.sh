@@ -94,7 +94,7 @@ run_standalone() {  # run_standalone <cwd> <module...>
 
 echo "== running suites under coverage =="
 run "$ROOT"            pytest polaris_checks/test_checks.py -q
-run "$ROOT/polaris_web" unittest test_app test_check_constraints test_pqc_signing test_custody test_secretstore test_transparency
+run "$ROOT/polaris_web" unittest test_app test_check_constraints test_pqc_signing test_custody test_secretstore test_transparency test_capacity
 run "$ROOT/polaris_web" unittest test_invariants_property test_redaction_property test_canonical_equivalence
 run "$ROOT/polaris_cli" unittest test_cli
 run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relying_party \

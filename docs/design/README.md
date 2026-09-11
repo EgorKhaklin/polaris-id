@@ -17,6 +17,7 @@ and the posture documents see [reference/](../reference/README.md).
 | [threat-model.md](threat-model.md) | Which adversaries, reaching which surfaces, and what is deliberately out of scope |
 | [audit-of-record.md](audit-of-record.md) | Why the audit tables are append-only at the database, and what that costs |
 | [transparency-program.md](transparency-program.md) | What the authority publishes about its own most invasive power: why every figure names its source, and why withholding a small count is not the same as protecting it |
+| [capacity-model.md](capacity-model.md) | Validating the stated national targets: every throughput target clears by an order of magnitude, and the system could not have run for a week at the sustained one because an id column was 32-bit |
 | [coexistence.md](coexistence.md) | Living beside the credential being replaced: the phases, and why the sunset is the moment an identity system becomes compulsory rather than a milestone a migration reaches |
 | [concurrency.md](concurrency.md) | Every race-prone path, the lock that serialises it, and the test that proves it |
 | [substrate.md](substrate.md) | Every primitive Polaris depends on, across its cryptographic, storage, network, runtime, hardware and human layers |

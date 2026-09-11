@@ -379,7 +379,7 @@ CREATE INDEX idx_authority_key_event_key ON AuthorityKeyEvent USING hash (public
 
 -- coverage:exempt — C1 AoR enforced by tg_authauditlog_append_only; schema_watcher verifies the trigger exists
 CREATE TABLE AuthAuditLog (
-    audit_id           SERIAL,
+    audit_id       BIGSERIAL,
     event_timestamp    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     event_type         VARCHAR(40)  NOT NULL,
     username           VARCHAR(50),
@@ -487,7 +487,7 @@ COMMENT ON COLUMN IdentityToken.predecessor_token_id IS
 
 -- coverage:exempt — C1 AoR enforced by tg_tokenlifecycleevent_append_only; schema_watcher verifies via EXPECTED_AOR_TABLES
 CREATE TABLE TokenLifecycleEvent (
-    event_id        SERIAL,
+    event_id    BIGSERIAL,
     token_id        INTEGER   NOT NULL REFERENCES IdentityToken(token_id),
     actor_agency_id INTEGER            REFERENCES Agency(agency_id),  -- nullable: device events have no agency actor
     event_type      VARCHAR(20) NOT NULL
@@ -516,7 +516,7 @@ COMMENT ON TABLE TokenLifecycleEvent IS
   'is enforced by convention and tooling (see 06_triggers.sql), not storage engine.';
 
 CREATE TABLE VerificationEvent (
-    event_id             SERIAL,
+    event_id         BIGSERIAL,
     token_id             INTEGER            REFERENCES IdentityToken(token_id),  -- NULLABLE: ZERO_KNOWLEDGE
     requesting_agency_id INTEGER   NOT NULL REFERENCES Agency(agency_id),
     context_id           INTEGER   NOT NULL REFERENCES VerificationContext(context_id),
@@ -970,7 +970,7 @@ COMMENT ON TABLE RecoveryRequest IS
 -- enforce_token_signature_immutability hold the invariants. See
 -- docs/design/token-signature.md
 CREATE TABLE TokenSignature (
-    signature_id       SERIAL       PRIMARY KEY,
+    signature_id   BIGSERIAL       PRIMARY KEY,
     token_id           INTEGER      NOT NULL
                        REFERENCES IdentityToken(token_id),
     algorithm_id       INTEGER      NOT NULL
@@ -1245,7 +1245,7 @@ COMMENT ON TABLE TokenStateEpoch IS
 
 -- coverage:exempt — epoch-leaf table; FK to tokenstateepoch; same append-only discipline
 CREATE TABLE TokenStateEpochLeaf (
-    leaf_id            SERIAL       PRIMARY KEY,
+    leaf_id        BIGSERIAL       PRIMARY KEY,
     epoch_id           INTEGER      NOT NULL REFERENCES TokenStateEpoch(epoch_id),
     token_id           INTEGER      NOT NULL REFERENCES IdentityToken(token_id),
     leaf_hash          VARCHAR(128) NOT NULL,

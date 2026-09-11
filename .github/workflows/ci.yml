@@ -279,6 +279,16 @@ jobs:
       - name: Enrollment proofing — the level is derived, not typed
         run: python scripts/polaris-enrollment-proofing-drill.py
 
+      # v9.384 (P7.3) — the id space is actually wide, not just declared wide. A SERIAL is
+      # an integer column PLUS a sequence declared AS integer, and ALTER COLUMN TYPE BIGINT
+      # changes only the first. Every tool then reports the column as bigint, the schema file
+      # looks right, and the sequence still refuses to issue 2,147,483,648. So the drill does
+      # not inspect types: it sets the sequences one short of the old 32-bit ceiling and
+      # inserts across it, with a half-widened scratch table alongside as the control that
+      # fails exactly where the real one used to. Builds and drops its own database.
+      - name: Capacity — every widened id and its SEQUENCE cross the old ceiling
+        run: python scripts/polaris-capacity-drill.py
+
       # v9.376 (P5.1) — a pilot that can actually be undone. The promise institutions say yes
       # on is that it can be wound back, and that is the one that fails quietly. The drill
       # asserts a wind-down is REFUSED without a co-signer (it is a mass revocation, and the

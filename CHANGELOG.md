@@ -5,6 +5,72 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.384 — 2026-09-10 (P7.3: the targets are met and the column ran out of integers)
+
+The roadmap states four national planning targets and says in the same sentence that they are
+"to be validated, not asserted". Validating them found both halves of the answer, and the
+second half is not a throughput number.
+
+EVERY THROUGHPUT TARGET CLEARS BY MORE THAN AN ORDER OF MAGNITUDE. 50,000 peak verifications a
+second is about 6.4 cores of a measured 7,848 per core, and verify-at-use needs only a public
+key so it fans out across replicas without touching custody. A 200,000/day enrollment surge is
+about nine minutes of one signer at a measured 372 tokens/s. Judged on throughput this system
+is ten times faster than its targets require.
+
+AND IT COULD NOT HAVE RUN FOR A WEEK AT THE SUSTAINED TARGET, because `VerificationEvent.
+event_id` was a 32-bit `SERIAL`. Two billion, one row per verification, five thousand a second:
+five days. At the 50,000/s peak target, twelve hours. Nothing is slow when a sequence is
+exhausted and no query degrades; every insert on the path fails, and on the verification path
+that is the whole service. `TokenStateEpochLeaf.leaf_id` was worse in the way that matters
+most: the table holds one row per token per epoch, so a 350M population exhausts it on the
+SIXTH epoch closure, and that figure needs no assumption about cadence at all.
+
+`polaris_web/capacity.py` is therefore a model that reads the schema, not a spreadsheet of
+core counts. Every figure is labelled MEASURED, DERIVED, ASSUMED or UNVALIDATED, and the two
+findings above are DERIVED -- arithmetic on the schema and a target quoted from the roadmap,
+with no modelling step in between, which is why they were acted on rather than filed. A target
+is reported MET only when its throughput is met, no id space blocks it, and no link in its
+derivation is UNVALIDATED.
+
+Migration `2026-09-10-015` widens five surrogate ids to 64 bits. A `SERIAL` IS TWO OBJECTS: an
+`integer` column and a sequence declared `AS integer`, and `ALTER COLUMN TYPE BIGINT` changes
+only the first. After that `information_schema` says `bigint`, the schema file looks right, the
+model reports MET, and the sequence still refuses to issue 2,147,483,648. So the drill inspects
+nothing: it sets each sequence one short of the old ceiling and inserts across it, with a
+deliberately half-widened scratch table alongside as the control that must fail at exactly that
+point. Without the control a passing widening test proves only that the number fit.
+
+Widening is an EXPAND, not a contract -- old code reading a wider column reads the same values
+-- so `check_migrations_expand_contract` learned to grade a declared
+`-- widens: Table.column OLD -> NEW` instead of refusing every type change. It verifies the
+pair is a recognised widening, that the declared target matches what the statement sets, and
+that no foreign key references the column, since a parent widened under a still-narrow child is
+exactly the rolling-deploy breakage the policy exists to prevent. Declaring the migration a
+contract to get past the checker would have been a lie, and weakening the checker would have
+been worse.
+
+99.99% AVAILABILITY STAYS UNVALIDATED and says why. It is 52.6 minutes a year; establishing it
+needs a failure rate and a recovery time from a multi-region deployment under real traffic, and
+what is measured is a rolling deploy that drops zero verifications and a failover that induces
+four failures and recovers, on a two-member topology on CI hardware. Extrapolating 99.99% from
+that would be an assertion wearing a measurement's clothes.
+
+Two defects found while building the check itself. It loaded the model with importlib, whose
+loader reuses cached bytecode when the source's mtime-to-the-second and size both match, so two
+versions of the file differing by four characters loaded as the same module and a changed
+constant read as unchanged; it also wrote a `.pyc` into `polaris_web/` as a side effect of
+running a check. Both gone: the model is compiled from source text. And an earlier draft
+checked that `UNVALIDATED_LINKS` was MENTIONED in `validate()`; disabling the branch that
+consults it left the mention on the line below and passed. The guard now runs the model.
+
+- `check_capacity_model` and the widening rule in `check_migrations_expand_contract`, each with
+  a detection test (223 checks)
+- `polaris_web/capacity.py`, `polaris_web/test_capacity.py` (25 measured tests),
+  `scripts/polaris-capacity-drill.py` on every push against a real database
+- [capacity-model.md](docs/design/capacity-model.md)
+
+---
+
 ## v9.383 — 2026-09-10 (a gate that says READY without linting)
 
 CI's product-test job runs `ruff check .` as its FIRST step, so a single unused import fails the
