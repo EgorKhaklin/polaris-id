@@ -5,6 +5,39 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.407 — 2026-09-11 (drop the constraint and see whether the suite notices)
+
+MISSION's first claim is that the guarantees live in the DATABASE, not in application code: a
+rule enforced by a CHECK constraint binds every client, survives every restore, and cannot be
+bypassed by the next caller. `test_check_constraints.py` is the evidence for that claim, and it
+is a suite of "this INSERT must raise CheckViolation" assertions.
+
+An assertion of that shape can pass for the wrong reason. A row crafted to violate one
+constraint very often violates a second on the way in, and `assertRaises(CheckViolation)` cannot
+tell them apart. The suite already knew this: its helper takes a constraint NAME and asserts it
+appears in the exception, and all 54 call sites pass one. But a name in an assertion is a claim
+about the database, and only the database can settle it.
+
+So settle it. `polaris-constraint-mutation-drill.py` drops each named constraint, runs the tests
+that name it, and requires them to go red. 46 constraints, 0 survivors: every constraint the
+suite names is load-bearing. The drill captures each definition from `pg_get_constraintdef`
+before dropping so what it restores is what it removed, verifies the catalog count comes back,
+prints the exact restore SQL if one does not, and refuses to run against a database whose name
+does not say it is disposable.
+
+Zero survivors is only a measurement if the drill can report a non-zero one, so it carries its
+own NEGATIVE control: before any verdict it drops one constraint and runs a test on a different
+table that must stay GREEN. Verified both ways by hand first: with `chk_appuser_role` dropped
+the agency enum test still passes and the appuser role test fails. Without that control, "every
+test went red" would be equally consistent with a suite that goes red at anything.
+
+The drill itself landed a version early, swept into v9.406 by a `git add -A` while it was still
+unwired. This is the ship that finishes it: CI runs it after the coverage gate, and
+`check_constraint_suite_is_mutation_tested` (231) pins the drop, the restore-from-catalog, the
+negative control, the test-database guard, the case count, the CI step, and the rule that every
+assertion names its constraint, since the drill cannot mutation-test what the suite will not
+name.
+
 ## v9.406 — 2026-09-11 (the key that worked on a laptop and not on a runner)
 
 v9.404's internal-kex drill bind-mounted a freshly minted server key into the postgres

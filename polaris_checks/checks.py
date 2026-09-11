@@ -10817,6 +10817,79 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_constraint_suite_is_mutation_tested(root: pathlib.Path) -> list[Finding]:
+    """The suite that proves the constraints exist must go red when one is gone (v9.407).
+
+    MISSION's first claim is that the guarantees live in the DATABASE: a rule enforced by a
+    CHECK constraint binds every client and survives every restore. `test_check_constraints.py`
+    is the evidence for that claim, and it is a suite of "this INSERT must raise CheckViolation"
+    assertions.
+
+    An assertion of that shape can pass for the wrong reason. A row crafted to violate one
+    constraint often violates a second on the way in, and the exception type cannot tell them
+    apart. The suite's helper takes a constraint NAME for exactly that reason, and every call
+    site passes one. But a name in an assertion is a claim about the database that only the
+    database can settle, and the way to settle it is to take the constraint away.
+
+    So `polaris-constraint-mutation-drill.py` drops each named constraint, runs the tests that
+    name it, and requires them to FAIL. Measured at 46 constraints, 0 survivors. That number
+    means something only because the drill also carries a NEGATIVE control: it drops one
+    constraint and runs a test on a different table that must stay GREEN, so a red test is
+    attributable to the constraint removed rather than to a suite that fails on anything."""
+    name = "constraint_mutation"
+    rel = "scripts/polaris-constraint-mutation-drill.py"
+    if not (root / rel).is_file():
+        return _fail(name, f"{rel} is absent; the constraint suite's assertions are checked by "
+                           "nothing that can tell a real constraint from a coincidence")
+    drill = _read(root, rel)
+    ci = _read(root, ".github/workflows/ci.yml")
+    suite = _read(root, "polaris_web/test_check_constraints.py")
+    problems = []
+    if "DROP CONSTRAINT" not in drill:
+        problems.append("the drill does not drop the constraints, so it is not a mutation test")
+    if "ADD CONSTRAINT" not in drill:
+        problems.append("the drill does not restore what it drops")
+    if "CONTROL_UNRELATED_TEST" not in drill or "CONTROL_CONSTRAINT" not in drill:
+        problems.append("the drill carries no negative control, so it cannot show it is able to "
+                        "report a survivor at all")
+    if "TEST_DB_MARKER" not in drill:
+        problems.append("the drill does not refuse to run against a non-test database")
+    if "pg_get_constraintdef" not in drill:
+        problems.append("the drill does not capture each constraint's definition from the "
+                        "catalog, so what it restores is not what it removed")
+    if "_cases_recorded" not in drill:
+        problems.append("the drill does not count its cases (v9.403)")
+    if "polaris-constraint-mutation-drill.py" not in ci:
+        problems.append("CI does not run the drill, so the mutation happens only by hand")
+    # Every assertion in the suite must name the constraint it expects. An unnamed one accepts
+    # any CheckViolation, and the drill cannot mutation-test what the suite will not name.
+    named, unnamed = 0, 0
+    try:
+        for node in ast.walk(ast.parse(suite)):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "_expect_check_violation"):
+                continue
+            if any(k.arg == "constraint_name" for k in node.keywords) or len(node.args) >= 3:
+                named += 1
+            else:
+                unnamed += 1
+    except SyntaxError as exc:
+        return _fail(name, f"polaris_web/test_check_constraints.py does not parse: {exc}")
+    if unnamed:
+        problems.append(f"{unnamed} _expect_check_violation call(s) name no constraint, so they "
+                        "pass on ANY CheckViolation and nothing can mutation-test them")
+    if named < 40:
+        problems.append(f"only {named} named constraint assertions were found; the parse has "
+                        "broken and this check is passing by finding nothing")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]))
+    return _ok(name,
+               f"every one of the {named} constraint assertions names "
+               "the constraint it expects, and the mutation drill drops each one, requires the "
+               "naming tests to go red, restores it from the catalog's own definition and "
+               "carries a negative control so a red test is attributable")
+
+
 def check_detection_tests_have_a_positive_control(root: pathlib.Path) -> list[Finding]:
     """A detection test that only ever asserts FAIL has not established that it detects (v9.405).
 
@@ -13773,6 +13846,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
     check_detection_tests_have_a_positive_control,
+    check_constraint_suite_is_mutation_tested,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,

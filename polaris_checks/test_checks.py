@@ -11903,3 +11903,69 @@ def test_detection_controls_check_discriminates(tmp_path):
     # the file is gone
     (tmp_path / rel).unlink()
     assert checks.check_detection_tests_have_a_positive_control(tmp_path)[0].level == "FAIL", "must FAIL when the test file is absent"
+
+
+def test_constraint_mutation_check_discriminates(tmp_path):
+    DRILL = ('TEST_DB_MARKER = "test"\n'
+             'CONTROL_CONSTRAINT = "chk_appuser_role"\n'
+             'CONTROL_UNRELATED_TEST = "TestAgencyChecks.test_agency_type_enum_rejects_unknown"\n'
+             '_cases_recorded = 0\n'
+             'SQL_READ = "SELECT pg_get_constraintdef(oid) FROM pg_constraint"\n'
+             'DROP = "ALTER TABLE t DROP CONSTRAINT c"\n'
+             'ADD = "ALTER TABLE t ADD CONSTRAINT c def"\n')
+    SUITE = ("class _CheckBase:\n"
+             "    def _expect_check_violation(self, sql, params=None, constraint_name=None):\n"
+             "        pass\n\n\n"
+             "class TestThings(_CheckBase):\n"
+             + "".join("    def test_c%d(self):\n"
+                       "        self._expect_check_violation('INSERT', constraint_name='c%d')\n"
+                       % (i, i) for i in range(45)))
+    CI = "      - name: mutate\n        run: python scripts/polaris-constraint-mutation-drill.py\n"
+    good = {
+        "scripts/polaris-constraint-mutation-drill.py": DRILL,
+        "polaris_web/test_check_constraints.py": SUITE,
+        ".github/workflows/ci.yml": CI,
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write()
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # one assertion stops naming its constraint: it now passes on ANY CheckViolation
+    write({"polaris_web/test_check_constraints.py": SUITE.replace(
+        "self._expect_check_violation('INSERT', constraint_name='c7')",
+        "self._expect_check_violation('INSERT')")})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when an assertion accepts any CheckViolation"
+    # the drill stops dropping anything
+    write({"scripts/polaris-constraint-mutation-drill.py": DRILL.replace("DROP CONSTRAINT", "SELECT")})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not drop the constraints"
+    # the drill stops restoring what it drops
+    write({"scripts/polaris-constraint-mutation-drill.py": DRILL.replace("ADD CONSTRAINT", "SELECT")})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not restore what it drops"
+    # the negative control goes away, so the drill cannot show it can report a survivor
+    write({"scripts/polaris-constraint-mutation-drill.py": DRILL.replace("CONTROL_UNRELATED_TEST", "SOMETHING")})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill has no negative control"
+    # it restores from a definition it made up rather than from the catalog
+    write({"scripts/polaris-constraint-mutation-drill.py": DRILL.replace("pg_get_constraintdef", "guess_the_definition")})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not read each definition from the catalog"
+    # it no longer refuses a non-test database
+    write({"scripts/polaris-constraint-mutation-drill.py": DRILL.replace("TEST_DB_MARKER", "ANY_DB")})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill would drop constraints in any database"
+    # it stops counting its cases
+    write({"scripts/polaris-constraint-mutation-drill.py": DRILL.replace("_cases_recorded", "_n")})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not count its cases"
+    # CI does not run it
+    write({".github/workflows/ci.yml": "      - name: other\n        run: true\n"})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+    # the floor: too few named assertions recognised
+    write({"polaris_web/test_check_constraints.py":
+           SUITE.split("    def test_c10(self):")[0]})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when too few named assertions are recognised, rather than pass by finding nothing"
+    # the suite does not parse
+    write({"polaris_web/test_check_constraints.py": "class Broken(\n"})
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the constraint suite does not parse"
+    # the drill is gone
+    write()
+    (tmp_path / "scripts" / "polaris-constraint-mutation-drill.py").unlink()
+    assert checks.check_constraint_suite_is_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill is absent"

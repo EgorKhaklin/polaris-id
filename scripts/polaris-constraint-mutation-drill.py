@@ -51,6 +51,14 @@ TEST_DB_MARKER = "test"
 #: silently tolerated.
 SURVIVORS_EXPECTED: dict[str, str] = {}
 
+#: The drill's own negative control. "Every constraint is load-bearing" is a measurement only
+#: if this drill is capable of reporting the opposite, so before any verdict is trusted it drops
+#: ONE constraint and runs a test that names a DIFFERENT constraint on a DIFFERENT table. That
+#: test must stay green. If it goes red, the suite is failing for reasons other than the
+#: constraint that was removed, and every "ok" in the run is unattributable.
+CONTROL_CONSTRAINT = "chk_appuser_role"
+CONTROL_UNRELATED_TEST = "TestAgencyChecks.test_agency_type_enum_rejects_unknown"
+
 #: Cases this drill actually recorded. A drill whose cases are removed or short-circuited in a
 #: refactor prints its whole summary and exits 0 anyway, which is a guarantee reported by
 #: something that tested nothing (v9.403).
@@ -132,6 +140,34 @@ def main() -> int:
     print(f"Polaris constraint mutation drill: {len(named)} named constraints, database {dbname}")
     print()
 
+    with conn.cursor() as cur:
+        control_rows = _catalog(cur, CONTROL_CONSTRAINT)
+    if not control_rows:
+        print(f"FAIL: the negative control constraint {CONTROL_CONSTRAINT} is gone; the drill "
+              "cannot show it is able to report a survivor.", file=sys.stderr)
+        conn.close()
+        return 1
+    try:
+        with conn.cursor() as cur:
+            for table, conname, _ in control_rows:
+                cur.execute(f'ALTER TABLE {table} DROP CONSTRAINT "{conname}"')
+        control_green = _run_tests([CONTROL_UNRELATED_TEST], env)
+    finally:
+        with conn.cursor() as cur:
+            for table, conname, definition in control_rows:
+                cur.execute(f'ALTER TABLE {table} ADD CONSTRAINT "{conname}" {definition}')
+    if not control_green:
+        print(f"FAIL: the negative control went red. {CONTROL_UNRELATED_TEST} fails when "
+              f"{CONTROL_CONSTRAINT} is dropped, which it has nothing to do with. The suite is "
+              "failing for reasons other than the constraint removed, so no verdict below would "
+              "mean anything.", file=sys.stderr)
+        conn.close()
+        return 1
+    print(f"  control  {CONTROL_CONSTRAINT + ' dropped':44} "
+          f"{CONTROL_UNRELATED_TEST.split('.')[-1]} stays green, so a red test below is "
+          "attributable")
+    print()
+
     for fragment in sorted(named):
         tests = sorted(set(named[fragment]))
         with conn.cursor() as cur:
@@ -196,7 +232,8 @@ def main() -> int:
         for fragment, where in unexpected:
             print(f"  {fragment} ({where})", file=sys.stderr)
         return 1
-    print(f"OK: {_cases_recorded} constraints mutated, {len(survivors)} survive "
+    print(f"OK: {_cases_recorded} constraints mutated behind a passing negative control, "
+          f"{len(survivors)} survive "
           f"({len(SURVIVORS_EXPECTED)} declared). Every constraint the suite names is "
           "load-bearing: drop it and the naming test goes red.")
     print(f"The catalog came back intact: {after_total} constraints, as before.")

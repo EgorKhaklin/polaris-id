@@ -394,6 +394,17 @@ jobs:
           COVERAGE_FLOOR: "74"
         run: bash scripts/polaris-coverage.sh
 
+      # v9.407 - MISSION's first claim is that the guarantees live in the DATABASE.
+      # test_check_constraints.py is the evidence, and it is a suite of "this INSERT
+      # must raise CheckViolation" assertions, each naming the constraint it expects.
+      # Naming it is still a claim only the database can settle, so this settles it:
+      # drop each named constraint, run the tests that name it, require them to go red.
+      # A constraint whose removal leaves the suite green is not tested by it. Runs
+      # AFTER the coverage gate because it mutates the schema; it restores every
+      # constraint it drops and fails if the catalog does not come back.
+      - name: Constraint mutation drill (drop each named constraint, the suite must notice)
+        run: python scripts/polaris-constraint-mutation-drill.py
+
       # v9.275 (roadmap PE.5) — attacks that MUST fail, run every release. The db
       # suite issues a real signed token, revokes it through the real uc8
       # procedure, and asserts /verify treats it as authentic-but-NOT-authoritative
