@@ -5,6 +5,36 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.392 — 2026-09-11 (twenty-four of forty-four cases held, and that was the second one)
+
+Finishing P1.18 item 7 meant running the last two commands the README gives a newcomer. One was
+already right. The other had the defect v9.389 had just fixed elsewhere.
+
+`scripts/polaris-verify.py --verify-dir vectors` behaves correctly with no post-quantum backend:
+it SKIPS each case with "no ML-DSA verifier installed" and exits 2. It does not score them.
+
+`scripts/polaris-compat-suite.py` printed **`24/44 cases hold`**. That is not a partial pass. The
+twenty cases expecting a GENUINE artifact all failed, and the twenty-four that "held" are the
+ones asking whether a forgery is refused -- answered by a verifier that refuses everything. Same
+class of error as the conformance runner, on the same newcomer path, found the same way.
+
+The compat suite now voids such a run, and the diagnosis it prints is better than the conformance
+runner's because there is somewhere to send the reader: THE TYPESCRIPT SDK VERIFIES ALL 44 FROZEN
+CASES ON THIS MACHINE, independently of any Python library, so the message names
+`--typescript-only` as a path that works right now. That was verified before it was printed.
+
+THE GATE IS EXERCISED, NOT READ. A first attempt checked the compat suite structurally, and
+deleting the rule's `if` condition -- leaving every word of it in the file -- passed. So
+`run_is_void` was extracted as a named predicate and `check_conformance_suite` now calls it with
+two synthetic case sets: one where only the rejection case held (must be void) and one where the
+positive control held (must NOT be void, because that is a verdict). Four ways of breaking it are
+verified to fail, including the disabled branch that defeated the structural version.
+
+The same lesson as v9.387's `UNVALIDATED_LINKS` guard, hit again a day later. A check that looks
+for a rule's text is a check on spelling, and spelling survives the rule being switched off.
+
+---
+
 ## v9.391 — 2026-09-11 (the coverage total came back empty, which is not a coverage drop)
 
 v9.390's CI failed on `Python coverage % is below the floor 74%` -- with no number where the

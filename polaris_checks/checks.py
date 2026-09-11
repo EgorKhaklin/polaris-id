@@ -28,6 +28,7 @@ import json
 import re
 import subprocess
 import sys
+import types
 from dataclasses import dataclass
 from typing import Callable
 
@@ -9222,6 +9223,46 @@ def check_conformance_suite(root: pathlib.Path) -> list[Finding]:
                      "expecting a rejection passes against such a verifier -- 35 of 71 did, on a "
                      "machine with no post-quantum backend -- and a negative result is evidence "
                      "only when the positive control holds")
+
+    #    The compat suite has the same exposure and the same rule: without a backend it
+    #    printed "24/44 cases hold", which is not a partial pass but a verifier that
+    #    verifies nothing, scored against the cases that ask whether a forgery is
+    #    refused. It is checked STRUCTURALLY rather than by probing, because a run takes
+    #    tens of seconds and there is no cheap way to hand it a stub verifier. That is a
+    #    weaker guarantee than the probe above and catches the realistic rot, which is
+    #    somebody deleting the gate.
+    compat = _read(root, "scripts/polaris-compat-suite.py")
+    if not compat:
+        return _fail("conformance_suite", "scripts/polaris-compat-suite.py is missing")
+    if "VOID" not in compat:
+        return _fail("conformance_suite",
+                     "the compat suite must VOID a run in which no frozen case expecting a "
+                     "GENUINE artifact held. Without it a verifier with no post-quantum backend "
+                     "reports a reassuring fraction of cases holding -- 24 of 44 -- every one of "
+                     "them a rejection answered by something that rejects everything")
+    #    Its predicate is EXERCISED, not read. `run_is_void` is extracted precisely so
+    #    this can call it: a rule buried in an `if` is disabled by editing the condition,
+    #    and a check that looks for the rule's text still passes.
+    compat_mod = types.ModuleType("polaris_compat_probe")
+    compat_mod.__file__ = str(root / "scripts" / "polaris-compat-suite.py")
+    try:
+        exec(compile(compat, compat_mod.__file__, "exec"), compat_mod.__dict__)
+        cases = [{"name": "good", "expect": {"authentic": True}},
+                 {"name": "forged", "expect": {"authentic": False}}]
+        void_when_nothing_verifies = compat_mod.run_is_void(cases, {"forged"})
+        sound_when_positive_holds = compat_mod.run_is_void(cases, {"good", "forged"})
+    except Exception as exc:  # noqa: BLE001
+        return _fail("conformance_suite",
+                     f"the compat suite's void predicate could not be exercised: {exc}")
+    if not void_when_nothing_verifies:
+        return _fail("conformance_suite",
+                     "the compat suite scores a run in which only the rejection case held. That "
+                     "is a verifier that refuses everything, and the case it 'held' asks whether "
+                     "a forgery is refused")
+    if sound_when_positive_holds:
+        return _fail("conformance_suite",
+                     "the compat suite voids a run whose positive control DID hold. The gate must "
+                     "fire on the absence of a passing positive, not on the presence of failures")
 
     # 1. The Python reference SDK: real ML-DSA authenticity + the online contract,
     #    standalone (only a standard crypto library + stdlib, no Polaris imports).

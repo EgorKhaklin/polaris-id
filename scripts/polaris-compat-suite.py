@@ -157,6 +157,28 @@ def check_sums():
     return n, bad, extra
 
 
+def positive_controls(cases):
+    """The cases that assert an artifact IS good: authentic, or a decision to accept.
+
+    A negative case -- "this forgery is refused" -- is evidence only when one of these
+    holds. Without them, a verifier that refuses everything scores every negative.
+    """
+    return [c for c in cases
+            if c["expect"].get("authentic") is True
+            or c["expect"].get("decision") == "accept"]
+
+
+def run_is_void(cases, held_names):
+    """True when the run proved nothing: positive controls exist and none of them held.
+
+    Extracted as a named predicate so it can be exercised directly. A rule buried in an
+    `if` can be disabled by editing the condition, and a check that looks for the rule's
+    TEXT still passes -- which is how a guard becomes decorative.
+    """
+    positives = positive_controls(cases)
+    return bool(positives) and not any(c["name"] in held_names for c in positives)
+
+
 def run_sdk_cli(cmd, env, cases):
     """Drive a stdin->stdout conformance verifier (the SDKs' CLI protocol) over frozen cases."""
     failures = []
@@ -241,6 +263,37 @@ def main(argv=None):
         else:
             n_ok += 1
     print("2. current detached verifier (%s) <- frozen v1: %d/%d cases hold" % (getattr(NEW, "_VERIFIER_VERSION", "?"), n_ok, len(frozen_cases)))
+
+    # A PARTIAL SCORE IS MEANINGLESS WHEN NO POSITIVE CONTROL HELD (v9.392).
+    #
+    # A verifier with no post-quantum backend reports authentic=False to every case,
+    # so every case expecting a REJECTION "holds" and the line above prints a
+    # reassuring fraction -- 24 of 44 on a machine without liboqs. It is not a partial
+    # pass. It is a verifier that verifies nothing, and the cases it "held" are the
+    # ones that ask whether a forgery is refused, answered by something that refuses
+    # everything.
+    #
+    # The same rule guards conformance/run_conformance.py. Both tools are deliberately
+    # standalone, so the rule is stated twice rather than shared through an import;
+    # check_conformance_suite requires both to carry it.
+    held = {c["name"] for c in frozen_cases
+            if not any(f.startswith("current verifier on frozen %s:" % c["name"])
+                       for f in failures)}
+    positives = positive_controls(frozen_cases)
+    if run_is_void(frozen_cases, held):
+        print("\n  VOID: not one of the %d frozen cases that expect a GENUINE artifact held,\n"
+              "  so the %d case(s) this verifier 'held' are rejections answered by something\n"
+              "  that rejects everything. A partial score is not a partial pass."
+              % (len(positives), n_ok), file=sys.stderr)
+        try:
+            import oqs  # noqa: F401 - availability probe only
+        except ImportError:
+            print("  The likely cause is a missing post-quantum backend: "
+                  "`pip install liboqs-python cryptography`.\n"
+                  "  The TypeScript SDK verifies independently of it: "
+                  "`python3 scripts/polaris-compat-suite.py --typescript-only`.",
+                  file=sys.stderr)
+        return 2
     if not args.skip_sdks:
         env = dict(os.environ); env["PYTHONPATH"] = str(ROOT / "sdk" / "python") + os.pathsep + env.get("PYTHONPATH", "")
         f = run_sdk_cli([sys.executable, "-m", "polaris_verify.conformance"], env, frozen_cases)
