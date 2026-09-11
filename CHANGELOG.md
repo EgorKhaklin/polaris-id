@@ -5,6 +5,19 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.383 — 2026-09-10 (a gate that says READY without linting)
+
+CI's product-test job runs `ruff check .` as its FIRST step, so a single unused import fails the
+whole run before a test executes. v9.382 shipped with one: `itertools`, left behind when the
+transparency drill's adversary was replaced by a reachability DP. The local preflight printed
+READY anyway, because it never linted and never said it had not.
+
+`scripts/polaris-preflight.sh` now runs ruff when it is present, and when it is absent says so
+loudly rather than passing quietly. A gate that stays silent about what it did not check is how
+READY stops meaning anything.
+
+---
+
 ## v9.382 — 2026-09-10 (P7.7: an authority cannot publish what it never recorded)
 
 Building the public transparency program began by asking what was recordable about the

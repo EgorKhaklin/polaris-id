@@ -40,6 +40,25 @@ else
   fails=$((fails+1))
 fi
 
+# 2b. Lint. CI runs `ruff check .` as its FIRST step in the product-test job, so a
+#     single unused import fails the whole run before a test executes. v9.382 shipped
+#     with one and cost a CI cycle, because this gate printed READY without ever
+#     linting. If ruff is absent the gate says so rather than passing quietly: a
+#     preflight that stays silent about what it did not check is how READY stops
+#     meaning anything.
+if command -v ruff > /dev/null 2>&1; then
+  if ruff check . > /tmp/_polaris_ruff.out 2>&1; then
+    echo "  ✓ ruff: no pyflakes findings"
+  else
+    echo "  ✗ ruff: $(grep -c '^' /tmp/_polaris_ruff.out) line(s) —"
+    head -12 /tmp/_polaris_ruff.out | sed 's/^/    /'
+    fails=$((fails+1))
+  fi
+else
+  echo "  ! ruff is not installed here, so NOTHING linted this tree. CI lints first"
+  echo "    and fails the product-test job before any test runs: 'pip install ruff'"
+fi
+
 # 3. TypeScript SDK â the offline steps of CI's sdk-typescript job, when node
 #    is present. `tsc --noEmit` is a TYPE gate the Python check layer cannot
 #    see: a type-only regression (v9.315's verifyCrossAuthority) passed

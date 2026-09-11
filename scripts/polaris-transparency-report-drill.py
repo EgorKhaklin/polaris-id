@@ -36,7 +36,6 @@ of the public would have.
 """
 from __future__ import annotations
 
-import itertools
 import random
 import sys
 import pathlib
