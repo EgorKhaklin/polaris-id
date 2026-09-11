@@ -10817,6 +10817,101 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_benchmark_measures_growth(root: pathlib.Path) -> list[Finding]:
+    """A benchmark that times an aggregate once has measured a point, not a curve (P2.14 S5).
+
+    The committed numbers said each bounded Atlas roll-up was fast at one scale. That cannot
+    distinguish an aggregate that tracks the row count from one that goes quadratic, and the
+    difference is whether a deployment is still usable in its fifth year. A capacity claim rests
+    on the second question and the instrument could only answer the first.
+
+    So the stream is measured in two parts -- a tenth, then the rest -- and each aggregate's
+    growth is compared against the ROW-COUNT growth on the same database minutes apart. An
+    aggregate that costs ten times more when the table holds ten times the rows is behaving; one
+    that costs forty is the lead the simulation exists to find, and the benchmark now EXITS
+    NON-ZERO on it rather than printing it green.
+
+    Sub-5ms timings are reported and not graded, because at that size the number is noise rather
+    than data, and an instrument that cried wolf at a keyset page would be turned off."""
+    name = "benchmark_growth"
+    bench = _read(root, "polaris_sim/benchmark.py")
+    main = _read(root, "polaris_sim/__main__.py")
+    if not bench or not main:
+        return _fail(name, "polaris_sim/benchmark.py and __main__.py must both be present")
+    for symbol in ("def measure_growth", "GROWTH_TOLERANCE", "GROWTH_FRACTION"):
+        if symbol not in bench:
+            return _fail(name, f"polaris_sim/benchmark.py must define {symbol.split()[-1]}")
+    if "atlas_growth" not in bench:
+        return _fail(name,
+                     "the report must carry atlas_growth. Timing the Atlas once measures a "
+                     "point, and the question a capacity claim rests on is the curve")
+    if '"atlas_growth": self.atlas_growth' not in bench:
+        return _fail(name,
+                     "atlas_growth is computed but not serialised: a measurement nothing can "
+                     "read is a measurement nobody takes")
+    # Structural, not positional: an earlier draft looked for `return 1` within 900
+    # characters of the word, and the explanatory comment pushed it out of range. The
+    # property is that the branch RETURNS a failure, and that is a tree shape.
+    try:
+        main_tree = ast.parse(main)
+    except SyntaxError as exc:
+        return _fail(name, f"polaris_sim/__main__.py does not parse: {exc}")
+    fails_on_superlinear = False
+    for node in ast.walk(main_tree):
+        if not isinstance(node, ast.If):
+            continue
+        if "superlinear" not in ast.unparse(node.test):
+            continue
+        if any(isinstance(st, ast.Return) and isinstance(st.value, ast.Constant)
+               and st.value.value == 1 for st in ast.walk(node)):
+            fails_on_superlinear = True
+    if not fails_on_superlinear:
+        return _fail(name,
+                     "the benchmark must EXIT NON-ZERO when an aggregate grows faster than the "
+                     "data it reads. Printing a finding green is how an instrument stops being "
+                     "one")
+
+    # The rule is EXERCISED: a constant can be read, a verdict cannot be faked by one.
+    # Only the grading function and its constants are lifted out and run. The module
+    # itself uses relative imports and cannot be exec'd standalone, and importing the
+    # installed one would test THIS tree rather than the one at `root`.
+    try:
+        bench_tree = ast.parse(bench)
+    except SyntaxError as exc:
+        return _fail(name, f"polaris_sim/benchmark.py does not parse: {exc}")
+    wanted = {"GROWTH_TOLERANCE", "GROWTH_FRACTION"}
+    pieces = []
+    for node in bench_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "measure_growth":
+            pieces.append(node)
+        elif isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id in wanted for t in node.targets):
+            pieces.append(node)
+    if not any(isinstance(x, ast.FunctionDef) for x in pieces):
+        return _fail(name, "polaris_sim/benchmark.py defines no measure_growth()")
+    mod = types.ModuleType("polaris_bench_probe")
+    try:
+        exec(compile(ast.Module(body=pieces, type_ignores=[]), "measure_growth", "exec"),
+             mod.__dict__)
+        linear = mod.measure_growth({"a": 10.0}, {"a": 100.0}, 1000, 10000)
+        quadratic = mod.measure_growth({"a": 10.0}, {"a": 400.0}, 1000, 10000)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(name, f"measure_growth() could not be exercised: {exc}")
+    if linear["superlinear"]:
+        return _fail(name,
+                     "an aggregate growing exactly with the data is reported as a finding; the "
+                     "instrument would cry wolf on every run")
+    if quadratic["superlinear"] != ["a"]:
+        return _fail(name,
+                     "an aggregate growing four times faster than the data is NOT reported. "
+                     "That is the shape the simulation exists to catch")
+    return _ok(name,
+               "the benchmark measures each bounded aggregate at two scales on one database and "
+               "grades its growth against the row count, exits non-zero when one outruns the "
+               "data it reads, and leaves sub-5ms timings ungraded because at that size the "
+               "number is noise")
+
+
 def check_enrollment_code(root: pathlib.Path) -> list[Finding]:
     """The secret sent to a channel, and the lifecycle that keeps what it proves narrow (P4.4).
 
@@ -13465,6 +13560,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,
     check_review_packet,

@@ -88,6 +88,35 @@ measurement instrument, not a production SLO.
 | `atlas_hexbin` (Density) | 143 ms |
 | `atlas_crosstab` | 163 ms |
 
+### How it GREW getting there (v9.402)
+
+A timing at one scale says an aggregate was fast once. It cannot distinguish a roll-up that
+tracks the row count from one going quadratic, and that difference is whether a deployment is
+still usable in its fifth year -- which is the question a capacity claim actually rests on.
+
+So the event stream now runs in two parts and the Atlas is timed after each: once at a tenth of
+the stream, once at all of it, **on the same database and the same hardware minutes apart**.
+Each aggregate's growth is graded against the ROW-COUNT growth rather than against a threshold
+somebody chose. Measured at 8,010 -> 80,010 events (10.0x the rows):
+
+| Aggregate | small | large | factor | vs linear |
+|---|---|---|---|---|
+| `atlas_crosstab` | 9.3 ms | 82.5 ms | 8.89x | **0.89x** |
+| `atlas_hexbin` | 6.1 ms | 52.1 ms | 8.52x | **0.85x** |
+| `atlas_volume_series` | 7.9 ms | 65.8 ms | 8.30x | **0.83x** |
+| `atlas_geo_jurisdictions` | 4.1 ms | 32.5 ms | 7.88x | **0.79x** |
+| `atlas_breakdown` | 4.9 ms | 35.5 ms | 7.23x | **0.72x** |
+| `atlas_records` | 1.3 ms | 1.5 ms | 1.14x | 0.11x (ungraded) |
+
+Every bounded aggregate grows **slower than its data**. `atlas_records` is the keyset-paginated
+grid and barely moves, which is what keyset pagination is for; it is reported and not graded,
+because a sub-5ms timing is noise rather than data and an instrument that cried wolf at a
+keyset page would be turned off.
+
+The benchmark **exits non-zero** when an aggregate outruns the data it reads by more than 1.5x,
+because a finding printed green is how an instrument stops being one. `check_benchmark_measures_
+growth` exercises the grading function rather than reading it.
+
 **Invariants under load:** C3, C6, the C1 append-only boundary, and
 `signatures_cryptographically_verify` (every sampled mass-issued token verified)
 all held.

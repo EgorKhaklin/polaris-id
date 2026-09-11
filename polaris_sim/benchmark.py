@@ -61,6 +61,7 @@ class BenchmarkReport:
     crypto_verification: dict = field(default_factory=dict)
     write_latency_ms: Percentiles = field(default_factory=lambda: Percentiles(0, 0, 0, 0))
     atlas_query_ms: dict = field(default_factory=dict)
+    atlas_growth: dict = field(default_factory=dict)
     partition_pruning: dict = field(default_factory=dict)
     invariants: dict = field(default_factory=dict)
     scale_counts: dict = field(default_factory=dict)
@@ -77,6 +78,7 @@ class BenchmarkReport:
             "crypto_verification": self.crypto_verification,
             "write_latency_ms": vars(self.write_latency_ms),
             "atlas_query_ms": self.atlas_query_ms,
+            "atlas_growth": self.atlas_growth,
             "partition_pruning": self.partition_pruning, "invariants": self.invariants,
             "scale_counts": self.scale_counts, "all_invariants_hold": self.all_invariants_hold,
         }
@@ -106,6 +108,48 @@ def time_atlas_queries(conn, since) -> dict:
     with conn.cursor() as cur:
         for name, sql, params in _atlas_probes(since):
             out[name] = round(_time_ms(lambda: cur.execute(sql, params)), 2)
+    return out
+
+
+#: The stream is measured after 1/GROWTH_FRACTION of it and again after all of it.
+GROWTH_FRACTION = 10
+
+#: How much faster than the data an aggregate may grow before it is a lead. A bounded
+#: aggregate should track the row count or beat it; 1.5x of linear is slack for a small
+#: first sample and a warm cache, not permission to be quadratic.
+GROWTH_TOLERANCE = 1.5
+
+
+def _event_rows(conn) -> int:
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM VerificationEvent")
+        return int(cur.fetchone()["n"])
+
+
+def measure_growth(small_ms: dict, large_ms: dict, rows_small: int, rows_large: int) -> dict:
+    """Per aggregate: how its time grew against how the data grew.
+
+    An aggregate that costs 10x when the table holds 10x the rows is behaving. One that
+    costs 40x is the lead this instrument exists to find, and a single timing at one
+    scale cannot tell the two apart -- which is why the benchmark measured a point and
+    called it a curve until v9.402.
+    """
+    rows_factor = (rows_large / rows_small) if rows_small else 0.0
+    out = {"rows_small": rows_small, "rows_large": rows_large,
+           "rows_factor": round(rows_factor, 2), "tolerance": GROWTH_TOLERANCE,
+           "aggregates": {}, "superlinear": []}
+    for name, large in sorted(large_ms.items()):
+        small = small_ms.get(name)
+        if not small or not rows_factor:
+            continue
+        factor = large / small
+        # Sub-millisecond timings are dominated by noise, not by the data.
+        meaningful = large >= 5.0
+        entry = {"small_ms": small, "large_ms": large, "factor": round(factor, 2),
+                 "vs_linear": round(factor / rows_factor, 2), "graded": meaningful}
+        out["aggregates"][name] = entry
+        if meaningful and factor > rows_factor * GROWTH_TOLERANCE:
+            out["superlinear"].append(name)
     return out
 
 
@@ -310,12 +354,34 @@ def run_benchmark(conn, *, scale_divisor: int, verifications: int, lifecycle: in
     report.enrollment = {"people": ls.people, "seconds": round(esec, 3),
                          "per_sec": round(ls.people / esec, 1) if esec else 0.0}
 
-    # Phase 2: the life-event stream (S2).
-    ss = _events.run_stream(conn, verifications=verifications, lifecycle=lifecycle,
+    # Phase 2: the life-event stream (S2), in two parts.
+    #
+    # THE SECOND PART IS WHY THERE ARE TWO. A single timing says an aggregate was fast
+    # once; it cannot say whether it STAYS proportional as history grows, and that is
+    # the question a capacity claim rests on. So the Atlas is timed after a tenth of the
+    # stream and again after all of it, on the same database and the same hardware
+    # minutes apart, and the growth factor is compared with the row-count factor.
+    # Measuring at two scales in two runs would compare across machine states; measuring
+    # here compares two numbers taken under the same conditions.
+    first = max(1, verifications // GROWTH_FRACTION)
+    ss = _events.run_stream(conn, verifications=first, lifecycle=0,
                             window_hours=window_hours, seed=seed, commit=commit, now=now)
-    report.verification = {"events": ss.verifications, "revocations": ss.revocations,
-                           "seconds": round(ss.seconds, 3), "per_sec": round(ss.rows_per_sec, 1),
-                           "by_disclosure": ss.by_disclosure}
+    since_small = now - datetime.timedelta(hours=window_hours * 2)
+    rows_small = _event_rows(conn)
+    atlas_small = time_atlas_queries(conn, since_small)
+
+    rest = _events.run_stream(conn, verifications=verifications - first, lifecycle=lifecycle,
+                              window_hours=window_hours, seed=seed + 1, commit=commit, now=now)
+    by_disclosure = dict(ss.by_disclosure)
+    for k, v in rest.by_disclosure.items():
+        by_disclosure[k] = by_disclosure.get(k, 0) + v
+    total_events = ss.verifications + rest.verifications
+    total_seconds = ss.seconds + rest.seconds
+    report.verification = {"events": total_events,
+                           "revocations": ss.revocations + rest.revocations,
+                           "seconds": round(total_seconds, 3),
+                           "per_sec": round(total_events / total_seconds, 1) if total_seconds else 0.0,
+                           "by_disclosure": by_disclosure}
 
     # Phase 3: single-write latency.
     pool, agencies, _ = _events.load_pools(conn, 2000)
@@ -325,9 +391,11 @@ def run_benchmark(conn, *, scale_divisor: int, verifications: int, lifecycle: in
     # verification-EVENT ingestion measured in Phase 2).
     report.crypto_verification = measure_crypto_verification(conn, verify_samples)
 
-    # Phase 5: the Atlas at scale.
+    # Phase 5: the Atlas at scale, and how it GREW getting there.
     since = now - datetime.timedelta(hours=window_hours * 2)
     report.atlas_query_ms = time_atlas_queries(conn, since)
+    report.atlas_growth = measure_growth(atlas_small, report.atlas_query_ms,
+                                         rows_small, _event_rows(conn))
 
     # Phase 5b: the Atlas roll-ups prune the partitioned event table (P2.14 S5).
     report.partition_pruning = measure_partition_pruning(conn)

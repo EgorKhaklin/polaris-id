@@ -159,6 +159,49 @@ def _db_available() -> bool:
 
 
 @unittest.skipUnless(_db_available(), "no Polaris database reachable (POLARIS_DB_*)")
+class GrowthMeasurementTests(unittest.TestCase):
+    """v9.402: the benchmark measures a CURVE, not a point.
+
+    A single timing says an aggregate was fast once. It cannot say whether the aggregate
+    stays proportional as history grows, which is the question a capacity claim rests on
+    -- and the answer separates a bounded roll-up from one that will be unusable in the
+    fifth year of a deployment.
+    """
+
+    def test_growth_at_the_data_rate_is_not_a_finding(self):
+        from polaris_sim.benchmark import measure_growth
+        g = measure_growth({"a": 10.0}, {"a": 100.0}, 1000, 10000)
+        self.assertEqual(g["rows_factor"], 10.0)
+        self.assertAlmostEqual(g["aggregates"]["a"]["vs_linear"], 1.0)
+        self.assertEqual(g["superlinear"], [])
+
+    def test_growing_faster_than_the_data_is(self):
+        from polaris_sim.benchmark import measure_growth
+        g = measure_growth({"a": 10.0}, {"a": 400.0}, 1000, 10000)
+        self.assertEqual(g["superlinear"], ["a"])
+        self.assertAlmostEqual(g["aggregates"]["a"]["vs_linear"], 4.0)
+
+    def test_beating_the_data_rate_is_what_bounded_means(self):
+        from polaris_sim.benchmark import measure_growth
+        g = measure_growth({"a": 10.0}, {"a": 20.0}, 1000, 10000)
+        self.assertEqual(g["superlinear"], [])
+        self.assertLess(g["aggregates"]["a"]["vs_linear"], 1.0)
+
+    def test_a_sub_millisecond_aggregate_is_not_graded(self):
+        """Timings that small are dominated by noise rather than by the data, and
+        grading them would make the instrument cry wolf at a keyset page."""
+        from polaris_sim.benchmark import measure_growth
+        g = measure_growth({"a": 0.2}, {"a": 3.0}, 1000, 10000)
+        self.assertFalse(g["aggregates"]["a"]["graded"])
+        self.assertEqual(g["superlinear"], [])
+
+    def test_no_small_sample_means_no_verdict(self):
+        from polaris_sim.benchmark import measure_growth
+        g = measure_growth({}, {"a": 100.0}, 1000, 10000)
+        self.assertEqual(g["aggregates"], {})
+        self.assertEqual(g["superlinear"], [])
+
+
 class SubstrateLoadTests(unittest.TestCase):
     """Load a small synthetic nation through uc_bulk_issue and assert it is a
     valid enrollment. Everything runs in one transaction and rolls back."""

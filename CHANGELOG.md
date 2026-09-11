@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.402 — 2026-09-11 (P2.14 S5: the benchmark measured a point and called it a curve)
+
+The national simulation's hardening loop says each benchmark finding becomes a focused ship. So
+I ran the instrument -- twice, at 20k and 200k events -- and it found nothing to harden: every
+bounded Atlas aggregate grew 7.7x to 10.4x for 10x the data, write latency stayed flat at 0.35ms
+p99, and every invariant held. That is a real result and not a ship.
+
+What it did expose is the instrument. **A timing at one scale cannot tell a roll-up that tracks
+the row count from one going quadratic**, and that difference is whether a deployment is still
+usable in its fifth year -- the question a capacity claim actually rests on. The committed
+numbers had always been a single point per aggregate.
+
+The stream now runs in two parts and the Atlas is timed after each: a tenth, then all of it, on
+the SAME database and hardware minutes apart. Each aggregate's growth is graded against the
+ROW-COUNT growth rather than a threshold somebody picked, which is the same self-calibrating
+shape as v9.397's parallelism fix -- two numbers taken under the same conditions beat one number
+and a guess made when the test was written.
+
+Measured at 8,010 -> 80,010 events, every bounded aggregate grows SLOWER than its data: 0.72x to
+0.89x of linear. `atlas_records` barely moves at 0.11x, which is what keyset pagination is for.
+
+AND THE BENCHMARK NOW EXITS NON-ZERO when an aggregate outruns its data by more than 1.5x.
+Printing a finding green is how an instrument stops being one. Sub-5ms timings are reported and
+NOT graded, because at that size the number is noise rather than data and an instrument that
+cried wolf at a keyset page would be turned off.
+
+- `check_benchmark_measures_growth` (227 checks), which EXERCISES the grading function rather
+  than reading it: six verified detections, including a tolerance set too wide to ever find
+  anything and one set so narrow that everything is a finding
+- five measured tests in `polaris_sim/test_sim.py`
+- the growth table in [BENCHMARK.md](docs/reference/BENCHMARK.md)
+
+---
+
 ## v9.401 — 2026-09-11 (four checks were true of a file that did not exist, two of them constitutional)
 
 The mutation drill only tested checks that GREP: comment out the lines carrying a check's search

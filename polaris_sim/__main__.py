@@ -161,6 +161,24 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         if not args.json:
             print(f"  report written: {args.report}")
     # A benchmark that broke an invariant under load is a failure.
+    # A superlinear aggregate is a finding, not a note. The instrument exists to turn
+    # one into a hardening ship (P2.14 S5), and a benchmark that printed it green while
+    # a bounded roll-up went quadratic would be measuring and not watching.
+    superlinear = (rep.atlas_growth or {}).get("superlinear") or []
+    if superlinear:
+        g = rep.atlas_growth
+        print("\nSUPERLINEAR: %s grew faster than the data it reads. Rows went %.1fx "
+              "(%d -> %d); these grew:" % (", ".join(superlinear), g["rows_factor"],
+                                           g["rows_small"], g["rows_large"]),
+              file=sys.stderr)
+        for name in superlinear:
+            a = g["aggregates"][name]
+            print("  %-28s %.1f -> %.1f ms  (%.2fx, %.2fx of linear)"
+                  % (name, a["small_ms"], a["large_ms"], a["factor"], a["vs_linear"]),
+                  file=sys.stderr)
+        print("A bounded aggregate tracks the row count or beats it. This is the lead.",
+              file=sys.stderr)
+        return 1
     return 0 if rep.all_invariants_hold else 1
 
 
