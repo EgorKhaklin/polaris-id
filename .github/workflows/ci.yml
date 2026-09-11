@@ -279,6 +279,17 @@ jobs:
       - name: Enrollment proofing — the level is derived, not typed
         run: python scripts/polaris-enrollment-proofing-drill.py
 
+      # v9.394 (P4.4) — the path for people with no documents, and the forgery channel it
+      # would otherwise be. Every 800-63A combination starts from documents; a person with
+      # none fails all of them. The trusted referee is the answer and the easiest way to mint
+      # an assurance level from nothing, and they are one table. So every refusal is attempted
+      # as a DIRECT INSERT: a rule only the application enforces is a rule the next caller
+      # does not meet. The bound asks for a co-signer rather than refusing, checked in both
+      # directions, and the drill confirms IdentityToken carries no trace of a vouching by
+      # asking the live catalog. Builds and drops its own database.
+      - name: Trusted referee — bounded where it would be a credential factory
+        run: python scripts/polaris-referee-drill.py
+
       # v9.384 (P7.3) — the id space is actually wide, not just declared wide. A SERIAL is
       # an integer column PLUS a sequence declared AS integer, and ALTER COLUMN TYPE BIGINT
       # changes only the first. Every tool then reports the column as bigint, the schema file

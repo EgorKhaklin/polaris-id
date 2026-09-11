@@ -10653,6 +10653,131 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_trusted_referee(root: pathlib.Path) -> list[Finding]:
+    """The path for people with no documents, and the forgery channel it would otherwise be (P4.4).
+
+    Every 800-63A combination starts from documents. A person with none -- no fixed address, a
+    care leaver, somebody who left a household in a hurry, an adult who never held a passport --
+    fails all of them, and an enrollment path that stops there has decided that the people with
+    least go without. The trusted referee is the answer, and it is also the easiest way to mint
+    an assurance level from nothing. They are one mechanism, not two.
+
+    SO THE LIMITS ARE IN THE DATABASE. A direct INSERT cannot record a self-vouching, a vouching
+    above the referee's own proofed level, or a vouching at IAL3. The module refuses those
+    earlier and with a reason, which is a different job: a refusal an operator cannot act on
+    sends them back to re-run the identical session.
+
+    NO VOUCHING REACHES IAL3, EVER. That level needs the APPLICANT's live biometric in a
+    supervised session. A referee can attest to who somebody is and cannot be their face, and a
+    system that let one stand in for the other would have made its highest assurance level the
+    easiest to forge.
+
+    THE BOUND ASKS FOR A CO-SIGNER AND NEVER REFUSES. A referee who has vouched forty times this
+    month is either a shelter worker doing exactly what this path exists for or a compromised
+    channel, and nothing in the database can tell those apart. Refusing breaks the legitimate
+    case, which is the exclusion this mechanism exists to prevent.
+
+    AND NOTHING REACHES THE CREDENTIAL. IdentityToken carries no column, flag or reference to a
+    vouching, so a person who needed a referee is not carrying a mark for it at every counter.
+    That one is an ABSENCE, which is the kind of property that gets deleted by accident, so it
+    is checked here rather than trusted."""
+    name = "trusted_referee"
+    mod_path = root / "polaris_web" / "referee.py"
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if not mod_path.is_file():
+        return _fail(name, "polaris_web/referee.py must carry the vouching rules")
+    if not schema:
+        return _fail(name, "polaris_sql/01_schema.sql is missing")
+
+    if "CREATE TABLE IF NOT EXISTS RefereeVouching" not in schema:
+        return _fail(name, "RefereeVouching must be in the base schema, not only a migration: "
+                           "a fresh load needs the table the triggers attach to")
+    table = schema[schema.index("CREATE TABLE IF NOT EXISTS RefereeVouching"):]
+    table = table[:table.index("\n);")]
+    for constraint in ("referee_is_not_the_applicant", "co_signer_is_a_third_person",
+                       "cannot_vouch_above_own_level", "vouching_never_reaches_ial3"):
+        if constraint not in table:
+            return _fail(name,
+                         f"the database does not hold {constraint}. A rule only the application "
+                         "enforces is a rule a direct INSERT does not meet, and this table is "
+                         "where an assurance level gets minted from somebody's word")
+    if "BIGSERIAL" not in table:
+        return _fail(name,
+                     "RefereeVouching's surrogate id is 32-bit. v9.384 widened five that exhaust "
+                     "before the national targets; a table added after that lesson repeats it")
+
+    # THE ABSENCE. Checked against the credential's own definition.
+    tok = schema[schema.index("CREATE TABLE IdentityToken"):]
+    tok = tok[:tok.index("\n);")]
+    for leak in ("vouching", "referee"):
+        if leak in tok.lower():
+            return _fail(name,
+                         f"IdentityToken mentions {leak!r}. A credential asserts an assurance "
+                         "LEVEL and never the circumstances its holder was in when they got it; "
+                         "a person who needed a referee would be carrying a mark for it at every "
+                         "counter")
+
+    # The rules are EXERCISED. A module-level constant can be read; a refusal cannot be
+    # faked by a comment.
+    ref = types.ModuleType("polaris_referee_probe")
+    ref.__file__ = str(mod_path)
+    try:
+        exec(compile(mod_path.read_text(encoding="utf-8"), ref.__file__, "exec"), ref.__dict__)
+    except Exception as exc:  # noqa: BLE001
+        return _fail(name, f"polaris_web/referee.py does not load: {exc}")
+
+    base = dict(referee_id=1, applicant_id=2, referee_ial="IAL2",
+                relationship="SOCIAL_WORKER", vouched_ial="IAL2")
+
+    def refuses(**over):
+        kw = dict(base); kw.update(over)
+        try:
+            ref.check_vouching(**kw)
+            return None
+        except ref.VouchingRefused as exc:
+            return str(exc)
+
+    if ref.vouching_ceiling("IAL3") != "IAL2":
+        return _fail(name,
+                     "a referee proofed at IAL3 is still capped at IAL2. The ceiling is about "
+                     "what a third party can establish, not how well the referee was proofed")
+    if ref.vouching_ceiling("IAL1") is not None:
+        return _fail(name,
+                     "a referee proofed at IAL1 must not be able to vouch: an unproofed person "
+                     "vouching for an unproofed person is two strangers agreeing")
+    if not refuses(applicant_id=1):
+        return _fail(name, "a person can vouch for themselves")
+    if not refuses(referee_ial="IAL3", vouched_ial="IAL3"):
+        return _fail(name, "a vouching reaches IAL3; a referee cannot be the applicant's face")
+    # The refusal above survives removing the explicit IAL3 rule, because the ceiling
+    # rule catches it too -- which is defence in depth working, not a gap. The risk the
+    # behaviour cannot show is the CEILING being raised, so that is asserted directly.
+    if ref.VOUCHING_CEILING == "IAL3":
+        return _fail(name,
+                     "the vouching ceiling is IAL3. That level needs the APPLICANT's live "
+                     "biometric in a supervised session, and no attestation by a third party "
+                     "substitutes for it; raising this makes the highest assurance level the "
+                     "easiest one to forge")
+    bounded = refuses(vouchings_in_window=ref.VOUCHING_BOUND)
+    if not bounded:
+        return _fail(name, "the vouching bound does not ask for anything past its threshold")
+    if "CO-SIGNER" not in bounded.upper():
+        return _fail(name,
+                     "past the bound the vouching must ask for a CO-SIGNER. Refusing outright "
+                     "breaks the shelter worker to catch the compromised referee, and those two "
+                     "look identical from here")
+    if refuses(vouchings_in_window=10_000, co_signer_id=99):
+        return _fail(name,
+                     "a co-signed vouching is refused past the bound. The bound exists to add a "
+                     "second pair of eyes, not to cap how many people one referee may help")
+    return _ok(name,
+               "the referee path is the anti-exclusion mechanism and the forgery channel in one "
+               "table, so the floors are in the database: nobody vouches for themselves, nobody "
+               "vouches above their own proofed level, no vouching reaches IAL3 because a referee "
+               "cannot be the applicant's face, the bound asks for a co-signer rather than "
+               "refusing, and IdentityToken carries no trace of any of it")
+
+
 def check_review_packet(root: pathlib.Path) -> list[Finding]:
     """The packet handed to an external reviewer cannot quietly stop being true (P1.18 item 8).
 
@@ -13036,6 +13161,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_trusted_referee,
     check_review_packet,
     check_capacity_model,
     check_transparency_program,

@@ -1092,6 +1092,18 @@ CREATE TRIGGER trg_enrollment_evidence_append_only
     FOR EACH ROW
     EXECUTE FUNCTION reject_audit_modification();
 
+-- ----------------------------------------------------------------------------
+-- RefereeVouching is the 18th audit-of-record instance (P4.4, v9.394). A vouching
+-- is the record that an assurance level rests on a named person's word. An
+-- authority that could delete one could unmake the accountability for every
+-- credential that referee touched, and the credentials would outlive the record.
+-- ----------------------------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_referee_vouching_append_only ON RefereeVouching;
+CREATE TRIGGER trg_referee_vouching_append_only
+    BEFORE UPDATE OR DELETE ON RefereeVouching
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_audit_modification();
+
 DROP TRIGGER IF EXISTS trg_card_personalization_append_only ON CardPersonalization;
 CREATE TRIGGER trg_card_personalization_append_only
     BEFORE UPDATE OR DELETE ON CardPersonalization

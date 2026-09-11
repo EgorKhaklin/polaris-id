@@ -9502,6 +9502,79 @@ def test_conformance_positive_control_gate_discriminates(tmp_path):
         "a run whose positive controls passed must not be declared void"
 
 
+def test_trusted_referee_check_discriminates(tmp_path):
+    # v9.394 (P4.4): the referee path is the anti-exclusion mechanism in enrollment and the
+    # easiest way to mint an assurance level from nothing, and they are the same table. The
+    # real module and schema are the fixture, because the check EXERCISES the module's rules
+    # and resolves constraints against the real schema.
+    #
+    # The absence case is the one that would otherwise rot silently: a credential must carry
+    # no trace of a vouching, and an absence is the kind of property somebody adds back
+    # without noticing what it costs the person holding the credential.
+    import shutil
+
+    def write(rel=None, old=None, new=None):
+        for f in ('polaris_web/referee.py', 'polaris_sql/01_schema.sql'):
+            dst = tmp_path / f
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / f, dst)
+        if rel:
+            dst = tmp_path / rel
+            text = dst.read_text()
+            assert old in text, f"fixture string missing from {rel}"
+            dst.write_text(text.replace(old, new, 1))
+
+    write()
+    assert checks.check_trusted_referee(tmp_path)[0].level == "OK", \
+        "the real module and schema must PASS"
+
+    # A FLOOR THAT EXISTS ONLY IN THE APPLICATION. The next caller does not meet it.
+    write('polaris_sql/01_schema.sql',
+          "    CONSTRAINT cannot_vouch_above_own_level\n        CHECK (vouched_ial <= referee_ial),",
+          "")
+    assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", \
+        "a rule only the module enforces must FAIL: this is where an assurance level is minted"
+
+    # THE CREDENTIAL GAINS A MARK. A person who needed a referee would carry it at every
+    # counter for the rest of their life.
+    write('polaris_sql/01_schema.sql', 'CREATE TABLE IdentityToken (',
+          'CREATE TABLE IdentityToken (\n    vouching_id BIGINT,')
+    assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", \
+        "IdentityToken carrying any trace of a vouching must FAIL"
+
+    # THE CEILING RAISED. IAL3 needs the APPLICANT's live biometric; no attestation
+    # substitutes for it, and raising this makes the highest level the easiest to forge.
+    write('polaris_web/referee.py', 'VOUCHING_CEILING = "IAL2"', 'VOUCHING_CEILING = "IAL3"')
+    assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", \
+        "a vouching ceiling of IAL3 must FAIL"
+
+    # SELF-VOUCHING ALLOWED.
+    write('polaris_web/referee.py', '    if referee_id == applicant_id:', '    if False:')
+    assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", \
+        "a person able to vouch for themselves must FAIL"
+
+    # THE BOUND REFUSES INSTEAD OF ASKING FOR A CO-SIGNER. That breaks the shelter worker
+    # to catch the compromised referee, and those two look identical from here.
+    write('polaris_web/referee.py', 'so this vouching needs a CO-SIGNER',
+          'so this vouching is refused outright')
+    assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", \
+        "a bound that refuses rather than asking for a co-signer must FAIL"
+
+    # A CO-SIGNED VOUCHING REFUSED ANYWAY. The bound adds a second pair of eyes; it does
+    # not cap how many people one referee may help.
+    write('polaris_web/referee.py',
+          'if vouchings_in_window >= bound and co_signer_id is None:',
+          'if vouchings_in_window >= bound:')
+    assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", \
+        "refusing a co-signed vouching past the bound must FAIL"
+
+    # A 32-BIT SURROGATE ID, the lesson v9.384 already paid for.
+    write('polaris_sql/01_schema.sql', 'vouching_id             BIGSERIAL',
+          'vouching_id             SERIAL   ')
+    assert checks.check_trusted_referee(tmp_path)[0].level == "FAIL", \
+        "a 32-bit surrogate id on a table added after v9.384 must FAIL"
+
+
 def test_review_packet_check_discriminates(tmp_path):
     # v9.388 (P1.18 item 8): the ways a review packet stops being true. The real packet is the
     # fixture because the check resolves its witnesses against real files -- a synthetic one

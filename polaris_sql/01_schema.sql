@@ -55,6 +55,7 @@
 -- database stopped at its plain CREATE TABLE. check_schema_reload_idempotent pins
 -- the list against every CREATE TABLE below.
 DROP TABLE IF EXISTS EnrollmentEvidence    CASCADE;
+DROP TABLE IF EXISTS RefereeVouching       CASCADE;
 DROP TABLE IF EXISTS EnrollmentProofing    CASCADE;
 DROP TABLE IF EXISTS CardPersonalization   CASCADE;
 DROP TABLE IF EXISTS ZkVerificationNonce    CASCADE;
@@ -1431,6 +1432,67 @@ CREATE INDEX IF NOT EXISTS idx_enrollment_proofing_individual
     ON EnrollmentProofing (individual_id, recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_enrollment_evidence_proofing
     ON EnrollmentEvidence (proofing_id);
+
+-- ----------------------------------------------------------------------------
+-- RefereeVouching is the EIGHTEENTH audit-of-record instance (P4.4, v9.394): how
+-- somebody who CANNOT present the usual evidence still gets a credential.
+--
+-- This is the anti-exclusion mechanism in the enrollment path and the most obvious
+-- forgery channel in it, and they are the same table. A person with no documents
+-- fails every 800-63A combination and would otherwise be unenrollable; a referee
+-- who can vouch without limit is a credential factory. So the limits are here,
+-- under the application, where a direct INSERT meets them too.
+--
+-- NOTHING HERE REACHES IdentityToken. A credential asserts an assurance LEVEL and
+-- never the circumstances its holder was in when they got it. The authority keeps
+-- the record; the holder carries a credential that looks like everybody else's.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS RefereeVouching (
+    vouching_id             BIGSERIAL    PRIMARY KEY,
+    proofing_id             INTEGER      NOT NULL
+                            REFERENCES EnrollmentProofing(proofing_id),
+    referee_individual_id   INTEGER      NOT NULL
+                            REFERENCES Individual(individual_id),
+    applicant_individual_id INTEGER      NOT NULL
+                            REFERENCES Individual(individual_id),
+    -- Copied, not joined: a referee re-proofed downward later must not silently
+    -- rewrite what this vouching was worth when it was made.
+    referee_ial             VARCHAR(6)   NOT NULL
+        CHECK (referee_ial IN ('IAL2', 'IAL3')),
+    -- A closed vocabulary, because "knows the applicant" covers a social worker
+    -- and a stranger paid fifty pounds, and the difference is the whole control.
+    relationship            VARCHAR(32)  NOT NULL
+        CHECK (relationship IN ('LEGAL_GUARDIAN', 'SOCIAL_WORKER', 'MEDICAL_PROFESSIONAL',
+                                'NOTARY', 'EDUCATIONAL_INSTITUTION', 'SHELTER_OR_REFUGE',
+                                'RELIGIOUS_INSTITUTION', 'EMPLOYER', 'COMMUNITY_LEADER')),
+    vouched_ial             VARCHAR(6)   NOT NULL
+        CHECK (vouched_ial IN ('IAL1', 'IAL2', 'IAL3')),
+    co_signer_individual_id INTEGER
+                            REFERENCES Individual(individual_id),
+    vouched_at              TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT referee_is_not_the_applicant
+        CHECK (referee_individual_id <> applicant_individual_id),
+    CONSTRAINT co_signer_is_a_third_person
+        CHECK (co_signer_individual_id IS NULL
+               OR (co_signer_individual_id <> referee_individual_id
+                   AND co_signer_individual_id <> applicant_individual_id)),
+    -- You cannot give what you do not have. 'IAL1' < 'IAL2' < 'IAL3' lexically.
+    CONSTRAINT cannot_vouch_above_own_level
+        CHECK (vouched_ial <= referee_ial),
+    -- A referee can attest to who somebody is. A referee cannot be that person's
+    -- face, and IAL3 needs the APPLICANT's live biometric in a supervised session.
+    CONSTRAINT vouching_never_reaches_ial3
+        CHECK (vouched_ial <> 'IAL3')
+);
+
+-- The compromise query: every enrollment one referee touched, in one index scan.
+-- A referee found to have vouched falsely makes every credential they touched a
+-- question, and an authority that cannot enumerate them cannot answer it.
+CREATE INDEX IF NOT EXISTS idx_vouching_by_referee
+    ON RefereeVouching (referee_individual_id, vouched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vouching_by_proofing
+    ON RefereeVouching (proofing_id);
 
 COMMENT ON TABLE EnrollmentProofing IS
   'P4.4: one identity-proofing event per row, and the assurance level its evidence supports. '

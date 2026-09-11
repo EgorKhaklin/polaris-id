@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v9.373): not production-ready for real identity data.** Every
+**Status (v9.394): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
@@ -22,8 +22,26 @@ can refuse a second claim from the same person without learning who they are
 and without being able to compare notes with another. Neither hides a holder
 from the ISSUER, which derives every leaf to build the tree.
 
-Four facts to know from v9.364 to v9.373, each of which is easy to read as more
-than it is. **The physical layer is a specification, an emulator and published
+Four facts to know from v9.374 to v9.394, each of which is easy to read as more than
+it is. **The throughput targets were met and the system could not have run for a week
+at them**, because an identifier column was 32 bits: five days at the stated sustained
+verification rate, twelve hours at the peak one. Nothing was slow. The columns are
+64-bit now and `check_capacity_model` recomputes the arithmetic from the live schema on
+every push, but the lesson is the one to carry -- a capacity question answered in cores
+and seconds is the easy half. **Three tools reported results they had not established.**
+With no post-quantum library installed, the conformance runner scored 35 of 71 cases as
+passes and the compat suite reported 24 of 44 holding, every one of them a rejection
+case answered by a verifier that rejects everything; a third drill closed with a summary
+asserting a property it had skipped. All three now refuse to report, and the rule names
+no cause, because a missing library, a misconfigured backend and a future regression
+produce the same false green. **The authority's most invasive power left no record of
+its own use** until v9.382: the warrant-audit read went unlogged for as long as it
+existed, because the read sits behind a stored procedure and nothing looking for a
+SELECT found it. **And somebody with no documents can now be enrolled** through a
+trusted referee -- bounded, co-signed past a threshold, and invisible on the credential
+itself, because a person who needed one should not carry a mark for it at every counter.
+
+Four earlier facts, still true. **The physical layer is a specification, an emulator and published
 vectors, not a card.** `polaris_card/` defines the on-card object, speaks ISO
 7816-4, personalizes a token whose keys it generates itself, and drives a
 reference verifier device; no card is manufactured and no silicon is certified,

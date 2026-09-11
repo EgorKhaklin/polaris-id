@@ -11,7 +11,7 @@ A working reference implementation of a post-quantum, issuer-unlinkable,
 compulsion-resistant national identity-token system. Educational; notional data
 only. The real system:
 
-- [`polaris_sql/`](polaris_sql/): 40-table schema, stored procedures, triggers (the security boundary).
+- [`polaris_sql/`](polaris_sql/): 41-table schema, stored procedures, triggers (the security boundary).
 - [`polaris_web/`](polaris_web/): the Flask app (`app.py`), `security.py`, `zk.py`, WebAuthn, the operational atlas.
 - [`polaris_zk/`](polaris_zk/): the Plonky2 Merkle-inclusion ZK crate + `witness2/` (the independent second witness).
 - [`polaris_cli/`](polaris_cli/): the CLI.

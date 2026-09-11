@@ -5,6 +5,62 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.394 — 2026-09-11 (P4.4: the anti-exclusion mechanism and the forgery channel are the same table)
+
+Every combination in 800-63A starts from documents. A person with none -- no fixed address, a
+care leaver, somebody who left a household in a hurry, a refugee, an adult who never held a
+passport -- fails all of them, and an enrollment path that stops there has decided that the
+people with least go without, by omission rather than by anybody choosing it.
+
+The trusted referee is the answer to that. It is also the easiest way to mint an assurance level
+out of nothing: find one corruptible caseworker and the documents stop mattering. THOSE ARE NOT
+TWO FEATURES TO BALANCE. THEY ARE ONE TABLE, and every rule in it exists because the second
+sentence is true of the first.
+
+`RefereeVouching` is the eighteenth audit-of-record instance, and every limit is a DATABASE
+constraint rather than an application check, because a rule only the application enforces is a
+rule the next caller does not meet -- and this is where an assurance level gets minted from
+somebody's word. Nobody vouches for themselves. A co-signer is a third person. Nobody vouches
+above their own proofed level, since you cannot give what you do not have. The relationship
+comes from a closed vocabulary, because "knows the applicant" covers a social worker and a
+stranger paid fifty pounds and the difference is the whole control.
+
+AND NO VOUCHING REACHES IAL3, EVER, including from a referee proofed at IAL3 themselves. That
+level needs the APPLICANT's live biometric in a supervised session. A referee can attest to who
+somebody is; a referee cannot be that person's face, and a system that let one stand in for the
+other would have made its highest assurance level the easiest one to forge.
+
+THE BOUND ASKS FOR A CO-SIGNER AND NEVER REFUSES. A referee who has vouched forty times this
+month is either a shelter worker doing exactly what this path exists for or a compromised
+channel, and nothing in the database can tell those apart. Refusing breaks the legitimate case,
+which is the exclusion the mechanism exists to prevent; allowing silently is how a compromised
+referee stays one. So past the bound a vouching needs a third proofed person to put their name
+to it, and with one it stands at any volume -- the same shape as the mass-revocation bound, for
+the same reason.
+
+AND THE CREDENTIAL SAYS NONE OF IT. `IdentityToken` gains no column, flag or reference to a
+vouching, and both the check and the drill verify that as an ABSENCE -- the drill asks the live
+catalog, because an absence is the kind of property somebody adds back without noticing. A
+credential asserts an assurance LEVEL, never the circumstances its holder was in when they got
+it. The authority keeps the whole record, append-only, because a referee found to have vouched
+falsely makes every credential they touched a question that has to be answerable, and
+`vouchings_by()` is an index scan. Accountability sits with the authority; the holder carries
+something that looks like everybody else's.
+
+The drill passed all fourteen cases on its first execution, which is the first time that has
+happened this session -- because the database floors were tested by hand with `psql` before the
+drill was written around them, and because psycopg2 is now installed locally so a DB drill can
+be RUN before it is pushed rather than debugged from a CI log.
+
+- `check_trusted_referee` with an eight-fixture detection test (225 checks), the rules
+  EXERCISED rather than read
+- `polaris_web/referee.py`, `polaris_web/test_referee.py` (23 measured tests),
+  `scripts/polaris-referee-drill.py` on every push against a real database
+- migration 016, the 41st table, `BIGSERIAL` from its first line (v9.384's lesson, not repeated)
+- [trusted-referee.md](docs/design/trusted-referee.md)
+
+---
+
 ## v9.393 — 2026-09-11 (a third tool claiming what it had not run, quieter than the other two)
 
 Having found the same defect twice on the newcomer path, I swept the tools that verify signatures
