@@ -327,7 +327,7 @@ jobs:
       # check it comments out every line carrying the check's own search strings -- leaving the
       # words in the comment, which is what `# temporarily disabled: <the thing>` looks like --
       # and re-runs it. Before v9.398, 71 of 75 still passed. No database.
-      - name: Check layer — no check passes on a tree where its property is commented out
+      - name: Check layer — no check passes on a broken tree, or on a missing one
         run: python scripts/polaris-check-mutation-drill.py
 
       # v9.388 (P1.18 item 8) — the external-review packet, RE-CHECKED IN BOTH DIRECTIONS.

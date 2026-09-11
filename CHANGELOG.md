@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.401 — 2026-09-11 (four checks were true of a file that did not exist, two of them constitutional)
+
+The mutation drill only tested checks that GREP: comment out the lines carrying a check's search
+strings and see whether it notices. A check that COMPUTES -- counts rows, parses a schema,
+compares a stated number -- was untested by it, and the review packet said so.
+
+So there is a second mutation now, and it is blunter: DELETE every file the check names and
+require it to fail. A check that does not notice its own input is gone is watching nothing.
+
+**Four checks passed with their input deleted.** Two are constitutional. `check_c10_no_money_
+tables` scans the schema for `Monetary`, `Balance`, `Payment`, `Wallet`, `Merchant`, `Spending`
+table names, finds none in a file that does not exist, and reports C10 as holding.
+`check_version_is_canonical` looks for a redefinition of the version in `app.py` and finds none
+in a missing `app.py`. The other two are `check_local_clock_convention`, which looks for
+`utcnow`, and `check_gitignore_no_trailing_comments`. Every one of them was vacuously true for
+as long as it had existed, and each now fails when its subject is absent.
+
+TWO CHECKS SURVIVE THE DELETION LEGITIMATELY and are listed with the reason rather than
+exempted silently: `check_athena_no_person` reads its SQL through a module constant the harness
+cannot resolve, and `check_image_builds_are_retried` iterates every workflow, so deleting one
+leaves the others carrying the property. A list of two with reasons is a different object from
+an allow-list, and it stays short or it stops being one.
+
+The drill now fully mutates 80 checks with none surviving, deletes the named inputs of 207 with
+none surviving unexpectedly, and takes about 100 seconds.
+
+What neither mutation reaches is stated in the review packet as the next thing to attack: a
+check computing over a file that is PRESENT but wrong. One mutation removes lines it can name;
+the other removes the file. Neither corrupts what is left.
+
+---
+
 ## v9.400 — 2026-09-11 (the forty-odd file reads that went around the stripping)
 
 v9.399 made `_read` strip comments, which covered every check that names a file. Forty-odd reads

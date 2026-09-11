@@ -33,7 +33,20 @@ once and broke 58 detection-test fixtures that carried their own property in a c
 fixtures were repaired in the same ship, since a fixture that states its property in a comment
 is testing the thing this drill exists to forbid.
 
-Exits non-zero if any fully mutated check still passes. No database.
+THERE ARE TWO MUTATIONS, because commenting out a check's search strings only tests a check that
+GREPS. The second is blunter and reaches the ones that compute: DELETE every file the check
+names and require it to fail. A check that passes when its input is gone is watching nothing,
+and the failure is quiet -- "the schema defines no monetary tables" is perfectly true of a
+schema that does not exist. That pass found four, two of them constitutional (C10's money-table
+prohibition and the canonical version), which had been vacuously true for as long as they had
+existed.
+
+A check may legitimately survive this when the deleted file is one of several it reads and the
+others still carry the property; those are listed rather than failed, with the expectation that
+a reader checks the list is short and understood.
+
+Exits non-zero if any fully mutated check still passes, or if a check outside the known set
+survives having its inputs deleted. No database.
 """
 from __future__ import annotations
 
@@ -47,6 +60,17 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
 MUTABLE_SUFFIXES = (".py", ".sql", ".sh", ".yml", ".yaml")
+
+#: Checks that legitimately survive having their NAMED inputs deleted, with the reason.
+#: Both read more than the files the harness can name: athena_no_person reads its SQL
+#: through a module constant the harness cannot resolve, and image_builds_are_retried
+#: iterates every workflow, so deleting one leaves the others carrying the property.
+DELETION_SURVIVORS_EXPECTED = {
+    "check_athena_no_person":
+        "reads its Athena SQL via a module constant the harness cannot resolve",
+    "check_image_builds_are_retried":
+        "iterates every workflow; deleting one leaves the rest to carry the property",
+}
 
 #: Checks that pass on a tree where their own property has been commented out. It was
 #: 71 of 75 at v9.398, when `_read` still handed checks the comments along with the
@@ -204,6 +228,24 @@ def main():
         if still_passes:
             survived.append(name)
 
+    # SECOND MUTATION: delete what the check names and require it to notice.
+    deletion_survivors, deletion_tested = [], 0
+    for name, fn in sorted(fns.items()):
+        named = [f for f in set(reads_of(fn)) if (base / f).is_file()]
+        if not named:
+            continue
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.copytree(base, work)
+        for rel in named:
+            (work / rel).unlink()
+        deletion_tested += 1
+        try:
+            still_passes = all(f.level != "FAIL" for f in by_name[name](work))
+        except Exception:                      # noqa: BLE001 - a crash is not a pass
+            still_passes = False
+        if still_passes and name not in DELETION_SURVIVORS_EXPECTED:
+            deletion_survivors.append(name)
+
     shutil.rmtree(work, ignore_errors=True)
     shutil.rmtree(base, ignore_errors=True)
 
@@ -211,6 +253,9 @@ def main():
     print("  ...of those, still passing on a broken tree  %4d" % len(survived))
     print("  skipped: inputs this harness cannot enumerate %3d" % skipped_opaque)
     print("  skipped: nothing to mutate                   %4d" % skipped_nothing)
+    print("  checks whose named inputs were DELETED       %4d" % deletion_tested)
+    print("  ...of those, still passing with them gone    %4d  (%d known and listed)"
+          % (len(deletion_survivors), len(DELETION_SURVIVORS_EXPECTED)))
     print()
 
     if len(survived) > SPELLING_PINNED_BASELINE:
@@ -225,6 +270,13 @@ def main():
         print("NOTE: %d survived, below the baseline of %d. Lower "
               "SPELLING_PINNED_BASELINE to %d so the ratchet holds the ground gained."
               % (len(survived), SPELLING_PINNED_BASELINE, len(survived)))
+    if deletion_survivors:
+        print("FAIL: these checks passed with every file they name DELETED. A check that "
+              "does not notice its own input is gone is watching nothing, and the property "
+              "it reports is vacuously true:", file=sys.stderr)
+        for name in sorted(deletion_survivors):
+            print("  %s" % name, file=sys.stderr)
+        return 1
     if mutated < 50:
         print("FAIL: only %d checks were mutated; the harness has stopped reaching the "
               "layer it is supposed to attack." % mutated, file=sys.stderr)

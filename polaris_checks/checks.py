@@ -314,6 +314,8 @@ def check_no_fk_cascade(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 def check_version_is_canonical(root: pathlib.Path) -> list[Finding]:
     app = _read(root, "polaris_web/app.py")
+    if not app:
+        return _fail("version_canonical", "polaris_web/app.py is missing or empty")
     if re.search(r"from\s+__version__\s+import|import\s+__version__", app):
         return _ok("version_canonical", "app.py imports the canonical __version__")
     if re.search(r"POLARIS_VERSION\s*=\s*['\"]", app):
@@ -395,8 +397,11 @@ def check_secrets_file_ignored(root: pathlib.Path) -> list[Finding]:
 
 
 def check_gitignore_no_trailing_comments(root: pathlib.Path) -> list[Finding]:
+    gitignore = _read(root, ".gitignore")
+    if not gitignore.strip():
+        return _fail("gitignore_comments", ".gitignore is missing or empty")
     offenders = []
-    for i, line in enumerate(_read(root, ".gitignore").splitlines(), 1):
+    for i, line in enumerate(gitignore.splitlines(), 1):
         s = line.rstrip()
         if not s.strip() or s.lstrip().startswith("#"):
             continue
@@ -2139,6 +2144,12 @@ def check_c9_concurrency_threading(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 def check_c10_no_money_tables(root: pathlib.Path) -> list[Finding]:
     schema = _read(root, "polaris_sql/01_schema.sql")
+    # A missing schema defines no monetary tables, and a constitutional prohibition that
+    # holds because there is nothing to prohibit is not holding anything (v9.401).
+    if "CREATE TABLE" not in schema:
+        return _fail("c10_no_money",
+                     "polaris_sql/01_schema.sql defines no tables at all; C10 has nothing to "
+                     "be true of")
     bad = re.findall(r"CREATE TABLE\s+(\w*(?:Monetary|Balance|Payment|Wallet|Merchant|Spending)\w*)", schema, re.I)
     if bad:
         return _fail("c10_no_money", "schema defines monetary table(s): " + ", ".join(bad[:5]) + " (C10)")
@@ -2833,6 +2844,9 @@ def check_launcher_refreshes_code(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 def check_local_clock_convention(root: pathlib.Path) -> list[Finding]:
     app = _read(root, "polaris_web/app.py")
+    if not app:
+        return _fail("local_clock", "polaris_web/app.py is missing or empty; the clock "
+                                    "convention has nothing to hold in")
     if "utcnow" in app:
         return _fail("local_clock",
                      "app.py references utcnow; the DB stores local-wall-clock "

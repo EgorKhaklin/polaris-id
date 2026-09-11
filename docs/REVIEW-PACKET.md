@@ -99,7 +99,11 @@ property in a comment is testing the thing the drill forbids.
 
 The drill now gates at zero on every push. **Its limits are where a reviewer should look
 next:** four checks read files the drill cannot enumerate, so they are skipped rather than
-counted; it only mutates strings a check GREPS for, so a check that computes rather than greps
-is untested by it; and it cannot tell a check that is vacuously true from one that is watching
-something. Two checks were found passing because the mutation removed their subject entirely,
-and there is no reason to think those were the last two.
+counted; and a SECOND mutation deletes every file a check names and requires it to notice, which is what
+reaches the checks that compute rather than grep. That one found four more passing vacuously,
+two of them constitutional: C10's money-table prohibition and the canonical-version rule were
+both perfectly true of a schema and an `app.py` that did not exist.
+
+What remains untested: a check that computes over a file that is PRESENT but wrong is caught by
+neither mutation, since one only removes lines it can name and the other removes the file
+entirely. A reviewer looking for the weakest thing on this page should start there.
