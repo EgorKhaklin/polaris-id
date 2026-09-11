@@ -68,18 +68,66 @@ def _existing_active_holder():
             LIMIT 1
         """)
         row = cur.fetchone()
-        return (row['individual_id'], row['token_id']) if row else None
+        if row is None:
+            # v9.411 - not None, and not a skip. An identity database with no ACTIVE
+            # token cannot exercise C2 or C3, and a suite that reports OK for that
+            # has reported a guarantee it did not test.
+            raise AssertionError(
+                "the database holds no ACTIVE IdentityToken, so C2 and C3 cannot be "
+                "exercised at all. That is a broken fixture, not a reason to pass.")
+        return (row['individual_id'], row['token_id'])
 
 
 def _existing_lifecycle_event():
+    """One lifecycle event, CREATING one if the database holds none.
+
+    v9.411 - this used to return None on an empty table and every caller answered
+    that by skipping. C1 is not conditional on the sample data happening to carry a
+    row: a skipped test leaves the append-only trigger covered by nothing while the
+    suite still prints OK. Measured: with these three tests skipping,
+    trg_lifecycle_append_only could be dropped and the whole suite stayed green.
+    """
     with closing(_get_connection()) as conn, conn.cursor() as cur:
         cur.execute("SELECT event_id, token_id, event_type FROM TokenLifecycleEvent ORDER BY event_id LIMIT 1")
+        row = cur.fetchone()
+        if row is not None:
+            return row
+        cur.execute("SELECT token_id FROM IdentityToken ORDER BY token_id LIMIT 1")
+        tok = cur.fetchone()
+        if tok is None:
+            raise AssertionError(
+                "the database holds no IdentityToken, so C1's lifecycle audit cannot be "
+                "exercised at all. That is a broken fixture, not a reason to pass.")
+        cur.execute(
+            "INSERT INTO TokenLifecycleEvent (token_id, event_type, event_timestamp, reason_code) "
+            "VALUES (%s, 'ISSUED', CURRENT_TIMESTAMP, 'PROPERTY_SUITE_FIXTURE') "
+            "RETURNING event_id, token_id, event_type",
+            (tok['token_id'],))
+        conn.commit()
         return cur.fetchone()
 
 
 def _existing_verification_event():
+    """One verification event, CREATING one if the database holds none (v9.411)."""
     with closing(_get_connection()) as conn, conn.cursor() as cur:
         cur.execute("SELECT event_id, disclosure_level, token_id FROM VerificationEvent ORDER BY event_id LIMIT 1")
+        row = cur.fetchone()
+        if row is not None:
+            return row
+        cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
+        tok = cur.fetchone()
+        if tok is None:
+            raise AssertionError(
+                "the database holds no ACTIVE IdentityToken, so C1's verification audit cannot "
+                "be exercised at all. That is a broken fixture, not a reason to pass.")
+        cur.execute(
+            "INSERT INTO VerificationEvent "
+            "  (token_id, requesting_agency_id, context_id, disclosure_level, "
+            "   outcome, event_timestamp) "
+            "VALUES (%s, 1, 1, 'FULL', 'SUCCESS', CURRENT_TIMESTAMP) "
+            "RETURNING event_id, disclosure_level, token_id",
+            (tok['token_id'],))
+        conn.commit()
         return cur.fetchone()
 
 
@@ -91,8 +139,6 @@ class C1_AppendOnlyProperties(unittest.TestCase):
     @HYPOTHESIS_SETTINGS
     def test_update_lifecycle_event_type_always_fails(self, event_type):
         evt = _existing_lifecycle_event()
-        if evt is None:
-            self.skipTest("no lifecycle events in DB")
         with closing(_get_connection()) as conn, conn.cursor() as cur:
             try:
                 cur.execute(
@@ -110,8 +156,6 @@ class C1_AppendOnlyProperties(unittest.TestCase):
     @HYPOTHESIS_SETTINGS
     def test_update_lifecycle_reason_always_fails(self, reason):
         evt = _existing_lifecycle_event()
-        if evt is None:
-            self.skipTest("no lifecycle events in DB")
         with closing(_get_connection()) as conn, conn.cursor() as cur:
             try:
                 cur.execute(
@@ -129,8 +173,6 @@ class C1_AppendOnlyProperties(unittest.TestCase):
                                                   blacklist_characters='\x00')))
     def test_delete_lifecycle_event_always_fails(self, noise):
         evt = _existing_lifecycle_event()
-        if evt is None:
-            self.skipTest("no lifecycle events in DB")
         with closing(_get_connection()) as conn, conn.cursor() as cur:
             try:
                 cur.execute("DELETE FROM TokenLifecycleEvent WHERE event_id = %s", (evt['event_id'],))
@@ -146,8 +188,6 @@ class C1_AppendOnlyProperties(unittest.TestCase):
     @given(disclosure=st.sampled_from(VALID_DISCLOSURE))
     def test_update_verification_event_always_fails(self, disclosure):
         evt = _existing_verification_event()
-        if evt is None:
-            self.skipTest("no verification events in DB")
         with closing(_get_connection()) as conn, conn.cursor() as cur:
             try:
                 cur.execute(
@@ -182,8 +222,6 @@ class C2_DisclosureTypingProperties(unittest.TestCase):
     @given(lat=LAT, lon=LON)
     def test_zk_with_non_null_token_id_always_rejected(self, lat, lon):
         holder = _existing_active_holder()
-        if holder is None:
-            self.skipTest("no active token in DB")
         _, token_id = holder
         with closing(_get_connection()) as conn, conn.cursor() as cur:
             try:
@@ -261,8 +299,6 @@ class C3_OneActivePerIndividualProperties(unittest.TestCase):
         """A second ACTIVE token for an already-active individual must fail
         the partial unique index regardless of other column values."""
         holder = _existing_active_holder()
-        if holder is None:
-            self.skipTest("no active token in DB")
         individual_id, _existing = holder
         with closing(_get_connection()) as conn, conn.cursor() as cur:
             try:
@@ -297,8 +333,6 @@ class C3_OneActivePerIndividualProperties(unittest.TestCase):
         partial index only fires on status=ACTIVE. This is critical for
         succession to work."""
         holder = _existing_active_holder()
-        if holder is None:
-            self.skipTest("no active token in DB")
         individual_id, _existing = holder
         with closing(_get_connection()) as conn, conn.cursor() as cur:
             try:

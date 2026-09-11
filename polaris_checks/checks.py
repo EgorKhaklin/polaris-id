@@ -10834,6 +10834,61 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
 
 
 
+def check_property_suite_cannot_skip_its_subject(root: pathlib.Path) -> list[Finding]:
+    """A property test that skips for want of a row has stopped proving anything (v9.411).
+
+    `test_invariants_property.py` is the C1/C2/C3 evidence: append-only means every UPDATE and
+    DELETE fails, disclosure typing means a ZERO_KNOWLEDGE row carrying a token_id is refused.
+    Seven of its tests began by looking for a row and calling `self.skipTest` when they did not
+    find one.
+
+    A skip is invisible. The runner prints OK, the suite is green, and the constitutional
+    property was not tested. Measured before the fix: with the three lifecycle tests skipping,
+    `trg_lifecycle_append_only` could be dropped from the schema entirely and all 757 tests in
+    the database suite stayed green. Afterwards, dropping it fails three.
+
+    The fix is that the fixtures MAKE their subject. Where that is impossible because minting a
+    token is uc1's job, the helper raises instead: an identity database with no ACTIVE token is a
+    broken fixture, not a passing test. Either way the property runs, which is the only state in
+    which it means anything."""
+    name = "property_no_skip"
+    rel = "polaris_web/test_invariants_property.py"
+    suite = _read(root, rel)
+    if not suite:
+        return _fail(name, f"{rel} is absent; C1 to C3 have no property evidence")
+    skips = re.findall(r"self\.skipTest\(\s*[\"']([^\"']*)[\"']", suite)
+    if skips:
+        return _fail(name,
+                     f"{len(skips)} property test(s) skip rather than run: "
+                     + ", ".join(repr(s) for s in skips[:3])
+                     + ". A skipped test prints OK and proves nothing; the fixture must create "
+                       "its subject, or fail loudly when it cannot")
+    # The helpers must actually make a subject, or say why they cannot. A helper that just
+    # returns None moves the same hole one level down into `if x is None: return`.
+    for helper, verb in (("_existing_lifecycle_event", "INSERT INTO TokenLifecycleEvent"),
+                         ("_existing_verification_event", "INSERT INTO VerificationEvent")):
+        body = suite.split(f"def {helper}(", 1)
+        if len(body) != 2:
+            return _fail(name, f"{helper} is gone; the fixtures that guarantee a subject have "
+                               "been removed")
+        body = body[1].split("\ndef ", 1)[0]
+        if verb not in body:
+            return _fail(name, f"{helper} no longer creates a subject when the table is empty, "
+                               "so the property silently stops being tested on an empty table")
+    if "raise AssertionError" not in suite:
+        return _fail(name, "no fixture fails loudly on an unusable database; a helper that "
+                           "cannot build its subject must say so rather than return None")
+    # It must actually contain the properties. A file emptied of tests passes everything above.
+    tests = len(re.findall(r"(?m)^\s+def test_\w+", suite))
+    if tests < 8:
+        return _fail(name, f"only {tests} property tests were found; the suite has been emptied "
+                           "and this check is passing by finding nothing")
+    return _ok(name,
+               f"all {tests} C1 to C3 property tests run unconditionally: the fixtures create "
+               "the row the property needs, and a database that cannot supply one fails loudly "
+               "instead of skipping a constitutional invariant into a green run")
+
+
 def check_trust_ladder_is_bound_to_the_code(root: pathlib.Path) -> list[Finding]:
     """The anti-trust ladder must name mechanisms that exist, and stop where it stops (v9.410).
 
@@ -14005,6 +14060,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_constraint_suite_is_mutation_tested,
     check_redaction_adversary_is_not_flattered,
     check_trust_ladder_is_bound_to_the_code,
+    check_property_suite_cannot_skip_its_subject,
     check_benchmark_measures_growth,
     check_enrollment_code,
     check_trusted_referee,

@@ -12094,3 +12094,47 @@ def test_trust_ladder_check_discriminates(tmp_path):
     # the file is gone
     (tmp_path / rel).unlink()
     assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the ladder is absent"
+
+
+def test_property_no_skip_check_discriminates(tmp_path):
+    SUITE = (
+        "def _existing_lifecycle_event():\n"
+        "    row = fetch()\n"
+        "    if row is not None:\n        return row\n"
+        "    if tok is None:\n        raise AssertionError('broken fixture, not a reason to pass')\n"
+        "    cur.execute('INSERT INTO TokenLifecycleEvent (token_id) VALUES (%s)')\n"
+        "    return cur.fetchone()\n\n\n"
+        "def _existing_verification_event():\n"
+        "    row = fetch()\n"
+        "    if row is not None:\n        return row\n"
+        "    cur.execute('INSERT INTO VerificationEvent (token_id) VALUES (%s)')\n"
+        "    return cur.fetchone()\n\n\n"
+        "class C1_AppendOnlyProperties:\n"
+        + "".join(f"    def test_p{i}(self):\n        assert True\n" for i in range(10)))
+    rel = "polaris_web/test_invariants_property.py"
+    def write(body):
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write(SUITE)
+    assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # a test skips instead of running: the property vanishes into a green run
+    write(SUITE.replace("    def test_p0(self):\n        assert True\n",
+                        "    def test_p0(self):\n        self.skipTest('no lifecycle events in DB')\n"))
+    assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "FAIL", "must FAIL when a property test skips rather than runs"
+    # the lifecycle fixture stops creating a subject
+    write(SUITE.replace("    cur.execute('INSERT INTO TokenLifecycleEvent (token_id) VALUES (%s)')\n", "    pass\n"))
+    assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "FAIL", "must FAIL when the lifecycle fixture no longer creates its subject"
+    # the verification fixture stops creating a subject
+    write(SUITE.replace("    cur.execute('INSERT INTO VerificationEvent (token_id) VALUES (%s)')\n", "    pass\n"))
+    assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "FAIL", "must FAIL when the verification fixture no longer creates its subject"
+    # a fixture that cannot build its subject returns quietly instead of failing loudly
+    write(SUITE.replace("        raise AssertionError('broken fixture, not a reason to pass')", "        return None"))
+    assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "FAIL", "must FAIL when an unusable database is answered with None rather than an error"
+    # a fixture helper is deleted outright
+    write(SUITE.replace("def _existing_verification_event():", "def _something_else():"))
+    assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "FAIL", "must FAIL when a subject-creating fixture is removed"
+    # the suite is emptied of tests, which satisfies every assertion above vacuously
+    write(SUITE.split("class C1_AppendOnlyProperties:")[0] + "class C1_AppendOnlyProperties:\n    pass\n")
+    assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "FAIL", "must FAIL when the suite holds too few property tests, rather than pass by finding nothing"
+    # the suite is gone
+    (tmp_path / rel).unlink()
+    assert checks.check_property_suite_cannot_skip_its_subject(tmp_path)[0].level == "FAIL", "must FAIL when the property suite is absent"

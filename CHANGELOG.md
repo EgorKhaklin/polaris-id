@@ -5,6 +5,42 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.411 — 2026-09-11 (a skipped test prints OK)
+
+v9.407 mutation-tested the CHECK constraints and found all 46 load-bearing. MISSION names three
+mechanisms, not one: a trigger, a CHECK constraint, or a unique index. So the same question went
+to the triggers, mutated at the SOURCE rather than in the catalog, because the suite reloads
+`06_triggers.sql` between tests and would otherwise put back whatever was dropped.
+
+Of 37 top-level triggers, 22 are load-bearing: drop one and something goes red. Fifteen were
+not. One of those fifteen is `trg_lifecycle_append_only`, which is C1 on the token lifecycle
+audit, and it turned out not to be untested but UNTESTABLE.
+
+`test_invariants_property.py` has three tests for exactly that trigger. Each begins by looking
+for a lifecycle row and calling `self.skipTest("no lifecycle events in DB")` when it does not
+find one. A skip is invisible: the runner prints OK, the suite is green, and the constitutional
+property was not tested. Measured: with those three skipping, the trigger could be dropped from
+the schema entirely and all 757 tests in the database suite stayed green. Four more tests had
+the same shape for C2 and C3, seven skip sites in all.
+
+The fix is that the fixtures MAKE their subject. `_existing_lifecycle_event` and
+`_existing_verification_event` insert a row when the table is empty and return it. The
+active-token helper cannot mint a token, since that is uc1's job, so it raises instead: an
+identity database with no ACTIVE token is a broken fixture, not a passing test. Verified both
+ways. With both audit tables truncated the suite now runs all ten tests and passes rather than
+skipping three; with `trg_lifecycle_append_only` dropped it now fails three, where before it
+printed OK.
+
+That leaves 14 of 37 triggers covered by nothing, which is a measured number rather than an
+estimate: the whole application suite stays green with all fifteen dropped at once, so no test in
+it covers any of them, and each was then mutated individually against the property suite. The
+list is in the CHANGELOG rather than a TODO because it is the next ship, not a note.
+
+`check_property_suite_cannot_skip_its_subject` (234) forbids the shape: no `skipTest` in the
+property suite, the fixtures must contain the INSERT that builds a subject, an unusable database
+must raise rather than return None, and a floor on the test count so a suite emptied of
+properties fails instead of satisfying all of that vacuously.
+
 ## v9.410 — 2026-09-11 (the ladder, and where it stops)
 
 Polaris makes one move over and over: find what the system is currently trusting, refuse to

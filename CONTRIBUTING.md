@@ -76,6 +76,22 @@ A pull request is ready when all of these hold:
   perturbation that removes it.
 - **Do not pipe a gate into `tail` inside an `&&` chain.** A pipeline's exit status is
   its last command, so `pytest ... | tail -2 && git commit` commits on a red suite.
+- **A detection test must assert the check PASSES on the good fixture before it asserts
+  the check fails on the broken one.** Without that, the FAIL is not attributable to the
+  defect the test injected: a check reading five files fails on a synthetic tree because
+  three are missing, and the mutation is decorative. `check_detection_tests_have_a_positive_control`
+  requires the OK assertion to name the SAME check as the FAIL assertion.
+- **A test that skips is a test that did not run, and the runner still prints OK.**
+  `self.skipTest("no lifecycle events in DB")` in three C1 property tests meant the
+  append-only trigger on the lifecycle audit could be dropped from the schema with all
+  757 database tests green. A fixture must CREATE the row its property needs; where that
+  is impossible, raise, because an unusable database is a broken fixture and not a pass.
+- **To mutation-test the schema, mutate the SOURCE, not the catalog.** The suites call
+  `reload_sample_data()`, which re-runs `06_triggers.sql`, so a `DROP TRIGGER` issued
+  against the live database is reinstalled by the next test that reloads and the mutation
+  measures nothing. Append the DROP to the file instead. Restore in a loop that continues
+  past a failure and reports every one: a restore that aborts on the first error leaves the
+  database missing the rest.
 - New behaviour carries a test that fails without it. A new invariant carries
   a `check_*` in `polaris_checks/checks.py` with a detection test in
   `polaris_checks/test_checks.py` proving it fails on a broken fixture.
@@ -177,4 +193,4 @@ system is encouraged, provided the constitutional constraints are not weakened
 in the derivative; documenting a derivative to the same audit-of-record
 standard is asked for, not required by the license.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-09-11 (v9.390).*
+*Maintainer: Egor Khaklin. Last updated: 2026-09-11 (v9.411).*

@@ -47,6 +47,14 @@ name the attacks the maintainers would most like attempted. Nothing on that page
 been reviewed by anybody outside this repository, which is the reason it is written
 down at all.
 
+Worth knowing before you start, because it says what has already been tried: the
+verification layer is itself mutation-tested. `scripts/polaris-check-mutation-drill.py`
+comments out each invariant's subject and requires the check to notice;
+`scripts/polaris-constraint-mutation-drill.py` drops each CHECK constraint the database
+suite names and requires the naming tests to go red (46 of 46 are load-bearing). The
+same treatment of the triggers is in progress and the current count is in the CHANGELOG;
+where a trigger is not yet covered by a test, that is stated rather than implied.
+
 **Fix, by severity:**
 
 - **Critical** (breaks C1 to C10 in a deployable configuration): patch
@@ -172,5 +180,5 @@ policy.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-11 (v9.390)*
+*Last updated: 2026-09-11 (v9.411)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*
