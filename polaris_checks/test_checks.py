@@ -12418,3 +12418,55 @@ def test_route_guards_check_discriminates(tmp_path):
     # security.py is gone
     (tmp_path / "polaris_web" / "security.py").unlink()
     assert checks.check_route_guards_are_derived_not_listed(tmp_path)[0].level == "FAIL", "must FAIL when security.py is absent"
+
+
+def test_csrf_exemptions_check_discriminates(tmp_path):
+    SEC = ("def csrf_protect(f):\n    wrapped.__polaris_csrf_protected__ = True\n    return wrapped\n\n\n"
+           "def reject_cross_site(f):\n    wrapped.__polaris_rejects_cross_site__ = True\n    return wrapped\n")
+    SUITE = ("class CrossSiteDefenceMatrixTests:\n"
+             "    CSRF_EXEMPT = {\n"
+             + "".join("        '/api/v1/e%d': 'machine API, no session',\n" % i for i in range(16))
+             + "    }\n"
+             "    def test_classified(self):\n"
+             "        self.assertEqual(unclassified, [], 'state-changing route(s) carry no "
+             "cross-site defence and are not declared exempt.')\n")
+    APP = ("@app.route('/api/v1/e0', methods=['POST'])\n"
+           "def e0():\n    return ('', 204)\n\n\n"
+           "@app.route('/uc1/issue', methods=['POST'])\n"
+           "@security.csrf_protect\n"
+           "def uc1():\n    role = session.get('role')\n    return ('', 204)\n")
+    good = {"polaris_web/security.py": SEC, "polaris_web/test_app.py": SUITE, "polaris_web/app.py": APP}
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write()
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # an exempt route starts reading the operator's identity from the session
+    write({"polaris_web/app.py": APP.replace(
+        "def e0():\n    return ('', 204)", "def e0():\n    role = session.get('role')\n    return ('', 204)")})
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL when a CSRF-exempt route trusts the session"
+    # the guards stop publishing what they enforce
+    write({"polaris_web/security.py": SEC.replace("__polaris_csrf_protected__", "_csrf")})
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL when the CSRF guard is not readable from the route table"
+    write({"polaris_web/security.py": SEC.replace("__polaris_rejects_cross_site__", "_xs")})
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL when the cross-site guard is not readable from the route table"
+    # the declared exemptions go away
+    write({"polaris_web/test_app.py": SUITE.replace("CSRF_EXEMPT", "SOME_LIST")})
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL without the declared exemptions"
+    # an unclassified state-changing route stops being a failure
+    write({"polaris_web/test_app.py": SUITE.replace(
+        "        self.assertEqual(unclassified, [], 'state-changing route(s) carry no cross-site defence and are not declared exempt.')\n", "")})
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL when an undefended, undeclared route would pass"
+    # the exemption list is emptied, which satisfies the assertions above vacuously
+    write({"polaris_web/test_app.py": SUITE.replace(
+        "".join("        '/api/v1/e%d': 'machine API, no session',\n" % i for i in range(16)),
+        "        '/api/v1/e0': 'machine API, no session',\n")})
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL when too few exemptions are parsed, rather than pass by finding nothing"
+    # app.py does not parse
+    write({"polaris_web/app.py": "def broken(\n"})
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL when app.py does not parse"
+    # app.py is gone
+    write()
+    (tmp_path / "polaris_web" / "app.py").unlink()
+    assert checks.check_csrf_exemptions_do_not_trust_the_session(tmp_path)[0].level == "FAIL", "must FAIL when app.py is absent"

@@ -5,6 +5,35 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.418 — 2026-09-11 ("CSRF does not apply here" is a claim, and it expires quietly)
+
+v9.417 made the guards publish what they enforce. The CSRF marker went with them and nothing read
+it, so this reads it.
+
+The route table has 49 state-changing routes. 31 carry `@csrf_protect`. 2 are the launcher's
+anonymous local-control endpoints and carry `@reject_cross_site`, whose docstring already explains
+why that is the right defence there: they take no session and no token, so without it a page the
+operator merely visits could `fetch()` the local instance and shut it down. 16 are the machine API
+and the pre-session auth endpoints.
+
+Those 16 are right to take no token. CSRF only bites where a browser attaches ambient authority,
+and they have none to attach. That was checked rather than assumed: none of them reads `role`,
+`user_id` or `username` from the session. `/login` reads `logged_in`, to redirect somebody who is
+already signed in, which is a question and not an authority.
+
+But "CSRF does not apply here" expires the moment one of those routes starts reading the
+operator's identity, and nothing about the exemption would change; the exemption would just have
+become wrong. So it is declared per route with its reason, the partition is asserted exhaustive so
+a new POST that is neither defended nor declared fails, and
+`check_csrf_exemptions_do_not_trust_the_session` (240) holds the static half: an exempt route that
+reads session identity fails the build.
+
+Verified in three directions. Removing one `@csrf_protect` fails, because a route without the
+guard stops appearing in the protected set and the count no longer matches. Adding a POST route
+with no defence fails as unclassified. And the first run of the test failed on its own author:
+`/api/heartbeat` and `/api/quit` had been listed as exempt when they carry a defence, which is the
+stale-exemption case the assertion exists to catch.
+
 ## v9.417 — 2026-09-11 (the access-control matrix was a list somebody wrote)
 
 Two hand-written lists in the test suite stood for the application's access control.

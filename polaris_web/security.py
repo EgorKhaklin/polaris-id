@@ -1180,6 +1180,7 @@ def reject_cross_site(view_func):
         if request.headers.get('Sec-Fetch-Site') == 'cross-site':
             abort(403)
         return view_func(*args, **kwargs)
+    wrapped.__polaris_rejects_cross_site__ = True
     return wrapped
 
 

@@ -9472,6 +9472,127 @@ class RouteGuardMatrixTests(PolarisTestCase):
                         r.status_code, 403,
                         f"{role} is allowed on {url} (gated to {sorted(roles)}) and got 403")
 
+
+class CrossSiteDefenceMatrixTests(PolarisTestCase):
+    """Every state-changing route, classified by which cross-site defence applies (v9.418).
+
+    CSRF protection only bites where a browser will attach ambient authority. The
+    route table has 49 state-changing routes: 31 carry @csrf_protect, 2 are the
+    launcher's anonymous local-control endpoints and carry @reject_cross_site, and
+    16 are the machine API and the pre-session auth endpoints, where there is no
+    cookie authority to abuse.
+
+    That last group is the interesting one, because "CSRF does not apply here" is a
+    claim, and it stops being true the moment one of those routes starts trusting a
+    session. So the exemption is declared per route WITH its reason, and
+    `check_csrf_exemptions_do_not_trust_the_session` holds the other half: an exempt
+    route that reads session authority fails the build.
+    """
+
+    STATE_METHODS = {'POST', 'PUT', 'DELETE', 'PATCH'}
+
+    #: Routes that change state, take no CSRF token, reject no cross-site request,
+    #: and are right not to. Each entry carries the reason, because an undocumented
+    #: exemption is indistinguishable from an oversight. The launcher's two
+    #: endpoints are NOT here: they carry @reject_cross_site, which is a defence
+    #: rather than an exemption, and listing them here was the first thing this
+    #: test caught.
+    CSRF_EXEMPT = {
+        '/login': 'establishes the session; there is none to protect yet',
+        '/auth/webauthn/assert/begin': 'pre-session WebAuthn challenge',
+        '/auth/webauthn/assert/finish': 'pre-session WebAuthn assertion',
+        '/api/v1/auth/authorize': 'broker endpoint, authenticated by client credential',
+        '/api/v1/auth/token': 'broker token exchange, authenticated by client credential',
+        '/api/v1/oauth/token': 'OAuth token endpoint, authenticated by client credential',
+        '/api/v1/exchange/<int:target_agency_id>': 'federation exchange, signed request',
+        '/api/v1/exchange-receipt/<int:agency_id>/signed': 'federation receipt, signed request',
+        '/api/v1/holder-binding': 'holder-side API, no session',
+        '/api/v1/holder-key': 'holder-side API, no session',
+        '/api/v1/mdoc': 'credential format API, no session',
+        '/api/v1/sign/<int:agency_id>/holder': 'document signing API, no session',
+        '/api/v1/status-assertion': 'status assertion API, no session',
+        '/api/v1/timestamp/<int:agency_id>': 'timestamp authority API, no session',
+        '/api/v1/verifiable-credential': 'credential issuance API, no session',
+        '/api/v1/verify': 'relying-party verification API, no session',
+    }
+
+    def _state_changing(self):
+        for rule in flask_app.app.url_map.iter_rules():
+            view = flask_app.app.view_functions.get(rule.endpoint)
+            if view is None or not (rule.methods & self.STATE_METHODS):
+                continue
+            yield rule, view
+
+    def test_every_state_changing_route_is_classified(self):
+        """The anti-vacuity anchor: a new POST that is neither protected nor
+        declared exempt lands in no class and fails here."""
+        csrf, cross_site, exempt, unclassified = [], [], [], []
+        for rule, view in self._state_changing():
+            if getattr(view, '__polaris_csrf_protected__', False):
+                csrf.append(rule.rule)
+            elif getattr(view, '__polaris_rejects_cross_site__', False):
+                cross_site.append(rule.rule)
+            elif rule.rule in self.CSRF_EXEMPT:
+                exempt.append(rule.rule)
+            else:
+                unclassified.append(sorted(rule.methods & self.STATE_METHODS) + [rule.rule])
+        self.assertEqual(
+            unclassified, [],
+            "state-changing route(s) carry no cross-site defence and are not declared exempt. "
+            "Either add @csrf_protect, or add an entry to CSRF_EXEMPT saying why a browser "
+            "cannot be made to call this with someone else's authority.")
+        self.assertEqual(
+            len(csrf), 31,
+            f"{len(csrf)} routes carry @csrf_protect and 31 are recorded. A guard that was "
+            "removed shows up here, because a route without one simply stops appearing in the "
+            "protected set.")
+        self.assertEqual(len(cross_site), 2, f"{len(cross_site)} routes reject cross-site "
+                                             "requests; 2 are recorded")
+        self.assertEqual(
+            sorted(exempt), sorted(self.CSRF_EXEMPT),
+            "the declared CSRF exemptions no longer match the routes that actually take no "
+            "token; a stale exemption hides a route that has since become protected, and a "
+            "missing one hides a route that has not")
+
+    def test_every_csrf_protected_route_refuses_a_request_without_a_token(self):
+        self._logout()
+        self._login('admin')
+        checked = 0
+        for rule, view in self._state_changing():
+            if not getattr(view, '__polaris_csrf_protected__', False):
+                continue
+            # Ordered: the int converter first, or the generic pattern eats it and
+            # the URL stops matching the rule at all (a 404 is not a refusal).
+            url = rule.rule
+            for pattern, value in ((r'<int:[^>]+>', '1'), (r'<path:[^>]+>', 'x'), (r'<[^>]+>', 'x')):
+                url = re.sub(pattern, value, url)
+            method = 'POST' if 'POST' in rule.methods else sorted(rule.methods & self.STATE_METHODS)[0]
+            with self.subTest(route=rule.rule):
+                r = self.client.open(url, method=method, data={})
+                self.assertEqual(
+                    r.status_code, 403,
+                    f"{method} {url} without a CSRF token returned {r.status_code}; the token "
+                    "is not being required")
+            checked += 1
+        self.assertEqual(checked, 31,
+                         f"only {checked} CSRF-protected routes were exercised; the route table "
+                         "is no longer being read and this test is passing by finding nothing")
+
+    def test_the_launcher_endpoints_refuse_a_cross_site_request(self):
+        self._logout()
+        checked = 0
+        for rule, view in self._state_changing():
+            if not getattr(view, '__polaris_rejects_cross_site__', False):
+                continue
+            with self.subTest(route=rule.rule):
+                r = self.client.post(rule.rule, headers={'Sec-Fetch-Site': 'cross-site'})
+                self.assertEqual(
+                    r.status_code, 403,
+                    f"POST {rule.rule} from a cross-site context returned {r.status_code}; a page "
+                    "the operator merely visits could drive this endpoint")
+            checked += 1
+        self.assertEqual(checked, 2, f"only {checked} cross-site-guarded routes were exercised")
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py

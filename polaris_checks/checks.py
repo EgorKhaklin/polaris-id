@@ -10907,6 +10907,76 @@ def check_property_suite_identifies_its_refusals(root: pathlib.Path) -> list[Fin
                "invariant holding")
 
 
+def check_csrf_exemptions_do_not_trust_the_session(root: pathlib.Path) -> list[Finding]:
+    """"CSRF does not apply here" is a claim, and it expires quietly (v9.418).
+
+    Of the 49 state-changing routes, 31 carry `@csrf_protect`, 2 are the launcher's anonymous
+    local-control endpoints and carry `@reject_cross_site`, and 16 are the machine API and the
+    pre-session auth endpoints. The 16 are right to take no token: CSRF only bites where a browser
+    attaches ambient authority, and those have none to attach.
+
+    That stops being true the moment one of them reads the operator's identity out of the session,
+    because then a page the operator merely visits can drive it with their authority. Nothing
+    about the exemption would change; the exemption would simply have become wrong.
+
+    So the exemptions are declared with their reasons in the suite, `CrossSiteDefenceMatrixTests`
+    asserts the partition is exhaustive, and this holds the other half statically: an exempt route
+    that reads `role`, `user_id` or `username` from the session fails the build. `logged_in` is
+    allowed, because /login reads it to redirect somebody who is already signed in, which is a
+    question rather than an authority."""
+    name = "csrf_exemptions"
+    app = _read(root, "polaris_web/app.py")
+    suite = _read(root, "polaris_web/test_app.py")
+    sec = _read(root, "polaris_web/security.py")
+    if not app or not suite:
+        return _fail(name, "polaris_web/app.py or test_app.py is absent")
+    problems = []
+    if "__polaris_csrf_protected__" not in sec or "__polaris_rejects_cross_site__" not in sec:
+        problems.append("the CSRF and cross-site guards no longer publish what they enforce, so "
+                        "the partition cannot be read off the route table")
+    if "CSRF_EXEMPT" not in suite:
+        problems.append("the declared exemptions are gone; a route taking no token is then "
+                        "indistinguishable from an oversight")
+    if "state-changing route(s) carry no cross-site defence" not in suite:
+        problems.append("the suite no longer fails on a state-changing route that is neither "
+                        "defended nor declared exempt")
+
+    # The static half. Map each exempt path to its view and look for session authority.
+    block = suite.split("CSRF_EXEMPT = {", 1)
+    exempt_paths = set(re.findall(r"'(/[^']*)':", block[1].split("\n    }", 1)[0])) if len(block) == 2 else set()
+    if len(exempt_paths) < 10:
+        problems.append(f"only {len(exempt_paths)} exemptions were parsed; the parse has broken "
+                        "and this check is passing by finding nothing")
+    try:
+        tree = ast.parse(app)
+    except SyntaxError as exc:
+        return _fail(name, f"polaris_web/app.py does not parse: {exc}")
+    authority = re.compile(r"session\.get\('(?:role|user_id|username)'\)")
+    trusting = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        routes = [d for d in node.decorator_list if "app.route" in ast.unparse(d)]
+        if not routes:
+            continue
+        paths = {m.group(1) for d in routes for m in re.finditer(r"app\.route\('([^']+)'", ast.unparse(d))}
+        if not (paths & exempt_paths):
+            continue
+        if authority.search(ast.unparse(node)):
+            trusting.append(sorted(paths & exempt_paths)[0])
+    if trusting:
+        problems.append("route(s) declared exempt from CSRF read the operator's identity from "
+                        "the session, which is exactly the authority a cross-site request would "
+                        "borrow: " + ", ".join(sorted(trusting)))
+    if problems:
+        return _fail(name, "; ".join(problems[:3]))
+    return _ok(name,
+               f"every state-changing route is defended or declared, and none of the "
+               f"{len(exempt_paths)} declared exemptions reads role, user_id or username from the "
+               "session, so no page the operator visits can drive one of them with their "
+               "authority")
+
+
 def check_route_guards_are_derived_not_listed(root: pathlib.Path) -> list[Finding]:
     """The access-control matrix must come from the routes, not from a list somebody wrote (v9.417).
 
@@ -14374,6 +14444,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_property_suite_cannot_skip_its_subject,
     check_append_only_tables_are_tested_exhaustively,
     check_route_guards_are_derived_not_listed,
+    check_csrf_exemptions_do_not_trust_the_session,
     check_unique_rules_are_tested_exhaustively,
     check_triggers_are_mutation_tested,
     check_property_suite_identifies_its_refusals,
