@@ -90,7 +90,7 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 242 invariant
+release; CVE gates on dependencies and images; a coverage floor; 243 invariant
 checks (v9.403) each with a detection test; nineteen operator runbooks and ledgers; the protocol layer
 (P8, complete and released): a signed registry, trust lists, the exchange gateway with
 receipts, a timestamp authority, document signing with long-term validation, an auth broker,

@@ -5,6 +5,39 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.422 — 2026-09-11 (creating an operator account left no record that it had happened)
+
+`AuthAuditLog.event_type` is a CHECK over twenty-one names and the CLI's `audit-log` command
+offers to filter by every one of them. Six had no writer anywhere in the tree.
+
+The worst was ACCOUNT_CREATED. `polaris user-create` is the ONLY door that makes an operator
+account, and an operator account is the thing that grants the power to issue credentials, revoke
+them, and read the warrant audit. Verified by running it: user #9 was created and not one audit
+table gained a row. Somebody searching the log for account creations got an empty result, which
+reads exactly like nobody had made any.
+
+This is the v9.382 finding in a second place. There the authority's most invasive power, the
+warrant-audit read, left no record of its own use. Here the power to MINT an authority leaves
+none.
+
+Three are now written, by the CLI, since it is the only door: ACCOUNT_CREATED,
+ACCOUNT_DEACTIVATED, PASSWORD_CHANGED. Each goes on the SAME cursor as the change it records, so
+the row and the change commit together; an entry that can be rolled back separately from its
+subject is not an entry. The record names the role granted, which is where the risk is, says the
+change came through the CLI and by which OS user, and never carries the password. A test asserts
+all of that, including the last.
+
+The other three are session-lifecycle events in the web app and are NOT wired here. They are
+declared in the check with the reason, because the difference between "nothing emits this" and
+"nothing emits this and somebody looked" is the whole value of writing it down. The list is meant
+to shrink.
+
+`check_every_audit_event_has_a_writer` (243) reads the admitted names from the newest migration
+that defines the CHECK, which is where the live set actually comes from, and requires each to be
+emitted or declared. Its first draft counted a filter list several lines below a real audit call
+as a writer, because the window it allowed spans whole statements in Python; the fixture caught
+it. Naming an event is not emitting it, which is the entire point of the check.
+
 ## v9.421 — 2026-09-11 (the other two survivors, and the shape they share)
 
 v9.420 closed the first of the three SDK entry points the conformance suite could not see being

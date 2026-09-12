@@ -48,6 +48,7 @@ POLARIS_DB_PASSWORD. Every command accepts --help.
 """
 
 import argparse
+import getpass
 import os
 import re
 import sys
@@ -982,6 +983,29 @@ def _read_password_interactively(prompt='New password: '):
         return pw1
 
 
+
+def _audit_operator_action(cur, event_type, username, user_id=None, detail=None):
+    """Append an AuthAuditLog row for an operator-account action (v9.422).
+
+    The schema has admitted ACCOUNT_CREATED, ACCOUNT_DEACTIVATED and PASSWORD_CHANGED
+    since the operator-session migration, and the `audit-log` command below offers to
+    filter by all three. Nothing wrote one. The CLI is the only door that creates an
+    operator account, so an account could be minted, given the admin role, and used to
+    issue or revoke credentials, with no record anywhere that it had been made.
+
+    Written on the SAME cursor as the change it records, so the row and the change
+    commit together: an audit entry that can be rolled back separately from its subject
+    is not an audit entry. The actor is the OS user running the CLI, which is the only
+    identity this process actually has; it is recorded as detail rather than as
+    `username`, because `username` names the account acted UPON.
+    """
+    cur.execute(
+        "INSERT INTO AuthAuditLog (event_type, username, user_id, ip_address, user_agent, detail) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (event_type, username, user_id, None, "polaris-cli",
+         ("by %s via CLI%s" % (getpass.getuser(), ": " + detail if detail else ""))[:500]))
+
+
 def cmd_user_create(args):
     generate_password_hash = _require_werkzeug()
 
@@ -1006,6 +1030,8 @@ def cmd_user_create(args):
                 RETURNING user_id
             """, (args.username.lower(), pw_hash, args.role))
             new_id = cur.fetchone()['user_id']
+            _audit_operator_action(cur, 'ACCOUNT_CREATED', args.username.lower(), new_id,
+                                   "role=%s" % args.role)
             conn.commit()
         print(green(f"✓ Created user #{new_id}: {args.username} ({args.role})"))
     except psycopg2.errors.UniqueViolation:
@@ -1080,6 +1106,8 @@ def cmd_user_passwd(args):
                  WHERE user_id = %s AND revoked_at IS NULL
             """, (row['user_id'],))
             revoked = cur.rowcount
+            _audit_operator_action(cur, 'PASSWORD_CHANGED', args.username.lower(),
+                                   row['user_id'])
             conn.commit()
         print(green(f"✓ Password updated for {args.username} (#{row['user_id']})"))
         print(dim(f"  Revoked {revoked} live web session(s)."))
@@ -1117,6 +1145,9 @@ def cmd_user_deactivate(args):
                  WHERE user_id = %s AND revoked_at IS NULL
             """, (row['user_id'],))
             revoked = cur.rowcount
+            _audit_operator_action(cur, 'ACCOUNT_DEACTIVATED', args.username.lower(),
+                                   row['user_id'],
+                                   "role=%s sessions_revoked=%d" % (row['role'], revoked))
             conn.commit()
         print(green(f"✓ Deactivated {args.username} (#{row['user_id']}, role={row['role']})"))
         print(dim(f"  Revoked {revoked} live web session(s)."))

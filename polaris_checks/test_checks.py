@@ -12613,3 +12613,51 @@ def test_relying_party_questions_check_discriminates(tmp_path):
     # cases.json is gone
     (tmp_path / "conformance" / "cases.json").unlink()
     assert checks.check_conformance_asks_the_relying_party_question(tmp_path)[0].level == "FAIL", "must FAIL when cases.json is absent"
+
+
+def test_audit_writers_check_discriminates(tmp_path):
+    TYPES = ["LOGIN_SUCCESS", "LOGIN_FAILED", "LOGOUT", "PASSWORD_CHANGED", "ACCOUNT_CREATED",
+             "ACCOUNT_DEACTIVATED", "CSRF_REJECTED", "AUTH_REQUIRED", "AUTHZ_DENIED",
+             "RATE_LIMITED", "SESSION_EVICTED", "SESSION_EXPIRED", "SESSION_REVOKED",
+             "WEBAUTHN_REGISTERED", "WEBAUTHN_ASSERTED", "NETWORK_POLICY_DENIED",
+             "EMERGENCY_PASSWORD_LOGIN_AUTHORIZED", "LOGIN_LOCKED", "WEBAUTHN_DEREGISTERED",
+             "WEBAUTHN_ASSERTION_FAILED", "WEBAUTHN_REGISTRATION_REFUSED"]
+    def schema(types):
+        return ("CREATE TABLE AuthAuditLog (\n"
+                "    CONSTRAINT chk_authaudit_event_type\n"
+                "        CHECK (event_type IN (\n"
+                + ",\n".join("            '%s'" % x for x in types)
+                + "\n        ))\n);\n")
+    # Every type except the three declared as not-yet-emitted needs a writer.
+    WRITTEN = [x for x in TYPES if x not in
+               ("SESSION_EXPIRED", "SESSION_REVOKED", "EMERGENCY_PASSWORD_LOGIN_AUTHORIZED")]
+    def app(types):
+        return "".join("_audit(db, '%s')\n" % x for x in types)
+    good = {"polaris_sql/01_schema.sql": schema(TYPES), "polaris_web/app.py": app(WRITTEN)}
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+        (tmp_path / "polaris_sql" / "migrations").mkdir(parents=True, exist_ok=True)
+    write()
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # an admitted event type loses its writer and is not declared
+    write({"polaris_web/app.py": app([x for x in WRITTEN if x != "ACCOUNT_CREATED"])})
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when an admitted event type is written by nothing"
+    # naming the type somewhere that is not an audit write does not count
+    write({"polaris_web/app.py": app([x for x in WRITTEN if x != "ACCOUNT_CREATED"])
+           + "FILTERABLE = ['ACCOUNT_CREATED']\n"})
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when the type is only named in a filter list"
+    # a declared exemption that the schema no longer admits is stale
+    write({"polaris_sql/01_schema.sql": schema([x for x in TYPES if x != "SESSION_REVOKED"])})
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when a declared exemption is no longer admitted"
+    # the CHECK list is emptied, which satisfies the assertions above vacuously
+    write({"polaris_sql/01_schema.sql": schema(TYPES[:4])})
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when too few event types are parsed, rather than pass by finding nothing"
+    # the constraint is named but carries no list
+    write({"polaris_sql/01_schema.sql": "COMMENT ON CONSTRAINT chk_authaudit_event_type IS 'x';\n"})
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when the constraint is named but its list cannot be read"
+    # the schema is gone
+    write()
+    (tmp_path / "polaris_sql" / "01_schema.sql").unlink()
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when the schema is absent"

@@ -11097,6 +11097,92 @@ def check_unique_rules_are_tested_exhaustively(root: pathlib.Path) -> list[Findi
                "fixture table is cross-checked against the catalog in both directions")
 
 
+def check_every_audit_event_has_a_writer(root: pathlib.Path) -> list[Finding]:
+    """An event type nothing emits makes the audit log answer a question it cannot (v9.422).
+
+    `AuthAuditLog.event_type` is a CHECK over a fixed list, and the CLI's `audit-log` command
+    offers to filter by every name on it. Six of the twenty-one had no writer anywhere in the
+    tree. Among them ACCOUNT_CREATED: `polaris user-create` mints an operator account, which is
+    the action that grants the power to issue and revoke credentials, and verified empirically,
+    nothing recorded that it had happened. An operator asking the audit log who created accounts
+    got an empty answer, which reads exactly like "nobody did".
+
+    Three of the six are now written by the CLI, which is the only door that creates, deactivates
+    or re-passwords an operator account, on the same cursor as the change so the record and the
+    change commit together. The remaining three are session-lifecycle events in the web app;
+    they are DECLARED below rather than left invisible, because the difference between "nothing
+    emits this" and "nothing emits this and somebody looked" is the whole point of the list."""
+    name = "audit_writers"
+    # The list lives in 01_schema.sql and is REPLACED by migrations, so the live set is
+    # whatever the newest migration that rewrites the constraint says. Taking the union
+    # instead would keep requiring a writer for a type some migration had dropped.
+    sources_for_types = [root / "polaris_sql" / "01_schema.sql"]
+    sources_for_types += sorted(
+        f for f in (root / "polaris_sql" / "migrations").glob("*.up.sql")
+        if "chk_authaudit_event_type" in _read_path(f))
+    latest = sources_for_types[-1] if sources_for_types else None
+    if latest is None or not latest.is_file():
+        return _fail(name, "no file defines the AuthAuditLog event-type CHECK")
+    text = _read_path(latest)
+    # Anchor on the DEFINITION, not the last mention: these files also carry a
+    # COMMENT ON CONSTRAINT with the same name and no list in it.
+    defn = re.search(r"(?:ADD |^\s*)CONSTRAINT chk_authaudit_event_type\s*\n?\s*CHECK\s*\("
+                     r"(.*?)\)\s*\)", text, re.S | re.M)
+    if defn is None:
+        return _fail(name, f"{latest.name} names chk_authaudit_event_type but its CHECK list "
+                           "could not be read")
+    types = sorted(set(re.findall(r"'([A-Z_]{3,})'", defn.group(1))))
+    if len(types) < 15:
+        return _fail(name, f"only {len(types)} event types were parsed from the CHECK; the parse "
+                           "has broken and this check is passing by finding nothing")
+
+    #: Admitted by the schema and emitted by nothing, each with the reason. An entry here is a
+    #: filter the audit log offers over events that never arrive, so it is a debt and not a
+    #: design: the list should shrink.
+    NOT_YET_EMITTED = {
+        "EMERGENCY_PASSWORD_LOGIN_AUTHORIZED":
+            "the WebAuthn-bypass path is specified and gated but does not record its use yet",
+        "SESSION_EXPIRED": "session expiry is enforced on the next request rather than swept, "
+                           "so no code path observes the moment it happens",
+        "SESSION_REVOKED": "revocation goes through the same UPDATE as eviction, which records "
+                           "SESSION_EVICTED; the two have not been separated",
+    }
+    sources = {}
+    for pattern in ("polaris_web/*.py", "polaris_cli/*.py", "scripts/*.py"):
+        for path in sorted(root.glob(pattern)):
+            if path.name.startswith("test_"):
+                continue
+            sources[path.name] = _read_path(path)
+    missing = []
+    for ev in types:
+        # The type must sit INSIDE the audit call's parentheses. An earlier draft
+        # allowed any 400 characters without a semicolon, which in Python spans whole
+        # statements: a filter list several lines below a real _audit() call counted as
+        # a writer. Naming an event is not emitting it, and that is the entire point.
+        written = any(
+            re.search(r"_audit\w*\([^)]{0,300}?'%s'" % ev, src, re.S)
+            or re.search(r"INSERT INTO AuthAuditLog[^;]{0,200}?VALUES[^;]{0,200}?'%s'" % ev,
+                         src, re.S | re.I)
+            for src in sources.values())
+        if not written and ev not in NOT_YET_EMITTED:
+            missing.append(ev)
+    if missing:
+        return _fail(name,
+                     "event type(s) the schema admits are written by nothing, so the audit log "
+                     "offers a filter over events that never arrive and answers 'none' to a "
+                     "question it cannot answer: " + ", ".join(missing)
+                     + ". Emit them, or declare them in NOT_YET_EMITTED with the reason.")
+    stale = [ev for ev in NOT_YET_EMITTED if ev not in types]
+    if stale:
+        return _fail(name, "declared as not-yet-emitted but no longer admitted by the schema, so "
+                           "the declaration is stale: " + ", ".join(stale))
+    return _ok(name,
+               f"{len(types) - len(NOT_YET_EMITTED)} of {len(types)} AuthAuditLog event types are "
+               f"emitted by a real code path, and the {len(NOT_YET_EMITTED)} that are not are "
+               "declared with the reason rather than left as filters over events that never "
+               "arrive")
+
+
 def check_conformance_asks_the_relying_party_question(root: pathlib.Path) -> list[Finding]:
     """For some artifacts the signature verifying is not the question (v9.420, v9.421).
 
@@ -14599,6 +14685,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_route_guards_are_derived_not_listed,
     check_csrf_exemptions_do_not_trust_the_session,
     check_unique_rules_are_tested_exhaustively,
+    check_every_audit_event_has_a_writer,
     check_conformance_asks_the_relying_party_question,
     check_zk_witnesses_are_mutation_tested,
     check_triggers_are_mutation_tested,

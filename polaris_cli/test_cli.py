@@ -1080,6 +1080,73 @@ class RecoveryCommandTests(CLIBaseTestCase):
         self.assertNotEqual(r.returncode, 0)
 
 
+# ============================================================================
+# Operator-account actions leave a record (v9.422)
+# ============================================================================
+
+class OperatorAccountAuditTests(CLIBaseTestCase):
+    """The CLI is the only door that creates an operator account.
+
+    AuthAuditLog has admitted ACCOUNT_CREATED, ACCOUNT_DEACTIVATED and
+    PASSWORD_CHANGED since the operator-session migration, and `audit-log`
+    offers to filter by all three. Nothing wrote one: an account could be
+    created, given the admin role and used to issue or revoke credentials with
+    no record that it had been made, and an operator searching the log for
+    account creations got an empty answer that reads like "nobody did".
+    """
+
+    USER = 'audit_probe_user'
+
+    def _events_for(self, username):
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT event_type, detail FROM AuthAuditLog WHERE username = %s "
+                            "ORDER BY audit_id", (username,))
+                return [(r['event_type'], r['detail']) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def test_the_account_lifecycle_is_recorded_end_to_end(self):
+        run_cli('user-create', self.USER, 'operator', '--password', 'Probe@Pass1!')
+        run_cli('user-passwd', self.USER, '--password', 'Probe@Pass2!')
+        run_cli('user-deactivate', self.USER)
+        events = [e for e, _ in self._events_for(self.USER)]
+        self.assertEqual(
+            events, ['ACCOUNT_CREATED', 'PASSWORD_CHANGED', 'ACCOUNT_DEACTIVATED'],
+            "the operator-account lifecycle must be in the audit log in order; got %r" % (events,))
+
+    def test_the_record_names_who_did_it_and_never_the_password(self):
+        run_cli('user-create', self.USER, 'admin', '--password', 'Probe@Secret9!')
+        (event, detail), = self._events_for(self.USER)
+        self.assertEqual(event, 'ACCOUNT_CREATED')
+        self.assertIn('via CLI', detail,
+                      "the record must say the change came through the CLI")
+        self.assertIn('role=admin', detail,
+                      "the record must say which role was granted; that is the whole risk")
+        self.assertNotIn('Probe@Secret9!', detail,
+                         "the audit row must never carry the password")
+
+    def test_the_record_and_the_account_commit_together(self):
+        """A row that can be rolled back separately from its subject is not a record."""
+        run_cli('user-create', self.USER, 'operator', '--password', 'Probe@Pass1!')
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT (SELECT count(*) FROM AppUser WHERE username=%s) AS u, "
+                            "(SELECT count(*) FROM AuthAuditLog WHERE username=%s "
+                            " AND event_type='ACCOUNT_CREATED') AS a", (self.USER, self.USER))
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        self.assertEqual((row['u'], row['a']), (1, 1),
+                         "the account and its record must both be there, or neither")
+
+
 if __name__ == '__main__':
     # Verify connection works before running anything
     try:
