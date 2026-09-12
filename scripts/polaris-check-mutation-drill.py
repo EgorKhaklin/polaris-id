@@ -66,8 +66,6 @@ MUTABLE_SUFFIXES = (".py", ".sql", ".sh", ".yml", ".yaml")
 #: through a module constant the harness cannot resolve, and image_builds_are_retried
 #: iterates every workflow, so deleting one leaves the others carrying the property.
 DELETION_SURVIVORS_EXPECTED = {
-    "check_athena_no_person":
-        "reads its Athena SQL via a module constant the harness cannot resolve",
     "check_image_builds_are_retried":
         "iterates every workflow; deleting one leaves the rest to carry the property",
 }
@@ -81,14 +79,50 @@ IGNORE = shutil.ignore_patterns(".git", "node_modules", "target", "__pycache__",
                                 ".hypothesis", "venv", ".ruff_cache")
 
 
+def _module_path_constants():
+    """Module-level `NAME = "some/path"` bindings in checks.py, as a name -> path map.
+
+    v9.438: a check may name its input through a constant rather than a literal --
+    `_read(root, _ATHENA_SQL_REL)` -- and resolving only literals left those checks
+    reported as deletion survivors for a reason that was about this harness, not about
+    them. `check_athena_no_person` does fail when 16_athena.sql is deleted; the drill
+    simply could not find the filename to delete. An exception declared for a harness
+    limitation reads exactly like one declared for a real gap, which is why this is
+    worth resolving rather than annotating.
+    """
+    out = {}
+    try:
+        tree = ast.parse((ROOT / "polaris_checks" / "checks.py").read_text(errors="replace"))
+    except Exception:
+        return out
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant) \
+                and isinstance(node.value.value, str) and "/" in node.value.value:
+            out[target.id] = node.value.value
+    return out
+
+
+_PATH_CONSTANTS = None
+
+
 def reads_of(fn):
-    """Files the check names literally through _read / _read_raw."""
+    """Files the check names through _read / _read_raw, literally or via a constant."""
+    global _PATH_CONSTANTS
+    if _PATH_CONSTANTS is None:
+        _PATH_CONSTANTS = _module_path_constants()
     out = []
     for node in ast.walk(fn):
         if (isinstance(node, ast.Call)
                 and getattr(node.func, "id", "") in ("_read", "_read_raw")
-                and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)):
-            out.append(node.args[1].value)
+                and len(node.args) >= 2):
+            arg = node.args[1]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                out.append(arg.value)
+            elif isinstance(arg, ast.Name) and arg.id in _PATH_CONSTANTS:
+                out.append(_PATH_CONSTANTS[arg.id])
     return out
 
 

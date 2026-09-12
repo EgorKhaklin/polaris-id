@@ -5,6 +5,36 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.438 — 2026-09-12 (an exception that was about the harness, not about the check)
+
+`polaris-check-mutation-drill.py` deletes each check's named inputs and requires the check to
+notice. Two checks were declared as surviving that, each with a reason. One of the two reasons
+was not about the check at all:
+
+> `check_athena_no_person`: reads its Athena SQL via a module constant the harness cannot resolve
+
+The harness resolved only literal filenames in `_read(root, "some/path")`, and that check names
+its input as `_read(root, _ATHENA_SQL_REL)`. So it was never deletion-tested, and the declaration
+recorded the fact without distinguishing it from a check that genuinely does not notice.
+
+**It does notice.** Copying the tree, deleting `polaris_sql/16_athena.sql` and calling the check
+returns FAIL with the right message. The exception was masking a measurement that had simply
+never been taken.
+
+The harness resolves module-level path constants now. 88 checks fully mutated rather than 87, 226
+deletion-tested rather than 222, and one declared exception instead of two. The one that remains
+is real: `check_image_builds_are_retried` iterates every workflow and requires all of them to
+build through the retrying helper, so deleting one leaves the rest carrying the property.
+
+An exception declared for a harness limitation reads exactly like one declared for a real gap.
+That is the whole reason to resolve it rather than annotate it, and it is the same distinction
+this session has been drawing everywhere else: between a thing that was checked and a thing that
+was assumed.
+
+**250 invariant checks. 0 of 88 survive a tree where their property is commented out.**
+
+---
+
 ## v9.437 — 2026-09-12 (every refusal a stored procedure makes is now tested)
 
 v9.434 measured 59 refusals across 16 stored procedures and found 27 that could be deleted with
