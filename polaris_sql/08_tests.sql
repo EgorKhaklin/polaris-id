@@ -132,8 +132,14 @@ BEGIN
         PERFORM _record('B.3: invalid disclosure_level rejected', TRUE, NULL);
     END;
 
-    -- B.4: invalid agency_type rejected
+    -- B.4: invalid agency_type rejected.
+    -- The reason is declared first on purpose. Since v9.440 trg_agency_audited refuses
+    -- an INSERT with no stated reason, and it is a BEFORE trigger, so it fires ahead of
+    -- the CHECK. Without this the block would still pass, on the wrong refusal, and
+    -- would keep passing if agency_type_check were dropped.
     BEGIN
+        PERFORM set_config('polaris.justification',
+                           'schema self-test, asserting the agency_type CHECK', true);
         INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level)
         VALUES ('Test Agency', 'ALIEN', 'US', 1);
         PERFORM _record('B.4: invalid agency_type rejected', FALSE,
@@ -142,8 +148,11 @@ BEGIN
         PERFORM _record('B.4: invalid agency_type rejected', TRUE, NULL);
     END;
 
-    -- B.5: authorization_level out-of-range rejected
+    -- B.5: authorization_level out-of-range rejected. The reason is declared for the
+    -- reason given at B.4: the CHECK must be what refuses this, not the recorder.
     BEGIN
+        PERFORM set_config('polaris.justification',
+                           'schema self-test, asserting the level range CHECK', true);
         INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level)
         VALUES ('Test Agency', 'FEDERAL', 'US', 99);
         PERFORM _record('B.5: out-of-range authorization_level rejected', FALSE,

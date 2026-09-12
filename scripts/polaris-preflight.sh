@@ -129,9 +129,21 @@ else
 fi
 
 # 5. Reminder for the DB-backed product suites (need Postgres + the venv).
-echo "  · DB suites: 'python3 scripts/polaris-ship.py run' (test_app, test_check_constraints,"
-echo "    test_invariants_property, test_redaction_property sharded; about two minutes);"
-echo "    test_cli runs from polaris_cli/ and rides along in CI via polaris-coverage.sh"
+#    Both halves, deliberately. Until v9.442 this named only the four sharded ones, which
+#    read like the whole product suite and are not: v9.440 passed them and broke
+#    polaris_sim.test_sim in CI, twice. check_local_gate_covers_ci binds this list to the
+#    one polaris-coverage.sh actually runs.
+echo "  · DB suites, sharded: 'python3 scripts/polaris-ship.py run' (test_app,"
+echo "    test_check_constraints, test_invariants_property, test_redaction_property;"
+echo "    about two minutes)"
+echo "  · and the rest, which CI runs and 'run' does not shard:"
+echo "      cd polaris_web && python3 -m unittest test_pqc_signing test_custody \\"
+echo "          test_secretstore test_transparency test_capacity test_referee \\"
+echo "          test_enrollment_code test_canonical_equivalence"
+echo "      cd polaris_cli && python3 -m unittest test_cli"
+echo "      cd scripts    && python3 -m unittest test_verify_load test_wallet \\"
+echo "          test_relying_party test_verify_conformance test_verify_p9 test_ship_tool"
+echo "      python3 -m unittest polaris_sim.test_sim"
 
 echo
 if [ "$fails" -eq 0 ]; then

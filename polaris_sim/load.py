@@ -50,10 +50,20 @@ class LoadStats:
         return self.people / self.seconds if self.seconds > 0 else 0.0
 
 
+#: Why the simulation is allowed to create authorities. Since v9.440 the database
+#: refuses an INSERT into Agency without a stated reason of at least 20 characters,
+#: and the simulation is a caller like any other: a loader that could bypass the rule
+#: would be simulating a system that does not have it.
+_SIM_REASON = ("synthetic bureau for the national simulation, notional data only")
+
+
 def _insert_agencies(cur, plan: _nation.NationPlan) -> dict[str, int]:
     """Insert every bureau as an Agency (configuration data, like the seed) and
     return name -> agency_id. Bureau names are unique by construction."""
     ids: dict[str, int] = {}
+    # Transaction-local, so it cannot leak into whatever runs on this connection next.
+    cur.execute("SELECT set_config('polaris.actor', 'national-simulation', true), "
+                "       set_config('polaris.justification', %s, true)", (_SIM_REASON,))
     for b in plan.bureaus:
         cur.execute(
             "INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level) "

@@ -207,7 +207,24 @@ def plan(out=None):
 # run: the product suite sharded across processes, one database per shard.
 # --------------------------------------------------------------------------------------
 
+# The four DB-heavy polaris_web suites, worth sharding. They are NOT the whole product
+# suite: scripts/polaris-coverage.sh runs fourteen more in CI, and v9.440 shipped twice
+# with a red CI because this list looks like the product suite and is not. Everything
+# coverage.sh runs and this does not is named in UNSHARDED_SUITES below, preflight
+# prints it, and check_local_gate_covers_ci fails if the two drift apart.
 DEFAULT_MODULES = ["test_app", "test_check_constraints", "test_invariants_property", "test_redaction_property"]
+
+#: Run these too before a ship. Sharding buys nothing here (they are fast, or they bind
+#: ports), but skipping them is how a break reaches CI. Keyed by the directory to run from.
+UNSHARDED_SUITES = {
+    "polaris_web": ["test_pqc_signing", "test_custody", "test_secretstore", "test_transparency",
+                    "test_capacity", "test_referee", "test_enrollment_code",
+                    "test_canonical_equivalence"],
+    "polaris_cli": ["test_cli"],
+    "scripts": ["test_verify_load", "test_wallet", "test_relying_party",
+                "test_verify_conformance", "test_verify_p9", "test_ship_tool"],
+    ".": ["polaris_sim.test_sim"],
+}
 # A class that spawns processes, binds a port or runs gunicorn cannot share a machine slot with
 # another such class; they run one after another in the serial shard.
 SERIAL_MARKERS = ("subprocess", "gunicorn", "socket", "multiprocessing")

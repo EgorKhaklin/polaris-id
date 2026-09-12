@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.442 — 2026-09-12 (the local gate ran four suites; CI runs eighteen)
+
+v9.440's trigger refused an INSERT into Agency with no stated reason. The national simulation's
+loader creates 51 jurisdictions' bureaus and stated none, so `polaris_sim.test_sim` broke. It
+shipped twice before CI said so, because the local gate never ran that suite.
+
+`polaris-ship.py run` shards four polaris_web suites and reads like the product suite.
+`polaris-coverage.sh` runs eighteen. Nothing connected the two, so a change could pass everything
+locally and break one of the other fourteen. That is the actual defect here; the simulation was
+the instance that found it.
+
+The simulation now states its reason like the seed data does, transaction-local so it cannot leak
+into whatever runs next on that connection. A loader allowed to bypass the rule would be
+simulating a system that does not have it.
+
+`08_tests.sql` B.4 and B.5 were passing for the wrong reason. Both assert that a bad
+`agency_type` and an out-of-range `authorization_level` are rejected, both catch `WHEN OTHERS`,
+and since v9.440 both were being rejected by the recorder before the CHECK was ever evaluated.
+They would have kept passing with `agency_type_check` dropped. Each now states a reason first, so
+the CHECK is what refuses it.
+
+`check_local_gate_covers_ci` binds the two lists: a suite CI runs cannot be one the ship tool has
+never heard of. It either shards it or names it in `UNSHARDED_SUITES`, and preflight now prints
+the unsharded ones as commands rather than mentioning `test_cli` and stopping. Verified against
+the tree as v9.440 left it, where it names `polaris_sim.test_sim` first among eight.
+
+Also: `scripts/polaris-loadtest-tokens.sh` inserts into `Agency (agency_name,
+jurisdiction_country)`. Neither column exists, and neither has for a long time. Left alone here
+and noted, because fixing it is not this change.
+
+**254 invariant checks. 44 tables.**
+
+---
+
 ## v9.441 — 2026-09-12 (a migration whose header promised a revert it did not have)
 
 v9.440's migration says, in its own header, "REVERSIBLE: the .down.sql drops the trigger and the

@@ -13526,10 +13526,12 @@ def test_migrations_reversible_check_discriminates(tmp_path):
 
     (d / "2026-01-01-001-first.up.sql").write_text("CREATE TABLE A (id int);\n")
     (d / "2026-01-01-001-first.down.sql").write_text("DROP TABLE A;\n")
-    assert level() == "OK", "must PASS when every migration is bidirectional"
+    good = checks.check_migrations_are_reversible(tmp_path)[0]
+    assert good.level == "OK", "must PASS when every migration is bidirectional"
 
     (d / "2026-01-02-002-second.up.sql").write_text("CREATE TABLE B (id int);\n")
-    assert level("2026-01-02-002-second.up.sql") == "FAIL", \
+    bad = checks.check_migrations_are_reversible(tmp_path)[0]
+    assert bad.level == "FAIL" and "2026-01-02-002-second.up.sql" in bad.message, \
         "must FAIL, and name the migration, when a revert is missing"
 
     (d / "2026-01-02-002-second.down.sql").write_text("DROP TABLE B;\n")
@@ -13548,3 +13550,52 @@ def test_migrations_reversible_check_discriminates(tmp_path):
     import shutil
     shutil.rmtree(tmp_path / "polaris_sql")
     assert level("is missing") == "FAIL", "must FAIL when the migrations directory is gone"
+
+
+def test_local_gate_covers_ci_check_discriminates(tmp_path):
+    """v9.440 passed every suite the ship tool knows and broke one it does not."""
+    sc = tmp_path / "scripts"
+    sc.mkdir(parents=True)
+
+    COV = ('run "$ROOT/polaris_web" unittest test_app test_capacity\n'
+           'run "$ROOT/polaris_cli" unittest test_cli\n'
+           'run "$ROOT" unittest polaris_sim.test_sim\n')
+    SHIP = ('DEFAULT_MODULES = ["test_app"]\n'
+            'UNSHARDED_SUITES = {"polaris_cli": ["test_cli"],\n'
+            '                    "polaris_web": ["test_capacity"],\n'
+            '                    ".": ["polaris_sim.test_sim"]}\n')
+
+    def write(cov=None, ship=None):
+        (sc / "polaris-coverage.sh").write_text(COV if cov is None else cov)
+        (sc / "polaris-ship.py").write_text(SHIP if ship is None else ship)
+
+    def level(msg_contains=None):
+        out = checks.check_local_gate_covers_ci(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    good = checks.check_local_gate_covers_ci(tmp_path)[0]
+    assert good.level == "OK", "must PASS when the ship tool knows every suite CI runs"
+
+    # The v9.440 shape: the simulation suite runs in CI and the ship tool has not heard of it.
+    write(ship='DEFAULT_MODULES = ["test_app"]\nUNSHARDED_SUITES = {"polaris_cli": ["test_cli"],\n'
+               '                    "polaris_web": ["test_capacity"]}\n')
+    assert level("polaris_sim.test_sim") == "FAIL", \
+        "must FAIL, and name it, when a CI suite is unknown to the ship tool"
+
+    write(ship='DEFAULT_MODULES = ["test_app"]\n')
+    out = checks.check_local_gate_covers_ci(tmp_path)[0]
+    assert out.level == "FAIL" and "3 suite(s)" in out.message, \
+        "must count every unknown suite, not stop at the first"
+
+    # A parser that has drifted from the script measures nothing, and must say so rather
+    # than reporting a clean result off an empty set.
+    write(cov='echo "no suites here"\n')
+    assert level("measuring nothing") == "FAIL", \
+        "must FAIL rather than pass vacuously when it can read no suites at all"
+
+    (sc / "polaris-ship.py").unlink()
+    assert level("could not be read") == "FAIL", "must FAIL when the ship tool is missing"

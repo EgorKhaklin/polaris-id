@@ -1044,6 +1044,46 @@ def check_migration_timeouts(root: pathlib.Path) -> list[Finding]:
                "fast instead of stalling the table)")
 
 
+def check_local_gate_covers_ci(root: pathlib.Path) -> list[Finding]:
+    """Every suite CI runs is one the ship tool knows about (v9.442).
+
+    `polaris-ship.py run` shards four polaris_web suites. `polaris-coverage.sh` runs
+    eighteen. Nothing said so, and the four read like the product suite, so a ship could
+    pass every local suite and break one of the other fourteen in CI. v9.440 did exactly
+    that: the trigger it added refused the national simulation's bureau loader, which
+    only `polaris_sim.test_sim` exercises, and shipped twice before CI said so.
+
+    The rule is not that the ship tool must RUN them all. It is that a suite CI runs
+    cannot be one the ship tool has never heard of: either it shards it, or it names it
+    in UNSHARDED_SUITES so preflight can tell you to run it.
+    """
+    name = "local_gate_covers_ci"
+    cov = _read(root, "scripts/polaris-coverage.sh")
+    ship = _read(root, "scripts/polaris-ship.py")
+    if not cov or not ship:
+        return _fail(name, "scripts/polaris-coverage.sh or polaris-ship.py could not be read")
+
+    ci: set[str] = set()
+    for line in cov.splitlines():
+        if not re.match(r"\s*(run|run_standalone)\s", line):
+            continue
+        for tok in re.findall(r"\b((?:[\w.]+\.)?test_\w+)\b", line):
+            ci.add(tok.split("/")[-1].removesuffix(".py"))
+    if not ci:
+        return _fail(name, "no suites could be read out of polaris-coverage.sh; the parser and "
+                           "the script have drifted, so this check is measuring nothing")
+
+    unknown = sorted(t for t in ci if t not in ship)
+    if unknown:
+        return _fail(name, "%d suite(s) run in CI that scripts/polaris-ship.py has never heard "
+                           "of, so a ship can pass the local gate and break them: %s. Shard them "
+                           "in DEFAULT_MODULES or name them in UNSHARDED_SUITES."
+                           % (len(unknown), ", ".join(unknown)))
+    return _ok(name, "all %d suites CI runs are known to the ship tool: it shards the DB-heavy "
+                     "ones and names the rest, so the local gate cannot be quietly narrower than "
+                     "the one that gates the push" % len(ci))
+
+
 def check_migrations_are_reversible(root: pathlib.Path) -> list[Finding]:
     """Every .up.sql has a .down.sql beside it (v9.441).
 
@@ -15896,6 +15936,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sast_scanning,
     check_migration_timeouts,
     check_migrations_are_reversible,
+    check_local_gate_covers_ci,
     check_deploy_syncs_db_objects,
     check_web_concurrency_honored,
     check_prometheus_multiprocess,
