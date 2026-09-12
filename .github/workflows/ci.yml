@@ -295,6 +295,19 @@ jobs:
       - name: Trusted referee — bounded where it would be a credential factory
         run: python scripts/polaris-referee-drill.py
 
+      # v9.445 — two operator scripts turned out never to have run: one named four columns
+      # AuditAccessLog has never had, the other six across three tables, both since the v9.30
+      # baseline. A script nobody runs is a script whose failure nobody sees, and every other
+      # guarantee here is checked by something that does run. So every INSERT column list and
+      # UPDATE target in the tree is resolved against the LIVE catalog rather than a parser:
+      # the first parser silently missed VerificationEvent, because a partitioned table ends
+      # ") PARTITION BY RANGE (...)" and not ");", and then called every column of it absent.
+      # Carries a negative control, since "0 unresolved references" means nothing unless the
+      # scanner can produce one, and reports what it skipped rather than implying it read
+      # everything.
+      - name: Schema drift — every SQL reference resolves against the live catalog
+        run: python scripts/polaris-schema-drift-drill.py
+
       # v9.384 (P7.3) — the id space is actually wide, not just declared wide. A SERIAL is
       # an integer column PLUS a sequence declared AS integer, and ALTER COLUMN TYPE BIGINT
       # changes only the first. Every tool then reports the column as bigint, the schema file

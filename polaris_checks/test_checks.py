@@ -13787,3 +13787,65 @@ def test_shell_arrays_portable_check_discriminates(tmp_path):
     write('#!/usr/bin/env bash\nARGS=()\npsql "${ARGS[@]}"\n')
     assert level("measuring nothing") == "FAIL", \
         "must FAIL rather than pass vacuously when no script sets -u"
+
+
+def test_schema_drift_drill_check_discriminates(tmp_path):
+    """The needles live in printed strings, because _read strips comments."""
+    (tmp_path / "scripts").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+
+    DRILL = ('import psycopg2\n'
+             'def catalog(cur):\n'
+             '    cur.execute("SELECT lower(table_name) FROM information_schema.columns")\n'
+             'def main():\n'
+             '    print("  negative control: a planted reference is caught")\n'
+             '    if not caught:\n'
+             '        print("the negative control was not caught, so a clean result means nothing")\n'
+             '        return 1\n'
+             '    print("%d reference(s) skipped as not statically parseable" % n)\n')
+    CI = "jobs:\n  test:\n    steps:\n      - run: python scripts/polaris-schema-drift-drill.py\n"
+
+    def write(drill=DRILL, ci=CI, drill_present=True):
+        f = tmp_path / "scripts" / "polaris-schema-drift-drill.py"
+        if drill_present:
+            f.write_text(drill)
+        elif f.exists():
+            f.unlink()
+        (tmp_path / ".github" / "workflows" / "ci.yml").write_text(ci)
+
+    def level(msg_contains=None):
+        out = checks.check_schema_drift_drill(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    good = checks.check_schema_drift_drill(tmp_path)[0]
+    assert good.level == "OK", "must PASS when the drill asks the catalog, runs in CI and " \
+                               "carries a control"
+
+    write(drill_present=False)
+    bad = checks.check_schema_drift_drill(tmp_path)[0]
+    assert bad.level == "FAIL" and "is missing" in bad.message, \
+        "must FAIL when nothing resolves the tree's SQL at all"
+
+    write(drill=DRILL.replace("information_schema.columns", "open('01_schema.sql').read()"))
+    assert level("asking the catalog") == "FAIL", \
+        "must FAIL when the drill parses the schema files instead of the catalog"
+
+    write(ci="jobs:\n  test:\n    steps:\n      - run: echo nothing\n")
+    assert level("not wired into CI") == "FAIL", \
+        "must FAIL when a statement that stops resolving cannot fail a push"
+
+    write(drill=DRILL.replace('print("  negative control: a planted reference is caught")\n', ""))
+    assert level("no negative control") == "FAIL", \
+        "must FAIL when a clean result cannot be distinguished from a scanner that read nothing"
+
+    write(drill=DRILL.replace('        print("the negative control was not caught, so a clean result means nothing")\n', ""))
+    assert level("no negative control") == "FAIL", \
+        "must FAIL when the control is reported but not acted on"
+
+    write(drill=DRILL.replace('    print("%d reference(s) skipped as not statically parseable" % n)\n', ""))
+    assert level("does not report what it skipped") == "FAIL", \
+        "must FAIL when the verdict implies it read every reference in the tree"

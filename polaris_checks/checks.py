@@ -1084,6 +1084,65 @@ def check_local_gate_covers_ci(root: pathlib.Path) -> list[Finding]:
                      "the one that gates the push" % len(ci))
 
 
+def check_schema_drift_drill(root: pathlib.Path) -> list[Finding]:
+    """Every SQL reference in the tree is resolved against the live catalog (v9.445).
+
+    v9.443 found two operator scripts that had never run. `polaris-set-webauthn-deadline.sh`
+    named four columns `AuditAccessLog` has never had, so ON_ERROR_STOP rolled the whole
+    transaction back and it could not set a deadline at all; `polaris-loadtest-tokens.sh`
+    named six across three tables. Both dated to the v9.30 baseline, four hundred and ten
+    versions. They were found by hand. Nothing would have found the next one.
+
+    Three properties, and the last is the one that makes the first two mean anything:
+
+      - The drill exists and asks the LIVE CATALOG. A file-based check would have to
+        reconstruct the schema from 01_schema.sql plus thirty-nine migrations, and the
+        first attempt at that silently missed VerificationEvent -- a partitioned table
+        ends `) PARTITION BY RANGE (...)`, not `);` -- then reported every one of its
+        columns as absent. A checker that is wrong about the schema is worse than none.
+      - It runs in CI, so a statement that stops resolving fails a push.
+      - It carries a NEGATIVE CONTROL. "0 unresolved references" is not a measurement
+        unless the scanner can produce one; a planted reference to a column that cannot
+        exist must be caught, and the drill fails outright if it is not. The same
+        anti-vacuity the conformance and procedure-mutation drills carry.
+    """
+    name = "schema_drift_drill"
+    drill = _read(root, "scripts/polaris-schema-drift-drill.py")
+    ci = _read(root, ".github/workflows/ci.yml")
+    if not drill:
+        return _fail(name, "scripts/polaris-schema-drift-drill.py is missing: nothing resolves "
+                           "the tree's SQL against the schema, so a statement naming a dead "
+                           "column sits there looking like a path that can execute")
+    if not ci:
+        return _fail(name, ".github/workflows/ci.yml could not be read")
+
+    findings: list[Finding] = []
+    if "information_schema.columns" not in drill:
+        findings.extend(_fail(name, "the drill does not read information_schema, so it is "
+                                    "parsing the schema files rather than asking the catalog; "
+                                    "that is how VerificationEvent went missing"))
+    if "polaris-schema-drift-drill.py" not in ci:
+        findings.extend(_fail(name, "the drill is not wired into CI, so a statement that stops "
+                                    "resolving does not fail a push"))
+    # Both needles live in PRINTED STRINGS on purpose: _read strips comments, so a
+    # needle in a `#` comment would be invisible here and the check would fail on a
+    # drill that has the control.
+    if "negative control:" not in drill or "the negative control was not caught" not in drill:
+        findings.extend(_fail(name, "the drill has no negative control: a clean result would "
+                                    "not distinguish a tree whose SQL resolves from a scanner "
+                                    "that read nothing"))
+    if "skipped as not statically parseable" not in drill:
+        findings.extend(_fail(name, "the drill does not report what it skipped, so a verdict "
+                                    "reads as though it resolved every reference in the tree "
+                                    "when it cannot parse interpolated SQL at all"))
+    if findings:
+        return findings
+    return _ok(name, "every INSERT column list and UPDATE target in the tree is resolved "
+                     "against the live catalog by a drill that runs in CI, carries a negative "
+                     "control so a clean result is a measurement, and names what it could not "
+                     "parse instead of implying it read everything")
+
+
 def check_shell_arrays_are_portable(root: pathlib.Path) -> list[Finding]:
     """A shell array that can be empty is expanded in the form that survives (v9.444).
 
@@ -16134,6 +16193,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_migration_timeouts,
     check_migrations_are_reversible,
     check_shell_arrays_are_portable,
+    check_schema_drift_drill,
     check_local_gate_covers_ci,
     check_deploy_syncs_db_objects,
     check_web_concurrency_honored,

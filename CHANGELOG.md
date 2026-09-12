@@ -5,6 +5,46 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.445 — 2026-09-12 (the two dead scripts were found by hand; nothing would find the next one)
+
+v9.443 found two operator scripts that had never run, one naming four columns `AuditAccessLog`
+has never had and one naming six across three tables, both since the v9.30 baseline. They were
+found by resolving every INSERT in the tree against the catalog by hand. That is not a thing that
+happens twice.
+
+`scripts/polaris-schema-drift-drill.py` is that scan as a path that runs. Every INSERT column
+list and every UPDATE target in 221 files is resolved against the LIVE CATALOG, and it runs in CI.
+Verified against the tree as v9.443 found it: restoring the three dead statements makes it name
+each one with file, line, table and the columns that are not there.
+
+It asks the catalog rather than the schema files, and that was learned rather than chosen. The
+first parser silently missed `VerificationEvent` -- a partitioned table ends `) PARTITION BY
+RANGE (...)` and not `);` -- and then reported every one of its columns as absent, which would
+have been a check confidently wrong about the schema. That is worse than no check, so the
+authority is the catalog and the instrument is a drill.
+
+It carries a NEGATIVE CONTROL, on the terms the conformance and procedure-mutation drills set: a
+planted reference to a column that cannot exist must be caught, and the drill fails outright if
+it is not, because "0 unresolved references" is not a measurement unless the scanner can produce
+one. It also reports what it SKIPPED. It cannot read SELECT projections, joins, or SQL built by
+interpolation, and 48 references in this tree are not statically parseable, so the verdict says
+so rather than implying the tree is clean.
+
+`check_schema_drift_drill` pins all four: the catalog as the source, the CI wiring, the control,
+and the skip reporting.
+
+Also: `polaris-federation-instances-drill.py` is given two loaded databases and does not load
+them, so it left its attestations and signatures behind and a second run died three hundred lines
+in on whichever UniqueViolation came first -- which reads as a broken tree and is not one. It now
+refuses at startup with the reload command, exit 3, detected on a signal measured against both
+states (a fresh load has no agency signing key; a used one has three). One insert that its own
+sibling eleven lines above already tolerated now tolerates a conflict too. Making each of the
+remaining writes tolerant in turn is the wrong shape: the contract is a fresh pair, so it says so.
+
+**257 invariant checks.**
+
+---
+
 ## v9.444 — 2026-09-12 (two drills the gate asked for could not run on the machine it gates)
 
 Under `set -u`, bash 3.2 treats `"${A[@]}"` as an unbound variable when A is empty and kills the

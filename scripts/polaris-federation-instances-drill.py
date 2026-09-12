@@ -207,8 +207,47 @@ def _kill(proc):
         proc.wait(timeout=10)
 
 
+def _refuse_a_used_database():
+    """Exit 3 if either database already carries this drill's artifacts.
+
+    This drill is GIVEN two loaded databases and does not load them itself, so it writes
+    attestations, token signatures and relying parties into them and leaves them there. A
+    second run then dies partway through on a UniqueViolation traceback from whichever
+    write collided first, which reads as a broken tree and is not one. Several of those
+    writes tolerate a conflict and several do not, and making each one tolerant in turn
+    is the wrong shape: the drill's contract is a FRESH pair, so it says so here rather
+    than failing obscurely three hundred lines later.
+    """
+    import psycopg2
+
+    for db in (A_DB, B_DB):
+        try:
+            with _conn(db) as c, c.cursor() as cur:
+                # A freshly loaded database has NO agency signing key: the seed leaves
+                # the column NULL and this drill's first act is to write real ML-DSA keys
+                # into it for agencies 1, 2 and 3. Measured on both: fresh 0, used 3.
+                # _conn yields plain tuples, not RealDictCursor rows.
+                cur.execute("SELECT count(*) FROM Agency "
+                            " WHERE signing_public_key_hex IS NOT NULL")
+                used = cur.fetchone()[0]
+        except psycopg2.Error:
+            # Unreachable or unloaded. The normal precondition path reports that; this
+            # catches ONLY database errors, because a broad except here once swallowed a
+            # TypeError in this very function and the guard silently did nothing.
+            return
+        if used:
+            print("federation-instances drill: %s already carries this drill's writes. It "
+                  "needs a FRESHLY LOADED pair and does not load them itself; reload both "
+                  "and re-run:\n"
+                  "    for db in %s %s; do dropdb --if-exists $db; createdb $db; "
+                  "(cd polaris_sql && psql -q -d $db -f 00_load_all.sql); done"
+                  % (db, A_DB, B_DB), file=sys.stderr)
+            sys.exit(3)
+
+
 def main():
     os.environ["POLARIS_USE_REAL_PQC"] = "1"
+    _refuse_a_used_database()
     try:
         import pqc_signing
     except Exception as e:
@@ -601,8 +640,14 @@ def main():
         checks.append(("a THIRD authority's attestation of X does not authorize X at B (403): trust is directional, not transitive",
                        (st15b, "directional" in ((body15b or {}).get("error_description") or "")), (403, True)))
         with _conn(B_DB) as cb, cb.cursor() as cur:
+            # ON CONFLICT for the reason the sibling insert eleven lines above has it: this
+            # drill does not load its own databases, it is given two, so a second run finds
+            # the row it wrote on the first and died on the duplicate. A drill that only
+            # passes against a freshly loaded pair is a drill that reports a broken tree.
             cur.execute("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, attested_date, valid_until, signed_by) "
-                        "VALUES (1, 3, %s, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year', 1)", (CONTEXT_ID,))
+                        "VALUES (1, 3, %s, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year', 1) "
+                        "ON CONFLICT (attesting_agency_id, attested_agency_id, context_id) WHERE revocation_date IS NULL DO NOTHING",
+                        (CONTEXT_ID,))
             cb.commit()
         st15c, ex15c = _http_post_json(gw, {"envelope": envelope(pub_x, _kf_x, ask, "nonce-3c"), "body": ask})
         checks.append(("once B itself attests X, the same exchange is authorized (200) via B's attestation and no other",
