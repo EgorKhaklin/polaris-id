@@ -321,6 +321,16 @@ class ArtifactVerdict:
     fresh: Optional[bool]
     note: Optional[str] = None
     witnesses: Optional[List[str]] = None
+    #: Whether the key that signed this artifact is one the caller trusts. None when no
+    #: anchors were supplied, which is the honest answer to a question nobody asked.
+    #:
+    #: v9.430. The SDK could not answer this for any windowed artifact: a caller learned
+    #: that a trust list, registry, manifest, timestamp, ID token, holder binding or epoch
+    #: bundle carried a valid signature, and had no way to learn whose. The detached
+    #: verifier has always taken anchors for all seven. Authenticity without trust is the
+    #: distinction v9.420 drew for the ID token's audience, one level out: a genuine
+    #: signature by a stranger is genuine and worthless.
+    issuer_trusted: Optional[bool] = None
 
 
 def _revoked_root(leaves) -> str:
@@ -347,27 +357,34 @@ class IdTokenVerdict:
     sub: Optional[str]
     acr: Optional[str]
     note: Optional[str] = None
+    #: v9.431: whether the agency that signed the token is one this relying party trusts.
+    #: None when no anchors were supplied. A genuine token from an agency you have never
+    #: heard of is genuine and meaningless, which is the same distinction v9.420 drew
+    #: about the audience one level in.
+    issuer_trusted: Optional[bool] = None
 
 
-def verify_id_token(tok: dict, audience=None, nonce=None, now=None) -> IdTokenVerdict:
+def verify_id_token(tok: dict, audience=None, nonce=None, now=None,
+                    anchors=None) -> IdTokenVerdict:
     """Verify a polaris-id-token/1 (P8.4) as a relying party, offline: the issuing agency's
     signature, that it was issued to THIS audience, that it carries the login's nonce, and
     freshness (iat <= now < exp). The subject is a credential hash, never a person."""
     tok = tok if isinstance(tok, dict) else {}
     if tok.get("format") != "polaris-id-token/1":
         return IdTokenVerdict(False, None, None, None, tok.get("sub"), tok.get("acr"), "not a polaris-id-token/1")
-    base = verify_signed_artifact(tok, now)
+    base = verify_signed_artifact(tok, now, anchors=anchors)
     if not base.authentic:
-        return IdTokenVerdict(False, None, None, None, tok.get("sub"), tok.get("acr"), base.note)
+        return IdTokenVerdict(False, None, None, None, tok.get("sub"), tok.get("acr"),
+                              base.note, base.issuer_trusted)
     ia, ea = _iso_to_epoch(tok.get("iat")), _iso_to_epoch(tok.get("exp"))
     n = _iso_to_epoch(now) if now is not None else time.time()
     fresh = (ia <= n < ea) if (ia is not None and ea is not None and n is not None) else None
     return IdTokenVerdict(True, (tok.get("aud") == audience) if audience is not None else None,
                           (tok.get("nonce") == nonce) if nonce is not None else None, fresh,
-                          tok.get("sub"), tok.get("acr"))
+                          tok.get("sub"), tok.get("acr"), None, base.issuer_trusted)
 
 
-def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
+def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict:
     """Verify a Polaris signed artifact's AUTHENTICITY offline (P8.1, wire spec section 3): for
     the epoch checkpoint, revocation feed, federation manifest, status bundle, or transparency
     STH, recompute the canonical statement for its `format`, verify the ML-DSA-65 signature over
@@ -423,7 +440,16 @@ def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
     fresh = _within_replay_window(obj, now)
     if fresh is None:
         fresh = _within_window(obj, now)
-    return ArtifactVerdict(ok, fresh, note, ran)
+    # Same rule as the detached verifier: the key that signed it, lowercased, is in the
+    # anchor set. None when the caller supplied none.
+    trusted = None
+    if anchors is not None:
+        try:
+            trusted = str(obj.get("public_key_hex", "")).lower() in {
+                str(a).lower() for a in anchors}
+        except TypeError:
+            trusted = False
+    return ArtifactVerdict(ok, fresh, note, ran, trusted)
 
 
 # --- P9.6: timestamp anchor verification (was P8.5c) --------------------------------

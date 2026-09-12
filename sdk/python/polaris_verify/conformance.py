@@ -60,14 +60,23 @@ def main(argv=None):
         # perfectly good signature at another. Audience confusion and nonce replay
         # are the two attacks this artifact exists to stop, so the contract asks
         # about them.
+        anchors = case.get("anchors")
+        if anchors == "self":
+            anchors = [(case.get("object") or {}).get("public_key_hex")]
         v = verify_id_token(case.get("object") or {}, audience=case.get("audience"),
-                            nonce=case.get("nonce"), now=case.get("now"))
+                            nonce=case.get("nonce"), now=case.get("now"), anchors=anchors)
         print(json.dumps({"authentic": v.authentic, "audience_matches": v.audience_matches,
-                          "nonce_matches": v.nonce_matches, "fresh": v.fresh}))
+                          "nonce_matches": v.nonce_matches, "fresh": v.fresh,
+                          "issuer_trusted": v.issuer_trusted}))
         return 0
     if artifact in _SIGNED_ARTIFACTS:
-        v = verify_signed_artifact(case.get("object") or {}, now=case.get("now"))
-        print(json.dumps({"authentic": v.authentic, "fresh": v.fresh}))
+        anchors = case.get("anchors")
+        if anchors == "self":
+            anchors = [(case.get("object") or {}).get("public_key_hex")]
+        v = verify_signed_artifact(case.get("object") or {}, now=case.get("now"),
+                                   anchors=anchors)
+        print(json.dumps({"authentic": v.authentic, "fresh": v.fresh,
+                          "issuer_trusted": v.issuer_trusted}))
         return 0
     if artifact == "timestamp-anchor":
         v = verify_timestamp_anchor(case.get("timestamp") or {}, log_key=case.get("log_key"),

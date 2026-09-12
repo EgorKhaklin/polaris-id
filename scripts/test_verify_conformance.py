@@ -118,15 +118,31 @@ def _verdict_for(case):
         # v9.420: the detached verifier answers the same three questions as the two
         # SDKs. Checking only the signature would let a token minted for one relying
         # party be accepted at another, which is what the new cases ask about.
-        v = V.verify_id_token(_load(case["object_file"]), audience=case.get("audience"),
-                              nonce=case.get("nonce"), now=case.get("now"))
+        obj = _load(case["object_file"])
+        anchors = case.get("anchors")
+        if anchors == "self":
+            anchors = [obj.get("public_key_hex")]
+        v = _call(V.verify_id_token, obj, audience=case.get("audience"),
+                  nonce=case.get("nonce"), now=case.get("now"),
+                  trusted_anchors=anchors, anchor_keys=anchors)
         return {"authentic": v["token_authentic"], "audience_matches": v["audience_matches"],
-                "nonce_matches": v["nonce_matches"], "fresh": v["fresh"]}
+                "nonce_matches": v["nonce_matches"], "fresh": v["fresh"],
+                "issuer_trusted": v.get("issuer_trusted")}
 
     if artifact in _SIGNED:
+        # v9.430: anchors are threaded too, so the contract can ask the second question a
+        # relying party has -- not only "is this signature genuine" but "is it by a key I
+        # trust". _call drops whichever keyword this verifier does not take, so the two
+        # spellings (trusted_anchors, anchor_keys) both reach the one that wants them.
         name, key = _SIGNED[artifact]
-        v = _call(getattr(V, name), _load(case["object_file"]), now=case.get("now"))
-        return {"authentic": v[key], "fresh": v.get("fresh")}
+        obj = _load(case["object_file"])
+        anchors = case.get("anchors")
+        if anchors == "self":
+            anchors = [obj.get("public_key_hex")]
+        v = _call(getattr(V, name), obj, now=case.get("now"),
+                  trusted_anchors=anchors, anchor_keys=anchors)
+        return {"authentic": v[key], "fresh": v.get("fresh"),
+                "issuer_trusted": v.get("issuer_trusted")}
 
     if artifact == "timestamp-anchor":
         ts = _load(case["timestamp_file"])

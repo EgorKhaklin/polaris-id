@@ -238,6 +238,34 @@
       "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
     },
     {
+      "name": "federation-manifest-trusted-issuer",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/federation-manifest-valid.json",
+      "anchors": "self",
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who trusts the key that signed it."
+    },
+    {
+      "name": "federation-manifest-untrusted-issuer",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/federation-manifest-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "now": "2026-06-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who does NOT trust that key. A verifier that reports only authenticity cannot tell these two apart, and a genuine signature by a stranger is worthless."
+    },
+    {
       "name": "status-bundle-valid",
       "artifact": "federation-status-bundle",
       "object_file": "conformance/vectors/federation-status-bundle-valid.json",
@@ -382,6 +410,32 @@
       "since": "9.321"
     },
     {
+      "name": "timestamp-trusted-issuer",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-valid.json",
+      "anchors": "self",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who trusts the key that signed it."
+    },
+    {
+      "name": "timestamp-untrusted-issuer",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who does NOT trust that key. A verifier that reports only authenticity cannot tell these two apart, and a genuine signature by a stranger is worthless."
+    },
+    {
       "name": "registry-valid",
       "artifact": "registry",
       "object_file": "conformance/vectors/registry-valid.json",
@@ -435,6 +489,34 @@
       },
       "since": "9.430",
       "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
+      "name": "registry-trusted-issuer",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-valid.json",
+      "anchors": "self",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who trusts the key that signed it."
+    },
+    {
+      "name": "registry-untrusted-issuer",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who does NOT trust that key. A verifier that reports only authenticity cannot tell these two apart, and a genuine signature by a stranger is worthless."
     },
     {
       "name": "exchange-request-valid",
@@ -549,6 +631,32 @@
       },
       "since": "9.420",
       "note": "the positive control for the three above: without it a verifier that answered False to every question would pass them all."
+    },
+    {
+      "name": "id-token-trusted-issuer",
+      "artifact": "id-token",
+      "object_file": "conformance/vectors/id-token-valid.json",
+      "anchors": "self",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who trusts the key that signed it."
+    },
+    {
+      "name": "id-token-untrusted-issuer",
+      "artifact": "id-token",
+      "object_file": "conformance/vectors/id-token-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who does NOT trust that key. A verifier that reports only authenticity cannot tell these two apart, and a genuine signature by a stranger is worthless."
     },
     {
       "name": "trust-list-valid",
@@ -670,6 +778,34 @@
       },
       "since": "9.430",
       "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
+      "name": "trust-list-trusted-issuer",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-valid.json",
+      "anchors": "self",
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who trusts the key that signed it."
+    },
+    {
+      "name": "trust-list-untrusted-issuer",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "now": "2026-05-01T12:00:00Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who does NOT trust that key. A verifier that reports only authenticity cannot tell these two apart, and a genuine signature by a stranger is worthless."
     },
     {
       "name": "exchange-receipt-valid",
@@ -904,6 +1040,34 @@
       "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
     },
     {
+      "name": "holder-binding-trusted-issuer",
+      "artifact": "holder-binding",
+      "object_file": "conformance/vectors/holder-binding-valid.json",
+      "anchors": "self",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who trusts the key that signed it."
+    },
+    {
+      "name": "holder-binding-untrusted-issuer",
+      "artifact": "holder-binding",
+      "object_file": "conformance/vectors/holder-binding-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who does NOT trust that key. A verifier that reports only authenticity cannot tell these two apart, and a genuine signature by a stranger is worthless."
+    },
+    {
       "name": "holder-proof-valid",
       "artifact": "holder-proof",
       "object_file": "conformance/vectors/holder-proof-valid.json",
@@ -1054,6 +1218,34 @@
       },
       "since": "9.430",
       "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
+      "name": "epoch-leaves-trusted-issuer",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-valid.json",
+      "anchors": "self",
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": true
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who trusts the key that signed it."
+    },
+    {
+      "name": "epoch-leaves-untrusted-issuer",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-valid.json",
+      "anchors": [
+        "00"
+      ],
+      "now": "2026-05-01T00:00:30Z",
+      "expect": {
+        "authentic": true,
+        "issuer_trusted": false
+      },
+      "since": "9.431",
+      "note": "v9.431: the same genuine artifact, read by a relying party who does NOT trust that key. A verifier that reports only authenticity cannot tell these two apart, and a genuine signature by a stranger is worthless."
     },
     {
       "name": "agent-grant-valid",

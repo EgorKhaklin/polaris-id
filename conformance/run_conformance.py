@@ -67,12 +67,26 @@ def _load_cases():
             for k in ("audience", "nonce", "now"):
                 if k in c:
                     payload[k] = c[k]
+            anchors = c.get("anchors")
+            if anchors == "self":
+                anchors = [payload["object"].get("public_key_hex")]
+            if anchors is not None:
+                payload["anchors"] = anchors
         elif artifact in ("epoch-checkpoint", "revocation-feed", "federation-manifest",
                           "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "trust-list", "exchange-receipt", "exchange-mint", "holder-binding", "holder-proof", "epoch-leaves",
                           "agent-grant", "grant-revocation", "agent-proof"):
             payload["object"] = _load_file(c["object_file"])
             if "now" in c:
                 payload["now"] = c["now"]
+            # v9.431: anchors too. A relying party asks two questions of a signed
+            # artifact, not one: is the signature genuine, and is it by a key I trust.
+            # The pack branch above has forwarded anchors since v9.274; these artifacts
+            # never did, so no case could ask the second question of them.
+            anchors = c.get("anchors")
+            if anchors == "self":
+                anchors = [payload["object"].get("public_key_hex")]
+            if anchors is not None:
+                payload["anchors"] = anchors
         elif artifact == "holder-chain":
             payload["credential"] = _load_file(c["credential_file"])
             payload["binding"] = _load_file(c["binding_file"])

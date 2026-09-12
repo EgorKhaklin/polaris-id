@@ -241,7 +241,14 @@ const ARTIFACT_KEYS: Record<string, string[]> = {
   "polaris-epoch-leaves/1": ["format", "authority", "epoch_id", "context_id", "merkle_root", "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm"],
 };
 
-export type ArtifactVerdict = { authentic: boolean; fresh: boolean | null; note?: string };
+/** `issuerTrusted` is null when the caller supplied no anchors, which is the honest answer
+ * to a question nobody asked. v9.430: the SDK could not answer it for any windowed
+ * artifact, so a caller learned a trust list, registry, manifest, timestamp, ID token,
+ * holder binding or epoch bundle carried a valid signature and had no way to learn whose.
+ * The detached verifier has always taken anchors for all seven. A genuine signature by a
+ * stranger is genuine and worthless. */
+export type ArtifactVerdict = { authentic: boolean; fresh: boolean | null; note?: string;
+                                issuerTrusted?: boolean | null };
 
 function revokedRoot(leaves: any): string {
   const arr: string[] = Array.isArray(leaves) ? leaves.map((x) => String(x).toLowerCase()) : [];
@@ -268,28 +275,35 @@ export type IdTokenVerdict = {
   sub: string | null;
   acr: string | null;
   note?: string;
+  /** v9.431: whether the agency that signed the token is one this relying party trusts.
+   * Null when no anchors were supplied. A genuine token from an agency you have never
+   * heard of is genuine and meaningless. */
+  issuerTrusted?: boolean | null;
 };
 
 /** Verify a polaris-id-token/1 (P8.4) as a relying party, offline: the issuing agency's
  * signature, that it was issued to THIS audience, that it carries the login's nonce, and
  * freshness (iat <= now < exp). The subject is a credential hash, never a person. */
-export function verifyIdToken(tok: any, audience?: string | null, nonce?: string | null, now?: string | null): IdTokenVerdict {
+export function verifyIdToken(tok: any, audience?: string | null, nonce?: string | null,
+                              now?: string | null, anchors?: string[] | null): IdTokenVerdict {
   const t = tok ?? {};
   if (t.format !== "polaris-id-token/1") {
     return { authentic: false, audienceMatches: null, nonceMatches: null, fresh: null, sub: t.sub ?? null, acr: t.acr ?? null, note: "not a polaris-id-token/1" };
   }
-  const base = verifySignedArtifact(t, now);
+  const base = verifySignedArtifact(t, now, anchors);
   if (!base.authentic) {
-    return { authentic: false, audienceMatches: null, nonceMatches: null, fresh: null, sub: t.sub ?? null, acr: t.acr ?? null, note: base.note };
+    return { authentic: false, audienceMatches: null, nonceMatches: null, fresh: null, sub: t.sub ?? null, acr: t.acr ?? null, note: base.note, issuerTrusted: base.issuerTrusted ?? null };
   }
   const ia = isoToEpoch(t.iat), ea = isoToEpoch(t.exp);
   const n = now != null ? isoToEpoch(now) : Date.now() / 1000;
   const fresh = ia !== null && ea !== null && n !== null ? ia <= n && n < ea : null;
   return { authentic: true, audienceMatches: audience != null ? t.aud === audience : null,
-           nonceMatches: nonce != null ? t.nonce === nonce : null, fresh, sub: t.sub ?? null, acr: t.acr ?? null };
+           nonceMatches: nonce != null ? t.nonce === nonce : null, fresh, sub: t.sub ?? null,
+           acr: t.acr ?? null, issuerTrusted: base.issuerTrusted ?? null };
 }
 
-export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVerdict {
+export function verifySignedArtifact(obj: any, now?: string | null,
+                                     anchors?: string[] | null): ArtifactVerdict {
   const o = obj ?? {};
   const keys = ARTIFACT_KEYS[o.format];
   if (!keys) return { authentic: false, fresh: null, note: "unknown or unsupported artifact: " + o.format };
@@ -344,7 +358,14 @@ export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVer
   // A replay-windowed format answers freshness the other way round; withinWindow needs
   // both ends of an interval and such an artifact has only its issuance.
   const replay = withinReplayWindow(o, now);
-  return { authentic: ok, fresh: replay !== null ? replay : withinWindow(o, now) };
+  // Same rule as the detached verifier and the Python SDK: the key that signed it,
+  // lowercased, is in the anchor set. Null when the caller supplied none.
+  const issuerTrusted = anchors == null
+    ? null
+    : anchors.map((a) => String(a).toLowerCase())
+             .includes(String(o.public_key_hex ?? "").toLowerCase());
+  return { authentic: ok, fresh: replay !== null ? replay : withinWindow(o, now),
+           issuerTrusted };
 }
 
 // --- P9.6: timestamp anchor verification (was P8.5c) --------------------------------

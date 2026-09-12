@@ -102,7 +102,6 @@ SURVIVORS_EXPECTED = (
     "verify_epoch_leaves.commitment_matches",
     "verify_epoch_leaves.count_matches",
     "verify_epoch_leaves.epoch_matches",
-    "verify_epoch_leaves.issuer_trusted",
     "verify_epoch_leaves.leaf_count",
     "verify_exchange_mint.responder_matches",
     "verify_exchange_receipt.request_bound",
@@ -115,14 +114,11 @@ SURVIVORS_EXPECTED = (
     "verify_exchange_request.requester_authorized",
     "verify_exchange_request.requester_matches",
     "verify_holder_binding.bound_to_credential",
-    "verify_holder_binding.issuer_trusted",
     "verify_holder_proof.context_matches",
-    "verify_id_token.issuer_trusted",
     "verify_manifest.anchors",
     "verify_pack.algorithm",
     "verify_pack.authenticity",
     "verify_pack.token_value",
-    "verify_registry.issuer_trusted",
     "verify_revocation_feed.commitment_ok",
     "verify_revocation_feed.issuer_matches",
     "verify_signed_document.anchored",
@@ -158,8 +154,6 @@ SURVIVORS_EXPECTED = (
     "verify_sth.issuer_matches",
     "verify_timestamp_anchor.log_matches",
     "verify_timestamp_anchor.sth_authentic",
-    "verify_timestamp.issuer_trusted",
-    "verify_trust_list.issuer_trusted",
 )
 
 def _load(name: str, path: pathlib.Path):

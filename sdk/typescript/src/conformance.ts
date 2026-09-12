@@ -47,13 +47,19 @@ process.stdin.on("end", () => {
   } else if (artifact === "id-token") {
     // v9.420: see the Python dispatcher. A signature-only check passes a token
     // minted for another relying party, which is the whole attack.
+    let idAnchors = caseObj.anchors ?? null;
+    if (idAnchors === "self") idAnchors = [(caseObj.object ?? {}).public_key_hex];
     const v = verifyIdToken(caseObj.object ?? {}, caseObj.audience ?? null,
-      caseObj.nonce ?? null, caseObj.now ?? null);
+      caseObj.nonce ?? null, caseObj.now ?? null, idAnchors);
     process.stdout.write(JSON.stringify({ authentic: v.authentic, audience_matches: v.audienceMatches,
-      nonce_matches: v.nonceMatches, fresh: v.fresh }) + "\n");
+      nonce_matches: v.nonceMatches, fresh: v.fresh,
+      issuer_trusted: v.issuerTrusted ?? null }) + "\n");
   } else if (SIGNED_ARTIFACTS.has(artifact)) {
-    const v = verifySignedArtifact(caseObj.object ?? {}, caseObj.now ?? null);
-    process.stdout.write(JSON.stringify({ authentic: v.authentic, fresh: v.fresh }) + "\n");
+    let anchors = caseObj.anchors ?? null;
+    if (anchors === "self") anchors = [(caseObj.object ?? {}).public_key_hex];
+    const v = verifySignedArtifact(caseObj.object ?? {}, caseObj.now ?? null, anchors);
+    process.stdout.write(JSON.stringify({ authentic: v.authentic, fresh: v.fresh,
+                                          issuer_trusted: v.issuerTrusted ?? null }) + "\n");
   } else if (artifact === "timestamp-anchor") {
     const v = verifyTimestampAnchor(caseObj.timestamp ?? {}, caseObj.log_key ?? null,
       caseObj.trusted_witnesses ?? null, Number(caseObj.threshold ?? 1));

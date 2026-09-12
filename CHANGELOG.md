@@ -5,6 +5,43 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.431 — 2026-09-12 (a genuine signature by a stranger, and no SDK could tell you)
+
+The drill's next-largest group after freshness was `issuer_trusted`: whether the key that signed
+an artifact is one the relying party trusts. Seven artifact types reported it and no published
+case asked. Asking exposed something worse than an unconstrained field.
+
+**Neither SDK could answer the question at all.** `ArtifactVerdict` had no `issuer_trusted`,
+`verify_signed_artifact` took no anchors, and the same was true of `verify_id_token`. So an
+integrator building on either the Python or the TypeScript SDK could learn that a trust list, a
+registry, a federation manifest, a timestamp, an ID token, a holder binding or an epoch-leaves
+bundle carried a valid signature, and had **no way to learn whose**. The detached verifier has
+taken anchors for all seven since they were written.
+
+This is the v9.420 distinction one level out. That ship found that an ID token's signature was
+checked and its audience was not, so a token minted for one relying party verified at another.
+The same shape: authenticity answered, authority not. A genuine signature by a stranger is
+genuine and worthless, and the pack verifier has said so since v9.274 while nothing else did.
+
+Both SDKs now take anchors and report the trust verdict, by the same rule the detached verifier
+uses (the signing key, lowercased, in the anchor set) and returning the same three-valued answer:
+null when the caller supplied no anchors, because that is the honest answer to a question nobody
+asked. Verified directly against each: no anchors gives null, the artifact's own key gives true, a
+stranger's key gives false, in all three implementations.
+
+Threading it took four places that had all quietly dropped the parameter: the detached verifier's
+conformance adapter, both SDK adapters, and `run_conformance.py` itself, which has forwarded
+anchors for authenticity packs since v9.274 and for nothing else since. Fourteen cases, seven
+trusted and seven untrusted; 116 in total; all three verifiers pass every one, each run the way CI
+runs it.
+
+72 unconstrained fields remain, down from 78 and from 88 two ships ago, still declared exactly and
+still checked both ways.
+
+**249 invariant checks. 116 conformance cases.**
+
+---
+
 ## v9.430 — 2026-09-12 (asking about freshness found two verifiers that disagreed about replay)
 
 v9.429's drill left 88 fields the published contract does not constrain, declared exactly. Nine
