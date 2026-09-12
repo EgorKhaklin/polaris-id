@@ -21,11 +21,12 @@ drives it over the published cases and checks every verdict. See conformance/SPE
 import json
 import sys
 
-from . import (verify_authenticity, verify_cross_authority, verify_holder, verify_id_token,
+from . import (verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
+               verify_id_token,
                verify_signed_artifact, verify_status_assertion, verify_timestamp_anchor)
 
 _SIGNED_ARTIFACTS = {"epoch-checkpoint", "revocation-feed", "federation-manifest",
-                     "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves",
+                     "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "holder-binding", "holder-proof", "epoch-leaves",
                      "agent-grant", "grant-revocation", "agent-proof"}
 
 
@@ -46,6 +47,12 @@ def main(argv=None):
     if artifact == "status-assertion":
         v = verify_status_assertion(case.get("assertion") or {}, now=case.get("now"))
         print(json.dumps({"authentic": v.authentic, "fresh": v.fresh, "active": v.active}))
+        return 0
+    if artifact == "trust-attestation":
+        v = verify_attestation(case.get("object") or {},
+                               attesting_agency_id=case.get("attesting_agency_id"),
+                               expected_key=case.get("expected_key"))
+        print(json.dumps({"authentic": v.authentic, "fresh": v.fresh}))
         return 0
     if artifact == "id-token":
         # v9.420: an ID token verified as a generic signed artifact is verified for

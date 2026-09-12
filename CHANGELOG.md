@@ -5,6 +5,43 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.421 — 2026-09-11 (the other two survivors, and the shape they share)
+
+v9.420 closed the first of the three SDK entry points the conformance suite could not see being
+switched off. These are the other two, and putting them beside the first shows what they have in
+common.
+
+A TRUST ATTESTATION is an edge between two agencies. A genuine edge between two OTHER agencies
+verifies perfectly, so a verifier checking only the signature accepts an attestation that is not
+the one it is relying on. The contract now supplies the agency and the key the relying party
+actually holds, and a valid attestation offered for the wrong agency or the wrong key is a
+refusal case. All three verifiers were taught the dispatch.
+
+A COSIGNATURE counts toward a timestamp's witness threshold, and the suite had a witnessed case
+and an unwitnessed one but none where a TRUSTED witness's signature is forged. Both existing
+cases pass whether or not the cosignature is checked: the witnessed one trusts valid signatures,
+and the unwitnessed one trusts nobody. The new vector needed no signing key, because tampering
+never does: it is the witnessed vector with one of two signatures corrupted in its first hex
+digit, trusted at a threshold of two. Counting a cosignature without verifying it makes the
+quorum arithmetic rather than evidence. That case passed on the first run, which is the answer
+worth having: the capability was there and nothing was asking for it.
+
+One divergence surfaced and is worth recording rather than smoothing. The detached verifier
+reports the two relying-party checks as their own fields where the SDKs fold them into the
+verdict. It is more granular and says the same thing, so its adapter answers the contract's one
+question from the parts, with a comment saying that is what it is doing.
+
+The id-token check from v9.420 is now a table rather than a special case. Two artifacts are in
+it; a third of the same shape is covered by adding a row, and until it has one it is not in the
+contract. `check_conformance_asks_the_relying_party_question` (242) requires, per artifact, that
+the case carries the relying party's own values, that a refusal case exists, that an acceptance
+case supplying those values exists so a verifier refusing everything cannot pass, that all three
+implementations dispatch it, that the runner forwards the parameters, and that SPEC.md describes
+it.
+
+Measured: stubbing `verify_attestation` to the signature-only check now fails 4 cases and
+`verify_cosignature` fails 1, where both failed none before.
+
 ## v9.420 — 2026-09-11 (a valid signature is not the question an ID token asks)
 
 The conformance suite is the artifact independent implementations build to, so the mutation

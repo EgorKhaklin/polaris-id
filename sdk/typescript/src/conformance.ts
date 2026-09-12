@@ -10,11 +10,11 @@
  * See conformance/SPEC.md. This is the TypeScript counterpart of the Python SDK's
  * `python -m polaris_verify.conformance`; the same runner drives either.
  */
-import { verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
+import { verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
   verifyTimestampAnchor, verifyHolder, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
-  "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves",
+  "epoch-checkpoint", "revocation-feed", "federation-manifest", "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "holder-binding", "holder-proof", "epoch-leaves",
   // P9.8: delegation. Signed by the holder's key and the agent's, never the issuer's.
   "agent-grant", "grant-revocation", "agent-proof"]);
 
@@ -38,6 +38,12 @@ process.stdin.on("end", () => {
   } else if (artifact === "status-assertion") {
     const v = verifyStatusAssertion(caseObj.assertion ?? {}, caseObj.now ?? null);
     process.stdout.write(JSON.stringify({ authentic: v.authentic, fresh: v.fresh, active: v.active }) + "\n");
+  } else if (artifact === "trust-attestation") {
+    // v9.421: see the Python dispatcher. A genuine edge between two OTHER agencies
+    // verifies perfectly and is still not the edge being relied on.
+    const v = verifyAttestation(caseObj.object ?? {}, caseObj.attesting_agency_id ?? null,
+      caseObj.expected_key ?? null);
+    process.stdout.write(JSON.stringify({ authentic: v.authentic, fresh: v.fresh }) + "\n");
   } else if (artifact === "id-token") {
     // v9.420: see the Python dispatcher. A signature-only check passes a token
     // minted for another relying party, which is the whole attack.

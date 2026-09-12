@@ -53,6 +53,12 @@ key the case's expected verdict names; the verifier may report additional keys.
   "now": "2026-06-01T00:00:00Z" }
    -> { "authentic": true, "fresh": true, "active": true }
 
+{ "artifact": "trust-attestation",
+  "object": { "...": "a polaris-trust-attestation/1" },
+  "attesting_agency_id": 2,
+  "expected_key": "<the attested public key the relying party actually holds>" }
+   -> { "authentic": true, "fresh": null }
+
 { "artifact": "id-token",
   "object": { "...": "a polaris-id-token/1" },
   "audience": "<the relying party this verifier IS>",
@@ -119,6 +125,16 @@ trusted), and the verdict a conformant verifier MUST return:
 | tampered-token | false | null | genuine signature over a different token_value |
 | wrong-key | false | null | genuine signature checked against an unrelated key |
 | placeholder | false | null | the dev/CI placeholder; not authenticatable offline |
+
+Trust-attestation cases (`artifact: trust-attestation`, v9.421). An attestation is an EDGE
+between two agencies, and a genuine edge between two OTHER agencies verifies perfectly. So the
+case supplies the agency and the key the relying party actually has, and a verifier that checks
+only the signature accepts an attestation that is not the one it is relying on.
+
+Timestamp-anchor witnessing (`artifact: timestamp-anchor`, v9.421). A cosignature counts toward
+the witness threshold only when it verifies. `timestamp-anchor-forged-cosignature` trusts both
+cosigners, corrupts one signature, and requires `witnessed: false` at a threshold of two:
+counting a cosignature without checking it makes the quorum arithmetic rather than evidence.
 
 ID-token cases (`artifact: id-token`, verdict `{authentic, audience_matches, nonce_matches,
 fresh}`, v9.420). An ID token is the one artifact whose signature being valid is not the

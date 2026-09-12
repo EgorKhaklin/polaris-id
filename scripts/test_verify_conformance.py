@@ -45,7 +45,6 @@ _SIGNED = {
     "trust-list":               ("verify_trust_list", "trust_list_authentic"),
     "exchange-receipt":         ("verify_exchange_receipt", "receipt_authentic"),
     "exchange-mint":            ("verify_exchange_mint", "mint_authentic"),
-    "trust-attestation":        ("verify_attestation", "attestation_authentic"),
     "holder-binding":           ("verify_holder_binding", "binding_authentic"),
     "holder-proof":             ("verify_holder_proof", "proof_authentic"),
     "epoch-leaves":             ("verify_epoch_leaves", "leaves_authentic"),
@@ -101,6 +100,19 @@ def _verdict_for(case):
         v = V.verify_status_assertion(_load(case["assertion_file"]), now=case.get("now"))
         return {"authentic": v["status_authentic"], "fresh": v["fresh"],
                 "active": (v["status"] == "ACTIVE") if v["status"] is not None else None}
+
+    if artifact == "trust-attestation":
+        # The detached verifier reports the two relying-party checks as their own
+        # fields rather than folding them into the verdict, which is more granular
+        # than the SDKs and says the same thing. The contract asks one question --
+        # can this edge be relied on -- so the adapter answers it from the parts.
+        v = V.verify_attestation(_load(case["object_file"]),
+                                 attesting_agency_id=case.get("attesting_agency_id"),
+                                 expected_key=case.get("expected_key"))
+        relied_on = (bool(v["attestation_authentic"])
+                     and v.get("attester_matches") is not False
+                     and v.get("key_matches") is not False)
+        return {"authentic": relied_on, "fresh": v.get("fresh")}
 
     if artifact == "id-token":
         # v9.420: the detached verifier answers the same three questions as the two

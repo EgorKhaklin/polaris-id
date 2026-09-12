@@ -51,6 +51,14 @@ def _load_cases():
             payload["assertion"] = _load_file(c["assertion_file"])
             if "now" in c:
                 payload["now"] = c["now"]
+        elif artifact == "trust-attestation":
+            # v9.421: an attestation is an edge between two agencies. Whether its
+            # signature verifies and whether it is the edge you are relying on are
+            # different questions, so the case supplies the agency and key in hand.
+            payload["object"] = _load_file(c["object_file"])
+            for k in ("attesting_agency_id", "expected_key", "now"):
+                if k in c:
+                    payload[k] = c[k]
         elif artifact == "id-token":
             # v9.420: an ID token is not just a signed object. Who it was issued TO
             # and which login it belongs to are the security properties, so the case
@@ -60,7 +68,7 @@ def _load_cases():
                 if k in c:
                     payload[k] = c[k]
         elif artifact in ("epoch-checkpoint", "revocation-feed", "federation-manifest",
-                          "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves",
+                          "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "trust-list", "exchange-receipt", "exchange-mint", "holder-binding", "holder-proof", "epoch-leaves",
                           "agent-grant", "grant-revocation", "agent-proof"):
             payload["object"] = _load_file(c["object_file"])
             if "now" in c:

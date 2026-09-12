@@ -11097,29 +11097,44 @@ def check_unique_rules_are_tested_exhaustively(root: pathlib.Path) -> list[Findi
                "fixture table is cross-checked against the catalog in both directions")
 
 
-def check_id_token_contract_covers_audience_and_nonce(root: pathlib.Path) -> list[Finding]:
-    """A valid signature is not the question an ID token asks (v9.420).
+def check_conformance_asks_the_relying_party_question(root: pathlib.Path) -> list[Finding]:
+    """For some artifacts the signature verifying is not the question (v9.420, v9.421).
 
-    The conformance suite is the artifact independent implementations build to, and until v9.420
-    it verified an ID token as a generic signed artifact: signature over the canonical form,
-    freshness, nothing else. But a token minted for relying party A carries a perfectly good
-    signature when it is replayed at relying party B, and one from an earlier login carries one
-    too. Audience confusion and nonce replay are the two attacks the artifact exists to stop, and
-    a verifier that ignored both passed all 71 cases.
+    The conformance suite is what independent implementations build to, so a question it does not
+    ask is one nobody has to answer. Two artifacts turn on something the signature cannot settle:
 
-    Measured: stubbing `verify_id_token` to the signature-only check failed 0 cases before and 4
-    after.
+    An ID TOKEN minted for relying party A carries a perfectly good signature when it is replayed
+    at relying party B, and one from an earlier login carries one too. Audience confusion and
+    nonce replay are the attacks it exists to stop.
 
-    The three verifiers in this tree all answer the fuller question now, which is the point of
-    putting it in the contract rather than in one implementation: the Python SDK, the TypeScript
-    SDK, and the detached verifier."""
-    name = "id_token_contract"
+    A TRUST ATTESTATION is an edge between two agencies, and a genuine edge between two OTHER
+    agencies verifies perfectly. Whether it is the edge in hand is a separate fact.
+
+    Both were routed to the generic signed-artifact verifier, so the contract asked only about the
+    signature and a verifier ignoring the rest passed every case. Measured: stubbing each to the
+    signature-only check failed 0 cases before and 4 after.
+
+    The table below is the point rather than the two entries in it. A third artifact of this shape
+    is covered by adding a row, and until it has one it is not in the contract."""
+    name = "relying_party_questions"
+
+    #: artifact -> (the case PARAMETERS that carry the relying party's own values,
+    #:              the VERDICT fields the contract asks about them, what goes unasked)
+    #: Some verifiers report the component (the ID token says audience_matches) and some
+    #: fold it into the verdict (an attestation for another agency is simply not
+    #: authentic), so both halves are declared and only the ones present are required.
+    RELYING_PARTY = {
+        "id-token": (("audience", "nonce"), ("audience_matches", "nonce_matches"),
+                     "audience confusion and nonce replay"),
+        "trust-attestation": (("attesting_agency_id", "expected_key"), (),
+                              "an attestation about another agency, or about another key"),
+    }
     cases_raw = _read_raw(root, "conformance/cases.json")
     spec = _read_raw(root, "conformance/SPEC.md")
-    py = _read(root, "sdk/python/polaris_verify/conformance.py")
-    ts = _read(root, "sdk/typescript/src/conformance.ts")
-    detached = _read(root, "scripts/test_verify_conformance.py")
     runner = _read(root, "conformance/run_conformance.py")
+    impls = {"the Python SDK": _read(root, "sdk/python/polaris_verify/conformance.py"),
+             "the TypeScript SDK": _read(root, "sdk/typescript/src/conformance.ts"),
+             "the detached verifier": _read(root, "scripts/test_verify_conformance.py")}
     if not cases_raw:
         return _fail(name, "conformance/cases.json is absent")
     try:
@@ -11127,50 +11142,46 @@ def check_id_token_contract_covers_audience_and_nonce(root: pathlib.Path) -> lis
     except (ValueError, KeyError) as exc:
         return _fail(name, f"conformance/cases.json does not parse: {exc}")
 
-    id_cases = [c for c in cases if c.get("artifact") == "id-token"]
-    asks = {k for c in id_cases for k in c.get("expect", {})}
-    problems = []
-    for field, why in (("audience_matches", "audience confusion: a token minted for another "
-                                            "relying party"),
-                       ("nonce_matches", "nonce replay: a token from an earlier login")):
-        if field not in asks:
-            problems.append(f"no id-token case asks about {field}, so the contract does not "
-                            f"cover {why}")
-    # A suite that only ever expects False would be satisfied by a verifier answering False to
-    # everything, which is the mirror of the defect this fixes.
-    negatives = [c for c in id_cases if False in c.get("expect", {}).values()]
-    positives = [c for c in id_cases
-                 if c.get("expect", {}).get("audience_matches") is True
-                 and c.get("expect", {}).get("nonce_matches") is True]
-    if not negatives:
-        problems.append("no id-token case expects a refusal")
-    if not positives:
-        problems.append("no id-token case expects the token's OWN relying party to accept it, so "
-                        "a verifier that refused everything would pass")
-    # All three implementations must answer it, or the contract is one implementation's opinion.
-    for src, who in ((py, "the Python SDK"), (ts, "the TypeScript SDK"),
-                     (detached, "the detached verifier")):
-        if "id-token" not in src or not re.search(r"verify_?[iI]d_?[tT]oken", src):
-            problems.append(f"{who} does not route id-token to its specialised verifier, so it "
-                            "answers the contract with a signature check")
-    if "audience" not in runner:
-        problems.append("the runner does not forward the case's audience, so every verifier "
-                        "would answer None and the cases could not discriminate")
-    if "audience_matches" not in spec:
-        problems.append("SPEC.md does not state the id-token verdict, and the spec is what an "
-                        "independent implementation builds to")
-    if len(id_cases) < 5:
-        problems.append(f"only {len(id_cases)} id-token cases were found; the parse has broken "
-                        "and this check is passing by finding nothing")
+    problems, covered = [], 0
+    for artifact, (params, verdict_fields, unasked) in sorted(RELYING_PARTY.items()):
+        mine = [c for c in cases if c.get("artifact") == artifact]
+        if len(mine) < 5:
+            problems.append(f"only {len(mine)} {artifact} cases; the parse has broken or the "
+                            "artifact has been emptied")
+            continue
+        covered += 1
+        supplied = {k for c in mine for k in c}
+        asked = {k for c in mine for k in c.get("expect", {})}
+        missing = [x for x in params if x not in supplied] + \
+                  [x for x in verdict_fields if x not in asked]
+        if missing:
+            problems.append(f"no {artifact} case supplies or asks about {', '.join(missing)}, so "
+                            f"the contract does not cover {unasked}")
+        if not any(False in c.get("expect", {}).values() for c in mine):
+            problems.append(f"no {artifact} case expects a refusal")
+        # And the mirror: a verifier refusing everything must not pass either.
+        if not any(all(v is not False for v in c.get("expect", {}).values())
+                   and all(x in c for x in params) for c in mine):
+            problems.append(f"no {artifact} case supplies the relying party's own values and "
+                            "expects acceptance, so a verifier that refused everything would pass")
+        for who, src in impls.items():
+            if f'"{artifact}"' not in src:
+                problems.append(f"{who} does not dispatch {artifact} to its specialised verifier, "
+                                "so it answers the contract with a signature check")
+        for x in params:
+            if x not in runner:
+                problems.append(f"the runner does not forward {x}, so every verifier would answer "
+                                "None and the cases could not discriminate")
+        if artifact not in spec:
+            problems.append(f"SPEC.md does not describe the {artifact} contract, and the spec is "
+                            "what an independent implementation builds to")
     if problems:
         return _fail(name, "; ".join(problems[:3]))
     return _ok(name,
-               f"the id-token contract asks {len(asks)} questions over {len(id_cases)} cases, not "
-               "just whether the signature verifies: a token offered to the wrong relying party "
-               "and a token carrying another login's nonce are both refusal cases, its own "
-               "relying party accepting it is the positive control, and all three verifiers in "
-               "this tree answer it")
-
+               f"{covered} artifact(s) whose signature is not the question carry the relying "
+               "party's own values in the contract, with a refusal case and an acceptance case "
+               "each, dispatched to a specialised verifier by all three implementations and "
+               "described in SPEC.md")
 
 def check_zk_witnesses_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
     """Two independent witnesses is a claim about the tests, not about the code (v9.419).
@@ -14588,7 +14599,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_route_guards_are_derived_not_listed,
     check_csrf_exemptions_do_not_trust_the_session,
     check_unique_rules_are_tested_exhaustively,
-    check_id_token_contract_covers_audience_and_nonce,
+    check_conformance_asks_the_relying_party_question,
     check_zk_witnesses_are_mutation_tested,
     check_triggers_are_mutation_tested,
     check_property_suite_identifies_its_refusals,
