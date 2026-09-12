@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.450 — 2026-09-12 (the canonical schema refused ten events the application writes)
+
+v9.449 asked whether a migration can leave a FUNCTION or an INDEX in a state the canonical file
+does not have. Asking the same of CHECK constraints found one, and it points the other way.
+
+`chk_authaudit_event_type` in `01_schema.sql` listed eleven event types. Migration
+`2026-09-01-001-operator-session` widened it to twenty-one, adding the WebAuthn and session events
+-- `WEBAUTHN_REGISTERED`, `WEBAUTHN_ASSERTED`, `WEBAUTHN_ASSERTION_FAILED`,
+`WEBAUTHN_DEREGISTERED`, `WEBAUTHN_REGISTRATION_REFUSED`, `EMERGENCY_PASSWORD_LOGIN_AUTHORIZED`,
+`NETWORK_POLICY_DENIED`, `SESSION_EVICTED`, `SESSION_EXPIRED`, `SESSION_REVOKED` -- and those
+never came back to the schema file.
+
+**Measured on a database built from the schema files alone: an insert of `WEBAUTHN_REGISTERED`
+failed the CHECK.** That is what a developer gets from a bare load. Every one of those ten events
+is written by `polaris_web/security.py` on a path that runs, so the schema file and the migrations
+describe different databases and the schema file is the one that is wrong. `01_schema.sql` says of
+another column, in its own comment, "Defined here so the canonical schema is complete on its own";
+this is that rule not being kept.
+
+`check_migrations_do_not_revert_canonical_objects` now compares 22 functions, 26 indexes and 44
+CHECK constraints, and catches the drift in EITHER direction: a migration reinstating an older
+function, or a canonical file missing a value the migrations allow.
+
+The check needed two corrections of its own before it was worth having. It compared constraint
+text, so a REORDERED vocabulary read as drift -- `IN ('a','b')` and `IN ('b','a')` are the same
+constraint, and a false finding is how a check teaches its reader to skip it. And the first fix
+for that did nothing: the pattern stops at the first `)`, so a captured body can be unbalanced and
+a paren-matching rewrite silently no-ops on it. The literals are pulled out and sorted instead.
+Both directions are asserted: the real gap fails, a pure reorder passes.
+
+**258 invariant checks. 45 tables.**
+
+---
+
 ## v9.449 — 2026-09-12 (a migration that says it changes a function, and does not)
 
 v9.448 ended with a finding rather than a fix: a migration carrying its own copy of `_rp_weakens`

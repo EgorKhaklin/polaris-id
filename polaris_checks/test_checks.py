@@ -13972,6 +13972,30 @@ def test_migrations_match_canonical_check_discriminates(tmp_path):
                                        ("2026-02-01-001-supersede.up.sql", NEW + NEW_IDX)))
     assert level() == "OK", "a later migration carrying the new index definition clears it"
 
+    # CHECK constraints, where v9.450 found the drift pointing the OTHER way: the
+    # migration had widened a vocabulary and the canonical schema never got the new
+    # values, so a bare load refused what the application writes.
+    NEW_CON = ("CREATE TABLE Ev (\n"
+               "    event_type VARCHAR(30),\n"
+               "    CONSTRAINT chk_ev_type CHECK (event_type IN ('LOGIN', 'LOGOUT', 'WEBAUTHN'))\n"
+               ");\n")
+    OLD_CON = NEW_CON.replace(", 'WEBAUTHN'", "")
+    write(indexes=OLD_CON, migrations=(("2026-01-01-001-first.up.sql", NEW + NEW_CON),))
+    bad = checks.check_migrations_do_not_revert_canonical_objects(tmp_path)[0]
+    assert bad.level == "FAIL" and "chk_ev_type" in bad.message, \
+        "must FAIL when the canonical schema is missing a value the migrations allow"
+
+    write(indexes=NEW_CON, migrations=(("2026-01-01-001-first.up.sql", NEW + NEW_CON),))
+    assert level() == "OK", "must PASS once the canonical schema carries the same vocabulary"
+
+    # A REORDERED vocabulary is the same constraint. Reporting it would be a false
+    # finding, and false findings are how a check teaches its reader to skip it.
+    write(indexes=NEW_CON,
+          migrations=(("2026-01-01-001-first.up.sql",
+                       NEW + NEW_CON.replace("'LOGIN', 'LOGOUT', 'WEBAUTHN'",
+                                             "'WEBAUTHN', 'LOGOUT', 'LOGIN'")),))
+    assert level() == "OK", "IN is order-independent; a reorder is not drift"
+
     # A function only a migration defines is not this check's business.
     write(canonical="-- nothing\n", migrations=(("2026-01-01-001-first.up.sql", OLD),))
     assert level("measuring nothing") == "FAIL", \

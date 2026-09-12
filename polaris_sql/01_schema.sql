@@ -556,13 +556,23 @@ CREATE TABLE AuthAuditLog (
     user_agent         VARCHAR(255),
     detail             VARCHAR(500),
 
+    -- v9.450: the ten below were added by migration 2026-09-01-001-operator-session and
+    -- never came back to this file, so a database built from the schema files alone --
+    -- which is what a bare load gives you -- REFUSED them. Measured: an insert of
+    -- WEBAUTHN_REGISTERED failed the CHECK on a load-only build. This file is meant to be
+    -- the complete schema on its own; a migration widening a vocabulary has to be
+    -- reflected here or the two describe different databases.
     CONSTRAINT chk_authaudit_event_type
         CHECK (event_type IN (
             'LOGIN_SUCCESS', 'LOGIN_FAILED', 'LOGIN_LOCKED',
             'LOGOUT',
             'PASSWORD_CHANGED', 'ACCOUNT_CREATED', 'ACCOUNT_DEACTIVATED',
             'CSRF_REJECTED', 'AUTH_REQUIRED', 'AUTHZ_DENIED',
-            'RATE_LIMITED'
+            'RATE_LIMITED',
+            'WEBAUTHN_REGISTERED', 'WEBAUTHN_ASSERTED', 'WEBAUTHN_ASSERTION_FAILED',
+            'WEBAUTHN_DEREGISTERED', 'WEBAUTHN_REGISTRATION_REFUSED',
+            'EMERGENCY_PASSWORD_LOGIN_AUTHORIZED', 'NETWORK_POLICY_DENIED',
+            'SESSION_EVICTED', 'SESSION_EXPIRED', 'SESSION_REVOKED'
         )),
     -- v9.245 (roadmap P2.1): the partition key must be part of the primary key.
     PRIMARY KEY (audit_id, event_timestamp)

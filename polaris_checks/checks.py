@@ -1242,6 +1242,32 @@ def _index_definitions(text: str) -> dict[str, str]:
     return out
 
 
+def _named_check_constraints(text: str) -> dict[str, str]:
+    """name -> CHECK body, normalised. Catches the drift in EITHER direction.
+
+    v9.450 found this one pointing the other way: migration 2026-09-01-001 widened
+    chk_authaudit_event_type by ten WebAuthn and session events and 01_schema.sql never
+    got them, so a database built from the schema files alone REFUSED an insert of
+    WEBAUTHN_REGISTERED. The canonical file is meant to be the whole schema on its own,
+    so a migration that widens a vocabulary has to be reflected back into it.
+    """
+    out: dict[str, str] = {}
+    for m in re.finditer(r"CONSTRAINT\s+(\w+)\s+CHECK\s*\((.*?)\)\s*(?:,|\)|;|$)",
+                         text, re.I | re.S):
+        body = re.sub(r"\s+", " ", re.sub(r"--[^\n]*", "", m.group(2))).strip().lower()
+        # `x IN ('a','b')` and `x IN ('b','a')` are the same constraint. Comparing the
+        # text would report a reordered vocabulary as drift, which is a false finding and
+        # exactly the kind of noise that teaches a reader to ignore a check.
+        #
+        # Done by pulling the literals out and sorting them rather than by rewriting the
+        # IN list in place: the pattern above stops at the first `)`, so a captured body
+        # can be unbalanced, and a paren-matching rewrite silently does nothing on it.
+        literals = sorted(re.findall(r"'[^']*'", body))
+        skeleton = re.sub(r"'[^']*'", "?", body)
+        out[m.group(1).lower()] = skeleton + " || " + ", ".join(literals)
+    return out
+
+
 def check_migrations_do_not_revert_canonical_objects(root: pathlib.Path) -> list[Finding]:
     """No migration reinstalls an older body of a function the canonical files own (v9.449).
 
@@ -1322,12 +1348,31 @@ def check_migrations_do_not_revert_canonical_objects(root: pathlib.Path) -> list
                            % (len(drifted_idx), ", ".join("%s (last set by %s)" % (n, m)
                                                           for n, m in drifted_idx)))
 
+    # And named CHECK constraints, where the drift showed up pointing the other way.
+    canonical_con = _named_check_constraints(_read(root, "polaris_sql/01_schema.sql"))
+    last_con: dict[str, tuple[str, str]] = {}
+    for path in sorted(d.glob("*.up.sql")):
+        for nm, body in _named_check_constraints(path.read_text(errors="replace")).items():
+            last_con[nm] = (path.name, body)
+    drifted_con = [(nm, mig) for nm, (mig, body) in sorted(last_con.items())
+                   if nm in canonical_con and body != canonical_con[nm]]
+    if drifted_con:
+        return _fail(name, "%d CHECK constraint(s) differ between the migrations and the "
+                           "canonical schema, so the two describe different databases: %s. "
+                           "Whichever is older has to be brought forward -- a migration that "
+                           "widens a vocabulary must be reflected back into 01_schema.sql, or a "
+                           "bare load refuses values the application writes."
+                           % (len(drifted_con), ", ".join("%s (migration copy from %s)" % (n, m)
+                                                          for n, m in drifted_con)))
+
     shared = sum(1 for fn in last if fn in canonical)
     shared_idx = sum(1 for nm in last_idx if nm in canonical_idx)
-    return _ok(name, "all %d function(s) and %d index(es) that a migration and a canonical file "
-                     "both define agree on what runs last, so applying migrations cannot quietly "
-                     "reinstate a version the tree has already corrected"
-                     % (shared, shared_idx))
+    shared_con = sum(1 for nm in last_con if nm in canonical_con)
+    return _ok(name, "all %d function(s), %d index(es) and %d CHECK constraint(s) that a "
+                     "migration and a canonical file both define agree, so applying migrations "
+                     "cannot quietly reinstate a version the tree has corrected and a bare load "
+                     "cannot refuse a value the migrations allow"
+                     % (shared, shared_idx, shared_con))
 
 
 def check_migrations_are_reversible(root: pathlib.Path) -> list[Finding]:
