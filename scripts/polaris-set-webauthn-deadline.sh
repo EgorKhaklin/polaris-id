@@ -87,6 +87,7 @@ FORCE_CLEAR=0
 FORCE=0
 DRY_RUN=0
 BY_USER="${USER:-unknown}"
+REASON=""
 
 # Database connection
 PSQL="${POLARIS_PSQL:-psql}"
@@ -117,6 +118,8 @@ while [[ $# -gt 0 ]]; do
         --dry-run)         DRY_RUN=1 ;;
         --by)              shift; BY_USER="${1:-${USER:-unknown}}" ;;
         --by=*)            BY_USER="${1#*=}" ;;
+        --reason)          shift; REASON="${1:-}" ;;
+        --reason=*)        REASON="${1#*=}" ;;
         --help|-h)         usage ;;
         *)                 echo "unknown arg: $1" >&2; usage ;;
     esac
@@ -259,22 +262,38 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
     exit "${EXIT_OK}"
 fi
 
+# v9.443: pushing a deadline further away, or clearing it, gives these operators longer
+# without a hardware key, and trg_app_user_audited refuses that without a stated reason.
+# Checked here so the operator learns it before the transaction rolls back. Pulling a
+# deadline closer is a tightening and needs none, but the script asks for one either way:
+# an operator who has to explain a relaxation should not have to discover that only when
+# it fails.
+if [[ "${#REASON}" -lt 20 ]]; then
+    echo "error: --reason is required and must be at least 20 characters." >&2
+    echo "       Moving this deadline changes when these operators must hold a hardware" >&2
+    echo "       key, and the record has to say why." >&2
+    exit "${EXIT_USAGE}"
+fi
+
 # Apply the update transactionally + write audit row
 SAFE_BY=$(sqlq "${BY_USER}")
-SAFE_CTX=$(sqlq "set by: ${BY_USER} | new_deadline: ${NEW_DEADLINE_HUMAN}")
+SAFE_CTX="${REASON} (set by: ${BY_USER} | new_deadline: ${NEW_DEADLINE_HUMAN})"
+# The audit row is NOT written here. Until v9.443 this script hand-wrote one into
+# AuditAccessLog, naming four columns that table has never had, so ON_ERROR_STOP rolled
+# the whole transaction back and the script could not set a deadline at all -- for every
+# version since the v9.30 baseline. Even corrected it was the wrong table:
+# AuditAccessLog records READS of the four audit-of-record tables and its CHECK says so.
+#
+# trg_app_user_audited now records the change from the row diff, so the script states
+# its reason and does the UPDATE. A deadline pushed FURTHER AWAY gives these operators
+# longer without a hardware key, which the trigger refuses without a reason; pulling one
+# closer needs none.
 APPLY_SQL=$(cat <<EOF
 BEGIN;
+SELECT set_config('polaris.actor', \$pol\$${BY_USER}\$pol\$, true),
+       set_config('polaris.justification', \$pol\$${SAFE_CTX}\$pol\$, true);
 UPDATE AppUser
    SET webauthn_required_after = ${NEW_DEADLINE_SQL}
- WHERE ${FILTER};
-INSERT INTO AuditAccessLog
-       (accessed_table, accessed_row_id, access_type, accessed_by_user_id,
-        access_context, accessed_at)
-SELECT 'AppUser', user_id, 'WEBAUTHN_DEADLINE_SET',
-       (SELECT user_id FROM AppUser WHERE username = '${SAFE_BY}' LIMIT 1),
-       '${SAFE_CTX}',
-       NOW()
-  FROM AppUser
  WHERE ${FILTER};
 COMMIT;
 EOF

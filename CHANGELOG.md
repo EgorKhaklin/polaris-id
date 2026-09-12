@@ -5,6 +5,68 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.443 — 2026-09-12 (the table of who may sign in had no trigger on it)
+
+Two operator scripts turned out never to have run. `polaris-set-webauthn-deadline.sh` writes an
+audit row naming four columns `AuditAccessLog` has never had, so `ON_ERROR_STOP` rolled the whole
+transaction back and the script could not set a deadline at all; `polaris-loadtest-tokens.sh`
+names six columns across three tables that do not exist. Both date to the v9.30 baseline, which
+is four hundred and ten versions. Verified against the live catalog rather than by reading: every
+INSERT in every shipped script was resolved against `information_schema.columns`, and these two
+are what came back.
+
+Fixing the first one is what found the real thing. `AuditAccessLog` records READS of the four
+audit-of-record tables and its CHECK says so, so it was the wrong table; `AuthAuditLog`'s
+vocabulary has twenty-one event types and none covers this; and `AppUser` -- the table that
+decides who may sign in, what role they hold, which authority they belong to, and the date by
+which they must carry a hardware key -- **had no trigger at all**. `pg_trigger` returned zero
+non-internal rows for it.
+
+`AuthAuditLog` is why that was hard to see. It records `LOGIN_SUCCESS`, `ACCOUNT_CREATED`,
+`PASSWORD_CHANGED` and eighteen other events, so the account table looked well covered. Every row
+there is written by the application and only when the application chooses to. An UPDATE in psql
+promoting an auditor to admin, reactivating a disabled account, or pushing the WebAuthn deadline
+out by a year wrote nothing anywhere.
+
+`AppUserEvent` is the third and last of the tables that decide who may act to get its record,
+after `RelyingParty` in v9.425 and `Agency` in v9.440: the outside organisation, the issuing
+authority, and the operator. A creation, a rise in role, a reactivation, a deadline moved further
+away and a move between authorities each need a stated reason at the database; a demotion, a
+deactivation or a rename needs none. **It holds no secret**: a password change is the fact and
+never the value, held by a CHECK at the table rather than by the trigger, because a record of the
+account table is not a place to accumulate old hashes for somebody to attack offline. A sign-in
+writes nothing, since `last_login_at`, `failed_login_count` and `locked_until` are live state and
+a row per request would bury the decisions. DELETE is recorded rather than refused, the
+deliberate difference from `Agency`: an account created by mistake before it ever acted can go,
+and one that acted is already held by the ten foreign keys pointing at it.
+
+The script that started this now states a reason and does the UPDATE, and the trigger records it.
+`polaris-loadtest-tokens.sh` is retired rather than repaired: `polaris_sim` loads a nation through
+the real `uc_bulk_issue` pipeline and certifies the invariants under load, and
+`polaris-atlas-benchmark.sh` times the endpoints against a multi-million-event log, so a second,
+worse load path built on direct inserts with placeholder signatures is not worth carrying.
+
+One property was found by testing the thing rather than reasoning about it, and it changed the
+design. `INSERT ... ON CONFLICT DO UPDATE` fires a BEFORE INSERT trigger SPECULATIVELY: the
+trigger runs, the conflict is then detected, the row is updated instead, and the trigger's write
+is NOT rolled back. The first cut recorded from a single BEFORE trigger, so a conflicting insert
+logged a `CREATED` event for an account that already existed. Measured: two `CREATED` rows for
+one account. Five callers in this tree use that form. So the gate and the recorder are now two
+triggers, `trg_app_user_guarded` BEFORE and `trg_app_user_audited` AFTER, both asking the same
+`_app_user_widens` predicate so they cannot drift. The check pins the direction of each, because
+putting the recorder back to BEFORE would quietly reintroduce invented creations. `Agency` is
+unaffected: it carries no unique constraint, so `ON CONFLICT` cannot be used against it, and
+nothing does.
+
+Also fixed, a consequence of v9.440 nobody would have seen: `idx_agency_event_widened` was a
+partial index `WHERE widened`, which holds only the TRUE rows. When `widened` became
+three-valued, the index stopped matching the `widened IS NOT FALSE` filter that
+`agency-history --widened-only` runs.
+
+**255 invariant checks. 45 tables.**
+
+---
+
 ## v9.442 — 2026-09-12 (the local gate ran four suites; CI runs eighteen)
 
 v9.440's trigger refused an INSERT into Agency with no stated reason. The national simulation's

@@ -85,7 +85,6 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-authz-audit.sh` | The who-can-do-what report across all four authorization surfaces | A contributor or an assessor; `RED-TEAM-SCOPE.md` points here |
 | `polaris-chaos-test.sh` | Fault injection, asserting the system fails safe rather than open | `ci.yml`, on every push |
 | `polaris-load-test.sh` | HTTP load generation against a running instance | A contributor, by hand |
-| `polaris-loadtest-tokens.sh` | Token-volume load: issuance at scale | A contributor, by hand |
 | `polaris-atlas-benchmark.sh` | The Atlas endpoints against a multi-million-event log | A contributor, reproducing `SCALING.md` |
 
 ## Python helpers

@@ -275,7 +275,7 @@ VHASH=$(compose exec -T -e P="$VPASS" app python3 -c \
     "import os; from werkzeug.security import generate_password_hash as g; print(g(os.environ['P'], method='scrypt'))" 2>/dev/null | tr -d '\r') \
     || fail "could not compute the operator hash in the app container"
 docker exec "polaris-$L0" psql -h /var/run/postgresql -U postgres -d polaris -v ON_ERROR_STOP=1 -c \
-    "INSERT INTO AppUser (username,password_hash,role,is_active,webauthn_required_after) VALUES ('polarisdrill','$VHASH','admin',TRUE,NULL) ON CONFLICT (username) DO UPDATE SET password_hash=EXCLUDED.password_hash, is_active=TRUE, locked_until=NULL, failed_login_count=0" >/dev/null \
+    "SELECT set_config('polaris.actor','drill',true), set_config('polaris.justification','throwaway administrator for the deploy drill',true); INSERT INTO AppUser (username,password_hash,role,is_active,webauthn_required_after) VALUES ('polarisdrill','$VHASH','admin',TRUE,NULL) ON CONFLICT (username) DO UPDATE SET password_hash=EXCLUDED.password_hash, is_active=TRUE, locked_until=NULL, failed_login_count=0" >/dev/null \
     || fail "could not bootstrap the drill admin on $L0"
 verify_recovered || fail "the verify-at-use endpoint did not answer 200 before the drill"
 # One steady verification load spanning ALL scenarios; asserted at the end. A

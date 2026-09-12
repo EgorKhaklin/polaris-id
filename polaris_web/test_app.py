@@ -4975,6 +4975,13 @@ class F01_AuthenticationTests(UnauthenticatedTestCase):
         from werkzeug.security import generate_password_hash
         get_db = lambda: psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            # v9.443: creating an account is refused without a stated reason, and this
+            # fixture is a caller like any other. Same statement as the INSERT so both
+            # land on this connection.
+            cur.execute(
+                "SELECT set_config('polaris.actor', 'test-fixture', true), "
+                "       set_config('polaris.justification', "
+                "                  'test fixture account for the timing and concurrency probes', true)")
             cur.execute(
                 "INSERT INTO AppUser (username, password_hash, role, "
                 "failed_login_count, locked_until, is_active) "
@@ -5019,6 +5026,13 @@ class F01_AuthenticationTests(UnauthenticatedTestCase):
         from werkzeug.security import generate_password_hash
         get_db = lambda: psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            # v9.443: creating an account is refused without a stated reason, and this
+            # fixture is a caller like any other. Same statement as the INSERT so both
+            # land on this connection.
+            cur.execute(
+                "SELECT set_config('polaris.actor', 'test-fixture', true), "
+                "       set_config('polaris.justification', "
+                "                  'test fixture account for the timing and concurrency probes', true)")
             cur.execute(
                 "INSERT INTO AppUser (username, password_hash, role, "
                 "failed_login_count, locked_until, is_active) "
@@ -5574,6 +5588,13 @@ class ConcurrencyTests(PolarisTestCase):
         # Use a fresh test user so we don't interfere with the seeded admin
         with self._new_conn() as conn, conn.cursor() as cur:
             from werkzeug.security import generate_password_hash
+            # v9.443: creating an account is refused without a stated reason, and this
+            # fixture is a caller like any other. Same statement as the INSERT so both
+            # land on this connection.
+            cur.execute(
+                "SELECT set_config('polaris.actor', 'test-fixture', true), "
+                "       set_config('polaris.justification', "
+                "                  'test fixture account for the timing and concurrency probes', true)")
             cur.execute(
                 "INSERT INTO AppUser (username, password_hash, role, "
                 "failed_login_count, locked_until, is_active) "

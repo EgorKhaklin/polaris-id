@@ -19,6 +19,9 @@
 #
 #   --username NAME            lowercase, 3-50 chars, [a-z0-9._-]
 #   --role admin|operator|auditor
+#   --reason TEXT              why this person is being given an account (>=20 chars;
+#                              the database refuses the creation without it)
+#   --by NAME                  who is doing this (defaults to $USER)
 #   --password-file PATH       read password from file (preferred)
 #   --target=docker-stack      use the running docker compose Postgres
 #   --dry-run                  validate + report; no INSERT issued
@@ -47,6 +50,8 @@ COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 
 USERNAME=""
 ROLE=""
+REASON=""
+BY_USER="${USER:-polaris-create-operator.sh}"
 PASSWORD_FILE=""
 USE_DOCKER_STACK=0
 DRY_RUN=0
@@ -57,6 +62,10 @@ while [[ $# -gt 0 ]]; do
         --username)         shift; USERNAME="${1:-}" ;;
         --role=*)           ROLE="${1#--role=}" ;;
         --role)             shift; ROLE="${1:-}" ;;
+        --reason=*)         REASON="${1#--reason=}" ;;
+        --reason)           shift; REASON="${1:-}" ;;
+        --by=*)             BY_USER="${1#--by=}" ;;
+        --by)               shift; BY_USER="${1:-}" ;;
         --password-file=*)  PASSWORD_FILE="${1#--password-file=}" ;;
         --password-file)    shift; PASSWORD_FILE="${1:-}" ;;
         --target=docker-stack) USE_DOCKER_STACK=1 ;;
@@ -74,6 +83,14 @@ done
 # (chk_appuser_username_format: ^[a-z0-9._-]{3,50}$; chk_appuser_role).
 if [[ -z "${USERNAME}" || -z "${ROLE}" ]]; then
     echo "error: --username and --role are required" >&2
+    exit "${EXIT_USAGE}"
+fi
+# v9.443: the database refuses an account with no stated reason. Checked here too, so
+# the operator is told before being asked for a password.
+if [[ "${#REASON}" -lt 20 ]]; then
+    echo "error: --reason is required and must be at least 20 characters: an account is" >&2
+    echo "       the grant of access to the system, and the record has to say why this" >&2
+    echo "       person was given one" >&2
     exit "${EXIT_USAGE}"
 fi
 if ! [[ "${USERNAME}" =~ ^[a-z0-9._-]{3,50}$ ]]; then
@@ -216,6 +233,10 @@ fi
 
 cat > "${SQL_TMP}" <<SQL
 BEGIN;
+-- v9.443: creating an account is refused without a stated reason. Declared in the
+-- same transaction as the INSERT so it reaches trg_app_user_audited.
+SELECT set_config('polaris.actor', \$polaris\$${BY_USER}\$polaris\$, true),
+       set_config('polaris.justification', \$polaris\$${REASON}\$polaris\$, true);
 INSERT INTO AppUser (username, password_hash, role, is_active, webauthn_required_after)
 VALUES ('${USERNAME}', \$polaris\$${HASH}\$polaris\$, '${ROLE}', TRUE, ${WEBAUTHN_DEADLINE_SQL});
 INSERT INTO AuthAuditLog (event_type, username, detail)

@@ -482,7 +482,7 @@ class UserListCommandTests(CLIBaseTestCase):
 class UserCreateCommandTests(CLIBaseTestCase):
 
     def test_create_user_with_valid_password(self):
-        r = run_cli('user-create', 'newop1', 'operator', '--password', 'StrongPass123!')
+        r = run_cli('user-create', 'newop1', 'operator', '--password', 'StrongPass123!', '--justification', 'test account created by the CLI suite')
         self.assertEqual(r.returncode, 0)
         self.assertIn('Created user', r.stdout)
         # Verify the new row exists
@@ -497,39 +497,39 @@ class UserCreateCommandTests(CLIBaseTestCase):
 
     def test_create_user_rejects_short_password(self):
         r = run_cli('user-create', 'shortpw', 'operator', '--password', 'Short1!',
-                    expect_success=False)
+                    '--justification', 'test account created by the CLI suite', expect_success=False)
         self.assertEqual(r.returncode, 1)
         self.assertIn('at least 12 characters', r.stderr)
 
     def test_create_user_rejects_no_digit(self):
         r = run_cli('user-create', 'nodigit', 'operator', '--password', 'NoDigitsHere!',
-                    expect_success=False)
+                    '--justification', 'test account created by the CLI suite', expect_success=False)
         self.assertEqual(r.returncode, 1)
         self.assertIn('at least one digit', r.stderr)
 
     def test_create_user_rejects_no_letter(self):
         r = run_cli('user-create', 'noletter', 'operator', '--password', '12345678901!@#',
-                    expect_success=False)
+                    '--justification', 'test account created by the CLI suite', expect_success=False)
         self.assertEqual(r.returncode, 1)
         self.assertIn('at least one letter', r.stderr)
 
     def test_create_user_rejects_no_symbol(self):
         r = run_cli('user-create', 'nosymbol', 'operator', '--password', 'NoSymbolHere123',
-                    expect_success=False)
+                    '--justification', 'test account created by the CLI suite', expect_success=False)
         self.assertEqual(r.returncode, 1)
         self.assertIn('at least one symbol', r.stderr)
 
     def test_create_user_rejects_duplicate(self):
         # admin already exists in the seed data
         r = run_cli('user-create', 'admin', 'operator', '--password', 'Whatever123!',
-                    expect_success=False)
+                    '--justification', 'test account created by the CLI suite', expect_success=False)
         self.assertEqual(r.returncode, 3)
         self.assertIn('already exists', r.stderr)
 
     def test_create_user_normalizes_uppercase_to_lowercase(self):
         """The CLI lowercases the username before insert (matches the
         chk_appuser_username_format CHECK constraint which only allows lowercase)."""
-        r = run_cli('user-create', 'NeWuSeR', 'operator', '--password', 'StrongPass123!')
+        r = run_cli('user-create', 'NeWuSeR', 'operator', '--password', 'StrongPass123!', '--justification', 'test account created by the CLI suite')
         self.assertEqual(r.returncode, 0)
         # Verify it was stored lowercase
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
@@ -543,17 +543,17 @@ class UserCreateCommandTests(CLIBaseTestCase):
         """Special characters not in [a-z0-9._-] are rejected."""
         # Spaces should hit the CHECK constraint after lowercasing
         r = run_cli('user-create', 'bad name', 'operator', '--password', 'StrongPass123!',
-                    expect_success=False)
+                    '--justification', 'test account created by the CLI suite', expect_success=False)
         self.assertEqual(r.returncode, 3)
 
     def test_create_user_rejects_invalid_role(self):
         r = run_cli('user-create', 'someuser', 'superuser', '--password', 'Whatever123!',
-                    expect_success=False)
+                    '--justification', 'test account created by the CLI suite', expect_success=False)
         self.assertEqual(r.returncode, 2)  # argparse rejects choice
 
     def test_created_user_password_works_for_authentication(self):
         """End-to-end: CLI-created user can authenticate via the security module."""
-        run_cli('user-create', 'roundtrip', 'auditor', '--password', 'RoundtripPass123!')
+        run_cli('user-create', 'roundtrip', 'auditor', '--password', 'RoundtripPass123!', '--justification', 'test account created by the CLI suite')
 
         # Verify hash decodes back via werkzeug
         from werkzeug.security import check_password_hash
@@ -1346,8 +1346,41 @@ class OperatorAccountAuditTests(CLIBaseTestCase):
         finally:
             conn.close()
 
+    def test_creating_an_account_without_a_reason_is_refused(self):
+        """v9.443: an account is the grant of access to the system. The CLI refuses it
+        before asking for a password, and the database refuses it independently."""
+        r = run_cli('user-create', 'unexplained_probe', 'operator',
+                    '--password', 'Probe@Pass1!', '--justification', 'too short',
+                    expect_success=False)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('at least 20 characters', r.stderr)
+
+    def test_the_trigger_records_the_creation_and_user_history_reads_it(self):
+        """The record is written by trg_app_user_audited, not by the CLI, so it exists
+        whether or not the caller chose to write one."""
+        run_cli('user-create', self.USER, 'operator', '--password', 'Probe@Pass1!',
+                '--justification', 'duty operator for the overnight verification desk',
+                '--actor', 'probe-admin')
+        r = run_cli('user-history', self.USER)
+        self.assertIn('CREATED', r.stdout)
+        self.assertIn('WIDENED', r.stdout)
+        self.assertIn('probe-admin', r.stdout)
+        self.assertIn('overnight verification desk', r.stdout)
+
+    def test_user_history_never_shows_a_password_hash(self):
+        """A password change is the FACT and never the value, held by a CHECK at the
+        table rather than by the command."""
+        run_cli('user-create', self.USER, 'operator', '--password', 'Probe@Secret9!',
+                '--justification', 'duty operator for the overnight verification desk')
+        run_cli('user-passwd', self.USER, '--password', 'Probe@Secret10!')
+        r = run_cli('user-history', self.USER)
+        self.assertIn('PASSWORD_CHANGED', r.stdout)
+        for leak in ('scrypt', 'Probe@Secret9!', 'Probe@Secret10!'):
+            self.assertNotIn(leak, r.stdout,
+                             "user-history leaked %r into the operator's terminal" % leak)
+
     def test_the_account_lifecycle_is_recorded_end_to_end(self):
-        run_cli('user-create', self.USER, 'operator', '--password', 'Probe@Pass1!')
+        run_cli('user-create', self.USER, 'operator', '--password', 'Probe@Pass1!', '--justification', 'test account created by the CLI suite')
         run_cli('user-passwd', self.USER, '--password', 'Probe@Pass2!')
         run_cli('user-deactivate', self.USER)
         events = [e for e, _ in self._events_for(self.USER)]
@@ -1356,7 +1389,7 @@ class OperatorAccountAuditTests(CLIBaseTestCase):
             "the operator-account lifecycle must be in the audit log in order; got %r" % (events,))
 
     def test_the_record_names_who_did_it_and_never_the_password(self):
-        run_cli('user-create', self.USER, 'admin', '--password', 'Probe@Secret9!')
+        run_cli('user-create', self.USER, 'admin', '--password', 'Probe@Secret9!', '--justification', 'test account created by the CLI suite')
         (event, detail), = self._events_for(self.USER)
         self.assertEqual(event, 'ACCOUNT_CREATED')
         self.assertIn('via CLI', detail,
@@ -1368,7 +1401,7 @@ class OperatorAccountAuditTests(CLIBaseTestCase):
 
     def test_the_record_and_the_account_commit_together(self):
         """A row that can be rolled back separately from its subject is not a record."""
-        run_cli('user-create', self.USER, 'operator', '--password', 'Probe@Pass1!')
+        run_cli('user-create', self.USER, 'operator', '--password', 'Probe@Pass1!', '--justification', 'test account created by the CLI suite')
         import psycopg2
         from psycopg2.extras import RealDictCursor
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)

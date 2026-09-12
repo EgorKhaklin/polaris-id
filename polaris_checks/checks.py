@@ -5851,6 +5851,7 @@ BESPOKE_IMMUTABILITY_GUARDS = {
     "enforce_agency_quota_immutability":      "polaris_web/test_check_constraints.py",
     # v9.440: the authority recorder also refuses a DELETE and an agency_id change.
     "record_agency_change":                   "polaris_web/test_check_constraints.py",
+    "guard_app_user_change":                  "polaris_web/test_check_constraints.py",
     "enforce_attestation_immutability":       "polaris_web/test_app.py",
     "enforce_discretion_policy_immutability": "polaris_web/test_check_constraints.py",
     "enforce_epoch_immutability":             "polaris_web/test_app.py",
@@ -6716,6 +6717,138 @@ def check_duress_is_indistinguishable(root: pathlib.Path) -> list[Finding]:
 # v9.424, v9.425 and v9.426 each gave a decision ABOUT an authority its history.
 # This is the decision underneath them.
 # ----------------------------------------------------------------------------
+
+def check_operator_accounts_are_recorded(root: pathlib.Path) -> list[Finding]:
+    """An operator account cannot be created, promoted or relaxed unrecorded (v9.443).
+
+    AppUser decides who may sign in, what role they hold, which authority they belong to,
+    and the date by which they must carry a hardware key. It had no trigger.
+
+    AuthAuditLog made that hard to see. It records LOGIN_SUCCESS, ACCOUNT_CREATED,
+    PASSWORD_CHANGED and eighteen other events, so the account table looked well covered
+    -- but every row there is written by the APPLICATION and only when the application
+    chooses to, which is the property this check exists to refuse. An UPDATE in psql that
+    promotes an auditor to admin, reactivates a disabled account, or pushes the WebAuthn
+    deadline out by a year wrote nothing anywhere.
+
+    Five properties:
+
+      - `AppUserEvent` exists, is append-only, and is written by a TRIGGER.
+      - It holds NO SECRET. A password or recovery-code change is recorded as the fact
+        and never as a value, held by a CHECK at the table rather than by the trigger
+        alone, so a record of the account table cannot become a pile of old hashes to
+        attack offline.
+      - The gated changes each need a stated reason at the DATABASE on the 20-character
+        floor: creation, a rise in role, reactivation, a deadline pushed further away,
+        and a move between authorities. A demotion, a deactivation or a rename needs none.
+      - A move between authorities is recorded as `widened = NULL`, because P3.9 made the
+        agency boundary what bounds an operator's view and no ordering puts one authority
+        above another. The operator tool filters on `widened IS NOT FALSE`.
+      - The live-state columns are NOT recorded. last_login_at, failed_login_count and
+        locked_until are written on every sign-in, and a recorder that captured them
+        would bury the decisions under a row per request.
+      - The recorder is an AFTER trigger and the guard a BEFORE one, which is not a style
+        choice. `INSERT ... ON CONFLICT DO UPDATE` fires a BEFORE INSERT trigger
+        SPECULATIVELY: it runs, the conflict is then detected, and the row is updated
+        instead, so a BEFORE recorder writes a CREATED event for a row that already
+        existed and does not roll it back. Five callers in this tree use that form.
+    """
+    name = "operator_accounts_recorded"
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    cli = _read(root, "polaris_cli/polaris.py")
+    if not schema or not triggers or not cli:
+        return _fail(name, "01_schema.sql, 06_triggers.sql or the CLI could not be read")
+
+    findings: list[Finding] = []
+    if "CREATE TABLE AppUserEvent" not in schema:
+        return _fail(name, "AppUserEvent is not declared: what is decided about an operator "
+                           "account is recorded nowhere")
+    if "chk_app_user_event_no_secret" not in schema:
+        findings.extend(_fail(name, "nothing at the TABLE stops a password or recovery-code "
+                                    "hash being written into the record; the trigger declining "
+                                    "to write one is not the same as the column refusing it"))
+
+    # The whole AppUser apparatus: the two predicates, the guard and the recorder.
+    i = triggers.find("FUNCTION _app_user_role_rank")
+    body = triggers[i:] if i >= 0 else ""
+    if not body:
+        return _fail(name, "the AppUser recorder is not in 06_triggers.sql at all")
+
+    # The recorder must be AFTER and the guard BEFORE, and that is not a style choice.
+    # `INSERT ... ON CONFLICT DO UPDATE` fires a BEFORE INSERT trigger speculatively: it
+    # runs, the conflict is then detected, and the row is updated instead, so a BEFORE
+    # recorder writes a CREATED event for a row that already existed. Five callers in
+    # this tree use that form.
+    if not re.search(r"CREATE TRIGGER trg_app_user_audited\s+AFTER INSERT OR UPDATE OR "
+                     r"DELETE ON AppUser", triggers, re.I):
+        findings.extend(_fail(name, "the AppUser recorder is not an AFTER INSERT OR UPDATE OR "
+                                    "DELETE trigger; a BEFORE recorder writes a CREATED event "
+                                    "for a row that already existed, because ON CONFLICT DO "
+                                    "UPDATE fires BEFORE INSERT speculatively"))
+    if not re.search(r"CREATE TRIGGER trg_app_user_guarded\s+BEFORE INSERT OR UPDATE OR "
+                     r"DELETE ON AppUser", triggers, re.I):
+        findings.extend(_fail(name, "the AppUser guard is not a BEFORE INSERT OR UPDATE OR "
+                                    "DELETE trigger, so a refusal would come after the write "
+                                    "it was supposed to prevent"))
+
+    for needle, why in (
+        ("length(trim(v_why)) < 20",
+         "creating an operator account needs no stated reason, or the floor on it is gone"),
+        ("_app_user_role_rank(p_new.role) > _app_user_role_rank(p_old.role)",
+         "raising an account's role is not treated as a widening, so a promotion to admin "
+         "needs no reason"),
+        ("p_new.is_active AND NOT p_old.is_active",
+         "reactivating a disabled account is not treated as a widening"),
+        ("p_new.webauthn_required_after IS NULL",
+         "clearing the hardware-key deadline is not treated as a relaxation, so it can be "
+         "removed with no reason given"),
+        ("p_new.agency_id IS DISTINCT FROM p_old.agency_id",
+         "moving an operator to another authority is not gated, so the P3.9 boundary can "
+         "be crossed with no stated reason"),
+        ("_app_user_widens(TG_OP, OLD, NEW) OR _app_user_rescopes(TG_OP, OLD, NEW)",
+         "the guard does not ask both predicates, so one class of change passes unexplained"),
+        ("user_id IS DISTINCT FROM OLD.user_id",
+         "user_id is mutable, and changing it would silently re-attribute every action "
+         "recorded against this operator"),
+    ):
+        if needle not in body:
+            findings.extend(_fail(name, why))
+
+    # The live-state columns must not be recorded: a row per sign-in would bury the
+    # decisions this table exists to hold.
+    for column in ("last_login_at", "failed_login_count", "locked_until"):
+        if re.search(r"NEW\.%s IS DISTINCT FROM OLD\.%s" % (column, column), body):
+            findings.extend(_fail(name, "the recorder writes an event for %s, which is live "
+                                        "state written on every sign-in; the decisions would "
+                                        "be buried under a row per request" % column))
+
+    if not re.search(r"'AGENCY_CHANGED',\s*'agency_id',[^;]*?NULL", body, re.S):
+        findings.extend(_fail(name, "a move between authorities claims a direction the "
+                                    "database cannot rank; FALSE drops it out of the "
+                                    "assessor's list and TRUE asserts what nothing checked"))
+
+    if not re.search(r"CREATE TRIGGER \w+\s+BEFORE UPDATE OR DELETE ON AppUserEvent",
+                     triggers, re.I):
+        findings.extend(_fail(name, "the record itself is not append-only"))
+
+    if "def cmd_user_history" not in cli:
+        findings.extend(_fail(name, "there is no command to read what was decided about an "
+                                    "operator account"))
+    if "widened IS NOT FALSE" not in cli:
+        findings.extend(_fail(name, "the operator tool filters on `widened` rather than "
+                                    "`widened IS NOT FALSE`, so it does not show the authority "
+                                    "moves whose direction the database could not decide"))
+
+    if findings:
+        return findings
+    return _ok(name, "creating an operator account, promoting it, reactivating it, moving its "
+                     "hardware-key deadline and moving it between authorities are all recorded "
+                     "by an AFTER trigger in an append-only AppUserEvent that holds no secret; "
+                     "each needs a stated reason from a BEFORE guard, a move between "
+                     "authorities is recorded as a direction the database will not guess, a "
+                     "sign-in writes nothing, and the operator tool can read it")
+
 
 def check_authority_creation_is_recorded(root: pathlib.Path) -> list[Finding]:
     """An authority cannot be created, widened or deleted without a record (v9.440).
@@ -16048,6 +16181,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_procedure_refusals_are_mutation_tested,
     check_duress_is_indistinguishable,
     check_authority_creation_is_recorded,
+    check_operator_accounts_are_recorded,
 ]
 
 

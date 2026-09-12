@@ -13599,3 +13599,131 @@ def test_local_gate_covers_ci_check_discriminates(tmp_path):
 
     (sc / "polaris-ship.py").unlink()
     assert level("could not be read") == "FAIL", "must FAIL when the ship tool is missing"
+
+
+def test_operator_accounts_recorded_check_discriminates(tmp_path):
+    """Every way an operator account could be created, promoted or relaxed unrecorded."""
+    SCHEMA = ("CREATE TABLE AppUserEvent (\n"
+              "    event_id SERIAL PRIMARY KEY,\n"
+              "    db_role VARCHAR(100) NOT NULL DEFAULT session_user,\n"
+              "    CONSTRAINT chk_app_user_event_no_secret CHECK (TRUE)\n"
+              ");\n")
+    TRIG = ("CREATE OR REPLACE FUNCTION _app_user_role_rank(p_role TEXT) RETURNS INTEGER AS $$\n"
+            "    SELECT 1;\n$$;\n"
+            "CREATE OR REPLACE FUNCTION _app_user_widens(p_op TEXT, p_old AppUser, p_new AppUser)\n"
+            "RETURNS BOOLEAN AS $$\n"
+            "    SELECT p_op = 'INSERT'\n"
+            "           OR _app_user_role_rank(p_new.role) > _app_user_role_rank(p_old.role)\n"
+            "           OR (p_new.is_active AND NOT p_old.is_active)\n"
+            "           OR (p_new.webauthn_required_after IS NULL);\n$$;\n"
+            "CREATE OR REPLACE FUNCTION _app_user_rescopes(p_op TEXT, p_old AppUser, p_new AppUser)\n"
+            "RETURNS BOOLEAN AS $$\n"
+            "    SELECT p_new.agency_id IS DISTINCT FROM p_old.agency_id;\n$$;\n"
+            "CREATE OR REPLACE FUNCTION guard_app_user_change() RETURNS TRIGGER AS $$\n"
+            "BEGIN\n"
+            "    IF NEW.user_id IS DISTINCT FROM OLD.user_id THEN\n"
+            "        RAISE EXCEPTION 'immutable';\n    END IF;\n"
+            "    IF (_app_user_widens(TG_OP, OLD, NEW) OR _app_user_rescopes(TG_OP, OLD, NEW))\n"
+            "       AND (v_why IS NULL OR length(trim(v_why)) < 20) THEN\n"
+            "        RAISE EXCEPTION 'needs a reason';\n    END IF;\n"
+            "END;\n$$;\n"
+            "CREATE OR REPLACE FUNCTION record_app_user_change() RETURNS TRIGGER AS $$\n"
+            "BEGIN\n"
+            "    INSERT INTO AppUserEvent VALUES (NEW.user_id, 'AGENCY_CHANGED', 'agency_id',\n"
+            "        OLD.agency_id, NEW.agency_id, NULL);\n"
+            "END;\n$$;\n"
+            "DROP TRIGGER IF EXISTS trg_app_user_guarded ON AppUser;\n"
+            "CREATE TRIGGER trg_app_user_guarded\n"
+            "    BEFORE INSERT OR UPDATE OR DELETE ON AppUser\n"
+            "    FOR EACH ROW EXECUTE FUNCTION guard_app_user_change();\n"
+            "DROP TRIGGER IF EXISTS trg_app_user_audited ON AppUser;\n"
+            "CREATE TRIGGER trg_app_user_audited\n"
+            "    AFTER INSERT OR UPDATE OR DELETE ON AppUser\n"
+            "    FOR EACH ROW EXECUTE FUNCTION record_app_user_change();\n"
+            "DROP TRIGGER IF EXISTS trg_app_user_event_append_only ON AppUserEvent;\n"
+            "CREATE TRIGGER trg_app_user_event_append_only\n"
+            "    BEFORE UPDATE OR DELETE ON AppUserEvent\n"
+            "    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n")
+    CLI = ("def cmd_user_history(args):\n"
+           "    where.append('e.widened IS NOT FALSE')\n")
+
+    def write(schema=None, trig=None, cli=None):
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_cli").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "01_schema.sql").write_text(SCHEMA if schema is None else schema)
+        (tmp_path / "polaris_sql" / "06_triggers.sql").write_text(TRIG if trig is None else trig)
+        (tmp_path / "polaris_cli" / "polaris.py").write_text(CLI if cli is None else cli)
+
+    def level(msg_contains=None):
+        out = checks.check_operator_accounts_are_recorded(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    good = checks.check_operator_accounts_are_recorded(tmp_path)[0]
+    assert good.level == "OK", "must PASS when the account table records its own decisions"
+
+    write(schema="CREATE TABLE Something (id int);\n")
+    bad = checks.check_operator_accounts_are_recorded(tmp_path)[0]
+    assert bad.level == "FAIL" and "recorded nowhere" in bad.message, \
+        "must FAIL with no AppUserEvent at all"
+
+    write(schema=SCHEMA.replace("    CONSTRAINT chk_app_user_event_no_secret CHECK (TRUE)\n", ""))
+    assert level("not the same as the column refusing it") == "FAIL", \
+        "must FAIL when only the trigger keeps hashes out of the record"
+
+    # The property that cost a restructure: a BEFORE recorder writes a CREATED event for
+    # a row that already existed, because ON CONFLICT DO UPDATE fires BEFORE INSERT
+    # speculatively and does not roll the trigger's write back.
+    write(trig=TRIG.replace("trg_app_user_audited\n    AFTER INSERT",
+                            "trg_app_user_audited\n    BEFORE INSERT"))
+    assert level("fires BEFORE INSERT speculatively") == "FAIL", \
+        "must FAIL when the recorder is BEFORE, which invents creations on the conflict path"
+
+    write(trig=TRIG.replace("trg_app_user_guarded\n    BEFORE INSERT",
+                            "trg_app_user_guarded\n    AFTER INSERT"))
+    assert level("after the write it was supposed to prevent") == "FAIL", \
+        "must FAIL when the guard is AFTER, so its refusal comes too late"
+
+    for needle, expect in (
+        ("length(trim(v_why)) < 20", "needs no stated reason"),
+        ("_app_user_role_rank(p_new.role) > _app_user_role_rank(p_old.role)",
+         "promotion to admin needs no reason"),
+        ("(p_new.is_active AND NOT p_old.is_active)", "reactivating a disabled account"),
+        ("p_new.webauthn_required_after IS NULL", "clearing the hardware-key deadline"),
+        ("p_new.agency_id IS DISTINCT FROM p_old.agency_id", "P3.9 boundary"),
+        ("(_app_user_widens(TG_OP, OLD, NEW) OR _app_user_rescopes(TG_OP, OLD, NEW))",
+         "does not ask both predicates"),
+        ("NEW.user_id IS DISTINCT FROM OLD.user_id", "re-attribute every action"),
+    ):
+        write(trig=TRIG.replace(needle, "-- gone"))
+        assert level(expect) == "FAIL", "must FAIL when %r is absent" % needle[:38]
+
+    # The live-state columns must stay out of the record.
+    for column in ("last_login_at", "failed_login_count", "locked_until"):
+        write(trig=TRIG.replace(
+            "    INSERT INTO AppUserEvent VALUES",
+            "    IF NEW.%s IS DISTINCT FROM OLD.%s THEN NULL; END IF;\n"
+            "    INSERT INTO AppUserEvent VALUES" % (column, column)))
+        assert level("row per request") == "FAIL", \
+            "must FAIL when %s is recorded as a decision" % column
+
+    # An authority move must not claim a direction.
+    for claimed in ("FALSE", "TRUE"):
+        write(trig=TRIG.replace("OLD.agency_id, NEW.agency_id, NULL);",
+                                "OLD.agency_id, NEW.agency_id, %s);" % claimed))
+        assert level("direction the database cannot rank") == "FAIL", \
+            "must FAIL when an authority move claims %s" % claimed
+
+    write(trig=TRIG.replace("    BEFORE UPDATE OR DELETE ON AppUserEvent\n",
+                            "    AFTER INSERT ON AppUserEvent\n"))
+    assert level("not append-only") == "FAIL", "must FAIL when the record can be rewritten"
+
+    write(cli="def cmd_something_else(args):\n    where.append('e.widened IS NOT FALSE')\n")
+    assert level("no command to read") == "FAIL", "must FAIL when the record cannot be read"
+
+    write(cli=CLI.replace("e.widened IS NOT FALSE", "e.widened"))
+    assert level("does not show the authority moves") == "FAIL", \
+        "must FAIL when the filter drops the changes it cannot rank"

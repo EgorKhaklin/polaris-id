@@ -30,7 +30,9 @@
 -- TRUNCATE auth tables; CASCADE clears the v2 admin-mediated seed rows
 -- (RecoveryRequest, AgencyTrustAttestation, TokenStateEpoch +
 -- TokenStateEpochLeaf via signed_by/closed_by_user_id FKs).
-TRUNCATE TABLE AuthAuditLog, AppUser RESTART IDENTITY CASCADE;
+-- AppUserEvent is truncated with them: it is keyed on user_id and RESTART IDENTITY
+-- resets the sequence, so leaving it would re-point old events at new accounts.
+TRUNCATE TABLE AuthAuditLog, AppUserEvent, AppUser RESTART IDENTITY CASCADE;
 
 -- ----------------------------------------------------------------------------
 -- Seed three test accounts. Passwords are scrypt hashes of:
@@ -41,6 +43,13 @@ TRUNCATE TABLE AuthAuditLog, AppUser RESTART IDENTITY CASCADE;
 -- them via the polaris.py CLI (`polaris user-create`, `polaris user-passwd`)
 -- or via direct SQL with a freshly-generated hash.
 -- ----------------------------------------------------------------------------
+
+-- v9.443: the seed states its reason like any other caller. Creating an operator
+-- account is refused without one, and a sample database that bypassed the rule
+-- would be a sample of a system that does not have it.
+SELECT set_config('polaris.actor', 'sample-data', false);
+SELECT set_config('polaris.justification',
+                  'notional development account, shipped with the demonstration data', false);
 
 INSERT INTO AppUser (username, password_hash, role) VALUES
     ('admin',

@@ -91,6 +91,7 @@ DROP TABLE IF EXISTS TokenLifecycleEvent    CASCADE;
 DROP TABLE IF EXISTS IdentityToken          CASCADE;
 DROP TABLE IF EXISTS AuthAuditLog           CASCADE;
 DROP TABLE IF EXISTS AgencyEvent            CASCADE;
+DROP TABLE IF EXISTS AppUserEvent           CASCADE;
 DROP TABLE IF EXISTS RelyingPartyEvent      CASCADE;
 DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
@@ -330,7 +331,54 @@ COMMENT ON TABLE AgencyEvent IS
   'creation, or a raised authorization_level -- which is what an assessor filters for.';
 
 CREATE INDEX idx_agency_event_agency ON AgencyEvent (agency_id, recorded_at DESC);
-CREATE INDEX idx_agency_event_widened ON AgencyEvent (recorded_at DESC) WHERE widened;
+CREATE INDEX idx_agency_event_widened ON AgencyEvent (recorded_at DESC)
+    WHERE widened IS NOT FALSE;  -- matches the filter agency-history --widened-only runs
+
+CREATE TABLE AppUserEvent (
+    event_id      SERIAL PRIMARY KEY,
+    -- Deliberately NOT a foreign key, for the reason AgencyEvent is not one (v9.440):
+    -- an account is removable and the record of what it was given has to outlive it.
+    user_id       INTEGER NOT NULL,
+    username      VARCHAR(60) NOT NULL,
+    event_type    VARCHAR(30) NOT NULL,
+    field         VARCHAR(40),
+    -- NEVER a secret. password_hash and recovery_code_hash are recorded as the FACT
+    -- that they changed and never as a value, held by chk_app_user_event_no_secret
+    -- below rather than by the trigger alone: a record of the account table is not a
+    -- place to accumulate old password hashes to attack offline.
+    old_value     TEXT,
+    new_value     TEXT,
+    -- Three-valued, for the reason AgencyEvent.widened is (v9.440). TRUE: the change
+    -- gave this account more than it had -- it was created, its role rose, it was
+    -- reactivated, or its hardware-key deadline moved further away. FALSE: it granted
+    -- nothing. NULL: the account moved between authorities, which P3.9 makes a real
+    -- boundary and which the database cannot rank, since neither agency is above the
+    -- other. The assessor's filter is `widened IS NOT FALSE`.
+    widened       BOOLEAN DEFAULT FALSE,
+    actor         VARCHAR(100),
+    db_role       VARCHAR(100) NOT NULL DEFAULT session_user,
+    justification VARCHAR(500),
+    recorded_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_app_user_event_type CHECK (event_type IN (
+        'CREATED', 'DELETED', 'RENAMED', 'ROLE_CHANGED', 'ACTIVATED', 'DEACTIVATED',
+        'WEBAUTHN_DEADLINE_CHANGED', 'AGENCY_CHANGED', 'PASSWORD_CHANGED',
+        'RECOVERY_CODE_CHANGED')),
+    CONSTRAINT chk_app_user_event_field CHECK (
+        (event_type IN ('CREATED', 'DELETED') AND field IS NULL) OR
+        (event_type NOT IN ('CREATED', 'DELETED') AND field IS NOT NULL)),
+    CONSTRAINT chk_app_user_event_no_secret CHECK (
+        event_type NOT IN ('PASSWORD_CHANGED', 'RECOVERY_CODE_CHANGED')
+        OR (old_value IS NULL AND new_value IS NULL))
+);
+
+COMMENT ON TABLE AppUserEvent IS
+    'Append-only record of every decision about an operator account (v9.443). Written '
+    'by trg_app_user_audited from the row diff, never by the caller. Holds no secret: '
+    'a password or recovery-code change is recorded as the fact and never as a value.';
+
+CREATE INDEX idx_appuserevent_user ON AppUserEvent (user_id, event_id);
+CREATE INDEX idx_appuserevent_widened ON AppUserEvent (recorded_at)
+    WHERE widened IS NOT FALSE;
 
 -- v9.425: every decision about an outside relying party, recorded. Registering one,
 -- turning its zero-knowledge step-up off, disabling it: all three used to write

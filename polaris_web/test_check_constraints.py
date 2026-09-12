@@ -231,9 +231,27 @@ class TestAnchorBatchChecks(_CheckBase):
 # ============================================================================
 
 class TestAppUserChecks(_CheckBase):
+    """The account table's CHECK constraints.
+
+    Each insert declares a reason first. Since v9.443 `trg_app_user_audited` is a BEFORE
+    trigger, so it runs ahead of these CHECKs and an account with no stated reason is
+    refused before the value is ever examined. Declaring one puts the CHECK back in the
+    position of being the thing that refuses, which is what these tests are about.
+    `TestAppUserChangesAreRecorded` covers the other refusal.
+    """
+
+    #: Long enough to clear the 20-character floor the trigger enforces.
+    REASON = "constraint test, not a real operator account"
+
+    def _expect_check_violation_with_reason(self, sql, constraint_name):
+        self._expect_check_violation(
+            "SELECT set_config('polaris.justification', %s, true); " + sql,
+            params=(self.REASON,),
+            constraint_name=constraint_name,
+        )
 
     def test_role_enum(self):
-        self._expect_check_violation(
+        self._expect_check_violation_with_reason(
             "INSERT INTO AppUser (username, password_hash, role) "
             "VALUES ('xtest', 'argon2id$dummy', 'godmode')",
             constraint_name='chk_appuser_role',
@@ -241,21 +259,21 @@ class TestAppUserChecks(_CheckBase):
 
     def test_username_format_lowercase_only(self):
         """chk_appuser_username_format: ^[a-z0-9._-]{3,50}$"""
-        self._expect_check_violation(
+        self._expect_check_violation_with_reason(
             "INSERT INTO AppUser (username, password_hash, role) "
             "VALUES ('UPPER', 'argon2id$dummy', 'operator')",
             constraint_name='chk_appuser_username_format',
         )
 
     def test_username_too_short_rejected(self):
-        self._expect_check_violation(
+        self._expect_check_violation_with_reason(
             "INSERT INTO AppUser (username, password_hash, role) "
             "VALUES ('xy', 'argon2id$dummy', 'operator')",
             constraint_name='chk_appuser_username_format',
         )
 
     def test_failed_count_nonneg(self):
-        self._expect_check_violation(
+        self._expect_check_violation_with_reason(
             "INSERT INTO AppUser (username, password_hash, role, failed_login_count) "
             "VALUES ('xtest', 'argon2id$dummy', 'operator', -1)",
             constraint_name='chk_appuser_failed_count_nonneg',
@@ -1455,6 +1473,9 @@ _HEX64 = "repeat('a', 64)"
 APPEND_ONLY_FIXTURES = {
     # v9.440: AgencyEvent has no INSERT of its own -- trg_agency_audited is the only
     # writer -- so the fixture creates the AUTHORITY and lets the trigger write the row.
+    'appuserevent': ('event_id',
+        "INSERT INTO AppUserEvent (user_id, username, event_type, field) "
+        "VALUES (1, 'admin', 'RENAMED', 'username') RETURNING event_id"),
     'agencyevent': ('event_id',
         "SELECT set_config('polaris.justification', "
         "'append-only fixture: an authority created to attack its event row', true); "
@@ -2197,6 +2218,204 @@ class TestAuthorityChangesAreRecorded(_CheckBase):
                          "an authority exists with no record of having been created")
 
 
+class TestAppUserChangesAreRecorded(_CheckBase):
+    """An operator account cannot be created, promoted or relaxed without a record (v9.443).
+
+    AppUser decides who may sign in, what role they hold, which authority they belong to,
+    and the date by which they must carry a hardware key. It had no trigger: verified
+    against a loaded database with pg_trigger returning zero non-internal rows. AuthAuditLog
+    made it look recorded, but every row there is written by the APPLICATION and only when
+    the application chooses to, so an UPDATE in psql wrote nothing at all.
+
+    The writer is trg_app_user_audited, not the console, so these attack the database
+    directly.
+    """
+
+    WHY = 'a stated reason long enough to satisfy the floor'
+
+    def setUp(self):
+        super().setUp()
+        self.cur = self.conn.cursor()
+        self.addCleanup(self.cur.close)
+
+    def _reason(self, why=None):
+        self.cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                         (self.WHY if why is None else why,))
+
+    def _actor(self, who='probe-operator'):
+        self.cur.execute("SELECT set_config('polaris.actor', %s, true)", (who,))
+
+    def _create(self, username='probe.recorded', role='auditor', **kw):
+        cols = ['username', 'password_hash', 'role'] + list(kw)
+        vals = [username, 'scrypt$notahash', role] + list(kw.values())
+        self.cur.execute(
+            "INSERT INTO AppUser (%s) VALUES (%s) RETURNING user_id"
+            % (', '.join(cols), ', '.join(['%s'] * len(vals))), tuple(vals))
+        return self.cur.fetchone()["user_id"]
+
+    def _events(self, user_id):
+        self.cur.execute("SELECT event_type, field, old_value, new_value, widened, actor, "
+                         "db_role, justification FROM AppUserEvent WHERE user_id = %s "
+                         " ORDER BY event_id", (user_id,))
+        return self.cur.fetchall()
+
+    def test_creating_an_account_is_recorded(self):
+        self._reason(); self._actor()
+        uid = self._create()
+        events = self._events(uid)
+        self.assertEqual(len(events), 1, "creating an account wrote no event")
+        e = events[0]
+        self.assertEqual(e["event_type"], "CREATED")
+        self.assertTrue(e["widened"], "an account where there was none is a grant of access")
+        self.assertEqual(e["actor"], "probe-operator")
+        self.assertIn(self.WHY, e["justification"])
+        self.assertIsNotNone(e["db_role"], "no event may be anonymous")
+
+    def test_creating_an_account_without_a_reason_is_refused(self):
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self._create(username='probe.unexplained')
+
+    def test_promotion_needs_a_reason_and_is_marked(self):
+        """auditor reads, operator acts, admin decides who may do either."""
+        self._reason(); self._actor()
+        uid = self._create(role='auditor')
+        self.cur.execute("SAVEPOINT created")
+        self._reason("")
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE AppUser SET role = 'admin' WHERE user_id = %s", (uid,))
+        self.cur.execute("ROLLBACK TO SAVEPOINT created")
+        self._reason("promoted to admin for the quarterly access review")
+        self.cur.execute("UPDATE AppUser SET role = 'admin' WHERE user_id = %s", (uid,))
+        e = [x for x in self._events(uid) if x["event_type"] == "ROLE_CHANGED"][0]
+        self.assertTrue(e["widened"], "a rise in role is a widening")
+        self.assertEqual((e["old_value"], e["new_value"]), ("auditor", "admin"))
+
+    def test_demotion_is_recorded_but_needs_no_reason(self):
+        """The rule bounds one direction: making an account weaker grants nothing."""
+        self._reason(); self._actor()
+        uid = self._create(role='admin')
+        self._reason("")
+        self.cur.execute("UPDATE AppUser SET role = 'auditor' WHERE user_id = %s", (uid,))
+        e = [x for x in self._events(uid) if x["event_type"] == "ROLE_CHANGED"][0]
+        self.assertFalse(e["widened"], "a fall in role grants nothing")
+
+    def test_reactivation_needs_a_reason_and_deactivation_does_not(self):
+        self._reason(); self._actor()
+        uid = self._create(is_active=True)
+        self._reason("")
+        self.cur.execute("UPDATE AppUser SET is_active = FALSE WHERE user_id = %s", (uid,))
+        self.assertEqual([x["event_type"] for x in self._events(uid)][-1], "DEACTIVATED")
+        self.cur.execute("SAVEPOINT off")
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE AppUser SET is_active = TRUE WHERE user_id = %s", (uid,))
+        self.cur.execute("ROLLBACK TO SAVEPOINT off")
+
+    def test_a_deadline_pushed_further_away_is_a_widening(self):
+        """The direction that matters: longer without a hardware key, not shorter."""
+        self._reason(); self._actor()
+        uid = self._create()
+        self._reason("")
+        self.cur.execute("UPDATE AppUser SET webauthn_required_after = NOW() + INTERVAL '7 days' "
+                         " WHERE user_id = %s", (uid,))
+        e = [x for x in self._events(uid) if x["event_type"] == "WEBAUTHN_DEADLINE_CHANGED"][-1]
+        self.assertFalse(e["widened"], "imposing a requirement grants nothing")
+        self.cur.execute("SAVEPOINT tight")
+        for sql in ("UPDATE AppUser SET webauthn_required_after = NOW() + INTERVAL '400 days' "
+                    " WHERE user_id = %s",
+                    "UPDATE AppUser SET webauthn_required_after = NULL WHERE user_id = %s"):
+            with self.subTest(sql=sql.split('=')[1][:18]):
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    self.cur.execute(sql, (uid,))
+                self.cur.execute("ROLLBACK TO SAVEPOINT tight")
+
+    def test_moving_between_authorities_is_recorded_as_undecidable(self):
+        """NULL, not FALSE. P3.9 makes the agency boundary what an operator can see, and
+        no ordering puts one authority above another."""
+        self._reason(); self._actor()
+        uid = self._create(agency_id=1)
+        self.cur.execute("SAVEPOINT made")
+        self._reason("")
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE AppUser SET agency_id = 2 WHERE user_id = %s", (uid,))
+        self.cur.execute("ROLLBACK TO SAVEPOINT made")
+        self._reason("seconded to the state bureau for the enrollment pilot")
+        self.cur.execute("UPDATE AppUser SET agency_id = 2 WHERE user_id = %s", (uid,))
+        e = [x for x in self._events(uid) if x["event_type"] == "AGENCY_CHANGED"][0]
+        self.assertIsNone(e["widened"], "a move between authorities claims a direction "
+                                        "the database cannot rank")
+
+    def test_the_record_holds_no_secret(self):
+        """A password change is the FACT, never the value. Held by a CHECK, so a caller
+        writing a row directly cannot put a hash here either."""
+        self._reason(); self._actor()
+        uid = self._create()
+        self._reason("")
+        self.cur.execute("UPDATE AppUser SET password_hash = 'scrypt$rotated' "
+                         " WHERE user_id = %s", (uid,))
+        e = [x for x in self._events(uid) if x["event_type"] == "PASSWORD_CHANGED"][0]
+        self.assertIsNone(e["old_value"], "the old password hash reached the record")
+        self.assertIsNone(e["new_value"], "the new password hash reached the record")
+        self.cur.execute("SAVEPOINT nosecret")
+        with self.assertRaises(pg_errors.CheckViolation):
+            self.cur.execute(
+                "INSERT INTO AppUserEvent (user_id, username, event_type, field, new_value) "
+                "VALUES (%s, 'x', 'PASSWORD_CHANGED', 'password_hash', 'scrypt$leaked')", (uid,))
+        self.cur.execute("ROLLBACK TO SAVEPOINT nosecret")
+
+    def test_a_sign_in_writes_nothing(self):
+        """last_login_at, failed_login_count and locked_until are live state. Recording
+        them would put a row per request here and bury the decisions."""
+        self._reason(); self._actor()
+        uid = self._create()
+        before = len(self._events(uid))
+        self._reason("")
+        self.cur.execute("UPDATE AppUser SET failed_login_count = 3, "
+                         " locked_until = NOW() + INTERVAL '15 minutes', last_login_at = NOW() "
+                         " WHERE user_id = %s", (uid,))
+        self.assertEqual(len(self._events(uid)), before,
+                         "a sign-in attempt wrote a decision event")
+
+    def test_deleting_an_account_is_recorded_rather_than_refused(self):
+        """The deliberate difference from Agency (v9.440). An account created by mistake
+        before it ever acted can go; one that acted is already held by the foreign keys."""
+        self._reason(); self._actor()
+        uid = self._create()
+        self._reason("")
+        self.cur.execute("DELETE FROM AppUser WHERE user_id = %s", (uid,))
+        e = self._events(uid)[-1]
+        self.assertEqual(e["event_type"], "DELETED")
+        self.assertFalse(e["widened"], "removing access grants nothing")
+
+    def test_the_user_id_cannot_be_repointed(self):
+        self._reason(); self._actor()
+        uid = self._create()
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE AppUser SET user_id = user_id + 5000 WHERE user_id = %s",
+                             (uid,))
+
+    def test_the_record_cannot_be_edited_or_deleted(self):
+        self._reason(); self._actor()
+        uid = self._create()
+        self.cur.execute("SAVEPOINT recorded")
+        for sql in ("UPDATE AppUserEvent SET widened = FALSE WHERE user_id = %s",
+                    "UPDATE AppUserEvent SET justification = 'rewritten' WHERE user_id = %s",
+                    "DELETE FROM AppUserEvent WHERE user_id = %s"):
+            with self.subTest(sql=sql.split()[0]):
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    self.cur.execute(sql, (uid,))
+                self.cur.execute("ROLLBACK TO SAVEPOINT recorded")
+
+    def test_every_seeded_account_carries_a_creation_event(self):
+        """The load order installs the trigger after the accounts, so those rows are
+        backfilled. A database showing operators and no record of them reads as a broken
+        recorder."""
+        self.cur.execute("SELECT count(*) AS n FROM AppUser u WHERE NOT EXISTS ("
+                         " SELECT 1 FROM AppUserEvent e WHERE e.user_id = u.user_id "
+                         "   AND e.event_type = 'CREATED')")
+        self.assertEqual(self.cur.fetchone()["n"], 0,
+                         "an operator account exists with no record of having been created")
+
+
 class TestAgencyQuotaIsAppendOnly(_CheckBase):
     """A quota decision is kept, not edited (v9.424).
 
@@ -2480,6 +2699,16 @@ class TestEveryUniqueRuleRefusesADuplicate(_CheckBase):
             with self.subTest(index=index_name):
                 try:
                     with self.conn.cursor() as cur:
+                        # Some tables carry a BEFORE trigger that refuses an unexplained
+                        # INSERT (Agency since v9.440, AppUser since v9.443). It fires
+                        # ahead of the unique index, so without a reason this sweep would
+                        # be measuring that refusal instead of the rule it names. Ignored
+                        # by every table that has no such trigger.
+                        cur.execute(
+                            "SELECT set_config('polaris.actor', 'unique-rule-sweep', true), "
+                            "       set_config('polaris.justification', "
+                            "                  'uniqueness sweep copying a row to prove the "
+                            "rule refuses a duplicate', true)")
                         table, statement = self._copy_statement(cur, index_name, perturb)
                         cur.execute(f"SELECT count(*) AS n FROM {table}")
                         if cur.fetchone()['n'] == 0:

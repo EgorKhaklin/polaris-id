@@ -29,6 +29,7 @@ drift from what the program accepts):
     bulk-enroll          P2.4: stage an extract with COPY and issue the batch set-based
     user-list            List application users (web auth accounts)
     user-create          Create a new application user
+    user-history         Every recorded decision about an operator account
     user-passwd          Change a user's password (also clears lockout)
     user-deactivate      Deactivate (soft-delete) a user account
     agency-create        Create an authority, with the reason it exists
@@ -1033,6 +1034,14 @@ def _audit_operator_action(cur, event_type, username, user_id=None, detail=None)
 def cmd_user_create(args):
     generate_password_hash = _require_werkzeug()
 
+    # Checked here as well as at the database, so an operator learns the rule before
+    # being asked for a password they then have to type again.
+    if len((args.justification or '').strip()) < 20:
+        sys.stderr.write(red("--justification must be at least 20 characters: an account "
+                             "is the grant of access to the system, and the record has to "
+                             "say why this person was given one.\n"))
+        sys.exit(1)
+
     # Read password — from --password (insecure, only for scripts) or interactively.
     if args.password:
         pw = args.password
@@ -1048,11 +1057,16 @@ def cmd_user_create(args):
     conn = connect()
     try:
         with conn.cursor() as cur:
+            # One statement, deliberately: set_config and the INSERT must land on the
+            # same pooled connection or the reason never reaches the trigger.
             cur.execute("""
+                SELECT set_config('polaris.actor', %s, true),
+                       set_config('polaris.justification', %s, true);
                 INSERT INTO AppUser (username, password_hash, role)
                 VALUES (%s, %s, %s)
                 RETURNING user_id
-            """, (args.username.lower(), pw_hash, args.role))
+            """, (args.actor or 'console', args.justification,
+                  args.username.lower(), pw_hash, args.role))
             new_id = cur.fetchone()['user_id']
             _audit_operator_action(cur, 'ACCOUNT_CREATED', args.username.lower(), new_id,
                                    "role=%s" % args.role)
@@ -1175,8 +1189,11 @@ def cmd_user_deactivate(args):
             conn.commit()
         print(green(f"✓ Deactivated {args.username} (#{row['user_id']}, role={row['role']})"))
         print(dim(f"  Revoked {revoked} live web session(s)."))
-        print(dim("  Audit history preserved. To reactivate:"))
-        print(dim(f"    polaris query \"UPDATE AppUser SET is_active=TRUE WHERE username='{args.username.lower()}'\""))
+        print(dim("  Recorded in AppUserEvent. To reactivate, which gives this person "
+                  "access again and so needs a reason:"))
+        print(dim(f"    polaris query \"SELECT set_config('polaris.justification', "
+                  f"'<why, at least 20 characters>', true); "
+                  f"UPDATE AppUser SET is_active=TRUE WHERE username='{args.username.lower()}'\""))
     except psycopg2.Error as e:
         conn.rollback()
         sys.stderr.write(red(f"Database error: {db_error_message(e)}\n"))
@@ -1245,6 +1262,66 @@ def cmd_agency_create(args):
         sys.exit(2)
     finally:
         conn.close()
+
+
+def cmd_user_history(args):
+    """Every recorded decision about an operator account, and who made it.
+
+    --widened-only filters on `widened IS NOT FALSE`, not on `widened`, for the reason
+    agency-history does: it has to include the changes the database records as
+    unknowable. Moving an operator to another authority is one of those. P3.9 made the
+    agency boundary the thing that bounds what an operator can see, and no ordering puts
+    one authority above another, so the record says it moved and declines to say whether
+    that gave them more.
+
+    The table holds no secret. A password or recovery-code change appears as the FACT
+    that it changed, with no value, held there by a CHECK rather than by this command.
+    """
+    where, params = ["TRUE"], []
+    if args.username:
+        where.append("e.username = %s"); params.append(args.username.lower())
+    if args.widened_only:
+        where.append("e.widened IS NOT FALSE")
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT e.*, coalesce(u.username, '(no longer present)') AS current_name
+                  FROM AppUserEvent e LEFT JOIN AppUser u USING (user_id)
+                 WHERE """ + " AND ".join(where) + """
+                 ORDER BY e.user_id, e.event_id
+            """, tuple(params))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        print(dim("No recorded decisions about an operator account."
+                  + (" Nothing has widened or moved one." if args.widened_only else "")))
+        return 0
+    current = None
+    for r in rows:
+        if r['user_id'] != current:
+            current = r['user_id']
+            print(f"\noperator #{r['user_id']} {r['current_name']}")
+        flag = (red(' WIDENED') if r['widened']
+                else ('' if r['widened'] is False else yellow(' AUTHORITY CHANGED')))
+        what = (f"{r['field']}: {r['old_value']} -> {r['new_value']}"
+                if r['field'] and r['old_value'] is not None
+                else (r['field'] or r['new_value'] or r['old_value'] or ''))
+        print(f"  {r['recorded_at']:%Y-%m-%d %H:%M}  {r['event_type']}{flag}")
+        if what:
+            print(f"      {what}")
+        print(dim(f"      by {r['actor'] or '(no actor declared)'} as db role {r['db_role']}"))
+        if r['justification']:
+            print(dim(f"      {r['justification']}"))
+    widened = sum(1 for r in rows if r['widened'])
+    moved = sum(1 for r in rows if r['widened'] is None)
+    print()
+    print(dim(f"{len(rows)} recorded decision(s): {widened} that gave an account more than "
+              f"it had, {moved} that moved one between authorities, where the direction is "
+              f"not something the database can decide. Written by the trg_app_user_audited "
+              f"trigger, so a change made outside this CLI appears here too."))
+    return 0
 
 
 def cmd_agency_history(args):
@@ -2216,6 +2293,18 @@ def build_parser():
     p_uc.add_argument('--password',
                       help='Password (interactive prompt if omitted; using --password '
                            'puts the value in process listings — prefer interactive)')
+    p_uc.add_argument('--justification', required=True,
+                      help='Why this person is being given an account (>=20 chars; the '
+                           'database refuses the creation without one)')
+    p_uc.add_argument('--actor', help='Who is doing this (defaults to "console")')
+
+    # user-history
+    p_uh = sub.add_parser('user-history',
+                          help='Every recorded decision about an operator account')
+    p_uh.add_argument('username', nargs='?', help='Limit to one account')
+    p_uh.add_argument('--widened-only', action='store_true',
+                      help='Only the changes that gave an account more than it had, or '
+                           'moved it between authorities')
 
     # user-passwd
     p_up = sub.add_parser('user-passwd', help="Change a user's password (also clears lockout)")
@@ -2623,6 +2712,7 @@ HANDLERS = {
     'user-deactivate':  cmd_user_deactivate,
     'agency-create':    cmd_agency_create,
     'agency-history':   cmd_agency_history,
+    'user-history':     cmd_user_history,
     'quota-set':        cmd_quota_set,
     'quota-show':       cmd_quota_show,
     'discretion-set':   cmd_discretion_set,

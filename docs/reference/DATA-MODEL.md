@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **44 tables** in `01_schema.sql` (v9.440), organized
-into six functional groups. A migrated deployment holds **51 tables**: those,
+The Polaris schema is **45 tables** in `01_schema.sql` (v9.443), organized
+into six functional groups. A migrated deployment holds **52 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -584,6 +584,70 @@ and have its `authorization_level` raised from 3 to 5 in silence, while
 `polaris-id` had no command for the row at the root of the hierarchy. Pinned by
 `check_authority_creation_is_recorded` and `TestAuthorityChangesAreRecorded`;
 migration `2026-09-12-002-agency-events`.
+
+### `AppUserEvent`
+
+Append-only record of every decision about an operator account (v9.443):
+`CREATED`, `DELETED`, `RENAMED`, `ROLE_CHANGED`, `ACTIVATED`, `DEACTIVATED`,
+`WEBAUTHN_DEADLINE_CHANGED`, `AGENCY_CHANGED`, `PASSWORD_CHANGED`,
+`RECOVERY_CODE_CHANGED`. Written by the `trg_app_user_audited` trigger from the
+row diff, never by the caller.
+
+`AuthAuditLog` made this look covered and did not cover it. It records
+`LOGIN_SUCCESS`, `ACCOUNT_CREATED`, `PASSWORD_CHANGED` and eighteen other events,
+but every row there is written by the APPLICATION and only when the application
+chooses to. An UPDATE in psql promoting an auditor to admin, reactivating a
+disabled account, or pushing the WebAuthn deadline out by a year wrote nothing
+anywhere, and the table afterwards was indistinguishable from one where it never
+happened.
+
+**It holds no secret.** A password or recovery-code change is recorded as the
+FACT that it changed, with `old_value` and `new_value` left NULL.
+`chk_app_user_event_no_secret` holds that at the table rather than leaving it to
+the trigger, so a caller writing a row directly cannot put a hash here either: a
+record of the account table is not a place to accumulate old password hashes for
+somebody to attack offline.
+
+`widened` is three-valued on the terms `AgencyEvent` set in v9.440. TRUE: the
+change gave this account more than it had, which is creation, a rise in role
+(auditor, operator, admin), reactivation, or a hardware-key deadline moved further
+away or cleared. NULL: the account moved between authorities, which
+[per-authority isolation](../design/per-authority-isolation.md) makes the boundary
+on what an operator can see, and which the database cannot rank because no
+ordering puts one authority above another. FALSE: it granted nothing. The
+assessor's filter is `widened IS NOT FALSE`, which is what `polaris-id
+user-history --widened-only` runs.
+
+Each of those widenings needs a stated reason of at least 20 characters or the
+database refuses the statement, the floor `AgencyQuota` has held since v9.190. A
+demotion, a deactivation, a rename or a password change needs none.
+
+Four columns are deliberately **not** recorded: `last_login_at`,
+`failed_login_count`, `locked_until` and `created_at`. The first three are written
+on every sign-in and every failed attempt, so recording them would put a row per
+request into this table and bury the decisions among them. They are live state;
+`AuthAuditLog` is where the sign-ins belong.
+
+DELETE is **recorded rather than refused**, which is the deliberate difference
+from `AgencyEvent`. An authority that issued credentials cannot be made never to
+have existed, so `Agency` refuses deletion outright; an operator account created
+by mistake before it ever acted can go. An operator who did act is already held by
+the ten foreign keys that point at `AppUser`, so the database refuses that
+deletion on its own without needing a rule of its own.
+
+The recorder is an **AFTER** trigger and the gate a separate **BEFORE** one, which
+is load-bearing rather than tidy. `INSERT ... ON CONFLICT DO UPDATE` fires a BEFORE
+INSERT trigger SPECULATIVELY: the trigger runs, the conflict is then detected, and
+the row is updated instead, but the trigger's write is not rolled back. A single
+BEFORE recorder therefore logs a `CREATED` event for a row that already existed.
+Five callers in this tree use that form, so this was not hypothetical: it was
+measured, two `CREATED` rows for one account, before the split. `trg_app_user_guarded`
+(BEFORE) refuses, `trg_app_user_audited` (AFTER) records, and both ask the same
+`_app_user_widens` predicate so they cannot drift apart.
+
+Deliberately **not** a foreign key to `AppUser`, for the reason `AgencyEvent` is
+not one to `Agency`. Pinned by `check_operator_accounts_are_recorded` and
+`TestAppUserChangesAreRecorded`; migration `2026-09-12-003-app-user-events`.
 
 ### `AgencyQuota`
 
