@@ -65,6 +65,12 @@ python3 scripts/polaris-ship.py plan
 # database, Redis and state dir per shard (process-spawning classes run serially).
 python3 scripts/polaris-ship.py run
 
+# The drills THIS ship needs (the drills that exercise a schema object it altered),
+# and whether they have run against the tree as it stands. Preflight withholds READY
+# while any is unrun; POLARIS_DRILLS_WAIVED=1 waives them and says so in the output.
+python3 scripts/polaris-ship.py drills          # list, with what named each
+python3 scripts/polaris-ship.py drills --run    # run them and record the passes
+
 # CI red? Known flake (apt index, Go module proxy) -> the rerun command; anything
 # else -> the first failing lines per job:
 python3 scripts/polaris-ship.py triage [RUN_ID]

@@ -17,6 +17,7 @@ freshly loaded database, with the classes that spawn processes or bind ports pin
 serial shard. `triage` classifies a failed run's logs against the known flake signatures.
 """
 import glob
+import hashlib
 import json
 import os
 import re
@@ -158,7 +159,22 @@ def plan(out=None):
         return 0
     changed = _changed_paths(last)
     product = [p for p in changed if p.startswith(PRODUCT_PREFIXES)]
-    print("plan for the %d path(s) changed since %s (working tree, uncommitted and untracked included):" % (len(changed), last), file=out)
+    # How stale the baseline is, said out loud (v9.428). Tags here are rare: at v9.427
+    # the last reachable one was v9.345, ninety-one ships back, so this plan had been
+    # answering "what changed in the last quarter" while reading like "what this ship
+    # needs". A reader who cannot tell those apart learns to skim the answer.
+    try:
+        behind = subprocess.check_output(["git", "rev-list", "--count", "%s..HEAD" % last],
+                                         cwd=ROOT, text=True,
+                                         stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        behind = None
+    span = ""
+    if behind and behind.isdigit() and int(behind) > 1:
+        span = (" -- %s ships back, so this is the accumulated surface, not this ship's; "
+                "`drills` scopes to this ship" % behind)
+    print("plan for the %d path(s) changed since %s%s (working tree, uncommitted and untracked included):"
+          % (len(changed), last, span), file=out)
     if not product:
         print("  ✓ no product path moved: the gate, the detection suite and the link check are the verification", file=out)
         return 0
@@ -527,6 +543,273 @@ def triage(run_id=None, out=None):
     return 1
 
 
+# --------------------------------------------------------------------------------------
+# drills (v9.428): the plan's drill list, made binding.
+#
+# `plan` has named the drills a change needs since v9.345, and preflight printed that
+# list as step 4 under the word "Informational". v9.424, v9.425 and v9.426 each moved
+# polaris_sql/, so the plan said "every drill CI runs (the schema sits under all of
+# them)" all three times. I read READY and pushed. Two of those runs went red on the
+# same line of scripts/polaris-abuse-drill.sh, which no unit suite executes.
+#
+# Preflight's own step 2b already says the principle: "a preflight that stays silent
+# about what it did not check is how READY stops meaning anything." A list printed and
+# not acted on is the same silence with extra words.
+#
+# So a drill named by the plan now has to have RUN, against the paths that named it.
+# The receipt records a fingerprint of exactly those paths' contents, so an unrelated
+# edit does not invalidate it and a relevant one does. Receipts live under .git/, which
+# is per-clone and never committed: a receipt that could be committed would be a claim
+# travelling to a machine that never ran anything.
+# --------------------------------------------------------------------------------------
+
+RECEIPTS = os.path.join(ROOT, ".git", "polaris-drill-receipts")
+
+#: A plan entry's `run` line is prose as often as a command. These are the shapes that
+#: name an actual drill this tool can execute and fingerprint.
+_DRILL_RE = re.compile(r"^(?:python3|bash)\s+(scripts/polaris-[a-z0-9-]+drill\.(?:py|sh))"
+                       r"(?:\s|$)")
+
+
+def _drill_jobs(since=None):
+    """[(command, [paths that named it])] for every drill the plan names.
+
+    'every drill CI runs' is prose, not a command, so it expands here to the drills CI
+    actually invokes. That phrase is what the schema rule emits, and it is the rule that
+    fired for the three ships this mechanism exists because of.
+    """
+    last = since or _ship_baseline()
+    if not last:
+        return []
+    product = [p for p in _changed_paths(last) if p.startswith(PRODUCT_PREFIXES)]
+    if not product:
+        return []
+    jobs = {}
+    for v in verification_for(product):
+        for line in v["run"]:
+            for cmd in _expand_drill_line(line, last):
+                jobs.setdefault(cmd, set()).update(v["paths"])
+    if "polaris_web/app.py" in product:
+        try:
+            with open(os.path.join(WEB, "app.py"), encoding="utf-8") as fh:
+                routes = changed_routes(_show(last, "polaris_web/app.py"), fh.read())
+            for name in drills_for_routes(routes, _drill_sources()):
+                runner = "python3" if name.endswith(".py") else "bash"
+                jobs.setdefault("%s scripts/%s" % (runner, name), set()).add("polaris_web/app.py")
+        except Exception:                      # the plan tolerates this; so does this
+            pass
+    return sorted((cmd, sorted(paths)) for cmd, paths in jobs.items())
+
+
+def _ship_baseline():
+    """What THIS ship changed, which is not what has changed since the last tag.
+
+    `plan` diffs against the last reachable tag, and tags here are rare: at v9.427 the
+    last one was v9.345, ninety-one ships back. So plan's answer was "nearly everything
+    moved", every time, for ninety-one ships. A signal that broad is one a reader learns
+    to skim, which is part of how three ships went out with a drill unrun.
+
+    A ship in this repo is one commit. So the baseline is the working tree against HEAD
+    when there is anything uncommitted, and HEAD against its parent when there is not:
+    either way, the change under consideration and not the quarter's worth around it.
+    """
+    try:
+        dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT,
+                                        text=True, stderr=subprocess.DEVNULL).strip()
+        if dirty:
+            return "HEAD"
+        return subprocess.check_output(["git", "rev-parse", "HEAD~1"], cwd=ROOT,
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return _last_tag()
+
+
+def _schema_objects_touched(last):
+    """The schema TABLES whose definition lines moved since `last`.
+
+    The plan's rule for polaris_sql/ says "every drill CI runs (the schema sits under
+    all of them)", which is true and useless as a gate: it names 66 drills, several
+    needing Docker, an HSM or a three-node cluster. A gate that large is one people
+    turn off.
+
+    So this narrows it the way `drills_for_routes` narrows app.py: to the objects that
+    actually moved. A drill whose source names a table this change altered is a drill
+    that exercises this change. v9.424 altered AgencyQuota; polaris-abuse-drill.sh is
+    the one drill in the tree that writes it, and it is the one that went red.
+    """
+    try:
+        with open(os.path.join(ROOT, "polaris_sql", "01_schema.sql"),
+                  encoding="utf-8", errors="replace") as fh:
+            known = set(re.findall(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)", fh.read(), re.I))
+    except OSError:
+        return set()
+    if not known:
+        return set()
+    lower = {t.lower(): t for t in known}
+    try:
+        diff = subprocess.check_output(
+            ["git", "diff", "-U0", last, "--", "polaris_sql/"],
+            cwd=ROOT, text=True, stderr=subprocess.DEVNULL)
+    except Exception:
+        return set()
+    touched = set()
+    for line in diff.splitlines():
+        if not (line.startswith("+") or line.startswith("-")) or line.startswith(("+++", "---")):
+            continue
+        body = line[1:].strip()
+        # A comment naming a table does not change the table. Most of the churn in a
+        # schema diff is the prose explaining the change, and counting it would put
+        # every drill that mentions any table back in the list.
+        if body.startswith("--") or not body:
+            continue
+        for word in re.findall(r"\w+", body):
+            t = lower.get(word.lower())
+            if t:
+                touched.add(t)
+    return touched
+
+
+def _drills_touching(objects):
+    """Drill file names whose own source mentions any of these tables."""
+    out = {}
+    for name, src in sorted(_drill_sources().items()):
+        hits = sorted(o for o in objects if re.search(r"\b%s\b" % re.escape(o), src, re.I))
+        if hits and _runs_in_ci(name):
+            out[name] = hits
+    return out
+
+
+def _expand_drill_line(line, last=None):
+    """The drill commands a plan `run` line names, if any."""
+    m = _DRILL_RE.match(line.strip())
+    if m:
+        runner = "python3" if m.group(1).endswith(".py") else "bash"
+        return ["%s %s" % (runner, m.group(1))]
+    if "every drill CI runs" in line and last:
+        objects = _schema_objects_touched(last)
+        return ["%s scripts/%s" % ("python3" if n.endswith(".py") else "bash", n)
+                for n in sorted(_drills_touching(objects))]
+    return []
+
+
+def _runs_in_ci(name):
+    """Does any workflow invoke this drill? A drill CI never runs is not a gate."""
+    wf = os.path.join(ROOT, ".github", "workflows")
+    for f in sorted(os.listdir(wf)) if os.path.isdir(wf) else []:
+        if not f.endswith((".yml", ".yaml")):
+            continue
+        with open(os.path.join(wf, f), encoding="utf-8", errors="replace") as fh:
+            if name in fh.read():
+                return True
+    return False
+
+
+#: Comment prefixes, per suffix, for the fingerprint below.
+_COMMENT_PREFIX = {".sql": "--", ".py": "#", ".sh": "#", ".yml": "#", ".yaml": "#"}
+
+
+def _substantive(path, raw):
+    """The lines of a file that can change what it does.
+
+    Comments and blank lines are stripped before fingerprinting, for the same reason
+    _schema_objects_touched ignores them: a comment naming a table does not change the
+    table. Without this, adding a sentence of explanation to 01_schema.sql invalidates
+    every receipt and asks for fourteen drills again, and a gate that expensive is one
+    people route around. Inline trailing comments are left alone: telling them from a
+    string literal or a SQL operator needs a parser, and guessing wrong would silently
+    weaken the fingerprint rather than merely widen it.
+    """
+    prefix = _COMMENT_PREFIX.get(os.path.splitext(path)[1])
+    out = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or (prefix and stripped.startswith(prefix)):
+            continue
+        out.append(stripped)
+    return "\n".join(out)
+
+
+def _fingerprint(paths):
+    """sha256 over the substantive content of the paths that named a drill.
+
+    Content, not mtime and not the commit: the question is whether what the drill
+    exercised is still what is on disk. A deleted path contributes its absence.
+    """
+    h = hashlib.sha256()
+    for p in sorted(paths):
+        h.update(p.encode("utf-8"))
+        full = os.path.join(ROOT, p)
+        if os.path.isfile(full):
+            with open(full, encoding="utf-8", errors="replace") as fh:
+                h.update(_substantive(p, fh.read()).encode("utf-8"))
+        else:
+            h.update(b"\0absent")
+    return h.hexdigest()
+
+
+def _receipt_path(cmd):
+    return os.path.join(RECEIPTS,
+                        re.sub(r"[^a-z0-9]+", "-", cmd.lower()).strip("-") + ".txt")
+
+
+def drills(argv):
+    """List, run, or verify the drills this change needs."""
+    check = "--check" in argv
+    do_run = "--run" in argv
+    since = None
+    if "--since" in argv:
+        since = argv[argv.index("--since") + 1]
+    jobs = _drill_jobs(since)
+    if not jobs:
+        if not check:
+            print("drills: this change names no drill "
+                  "(no product path moved, or none of the rules that name one matched)")
+        return 0
+
+    if do_run:
+        os.makedirs(RECEIPTS, exist_ok=True)
+        failed = []
+        for cmd, paths in jobs:
+            print("── %s" % cmd, flush=True)
+            rc = subprocess.call(cmd, shell=True, cwd=ROOT)
+            if rc != 0:
+                failed.append(cmd)
+                print("   FAILED (exit %d); no receipt written" % rc, flush=True)
+                continue
+            with open(_receipt_path(cmd), "w", encoding="utf-8") as fh:
+                fh.write(_fingerprint(paths))
+            print("   passed; receipt recorded", flush=True)
+        if failed:
+            print("\ndrills: %d of %d FAILED: %s" % (len(failed), len(jobs), ", ".join(failed)))
+            return 1
+        print("\ndrills: all %d passed and recorded" % len(jobs))
+        return 0
+
+    stale = []
+    for cmd, paths in jobs:
+        want = _fingerprint(paths)
+        try:
+            with open(_receipt_path(cmd), encoding="utf-8") as fh:
+                got = fh.read().strip()
+        except OSError:
+            got = None
+        if got != want:
+            stale.append((cmd, "never run against this tree" if got is None
+                               else "the paths that need it have changed since it ran"))
+    if check:
+        for cmd, why in stale:
+            print("  ✗ %s: %s" % (cmd, why))
+        return 1 if stale else 0
+    print("drills this change needs (%d):" % len(jobs))
+    for cmd, paths in jobs:
+        mark = "✗" if any(cmd == c for c, _ in stale) else "✓"
+        print("  %s %s" % (mark, cmd))
+        print("      named by: %s" % ", ".join(paths[:4]) + (" ..." if len(paths) > 4 else ""))
+    if stale:
+        print("\nRun them: python3 scripts/polaris-ship.py drills --run")
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "plan"
@@ -534,6 +817,8 @@ def main(argv=None):
         return plan()
     if cmd == "run":
         return run(argv[1:])
+    if cmd == "drills":
+        return drills(argv[1:])
     if cmd == "triage":
         return triage(argv[1] if len(argv) > 1 else None)
     if cmd == "_make_db":  # the parallel loader's entry point

@@ -5,6 +5,68 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.428 — 2026-09-12 (the plan named the drill every time; the gate called it informational)
+
+v9.427 fixed the two callers that took v9.424 and v9.425 red. This fixes the reason I did not
+find them.
+
+`polaris-ship.py plan` has named the verification a change needs since v9.345, and
+`polaris-preflight.sh` printed that list as step 4 under the word **Informational**. Step 2b of
+the same file already says what that costs, about linting: *"a preflight that stays silent about
+what it did not check is how READY stops meaning anything."* A list printed and not acted on is
+the same silence with more words.
+
+Two things were wrong, and the second is the one that made the first survive.
+
+**The plan's baseline was the last reachable tag, and the last tag was 91 ships back.** At v9.427
+`git describe` returned v9.345. So every plan for three months answered "what has changed since
+March" while reading like "what this ship needs", and named 313 paths and effectively every
+drill. A signal that broad is one a reader learns to skim. `plan` now says so in its own first
+line: *91 ships back, so this is the accumulated surface, not this ship's*.
+
+**And "every drill CI runs" is true of any schema edit.** That is the rule that fired for v9.424,
+v9.425 and v9.426, and expanded literally it names 66 drills, several needing Docker, an HSM or a
+three-node cluster. A gate that large is one people turn off.
+
+So the new `drills` subcommand narrows on both axes:
+
+- **Scoped to this ship.** The working tree against HEAD when anything is uncommitted, HEAD
+  against its parent when nothing is. A ship here is a commit.
+- **Narrowed to the objects that moved.** For a schema change it reads the diff, collects the
+  table names whose non-comment lines changed, and selects the drills whose own source writes
+  those tables. v9.424 altered `AgencyQuota`; `polaris-abuse-drill.sh` is the one drill in the
+  tree that writes it, and it is the one that went red. Asked about the range containing v9.424,
+  `drills` names it.
+
+A pass is recorded as a **fingerprint of the substantive content of the paths that named the
+drill**, so an unrelated edit does not invalidate it and a relevant one does, both tested:
+appending a comment to `01_schema.sql` leaves the receipt fresh, appending a `CREATE INDEX`
+makes it stale. Comments are stripped for the same reason the object rule ignores them, and
+because a receipt invalidated by explaining a change is a gate that punishes writing things down.
+
+Receipts live under `.git/`, never in the working tree. A receipt that could be committed is a
+claim travelling to a machine that never ran anything, which is the failure mode this whole
+session keeps finding in other forms.
+
+`preflight` now counts an unrun drill as a gate failure, so **READY is withheld**.
+`POLARIS_DRILLS_WAIVED=1` gets past it and prints the waiver, because some drills genuinely
+cannot run on a laptop; a waiver that is visible is a decision, a waiver that is silent is this
+bug again.
+
+`check_drill_plan_is_binding` pins all of it: the subcommand and its two modes, the ship scoping,
+the object narrowing, the content fingerprint, the comment stripping, receipts outside the tree,
+and preflight treating an unrun drill as a failure with the waiver printed. Fourteen
+discriminations.
+
+One of those clauses was tautological when first written. It asked whether the string `WAIVED`
+appeared in preflight's drill block, which is satisfied by the name of the environment variable
+`POLARIS_DRILLS_WAIVED` itself, so it could never fail. Its detection case caught it: the check
+now requires the waiver to be **echoed**.
+
+**248 invariant checks.**
+
+---
+
 ## v9.427 — 2026-09-12 (the gate said READY and CI went red twice on the same line)
 
 v9.424 and v9.425 both failed CI. Same job, same cause, and it was not in either of them: line 98

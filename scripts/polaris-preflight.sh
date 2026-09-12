@@ -87,6 +87,36 @@ fi
 #    Informational; it skips itself where no tag is reachable (shallow clones).
 ( cd "${ROOT}" && python3 scripts/polaris-ship.py plan ) 2>&1 | sed 's/^/  /'
 
+# 4b. The drills the plan names, made binding (v9.428).
+#
+#     Step 4 above has printed a verification plan since v9.345 under the word
+#     "Informational", and step 2b already says what that costs: "a preflight that
+#     stays silent about what it did not check is how READY stops meaning anything."
+#     A list printed and not acted on is the same silence with extra words. v9.424,
+#     v9.425 and v9.426 each altered a table that scripts/polaris-abuse-drill.sh
+#     writes; two of those runs went red on that drill, and this gate said READY all
+#     three times.
+#
+#     `drills --check` names every drill that exercises a schema object THIS ship
+#     altered and has not been run against the tree as it now stands. Non-empty is a
+#     gate failure. POLARIS_DRILLS_WAIVED=1 gets past it and says so in the output,
+#     because some drills need Docker, an HSM or a cluster; a waiver that is visible
+#     is a decision, a waiver that is silent is this bug again.
+echo
+echo "── drills this change needs ──"
+if drill_out="$( cd "${ROOT}" && python3 scripts/polaris-ship.py drills --check 2>&1 )"; then
+  echo "  ✓ every drill this change needs has run against this tree"
+else
+  echo "$drill_out" | sed 's/^/  /'
+  if [ "${POLARIS_DRILLS_WAIVED:-0}" = "1" ]; then
+    echo "  ! WAIVED by POLARIS_DRILLS_WAIVED=1: the drills above did not run"
+  else
+    echo "    run them: python3 scripts/polaris-ship.py drills --run"
+    echo "    or waive deliberately: POLARIS_DRILLS_WAIVED=1 (the waiver is printed)"
+    fails=$((fails+1))
+  fi
+fi
+
 # 5. Reminder for the DB-backed product suites (need Postgres + the venv).
 echo "  · DB suites: 'python3 scripts/polaris-ship.py run' (test_app, test_check_constraints,"
 echo "    test_invariants_property, test_redaction_property sharded; about two minutes);"

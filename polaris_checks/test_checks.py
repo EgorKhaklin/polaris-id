@@ -13075,3 +13075,86 @@ def test_upsert_arbiter_check_discriminates(tmp_path):
     shutil.rmtree(tmp_path / "polaris_web")
     assert level("passing by finding nothing") == "FAIL", \
         "must FAIL rather than pass when the source scan finds almost nothing"
+
+
+def test_drill_plan_binding_check_discriminates(tmp_path):
+    """Every way the drill gate could exist and not bind must fail."""
+    SHIP = ("RECEIPTS = os.path.join(ROOT, \".git\", \"polaris-drill-receipts\")\n"
+            "def _ship_baseline():\n    return 'HEAD'\n"
+            "def _schema_objects_touched(last):\n    return set()\n"
+            "def _substantive(path, raw):\n    return raw\n"
+            "def _fingerprint(paths):\n    return 'x'\n"
+            "def drills(argv):\n"
+            "    check = \"--check\" in argv\n"
+            "    do_run = \"--run\" in argv\n"
+            "    return 0\n"
+            "def main(argv=None):\n"
+            "    if cmd == \"drills\":\n        return drills(argv[1:])\n")
+    PRE = ("echo step 4b\n"
+           'if drill_out="$( python3 scripts/polaris-ship.py drills --check 2>&1 )"; then\n'
+           "  echo ok\n"
+           "else\n"
+           '  if [ "${POLARIS_DRILLS_WAIVED:-0}" = "1" ]; then\n'
+           "    echo '  ! WAIVED by POLARIS_DRILLS_WAIVED=1'\n"
+           "  else\n"
+           "    fails=$((fails+1))\n"
+           "  fi\n"
+           "fi\n")
+
+    def write(ship=None, pre=None):
+        (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "scripts" / "polaris-ship.py").write_text(SHIP if ship is None else ship)
+        (tmp_path / "scripts" / "polaris-preflight.sh").write_text(PRE if pre is None else pre)
+
+    def level(msg_contains=None):
+        out = checks.check_drill_plan_is_binding(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS on a gate that binds"
+
+    for needle, expect in (
+        ("def drills(", "no `drills` subcommand"),
+        ('cmd == "drills"', "not dispatched"),
+        ('"--check" in argv', "cannot be asked"),
+        ('"--run" in argv', "cannot run the list"),
+        ("def _ship_baseline(", "not scoped to this ship"),
+        ("def _schema_objects_touched(", "not narrowed to the objects"),
+        ("def _fingerprint(", "not recorded against the content"),
+        ("def _substantive(", "counts comments"),
+    ):
+        write(ship=SHIP.replace(needle, "def _gone("))
+        assert level(expect) == "FAIL", "must FAIL when %r is absent" % needle
+
+    # A receipt that could be committed is a claim, not a measurement.
+    write(ship=SHIP.replace('os.path.join(ROOT, ".git", "polaris-drill-receipts")',
+                            'os.path.join(ROOT, "drill-receipts")'))
+    assert level("inside the working tree") == "FAIL", \
+        "must FAIL when receipts live where they could be committed"
+
+    # Preflight never asks.
+    write(pre="echo nothing\n")
+    assert level("never asks") == "FAIL", "must FAIL when preflight does not ask"
+
+    # Preflight asks and shrugs.
+    write(pre=PRE.replace("    fails=$((fails+1))\n", "    echo '  (unrun, carrying on)'\n"))
+    assert level("not a gate failure") == "FAIL", \
+        "must FAIL when an unrun drill still prints READY"
+
+    # No deliberate waiver, so the only way past is to ignore the gate.
+    write(pre=PRE.replace('if [ "${POLARIS_DRILLS_WAIVED:-0}" = "1" ]; then\n'
+                          "    echo '  ! WAIVED by POLARIS_DRILLS_WAIVED=1'\n"
+                          "  else\n", "if false; then\n    echo x\n  else\n"))
+    assert level("no deliberate waiver") == "FAIL", \
+        "must FAIL when a Docker-only drill has no honest escape"
+
+    # A silent waiver looks exactly like a satisfied drill.
+    write(pre=PRE.replace("echo '  ! WAIVED by POLARIS_DRILLS_WAIVED=1'", "true"))
+    assert level("not printed") == "FAIL", "must FAIL when a waiver leaves no trace"
+
+    # The files are gone.
+    (tmp_path / "scripts" / "polaris-preflight.sh").unlink()
+    assert level() == "FAIL", "must FAIL when preflight is absent"

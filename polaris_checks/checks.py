@@ -6270,6 +6270,94 @@ def check_no_upsert_without_an_arbiter(root: pathlib.Path) -> list[Finding]:
                      f"accept")
 
 
+
+# ----------------------------------------------------------------------------
+# v9.428: the plan's drill list is binding, not informational.
+#
+# `plan` has named the verification a change needs since v9.345, and preflight
+# printed it under the word "Informational". Preflight's own step 2b says what that
+# costs: "a preflight that stays silent about what it did not check is how READY
+# stops meaning anything." A list printed and not acted on is the same silence with
+# more words. v9.424, v9.425 and v9.426 each altered a table that
+# scripts/polaris-abuse-drill.sh writes; two of those runs went red on that drill,
+# and the gate said READY all three times.
+# ----------------------------------------------------------------------------
+
+def check_drill_plan_is_binding(root: pathlib.Path) -> list[Finding]:
+    """A drill the plan names for this ship must have run, or READY is withheld (v9.428).
+
+    Four properties, each of which the mechanism is useless without:
+
+      - `polaris-ship.py` offers `drills` with `--check` and `--run`, so the list can
+        be both asked for and satisfied.
+      - The list is scoped to THIS ship, not to the last tag. Tags here are ninety-one
+        ships apart; a plan diffed against one names nearly every drill, which is a
+        list nobody can act on and so a list nobody does.
+      - It is narrowed to the drills that exercise a schema object this change altered.
+        "Every drill CI runs" is true of any schema edit and names sixty-six drills,
+        several needing Docker, an HSM or a cluster. A gate that large gets disabled.
+      - A pass is recorded as a fingerprint of the paths that named the drill, kept
+        OUTSIDE the working tree. A receipt that could be committed is a claim
+        travelling to a machine that never ran anything.
+
+    And preflight must count a missing receipt as a gate failure, with the waiver
+    visible when one is taken.
+    """
+    name = "drill_plan_binding"
+    ship = _read(root, "scripts/polaris-ship.py")
+    pre = _read(root, "scripts/polaris-preflight.sh")
+    if not ship or not pre:
+        return _fail(name, "scripts/polaris-ship.py or scripts/polaris-preflight.sh is missing")
+
+    findings: list[Finding] = []
+    for needle, why in (
+        ("def drills(", "polaris-ship.py has no `drills` subcommand"),
+        ('cmd == "drills"', "`drills` is not dispatched from main()"),
+        ('"--check" in argv', "`drills` cannot be asked whether the list is satisfied"),
+        ('"--run" in argv', "`drills` cannot run the list it names"),
+        ("def _ship_baseline(", "the drill list is not scoped to this ship"),
+        ("def _schema_objects_touched(", "the schema rule is not narrowed to the objects that moved"),
+        ("def _fingerprint(", "a pass is not recorded against the content it was run on"),
+        ("def _substantive(", "the fingerprint counts comments, so explaining a change invalidates it"),
+    ):
+        if needle not in ship:
+            findings.extend(_fail(name, why))
+
+    # The receipt store must sit outside the working tree.
+    m = re.search(r"RECEIPTS\s*=\s*os\.path\.join\(ROOT,\s*([^)]*)\)", ship)
+    if not m:
+        findings.extend(_fail(name, "the receipt store is not declared"))
+    elif '".git"' not in m.group(1):
+        findings.extend(_fail(name, "receipts are stored inside the working tree, so one could "
+                                    "be committed and assert a drill ran on a machine that "
+                                    "never ran it"))
+
+    # And preflight must act on it.
+    if "drills --check" not in pre:
+        findings.extend(_fail(name, "preflight never asks whether the drills this change needs "
+                                    "have run"))
+    else:
+        block = pre[pre.find("drills --check"):]
+        block = block[:block.find("\n\n\n")] if "\n\n\n" in block else block
+        if "fails=$((fails+1))" not in block:
+            findings.extend(_fail(name, "preflight asks about the drills but an unrun one is not "
+                                        "a gate failure, so READY is printed anyway"))
+        if "POLARIS_DRILLS_WAIVED" not in block:
+            findings.extend(_fail(name, "there is no deliberate waiver, so the only way past a "
+                                        "drill that needs Docker is to ignore the gate"))
+        # Not a bare "WAIVED" substring: that is satisfied by the name of the env var
+        # itself, so the clause could never fail. The waiver has to be ECHOED.
+        if not re.search(r"echo\s+[^\n]*WAIVED", block):
+            findings.extend(_fail(name, "a waiver is not printed, so a skipped drill looks the "
+                                        "same as a satisfied one"))
+
+    if findings:
+        return findings
+    return _ok(name, "the drills a ship needs are derived from the schema objects it altered, "
+                     "scoped to that ship, recorded as a content fingerprint outside the tree, "
+                     "and an unrun one withholds READY unless the waiver is taken and printed")
+
+
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
     """The retention decision is data, floored, append-only, and the purge obeys it.
 
@@ -15490,6 +15578,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_relying_party_decisions_cannot_be_silent,
     check_recorded_decisions_keep_their_history,
     check_no_upsert_without_an_arbiter,
+    check_drill_plan_is_binding,
 ]
 
 
