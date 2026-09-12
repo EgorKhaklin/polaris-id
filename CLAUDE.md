@@ -133,11 +133,14 @@ A ship is a coherent change, verified:
    `TokenSignature.signature_bytes`: real ML-DSA-65 when the flag + liboqs are
    present, a deterministic SHA3-256 placeholder otherwise (the default, incl.
    CI). `polaris_checks.check_pqc_signing_wired` guards the wiring.
-8. **CI flakes look like failures.** Three known signatures: the runner's apt index
+8. **CI flakes look like failures.** Four known signatures: the runner's apt index
    (`Hash Sum mismatch`, jobs die in their install step with exit code 100), the Go
-   module proxy in the Caddy build (`sum.golang.org` stream errors), and the postgres
+   module proxy in the Caddy build (`sum.golang.org` stream errors), the postgres
    image's apk + pip layer (`process "/bin/sh -c apk add ... pip3 install ..." did not
-   complete successfully`, v9.377). `python3 scripts/polaris-ship.py triage` names them;
+   complete successfully`, v9.377), and buildx resolving the dockerfile frontend from
+   Docker Hub (`DeadlineExceeded: failed to resolve source metadata for
+   docker.io/docker/dockerfile:1`, v9.447 — it fails BEFORE reading the Dockerfile, so
+   the tree cannot be the cause). `python3 scripts/polaris-ship.py triage` names them;
    `gh run rerun <id> --failed` clears them. Anything else is real: run the verification
    `plan` names.
 9. **`triage` cannot read a log until the whole run finishes.** `gh` refuses

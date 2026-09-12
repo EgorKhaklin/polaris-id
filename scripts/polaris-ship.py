@@ -473,6 +473,24 @@ FLAKE_SIGNATURES = [
      "the postgres image's apk + pip layer failed on the runner (Alpine package index or "
      "PyPI); confirm with a local `docker build --no-cache -f polaris_web/Dockerfile.postgres .` "
      "and rerun the failed jobs if it builds"),
+    # v9.447: buildx resolving the `# syntax=docker/dockerfile:1` frontend from Docker Hub.
+    # It fails BEFORE the Dockerfile is read, so the failure has nothing to do with what is
+    # being built and the job's own output is a bare exit 1. Added after one was chased by
+    # hand on a run where four pushes had twenty jobs competing: the same run's DR drill
+    # passed on the three commits before it, and the commit that failed touched no image,
+    # no compose file and no Dockerfile.
+    #
+    # Note the overlap with registry-removal below. That one is `pull access denied ...
+    # repository does not exist`, a definite answer from a registry that is up. This one is
+    # DeadlineExceeded or a timeout resolving metadata, which is the registry not answering.
+    # Rerunning clears the second and never clears the first, so they must not be one rule.
+    ("buildkit-frontend",
+     r"failed to resolve source metadata for docker\.io/docker/dockerfile|"
+     r"DeadlineExceeded.*failed to resolve source metadata|"
+     r"failed to solve: DeadlineExceeded",
+     "buildx could not resolve the dockerfile frontend from Docker Hub (DeadlineExceeded). "
+     "The build failed before reading the Dockerfile, so this is the registry not answering "
+     "rather than anything in the tree; rerun the failed jobs"),
 ]
 
 #: Failures that are NOT flakes and that rerunning will never clear: something

@@ -36,6 +36,16 @@ ALPINE_PIP = (
     'exit code: 1')
 
 
+#: v9.446's DR drill, verbatim. The build died resolving the dockerfile FRONTEND from
+#: Docker Hub, so it never read the Dockerfile and the tree had nothing to do with it.
+BUILDKIT_FRONTEND = (
+    'DR drill\t\t2026-09-12T19:01:12.0000000Z == 0. build the pgbackrest-enabled postgres image ==\n'
+    'DR drill\t\t2026-09-12T19:01:13.0000000Z ERROR: failed to build: failed to solve: '
+    'DeadlineExceeded: DeadlineExceeded: failed to resolve source metadata for '
+    'docker.io/docker/dockerfile:1: failed to do request\n'
+    'DR drill\t\t2026-09-12T19:01:13.6923120Z ##[error]Process completed with exit code 1.')
+
+
 class FlakeClassifierTests(unittest.TestCase):
     def test_the_alpine_pip_layer_is_a_known_flake(self):
         verdict, name, advice = ship.classify_failure_log(ALPINE_PIP)
@@ -54,6 +64,19 @@ class FlakeClassifierTests(unittest.TestCase):
         self.assertEqual(
             ship.classify_failure_log("verifying sum.golang.org: stream error")[1],
             "caddy-module-proxy")
+
+    def test_the_buildkit_frontend_timeout_is_a_known_flake(self):
+        verdict, name, advice = ship.classify_failure_log(BUILDKIT_FRONTEND)
+        self.assertEqual((verdict, name), ("flake", "buildkit-frontend"))
+        self.assertIn("rerun", advice)
+
+    def test_a_registry_REMOVAL_is_not_read_as_a_frontend_timeout(self):
+        """The two look alike and the advice is opposite: rerunning clears a registry that
+        did not answer and never clears a repository that is gone."""
+        verdict, name, _ = ship.classify_failure_log(
+            "ERROR: pull access denied for minio/minio, repository does not exist or may "
+            "require 'docker login'")
+        self.assertEqual((verdict, name), ("upstream", "registry-removal"))
 
     def test_a_real_failure_is_not_excused_as_a_flake(self):
         # The direction that matters most. A classifier that called real failures flakes

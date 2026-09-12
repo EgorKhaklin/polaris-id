@@ -5,6 +5,39 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.447 — 2026-09-12 (a flake the tool called "investigate", and the cost of pushing faster than CI)
+
+v9.446's DR drill went red on a signature `triage` did not know, so it said "investigate (no known
+flake signature matched)" and the failure had to be chased by hand. That is exactly the cost the
+signature table exists to avoid, and v9.377 added the last entry to it for the same reason.
+
+The failure: buildx could not resolve `# syntax=docker/dockerfile:1` from Docker Hub
+(`DeadlineExceeded: failed to resolve source metadata`). It died BEFORE reading the Dockerfile, so
+nothing in the tree could have caused it, and the job's own output was a bare exit 1. Confirmed
+against the three commits before it, whose DR drills passed: the one that failed touched no image,
+no compose file and no Dockerfile.
+
+`buildkit-frontend` is now in the table, and it is kept separate from `registry-removal` on
+purpose. They look alike and the advice is opposite: a registry answering "repository does not
+exist" never clears on a rerun, and a registry not answering at all always does. A test asserts
+the removal case is still classified as upstream rather than swallowed by the new rule.
+
+Also recorded: **the reason there was contention at all.** Four versions were pushed in ninety
+minutes, so four full matrices ran at once and twenty jobs competed for runners. The oldest run
+took 60 minutes against a 36-minute baseline, and the DR drill's image pull timed out on the
+newest. Shipping faster than CI can verify does not just delay the signal; it degrades it, and it
+cost a red build that had nothing to do with the code.
+
+And a measured negative, recorded so it is not re-derived: extending the schema-drift drill to
+WHERE clauses would find nothing. 543 single-table `FROM x WHERE col` references resolve today,
+and the only three that did not were the scanner's own fault -- `tableoid` is a PostgreSQL system
+column and `p_cursor_ts` is a PL/pgSQL parameter. It would need system-column and parameter
+awareness purely to suppress false positives it generates itself.
+
+**257 invariant checks.**
+
+---
+
 ## v9.446 — 2026-09-12 (the drill from an hour ago was reading 375 statements and reporting on the tree)
 
 v9.445's schema-drift drill said it skipped 48 references as not statically parseable, which reads

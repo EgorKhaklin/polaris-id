@@ -26,6 +26,12 @@ parse SELECT projections, joins, or SQL built by string interpolation, and it sa
 rather than implying the tree is clean: a reference it cannot parse is skipped, counted,
 and reported as skipped.
 
+WHERE clauses were measured and deliberately left out. 543 single-table `FROM x WHERE
+col` references resolve today, and the only three that did not were this scanner's fault:
+`tableoid` is a PostgreSQL system column, and `p_cursor_ts` is a PL/pgSQL parameter, not a
+column. Reading them would need system-column and parameter awareness to suppress its own
+false positives, and would have found nothing. Recorded here so it is not re-derived.
+
 Two of those numbers are worth keeping honest. The first cut reported 48 skipped
 references, which sounded like the cost of not parsing dynamic SQL. Forty-six of them
 were multi-line column lists split across adjacent string literals, which the INSERT
