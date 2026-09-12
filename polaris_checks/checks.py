@@ -8050,6 +8050,119 @@ _OVERCLAIM_PHRASES = (
 )
 
 
+#: Surfaces a reader outside the project sees. The operator console is not here: it is
+#: read by somebody who already has an account on the instance.
+_OUTWARD_SURFACES = ("README.md", "site/index.html", "MISSION.md", "CITATION.cff")
+
+#: The readiness ledger is where the limitation lives, so a claim must point at it.
+_PQ_LIMITATION_REL = "docs/PRODUCTION-READINESS.md"
+
+#: Phrasing that asserts post-quantum SECURITY as a settled property. Each of these says
+#: the system cannot be broken by a quantum adversary, which is a claim about Module-LWE
+#: remaining hard, not a claim about this repository. "post-quantum" itself is NOT here:
+#: it is accurate about the algorithm and about the TLS edge, and a denylist that banned
+#: it would be refusing a true statement.
+_PQ_SECURITY_ASSERTIONS = (
+    "quantum-safe", "quantum safe", "quantum-resistant", "quantum resistant",
+    "quantum-proof", "quantum proof", "immune to quantum", "secure against quantum",
+    "unbreakable by quantum", "quantum-secure", "quantum secure",
+)
+
+
+def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
+    """An outward surface claims post-quantum AGILITY, never post-quantum SECURITY (v9.452).
+
+    The defensible claim is not "we are post-quantum". It is C7: the algorithm is a row in
+    `CryptographicAlgorithm` rather than a constant, authorized per authority through
+    `AgencyAlgorithmAuth`, and migrated through `uc6_migrate` on a path that runs. That is
+    algorithm agility under an audited migration path, and it is a property of THIS
+    repository. "Secure against a quantum adversary" is a property of Module-LWE staying
+    hard, which this repository cannot establish and does not test.
+
+    Two things are refused.
+
+    A surface may not use phrasing that asserts the security as settled -- quantum-safe,
+    quantum-resistant, quantum-proof and the rest. Note what is NOT refused: the words
+    "post-quantum" themselves, which are accurate about ML-DSA-65, about the SLH-DSA hedge
+    and about the X25519MLKEM768 edge. A check that banned the true statement alongside
+    the overstated one would be refusing accuracy, and would be routed around within a
+    ship.
+
+    And a surface that claims post-quantum anything must point at the readiness ledger,
+    which carries what a break in Module-LWE would and would not cost: that no schema or
+    verification-path change is needed because the algorithm is data; that the migration
+    path is exercised rather than planned; that every credential already issued under the
+    broken algorithm is lost; and that a credential's CLASSICAL half during a cutover is
+    protected by nothing this design provides, so anything harvested today is readable the
+    day that half falls.
+
+    The ledger must also state the exposure that makes the word load-bearing: without
+    `POLARIS_USE_REAL_PQC=1` and liboqs, the default signing path writes a 32-byte
+    deterministic SHA3-256 placeholder that verifies against no key, and that is the
+    default in CI. The tree guards it -- production fails closed, the profile is named,
+    the warning is loud -- and a reader still has to be told before believing the word.
+    """
+    name = "pq_claims_are_agility"
+    ledger = _read(root, _PQ_LIMITATION_REL)
+    if not ledger:
+        return _fail(name, "%s could not be read, so there is nowhere for a post-quantum claim "
+                           "to point and nothing to compare a surface against" % _PQ_LIMITATION_REL)
+
+    findings: list[Finding] = []
+
+    # The limitation itself, by the things it has to say rather than by its heading.
+    for needle, why in (
+        ("algorithm agility under an audited migration path",
+         "the ledger does not name what IS defensible, so a reader is left with the word "
+         "post-quantum and no better one"),
+        ("Module-LWE",
+         "the ledger does not name the assumption the security rests on, so a break reads "
+         "as a surprise rather than as the risk that was carried"),
+        ("uc6_migrate",
+         "the ledger does not say the migration path is a path that runs, which is the "
+         "whole difference between agility and a plan"),
+        ("classical half",
+         "the ledger does not say a credential's classical signature is protected by "
+         "nothing here, which is what harvest-now-decrypt-later costs whatever is migrated "
+         "to afterwards"),
+        ("DETERMINISTIC-PLACEHOLDER-SHA3-256",
+         "the ledger does not name the placeholder the default signing path actually "
+         "writes, so the word post-quantum is unqualified where it matters most"),
+    ):
+        if needle not in ledger:
+            findings.extend(_fail(name, why))
+
+    # Outward surfaces: no settled-security phrasing, and a claim has to point at the ledger.
+    for rel in _OUTWARD_SURFACES:
+        text = _read(root, rel)
+        if not text:
+            findings.extend(_fail(name, "%s could not be read; an outward surface this check "
+                                        "is meant to hold cannot be inspected" % rel))
+            continue
+        low = text.lower()
+        for phrase in _PQ_SECURITY_ASSERTIONS:
+            if phrase in low:
+                findings.extend(_fail(name, "%s says %r, which asserts the security rather than "
+                                            "the agility. What this repository can show is that "
+                                            "the algorithm is data and the migration runs; "
+                                            "whether Module-LWE stays hard is not its property "
+                                            "to claim" % (rel, phrase)))
+        if "post-quantum" in low and "PRODUCTION-READINESS" not in text:
+            findings.extend(_fail(name, "%s claims post-quantum without pointing at "
+                                        "PRODUCTION-READINESS.md, where what a break would cost "
+                                        "and what the default signing path actually writes are "
+                                        "stated" % rel))
+
+    if findings:
+        return findings
+    return _ok(name, "all %d outward surfaces claim post-quantum AGILITY and not settled "
+                     "post-quantum SECURITY, and each points at the readiness ledger, which "
+                     "carries what a Module-LWE break would and would not cost, that the "
+                     "migration path runs rather than being planned, that a credential's "
+                     "classical half is protected by nothing here, and that the default signing "
+                     "path writes a placeholder" % len(_OUTWARD_SURFACES))
+
+
 def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     """The site title and social card must name Polaris a reference implementation
     (not present it AS a national identity system in a browser tab or a shared
@@ -16400,6 +16513,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_key_rotation_drilled,
     check_holder_wallet,
     check_public_claims_honest,
+    check_post_quantum_claims_are_agility,
     check_verify_witness_sampling,
     check_constitution_layered,
     check_no_scifi_schema,

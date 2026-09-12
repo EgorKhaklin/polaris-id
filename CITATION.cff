@@ -5,7 +5,7 @@ type: software
 authors:
   - family-names: Khaklin
     given-names: Egor
-version: "9.451"
+version: "9.452"
 date-released: "2026-09-10"
 repository-code: "https://github.com/EgorKhaklin/polaris-id"
 url: "https://egorkhaklin.github.io/polaris-id/"
@@ -25,4 +25,10 @@ abstract: >-
   trust list, exchange receipts, timestamps, signed documents, a credential-bound
   login token, offline wallet presentations) verified offline by a detached
   verifier and two SDKs against a frozen, conformance-tested wire specification.
+  The cryptographic claim is algorithm AGILITY under an audited migration path --
+  the algorithm is a row in the schema, not a constant, and migration runs on
+  every push -- and not settled security against a quantum adversary; the default
+  signing path writes a labelled placeholder unless real ML-DSA is enabled. Both
+  limits, and what a break in Module-LWE would and would not cost, are stated in
+  docs/PRODUCTION-READINESS.md.
   Educational; notional data only; never deployed.

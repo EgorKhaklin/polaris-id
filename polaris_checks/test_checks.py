@@ -14017,3 +14017,73 @@ def test_migrations_match_canonical_check_discriminates(tmp_path):
     (d / "01_schema.sql").unlink()
     assert level("could not be read") == "FAIL", \
         "must FAIL when a canonical file it compares against is missing"
+
+
+def test_post_quantum_claims_are_agility_check_discriminates(tmp_path):
+    """The denylist deliberately does NOT contain "post-quantum": that phrase is accurate
+    about ML-DSA-65, about the SLH-DSA hedge and about the TLS edge, and a check that
+    refused a true statement alongside an overstated one would be routed around."""
+    LEDGER = ("The claim is algorithm agility under an audited migration path.\n"
+              "ML-DSA-65 rests on Module-LWE hardness.\n"
+              "Migration runs through uc6_migrate on every push.\n"
+              "A credential's classical half is protected by nothing here.\n"
+              "The default writes DETERMINISTIC-PLACEHOLDER-SHA3-256.\n")
+    SURFACE = "Polaris signs with post-quantum ML-DSA-65. Limits: PRODUCTION-READINESS.md\n"
+
+    def write(ledger=LEDGER, readme=SURFACE, site=SURFACE, mission=SURFACE, citation=SURFACE):
+        (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "site").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "docs" / "PRODUCTION-READINESS.md").write_text(ledger)
+        (tmp_path / "README.md").write_text(readme)
+        (tmp_path / "site" / "index.html").write_text(site)
+        (tmp_path / "MISSION.md").write_text(mission)
+        (tmp_path / "CITATION.cff").write_text(citation)
+
+    def level(msg_contains=None):
+        out = checks.check_post_quantum_claims_are_agility(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    good = checks.check_post_quantum_claims_are_agility(tmp_path)[0]
+    assert good.level == "OK", "must PASS when a surface claims post-quantum and points at the " \
+                               "ledger, and the ledger carries the limitation"
+
+    # The word itself is not the offence. A surface may say post-quantum.
+    write(readme="This is a post-quantum credential engine. See PRODUCTION-READINESS.md\n")
+    assert level() == "OK", "'post-quantum' is accurate about the algorithm and must not be refused"
+
+    # Asserting the security IS the offence, on every outward surface.
+    for phrase in ("quantum-resistant", "quantum-safe", "quantum-proof", "quantum-secure",
+                   "immune to quantum", "secure against quantum"):
+        write(readme=SURFACE + "Polaris is %s.\n" % phrase)
+        assert level(repr(phrase).strip("'")) == "FAIL", \
+            "must FAIL when an outward surface asserts %r" % phrase
+
+    write(site=SURFACE + "quantum safe\n")
+    assert level("site/index.html") == "FAIL", "the rule holds on the site, not only the README"
+
+    # A claim with no pointer to where the limits are stated.
+    write(mission="Polaris signs with post-quantum ML-DSA-65.\n")
+    assert level("without pointing at") == "FAIL", \
+        "must FAIL when a surface claims post-quantum and points nowhere"
+
+    # A surface that makes no claim needs no pointer.
+    write(mission="Polaris enforces its guarantees in the database.\n")
+    assert level() == "OK", "a surface that does not claim post-quantum needs no pointer"
+
+    # The ledger has to say each of the five things, not merely exist.
+    for needle, label in (
+            ("algorithm agility under an audited migration path", "what IS defensible"),
+            ("Module-LWE", "the assumption"),
+            ("uc6_migrate", "that the migration runs"),
+            ("classical half", "the harvest-now cost"),
+            ("DETERMINISTIC-PLACEHOLDER-SHA3-256", "the placeholder")):
+        write(ledger=LEDGER.replace(needle, "(removed)"))
+        assert level() == "FAIL", "must FAIL when the ledger omits %s" % label
+
+    (tmp_path / "docs" / "PRODUCTION-READINESS.md").unlink()
+    assert level("could not be read") == "FAIL", \
+        "must FAIL rather than pass vacuously when the ledger is gone"

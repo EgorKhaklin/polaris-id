@@ -89,6 +89,43 @@ the instrument. Every intermediate figure had been reported as if it measured th
 lesson this ledger already carried -- ask whether it would notice, not whether it passes -- turns
 out to apply to the things doing the asking.
 
+**One fact about the cryptography, which the outward surfaces have been stating as more than it
+is.** Polaris is described as post-quantum. What is defensible is narrower and more useful:
+**algorithm agility under an audited migration path**. The distinction is not pedantry, because
+the two fail differently.
+
+ML-DSA-65's security does not rest on a prediction about how large quantum computers will get. It
+rests on the hardness of Module-LWE and Module-SIS against the best known classical AND quantum
+algorithms. So the argument "post-quantum is unprovable because the hardware is unpredictable"
+attacks the wrong thing. The two ways this breaks are a **cryptanalytic advance against the lattice
+assumptions** and an **implementation flaw**, and the design answers each: SLH-DSA-128s and
+SLH-DSA-256s are registered with no signer precisely because they rest on hash functions alone
+rather than on lattices, and issuance requires two independent ML-DSA implementations (liboqs and
+OpenSSL through `cryptography`) that must agree.
+
+What a break in Module-LWE would cost, stated plainly. It would **not** require a schema change, a
+code change on the verification path, or a new trust model: the algorithm is a row in
+`CryptographicAlgorithm`, not a constant, which is C7. Registering a replacement, authorizing it
+per authority through `AgencyAlgorithmAuth`, and migrating credentials through `uc6_migrate` is a
+path that RUNS and is exercised on every push, not a plan. It **would** cost every credential
+already issued under the broken algorithm, and here is the part no agility buys back: a credential
+carries classical and post-quantum signatures during a cutover, and the classical half is
+protected by nothing this design provides. A holder's credential that was harvested today is
+readable on the day its classical signature falls, whatever Polaris migrates to afterwards. That is
+the asymmetry that makes signing post-quantum now worth doing, and it is also the limit of what
+doing it achieves.
+
+And the exposure a reader should know before believing the word. **The default signing path is not
+post-quantum.** Without `POLARIS_USE_REAL_PQC=1` and liboqs present,
+`TokenSignature.signature_bytes` holds a 32-byte deterministic SHA3-256 value labelled
+`DETERMINISTIC-PLACEHOLDER-SHA3-256` that verifies against no key; real ML-DSA-65 produces 3,309
+bytes. That is the default in CI. It is guarded -- production fails closed at boot without real
+signing, the placeholder is a named development profile, and it warns loudly when used unnamed --
+but a repository whose default path signs with a placeholder should not call itself post-quantum
+without saying so in the same breath. `check_post_quantum_claims_are_agility` refuses an outward
+surface that asserts post-quantum SECURITY rather than post-quantum AGILITY, and refuses one that
+claims either without pointing here.
+
 None of that changed what the system does. All of it changed what is known about it, which is the
 only thing this ledger is for.
 

@@ -5,6 +5,60 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.452 — 2026-09-12 (post-quantum agility is the claim; post-quantum security is not ours to make)
+
+An outside argument put it sharply: "post-quantum is fake because nobody knows how large quantum
+computers will get" attacks the wrong thing, and the part it gets right is sharper than the
+framing. ML-DSA-65's security does not rest on a hardware prediction. It rests on Module-LWE and
+Module-SIS being hard against the best known classical AND quantum algorithms, which could be
+wrong for mathematical reasons rather than for hardware ones. The two real risks are a
+cryptanalytic advance against the lattice assumptions and an implementation flaw, and the design
+already answers both: SLH-DSA-128s and SLH-DSA-256s are registered with no signer BECAUSE they
+rest on hash functions alone, and issuance requires two independent ML-DSA implementations that
+must agree.
+
+So the engineering was not the problem. The wording was. What this repository can demonstrate is
+**algorithm agility under an audited migration path** -- C7, the algorithm is a row in
+`CryptographicAlgorithm` and not a constant, authorized per authority through
+`AgencyAlgorithmAuth`, migrated through `uc6_migrate` on a path CI runs -- and it was saying
+instead that it IS post-quantum, which is a claim about Module-LWE staying hard.
+
+Two specific overstatements are gone. The comparison table argued from the timeline ("today's
+signatures break when a quantum computer arrives") and is now the risk that actually exists, a
+signature algorithm falling to cryptanalysis or to an implementation flaw while a credential
+outlives the assumption it was signed under. And "the signing default is post-quantum on day one"
+was the sentence most able to mislead, because **measured, the default signing path is not
+post-quantum at all**: without `POLARIS_USE_REAL_PQC=1` and liboqs, `TokenSignature.signature_bytes`
+holds a 32-byte value labelled `DETERMINISTIC-PLACEHOLDER-SHA3-256` that verifies against no key,
+against 3,309 bytes for real ML-DSA-65. That is the default in CI. It is guarded -- production
+fails closed at boot, the profile is named, the warning is loud -- and a reader still has to be
+told before believing the word.
+
+The readiness ledger now carries what a break in Module-LWE would and would not cost. It would NOT
+need a schema change, a verification-path change or a new trust model, because the algorithm is
+data and the migration is exercised rather than planned. It WOULD cost every credential already
+issued under the broken algorithm -- and the part no agility buys back: a credential carries a
+classical signature alongside the post-quantum one during cutover, and the classical half is
+protected by nothing this design provides. Anything harvested today is readable the day that half
+falls, whatever is migrated to afterwards. That asymmetry is why signing post-quantum now is worth
+doing, and it is also the limit of what doing it achieves.
+
+`check_post_quantum_claims_are_agility` pins it. An outward surface may not assert settled security
+-- quantum-safe, quantum-resistant, quantum-proof and the rest -- and one that claims post-quantum
+anything must point at the ledger. What the denylist deliberately does NOT contain is
+"post-quantum" itself: it is accurate about ML-DSA-65, about the SLH-DSA hedge and about the
+X25519MLKEM768 edge, and a check that refused a true statement alongside an overstated one would be
+routed around inside a ship. Nine discriminations, including the one that matters -- a surface
+saying plain "post-quantum" with a pointer must PASS.
+
+The operator console said "Quantum-resistant algorithms only" on the issuance form. That is an
+inward surface the check deliberately does not cover, and the wording is aligned anyway rather than
+left as the one place the tree still says it.
+
+**259 invariant checks. 45 tables.**
+
+---
+
 ## v9.451 — 2026-09-12 (the check that finds vacuous checks found mine)
 
 v9.450 went red, and on the right thing. `polaris-check-mutation-drill` deletes the files a check
