@@ -1208,6 +1208,128 @@ def check_shell_arrays_are_portable(root: pathlib.Path) -> list[Finding]:
                      "cannot be one that only runs on CI" % scanned)
 
 
+#: The files that OWN a function body. A migration may carry a copy -- it has to, to be
+#: self-contained -- but the copy that runs LAST must not disagree with these.
+_CANONICAL_OBJECT_FILES = ("polaris_sql/05_procedures.sql", "polaris_sql/06_triggers.sql")
+
+
+def _function_bodies(text: str) -> dict[str, str]:
+    """name -> body, normalised so formatting is not a difference."""
+    out: dict[str, str] = {}
+    for m in re.finditer(r"CREATE OR REPLACE FUNCTION\s+(\w+)\s*\(", text, re.I):
+        end = text.find("$$;", m.end())
+        if end == -1:
+            continue
+        body = re.sub(r"--[^\n]*", "", text[m.start():end])
+        out[m.group(1).lower()] = re.sub(r"\s+", " ", body).strip()
+    return out
+
+
+#: Indexes are owned by these. A migration creates them too, and the same trap applies:
+#: v9.443 corrected idx_agency_event_widened in 01_schema.sql to `WHERE widened IS NOT
+#: FALSE` and left the migration carrying `WHERE widened`, which holds only the rows the
+#: database could rank and therefore cannot serve the filter the operator tool runs.
+_CANONICAL_INDEX_FILES = ("polaris_sql/01_schema.sql", "polaris_sql/02_indexes.sql")
+
+
+def _index_definitions(text: str) -> dict[str, str]:
+    """name -> definition, normalised so formatting is not a difference."""
+    out: dict[str, str] = {}
+    for m in re.finditer(r"CREATE(?: UNIQUE)? INDEX(?: IF NOT EXISTS)?\s+(\w+)\s+ON\s+(.*?);",
+                         text, re.I | re.S):
+        body = re.sub(r"--[^\n]*", "", m.group(2))
+        out[m.group(1).lower()] = re.sub(r"\s+", " ", body).strip().lower()
+    return out
+
+
+def check_migrations_do_not_revert_canonical_objects(root: pathlib.Path) -> list[Finding]:
+    """No migration reinstalls an older body of a function the canonical files own (v9.449).
+
+    A migration has to be self-contained, so it carries the functions it needs. That is
+    correct and it is also a trap: migrations run in date order, so the LAST one to define
+    a function wins, and if that copy predates a later correction the correction is undone.
+
+    Measured, twice, in one afternoon:
+
+      - `2026-09-11-018` carries the v9.425 `_rp_weakens`. Applying migrations after a
+        load reinstalled the string-length scope rule v9.448 had just replaced, and five
+        tests that passed against the canonical file failed against that database.
+      - `2026-09-01-002` carries the pre-history `enforce_agency_quota`, whose SELECT has
+        no `superseded_at IS NULL`. v9.424 gave AgencyQuota history and its migration says
+        in its own header "enforce_agency_quota() reads the LIVE row" -- and never
+        redefines the function. On a load-then-migrate database an agency whose cap was
+        lowered from 999999 to 5 had 999999 enforced, because `SELECT ... INTO` over
+        several rows takes an arbitrary one.
+
+    A deployment runs `polaris-migrate.sh --sync-objects` after migrating, which re-applies
+    the canonical files, so a deployed stack recovers. That is why this can sit unnoticed:
+    the one path that is exercised is the one that hides it.
+
+    The rule is not "a migration may not carry a function". It is that the copy which runs
+    last must agree with the file that owns it, byte for byte once comments and whitespace
+    are normalised. A migration that needs to change a body supersedes the older one by
+    carrying the NEW text, which is what 2026-09-12-004 and -005 do.
+    """
+    name = "migrations_match_canonical"
+    d = root / "polaris_sql" / "migrations"
+    if not d.is_dir():
+        return _fail(name, "polaris_sql/migrations/ is missing")
+
+    canonical: dict[str, str] = {}
+    for rel in _CANONICAL_OBJECT_FILES:
+        text = _read(root, rel)
+        if not text:
+            return _fail(name, "%s could not be read, so nothing can be compared against it" % rel)
+        canonical.update(_function_bodies(text))
+    if not canonical:
+        return _fail(name, "no function bodies were parsed out of the canonical files; the "
+                           "parser and the schema have drifted and this check is measuring "
+                           "nothing")
+
+    # Date order is application order, and the last definition is the one that survives.
+    last: dict[str, tuple[str, str]] = {}
+    for path in sorted(d.glob("*.up.sql")):
+        for fn, body in _function_bodies(path.read_text(errors="replace")).items():
+            last[fn] = (path.name, body)
+
+    drifted = [(fn, mig) for fn, (mig, body) in sorted(last.items())
+               if fn in canonical and body != canonical[fn]]
+    if drifted:
+        return _fail(name, "%d function(s) are left by the migrations in a body the canonical "
+                           "file does not have, so a load-then-migrate database silently runs "
+                           "the older one: %s. Supersede it with a migration carrying the NEW "
+                           "text rather than editing the old migration."
+                           % (len(drifted), ", ".join("%s (last set by %s)" % (f, m)
+                                                      for f, m in drifted)))
+    # The same question for INDEXES. Found by asking it: v9.443 corrected
+    # idx_agency_event_widened to `WHERE widened IS NOT FALSE` in the canonical file and
+    # the migration kept `WHERE widened`, so a migrated database had an index that could
+    # not serve the query it exists for.
+    canonical_idx: dict[str, str] = {}
+    for rel in _CANONICAL_INDEX_FILES:
+        canonical_idx.update(_index_definitions(_read(root, rel)))
+    last_idx: dict[str, tuple[str, str]] = {}
+    for path in sorted(d.glob("*.up.sql")):
+        for nm, body in _index_definitions(path.read_text(errors="replace")).items():
+            last_idx[nm] = (path.name, body)
+    drifted_idx = [(nm, mig) for nm, (mig, body) in sorted(last_idx.items())
+                   if nm in canonical_idx and body != canonical_idx[nm]]
+    if drifted_idx:
+        return _fail(name, "%d index(es) are left by the migrations in a definition the canonical "
+                           "file does not have, so a load-then-migrate database has a different "
+                           "index from the one the schema declares: %s. Supersede it with a "
+                           "migration carrying the NEW definition."
+                           % (len(drifted_idx), ", ".join("%s (last set by %s)" % (n, m)
+                                                          for n, m in drifted_idx)))
+
+    shared = sum(1 for fn in last if fn in canonical)
+    shared_idx = sum(1 for nm in last_idx if nm in canonical_idx)
+    return _ok(name, "all %d function(s) and %d index(es) that a migration and a canonical file "
+                     "both define agree on what runs last, so applying migrations cannot quietly "
+                     "reinstate a version the tree has already corrected"
+                     % (shared, shared_idx))
+
+
 def check_migrations_are_reversible(root: pathlib.Path) -> list[Finding]:
     """Every .up.sql has a .down.sql beside it (v9.441).
 
@@ -16240,6 +16362,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sast_scanning,
     check_migration_timeouts,
     check_migrations_are_reversible,
+    check_migrations_do_not_revert_canonical_objects,
     check_shell_arrays_are_portable,
     check_schema_drift_drill,
     check_local_gate_covers_ci,

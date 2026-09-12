@@ -5,6 +5,55 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.449 — 2026-09-12 (a migration that says it changes a function, and does not)
+
+v9.448 ended with a finding rather than a fix: a migration carrying its own copy of `_rp_weakens`
+reinstalled the rule that ship had just corrected. The obvious next question is whether any other
+migration does that. One does, and it is worse.
+
+`2026-09-11-001-agency-quota-history` is the migration for v9.424, which turned `AgencyQuota` from
+a setting into a decision that survives being changed. Its header says, in its own words:
+
+    CHANGES (4): enforce_agency_quota() reads the LIVE row. A superseded cap must
+
+It never redefines the function. The canonical `06_triggers.sql` was corrected to read
+`WHERE agency_id = v_agency_id AND superseded_at IS NULL`; the migration chain was not, and
+`2026-09-01-002-agency-quota` still carries the pre-history body with a bare `WHERE agency_id`.
+
+**Measured on a database built by loading the SQL files and then applying migrations in order:**
+an agency whose cap had been lowered from 999999 to 5 had **999999** enforced. `SELECT ... INTO
+v_cap` over a table that now keeps superseded rows takes an arbitrary one, and the superseded row
+came back first. Lowering a quota needs a 20-character justification at the database (v9.190) and
+then did not take effect.
+
+A deployment re-runs `polaris-migrate.sh --sync-objects` after migrating, which re-applies the
+canonical files and puts the correct body back, so a deployed stack was never exposed. That is
+exactly why it could sit unnoticed: the one path that is exercised is the one that hides it.
+
+`2026-09-12-005` carries the corrected body. The two older migrations are history and stay as they
+are; this supersedes them by running after them. Its `.down.sql` restores the pre-history body and
+says plainly that doing so reintroduces the bug, because that is what reversing it means.
+
+`check_migrations_do_not_revert_canonical_objects` is the general form. A migration MUST carry the
+functions it needs to be self-contained; the rule is that the copy which runs LAST has to agree
+with the file that owns it, once comments and whitespace are normalised. Verified against the tree
+as it stood at both instances: with `2026-09-12-004` removed it names `_rp_weakens`, and with
+`-005` removed it names `enforce_agency_quota`, each with the migration that last set it.
+
+Extending that check from functions to INDEXES found one more, and it was mine. v9.443 corrected
+`idx_agency_event_widened` to `WHERE widened IS NOT FALSE` in `01_schema.sql`, because v9.440 had
+made `widened` three-valued and a partial index over `WHERE widened` holds only the rows the
+database could rank. The migration kept the old predicate, so a load-then-migrate database has an
+index that cannot serve the filter `agency-history --widened-only` runs. Not a correctness bug --
+PostgreSQL falls back to a sequential scan and returns the right rows -- but it is the schema and
+the migrated database disagreeing, which is the thing this check refuses. `2026-09-12-006` carries
+the corrected definition. `idx_rp_event_weakened` is not in the list because v9.448's migration
+recreates it; the difference is what the check now makes unnecessary to remember.
+
+**258 invariant checks. 45 tables.**
+
+---
+
 ## v9.448 — 2026-09-12 (the relying-party rule ranked a capability by how long its name is)
 
 v9.440 made `AgencyEvent.widened` three-valued because a county could become a nation and the

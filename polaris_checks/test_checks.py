@@ -13894,3 +13894,85 @@ def test_schema_drift_drill_check_discriminates(tmp_path):
     write(drill=DRILL.replace("_JOIN_LITERALS = 1\n", ""))
     assert level("truncated at the closing quote") == "FAIL", \
         "must FAIL when the drill cannot read a column list split across lines"
+
+
+def test_migrations_match_canonical_check_discriminates(tmp_path):
+    """Both instances this was written for are in here as fixtures: a migration that
+    carries an older body, and the one that supersedes it by carrying the new text."""
+    d = tmp_path / "polaris_sql"
+    (d / "migrations").mkdir(parents=True)
+
+    NEW = ("CREATE OR REPLACE FUNCTION enforce_quota() RETURNS TRIGGER AS $$\n"
+           "BEGIN\n"
+           "    SELECT cap INTO v_cap FROM Quota\n"
+           "     WHERE agency_id = v_id AND superseded_at IS NULL;\n"
+           "    RETURN NEW;\n"
+           "END;\n$$;\n")
+    OLD = NEW.replace(" AND superseded_at IS NULL", "")
+
+    def write(canonical=NEW, migrations=(("2026-01-01-001-first.up.sql", NEW),), indexes=""):
+        (d / "06_triggers.sql").write_text(canonical)
+        (d / "05_procedures.sql").write_text("-- no functions here\n")
+        # Indexes are owned by 01_schema.sql / 02_indexes.sql, not by the trigger file.
+        (d / "01_schema.sql").write_text(indexes)
+        (d / "02_indexes.sql").write_text("-- no indexes here\n")
+        for f in (d / "migrations").glob("*.sql"):
+            f.unlink()
+        for fname, body in migrations:
+            (d / "migrations" / fname).write_text(body)
+
+    def level(msg_contains=None):
+        out = checks.check_migrations_do_not_revert_canonical_objects(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    good = checks.check_migrations_do_not_revert_canonical_objects(tmp_path)[0]
+    assert good.level == "OK", "must PASS when the migration copy matches the canonical body"
+
+    # Formatting is not a difference: comments and whitespace are normalised away.
+    write(migrations=(("2026-01-01-001-first.up.sql",
+                       "-- a comment the canonical file does not have\n"
+                       + NEW.replace("BEGIN\n", "BEGIN\n\n")),))
+    assert level() == "OK", "a reformatted copy is not a drifted copy"
+
+    # The real shape: an older migration carries the pre-correction body and nothing
+    # after it supersedes, so applying migrations reinstates it.
+    write(migrations=(("2026-01-01-001-first.up.sql", OLD),))
+    bad = checks.check_migrations_do_not_revert_canonical_objects(tmp_path)[0]
+    assert bad.level == "FAIL" and "enforce_quota" in bad.message and "first" in bad.message, \
+        "must FAIL and name the function and the migration that last set it"
+
+    # And the fix: a LATER migration carrying the new text supersedes the older copy.
+    write(migrations=(("2026-01-01-001-first.up.sql", OLD),
+                      ("2026-02-01-001-supersede.up.sql", NEW)))
+    assert level() == "OK", "a later migration carrying the new text must clear it"
+
+    # Order is by date, not by which file happens to be read first.
+    write(migrations=(("2026-01-01-001-first.up.sql", NEW),
+                      ("2026-02-01-001-supersede.up.sql", OLD)))
+    assert level("enforce_quota") == "FAIL", \
+        "the LAST migration wins, so a later file carrying the old body is the drift"
+
+    # The same question for INDEXES, which is how idx_agency_event_widened was found:
+    # the canonical file said `WHERE widened IS NOT FALSE` and the migration said
+    # `WHERE widened`, so a migrated database had an index that could not serve the
+    # filter the operator tool runs.
+    NEW_IDX = ("CREATE INDEX idx_probe ON Ev (recorded_at DESC)\n"
+               "    WHERE widened IS NOT FALSE;\n")
+    OLD_IDX = "CREATE INDEX idx_probe ON Ev (recorded_at DESC) WHERE widened;\n"
+    write(indexes=NEW_IDX, migrations=(("2026-01-01-001-first.up.sql", NEW + OLD_IDX),))
+    bad = checks.check_migrations_do_not_revert_canonical_objects(tmp_path)[0]
+    assert bad.level == "FAIL" and "idx_probe" in bad.message, \
+        "must FAIL and name the index whose migration definition differs"
+
+    write(indexes=NEW_IDX, migrations=(("2026-01-01-001-first.up.sql", NEW + OLD_IDX),
+                                       ("2026-02-01-001-supersede.up.sql", NEW + NEW_IDX)))
+    assert level() == "OK", "a later migration carrying the new index definition clears it"
+
+    # A function only a migration defines is not this check's business.
+    write(canonical="-- nothing\n", migrations=(("2026-01-01-001-first.up.sql", OLD),))
+    assert level("measuring nothing") == "FAIL", \
+        "must FAIL rather than pass vacuously when no canonical body could be parsed"
