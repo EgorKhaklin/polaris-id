@@ -1166,6 +1166,82 @@ class TestRetentionEngine(_CheckBase):
         self.cur = self.conn.cursor()
         self.addCleanup(self.cur.close)
 
+
+    # ------------------------------------------------------------------
+    # v9.437: the refusals uc_archive_purge makes.
+    #
+    # v9.434 deleted each of these and the whole suite stayed green. This procedure
+    # is the ONLY sanctioned DELETE path against the append-only audit tables, and it
+    # runs SECURITY DEFINER with the owner's rights precisely because nothing else
+    # may. Everything standing between that power and an audit trail is a RAISE in
+    # its preamble: the cutoff must be in the past, every per-class cutoff must be,
+    # the archive digest must be a real digest, and the actor must be an admin who
+    # exists. A trigger cannot check any of it -- the deletes have not happened yet.
+    # ------------------------------------------------------------------
+
+    def _admin_id(self):
+        self.cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' LIMIT 1")
+        return self.cur.fetchone()["user_id"]
+
+    def _purge(self, cutoff="(now() - INTERVAL '2000 days')::timestamptz",
+               digest="a" * 64, actor=None, class_cutoffs="NULL"):
+        actor = self._admin_id() if actor is None else actor
+        self.cur.execute(
+            "CALL uc_archive_purge(%s, %%s, %%s, %%s, NULL, %s)" % (cutoff, class_cutoffs),
+            ("s3://polaris-archive/v9437.tar.zst", digest, actor))
+
+    def test_a_cutoff_in_the_future_is_refused(self):
+        """A future cutoff deletes everything, including what has not happened yet."""
+        with self.assertRaises(pg_errors.Error) as c:
+            self._purge(cutoff="(now() + INTERVAL '1 day')::timestamptz")
+        self.assertIn("is in the future", str(c.exception))
+
+    def test_a_per_class_cutoff_in_the_future_is_refused(self):
+        """The per-class array is the same power at finer grain, and was checked
+        separately, so it needs its own case: a purge whose overall cutoff is sane can
+        still carry a class cutoff that is not."""
+        # Four, ordered TOKEN_LIFECYCLE, VERIFICATION, ENROLLMENT, AUTH_AUDIT: the
+        # arity is checked separately and already covered, so this case has to satisfy
+        # it in order to reach the one under test.
+        past = "(now() - INTERVAL '2000 days')::timestamptz"
+        future = "(now() + INTERVAL '1 day')::timestamptz"
+        for i in range(4):
+            with self.subTest(class_index=i):
+                arr = ", ".join(future if j == i else past for j in range(4))
+                self.cur.execute("SAVEPOINT classcut")
+                with self.assertRaises(pg_errors.Error) as c:
+                    self._purge(class_cutoffs="ARRAY[%s]" % arr)
+                self.assertIn("is in the future", str(c.exception))
+                self.cur.execute("ROLLBACK TO SAVEPOINT classcut")
+
+    def test_the_archive_digest_must_be_a_digest(self):
+        """The rows are gone after this runs; the digest is what proves the archive
+        holding them is the one that was made. A short or non-hex string is not a
+        commitment to anything."""
+        for bad in ("", "deadbeef", "z" * 64, "A" * 63):
+            with self.subTest(digest=bad or "(empty)"):
+                self.cur.execute("SAVEPOINT digest")
+                with self.assertRaises(pg_errors.Error) as c:
+                    self._purge(digest=bad)
+                self.assertIn("64 hex chars", str(c.exception))
+                self.cur.execute("ROLLBACK TO SAVEPOINT digest")
+
+    def test_an_actor_that_does_not_exist_is_refused(self):
+        with self.assertRaises(pg_errors.Error) as c:
+            self._purge(actor=9_000_004)
+        self.assertIn("does not exist", str(c.exception))
+
+    def test_a_non_admin_actor_is_refused(self):
+        """SECURITY DEFINER means the procedure's own rights are the owner's, so the
+        role check inside it is the entire access control on this path."""
+        self.cur.execute("SELECT user_id, role FROM AppUser WHERE role <> 'admin' LIMIT 1")
+        row = self.cur.fetchone()
+        if row is None:
+            self.skipTest("no non-admin account in the sample data")
+        with self.assertRaises(pg_errors.Error) as c:
+            self._purge(actor=row["user_id"])
+        self.assertIn("must be admin", str(c.exception))
+
     def test_retention_floor_refuses_a_short_policy(self):
         with self.assertRaises(pg_errors.CheckViolation):
             self.cur.execute(

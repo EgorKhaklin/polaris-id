@@ -3034,6 +3034,195 @@ class IssuerFederationTests(PolarisTestCase):
                      WHERE attestation_id = 1
                 """)
 
+
+    # ------------------------------------------------------------------
+    # v9.437: the refusals uc10_attest_trust and uc10_revoke_attestation make.
+    #
+    # v9.434 deleted each of these and the suite stayed green. An attestation is one
+    # authority vouching for another in a context; revoking one withdraws that. Both
+    # are federation-trust decisions, and the preconditions are what stop a stale
+    # signer, a backdated expiry, a duplicate live edge or a non-admin revocation.
+    # ------------------------------------------------------------------
+
+    def _attest(self, attesting=4, attested=2, context=None, days=30, signer=None):
+        ctx = self._context_id('MOTOR_VEHICLE') if context is None else context
+        signer = self._admin_user_id() if signer is None else signer
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
+                        (attesting, attested, ctx,
+                         datetime.now().date() + timedelta(days=days), signer))
+            conn.commit()
+
+
+    # ------------------------------------------------------------------
+    # v9.437: the last of the refusals v9.434 found unnoticed.
+    #
+    # Closing an epoch publishes the anonymity set a ZK proof is checked against, and
+    # batching anchors commits a set of them to a ledger. Both take their size from
+    # the caller, so the caps are the only thing between a caller's mistake and an
+    # unbounded commitment. Neither is a security invariant in the C1-C10 sense; both
+    # are refusals the procedure makes and nothing noticed when they went.
+    # ------------------------------------------------------------------
+
+    def test_closing_an_epoch_with_an_unknown_user_is_refused(self):
+        from psycopg2.extras import Json
+        with self._db() as conn, conn.cursor() as cur:
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)",
+                            ('a' * 64, datetime.now() + timedelta(days=30), 9_000_008,
+                             Json([{'token_id': 1, 'leaf_hash': 'b' * 64}])))
+            self.assertIn('not found', str(c.exception))
+
+    def test_an_empty_epoch_cannot_be_closed(self):
+        """An epoch with no leaves commits to nothing and would publish a root that
+        proves membership of the empty set."""
+        from psycopg2.extras import Json
+        admin = self._admin_user_id()
+        # An empty ARRAY and a SQL NULL, which are the two ways the count comes out
+        # unusable. JSON `null` is a third thing and not this: jsonb_array_length
+        # rejects a scalar before the procedure's own check is reached, so passing
+        # Json(None) would test Postgres rather than the refusal.
+        for leaves, label in ((Json([]), 'empty array'), (None, 'SQL NULL')):
+            with self.subTest(leaves=label):
+                with self._db() as conn, conn.cursor() as cur:
+                    with self.assertRaises(psycopg2.Error) as c:
+                        cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)",
+                                    ('a' * 64, datetime.now() + timedelta(days=30), admin,
+                                     leaves))
+                    self.assertIn('empty epoch', str(c.exception))
+
+    def test_an_epoch_larger_than_the_cap_is_refused(self):
+        """The cap counts the array the CALLER passes, so it is reachable without
+        creating ten thousand tokens: the point is that the procedure bounds what it
+        is handed rather than trusting it."""
+        from psycopg2.extras import Json
+        admin = self._admin_user_id()
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT jsonb_agg(jsonb_build_object('token_id', g, "
+                        "'leaf_hash', repeat('c', 64))) AS leaves "
+                        "  FROM generate_series(1, 10001) g")
+            oversized = cur.fetchone()['leaves']
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)",
+                            ('a' * 64, datetime.now() + timedelta(days=30), admin,
+                             Json(oversized)))
+            self.assertIn('exceeds cap', str(c.exception))
+
+    def test_a_batch_larger_than_the_cap_is_refused(self):
+        """Ten thousand and one pending anchors, inserted in one statement and rolled
+        back. The count is of rows the procedure finds, not of anything the caller
+        declares, so this is the one cap that needs the rows to exist."""
+        from psycopg2.extras import Json
+        with self._db() as conn, conn.cursor() as cur:
+            # The count joins IdentityToken on algorithm_id, so the rows must hang
+            # off a token signed under the algorithm being batched, and 'PENDING' is
+            # not a status this table takes: unbatched means batch_id IS NULL.
+            cur.execute("SELECT token_id, algorithm_id FROM IdentityToken "
+                        " WHERE algorithm_id IS NOT NULL LIMIT 1")
+            row = cur.fetchone()
+            cur.execute("""
+                INSERT INTO BlockchainAnchor
+                    (token_id, did, commitment_hash, ledger_network, status)
+                SELECT %s, 'did:polaris:cap:' || g, repeat('d', 64), 'ALGORAND_PQ', 'ACTIVE'
+                  FROM generate_series(1, 10001) g
+            """, (row['token_id'],))
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL close_anchor_batch(%s, %s, %s)",
+                            (row['algorithm_id'], 'e' * 64, Json({})))
+            self.assertIn('batch-size cap', str(c.exception))
+            conn.rollback()
+
+    def test_revoking_a_token_that_does_not_exist_is_refused(self):
+        with self._db() as conn, conn.cursor() as cur:
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL uc8_revoke_token(%s, %s, %s, %s, %s)",
+                            (9_000_009, 1, 'ADMINISTRATIVE',
+                             'https://crl.idtoken.gov/test/nosuch', None))
+            self.assertIn('does not exist', str(c.exception))
+
+    def test_attesting_with_an_unknown_signer_is_refused(self):
+        with self.assertRaises(psycopg2.Error) as c:
+            self._attest(signer=9_000_005)
+        self.assertIn('not found', str(c.exception))
+
+    def test_an_attestation_must_expire_in_the_future(self):
+        """An edge that is already expired when it is written is an edge nobody can
+        use and a record that reads as if they could."""
+        for days in (0, -1):
+            with self.subTest(days=days):
+                with self.assertRaises(psycopg2.Error) as c:
+                    self._attest(attesting=5, attested=3, days=days)
+                self.assertIn('strictly in the future', str(c.exception))
+
+    def test_a_second_active_attestation_for_the_same_edge_is_refused(self):
+        """Two live edges for one (attester, attested, context) would make "is this
+        vouched for" depend on which row a reader saw first."""
+        ctx = self._context_id('MOTOR_VEHICLE')
+        self._attest(attesting=6, attested=3, context=ctx)
+        with self.assertRaises(psycopg2.Error) as c:
+            self._attest(attesting=6, attested=3, context=ctx, days=60)
+        self.assertIn('already exists', str(c.exception))
+
+    def test_revoking_an_attestation_that_does_not_exist_is_refused(self):
+        admin = self._admin_user_id()
+        with self._db() as conn, conn.cursor() as cur:
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
+                            (9_000_006, 'TESTING_UNKNOWN', admin))
+            self.assertIn('does not exist', str(c.exception))
+
+    def test_revoking_an_already_revoked_attestation_is_refused(self):
+        """Not idempotent on purpose: a second revocation would overwrite the instant
+        and the reason the first one recorded."""
+        ctx = self._context_id('MOTOR_VEHICLE')
+        admin = self._admin_user_id()
+        self._attest(attesting=5, attested=2, context=ctx)
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT attestation_id FROM AgencyTrustAttestation "
+                        " WHERE attesting_agency_id=5 AND attested_agency_id=2 "
+                        "   AND context_id=%s AND revocation_date IS NULL", (ctx,))
+            aid = cur.fetchone()['attestation_id']
+            cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
+                        (aid, 'TESTING_FIRST', admin))
+            conn.commit()
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
+                            (aid, 'TESTING_SECOND', admin))
+            self.assertIn('already revoked', str(c.exception))
+
+    def test_revoking_with_an_unknown_signer_is_refused(self):
+        ctx = self._context_id('MOTOR_VEHICLE')
+        self._attest(attesting=6, attested=2, context=ctx)
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT attestation_id FROM AgencyTrustAttestation "
+                        " WHERE attesting_agency_id=6 AND attested_agency_id=2 "
+                        "   AND context_id=%s AND revocation_date IS NULL", (ctx,))
+            aid = cur.fetchone()['attestation_id']
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
+                            (aid, 'TESTING_UNKNOWN_SIGNER', 9_000_007))
+            self.assertIn('not found', str(c.exception))
+
+    def test_a_non_admin_cannot_revoke_an_attestation(self):
+        """Withdrawing a federation edge is an admin act: it changes what a whole
+        authority is trusted for."""
+        ctx = self._context_id('MOTOR_VEHICLE')
+        self._attest(attesting=4, attested=3, context=ctx)
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE role <> 'admin' "
+                        " AND is_active LIMIT 1")
+            row = cur.fetchone()
+            if row is None:
+                self.skipTest("no non-admin account in the sample data")
+            cur.execute("SELECT attestation_id FROM AgencyTrustAttestation "
+                        " WHERE attesting_agency_id=4 AND attested_agency_id=3 "
+                        "   AND context_id=%s AND revocation_date IS NULL", (ctx,))
+            aid = cur.fetchone()['attestation_id']
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
+                            (aid, 'TESTING_NON_ADMIN', row['user_id']))
+            self.assertIn('admin role', str(c.exception))
+
     def test_revocation_one_way(self):
         """Once revoked, an attestation cannot be un-revoked."""
         admin = self._admin_user_id()

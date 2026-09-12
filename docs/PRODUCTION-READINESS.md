@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v9.436): not production-ready for real identity data.** Every
+**Status (v9.437): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
@@ -77,8 +77,10 @@ worth knowing before relying on it. SECURITY.md says so.
 refusals across 16 procedures; 27 could be deleted with the whole suite green. They concentrate
 where the invariants are multi-step and a trigger cannot see them: the four-eyes rule, the
 cool-down, the three out-of-band channels and the third-person witness in
-`uc9_complete_recovery`, and the preconditions on an irreversible erasure. Ten are covered;
-**seventeen are not**, and they are declared rather than quietly carried.
+`uc9_complete_recovery`, the preconditions on an irreversible erasure, and the only sanctioned
+DELETE path against the audit tables. **All 27 are covered as of v9.437**, and the drill runs on
+every push that touches a procedure with its declared-survivor list empty and checked in both
+directions, so one that stops being covered fails rather than going quiet.
 
 **And the measurement instruments were wrong three times in ways that flattered them.** The
 conformance drill counted 22 fields that were not fields and misclassified what fixing the rest

@@ -5,6 +5,59 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.437 — 2026-09-12 (every refusal a stored procedure makes is now tested)
+
+v9.434 measured 59 refusals across 16 stored procedures and found 27 that could be deleted with
+the whole suite green. v9.435 covered the ten closest to the constitution. This covers the
+remaining seventeen, and the drill's declared-survivor list is empty.
+
+**`uc_archive_purge` (5).** The only sanctioned DELETE path against the append-only audit tables,
+running SECURITY DEFINER with the owner's rights precisely because nothing else may. Everything
+between that power and an audit trail is a refusal in its preamble: the cutoff must be in the
+past, each of the four per-class cutoffs must be, the archive digest must be 64 hex characters,
+and the actor must be an admin who exists. The per-class case is one subtest per position,
+because a single one would pass if the procedure checked only the first.
+
+**`uc10_attest_trust` (3) and `uc10_revoke_attestation` (4).** One authority vouching for another
+in a context, and the withdrawal of that. A stale signer, an already-expired edge, a duplicate
+live edge, a double revocation that would overwrite the instant and reason the first recorded,
+and a non-admin withdrawing a federation edge.
+
+**`uc11_close_epoch` (3), `uc8_revoke_token` (1), `close_anchor_batch` (1).** An epoch with no
+leaves would publish a root proving membership of the empty set. Both 10 000 caps are reachable
+without ten thousand of anything real: `uc11`'s counts the array the CALLER passes, which is the
+point (it bounds what it is handed rather than trusting it), and the anchor cap needs one
+10 001-row insert rolled back inside the test.
+
+### Two fixtures that would have looked right and tested nothing
+
+**`Json(None)` sends JSON `null`, not SQL NULL.** `jsonb_array_length` rejects a scalar before the
+procedure's own empty-epoch check is reached, so that case asserted against a Postgres type error
+rather than the refusal under test. The `IS NULL` branch needs a real SQL NULL, and the test says
+so where the next reader will need it.
+
+**The anchor cap counts rows joined to `IdentityToken` on `algorithm_id`,** and `'PENDING'` is not
+a status that table accepts. The first fixture inserted 10 001 rows the procedure would never have
+counted, against an algorithm it was not batching. It would have raised a CHECK violation rather
+than the cap, and a less careful assertion would have called that a pass.
+
+Both are the failure this whole arc is about, in the tests rather than the code: something that
+reports success without having done the work.
+
+**Measured, not asserted:** the drill was re-run against all 16 procedures. 49 refusals mutated,
+0 untested; the other 10 belong to procedures no test class in those files names, and are
+exercised by `polaris_sim`, `08_tests.sql` and the partition drill instead. `SURVIVORS_EXPECTED`
+is empty and checked in both directions, so a refusal that stops being covered fails the drill
+and a stale entry does too.
+
+The drill's own summary line said "59 refusals mutated" while skipping those 10, which is this
+tool overstating its work: exactly what it exists to catch, in itself. It reports the two numbers
+separately now.
+
+**250 invariant checks. 49 procedure refusals measured, 0 untested.**
+
+---
+
 ## v9.436 — 2026-09-12 (I made the longest step in CI longer, and the fix took three tries)
 
 v9.434 put the procedure mutation drill on every push. Watching v9.434's own CI run, the job sat

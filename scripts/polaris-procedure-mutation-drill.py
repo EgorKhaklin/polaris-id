@@ -91,58 +91,18 @@ def _classes_exercising(name: str) -> list:
 #: because it is plainly tested: the co-signer rule is the subject of its own test.
 CONTROL = ("uc8_revoke_token", "Co-signer must differ from actor")
 
-#: Refusals nothing covers, each with the message it stops making. Measured, not
-#: guessed: the exhaustive pass re-tried every one against all 22 exercising test
-#: classes and none of them noticed, so deleting any line below leaves the whole
-#: suite green while the procedure performs a write it is written to refuse.
+#: Refusals nothing covers, each with the reason. EMPTY as of v9.437: every one of the
+#: 59 refusals these 16 procedures make now turns something red when it is deleted.
 #:
-#: They concentrate where the invariants are multi-step, which is the reason this
-#: drill exists: uc9_complete_recovery reconciles a recovery against its predecessor,
-#: uc_archive_purge against a retention window, uc10_* against an attestation chain.
-#: A trigger cannot see any of that, so the refusal is the only thing standing there.
+#: The first measurement (v9.434) found 27 that nothing noticed, concentrated where the
+#: invariants are multi-step and a trigger cannot see them. v9.435 covered the ten closest
+#: to the constitution -- the four-eyes rule, the cool-down, the three out-of-band channels
+#: and the third-person witness in uc9_complete_recovery, and the preconditions on an
+#: irreversible erasure -- and v9.437 covered the remaining seventeen.
 #:
-#: v9.435 covered the first ten: the seven uc9_complete_recovery refusals, which are
-#: the four-eyes, cool-down, three-channel and third-person-witness discipline, and
-#: the three on uc_pseudonymize_individual, which is irreversible by construction so
-#: its preconditions are the only place a mistake can still be caught. Seventeen
-#: remain. The list is exact and checked both ways, so it cannot grow and cannot
-#: quietly stop describing the procedures.
-SURVIVORS_EXPECTED: dict[str, str] = {
-    "close_anchor_batch#2":
-        "Pending anchors (%) exceeds batch-size cap of 10000; close in multiple ba",
-    "uc10_attest_trust#0":
-        "AppUser % not found",
-    "uc10_attest_trust#2":
-        "valid_until must be strictly in the future; got %",
-    "uc10_attest_trust#3":
-        "An active attestation already exists for (attesting=%, attested=%, contex",
-    "uc10_revoke_attestation#0":
-        "Attestation % does not exist",
-    "uc10_revoke_attestation#1":
-        "Attestation % is already revoked at %",
-    "uc10_revoke_attestation#2":
-        "AppUser % not found",
-    "uc10_revoke_attestation#3":
-        "Federation revocation requires admin role (signer % has role %)",
-    "uc11_close_epoch#0":
-        "AppUser % not found",
-    "uc11_close_epoch#2":
-        "Cannot close an empty epoch (zero valid tokens to commit)",
-    "uc11_close_epoch#3":
-        "Epoch size (%) exceeds cap of 10000; split into multiple epochs",
-    "uc8_revoke_token#0":
-        "Token % does not exist",
-    "uc_archive_purge#0":
-        "uc_archive_purge: cutoff_timestamp (%) is in the future; refusing.",
-    "uc_archive_purge#3":
-        "uc_archive_purge: the cutoff for % (%) is in the future; refusing.",
-    "uc_archive_purge#6":
-        "uc_archive_purge: archive_sha256 must be 64 hex chars; got %",
-    "uc_archive_purge#7":
-        "uc_archive_purge: actor_user_id (%) does not exist.",
-    "uc_archive_purge#8":
-        "uc_archive_purge: actor_user_id (%) has role %, must be admin.",
-}
+#: An entry here is a guarantee a procedure makes and the tests do not check. The list is
+#: checked in BOTH directions, so it cannot grow silently and a stale entry fails too.
+SURVIVORS_EXPECTED: dict[str, str] = {}
 
 
 def _env() -> dict:
@@ -430,8 +390,12 @@ def main(argv=None) -> int:
               % ", ".join(gone))
     if new_ones or gone:
         return 1
-    print("OK: %d refusals mutated, %d untested. Deleting any of the rest turns something red."
-          % (len(cases), len(survivors)))
+    # len(cases) counts the unmeasurable ones too, and saying "59 mutated" when ten were
+    # skipped is this tool overstating its own work, which is the thing it exists to catch.
+    print("OK: %d refusal(s) mutated, %d untested%s. Deleting any of the rest turns "
+          "something red."
+          % (len(cases) - len(unmeasurable), len(survivors),
+             ("; %d not measurable here" % len(unmeasurable)) if unmeasurable else ""))
     return 0
 
 
