@@ -193,6 +193,16 @@
       "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
     },
     {
+      "name": "revocation-feed-commitment-mismatch",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-commitment-mismatch.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.432",
+      "note": "v9.432: a feed whose signature is genuine and whose commitment is a lie. Its only refusal case tampered the SIGNATURE and left commitment_ok true, so nothing published exercised the commitment at all: a verifier that never recomputed the revoked root conformed, and an authority could sign one root while publishing different leaves."
+    },
+    {
       "name": "manifest-valid",
       "artifact": "federation-manifest",
       "object_file": "conformance/vectors/federation-manifest-valid.json",
@@ -309,6 +319,16 @@
       },
       "since": "9.430",
       "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
+      "name": "federation-status-bundle-commitment-mismatch",
+      "artifact": "federation-status-bundle",
+      "object_file": "conformance/vectors/federation-status-bundle-commitment-mismatch.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "9.432",
+      "note": "v9.432: the same for the member set. A publisher could sign one members_root while listing different members, and every published case still passed."
     },
     {
       "name": "transparency-sth-valid",

@@ -20,7 +20,7 @@ Bump procedure (see CLAUDE.md "Shipping"):
 """
 # coverage:exempt - one constant, imported by everything; check_version_is_canonical pins it and there is no behaviour to exercise.
 
-__version__: str = "9.431"
+__version__: str = "9.432"
 
 
 # Backwards-compat alias for code that imported `POLARIS_VERSION`

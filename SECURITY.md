@@ -89,7 +89,15 @@ initial report, extended for Critical findings as the patch warrants.
   the signed registry, the timestamp authority, the receipt transparency log, and the
   wallet's presentation and QR framing
 - The verify SDKs (`sdk/python`, `sdk/typescript`) and the conformance suite
-  (`conformance/`), which independent implementations build to
+  (`conformance/`), which independent implementations build to. **What passing the
+  conformance suite does and does not prove** is itself worth reading before you rely
+  on it: `scripts/polaris-conformance-mutation-drill.py` measures which verdict fields
+  the published cases actually constrain, and 65 of them are not constrained at all. An
+  implementation can pass all 118 cases while never performing those checks. The drill
+  declares the list exactly and CI fails if it grows. A divergence between the shipped
+  verifiers that the suite fails to catch is a finding we want: v9.430 and v9.431 each
+  found one that way (no replay bound on holder proofs in either SDK; no way for either
+  SDK to report whether an artifact's issuer is trusted)
 - The physical layer (`polaris_card/`, P4): the card profile and its encoding, the
   software token emulator and its APDU contract, the personalization flow, and the
   reference verifier device. A finding that an emulator does not model a property of
@@ -180,5 +188,5 @@ policy.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-11 (v9.411)*
+*Last updated: 2026-09-12 (v9.432)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

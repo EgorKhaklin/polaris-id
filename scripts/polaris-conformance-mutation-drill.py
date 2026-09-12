@@ -81,6 +81,14 @@ NOT_A_DECISION = {
 #: had no case in which the signature was bad, so a verifier that never checked theirs
 #: conformed). Nor is freshness: v9.430 closed all nine `fresh` fields by pinning a
 #: `now` in each case, one inside the artifact's validity window and one long after.
+#: Nor are the two commitments: v9.432 published a feed and a bundle that are correctly
+#: SIGNED and whose committed root does not match what they list.
+#:
+#: Seven fields that stood here until v9.432 were never survivors. They GATE their
+#: artifact's authenticity, so forcing the reported value cannot re-open the gate and
+#: the mutation was measuring nothing; a published case already drove each of them
+#: false. The drill now asks that question instead of counting them, which is why this
+#: list fell by more than the two cases added.
 SURVIVORS_EXPECTED = (
     "verify_agent_grant.action_in_scope",
     "verify_agent_grant.agent_proved",
@@ -89,17 +97,13 @@ SURVIVORS_EXPECTED = (
     "verify_agent_grant.pairwise_handle",
     "verify_agent_grant.principal_bound",
     "verify_agent_grant.revoked",
-    "verify_agent_grant.usable",
     "verify_cosignature.witness_matches",
-    "verify_cross_authority.attestation_signed",
     "verify_cross_authority.authentic",
     "verify_cross_authority.compromised",
     "verify_cross_authority.key_status",
-    "verify_cross_authority.revocation_checked",
     "verify_cross_authority.revoked",
     "verify_cross_authority.via",
     "verify_epoch_checkpoint.issuer_matches",
-    "verify_epoch_leaves.commitment_matches",
     "verify_epoch_leaves.count_matches",
     "verify_epoch_leaves.epoch_matches",
     "verify_epoch_leaves.leaf_count",
@@ -119,7 +123,6 @@ SURVIVORS_EXPECTED = (
     "verify_pack.algorithm",
     "verify_pack.authenticity",
     "verify_pack.token_value",
-    "verify_revocation_feed.commitment_ok",
     "verify_revocation_feed.issuer_matches",
     "verify_signed_document.anchored",
     "verify_signed_document.authentic",
@@ -146,10 +149,8 @@ SURVIVORS_EXPECTED = (
     "verify_signed_document.timestamp_witnessed",
     "verify_signed_document.timestamps",
     "verify_signed_document.trusted",
-    "verify_signed_document.valid_long_term",
     "verify_signed_document.witnessed",
     "verify_status_assertion.issuer_trusted",
-    "verify_status_bundle.commitment_ok",
     "verify_status_bundle.publisher_matches",
     "verify_sth.issuer_matches",
     "verify_timestamp_anchor.log_matches",
@@ -200,6 +201,40 @@ def _fields(verifier) -> set:
     except (OSError, TypeError):
         return set()
     return {k for k in re.findall(r'"(\w+)":', src) if k not in NOT_A_DECISION}
+
+
+def _observed_false(harness, cases, fn_name, key):
+    """Does any published case make this verifier report this field FALSE?
+
+    Forcing a field permissive is a faithful simulation of an implementation that skips
+    the check ONLY when nothing else depends on the field. Where the field GATES the
+    artifact's authenticity verdict -- `commitment_ok` on a revocation feed, say -- the
+    verifier has already folded it in before the forcing wrapper sees the dict, so the
+    mutation cannot re-open the gate and the field reads as unconstrained no matter what
+    the contract does.
+
+    For those, the honest question is the one the contract can actually answer: is there
+    a published case in which this check FAILS? If a case drives the field to False, an
+    implementation that skipped the check would disagree with the published verdict on
+    that case. v9.432 added exactly such a case for the two commitment fields, and
+    without this distinction the drill went on calling them survivors.
+    """
+    original = getattr(harness.V, fn_name)
+    seen = []
+
+    def recorder(*a, **kw):
+        out = original(*a, **kw)
+        if isinstance(out, dict) and out.get(key) is False:
+            seen.append(True)
+        return out
+
+    recorder.__signature__ = inspect.signature(original)
+    setattr(harness.V, fn_name, recorder)
+    try:
+        _run_all(harness, cases)
+    finally:
+        setattr(harness.V, fn_name, original)
+    return bool(seen)
 
 
 def _force(mod, fn_name, key, value):
@@ -293,6 +328,7 @@ def main(argv=None) -> int:
     # THE MEASUREMENT.
     print("\n== every other decision field, forced permissive ==")
     survivors = []
+    gated = []
     checked = 0
     for fn_name in verifiers:
         fn = getattr(V, fn_name)
@@ -308,6 +344,13 @@ def main(argv=None) -> int:
                     if args.verbose:
                         print("   ok        %s.%s -> %d case(s) red (%s)"
                               % (fn_name, key, len(red), red[0]))
+                elif _observed_false(harness, cases, fn_name, key):
+                    # The field gates the verdict, and a published case drives it false:
+                    # an implementation that skipped this check would fail that case.
+                    gated.append((fn_name, key))
+                    if args.verbose:
+                        print("   ok        %s.%s -> gated: a published case drives it false"
+                              % (fn_name, key))
                 else:
                     survivors.append((fn_name, key))
                     print("   SURVIVOR  %s.%s: forced permissive, every published case "
@@ -315,6 +358,10 @@ def main(argv=None) -> int:
 
     print("\n%d decision field(s) measured across the %d verifier(s) the contract "
           "reaches." % (checked, len(verifiers)))
+    if gated:
+        print("%d of them gate an artifact's authenticity and a published case drives each "
+              "false, so the check behind them IS exercised: %s"
+              % (len(gated), ", ".join("%s.%s" % g for g in sorted(gated))))
     if skipped:
         print("Not measured (no published case reaches them; their own drills do): %s"
               % ", ".join(skipped))

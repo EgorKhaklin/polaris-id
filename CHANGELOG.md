@@ -5,6 +5,49 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.432 — 2026-09-12 (a signature can be genuine and the commitment it carries a lie)
+
+A revocation feed publishes a set of revoked credentials and a root that commits to them. The
+root is inside the signed statement, so tampering with the leaves breaks the signature. What the
+signature cannot catch is an authority that SIGNS one root while publishing different leaves.
+
+The published contract never asked. Both the feed and the federation status bundle carried exactly
+one refusal case each, and both tampered the **signature**: on `revocation-feed-tampered` the
+verifier still reports `commitment_ok: true`. So no case exercised the commitment at all, and an
+implementation that never recomputed the root conformed.
+
+Two vectors close it, and neither could be made by tampering. Each is a fresh ML-DSA-65 keypair
+signing a statement whose committed root does not match what the artifact lists: the signature is
+genuine, the commitment is a lie, which is exactly the artifact a dishonest authority would emit.
+Both verifiers already fold the commitment into authenticity, so both refuse them and no SDK
+change was needed. 118 cases; the detached verifier, the Python SDK and the TypeScript SDK each
+pass every one.
+
+### The drill was over-reporting, and this is how it showed
+
+`commitment_ok` stayed on the survivor list after the cases landed. That is not a stale
+declaration: it is the drill's method reaching its limit. Forcing a reported field permissive
+faithfully simulates an implementation that skips the check **only when nothing else depends on
+the field**. Where the field GATES the artifact's authenticity, the verifier has already folded it
+in before the wrapper sees the dict, so the mutation cannot re-open the gate and the field reads
+as unconstrained no matter what the contract does.
+
+For those the answerable question is different: does a published case drive this field FALSE? If
+one does, an implementation that skipped the check would disagree with the published verdict on
+that case. The drill now asks it, by running the cases with a recorder rather than by reasoning
+about which fields gate what.
+
+**Seven fields were never survivors.** Five of them -- `agent_grant.usable`,
+`cross_authority.attestation_signed`, `cross_authority.revocation_checked`,
+`epoch_leaves.commitment_matches`, `signed_document.valid_long_term` -- have been exercised all
+along and this drill has been counting them wrong since v9.429. The other two are the commitments
+this ship closed. So the list falls 72 to 65, and five of those seven are a correction to my own
+earlier numbers rather than work done.
+
+**249 invariant checks. 118 conformance cases.**
+
+---
+
 ## v9.431 — 2026-09-12 (a genuine signature by a stranger, and no SDK could tell you)
 
 The drill's next-largest group after freshness was `issuer_trusted`: whether the key that signed

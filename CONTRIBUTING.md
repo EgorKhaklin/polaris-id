@@ -46,8 +46,18 @@ A pull request is ready when all of these hold:
 - `./scripts/polaris-preflight.sh` reports READY; it runs the checks and the link
   checker as the pre-ship gate. **Install `ruff` first.** CI runs `ruff check .` as
   the FIRST step of the product-test job, so a single unused import fails the whole
-  run before a test executes. Without ruff the preflight lints nothing and says so
-  loudly; do not read past that line.
+  run before a test executes. Since v9.430 an unlinted tree is a gate FAILURE rather
+  than a note: this paragraph used to end "says so loudly; do not read past that line",
+  and v9.429 shipped an unused import past exactly that line. `POLARIS_LINT_WAIVED=1`
+  waives it and prints the waiver.
+- **Run the drills this change needs.** `python3 scripts/polaris-ship.py drills` lists
+  them, scoped to this ship and narrowed to the drills that exercise a schema object it
+  altered; `--run` runs them and records each pass as a fingerprint of the paths that
+  named it. Preflight withholds READY while any is unrun, and `POLARIS_DRILLS_WAIVED=1`
+  waives them visibly, because a few need Docker or a cluster. This exists because
+  v9.424, v9.425 and v9.426 each altered a table `scripts/polaris-abuse-drill.sh`
+  writes, the plan named that drill all three times as informational text, and two of
+  those runs went red on it while the gate said READY.
 - **Check a schema change against a real database before pushing.** The application
   suites need Flask and psycopg2, but loading the SQL needs only `psql`:
   `createdb polaris_t && psql -v ON_ERROR_STOP=1 -d polaris_t -f polaris_sql/00_load_all.sql`,
@@ -193,4 +203,4 @@ system is encouraged, provided the constitutional constraints are not weakened
 in the derivative; documenting a derivative to the same audit-of-record
 standard is asked for, not required by the license.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-09-11 (v9.411).*
+*Maintainer: Egor Khaklin. Last updated: 2026-09-11 (v9.432).*
