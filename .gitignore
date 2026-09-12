@@ -146,6 +146,13 @@ polaris_web/secrets.sealed.prev/
 *.out
 .tla/
 
+# The UI drill renders screenshots of every operator surface into the repo root
+# (scripts/polaris-ui-drill.sh, POLARIS_UI_OUT). They are evidence for one run, not
+# part of the tree. `*.out` above does not cover this: the directory ends in -out,
+# not .out, so a `git add -A` after a drill swept five PNGs into v9.440 and
+# check_system_map failed on the untracked top-level path.
+ui-drill-out/
+
 # TLC writes its fingerprint and state-queue files beside the spec it is checking.
 # They reach a gigabyte on a large run and have no business in the tree; the drill
 # points TLC at a scratch metadir, and this is the belt to that suspenders.
