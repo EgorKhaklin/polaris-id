@@ -763,7 +763,12 @@ COMMENT ON TABLE TokenPermission IS
 -- ----------------------------------------------------------------------------
 -- coverage:exempt — M2-11 issuer-discretion bounds enforced by tg_issuerdiscretionpolicy_enforce_bounds; tested in test_app.py::IssuerDiscretionBoundsTests
 CREATE TABLE IssuerDiscretionPolicy (
-    agency_id           INTEGER     PRIMARY KEY
+    -- v9.426: policy_id, not agency_id, so the table keeps its history. agency_id
+    -- was the primary key, which made a change an in-place overwrite: raising an
+    -- agency's bound from 5% to 80% destroyed the baseline, who set it, when, and
+    -- why, while the COMMENT below claimed any loosening was auditable.
+    policy_id           SERIAL      PRIMARY KEY,
+    agency_id           INTEGER     NOT NULL
                         REFERENCES Agency(agency_id),
     max_revoke_percent  NUMERIC(5,2) NOT NULL
                         CHECK (max_revoke_percent > 0
@@ -773,14 +778,22 @@ CREATE TABLE IssuerDiscretionPolicy (
     set_by_admin        VARCHAR(50) NOT NULL,
     set_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
     justification       TEXT        NOT NULL
-                        CHECK (length(justification) >= 20)
+                        CHECK (length(justification) >= 20),
+    -- Set when a later decision replaces this one. NULL = in force, and
+    -- uq_effective_discretion_policy allows exactly one such row per agency.
+    superseded_at       TIMESTAMP
 );
 
 COMMENT ON TABLE IssuerDiscretionPolicy IS
   'Per-agency overrides to the system-wide N% / W-day bound on revocation '
-  'velocity (R11-6 / M2-11). Absence of a row means the system default '
-  '(see polaris.default_max_revoke_percent GUC) applies. The justification '
-  'field is required so any loosening is auditable.';
+  'velocity (R11-6 / M2-11). Absence of a row in force means the system default '
+  '(see polaris.default_max_revoke_percent GUC) applies. justification >= 20 '
+  'chars, and since v9.426 the row survives the next change: setting a bound '
+  'supersedes the row in force and appends a new one, and '
+  'trg_discretion_policy_immutable refuses any other edit. So a LOOSENING is '
+  'auditable in fact and not only in intent -- who raised the bound, from what, '
+  'when, and the reason they gave all survive. Set with polaris-id '
+  'discretion-set; read with discretion-show --history.';
 
 -- ----------------------------------------------------------------------------
 -- AgencyQuota (v9.190 / roadmap P1.8): opt-in per-agency caps on how much an

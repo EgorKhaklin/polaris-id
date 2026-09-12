@@ -33,6 +33,8 @@ drift from what the program accepts):
     user-deactivate      Deactivate (soft-delete) a user account
     quota-set            Set per-agency caps; 0 clears a cap
     quota-show           Show per-agency caps (all agencies, or one)
+    discretion-set       Set an agency's revocation-share bound
+    discretion-show      Show per-agency revocation bounds, with history
     retention-show       What retention is in force, and the cutoff it resolves to
     retention-set        Record a retention decision, or adopt a named template
     audit-log            Tail the authentication audit log
@@ -1343,6 +1345,150 @@ def cmd_quota_show(args):
 
 
 # ----------------------------------------------------------------------------
+# COMMAND: discretion-set / discretion-show (the per-agency revocation bound)
+#
+# v9.426. docs/operator/SECURITY-CONTROLS.md has told operators since v9.190 that
+# the system default revocation share is "overridable per agency in
+# IssuerDiscretionPolicy", and there was no command to do it. No route either: the
+# only writers in the tree were seed data and tests, so in a running deployment the
+# bound could only be set with raw SQL against the schema owner. A control the
+# operator documentation names is a control the operator tool should offer.
+# ----------------------------------------------------------------------------
+
+def cmd_discretion_set(args):
+    """Record a revocation bound for one agency: supersede the row in force, append a new one.
+
+    The bound is the share of its OWN tokens an issuing agency may revoke in a rolling
+    window, against a system default of 5.00% over 30 days. It is what stands between
+    one authority and mass revocation of the credentials it issued, so raising it is
+    the act an audit most needs to see: the justification floor is 20 characters and
+    the row is append-only at the database (trg_discretion_policy_immutable).
+    """
+    if not (0 < float(args.max_revoke_percent) <= 100):
+        sys.stderr.write(red("--max-revoke-percent must be greater than 0 and at most 100.\n"))
+        sys.exit(1)
+    if not (1 <= int(args.window_days) <= 365):
+        sys.stderr.write(red("--window-days must be between 1 and 365.\n"))
+        sys.exit(1)
+    if len((args.justification or '').strip()) < 20:
+        sys.stderr.write(red("--justification must be at least 20 characters: a bound on how "
+                             "much of its own population an agency may revoke is what an "
+                             "assessor reads.\n"))
+        sys.exit(1)
+    set_by = (args.set_by or os.environ.get('USER') or 'operator')[:50]
+
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT agency_id, name FROM Agency WHERE agency_id = %s",
+                        (args.agency_id,))
+            agency = cur.fetchone()
+            if agency is None:
+                sys.stderr.write(red(f"No such agency: {args.agency_id}\n"))
+                sys.exit(1)
+            cur.execute("SELECT policy_id, max_revoke_percent FROM IssuerDiscretionPolicy "
+                        " WHERE agency_id = %s AND superseded_at IS NULL", (args.agency_id,))
+            current = cur.fetchone()
+            # Supersede then append, in one transaction. uq_effective_discretion_policy
+            # means at most one row per agency can be un-superseded, so if this ordering
+            # were ever broken the INSERT fails rather than leaving two bounds in force
+            # for uc8_revoke_token to choose between.
+            cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                        " WHERE agency_id = %s AND superseded_at IS NULL", (args.agency_id,))
+            cur.execute("""
+                INSERT INTO IssuerDiscretionPolicy
+                    (agency_id, max_revoke_percent, window_days, set_by_admin, justification)
+                VALUES (%s, %s, %s, %s, %s) RETURNING policy_id
+            """, (args.agency_id, args.max_revoke_percent, args.window_days, set_by,
+                  args.justification.strip()))
+            policy_id = cur.fetchone()['policy_id']
+            conn.commit()
+        print(green(f"✓ Bound #{policy_id} in force for agency "
+                    f"#{agency['agency_id']} ({agency['name']})"))
+        print(f"  at most {args.max_revoke_percent}% of its own tokens revoked "
+              f"per {args.window_days} rolling day(s)")
+        if current is not None:
+            was = float(current['max_revoke_percent'])
+            now = float(args.max_revoke_percent)
+            direction = ('LOOSENED from %.2f%%' % was if now > was else
+                         'tightened from %.2f%%' % was if now < was else
+                         'unchanged at %.2f%%' % was)
+            line = f"  {direction}; bound #{current['policy_id']} superseded and still readable"
+            print(red(line) if now > was else dim(line))
+        print(dim("  Enforced by uc8_revoke_token on every sanctioned revocation. "
+                  "History: polaris discretion-show --history."))
+    except psycopg2.errors.CheckViolation as e:
+        conn.rollback()
+        sys.stderr.write(red(f"Constraint violation: {str(e).split(chr(10))[0]}\n"))
+        sys.exit(3)
+    except psycopg2.Error as e:
+        conn.rollback()
+        sys.stderr.write(red(f"Database error: {db_error_message(e)}\n"))
+        sys.exit(2)
+    finally:
+        conn.close()
+
+
+def cmd_discretion_show(args):
+    """What revocation bound each agency is under, and with --history what it replaced.
+
+    An agency with no row in force is under the system default, which this prints, so
+    the answer is never "nothing configured" when the real answer is "5% over 30 days".
+    """
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT current_setting('polaris.default_max_revoke_percent', true) AS p, "
+                        "       current_setting('polaris.default_window_days', true) AS w")
+            d = cur.fetchone()
+            default = (float(d['p']) if d['p'] else 5.00, int(d['w']) if d['w'] else 30)
+            where = "p.agency_id = %s" if args.agency_id is not None else "TRUE"
+            params = (args.agency_id,) if args.agency_id is not None else ()
+            cur.execute(f"""
+                SELECT p.*, a.name FROM IssuerDiscretionPolicy p JOIN Agency a USING (agency_id)
+                 WHERE {where} AND p.superseded_at IS NULL ORDER BY p.agency_id
+            """, params)
+            rows = cur.fetchall()
+            history = []
+            if args.history:
+                cur.execute(f"""
+                    SELECT p.*, a.name FROM IssuerDiscretionPolicy p JOIN Agency a USING (agency_id)
+                     WHERE {where} AND p.superseded_at IS NOT NULL
+                     ORDER BY p.agency_id, p.set_at DESC
+                """, params)
+                history = cur.fetchall()
+    finally:
+        conn.close()
+
+    print(dim(f"system default: at most {default[0]:.2f}% of an agency's own tokens "
+              f"per {default[1]} rolling day(s); an agency with no bound in force is under it."))
+    if not rows:
+        print(dim("No per-agency override in force."))
+    for r in rows:
+        print(f"agency #{r['agency_id']} {r['name']}: {r['max_revoke_percent']}% "
+              f"per {r['window_days']}d"
+              + (red("   LOOSER than the default") if float(r['max_revoke_percent']) > default[0]
+                 else dim("   tighter than the default")))
+        print(dim(f"  #{r['policy_id']} set by {r['set_by_admin']} at "
+                  f"{r['set_at']:%Y-%m-%d %H:%M}: {r['justification']}"))
+    if args.history:
+        by_agency = {}
+        for r in history:
+            by_agency.setdefault(r['agency_id'], []).append(r)
+        if not by_agency:
+            print(dim("\nNo superseded bounds: every bound in force is the first one set."))
+        for agency_id in sorted(by_agency):
+            print(dim(f"\nsuperseded, agency #{agency_id}:"))
+            for r in by_agency[agency_id]:
+                print(dim(f"  #{r['policy_id']} {r['max_revoke_percent']}% per "
+                          f"{r['window_days']}d, set by {r['set_by_admin']} at "
+                          f"{r['set_at']:%Y-%m-%d %H:%M}"))
+                print(dim(f"     superseded {r['superseded_at']:%Y-%m-%d %H:%M}: "
+                          f"{r['justification']}"))
+    return 0
+
+
+# ----------------------------------------------------------------------------
 # COMMAND: retention-show / retention-set (the retention decision, P1.11)
 # ----------------------------------------------------------------------------
 
@@ -1975,6 +2121,27 @@ def build_parser():
                             'when, and why')
     p_qsh.add_argument('agency_id', type=int, nargs='?', default=None)
 
+    # discretion-set / discretion-show (v9.426): the per-agency revocation bound. The
+    # operator docs have named this control since v9.190 with no command behind it.
+    p_ds = sub.add_parser('discretion-set',
+                          help="Set an agency's revocation-share bound (the share of its own "
+                               "tokens it may revoke in a rolling window)")
+    p_ds.add_argument('agency_id', type=int)
+    p_ds.add_argument('--max-revoke-percent', type=float, required=True,
+                      help='At most this share of the agency\'s own tokens, per window '
+                           '(system default 5.00)')
+    p_ds.add_argument('--window-days', type=int, default=30,
+                      help='The rolling window in days (1-365, default 30)')
+    p_ds.add_argument('--justification', required=True,
+                      help='Why this bound; at least 20 characters, recorded with the decision')
+    p_ds.add_argument('--set-by', default=None, help='Who set it (default: $USER)')
+
+    p_dsh = sub.add_parser('discretion-show',
+                           help='Show per-agency revocation bounds against the system default')
+    p_dsh.add_argument('agency_id', type=int, nargs='?', default=None)
+    p_dsh.add_argument('--history', action='store_true',
+                       help='also show superseded bounds: who set the previous one, and why')
+
     # rp-register (roadmap P3.4 — relying-party API v1)
     p_rp = sub.add_parser('rp-register',
                           help='Register a relying-party org for the /api/v1 verification API')
@@ -2316,6 +2483,8 @@ HANDLERS = {
     'user-deactivate':  cmd_user_deactivate,
     'quota-set':        cmd_quota_set,
     'quota-show':       cmd_quota_show,
+    'discretion-set':   cmd_discretion_set,
+    'discretion-show':  cmd_discretion_show,
     'retention-show':   cmd_retention_show,
     'retention-set':    cmd_retention_set,
     'audit-log':        cmd_audit_log,

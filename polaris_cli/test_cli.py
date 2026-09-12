@@ -1077,6 +1077,93 @@ class RelyingPartyDecisionTests(CLIBaseTestCase):
         self.assertIn('no relying party', r.stdout + r.stderr)
 
 
+class DiscretionCommandTests(CLIBaseTestCase):
+    """The operator door that did not exist (v9.426).
+
+    docs/operator/SECURITY-CONTROLS.md has told operators since v9.190 that the
+    revocation-share default is "overridable per agency in IssuerDiscretionPolicy".
+    No command wrote that table, and no route did either: in a running deployment the
+    bound could only be set with raw SQL as the schema owner.
+    """
+
+    AGENCY = 2
+    WHY = 'tightened while the county audit remains open'
+
+    def _one(self, sql, params=()):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchone()
+        finally:
+            conn.close()
+
+    def _live(self):
+        return self._one("SELECT policy_id, max_revoke_percent, window_days, set_by_admin, "
+                         "justification FROM IssuerDiscretionPolicy "
+                         " WHERE agency_id = %s AND superseded_at IS NULL", (self.AGENCY,))
+
+    def test_the_command_exists_and_sets_a_bound(self):
+        r = run_cli('discretion-set', str(self.AGENCY), '--max-revoke-percent', '4',
+                    '--window-days', '14', '--set-by', 'cli-test', '--justification', self.WHY)
+        self.assertIn('in force for agency #%d' % self.AGENCY, r.stdout)
+        live = self._live()
+        self.assertEqual(float(live['max_revoke_percent']), 4.00)
+        self.assertEqual(live['window_days'], 14)
+        self.assertEqual(live['set_by_admin'], 'cli-test')
+        self.assertIn('county audit', live['justification'])
+
+    def test_a_loosening_keeps_the_bound_it_replaced_and_says_so(self):
+        """The claim SECURITY-CONTROLS.md makes, at the door an operator uses."""
+        run_cli('discretion-set', str(self.AGENCY), '--max-revoke-percent', '5',
+                '--justification', 'the contracted baseline for this agency, stated')
+        r = run_cli('discretion-set', str(self.AGENCY), '--max-revoke-percent', '80',
+                    '--justification', 'a mass reissue is planned and needs the headroom')
+        self.assertIn('LOOSENED from 5.00%', r.stdout,
+                      'the operator was not told the bound was being raised')
+        self.assertEqual(float(self._live()['max_revoke_percent']), 80.00)
+        h = run_cli('discretion-show', str(self.AGENCY), '--history')
+        self.assertIn('superseded', h.stdout)
+        self.assertIn('the contracted baseline for this agency, stated', h.stdout,
+                      'the reason given for the bound that was raised is gone')
+
+    def test_a_tightening_is_not_announced_as_a_loosening(self):
+        run_cli('discretion-set', str(self.AGENCY), '--max-revoke-percent', '50',
+                '--justification', 'a wide bound that the next command will tighten')
+        r = run_cli('discretion-set', str(self.AGENCY), '--max-revoke-percent', '2',
+                    '--justification', 'tightened back down once the reissue completed')
+        self.assertIn('tightened from 50.00%', r.stdout)
+        self.assertNotIn('LOOSENED', r.stdout)
+
+    def test_show_names_the_system_default_and_flags_the_loose_ones(self):
+        run_cli('discretion-set', str(self.AGENCY), '--max-revoke-percent', '90',
+                '--justification', 'a deliberately loose bound for this assertion')
+        r = run_cli('discretion-show')
+        self.assertIn('system default', r.stdout,
+                      'an agency under the default must not read as unconfigured')
+        self.assertIn('LOOSER than the default', r.stdout)
+
+    def test_a_short_justification_is_refused(self):
+        r = run_cli('discretion-set', str(self.AGENCY), '--max-revoke-percent', '9',
+                    '--justification', 'because', expect_success=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('20 characters', r.stderr)
+
+    def test_an_out_of_range_bound_is_refused(self):
+        for percent, days in (('0', '30'), ('101', '30'), ('5', '0'), ('5', '400')):
+            with self.subTest(percent=percent, window_days=days):
+                r = run_cli('discretion-set', str(self.AGENCY), '--max-revoke-percent', percent,
+                            '--window-days', days, '--justification', self.WHY,
+                            expect_success=False)
+                self.assertNotEqual(r.returncode, 0)
+
+    def test_an_unknown_agency_is_refused(self):
+        r = run_cli('discretion-set', '9999', '--max-revoke-percent', '5',
+                    '--justification', self.WHY, expect_success=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('No such agency', r.stderr)
+
+
 class HelpAndErrorTests(unittest.TestCase):
     """No DB needed for these."""
 

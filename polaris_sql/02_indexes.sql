@@ -287,6 +287,20 @@ CREATE UNIQUE INDEX uq_effective_agency_quota
     WHERE superseded_at IS NULL;
 
 -- ----------------------------------------------------------------------------
+-- One effective revocation bound per agency (v9.426).
+--
+-- The third of the same shape, after uq_effective_retention_policy and
+-- uq_effective_agency_quota, and load-bearing for the same reason:
+-- uc8_revoke_token reads ONE row to decide how much of its own population an
+-- agency may revoke, so two rows in force would make that answer depend on
+-- insertion order.
+-- ----------------------------------------------------------------------------
+DROP INDEX IF EXISTS uq_effective_discretion_policy;
+CREATE UNIQUE INDEX uq_effective_discretion_policy
+    ON IssuerDiscretionPolicy (agency_id)
+    WHERE superseded_at IS NULL;
+
+-- ----------------------------------------------------------------------------
 -- One effective retention policy per (class, jurisdiction) (roadmap P1.11).
 --
 -- COALESCE on the jurisdiction is load-bearing: a plain partial unique index

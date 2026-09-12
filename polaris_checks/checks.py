@@ -5775,6 +5775,7 @@ def check_paper_pdf_is_current(root: pathlib.Path) -> list[Finding]:
 BESPOKE_IMMUTABILITY_GUARDS = {
     "enforce_agency_quota_immutability":      "polaris_web/test_check_constraints.py",
     "enforce_attestation_immutability":       "polaris_web/test_app.py",
+    "enforce_discretion_policy_immutability": "polaris_web/test_check_constraints.py",
     "enforce_epoch_immutability":             "polaris_web/test_app.py",
     "enforce_recovery_request_immutability":  "polaris_web/test_check_constraints.py",
     # v9.425: the writer also refuses one edit -- repointing client_id would silently
@@ -6058,6 +6059,115 @@ def check_relying_party_decisions_cannot_be_silent(root: pathlib.Path) -> list[F
                      f"recording trigger and the weakening rule, both derived from the schema; "
                      f"a weakening without a stated reason is refused by the database, and the "
                      f"trigger is the record's only writer")
+
+
+
+# ----------------------------------------------------------------------------
+# v9.426: a table that demands a reason must keep the reason.
+#
+# The tree has one marker for "this row is a decision somebody made and has to
+# explain": a `justification` column, with a CHECK floor on its length. Four tables
+# carry it. Three kept their history. The fourth, IssuerDiscretionPolicy, was keyed
+# on agency_id, so raising an agency's revocation bound from 5% to 80% overwrote the
+# baseline, who set it, when, and the reason given -- while SECURITY-CONTROLS.md said
+# the justification existed "so any loosening is auditable". The floor was real and
+# the sentence was false.
+#
+# That is the same defect AgencyQuota had in v9.424, and the reason it recurs is that
+# each table is written once and reviewed once. So the rule is derived: any table the
+# schema marks as a decision must be unable to forget one.
+# ----------------------------------------------------------------------------
+
+def _schema_tables(sql: str) -> dict:
+    """table name (lowercased) -> the text of its CREATE TABLE body."""
+    out = {}
+    for m in re.finditer(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)\s*\((.*?)\n\);", sql, re.S):
+        out[m.group(1).lower()] = m.group(2)
+    return out
+
+
+def check_recorded_decisions_keep_their_history(root: pathlib.Path) -> list[Finding]:
+    """Every table with a `justification` column keeps its history (v9.426).
+
+    A `justification` column with a length floor is this schema's way of saying the row
+    is a decision and the decider has to account for it. That is worth nothing if the
+    next change overwrites it, which is exactly what happened to AgencyQuota until
+    v9.424 and to IssuerDiscretionPolicy until v9.426: both were keyed on agency_id, so
+    a loosening destroyed the bound it replaced, who set it, and why.
+
+    A decision table qualifies one of two ways, and must qualify one of them:
+
+      - it keeps versions: a `superseded_at` column, a partial unique index on the
+        subject `WHERE superseded_at IS NULL` so exactly one row is in force, and a
+        trigger refusing an edit of the decided fields; or
+      - it is append-only outright, carrying one of the append-only guards, which is
+        the right shape for a table whose rows are events rather than settings.
+
+    Derived from `01_schema.sql`, so a fifth decision table added without either shape
+    fails here rather than being noticed a version later.
+    """
+    name = "recorded_decisions"
+    findings: list[Finding] = []
+
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    indexes = _read(root, "polaris_sql/02_indexes.sql")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    if not schema or not indexes or not triggers:
+        return _fail(name, "01_schema.sql, 02_indexes.sql or 06_triggers.sql could not be read")
+
+    # The generic append-only guard names live in the constraint suite, where the
+    # table-driven C1 class uses them; read them rather than keeping a second copy.
+    guards = set(re.findall(r"'(\w+)'", (re.search(
+        r"APPEND_ONLY_GUARDS\s*=\s*\((.*?)\)",
+        _read(root, "polaris_web/test_check_constraints.py"), re.S) or _NoMatch()).group(1)))
+    if not guards:
+        return _fail(name, "APPEND_ONLY_GUARDS could not be read from "
+                           "test_check_constraints.py, so an append-only decision table "
+                           "cannot be recognised")
+
+    tables = _schema_tables(schema)
+    if len(tables) < 20:
+        return _fail(name, f"only {len(tables)} CREATE TABLE blocks parsed from 01_schema.sql; "
+                           f"the parser has broken and this check is passing by finding nothing")
+    decisions = {t: body for t, body in tables.items()
+                 if re.search(r"^\s+justification\s", body, re.M)}
+    if len(decisions) < 3:
+        return _fail(name, f"only {len(decisions)} table(s) with a justification column were "
+                           f"found among {len(tables)}; the marker this check keys on has "
+                           f"changed and it is now asserting about almost nothing")
+
+    for table, body in sorted(decisions.items()):
+        # Path two: an append-only table. Its rows are events, so there is no version
+        # to supersede; nothing can be rewritten at all, which is stronger.
+        guarded = any(
+            re.search(r"CREATE TRIGGER \w+\s+BEFORE[^;]*?ON %s\b[^;]*?EXECUTE\s+"
+                      r"(?:PROCEDURE|FUNCTION)\s+%s" % (table, guard), triggers, re.I | re.S)
+            for guard in guards)
+        if guarded:
+            continue
+
+        # Path one: versions kept.
+        if not re.search(r"^\s+superseded_at\s", body, re.M):
+            findings.extend(_fail(name, f"{table} demands a justification but has no "
+                                        f"superseded_at and no append-only guard, so the next "
+                                        f"change overwrites the reason given for the last one"))
+            continue
+        if not re.search(r"CREATE UNIQUE INDEX \w+\s*\n?\s*ON %s\b[^;]*?WHERE superseded_at IS "
+                         r"NULL" % table, indexes, re.I | re.S):
+            findings.extend(_fail(name, f"{table} keeps versions but no partial unique index "
+                                        f"limits it to one row in force, so which decision "
+                                        f"binds would depend on insertion order"))
+        if not re.search(r"CREATE TRIGGER \w+\s+BEFORE UPDATE OR DELETE ON %s\b" % table,
+                         triggers, re.I):
+            findings.extend(_fail(name, f"{table} keeps versions but nothing refuses an edit of "
+                                        f"a recorded one, so a decision can still be rewritten "
+                                        f"in place and the history is decoration"))
+
+    if findings:
+        return findings
+    return _ok(name, f"all {len(decisions)} tables that demand a justification keep it: each "
+                     f"either versions its decisions behind a one-in-force index and an "
+                     f"immutability trigger, or is append-only outright")
 
 
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
@@ -15278,6 +15388,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_retention_engine,
     check_immutability_guards_are_derived_from_the_schema,
     check_relying_party_decisions_cannot_be_silent,
+    check_recorded_decisions_keep_their_history,
 ]
 
 

@@ -57,6 +57,26 @@ def _superuser_conn():
     return psycopg2.connect(host='/var/run/postgresql', database=cfg['database'])
 
 
+def set_discretion_bound(cur, agency_id, max_percent, window_days=30,
+                        why='test fixture: the revocation bound under test'):
+    """Give one agency a revocation bound, the way an operator now has to (v9.426).
+
+    IssuerDiscretionPolicy is append-only since v9.426, so `ON CONFLICT (agency_id) DO
+    UPDATE` -- which eight fixtures in this file used -- has no arbiter any more and
+    trg_discretion_policy_immutable would refuse the update even if it did. Supersede
+    then append, which is what polaris discretion-set does. One helper rather than eight
+    copies, so the next change to the shape lands in one place.
+    """
+    cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                " WHERE agency_id = ANY(%s) AND superseded_at IS NULL",
+                ([agency_id] if isinstance(agency_id, int) else list(agency_id),))
+    for aid in ([agency_id] if isinstance(agency_id, int) else agency_id):
+        cur.execute(
+            "INSERT INTO IssuerDiscretionPolicy (agency_id, max_revoke_percent, "
+            "window_days, set_by_admin, justification) VALUES (%s, %s, %s, 'test_setup', %s)",
+            (aid, max_percent, window_days, why))
+
+
 def reload_sample_data():
     """
     Reset the database to the pristine sample state by re-running:
@@ -1525,17 +1545,8 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
 
     def _set_policy(self, agency_id, max_percent, window_days=30):
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO IssuerDiscretionPolicy
-                    (agency_id, max_revoke_percent, window_days,
-                     set_by_admin, justification)
-                VALUES (%s, %s, %s, 'test_setup',
-                        'test fixture for IssuerDiscretionBoundsTests')
-                ON CONFLICT (agency_id) DO UPDATE
-                  SET max_revoke_percent = EXCLUDED.max_revoke_percent,
-                      window_days        = EXCLUDED.window_days,
-                      justification      = EXCLUDED.justification
-            """, (agency_id, max_percent, window_days))
+            set_discretion_bound(cur, agency_id, max_percent, window_days,
+                                 'test fixture for IssuerDiscretionBoundsTests')
             conn.commit()
 
     def _call_uc8(self, token_id, actor, reason, cosigner=None,
@@ -5388,15 +5399,8 @@ class ConcurrencyTests(PolarisTestCase):
         # find itself OVER and require a co-signer (which it doesn't
         # provide here).
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO IssuerDiscretionPolicy
-                    (agency_id, max_revoke_percent, window_days, set_by_admin, justification)
-                VALUES (2, 49.00, 30, 'concurrency_test',
-                        'C9 concurrency test fixture for boundary-race')
-                ON CONFLICT (agency_id) DO UPDATE
-                  SET max_revoke_percent=49.00,
-                      justification='C9 concurrency test fixture for boundary-race'
-            """)
+            set_discretion_bound(cur, 2, 49.00,
+                                 why='C9 concurrency test fixture for boundary-race')
             conn.commit()
 
         def seed_active(label):
@@ -5468,17 +5472,8 @@ class ConcurrencyTests(PolarisTestCase):
     def test_uc8_cross_agency_revocations_do_not_block(self):
         # Permissive overrides for both agency 2 and agency 3.
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO IssuerDiscretionPolicy
-                    (agency_id, max_revoke_percent, window_days, set_by_admin, justification)
-                VALUES (2, 95.00, 30, 'concurrency_test',
-                        'C9 cross-agency test — permissive for agency 2'),
-                       (3, 95.00, 30, 'concurrency_test',
-                        'C9 cross-agency test — permissive for agency 3')
-                ON CONFLICT (agency_id) DO UPDATE
-                  SET max_revoke_percent=95.00,
-                      justification=EXCLUDED.justification
-            """)
+            set_discretion_bound(cur, (2, 3), 95.00,
+                                 why='C9 cross-agency test: permissive for both agencies')
             conn.commit()
 
         def seed_active(agency_id, label):
@@ -8998,14 +8993,7 @@ class TokenVerifyTests(PolarisTestCase):
         self.assertTrue(before['signature_valid'] and before['usable'])
         # Grant agency 1 a permissive bound and revoke through uc8_revoke_token.
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO IssuerDiscretionPolicy
-                    (agency_id, max_revoke_percent, window_days,
-                     set_by_admin, justification)
-                VALUES (1, 90.00, 30, 'test_setup', 'TokenVerifyTests fixture')
-                ON CONFLICT (agency_id) DO UPDATE
-                  SET max_revoke_percent = EXCLUDED.max_revoke_percent
-            """)
+            set_discretion_bound(cur, 1, 90.00, why='TokenVerifyTests fixture bound')
             cur.execute("CALL uc8_revoke_token(%s, %s, %s, %s, %s)",
                         (tok_id, 1, 'ADMINISTRATIVE',
                          'https://crl.idtoken.gov/test/uc8.crl', None))
@@ -10369,9 +10357,12 @@ class AgencyQuotaTests(PolarisTestCase):
 
     def test_revoke_cap_binds_uc8(self):
         # A permissive R11-6 percentage bound so the count cap is what trips.
-        _sql("INSERT INTO IssuerDiscretionPolicy (agency_id, max_revoke_percent, window_days, set_by_admin, "
-             "justification) VALUES (%s, 100, 30, 'test', 'AgencyQuotaTests: percentage bound out of the way') "
-             "ON CONFLICT (agency_id) DO UPDATE SET max_revoke_percent=100", (self.ISSUER,), fetch='none')
+        _sql("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+             " WHERE agency_id = %s AND superseded_at IS NULL; "
+             "INSERT INTO IssuerDiscretionPolicy (agency_id, max_revoke_percent, window_days, "
+             "set_by_admin, justification) VALUES (%s, 100, 30, 'test', "
+             "'AgencyQuotaTests: percentage bound out of the way')",
+             (self.ISSUER, self.ISSUER), fetch='none')
         t1 = self._seed_active_token(self.ISSUER, 'R1')
         t2 = self._seed_active_token(self.ISSUER, 'R2')
         cap = self._revoked_in_day(self.ISSUER) + 1
@@ -10926,12 +10917,7 @@ class EndToEndFlowTests(PolarisTestCase):
 
     def _revoke(self, token_id):
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO IssuerDiscretionPolicy
-                    (agency_id, max_revoke_percent, window_days, set_by_admin, justification)
-                VALUES (1, 90.00, 30, 'test_setup', 'EndToEndFlowTests fixture')
-                ON CONFLICT (agency_id) DO UPDATE SET max_revoke_percent = EXCLUDED.max_revoke_percent
-            """)
+            set_discretion_bound(cur, 1, 90.00, why='EndToEndFlowTests fixture bound')
             cur.execute("CALL uc8_revoke_token(%s, %s, %s, %s, %s)",
                         (token_id, 1, 'ADMINISTRATIVE', 'https://crl.idtoken.gov/test/e2e.crl', None))
             conn.commit()
@@ -11122,9 +11108,8 @@ class RelyingPartyApiTests(PolarisTestCase):
         body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
         self.assertEqual(self.client.post('/api/v1/verify', headers=bearer, json=body).get_json()['decision'], 'accept')
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO IssuerDiscretionPolicy (agency_id,max_revoke_percent,window_days,set_by_admin,justification) "
-                        "VALUES (1,90,30,'test','relying-party api revoke fixture') "
-                        "ON CONFLICT (agency_id) DO UPDATE SET max_revoke_percent=90")
+            set_discretion_bound(cur, 1, 90.00,
+                                 why='fixture: a permissive bound so the count cap trips')
             with self._new_conn() as c2, c2.cursor() as cur2:
                 cur2.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (pack['token_value'],))
                 tid = cur2.fetchone()['token_id']
@@ -11325,9 +11310,8 @@ class OfflineStatusAssertionTests(PolarisTestCase):
         body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
         self.assertEqual(self.client.post('/api/v1/status-assertion', json=body).get_json()['status'], 'ACTIVE')
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO IssuerDiscretionPolicy (agency_id,max_revoke_percent,window_days,set_by_admin,justification) "
-                        "VALUES (1,90,30,'test','offline status assertion revoke fixture') "
-                        "ON CONFLICT (agency_id) DO UPDATE SET max_revoke_percent=90")
+            set_discretion_bound(cur, 1, 90.00,
+                                 why='fixture: a permissive bound so the count cap trips')
             cur.execute("CALL uc8_revoke_token(%s,1,'ADMINISTRATIVE','https://crl/off.crl',NULL)", (tid,))
             conn.commit()
         self.assertEqual(self.client.post('/api/v1/status-assertion', json=body).get_json()['status'], 'REVOKED')

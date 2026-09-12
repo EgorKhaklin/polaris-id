@@ -1182,6 +1182,28 @@ increment. The percentage bound on revocation velocity
 (`trg_enforce_revocation_velocity`) still applies; whichever trips first
 refuses. An uncapped agency pays one primary-key lookup per write.
 
+**Revocation bounds.** `uc8_revoke_token` caps the share of its own tokens one
+issuing agency may revoke in a rolling window: 5.00% over 30 days by default,
+overridable per agency. Raising an agency's ceiling is the single most consequential
+per-agency setting in the schema, so it is kept, not edited:
+
+```bash
+polaris-id discretion-show                     # every bound, against the system default
+polaris-id discretion-set 6 --max-revoke-percent 3 \
+    --justification "county authority held below default to limit single-county exposure"
+polaris-id discretion-set 6 --max-revoke-percent 40 --window-days 7 \
+    --justification "coordinated reissue after the hardware recall, one cycle only"
+polaris-id discretion-show 6 --history         # what each bound replaced, and why
+```
+
+`discretion-set` prints `LOOSENED from N%` in red when the new bound is higher than
+the one it replaces, and `discretion-show` flags any agency sitting looser than the
+system default. The previous bound is superseded rather than overwritten, and
+`trg_discretion_policy_immutable` refuses an edit or a delete, so the record of who
+raised a ceiling and on what stated reason survives at the database rather than by
+convention. An agency with no bound in force is under the system default, which
+`discretion-show` prints first so that case never reads as unconfigured.
+
 **Relying parties.** Registering an outside relying party grants it standing to ask
 this system about people, so `polaris-id rp-register` requires a `--justification` and
 records it. Changing its policy afterwards is recorded too:

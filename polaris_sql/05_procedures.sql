@@ -537,7 +537,8 @@ BEGIN
     SELECT max_revoke_percent, window_days
       INTO v_max_percent, v_window_days
     FROM IssuerDiscretionPolicy
-    WHERE agency_id = v_issuing_agency_id;
+    WHERE agency_id = v_issuing_agency_id
+      AND superseded_at IS NULL;   -- v9.426: a superseded bound does not bind
     IF NOT FOUND THEN
         v_max_percent := COALESCE(
             NULLIF(current_setting('polaris.default_max_revoke_percent', true), '')::NUMERIC,

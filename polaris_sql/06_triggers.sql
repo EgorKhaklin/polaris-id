@@ -1118,6 +1118,55 @@ CREATE TRIGGER trg_rp_event_append_only
 
 
 -- ----------------------------------------------------------------------------
+-- enforce_discretion_policy_immutability (v9.426)
+--
+-- The third instance of the same guard, for the same reason: a decision about how
+-- much an authority may do is an audit of record, and editing it in place erases
+-- the thing it exists to prove.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION enforce_discretion_policy_immutability() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION
+            'IssuerDiscretionPolicy is append-only: DELETE is refused. A revocation '
+            'bound is what stands between one authority and mass revocation of the '
+            'credentials it issued; supersede it instead.'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    IF NEW.policy_id          IS DISTINCT FROM OLD.policy_id
+       OR NEW.agency_id          IS DISTINCT FROM OLD.agency_id
+       OR NEW.max_revoke_percent IS DISTINCT FROM OLD.max_revoke_percent
+       OR NEW.window_days        IS DISTINCT FROM OLD.window_days
+       OR NEW.set_by_admin       IS DISTINCT FROM OLD.set_by_admin
+       OR NEW.set_at             IS DISTINCT FROM OLD.set_at
+       OR NEW.justification      IS DISTINCT FROM OLD.justification THEN
+        RAISE EXCEPTION
+            'IssuerDiscretionPolicy is append-only: only superseded_at may be '
+            'updated. Changing a bound appends a row; it does not rewrite the old one.'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    IF OLD.superseded_at IS NOT NULL
+       AND NEW.superseded_at IS DISTINCT FROM OLD.superseded_at THEN
+        RAISE EXCEPTION
+            'IssuerDiscretionPolicy row % was superseded at %; that cannot be moved '
+            'or undone.', OLD.policy_id, OLD.superseded_at
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_discretion_policy_immutable ON IssuerDiscretionPolicy;
+CREATE TRIGGER trg_discretion_policy_immutable
+    BEFORE UPDATE OR DELETE ON IssuerDiscretionPolicy
+    FOR EACH ROW EXECUTE FUNCTION enforce_discretion_policy_immutability();
+
+
+-- ----------------------------------------------------------------------------
 -- enforce_retention_policy_immutability (roadmap P1.11)
 --
 -- RetentionPolicy is an audit of record: it holds what an operator decided

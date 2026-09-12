@@ -496,6 +496,19 @@ is auditable from the row alone. Implements the PDF §9
 *"constitutional limits on issuer discretion"* leg of the
 issuer-trust-concentration triad. See `docs/design/issuer-discretion.md`.
 
+Since v9.426 the table keeps its history: `policy_id` is the primary key,
+`superseded_at` marks a bound that has been replaced, and
+`uq_effective_discretion_policy` (a partial unique index `WHERE superseded_at
+IS NULL`) allows exactly one bound in force per agency, which is the row
+`uc8_revoke_token` reads. Changing a bound supersedes the live row and appends
+a new one; `trg_discretion_policy_immutable` refuses an UPDATE of any decided
+field and refuses DELETE outright, and superseding is one-way. Before that,
+`agency_id` was the primary key, so raising an agency's ceiling from 5% to 80%
+destroyed the baseline, who set it, when, and the stated reason, while this page
+and `SECURITY-CONTROLS.md` both said any loosening was auditable. Set with
+`polaris-id discretion-set`, read with `discretion-show --history`; migration
+`2026-09-12-001-discretion-policy-history`.
+
 ### `RelyingPartyEvent`
 
 Append-only record of every decision about an outside relying party (v9.425):

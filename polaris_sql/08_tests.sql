@@ -710,13 +710,13 @@ BEGIN
     -- Seed a permissive override so this single-revocation test stays
     -- under-bound with the small sample. ON CONFLICT UPDATE in case the
     -- agency already has a sample-data row (agency 1 / 6 do).
+    -- v9.426: a bound is append-only, so a change supersedes and appends.
+    UPDATE IssuerDiscretionPolicy SET superseded_at = now()
+     WHERE agency_id = v_agency_id AND superseded_at IS NULL;
     INSERT INTO IssuerDiscretionPolicy
         (agency_id, max_revoke_percent, window_days, set_by_admin, justification)
     VALUES (v_agency_id, 95.00, 30, 'test_K6',
-        'temporary permissive override for SQL self-test K.6 under-bound path')
-    ON CONFLICT (agency_id) DO UPDATE
-        SET max_revoke_percent = 95.00,
-            justification      = 'temporary permissive override for SQL self-test K.6 under-bound path';
+        'temporary permissive override for SQL self-test K.6 under-bound path');
 
     SELECT count(*) INTO v_crl_before FROM RevocationList;
 
@@ -734,6 +734,18 @@ BEGIN
     PERFORM _record('K.6: uc8_revoke_token under bound succeeds',
         v_final_status = 'REVOKED' AND v_crl_after = v_crl_before + 1,
         format('status=%s crl_delta=%s', v_final_status, v_crl_after - v_crl_before));
+
+    -- v9.426: retire the test's permissive override, the way S.13 retires the test
+    -- retention policies. Before this it stayed in force, so a freshly loaded
+    -- database shipped with one agency bounded at 95% -- invisible until
+    -- `discretion-show` existed to print it, and then printed in red. The row is not
+    -- deleted (the table refuses that): it is superseded, so the test's own decision
+    -- stays readable and the agency goes back to whatever bound it had before.
+    UPDATE IssuerDiscretionPolicy SET superseded_at = now()
+     WHERE agency_id = v_agency_id AND superseded_at IS NULL AND set_by_admin = 'test_K6';
+    UPDATE IssuerDiscretionPolicy SET superseded_at = NULL
+     WHERE policy_id = (SELECT max(policy_id) FROM IssuerDiscretionPolicy
+                         WHERE agency_id = v_agency_id AND set_by_admin <> 'test_K6');
 END $$;
 
 -- K.7: Already-terminal token cannot be revoked again.

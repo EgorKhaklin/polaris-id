@@ -12902,3 +12902,91 @@ def test_relying_party_decisions_check_discriminates(tmp_path):
     write(schema="CREATE TABLE RelyingParty (\n    rp_id SERIAL\n);\n")
     assert level("passing by finding nothing") == "FAIL", \
         "must FAIL rather than pass when almost no decision columns are parsed"
+
+
+def test_recorded_decisions_check_discriminates(tmp_path):
+    """A table that demands a justification and can be edited in place must fail."""
+    def table(name, extra=""):
+        return ("CREATE TABLE %s (\n"
+                "    id            SERIAL PRIMARY KEY,\n"
+                "    agency_id     INTEGER NOT NULL,\n"
+                "    justification TEXT NOT NULL CHECK (length(justification) >= 20)%s\n"
+                ");\n" % (name, extra))
+
+    def plain(name):
+        return ("CREATE TABLE %s (\n    id SERIAL PRIMARY KEY,\n    note TEXT\n);\n" % name)
+
+    KEEPS = ",\n    superseded_at TIMESTAMP"
+    DECISIONS = ("alpha", "beta", "gamma")
+
+    SCHEMA_OK = "".join(table(d, KEEPS) for d in DECISIONS) \
+        + "".join(plain("filler%d" % i) for i in range(20))
+    IDX_OK = "".join(
+        "DROP INDEX IF EXISTS uq_effective_%s;\nCREATE UNIQUE INDEX uq_effective_%s\n"
+        "    ON %s (agency_id)\n    WHERE superseded_at IS NULL;\n" % (d, d, d)
+        for d in DECISIONS)
+    TRG_OK = "".join(
+        "DROP TRIGGER IF EXISTS trg_%s_immutable ON %s;\nCREATE TRIGGER trg_%s_immutable\n"
+        "    BEFORE UPDATE OR DELETE ON %s\n"
+        "    FOR EACH ROW EXECUTE FUNCTION enforce_%s_immutability();\n" % (d, d, d, d, d)
+        for d in DECISIONS)
+    SUITE = "APPEND_ONLY_GUARDS = (\n    'reject_audit_modification',\n)\n"
+
+    def write(schema=None, idx=None, trg=None, suite=None):
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
+            SCHEMA_OK if schema is None else schema)
+        (tmp_path / "polaris_sql" / "02_indexes.sql").write_text(IDX_OK if idx is None else idx)
+        (tmp_path / "polaris_sql" / "06_triggers.sql").write_text(TRG_OK if trg is None else trg)
+        (tmp_path / "polaris_web" / "test_check_constraints.py").write_text(
+            SUITE if suite is None else suite)
+
+    def level(msg_contains=None):
+        out = checks.check_recorded_decisions_keep_their_history(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS when every decision table keeps its history"
+
+    # The AgencyQuota-before-v9.424 and IssuerDiscretionPolicy-before-v9.426 shape:
+    # a justification with nowhere for the previous one to go.
+    write(schema=SCHEMA_OK.replace(table("gamma", KEEPS), table("gamma")))
+    assert level("gamma demands a justification") == "FAIL", \
+        "must FAIL on a decision table with no superseded_at and no append-only guard"
+
+    # Unless it is append-only outright, which is stronger: nothing can be rewritten.
+    write(schema=SCHEMA_OK.replace(table("gamma", KEEPS), table("gamma")),
+          trg=TRG_OK + "CREATE TRIGGER trg_gamma_ao\n    BEFORE UPDATE OR DELETE ON gamma\n"
+                       "    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n")
+    assert level() == "OK", "an append-only decision table needs no superseded_at"
+
+    # Versions kept, but two rows could be in force at once.
+    write(idx=IDX_OK.replace("    ON beta (agency_id)\n    WHERE superseded_at IS NULL;\n",
+                             "    ON beta (agency_id, id);\n"))
+    assert level("no partial unique index") == "FAIL", \
+        "must FAIL when nothing limits the table to one decision in force"
+
+    # Versions kept and one in force, but a recorded decision is still editable.
+    write(trg=TRG_OK.replace(
+        "    BEFORE UPDATE OR DELETE ON beta\n", "    AFTER INSERT ON beta\n"))
+    assert level("nothing refuses an edit") == "FAIL", \
+        "must FAIL when the history exists but can be rewritten in place"
+
+    # Anti-vacuity: the marker this check keys on has to still be there.
+    write(schema="".join(plain("filler%d" % i) for i in range(25)))
+    assert level("asserting about almost nothing") == "FAIL", \
+        "must FAIL rather than pass when no decision table is found"
+
+    # Anti-vacuity: and the schema has to parse at all.
+    write(schema=table("alpha", KEEPS))
+    assert level("passing by finding nothing") == "FAIL", \
+        "must FAIL rather than pass when almost no tables are parsed"
+
+    # The guard list it reads must be readable, or an append-only table is unrecognisable.
+    write(suite="NOTHING = 1\n")
+    assert level("APPEND_ONLY_GUARDS could not be read") == "FAIL", \
+        "must FAIL when the guard names cannot be read"

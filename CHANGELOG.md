@@ -5,6 +5,82 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.426 — 2026-09-12 (the control the docs told you to set, with no way to set it, and no record if you did)
+
+`IssuerDiscretionPolicy` bounds the share of its own tokens one issuing agency may revoke in a
+rolling window. The system default is 5.00% over 30 days; a row here overrides it, up to 100%.
+It is what stands between one authority and mass revocation of the credentials it issued.
+
+`docs/operator/SECURITY-CONTROLS.md` has said since v9.190 that the default is "overridable per
+agency in `IssuerDiscretionPolicy` with a justification of at least 20 characters so any
+loosening is auditable". Two things were wrong with that sentence, both verified:
+
+- **There was no way to do it.** No CLI command, no route. `polaris --help` mentioned discretion
+  zero times. The only writers in the tree were seed data and the SQL self-tests, so in a running
+  deployment the bound could only be set with raw SQL as the schema owner.
+- **A loosening was not auditable.** `agency_id` was the primary key. Raising an agency's bound
+  from 5% to 80% left one row holding 80%, a new name and a new reason; the baseline and whoever
+  set it were gone, and no audit table anywhere had gained a row. The justification floor was
+  real. The claim built on it was not.
+
+Both closed. The table now keeps its history the way `RetentionPolicy` (v9.379) and `AgencyQuota`
+(v9.424) do: `policy_id SERIAL PRIMARY KEY`, `superseded_at`, `uq_effective_discretion_policy` as
+a partial unique index so exactly one bound is in force per agency, and
+`trg_discretion_policy_immutable` refusing an edit of any decided field, refusing DELETE, and
+making superseding one-way. `uc8_revoke_token`'s lookup filters on `superseded_at IS NULL`, so a
+superseded bound does not bind.
+
+And the door exists: `discretion-set` and `discretion-show --history`. `discretion-set` prints
+`LOOSENED from N%` in red when the new bound is higher than the one it replaces and names the
+superseded row; `discretion-show` prints the system default first, so an agency under it never
+reads as unconfigured, and flags every bound looser than the default.
+
+Three mutations, three red: the immutability trigger not installed, the partial unique index
+dropped, and the `superseded_at IS NULL` filter removed from the procedure's lookup. 7 tests in
+`test_check_constraints`, 7 in `test_cli`.
+
+### The test that proved the filter worked in the test
+
+The third mutation passed the first draft. `test_a_superseded_bound_does_not_bind` queried
+`IssuerDiscretionPolicy` with its own `superseded_at IS NULL` filter and asserted on the answer,
+which demonstrates that the filter works when the test writes it, and says nothing about what
+`uc8_revoke_token` does. Dropping the filter from `05_procedures.sql` left it green.
+
+It now calls the procedure. Two cases, because one is not enough: without the filter the
+procedure's `SELECT ... INTO` matches every bound the agency has ever had and takes one, so a
+single case can pass by luck on whichever row it happens to reach. A tight bound in force over a
+loose superseded one must refuse the revocation, and a loose bound in force over a tight
+superseded one must allow it. Whichever row an unfiltered lookup favours, it favours the same
+relative row in both, so at least one must come out wrong.
+
+### check_recorded_decisions_keep_their_history
+
+The tree has one marker for "this row is a decision somebody made and has to account for": a
+`justification` column with a length floor. Four tables carry it. The reason this defect recurred
+in `AgencyQuota` and then here is that each table is written once and reviewed once, so the rule
+lived in whoever remembered it.
+
+The check derives it. Every table in `01_schema.sql` with a `justification` column must either
+version its decisions (a `superseded_at`, a partial unique index limiting it to one in force, and
+a trigger refusing an edit of a recorded one) or be append-only outright, which is the right shape
+for `RelyingPartyEvent` whose rows are events rather than settings. A fifth decision table added
+without either fails here rather than being noticed a version later.
+
+Run against the tree as it stood two ships ago it reports exactly the two defects that were there:
+`agencyquota` at v9.423 and `issuerdiscretionpolicy` at v9.424. Eight discriminations.
+
+Also fixed: **the K.6 self-test loosened an agency to 95% and never retired it**, so a freshly
+loaded database shipped with one agency bounded at 95%. Invisible until `discretion-show` existed
+to print it, and then printed in red. It now supersedes its own override the way S.13 retires the
+test retention policies, and the test's decision stays readable.
+
+`check_immutability_guards_are_derived_from_the_schema` caught the new guard before its own tests
+were written, for the third ship running. 17 immutability guards, all derived from the schema.
+
+**246 invariant checks.**
+
+---
+
 ## v9.425 — 2026-09-11 (a relying party's bar could be lowered with nothing recorded anywhere)
 
 A relying party is an outside organisation with standing to ask this system about people.

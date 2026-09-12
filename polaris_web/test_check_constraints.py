@@ -1739,6 +1739,179 @@ class TestRelyingPartyDecisionsAreRecorded(_CheckBase):
                                 f"returns NULL and the justification gate lets it through")
 
 
+class TestDiscretionPolicyIsAppendOnly(_CheckBase):
+    """A revocation bound is a decision that is kept, not edited (v9.426).
+
+    IssuerDiscretionPolicy bounds the share of its own tokens one issuing agency may
+    revoke in a rolling window: it is what stands between one authority and mass
+    revocation of the credentials it issued. agency_id was the primary key, so raising
+    an agency's bound from 5% to 80% overwrote the baseline, who set it, when, and the
+    reason given, while docs/operator/SECURITY-CONTROLS.md said the justification
+    existed "so any loosening is auditable". Verified against a loaded database before
+    the change: one row, 80%, a new name and a new reason, and no audit row anywhere.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.cur = self.conn.cursor()
+        self.addCleanup(self.cur.close)
+
+    AGENCY = 2      # a sample agency with no shipped override of its own
+
+    def _record(self, percent=5.00, why='a bound recorded so the test can try to rewrite it'):
+        self.cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                         " WHERE agency_id = %s AND superseded_at IS NULL", (self.AGENCY,))
+        self.cur.execute(
+            "INSERT INTO IssuerDiscretionPolicy (agency_id, max_revoke_percent, window_days, "
+            "set_by_admin, justification) VALUES (%s, %s, 30, 'test', %s) RETURNING policy_id",
+            (self.AGENCY, percent, why))
+        return self.cur.fetchone()["policy_id"]
+
+    def test_loosening_a_bound_keeps_the_one_it_replaced(self):
+        """The claim SECURITY-CONTROLS.md makes, as a test."""
+        self._record(5.00, 'the contracted baseline for this agency, stated')
+        self._record(80.00, 'a mass reissue is planned and needs the headroom')
+        self.cur.execute("SELECT max_revoke_percent, justification, superseded_at "
+                         "FROM IssuerDiscretionPolicy WHERE agency_id = %s ORDER BY policy_id",
+                         (self.AGENCY,))
+        rows = self.cur.fetchall()
+        self.assertGreaterEqual(len(rows), 2, "the bound it replaced was overwritten")
+        live = [r for r in rows if r["superseded_at"] is None]
+        self.assertEqual(len(live), 1, "exactly one bound may be in force per agency")
+        self.assertEqual(float(live[0]["max_revoke_percent"]), 80.00)
+        self.assertIn('the contracted baseline for this agency, stated',
+                      [r["justification"] for r in rows],
+                      "the reason given for the bound that was raised is gone")
+
+    def _revocable_token(self, label):
+        """A fresh Individual with one ACTIVE token issued by self.AGENCY.
+
+        uq_one_active_per_person means each call needs its own person. RESERVE then
+        ACTIVE, because the state-machine trigger allows no other way in.
+        """
+        self.cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                         "VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id",
+                         ('Discretion Bound Test ' + label,))
+        iid = self.cur.fetchone()["individual_id"]
+        self.cur.execute("SELECT algorithm_id FROM AgencyAlgorithmAuth "
+                         " WHERE agency_id = %s LIMIT 1", (self.AGENCY,))
+        row = self.cur.fetchone()
+        if row is None:
+            self.skipTest("agency %d is authorized for no algorithm, so it cannot issue"
+                          % self.AGENCY)
+        self.cur.execute(
+            "INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
+            "biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, status, "
+            "issued_date, expiration_date) VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, %s, "
+            "'RESERVE', CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date) "
+            "RETURNING token_id",
+            ('TKN-DISC-' + label, 'SN-DISC-' + label, iid, self.AGENCY, row["algorithm_id"]))
+        tid = self.cur.fetchone()["token_id"]
+        self.cur.execute("SELECT set_config('polaris.actor_agency_id', %s, true)",
+                         (str(self.AGENCY),))
+        self.cur.execute("SELECT set_config('polaris.reason_code', 'INITIAL_ISSUE', true)")
+        # The state machine requires activated_date on the way in.
+        self.cur.execute("UPDATE IdentityToken SET status = 'ACTIVE', "
+                         " activated_date = CURRENT_TIMESTAMP WHERE token_id = %s", (tid,))
+        return tid
+
+    def _revocation_allowed(self, label):
+        """Does uc8_revoke_token let this agency revoke one more of its own tokens?"""
+        tid = self._revocable_token(label)
+        self.cur.execute("SAVEPOINT attempt")
+        try:
+            self.cur.execute(
+                "CALL uc8_revoke_token(p_token_id => %s, p_actor_agency_id => %s, "
+                "p_reason_code => 'ADMINISTRATIVE', "
+                "p_published_location => 'https://crl.example/disc', "
+                "p_cosigner_agency_id => NULL)", (tid, self.AGENCY))
+        except pg_errors.Error:
+            self.cur.execute("ROLLBACK TO SAVEPOINT attempt")
+            return False
+        return True
+
+    def test_a_superseded_bound_does_not_bind(self):
+        """uc8_revoke_token reads the bound IN FORCE, asked of the procedure itself.
+
+        Two cases, deliberately, because one is not enough. Without the
+        `superseded_at IS NULL` filter the procedure's `SELECT ... INTO` matches every
+        bound the agency has ever had and takes one of them, so a single case can pass
+        by luck: the row it happens to reach may be the right one. Whichever row an
+        unfiltered lookup favours, it favours the same relative row in both cases below,
+        so at least one of them must come out wrong. The first draft of this test
+        queried the table with its own `superseded_at IS NULL` filter and asserted on
+        the answer, which proved the filter worked in the test and nothing about the
+        procedure: dropping the filter from 05_procedures.sql left it green.
+        """
+        with self.subTest(case='live bound is tight, superseded one is loose'):
+            self.cur.execute("SAVEPOINT tight")
+            self._record(100.00, 'the loose bound this test will supersede, stated fully')
+            self._record(0.01, 'the tight bound in force, which must be the one that binds')
+            self.assertFalse(self._revocation_allowed('TIGHT'),
+                             "a revocation was allowed under a 0.01% bound in force, so the "
+                             "procedure read the superseded 100% one")
+            self.cur.execute("ROLLBACK TO SAVEPOINT tight")
+        with self.subTest(case='live bound is loose, superseded one is tight'):
+            self.cur.execute("SAVEPOINT loose")
+            self._record(0.01, 'the tight bound this test will supersede, stated fully')
+            self._record(100.00, 'the loose bound in force, which must be the one that binds')
+            self.assertTrue(self._revocation_allowed('LOOSE'),
+                            "a revocation was refused under a 100% bound in force, so the "
+                            "procedure read the superseded 0.01% one")
+            self.cur.execute("ROLLBACK TO SAVEPOINT loose")
+
+    def test_two_bounds_cannot_be_in_force_for_one_agency(self):
+        """uq_effective_discretion_policy, not application care, decides this."""
+        self._record()
+        with self.assertRaises(pg_errors.UniqueViolation):
+            self.cur.execute(
+                "INSERT INTO IssuerDiscretionPolicy (agency_id, max_revoke_percent, "
+                "window_days, set_by_admin, justification) VALUES (%s, 50, 30, 'test', "
+                "'a second bound in force for one agency, refused')", (self.AGENCY,))
+
+    def test_a_recorded_bound_cannot_be_edited(self):
+        for column, value in (('max_revoke_percent', 99), ('window_days', 365),
+                              ('set_by_admin', 'someone_else'), ('agency_id', 4),
+                              ('justification', 'a different reason, twenty plus characters'),
+                              ('set_at', 'epoch')):
+            with self.subTest(column=column):
+                pid = self._record()
+                self.cur.execute("SAVEPOINT recorded")
+                with self.assertRaises(pg_errors.InsufficientPrivilege,
+                                       msg=f"{column} was editable"):
+                    self.cur.execute(
+                        f"UPDATE IssuerDiscretionPolicy SET {column} = %s WHERE policy_id = %s",
+                        (value, pid))
+                self.cur.execute("ROLLBACK TO SAVEPOINT recorded")
+
+    def test_a_recorded_bound_cannot_be_deleted(self):
+        pid = self._record(why='a bound recorded so the test can try to delete it')
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("DELETE FROM IssuerDiscretionPolicy WHERE policy_id = %s", (pid,))
+
+    def test_superseding_is_one_way(self):
+        """Un-superseding would put a replaced bound back in force with no trace that it
+        had ever been replaced, which is the edit the history exists to stop."""
+        pid = self._record()
+        self.cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                         " WHERE policy_id = %s", (pid,))
+        for attempt in ("superseded_at = NULL", "superseded_at = now() - interval '9 days'"):
+            with self.subTest(attempt=attempt):
+                self.cur.execute("SAVEPOINT one_way")
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    self.cur.execute(f"UPDATE IssuerDiscretionPolicy SET {attempt} "
+                                     f" WHERE policy_id = %s", (pid,))
+                self.cur.execute("ROLLBACK TO SAVEPOINT one_way")
+
+    def test_the_justification_floor_still_binds_every_row(self):
+        """The floor is what makes the kept history worth reading."""
+        with self.assertRaises(pg_errors.CheckViolation):
+            self.cur.execute(
+                "INSERT INTO IssuerDiscretionPolicy (agency_id, max_revoke_percent, "
+                "window_days, set_by_admin, justification) VALUES (%s, 9, 30, 'test', 'short')",
+                (self.AGENCY,))
+
+
 class TestAgencyQuotaIsAppendOnly(_CheckBase):
     """A quota decision is kept, not edited (v9.424).
 
@@ -1941,6 +2114,7 @@ UNIQUE_RULE_FIXTURES = {
     # One unique index on the table: a plain copy names it.
     'uq_active_attestation': (None, {}),
     'uq_effective_retention_policy': (None, {}),
+    'uq_effective_discretion_policy': (None, {}),
     'uq_effective_agency_quota': (
         "INSERT INTO AgencyQuota (agency_id, issue_per_day, set_by_admin, justification) "
         "VALUES (1, 100, 'fixture', 'uniqueness probe: the cap in force for agency 1')", {}),
