@@ -13914,7 +13914,9 @@ def test_migrations_match_canonical_check_discriminates(tmp_path):
         (d / "06_triggers.sql").write_text(canonical)
         (d / "05_procedures.sql").write_text("-- no functions here\n")
         # Indexes are owned by 01_schema.sql / 02_indexes.sql, not by the trigger file.
-        (d / "01_schema.sql").write_text(indexes)
+        # Both must be NON-EMPTY: the check refuses to compare against a file it cannot
+        # read, because deleting one used to leave it comparing a third of its input.
+        (d / "01_schema.sql").write_text(indexes or "-- no indexes here\n")
         (d / "02_indexes.sql").write_text("-- no indexes here\n")
         for f in (d / "migrations").glob("*.sql"):
             f.unlink()
@@ -14000,3 +14002,18 @@ def test_migrations_match_canonical_check_discriminates(tmp_path):
     write(canonical="-- nothing\n", migrations=(("2026-01-01-001-first.up.sql", OLD),))
     assert level("measuring nothing") == "FAIL", \
         "must FAIL rather than pass vacuously when no canonical body could be parsed"
+
+    # ANTI-VACUITY, the other side. polaris-check-mutation-drill caught this by deleting
+    # the migrations and watching the check report `all 0 function(s), 0 index(es) and
+    # 0 CHECK constraint(s) agree` -- a green verdict over an empty set.
+    write(migrations=())
+    assert level("nothing was compared") == "FAIL", \
+        "must FAIL when there are no migrations to compare against"
+
+    # And it must notice ANY canonical input is gone, not just the ones it reads first.
+    # Deleting 01_schema.sql alone left the function comparison working and the index and
+    # constraint comparisons silently empty.
+    write()
+    (d / "01_schema.sql").unlink()
+    assert level("could not be read") == "FAIL", \
+        "must FAIL when a canonical file it compares against is missing"

@@ -5,6 +5,42 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.451 — 2026-09-12 (the check that finds vacuous checks found mine)
+
+v9.450 went red, and on the right thing. `polaris-check-mutation-drill` deletes the files a check
+names and asserts the check notices. The one added in v9.449 did not:
+
+    FAIL: these checks passed with every file they name DELETED. A check that does not
+    notice its own input is gone is watching nothing
+      check_migrations_do_not_revert_canonical_objects
+
+Two separate holes, and the second is the one worth reading.
+
+**It had no anti-vacuity guard on the migration side.** With the migrations gone it reported
+`all 0 function(s), 0 index(es) and 0 CHECK constraint(s) agree` -- a green verdict over an empty
+set. The canonical side HAD that guard; the migration side did not, which is asymmetric guarding
+and the easiest kind to miss when you write the two halves an hour apart.
+
+**And it hid its inputs from the harness.** The drill parses `_read(root, ...)` calls to find what
+a check reads, and resolves a constant holding one path but not a tuple holding several. The check
+read its four canonical files by looping over `_CANONICAL_OBJECT_FILES` and `_CANONICAL_INDEX_FILES`,
+so the only path the harness could see was the one literal left, `01_schema.sql`. Deleting that
+alone left the FUNCTION comparison working against the other two files while the index and
+constraint comparisons went silently empty, and the check passed with a third of its input gone.
+
+The fix is the check naming its inputs where the harness can read them, not the harness guessing
+harder. A tuple resolver was written and then reverted: no check in the tree reads
+`_read(root, TUPLE_NAME)`, so it would have been speculative code justifying a check that hides
+what it depends on. v9.438 recorded the same lesson one container shallower -- an exception
+declared for a harness limitation reads exactly like one declared for a real gap.
+
+The drill now reports 0 deletion survivors against a declared list of 1, and 0 of 92 fully mutated
+checks surviving, at the recorded baseline of 0.
+
+**258 invariant checks. 45 tables.**
+
+---
+
 ## v9.450 — 2026-09-12 (the canonical schema refused ten events the application writes)
 
 v9.449 asked whether a migration can leave a FUNCTION or an INDEX in a state the canonical file

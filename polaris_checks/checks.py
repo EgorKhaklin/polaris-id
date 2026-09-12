@@ -1301,11 +1301,30 @@ def check_migrations_do_not_revert_canonical_objects(root: pathlib.Path) -> list
     if not d.is_dir():
         return _fail(name, "polaris_sql/migrations/ is missing")
 
-    canonical: dict[str, str] = {}
-    for rel in _CANONICAL_OBJECT_FILES:
-        text = _read(root, rel)
+    # Every canonical file this compares against, checked up front. Reading 01_schema.sql
+    # lazily further down meant that deleting it left the FUNCTION comparison working and
+    # the index and constraint comparisons silently empty, so the check passed with a
+    # third of its input gone. polaris-check-mutation-drill found that by deleting it.
+    # Each input named with a LITERAL, deliberately. polaris-check-mutation-drill finds
+    # what a check reads by parsing these calls, and it resolves a constant holding one
+    # path but not a tuple holding several. Reading them through a loop over
+    # _CANONICAL_OBJECT_FILES left the harness able to see only 01_schema.sql, so it
+    # deleted that alone, the function comparison carried on against the other two, and
+    # this check passed with a third of its input gone. Naming them here is what makes
+    # the dependency visible to the thing whose job is to check it.
+    procedures = _read(root, "polaris_sql/05_procedures.sql")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    indexes = _read(root, "polaris_sql/02_indexes.sql")
+    for rel, text in (("polaris_sql/05_procedures.sql", procedures),
+                      ("polaris_sql/06_triggers.sql", triggers),
+                      ("polaris_sql/01_schema.sql", schema),
+                      ("polaris_sql/02_indexes.sql", indexes)):
         if not text:
             return _fail(name, "%s could not be read, so nothing can be compared against it" % rel)
+
+    canonical: dict[str, str] = {}
+    for text in (procedures, triggers):
         canonical.update(_function_bodies(text))
     if not canonical:
         return _fail(name, "no function bodies were parsed out of the canonical files; the "
@@ -1332,8 +1351,8 @@ def check_migrations_do_not_revert_canonical_objects(root: pathlib.Path) -> list
     # the migration kept `WHERE widened`, so a migrated database had an index that could
     # not serve the query it exists for.
     canonical_idx: dict[str, str] = {}
-    for rel in _CANONICAL_INDEX_FILES:
-        canonical_idx.update(_index_definitions(_read(root, rel)))
+    for text in (schema, indexes):
+        canonical_idx.update(_index_definitions(text))
     last_idx: dict[str, tuple[str, str]] = {}
     for path in sorted(d.glob("*.up.sql")):
         for nm, body in _index_definitions(path.read_text(errors="replace")).items():
@@ -1349,7 +1368,7 @@ def check_migrations_do_not_revert_canonical_objects(root: pathlib.Path) -> list
                                                           for n, m in drifted_idx)))
 
     # And named CHECK constraints, where the drift showed up pointing the other way.
-    canonical_con = _named_check_constraints(_read(root, "polaris_sql/01_schema.sql"))
+    canonical_con = _named_check_constraints(schema)
     last_con: dict[str, tuple[str, str]] = {}
     for path in sorted(d.glob("*.up.sql")):
         for nm, body in _named_check_constraints(path.read_text(errors="replace")).items():
@@ -1368,6 +1387,19 @@ def check_migrations_do_not_revert_canonical_objects(root: pathlib.Path) -> list
     shared = sum(1 for fn in last if fn in canonical)
     shared_idx = sum(1 for nm in last_idx if nm in canonical_idx)
     shared_con = sum(1 for nm in last_con if nm in canonical_con)
+
+    # ANTI-VACUITY. "Nothing drifted" is not a result if nothing was compared. The first
+    # cut guarded the canonical side and not this one, and polaris-check-mutation-drill
+    # caught it by deleting the migrations and watching this report `all 0 function(s),
+    # 0 index(es) and 0 CHECK constraint(s) agree` -- a green verdict over an empty set.
+    # The tree's own words for that: a check that does not notice its own input is gone
+    # is watching nothing.
+    if not any((shared, shared_idx, shared_con)):
+        return _fail(name, "nothing was compared: %d migration file(s) were read and not one "
+                           "function, index or CHECK constraint in them is also defined by a "
+                           "canonical file. Either the migrations are missing or the parser and "
+                           "the tree have drifted, and in both cases a clean result here would "
+                           "mean nothing" % len(list(d.glob("*.up.sql"))))
     return _ok(name, "all %d function(s), %d index(es) and %d CHECK constraint(s) that a "
                      "migration and a canonical file both define agree, so applying migrations "
                      "cannot quietly reinstate a version the tree has corrected and a bare load "
