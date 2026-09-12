@@ -13797,6 +13797,7 @@ def test_schema_drift_drill_check_discriminates(tmp_path):
     DRILL = ('import psycopg2\n'
              'def catalog(cur):\n'
              '    cur.execute("SELECT lower(table_name) FROM information_schema.columns")\n'
+             '_JOIN_LITERALS = 1\n'
              'def main():\n'
              '    print("  negative control: a planted reference is caught")\n'
              '    if not caught:\n'
@@ -13849,3 +13850,7 @@ def test_schema_drift_drill_check_discriminates(tmp_path):
     write(drill=DRILL.replace('    print("%d reference(s) skipped as not statically parseable" % n)\n', ""))
     assert level("does not report what it skipped") == "FAIL", \
         "must FAIL when the verdict implies it read every reference in the tree"
+
+    write(drill=DRILL.replace("_JOIN_LITERALS = 1\n", ""))
+    assert level("truncated at the closing quote") == "FAIL", \
+        "must FAIL when the drill cannot read a column list split across lines"

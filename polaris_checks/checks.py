@@ -1131,6 +1131,11 @@ def check_schema_drift_drill(root: pathlib.Path) -> list[Finding]:
         findings.extend(_fail(name, "the drill has no negative control: a clean result would "
                                     "not distinguish a tree whose SQL resolves from a scanner "
                                     "that read nothing"))
+    if "_JOIN_LITERALS" not in drill:
+        findings.extend(_fail(name, "the drill does not collapse adjacent string literals "
+                                    "before scanning, so a column list split across lines is "
+                                    "truncated at the closing quote and skipped; that hid 46 of "
+                                    "the 48 references its first cut called unparseable"))
     if "skipped as not statically parseable" not in drill:
         findings.extend(_fail(name, "the drill does not report what it skipped, so a verdict "
                                     "reads as though it resolved every reference in the tree "

@@ -5,6 +5,35 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.446 — 2026-09-12 (the drill from an hour ago was reading 375 statements and reporting on the tree)
+
+v9.445's schema-drift drill said it skipped 48 references as not statically parseable, which reads
+like the honest cost of not parsing dynamic SQL. Forty-six of them were multi-line column lists
+split across adjacent string literals -- `"a, b, "` then `"c, d"` on the next line, which Python
+joins into one string and the INSERT pattern truncated at the closing quote. That is a blind spot
+of the drill, not a property of the tree, and it meant a dead column inside any long INSERT would
+have gone unread. `polaris-enrollment-proofing-drill.py` alone had four.
+
+Collapsing that concatenation first takes it from 375 statements read to **423**, and from 48
+skipped to 2. The remaining 2 are genuinely interpolated.
+
+The transform deliberately requires a LINE BREAK between the quotes. A same-line pair can be
+content rather than concatenation -- `x = 'a" "b'` -- and collapsing that would corrupt the text
+the drill then matches against, which is how a coverage fix turns into a false finding.
+
+Re-reading the 46 surfaced NO defect: the tree is clean there. So this is a coverage fix and not a
+finding, and it is worth a version anyway, because the difference between "every INSERT in the
+tree resolves" and "every INSERT I could parse resolves" is the whole value of the instrument.
+Verified by planting the multi-line form of the v9.443 statement: the drill now names it, and did
+not before.
+
+`check_schema_drift_drill` pins the transform, so the drill cannot go back to under-reading its
+own target.
+
+**257 invariant checks.**
+
+---
+
 ## v9.445 — 2026-09-12 (the two dead scripts were found by hand; nothing would find the next one)
 
 v9.443 found two operator scripts that had never run, one naming four columns `AuditAccessLog`

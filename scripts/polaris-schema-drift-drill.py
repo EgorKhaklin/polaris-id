@@ -21,10 +21,19 @@ ends `) PARTITION BY RANGE (...)` rather than `);`, and then reported every one 
 columns as absent. A checker that is wrong about the schema is worse than no checker.
 The catalog is the authority, so this asks the catalog.
 
-WHAT IT CANNOT DO. It resolves INSERT column lists, UPDATE SET targets, and the closed
-vocabularies a CHECK constraint declares. It does not parse SELECT projections, joins,
-or SQL built by string interpolation, and it says so rather than implying the tree is
-clean. A reference it cannot parse is skipped, counted, and reported as skipped.
+WHAT IT CANNOT DO. It resolves INSERT column lists and UPDATE SET targets. It does not
+parse SELECT projections, joins, or SQL built by string interpolation, and it says so
+rather than implying the tree is clean: a reference it cannot parse is skipped, counted,
+and reported as skipped.
+
+Two of those numbers are worth keeping honest. The first cut reported 48 skipped
+references, which sounded like the cost of not parsing dynamic SQL. Forty-six of them
+were multi-line column lists split across adjacent string literals, which the INSERT
+pattern truncated at the closing quote -- a blind spot of this file, not of the tree.
+Collapsing that concatenation first takes it to 423 statements read and 2 skipped, and
+the 2 are genuinely interpolated. Re-reading the 46 surfaced no defect, so this is a
+coverage fix and not a finding; the point is that a verdict over 375 statements was
+being reported as a verdict over the tree.
 
 Exit 0 clean, 1 on any unresolved reference, 3 if the database is not reachable (skip).
 
@@ -54,6 +63,16 @@ SUFFIXES = (".py", ".sh", ".sql")
 SKIP = ("polaris_sql/01_schema.sql", "polaris_sql/02_indexes.sql",
         "polaris_sql/migrations/")
 
+#: Adjacent string-literal concatenation. In Python, `"a, b, " \n "c, d"` is ONE string,
+#: and a long column list is almost always written that way. Without collapsing it first
+#: the INSERT pattern stops at the closing quote and the statement is skipped as
+#: unparseable. The first cut of this drill did exactly that and called 48 references
+#: unreadable when 46 of them were its own formatting blind spot.
+#:
+#: Deliberately requires a LINE BREAK between the quotes. A same-line pair can be
+#: content -- `x = 'a" "b'` -- and collapsing that would corrupt the text this then
+#: pattern-matches against.
+_JOIN_LITERALS = re.compile(r"""(['"])[ \t]*(?:\\)?\r?\n[ \t]*\1""")
 _INSERT = re.compile(r"INSERT\s+INTO\s+([A-Za-z_][\w]*)\s*\(([^)]*)\)", re.I)
 _UPDATE = re.compile(r"UPDATE\s+([A-Za-z_][\w]*)\s+SET\s+([A-Za-z_][\w]*)\s*=", re.I)
 _IDENT = re.compile(r"^[A-Za-z_][\w]*$")
@@ -103,7 +122,7 @@ def _scan(tables):
             if "venv" in rel or "node_modules" in rel or "/target/" in rel:
                 continue
             scanned += 1
-            text = path.read_text(errors="replace")
+            text = _JOIN_LITERALS.sub("", path.read_text(errors="replace"))
             found, skipped = _references(path, text)
             skipped_n += len(skipped)
             for line, table, cols, kind in found:
