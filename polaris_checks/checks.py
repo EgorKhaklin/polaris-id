@@ -6186,6 +6186,7 @@ def check_relying_party_decisions_cannot_be_silent(root: pathlib.Path) -> list[F
 
     schema = _read(root, "polaris_sql/01_schema.sql")
     triggers = _read(root, "polaris_sql/06_triggers.sql")
+    cli = _read(root, "polaris_cli/polaris.py")
     if not schema or not triggers:
         return _fail(name, "01_schema.sql or 06_triggers.sql could not be read")
 
@@ -6226,14 +6227,53 @@ def check_relying_party_decisions_cannot_be_silent(root: pathlib.Path) -> list[F
     # An unclassified field must make the predicate return NULL. A FALSE fallback would
     # turn every future column into a silent one, which is the failure above with the
     # alarm disconnected.
-    if not re.search(r"ELSE\s+NULL", predicate_body, re.I):
+    # Anchored on the OUTER CASE's fallback, not on any ELSE NULL. v9.448 introduced
+    # nested CASE expressions that themselves end `ELSE NULL END`, and a bare search for
+    # `ELSE NULL` was then satisfied by those even with the outer fallback deleted -- the
+    # check would have kept passing while the property it names was gone.
+    if not re.search(r"ELSE\s+NULL\s*\n\s*END\s*;", predicate_body, re.I):
         findings.extend(_fail(name, "_rp_weakens falls back to something other than NULL, so a "
                                     "column nobody classified would count as harmless"))
+
+    # v9.448: scope is rankable, but not by string length. 'authenticate' -> 'verify'
+    # gives the party a capability it did not hold and the length goes DOWN, so the
+    # original rule recorded a widening as harmless. The question is set containment.
+    if "length(p_new.scope)" in predicate_body:
+        findings.extend(_fail(name, "_rp_weakens ranks scope by STRING LENGTH, which calls "
+                                    "'authenticate' -> 'verify' harmless even though the party "
+                                    "gains the verify capability; compare the sets"))
+    if "string_to_array(p_new.scope" not in predicate_body:
+        findings.extend(_fail(name, "_rp_weakens does not compare scope as a set, so a change "
+                                    "that grants a capability the party did not hold can be "
+                                    "recorded as granting nothing"))
+
+    # v9.448: a swap between two values neither of which is above the other. The app
+    # compares enrollment EXACTLY, so each value names one mutually exclusive population;
+    # contexts are likewise unordered. FALSE drops it out of the assessor's list.
+    for column in ("required_enrollment", "required_context_id"):
+        if not re.search(r"p_old\.%s IS NOT DISTINCT FROM p_new\.%s" % (column, column),
+                         predicate_body):
+            findings.extend(_fail(name, "_rp_weakens still treats a %s SWAP as a definite "
+                                        "answer; moving between two values neither of which is "
+                                        "above the other is a direction the database cannot "
+                                        "rank" % column))
 
     # The gate itself.
     if not re.search(r"_rp_weakens\(\s*NULL", writer_body):
         findings.extend(_fail(name, "the writer never asks _rp_weakens about the statement as a "
                                     "whole, so nothing requires a reason for a weakening"))
+    # v9.448: `NULL AND TRUE` is NULL, not TRUE. Once the predicate is three-valued a bare
+    # truth test lets every unrankable change -- and every ELSE NULL field -- past the gate
+    # with no reason, which undoes the reason ELSE NULL is there.
+    if not re.search(r"_rp_weakens\([^)]*\)\s*IS NOT FALSE", writer_body, re.S):
+        findings.extend(_fail(name, "the gate asks whether the statement weakens rather than "
+                                    "whether it IS NOT FALSE, so a change the rule could not "
+                                    "rank needs no stated reason at all"))
+    if "weakened IS NOT FALSE" not in cli:
+        findings.extend(_fail(name, "rp-history --weakened-only filters on `weakened` rather "
+                                    "than `weakened IS NOT FALSE`, so the changes the database "
+                                    "declined to rank are invisible to the only tool that reads "
+                                    "the record"))
     if not re.search(r"length\(trim\(v_why\)\)\s*<\s*20", writer_body):
         findings.extend(_fail(name, "the writer does not hold a 20-character floor on the stated "
                                     "reason, so an empty one would satisfy it"))
@@ -6261,10 +6301,13 @@ def check_relying_party_decisions_cannot_be_silent(root: pathlib.Path) -> list[F
 
     if findings:
         return findings
-    return _ok(name, f"all {len(decisions)} RelyingParty decision columns are covered by the "
-                     f"recording trigger and the weakening rule, both derived from the schema; "
-                     f"a weakening without a stated reason is refused by the database, and the "
-                     f"trigger is the record's only writer")
+    return _ok(name, "all %d RelyingParty decision columns are covered by the recording "
+                     "trigger and the weakening rule, both derived from the schema; scope is "
+                     "compared as a SET rather than by string length, a swap between two values "
+                     "neither of which is above the other is recorded as a direction the "
+                     "database will not guess, a change that is not definitely harmless needs a "
+                     "stated reason, the operator tool filters on `weakened IS NOT FALSE`, and "
+                     "the trigger is the record's only writer" % len(decisions))
 
 
 

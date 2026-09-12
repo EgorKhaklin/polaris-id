@@ -5,6 +5,58 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.448 — 2026-09-12 (the relying-party rule ranked a capability by how long its name is)
+
+v9.440 made `AgencyEvent.widened` three-valued because a county could become a nation and the
+record called it harmless. `RelyingPartyEvent.weakened`, shipped in v9.425, still had the boolean
+version of that problem and one worse than it. All three were found by running them against a
+loaded database, not by reading the rule.
+
+**`scope` was ranked by STRING LENGTH.** `length(p_new.scope) > length(p_old.scope)`. Measured:
+`'authenticate'` to `'verify'` gives the party the verify capability it did not hold, the length
+goes DOWN, and the record said it granted nothing and asked for no reason. Scope IS rankable --
+a party holding a capability it did not hold before has more reach -- but by set containment, not
+by how long the word is. Now: does the new set hold anything the old did not.
+
+**A swap was recorded as a definite answer.** `required_enrollment` moving ENROLLED to EXEMPT, and
+`required_context_id` moving 1 to 2, both recorded FALSE. `/api/v1/auth/authorize` compares
+`enrollment != required` EXACTLY, so each value names one mutually exclusive population and no
+ordering puts one above another; contexts are the same. FALSE drops the change out of the
+assessor's list and TRUE would assert a ranking nothing performed, so it is NULL.
+
+**The gate let all of it through.** `IF _rp_weakens(...) AND (no reason)`. `NULL AND TRUE` is NULL
+rather than TRUE, so the moment the predicate could return NULL an unrankable change needed no
+reason at all -- and neither did the `ELSE NULL` case, which exists precisely so a column nobody
+classified cannot default to harmless. The gate asks `IS NOT FALSE`, and `rp-history
+--weakened-only` filters on the same thing, because the only tool that reads the record was
+dropping exactly the rows the `ELSE NULL` discipline creates.
+
+One correction to the check itself, which this change caused. `check_relying_party_decisions_cannot_be_silent`
+asserted the predicate ends `ELSE NULL` by searching for that text anywhere in it. The new nested
+`CASE ... ELSE NULL END` expressions satisfy that search, so the check would have kept passing with
+the outer fallback deleted. It is anchored on the outer CASE's terminator now.
+
+Also: `test_the_predicate_classifies_every_policy_column` was SKIPPING, eight subtests at a time,
+because a freshly loaded database has no relying party to ask about. It registers one. That is the
+shape `check_property_no_skip` refuses for the C1-C3 properties -- a fixture that cannot supply
+its row must fail loudly rather than report green having asked nothing -- and it was sitting in a
+different family the whole time.
+
+And a finding the ship itself produced, which is the one worth carrying forward. Five of the new
+tests passed against the canonical trigger file and FAILED against a database built by loading it
+and then applying migrations in order. Migration `2026-09-11-018` embeds its own copy of
+`_rp_weakens`, correct for what that migration did, so applying migrations reinstalled the v9.425
+string-length rule on top of the corrected one. A deployment re-runs `polaris-migrate.sh
+--sync-objects` afterwards and gets the canonical file back, so production was never exposed --
+but anything that applies migrations without that step ends with the old behaviour and no sign of
+it. Migration `2026-09-12-004` therefore carries the rule and the gate itself rather than leaving
+them to the canonical copy: 018 is history and stays as it is, and this supersedes it by running
+after it. Verified on a database built both ways.
+
+**257 invariant checks. 45 tables.**
+
+---
+
 ## v9.447 — 2026-09-12 (a flake the tool called "investigate", and the cost of pushing faster than CI)
 
 v9.446's DR drill went red on a signature `triage` did not know, so it said "investigate (no known

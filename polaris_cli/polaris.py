@@ -2587,13 +2587,19 @@ def cmd_rp_history(args):
     or re-enabling it. This reads the record that now exists.
 
     --weakened-only answers the question an assessor actually asks: when was this
-    party's bar LOWERED, by whom, and what reason did they give.
+    party's bar LOWERED, by whom, and what reason did they give. It filters on
+    `weakened IS NOT FALSE`, not on `weakened`, and that is the difference between a
+    list and a shorter list. Two kinds of row are NULL rather than TRUE: a change that
+    moved the party's reach sideways, to a different enrollment population or a
+    different context, which no ordering ranks; and a field nobody has classified,
+    which `_rp_weakens` deliberately returns NULL for so it cannot default to harmless.
+    Filtering on `weakened` alone drops exactly those.
     """
     where, params = ["TRUE"], []
     if args.client_id:
         where.append("e.client_id = %s"); params.append(args.client_id)
     if args.weakened_only:
-        where.append("e.weakened")
+        where.append("e.weakened IS NOT FALSE")
     conn = connect()
     try:
         with conn.cursor() as cur:
@@ -2609,10 +2615,10 @@ def cmd_rp_history(args):
     if not rows:
         if args.client_id:
             print(dim(f"No recorded decisions for {args.client_id}."
-                      + (" (nothing weakened its policy)" if args.weakened_only else "")))
+                      + (" (nothing weakened or moved its policy)" if args.weakened_only else "")))
         else:
             print(dim("No relying-party decisions recorded."
-                      + (" Nothing has weakened a policy." if args.weakened_only else "")))
+                      + (" Nothing has weakened or moved a policy." if args.weakened_only else "")))
         return 0
 
     current_rp = None
@@ -2620,7 +2626,8 @@ def cmd_rp_history(args):
         if r['rp_id'] != current_rp:
             current_rp = r['rp_id']
             print(f"\nrelying party #{r['rp_id']} {r['current_org_name']} ({r['client_id']})")
-        flag = red(' WEAKENED') if r['weakened'] else ''
+        flag = (red(' WEAKENED') if r['weakened']
+                else ('' if r['weakened'] is False else yellow(' REACH CHANGED')))
         what = (r['field'] + ': ' + str(r['old_value']) + ' -> ' + str(r['new_value'])
                 if r['field'] else str(r['new_value']))
         print(f"  {r['recorded_at']:%Y-%m-%d %H:%M}  {r['event_type']}{flag}")
@@ -2630,10 +2637,13 @@ def cmd_rp_history(args):
         if r['justification']:
             print(dim(f"      {r['justification']}"))
     weakenings = sum(1 for r in rows if r['weakened'])
+    moved = sum(1 for r in rows if r['weakened'] is None)
     print()
-    print(dim(f"{len(rows)} recorded decision(s), {weakenings} that reduced what a party "
-              f"must satisfy. The record is written by the trg_relying_party_audited "
-              f"trigger, so a change made outside this CLI appears here too."))
+    print(dim(f"{len(rows)} recorded decision(s): {weakenings} that reduced what a party "
+              f"must satisfy or gave it a capability it did not hold, {moved} that moved one's "
+              f"reach sideways, where the direction is not something the database can decide. "
+              f"The record is written by the trg_relying_party_audited trigger, so a change "
+              f"made outside this CLI appears here too."))
     return 0
 
 

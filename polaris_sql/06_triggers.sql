@@ -956,11 +956,36 @@ BEGIN
     END IF;
     RETURN CASE p_field
         WHEN 'require_zk'          THEN p_old.require_zk AND NOT p_new.require_zk
-        WHEN 'required_enrollment' THEN p_old.required_enrollment IS NOT NULL
-                                        AND p_new.required_enrollment IS NULL
-        WHEN 'required_context_id' THEN p_old.required_context_id IS NOT NULL
-                                        AND p_new.required_context_id IS NULL
-        WHEN 'scope'               THEN length(p_new.scope) > length(p_old.scope)
+        -- v9.448: three-valued, for the reason AgencyEvent.widened is (v9.440). Removing
+        -- the filter is a definite weakening: the party stops being restricted to one
+        -- enrollment status and starts answering about every holder. Swapping ENROLLED
+        -- for EXEMPT is NOT: the app compares `enrollment != required` exactly, so each
+        -- value names one mutually exclusive population and no ordering puts one above
+        -- another. Recording that FALSE dropped it out of the assessor's list; recording
+        -- it TRUE would assert a ranking nothing performed.
+        WHEN 'required_enrollment' THEN CASE
+            WHEN p_old.required_enrollment IS NOT DISTINCT FROM p_new.required_enrollment
+                THEN FALSE
+            WHEN p_new.required_enrollment IS NULL THEN TRUE
+            WHEN p_old.required_enrollment IS NULL THEN FALSE
+            ELSE NULL
+        END
+        -- The same shape. Contexts are not ordered: TRAVEL is neither above nor below
+        -- BANKING, so a swap is a change of reach the database will not rank.
+        WHEN 'required_context_id' THEN CASE
+            WHEN p_old.required_context_id IS NOT DISTINCT FROM p_new.required_context_id
+                THEN FALSE
+            WHEN p_new.required_context_id IS NULL THEN TRUE
+            WHEN p_old.required_context_id IS NULL THEN FALSE
+            ELSE NULL
+        END
+        -- v9.448: set containment, not string length. Scope IS rankable -- a party that
+        -- holds a capability it did not hold before has more reach -- but `length(new) >
+        -- length(old)` is not that test. Measured: 'authenticate' -> 'verify' gains the
+        -- verify capability and the length goes DOWN, so the old rule called a widening
+        -- harmless. The question is whether the new set contains anything the old did not.
+        WHEN 'scope'               THEN NOT (string_to_array(p_new.scope, ' ')
+                                             <@ string_to_array(p_old.scope, ' '))
         WHEN 'enabled'             THEN p_new.enabled AND NOT p_old.enabled
         WHEN 'rate_limit_per_min'  THEN p_new.rate_limit_per_min > p_old.rate_limit_per_min
         WHEN 'client_secret_hash'  THEN FALSE
@@ -998,7 +1023,12 @@ BEGIN
     --
     -- _rp_weakens() decides what counts, so the rule and the `weakened` column on the
     -- rows below cannot drift apart.
-    IF _rp_weakens(NULL, CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD END, NEW)
+    -- v9.448: IS NOT FALSE, not a bare truth test. _rp_weakens is three-valued now, and
+    -- `NULL AND TRUE` is NULL rather than TRUE, so an unrankable change -- and the ELSE
+    -- NULL case, a field nobody classified -- would pass the gate without a reason. The
+    -- ELSE NULL exists precisely so nobody defaults to harmless; a gate that ignores it
+    -- undoes that.
+    IF _rp_weakens(NULL, CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD END, NEW) IS NOT FALSE
        AND (v_why IS NULL OR length(trim(v_why)) < 20) THEN
         RAISE EXCEPTION
             'a change that reduces what a relying party must satisfy needs a '

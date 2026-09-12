@@ -519,11 +519,31 @@ current value is by definition no longer what it was.
 
 Written by the `trg_relying_party_audited` trigger from the row diff, not by the
 caller: a change made in psql is recorded on the same terms as one made through
-`polaris rp-policy`. `weakened` marks a change that reduced what the party must
-satisfy before it learns something about a person, which is the column an assessor
-filters on (`polaris rp-history --weakened-only`); `_rp_weakens` holds one rule per
-field and is asked both per field, to stamp that column, and per statement, to
-decide whether a justification is required. A weakening with no stated reason of at
+`polaris rp-policy`. `_rp_weakens` holds one rule per field and is asked both per
+field, to stamp `weakened`, and per statement, to decide whether a justification is
+required.
+
+`weakened` is three-valued since v9.448, on the terms `AgencyEvent.widened` set in
+v9.440. TRUE: the change reduced what the party must satisfy, or gave it a capability
+it did not hold. FALSE: it granted nothing. NULL: the change moved the party's reach
+SIDEWAYS and no ordering ranks the two positions. The assessor's filter is therefore
+`weakened IS NOT FALSE`, which is what `polaris rp-history --weakened-only` runs.
+
+Three corrections went in together, all found by running them against a loaded
+database rather than by reading the rule:
+
+- **`scope` was ranked by string length.** Measured: `'authenticate'` to `'verify'`
+  gives the party the verify capability it did not hold and the length goes *down*, so
+  a widening was recorded as harmless and needed no reason. Scope is rankable, by set
+  containment: the question is whether the new set holds anything the old did not.
+- **`required_enrollment` and `required_context_id` were FALSE on a swap.**
+  `/api/v1/auth/authorize` compares `enrollment != required` exactly, so each value
+  names one mutually exclusive population; contexts are likewise unordered. Neither
+  FALSE nor TRUE is true of a swap, so it is NULL.
+- **The gate asked a bare truth test.** `NULL AND TRUE` is NULL, not TRUE, so once the
+  predicate could return NULL an unrankable change passed with no reason at all, and so
+  did the `ELSE NULL` case that exists precisely so a field nobody classified cannot
+  default to harmless. The gate asks `IS NOT FALSE`. A weakening with no stated reason of at
 least 20 characters is refused by the database, the same floor `AgencyQuota` has
 held since v9.190; a tightening needs none.
 

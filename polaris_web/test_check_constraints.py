@@ -1685,6 +1685,85 @@ class TestRelyingPartyDecisionsAreRecorded(_CheckBase):
                          " WHERE rp_id = %s ORDER BY event_id", (rp_id,))
         return self.cur.fetchall()
 
+    # -- what the rule can and cannot rank (v9.448) ------------------------
+
+    def test_gaining_a_capability_is_a_widening_even_when_the_string_is_shorter(self):
+        """The miss that prompted this. Until v9.448 scope was ranked by STRING LENGTH,
+        so 'authenticate' -> 'verify' gave the party the verify capability it did not
+        hold, the length went DOWN, and the record said it granted nothing."""
+        self._reason(); self._actor()
+        rp = self._register(cid='rp_scope_gain_probe_0001', scope='authenticate')
+        self._reason("the party is taking over the verification desk this quarter")
+        self.cur.execute("UPDATE RelyingParty SET scope = 'verify' WHERE rp_id = %s", (rp,))
+        e = [x for x in self._events(rp) if x["field"] == "scope"][-1]
+        self.assertTrue(e["weakened"],
+                        "gaining a capability the party did not hold is a widening, and the "
+                        "old string-length rule called it harmless")
+
+    def test_losing_a_capability_grants_nothing(self):
+        self._reason(); self._actor()
+        rp = self._register(cid='rp_scope_drop_probe_0001', scope='verify authenticate')
+        self._reason("")
+        self.cur.execute("UPDATE RelyingParty SET scope = 'verify' WHERE rp_id = %s", (rp,))
+        e = [x for x in self._events(rp) if x["field"] == "scope"][-1]
+        self.assertFalse(e["weakened"], "dropping a capability grants nothing")
+
+    def test_a_swap_the_database_cannot_rank_is_recorded_as_such(self):
+        """NULL, not FALSE. /api/v1/auth/authorize compares `enrollment != required`
+        EXACTLY, so each value names one mutually exclusive population and no ordering
+        puts one above another; contexts are likewise unordered."""
+        self._reason(); self._actor()
+        rp = self._register(cid='rp_swap_probe_00000001',
+                            required_enrollment='ENROLLED', required_context_id=1)
+        self._reason("moved to the exempt population for the pilot cohort")
+        self.cur.execute("UPDATE RelyingParty SET required_enrollment = 'EXEMPT', "
+                         " required_context_id = 2 WHERE rp_id = %s", (rp,))
+        by_field = {x["field"]: x for x in self._events(rp) if x["field"]}
+        for field in ("required_enrollment", "required_context_id"):
+            with self.subTest(field=field):
+                self.assertIsNone(by_field[field]["weakened"],
+                                  "a swap between two values neither of which is above the "
+                                  "other claims a direction the database cannot rank")
+
+    def test_a_swap_still_needs_a_stated_reason(self):
+        """The gate asks IS NOT FALSE. `NULL AND TRUE` is NULL, so a bare truth test would
+        let every unrankable change through unexplained."""
+        self._reason(); self._actor()
+        rp = self._register(cid='rp_swap_reason_probe01', required_enrollment='ENROLLED')
+        self.cur.execute("SAVEPOINT made")
+        self._reason("")
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE RelyingParty SET required_enrollment = 'EXEMPT' "
+                             " WHERE rp_id = %s", (rp,))
+        self.cur.execute("ROLLBACK TO SAVEPOINT made")
+
+    def test_removing_a_filter_entirely_is_a_weakening(self):
+        """The one direction the original rule did get right, kept under test."""
+        self._reason(); self._actor()
+        rp = self._register(cid='rp_filter_drop_probe01', required_enrollment='ENROLLED')
+        self._reason("the party now serves every holder regardless of enrollment")
+        self.cur.execute("UPDATE RelyingParty SET required_enrollment = NULL WHERE rp_id = %s",
+                         (rp,))
+        e = [x for x in self._events(rp) if x["field"] == "required_enrollment"][-1]
+        self.assertTrue(e["weakened"], "dropping the filter lets every holder through")
+
+    def test_the_assessors_filter_returns_every_change_that_may_have_granted_reach(self):
+        self._reason(); self._actor()
+        rp = self._register(cid='rp_filter_view_probe01', required_enrollment='ENROLLED')
+        self._reason("moved to the exempt population for the pilot cohort")
+        self.cur.execute("UPDATE RelyingParty SET required_enrollment = 'EXEMPT' WHERE rp_id = %s",
+                         (rp,))
+        self._reason("")
+        self.cur.execute("UPDATE RelyingParty SET org_name = 'Renamed Probe' WHERE rp_id = %s",
+                         (rp,))
+        self.cur.execute("SELECT field FROM RelyingPartyEvent WHERE rp_id = %s "
+                         "   AND weakened IS NOT FALSE AND field IS NOT NULL "
+                         " ORDER BY event_id", (rp,))
+        got = [r["field"] for r in self.cur.fetchall()]
+        self.assertEqual(got, ["required_enrollment"],
+                         "the assessor's filter is not the set of changes that may have "
+                         "granted reach")
+
     # -- registration ------------------------------------------------------
 
     def test_registering_a_party_is_recorded(self):
@@ -1848,14 +1927,21 @@ class TestRelyingPartyDecisionsAreRecorded(_CheckBase):
         """)
         columns = [r["column_name"] for r in self.cur.fetchall()]
         self.assertGreaterEqual(len(columns), 7, "the column query found almost nothing")
+        # v9.448: register the row this needs rather than skipping when the sample data
+        # has none. It did skip -- eight subtests, silently, on a freshly loaded database
+        # -- which is the shape check_property_no_skip refuses for the C1-C3 properties:
+        # a fixture that cannot supply the row must fail loudly, not report green having
+        # asked nothing.
+        self._reason(); self._actor()
+        self._register(cid='rp_classify_probe_00001')
         for column in columns:
             with self.subTest(column=column):
                 self.cur.execute(
                     "SELECT _rp_weakens(%s, r, r) IS NOT NULL AS classified "
                     "  FROM RelyingParty r LIMIT 1", (column,))
                 row = self.cur.fetchone()
-                if row is None:
-                    self.skipTest("no relying party in the sample data to ask about")
+                self.assertIsNotNone(row, "no relying party to ask about even after "
+                                          "registering one; the fixture is broken")
                 self.assertTrue(row["classified"],
                                 f"_rp_weakens has no rule for {column}, so a change to it "
                                 f"returns NULL and the justification gate lets it through")

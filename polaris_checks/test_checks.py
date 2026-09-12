@@ -12795,12 +12795,22 @@ def test_relying_party_decisions_check_discriminates(tmp_path):
     PRED = ("CREATE OR REPLACE FUNCTION _rp_weakens(p_field TEXT, p_old RelyingParty, "
             "p_new RelyingParty)\nRETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE AS $$\nBEGIN\n"
             "    RETURN CASE p_field\n"
-            + "".join("        WHEN '%s' THEN FALSE\n" % c for c in DECISIONS)
+            + "".join("        WHEN '%s' THEN FALSE\n" % c for c in DECISIONS
+                       if c not in ("scope", "required_enrollment", "required_context_id"))
+            # v9.448: scope as a SET, and the two swaps the database will not rank.
+            + "        WHEN 'scope' THEN NOT (string_to_array(p_new.scope, ' ')\n"
+              "                               <@ string_to_array(p_old.scope, ' '))\n"
+              "        WHEN 'required_enrollment' THEN CASE\n"
+              "            WHEN p_old.required_enrollment IS NOT DISTINCT FROM "
+              "p_new.required_enrollment THEN FALSE ELSE NULL END\n"
+              "        WHEN 'required_context_id' THEN CASE\n"
+              "            WHEN p_old.required_context_id IS NOT DISTINCT FROM "
+              "p_new.required_context_id THEN FALSE ELSE NULL END\n"
             + "        ELSE NULL\n    END;\nEND;\n$$;\n")
 
     WRITER = ("CREATE OR REPLACE FUNCTION record_relying_party_change() RETURNS TRIGGER\n"
               "LANGUAGE plpgsql AS $$\nBEGIN\n"
-              "    IF _rp_weakens(NULL, OLD, NEW)\n"
+              "    IF _rp_weakens(NULL, OLD, NEW) IS NOT FALSE\n"
               "       AND (v_why IS NULL OR length(trim(v_why)) < 20) THEN\n"
               "        RAISE EXCEPTION 'needs a reason';\n    END IF;\n"
               + "".join("    IF NEW.%s IS DISTINCT FROM OLD.%s THEN INSERT INTO "
@@ -12828,7 +12838,7 @@ def test_relying_party_decisions_check_discriminates(tmp_path):
         (tmp_path / "polaris_web" / "app.py").write_text(
             "query('SELECT 1')\n" if app is None else app)
         (tmp_path / "polaris_cli" / "polaris.py").write_text(
-            "pass\n" if cli is None else cli)
+            "where.append('e.weakened IS NOT FALSE')\n" if cli is None else cli)
 
     def level(msg_contains=None):
         out = checks.check_relying_party_decisions_cannot_be_silent(tmp_path)
@@ -12848,6 +12858,36 @@ def test_relying_party_decisions_check_discriminates(tmp_path):
     assert level("max_queries_per_day") == "FAIL", \
         "must FAIL on a decision column the writer does not record"
 
+    # v9.448. Scope ranked by STRING LENGTH called 'authenticate' -> 'verify' harmless
+    # even though the party gained the verify capability.
+    write(triggers=(PRED.replace("NOT (string_to_array(p_new.scope, ' ')\n"
+                                 "                               <@ string_to_array(p_old.scope, ' '))",
+                                 "length(p_new.scope) > length(p_old.scope)")
+                    + WRITER + TRIG))
+    assert level("STRING LENGTH") == "FAIL", \
+        "must FAIL when scope is ranked by how long the string is"
+
+    # A swap between two values neither of which is above the other must not get a
+    # definite answer.
+    for column in ("required_enrollment", "required_context_id"):
+        write(triggers=(PRED.replace(
+            "WHEN p_old.%s IS NOT DISTINCT FROM p_new.%s THEN FALSE ELSE NULL END" % (column, column),
+            "FALSE") + WRITER + TRIG))
+        assert level("%s SWAP" % column) == "FAIL", \
+            "must FAIL when a %s swap is recorded as a definite answer" % column
+
+    # The gate. `NULL AND TRUE` is NULL, so a bare truth test lets every unrankable
+    # change past with no reason, which undoes the reason ELSE NULL is there.
+    write(triggers=(PRED + WRITER.replace("_rp_weakens(NULL, OLD, NEW) IS NOT FALSE",
+                                          "_rp_weakens(NULL, OLD, NEW)") + TRIG))
+    assert level("IS NOT FALSE") == "FAIL", \
+        "must FAIL when the gate ignores the changes the rule could not rank"
+
+    # And the only tool that reads the record must not drop exactly those rows.
+    write(cli="where.append('e.weakened')\n")
+    assert level("invisible to the only tool") == "FAIL", \
+        "must FAIL when rp-history filters on `weakened` rather than `weakened IS NOT FALSE`"
+
     # It is in the writer but the predicate has no rule, so no reason is demanded.
     write(schema=extra,
           triggers=PRED + WRITER.replace(
@@ -12863,7 +12903,7 @@ def test_relying_party_decisions_check_discriminates(tmp_path):
         "must FAIL when an unclassified column would default to not-a-weakening"
 
     # The gate is gone.
-    write(triggers=PRED + WRITER.replace("    IF _rp_weakens(NULL, OLD, NEW)\n"
+    write(triggers=PRED + WRITER.replace("    IF _rp_weakens(NULL, OLD, NEW) IS NOT FALSE\n"
                                          "       AND (v_why IS NULL OR length(trim(v_why)) < 20) THEN\n"
                                          "        RAISE EXCEPTION 'needs a reason';\n    END IF;\n", "") + TRIG)
     assert level("nothing requires a reason") == "FAIL", \

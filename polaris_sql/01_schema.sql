@@ -409,7 +409,12 @@ CREATE TABLE RelyingPartyEvent (
     -- required enrollment status dropped, the context restriction lifted, the
     -- credential enabled, the rate limit raised. This is the column an assessor
     -- filters on, and the reason the table is worth more than a diff log.
-    weakened        BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Three-valued since v9.448, for the reason AgencyEvent.widened is. TRUE: the change
+    -- reduced what the party must satisfy, or gave it a capability it did not hold. FALSE:
+    -- it granted nothing. NULL: the change moved the party's reach sideways -- a different
+    -- enrollment population, a different context -- and no ordering puts one above the
+    -- other. The assessor's filter is `weakened IS NOT FALSE`.
+    weakened        BOOLEAN DEFAULT FALSE,
     -- Who. `actor` is what the application declared for this transaction and may
     -- be absent; `db_role` is session_user and never is, so no event is anonymous.
     actor           VARCHAR(100),
@@ -435,7 +440,8 @@ COMMENT ON TABLE RelyingPartyEvent IS
   'case this table exists for.';
 
 CREATE INDEX idx_rp_event_rp ON RelyingPartyEvent (rp_id, recorded_at DESC);
-CREATE INDEX idx_rp_event_weakened ON RelyingPartyEvent (recorded_at DESC) WHERE weakened;
+CREATE INDEX idx_rp_event_weakened ON RelyingPartyEvent (recorded_at DESC)
+    WHERE weakened IS NOT FALSE;  -- matches the filter rp-history --weakened-only runs
 
 -- P8.2c (v9.322): the exchange-receipt TRANSPARENCY LOG. A receipt itself is never
 -- retained (evidence without retention); only its SHA3-256 -- a commitment that
