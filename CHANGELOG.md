@@ -5,6 +5,38 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.423 — 2026-09-11 (the detector was the defect, and it said so about three events)
+
+v9.422 said three AuthAuditLog event types were emitted by nothing and declared them so, with
+reasons, in the check. **All three were wrong.** Correcting it here rather than quietly, because
+a list that says "nothing emits this" is trusted by whoever reads it, and mine was misleading on
+every row.
+
+SESSION_EXPIRED and SESSION_REVOKED have always been emitted by `validate_session`, which builds
+the name into a tuple and passes it on:
+
+    ended = ('idle', 'SESSION_EXPIRED', detail)
+    ...
+    _audit(get_conn, ended[1], ...)
+
+The detector only recognised a literal inside the audit call's own parentheses. It now also
+counts a literal reaching `_audit` through a variable in the SAME function, which is narrow
+enough to keep out the case the strict form was written for: the CLI's `audit-log` filter list
+names every event type and sits in a function that audits nothing. Both directions are in the
+detection test.
+
+EMERGENCY_PASSWORD_LOGIN_AUTHORIZED is emitted by `scripts/polaris-recover-admin.sh`, in one
+transaction with the grant it records, which is the same discipline v9.422 applied to the CLI.
+The detector read only Python. It reads the shell tools and the SQL now.
+
+So the honest number is 21 of 21, and `NOT_YET_EMITTED` is empty. What survives from v9.422 is the
+finding that prompted it, which was verified by running the command rather than by grep: creating
+an operator account recorded nothing, and now records ACCOUNT_CREATED with the role it granted.
+
+The check gained the assertion that would have caught this: a type declared unemitted that IS
+emitted now fails, the same way a declaration for a type the schema no longer admits already did.
+A list of known gaps is only useful while every line of it is true.
+
 ## v9.422 — 2026-09-11 (creating an operator account left no record that it had happened)
 
 `AuthAuditLog.event_type` is a CHECK over twenty-one names and the CLI's `audit-log` command

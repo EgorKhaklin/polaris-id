@@ -12628,9 +12628,8 @@ def test_audit_writers_check_discriminates(tmp_path):
                 "        CHECK (event_type IN (\n"
                 + ",\n".join("            '%s'" % x for x in types)
                 + "\n        ))\n);\n")
-    # Every type except the three declared as not-yet-emitted needs a writer.
-    WRITTEN = [x for x in TYPES if x not in
-               ("SESSION_EXPIRED", "SESSION_REVOKED", "EMERGENCY_PASSWORD_LOGIN_AUTHORIZED")]
+    # NOT_YET_EMITTED is empty, so every admitted type needs a writer.
+    WRITTEN = list(TYPES)
     def app(types):
         return "".join("_audit(db, '%s')\n" % x for x in types)
     good = {"polaris_sql/01_schema.sql": schema(TYPES), "polaris_web/app.py": app(WRITTEN)}
@@ -12648,9 +12647,15 @@ def test_audit_writers_check_discriminates(tmp_path):
     write({"polaris_web/app.py": app([x for x in WRITTEN if x != "ACCOUNT_CREATED"])
            + "FILTERABLE = ['ACCOUNT_CREATED']\n"})
     assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when the type is only named in a filter list"
-    # a declared exemption that the schema no longer admits is stale
-    write({"polaris_sql/01_schema.sql": schema([x for x in TYPES if x != "SESSION_REVOKED"])})
-    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when a declared exemption is no longer admitted"
+    # a type emitted only through a variable in the same function still counts (v9.423)
+    write({"polaris_web/app.py": app([x for x in WRITTEN if x != "SESSION_EXPIRED"])
+           + ("def validate(c):\n    ended = ('idle', 'SESSION_EXPIRED', 'why')\n"
+              "    _audit(c, ended[1])\n")})
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "OK", "a literal reaching _audit through a variable in the same function is a writer"
+    # but the same literal in a function that audits nothing is not
+    write({"polaris_web/app.py": app([x for x in WRITTEN if x != "SESSION_EXPIRED"])
+           + "def build_parser(p):\n    p.add_argument('--type', choices=['SESSION_EXPIRED'])\n"})
+    assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "a filter list in a function that audits nothing is not a writer"
     # the CHECK list is emptied, which satisfies the assertions above vacuously
     write({"polaris_sql/01_schema.sql": schema(TYPES[:4])})
     assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when too few event types are parsed, rather than pass by finding nothing"

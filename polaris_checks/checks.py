@@ -11097,6 +11097,42 @@ def check_unique_rules_are_tested_exhaustively(root: pathlib.Path) -> list[Findi
                "fixture table is cross-checked against the catalog in both directions")
 
 
+def _emits(source: str, event: str) -> bool:
+    """Does this module emit `event` as an audit row?
+
+    Two forms count, and the difference between them cost a wrong claim. The first is
+    the literal at the call site, `_audit(conn, 'LOGIN_SUCCESS', ...)`. The second is
+    the literal travelling through a variable:
+
+        ended = ('idle', 'SESSION_EXPIRED', detail)
+        ...
+        _audit(get_conn, ended[1], ...)
+
+    v9.422 recognised only the first and therefore declared SESSION_EXPIRED and
+    SESSION_REVOKED unemitted when `validate_session` has always emitted both. So the
+    second form counts when the literal and an `_audit` call are in the SAME function,
+    which is narrow enough to keep out the case the strict form was written for: the
+    CLI's `audit-log` filter list names every event type and sits in a function that
+    audits nothing.
+    """
+    if re.search(r"_audit\w*\([^)]{0,300}?'%s'" % event, source, re.S):
+        return True
+    if re.search(r"INSERT INTO AuthAuditLog[^;]{0,200}?VALUES[^;]{0,200}?'%s'" % event,
+                 source, re.S | re.I):
+        return True
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        body = ast.unparse(node)
+        if f"'{event}'" in body and re.search(r"_audit\w*\(", body):
+            return True
+    return False
+
+
 def check_every_audit_event_has_a_writer(root: pathlib.Path) -> list[Finding]:
     """An event type nothing emits makes the audit log answer a question it cannot (v9.422).
 
@@ -11139,31 +11175,27 @@ def check_every_audit_event_has_a_writer(root: pathlib.Path) -> list[Finding]:
     #: Admitted by the schema and emitted by nothing, each with the reason. An entry here is a
     #: filter the audit log offers over events that never arrive, so it is a debt and not a
     #: design: the list should shrink.
-    NOT_YET_EMITTED = {
-        "EMERGENCY_PASSWORD_LOGIN_AUTHORIZED":
-            "the WebAuthn-bypass path is specified and gated but does not record its use yet",
-        "SESSION_EXPIRED": "session expiry is enforced on the next request rather than swept, "
-                           "so no code path observes the moment it happens",
-        "SESSION_REVOKED": "revocation goes through the same UPDATE as eviction, which records "
-                           "SESSION_EVICTED; the two have not been separated",
-    }
+    NOT_YET_EMITTED: dict[str, str] = {}
+    # v9.423: this list had three entries and every one of them was wrong.
+    # SESSION_EXPIRED and SESSION_REVOKED are emitted by validate_session through a
+    # variable rather than a literal at the call site; EMERGENCY_PASSWORD_LOGIN_AUTHORIZED
+    # is emitted by scripts/polaris-recover-admin.sh, which is not Python. The detector
+    # was the defect, not the tree. It is empty now and meant to stay that way: a
+    # declaration that something is unemitted when it is emitted misleads exactly the
+    # person who trusts the list, so it is checked in BOTH directions below.
     sources = {}
-    for pattern in ("polaris_web/*.py", "polaris_cli/*.py", "scripts/*.py"):
+    # v9.423: shell scripts too. EMERGENCY_PASSWORD_LOGIN_AUTHORIZED is written by
+    # scripts/polaris-recover-admin.sh, in one transaction with the grant it records,
+    # and a detector that reads only Python called it unemitted.
+    for pattern in ("polaris_web/*.py", "polaris_cli/*.py", "scripts/*.py",
+                    "scripts/*.sh", "polaris_sql/*.sql"):
         for path in sorted(root.glob(pattern)):
             if path.name.startswith("test_"):
                 continue
             sources[path.name] = _read_path(path)
     missing = []
     for ev in types:
-        # The type must sit INSIDE the audit call's parentheses. An earlier draft
-        # allowed any 400 characters without a semicolon, which in Python spans whole
-        # statements: a filter list several lines below a real _audit() call counted as
-        # a writer. Naming an event is not emitting it, and that is the entire point.
-        written = any(
-            re.search(r"_audit\w*\([^)]{0,300}?'%s'" % ev, src, re.S)
-            or re.search(r"INSERT INTO AuthAuditLog[^;]{0,200}?VALUES[^;]{0,200}?'%s'" % ev,
-                         src, re.S | re.I)
-            for src in sources.values())
+        written = any(_emits(src, ev) for src in sources.values())
         if not written and ev not in NOT_YET_EMITTED:
             missing.append(ev)
     if missing:
@@ -11176,11 +11208,25 @@ def check_every_audit_event_has_a_writer(root: pathlib.Path) -> list[Finding]:
     if stale:
         return _fail(name, "declared as not-yet-emitted but no longer admitted by the schema, so "
                            "the declaration is stale: " + ", ".join(stale))
+    false_claims = [ev for ev in NOT_YET_EMITTED
+                    if any(_emits(src, ev) for src in sources.values())]
+    if false_claims:
+        return _fail(name,
+                     "declared as not-yet-emitted and actually emitted, which misleads whoever "
+                     "reads the list: " + ", ".join(false_claims)
+                     + ". Remove the entry; the event has a writer.")
+    pending = len(NOT_YET_EMITTED)
+    if not pending:
+        return _ok(name,
+                   f"every one of the {len(types)} AuthAuditLog event types the schema admits is "
+                   "emitted by a real code path, so the audit log offers no filter over events "
+                   "that never arrive")
     return _ok(name,
-               f"{len(types) - len(NOT_YET_EMITTED)} of {len(types)} AuthAuditLog event types are "
-               f"emitted by a real code path, and the {len(NOT_YET_EMITTED)} that are not are "
-               "declared with the reason rather than left as filters over events that never "
-               "arrive")
+               f"{len(types) - pending} of {len(types)} AuthAuditLog event types are emitted by a "
+               f"real code path, and the {pending} that "
+               + ("is not is" if pending == 1 else "are not are")
+               + " declared with the reason rather than left as a filter over events that never "
+                 "arrive")
 
 
 def check_conformance_asks_the_relying_party_question(root: pathlib.Path) -> list[Finding]:
