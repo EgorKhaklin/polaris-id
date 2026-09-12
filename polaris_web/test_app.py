@@ -1975,7 +1975,12 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                     %s,
                     %s,
                     %s,
-                    CURRENT_TIMESTAMP - INTERVAL '2 hours'
+                    -- v9.435: honour cooldown_past. It was a parameter this fixture
+                    -- accepted and ignored, hardcoding an expired cool-down, so a caller
+                    -- asking for an UNEXPIRED one silently got the opposite and any test
+                    -- built on it was not testing what it said.
+                    CURRENT_TIMESTAMP + (CASE WHEN %s THEN INTERVAL '-2 hours'
+                                              ELSE INTERVAL '46 hours' END)
                 )
                 RETURNING recovery_id
             """, (
@@ -1985,6 +1990,7 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                 'a' * 64 if sworn else None,
                 3 if witness else None,
                 self._user_id(witness_user) if witness else None,
+                bool(cooldown_past),
             ))
             rid = cur.fetchone()['recovery_id']
             conn.commit()
@@ -2005,6 +2011,98 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                 f'https://crl.idtoken.gov/test/{recovery_id}',
             ))
             conn.commit()
+
+
+    # ------------------------------------------------------------------
+    # v9.435: the refusals uc9_complete_recovery makes.
+    #
+    # v9.434 deleted each of them in turn and the whole suite stayed green. This
+    # procedure is where the compulsion-resistance discipline actually lives: four
+    # eyes, a cool-down that must elapse, three out-of-band channels, and a witness
+    # who is neither of the other two. A trigger cannot see any of that -- it is one
+    # row at a time -- so the RAISE is the only thing standing there, and until now
+    # nothing noticed if it went.
+    # ------------------------------------------------------------------
+
+    def _call_complete(self, recovery_id, deciding_user='admin', decision='APPROVED',
+                       reason='test reason', token=True, biometric='IRIS',
+                       liveness='MULTI_MODAL', deciding_user_id=None):
+        """uc9_complete_recovery with each argument steerable, so one test can remove
+        exactly one precondition and leave the others intact."""
+        uid = deciding_user_id if deciding_user_id is not None else self._user_id(deciding_user)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (recovery_id, uid, decision, reason,
+                 ('TKN-R9-%s' % recovery_id) if token else None,
+                 ('SN-R9-%s' % recovery_id) if token else None,
+                 1 if token else None,
+                 biometric, liveness,
+                 'https://crl.idtoken.gov/test/%s' % recovery_id))
+            conn.commit()
+
+    def test_an_unknown_recovery_is_refused(self):
+        with self.assertRaises(psycopg2.Error) as c:
+            self._call_complete(9_000_001)
+        self.assertIn('does not exist', str(c.exception))
+
+    def test_the_approver_may_not_be_the_requester(self):
+        """Four eyes. One person who can both ask for a replacement credential and
+        grant it is one person who can be compelled."""
+        ind = self._make_individual('UC9 Four Eyes')
+        rid = self._make_pending_with_channels(ind, requesting_user='admin')
+        with self.assertRaises(psycopg2.Error) as c:
+            self._call_complete(rid, deciding_user='admin')
+        self.assertIn('must differ from requester', str(c.exception))
+
+    def test_a_decision_must_be_approved_or_rejected(self):
+        ind = self._make_individual('UC9 Decision')
+        rid = self._make_pending_with_channels(ind)
+        with self.assertRaises(psycopg2.Error) as c:
+            self._call_complete(rid, decision='MAYBE')
+        self.assertIn('APPROVED or REJECTED', str(c.exception))
+
+    def test_the_cooldown_must_have_elapsed(self):
+        """The wait is the point: it is the window in which a coerced request can be
+        noticed and withdrawn."""
+        ind = self._make_individual('UC9 Cooldown')
+        rid = self._make_pending_with_channels(ind, cooldown_past=False)
+        with self.assertRaises(psycopg2.Error) as c:
+            self._call_complete(rid)
+        self.assertIn('Cool-down has not expired', str(c.exception))
+
+    def test_approval_requires_all_three_out_of_band_channels(self):
+        """Each channel alone is forgeable under pressure; the point is that three
+        independent ones are not. One test per missing channel, so removing the check
+        for any single one is caught."""
+        for missing in ('biometric', 'sworn', 'witness'):
+            with self.subTest(missing=missing):
+                ind = self._make_individual('UC9 Channels %s' % missing)
+                rid = self._make_pending_with_channels(
+                    ind, biometric=(missing != 'biometric'),
+                    sworn=(missing != 'sworn'), witness=(missing != 'witness'))
+                with self.assertRaises(psycopg2.Error) as c:
+                    self._call_complete(rid)
+                self.assertIn('three OOB channels', str(c.exception))
+
+    def test_the_witness_must_be_a_third_person(self):
+        """A witness who is the approver or the requester is not a witness."""
+        ind = self._make_individual('UC9 Witness')
+        rid = self._make_pending_with_channels(ind, requesting_user='operator',
+                                               witness_user='admin')
+        with self.assertRaises(psycopg2.Error) as c:
+            self._call_complete(rid, deciding_user='admin')
+        self.assertIn('must differ from', str(c.exception))
+
+    def test_approval_requires_the_new_token_parameters(self):
+        """An APPROVED recovery that issues nothing would close the request and leave
+        the person without a credential, which is the failure the whole flow exists to
+        repair."""
+        ind = self._make_individual('UC9 NoToken')
+        rid = self._make_pending_with_channels(ind)
+        with self.assertRaises(psycopg2.Error) as c:
+            self._call_complete(rid, token=False)
+        self.assertIn('new token parameters', str(c.exception))
 
     # ------------------------------------------------------------------
     # Page-render tests
@@ -8476,6 +8574,52 @@ class ErasureTests(PolarisTestCase):
             return admin, nonadmin, ind
         finally:
             conn.close()
+
+
+    # ------------------------------------------------------------------
+    # v9.435: the refusals uc_pseudonymize_individual makes.
+    #
+    # v9.434 deleted each of them and the suite stayed green. Erasure is irreversible
+    # by construction -- the prior name is gone, not archived -- so the preconditions
+    # are the only place a mistake can still be caught. An erasure aimed at an id that
+    # does not exist, or attributed to an actor who does not exist, or recorded with no
+    # reason, is an erasure whose record cannot answer the one question an assessor
+    # will ask afterwards.
+    # ------------------------------------------------------------------
+
+    def _erase(self, individual_id, actor_id, reason):
+        conn = psycopg2.connect(**DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("CALL uc_pseudonymize_individual(%s, %s, %s)",
+                            (individual_id, actor_id, reason))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_erasing_an_individual_that_does_not_exist_is_refused(self):
+        admin, _, _ = self._ids()
+        with self.assertRaises(psycopg2.Error) as c:
+            self._erase(9_000_002, admin, 'GDPR Art 17 request')
+        self.assertIn('does not exist', str(c.exception))
+
+    def test_an_erasure_by_an_actor_that_does_not_exist_is_refused(self):
+        """The record names who erased. An actor id nobody holds makes that name a
+        number, and the act unattributable."""
+        _, _, ind = self._ids()
+        with self.assertRaises(psycopg2.Error) as c:
+            self._erase(ind, 9_000_003, 'GDPR Art 17 request')
+        self.assertIn('does not exist', str(c.exception))
+
+    def test_an_erasure_without_a_reason_is_refused(self):
+        """Irreversible and unexplained is the combination the reason floor exists to
+        prevent. Empty and whitespace both, because a space is not a reason."""
+        admin, _, ind = self._ids()
+        for reason in ('', '   '):
+            with self.subTest(reason=repr(reason)):
+                with self.assertRaises(psycopg2.Error) as c:
+                    self._erase(ind, admin, reason)
+                self.assertIn('reason is required', str(c.exception))
 
     def test_pseudonymize_replaces_name_and_records_event(self):
         admin, _, ind = self._ids()

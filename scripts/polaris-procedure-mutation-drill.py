@@ -101,9 +101,12 @@ CONTROL = ("uc8_revoke_token", "Co-signer must differ from actor")
 #: uc_archive_purge against a retention window, uc10_* against an attestation chain.
 #: A trigger cannot see any of that, so the refusal is the only thing standing there.
 #:
-#: Covering them is the next arc, the way v9.412 covered the fourteen triggers v9.411
-#: found. Until then the list is exact and checked both ways, so it cannot grow and
-#: cannot quietly stop describing the procedures.
+#: v9.435 covered the first ten: the seven uc9_complete_recovery refusals, which are
+#: the four-eyes, cool-down, three-channel and third-person-witness discipline, and
+#: the three on uc_pseudonymize_individual, which is irreversible by construction so
+#: its preconditions are the only place a mistake can still be caught. Seventeen
+#: remain. The list is exact and checked both ways, so it cannot grow and cannot
+#: quietly stop describing the procedures.
 SURVIVORS_EXPECTED: dict[str, str] = {
     "close_anchor_batch#2":
         "Pending anchors (%) exceeds batch-size cap of 10000; close in multiple ba",
@@ -129,20 +132,6 @@ SURVIVORS_EXPECTED: dict[str, str] = {
         "Epoch size (%) exceeds cap of 10000; split into multiple epochs",
     "uc8_revoke_token#0":
         "Token % does not exist",
-    "uc9_complete_recovery#1":
-        "Recovery request % does not exist",
-    "uc9_complete_recovery#3":
-        "Approver (user %) must differ from requester (user %)",
-    "uc9_complete_recovery#4":
-        "Decision must be APPROVED or REJECTED, got %",
-    "uc9_complete_recovery#5":
-        "Cool-down has not expired (until %); cannot approve yet",
-    "uc9_complete_recovery#6":
-        "APPROVED requires all three OOB channels (biometric, sworn statement, wit",
-    "uc9_complete_recovery#7":
-        "Witness co-signer (user %) must differ from both the approver (%) and the",
-    "uc9_complete_recovery#8":
-        "APPROVED recovery requires new token parameters ",
     "uc_archive_purge#0":
         "uc_archive_purge: cutoff_timestamp (%) is in the future; refusing.",
     "uc_archive_purge#3":
@@ -153,12 +142,6 @@ SURVIVORS_EXPECTED: dict[str, str] = {
         "uc_archive_purge: actor_user_id (%) does not exist.",
     "uc_archive_purge#8":
         "uc_archive_purge: actor_user_id (%) has role %, must be admin.",
-    "uc_pseudonymize_individual#0":
-        "uc_pseudonymize_individual: individual_id (%) does not exist.",
-    "uc_pseudonymize_individual#1":
-        "uc_pseudonymize_individual: actor_user_id (%) does not exist.",
-    "uc_pseudonymize_individual#4":
-        "uc_pseudonymize_individual: a non-empty reason is required.",
 }
 
 

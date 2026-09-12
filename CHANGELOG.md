@@ -5,6 +5,45 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.435 — 2026-09-12 (the four-eyes rule, the cool-down and the three channels, now actually tested)
+
+v9.434 found 27 refusals a stored procedure makes that no test notices. This covers the ten that
+matter most, which are the ten closest to the constitution.
+
+**`uc9_complete_recovery` (7).** This procedure is where the compulsion-resistance discipline
+actually lives: the approver must not be the requester, the cool-down must have elapsed, all
+three out-of-band channels must be present, the witness must be a third person, and an APPROVED
+decision must actually issue a replacement. None of that is visible to a trigger, which sees one
+row at a time, so the `RAISE` is the only thing standing there. Each of the five was deletable
+with the whole suite green.
+
+The three-channel test is one subtest per missing channel rather than one case with all three
+absent, because a single case would pass even if the procedure only checked one of them.
+
+**`uc_pseudonymize_individual` (3).** Erasure is irreversible by construction: the prior name is
+gone, not archived. So its preconditions are the only place a mistake can still be caught, and an
+erasure aimed at an id nobody holds, or attributed to an actor nobody holds, or recorded with no
+reason, produces a record that cannot answer the one question an assessor asks afterwards. The
+reason test covers the empty string and whitespace, because a space is not a reason.
+
+Measured, not asserted: the drill was re-run against both procedures and all their refusals now
+turn something red. 27 survivors down to 17.
+
+### A fixture that lied about what it was testing
+
+`_make_pending_with_channels` accepted a `cooldown_past` parameter and **ignored it**, hardcoding
+`cooldown_expires_at` to two hours in the past. A caller asking for an unexpired cool-down
+silently got an expired one. The new cool-down test failed for exactly that reason and it is why
+the fixture had one caller in five years of the flow existing and no test of the wait itself.
+The parameter is honoured now.
+
+That is the same defect this whole arc keeps finding, one layer down: a thing that reports
+success without having done the work.
+
+**250 invariant checks. 17 procedure refusals still uncovered.**
+
+---
+
 ## v9.434 — 2026-09-12 (27 refusals a stored procedure makes that no test notices)
 
 CHECK constraints have been mutation-tested since v9.407, triggers since v9.413, the ZK
