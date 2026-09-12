@@ -5,6 +5,47 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.436 — 2026-09-12 (I made the longest step in CI longer, and the fix took three tries)
+
+v9.434 put the procedure mutation drill on every push. Watching v9.434's own CI run, the job sat
+on that step at forty minutes, which is the top of the envelope earlier runs occupied. 59
+mutations, each running real test classes, on every push including ones that do not touch a
+procedure. That is a cost I introduced and did not estimate.
+
+The rule v9.428 wrote for the gate applies to the drill itself: run what THIS change needs. A
+push that does not touch `05_procedures.sql` has nothing here to prove, because the suites
+already ran. `--changed` is what CI runs now, and the checkout gets `fetch-depth: 2` so there is
+a commit to compare against.
+
+### It took three attempts, and the first two were wrong in the same direction
+
+**Scraping names out of `git diff`.** Missed an edit inside a procedure body: git's hunk headers
+carry no SQL function context, and a changed line does not repeat the name it belongs to. Tested
+with a real edit to `uc12_record_duress`, it reported nothing had moved.
+
+**Parsing both versions into per-procedure bodies.** Found 3 of 13, because the terminators in
+that file are not uniform, and then reported the WRONG procedure as changed. Both failures are
+the same shape: under-selecting, which silently skips the thing that moved. That is the exact
+failure this drill exists to prevent, so an implementation with it is worse than no scoping at
+all.
+
+**Asking only whether the file moved.** Coarse on purpose. If `05_procedures.sql` or a migration
+changed, run all 59; if not, run none. The cost lands only on a ship that touches the procedures,
+which is rare, and there is no way for it to miss one.
+
+It returns None rather than False when no baseline is reachable, and the drill turns None into a
+refusal: "I could not tell what changed" and "nothing changed" must not look alike. A shallow
+checkout therefore fails loudly instead of passing quietly, which is the same distinction the
+drill makes between an unmeasurable procedure and a covered one.
+
+I also killed a run mid-flight while testing this and it left `uc8_revoke_token` mutated, for the
+second time. The repair printed at the top of the run is what fixed it, in one line, which is why
+it is printed there.
+
+**250 invariant checks. 17 procedure refusals still uncovered.**
+
+---
+
 ## v9.435 — 2026-09-12 (the four-eyes rule, the cool-down and the three channels, now actually tested)
 
 v9.434 found 27 refusals a stored procedure makes that no test notices. This covers the ten that

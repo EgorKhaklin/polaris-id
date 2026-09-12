@@ -76,6 +76,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # v9.436: the procedure drill's --changed mode compares against HEAD~1 and
+          # refuses rather than passing when it cannot reach one, so the job needs one
+          # commit of history.
+          fetch-depth: 2
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v7
@@ -425,7 +430,7 @@ jobs:
       # only the test classes that NAME the procedure under test; the weekly
       # procedure-sweep workflow re-tries every survivor against all of them.
       - name: Procedure mutation drill (delete each refusal, something must notice)
-        run: python scripts/polaris-procedure-mutation-drill.py
+        run: python scripts/polaris-procedure-mutation-drill.py --changed
 
       # A killed drill cannot restore what it mutated. 05_procedures.sql is the
       # canonical source, so reinstalling it leaves the database trustworthy for

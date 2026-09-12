@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v9.415): not production-ready for real identity data.** Every
+**Status (v9.436): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
@@ -56,6 +56,36 @@ exactly like the invariant holding. **And a security claim was inferred rather t
 PQC-POSTURE stated the internal hops' key exchange from base-image OpenSSL versions, and one hop
 had been post-quantum for some time while the document called it classical. It is read off a real
 handshake now.
+
+Four more facts from v9.416 to v9.436, still about the verification layer rather than the system.
+**The published conformance contract asked less than it appeared to.** Three artifact types --
+agent-proof, grant-revocation, holder-proof -- had no case in which the signature was bad, so a
+verifier that never checked theirs conformed; five of the published "valid" vectors had expired
+months earlier and no case noticed, because none asserted freshness. Asking about freshness then
+surfaced two divergences between the shipped reference verifiers: neither SDK bounded a holder
+proof's age, so an integrator following one got no replay protection on presentations, and
+neither could report whether an artifact's issuer was trusted at all. Both are fixed and all
+three verifiers now agree on 118 cases.
+
+**What conformance still does not prove is now stated where an integrator will read it.** 43
+verdict fields are unconstrained by the published cases, and none of them can be closed by
+writing a case: each needs a conforming verifier to compute something it does not. The contract
+constrains what its WEAKEST conforming implementation computes, which is a property of the suite
+worth knowing before relying on it. SECURITY.md says so.
+
+**The stored procedures were the last part of the security boundary with no mutation test.** 59
+refusals across 16 procedures; 27 could be deleted with the whole suite green. They concentrate
+where the invariants are multi-step and a trigger cannot see them: the four-eyes rule, the
+cool-down, the three out-of-band channels and the third-person witness in
+`uc9_complete_recovery`, and the preconditions on an irreversible erasure. Ten are covered;
+**seventeen are not**, and they are declared rather than quietly carried.
+
+**And the measurement instruments were wrong three times in ways that flattered them.** The
+conformance drill counted 22 fields that were not fields and misclassified what fixing the rest
+would take, twice. Of a 45-point fall in its headline number, 18 was work and 27 was correcting
+the instrument. Every intermediate figure had been reported as if it measured the contract. The
+lesson this ledger already carried -- ask whether it would notice, not whether it passes -- turns
+out to apply to the things doing the asking.
 
 None of that changed what the system does. All of it changed what is known about it, which is the
 only thing this ledger is for.

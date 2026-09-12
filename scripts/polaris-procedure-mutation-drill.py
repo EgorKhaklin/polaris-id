@@ -219,6 +219,37 @@ def _install(conn, sql) -> str:
         return str(exc).splitlines()[0]
 
 
+def _procedures_moved() -> bool:
+    """Did this ship touch the procedures at all? None if that cannot be known.
+
+    Deliberately coarse: it answers "did 05_procedures.sql or a migration change", not
+    "which procedure changed". Two finer attempts both under-selected. Scraping names out
+    of `git diff` missed an edit inside a body, because git's hunk headers carry no SQL
+    function context and a changed line does not repeat the name it belongs to. Parsing
+    the two versions into per-procedure bodies found 3 of 13, because the terminators in
+    this file are not uniform, and it then reported the WRONG procedure as changed.
+
+    Under-selecting here silently skips the thing that moved, which is the failure this
+    drill exists to prevent, so the coarse answer is the right one: if the file moved, run
+    all 59. That cost lands only on a ship that touches the procedures, which is rare, and
+    a ship that does not touch them has nothing here to prove because the suites already
+    ran.
+
+    None rather than False when no baseline is reachable -- a shallow checkout, say --
+    because "I could not tell" and "nothing changed" must not look alike.
+    """
+    try:
+        base = subprocess.check_output(["git", "rev-parse", "HEAD~1"], cwd=str(ROOT),
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+        out = subprocess.check_output(
+            ["git", "diff", "--name-only", base, "--",
+             "polaris_sql/05_procedures.sql", "polaris_sql/migrations"],
+            cwd=str(ROOT), text=True, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    return bool(out.strip())
+
+
 MUTATION_MARK = "mutation: this refusal deleted"
 
 
@@ -238,6 +269,8 @@ def main(argv=None) -> int:
     ap.add_argument("--exhaustive", action="store_true",
                     help="also run the application suite for refusals the fast suites miss")
     ap.add_argument("--only", default=None, help="one procedure name, for iterating")
+    ap.add_argument("--changed", action="store_true",
+                    help="only the procedures this ship touched (what CI runs per push)")
     args = ap.parse_args(argv)
 
     env = _env()
@@ -260,6 +293,22 @@ def main(argv=None) -> int:
         print("only %d procedure(s) found; the catalog query has broken and this drill would "
               "be measuring almost nothing" % len(originals), file=sys.stderr)
         return 2
+
+    if args.changed:
+        moved = _procedures_moved()
+        if moved is None:
+            print("--changed cannot tell what this ship touched (no reachable HEAD~1). That is "
+                  "not the same as 'nothing changed', so this is a refusal rather than a clean "
+                  "run: give the checkout fetch-depth: 2, or run without --changed.",
+                  file=sys.stderr)
+            conn.close()
+            return 2
+        if not moved:
+            print("  this ship did not touch polaris_sql/05_procedures.sql or a migration: "
+                  "nothing to mutate")
+            conn.close()
+            return 0
+        print("  the procedures moved in this ship: running all of them")
 
     cases = []
     for name, body in sorted(originals.items()):
