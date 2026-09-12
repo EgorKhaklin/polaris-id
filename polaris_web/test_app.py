@@ -664,7 +664,20 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         r_wrong = self._authorize(cid, tv, sig, challenge, presented_code='9999')
         r_duress = self._authorize(cid, tv, sig, challenge, presented_code='4321')
         self.assertEqual((r_wrong.status_code, r_duress.status_code), (200, 200))
-        self.assertEqual(set(r_wrong.get_json().keys()), set(r_duress.get_json().keys()))
+        jw, jd = r_wrong.get_json(), r_duress.get_json()
+        self.assertEqual(set(jw.keys()), set(jd.keys()))
+        # v9.439: the key SET is the weakest form of "served identically". A coercer
+        # comparing two responses reads the values and the length, so assert those too.
+        # They hold today; asserting them means a change that breaks one fails here
+        # rather than being discovered by someone under duress.
+        self.assertEqual(jw['acr'], jd['acr'],
+                         "the assurance level tells a coercer which code was typed")
+        self.assertEqual(jw['expires_in'], jd['expires_in'])
+        self.assertEqual(len(r_wrong.get_data()), len(r_duress.get_data()),
+                         "a length difference is readable through TLS")
+        self.assertEqual(sorted(r_wrong.headers.keys()), sorted(r_duress.headers.keys()))
+        self.assertEqual(len(jw['code']), len(jd['code']),
+                         "the code's length must not encode which path produced it")
         time.sleep(1.0)   # the duress record is written off the request thread by design
         after = flask_app.query("SELECT count(*) AS n FROM DuressEvent", fetch='one', primary=True)['n']
         self.assertEqual(after, before + 1)
@@ -4271,6 +4284,36 @@ class DuressCodeTests(PolarisTestCase):
             cur.execute("SELECT count(*) AS n FROM VerificationEvent")
             self.assertEqual(cur.fetchone()['n'], verif_before + 1,
                 'Verification path proceeds normally (coercer-visible)')
+
+    def test_a_duress_verification_is_served_identically(self):
+        """The response a coercer watches must not say which code was typed.
+
+        v9.439: the test above proves the silent record is written. It says nothing
+        about what the screen showed, and the screen is what a person standing over
+        the holder can see. Both responses are byte-identical today; asserting it
+        means a change that makes them differ fails here rather than in a room where
+        somebody is being coerced.
+
+        Ids and nonces are masked before comparison: they differ between any two
+        requests and carry nothing about the duress path.
+        """
+        import re as _re
+
+        def post(code):
+            return self._post('/verifications/new', data={
+                'token_id': '2', 'requesting_agency_id': '5', 'context_id': '1',
+                'disclosure_level': 'ZERO_KNOWLEDGE', 'outcome': 'AUTHORIZED',
+                'duress_code': code})
+
+        plain = post('0000')            # not the duress code
+        duress = post('911911')         # the seeded duress code
+        self.assertEqual(plain.status_code, duress.status_code)
+        self.assertEqual(len(plain.get_data()), len(duress.get_data()),
+                         "a length difference is readable through TLS and over a shoulder")
+        mask = lambda r: _re.sub(r'[0-9a-f]{8,}', 'X', r.get_data(as_text=True))
+        self.assertEqual(mask(plain), mask(duress),
+                         "the page differs between a duress entry and an ordinary one")
+        self.assertEqual(sorted(plain.headers.keys()), sorted(duress.headers.keys()))
 
     def test_duress_recording_is_async_by_default_and_durable(self):
         """By default (no POLARIS_DURESS_SYNC) the DuressEvent is written on a

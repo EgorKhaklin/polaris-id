@@ -6555,6 +6555,77 @@ def check_procedure_refusals_are_mutation_tested(root: pathlib.Path) -> list[Fin
                      "weekly")
 
 
+
+# ----------------------------------------------------------------------------
+# v9.439: a duress entry must be indistinguishable in what it SHOWS, not only in
+# what it records.
+#
+# The card's timing is measured by polaris-duress-timing-drill.py and the recording
+# runs off the request thread so the latency does not encode the match. What the
+# suite asserted about the RESPONSE was thinner: one path compared the status code
+# and the set of JSON key names, the other compared event counts and never looked at
+# the page at all. Both responses are byte-identical in practice, so the property
+# held by accident rather than by assertion, and an accident is not a guarantee to a
+# person with someone standing over them.
+# ----------------------------------------------------------------------------
+
+def check_duress_is_indistinguishable(root: pathlib.Path) -> list[Finding]:
+    """Every path that can see a duress credential asserts its response is identical.
+
+    Recording the alarm silently is half of it. The other half is that the thing the
+    coercer can watch -- the status, the body, its length, the headers -- says nothing
+    about which code was typed. A test that compares only the key NAMES of a JSON body
+    would pass while the values differed, and a test that counts rows says nothing
+    about the screen.
+
+    So both duress-carrying paths must compare the response itself: the auth broker,
+    where a token is minted, and the verification form, where a page is rendered.
+    """
+    name = "duress_indistinguishable"
+    tests = _read(root, "polaris_web/test_app.py")
+    if not tests:
+        return _fail(name, "polaris_web/test_app.py could not be read")
+
+    findings: list[Finding] = []
+    for marker, why in (
+        ("test_duress_is_served_identically_and_recorded_silently",
+         "the auth-broker path has no served-identically test"),
+        ("test_a_duress_verification_is_served_identically",
+         "the verification path never compares the page a coercer would see"),
+    ):
+        if marker not in tests:
+            findings.extend(_fail(name, why))
+    if findings:
+        return findings
+
+    # Each of those tests must compare the response, not merely its shape.
+    for marker, needles, why in (
+        ("test_duress_is_served_identically_and_recorded_silently",
+         ("len(r_wrong.get_data())", "acr"),
+         "the auth-broker test compares the key names but not the body length or the "
+         "assurance level, either of which would tell a coercer which code was typed"),
+        ("test_a_duress_verification_is_served_identically",
+         ("len(plain.get_data())", "mask"),
+         "the verification test does not compare the rendered page byte for byte"),
+    ):
+        start = tests.find(marker)
+        body = tests[start:start + 2600]
+        for needle in needles:
+            if needle not in body:
+                findings.extend(_fail(name, why))
+                break
+
+    if "POLARIS_DURESS_SYNC" not in _read(root, "polaris_web/app.py"):
+        findings.extend(_fail(name, "the duress recording is no longer forced off the request "
+                                    "thread by default, so the latency encodes the match"))
+
+    if findings:
+        return findings
+    return _ok(name, "both duress-carrying paths assert the response is identical -- status, "
+                     "body length, rendered page and headers -- not just that the silent record "
+                     "was written; and the recording stays off the request thread")
+
+
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
     """The retention decision is data, floored, append-only, and the purge obeys it.
 
@@ -15778,6 +15849,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drill_plan_is_binding,
     check_conformance_contract_constrains,
     check_procedure_refusals_are_mutation_tested,
+    check_duress_is_indistinguishable,
 ]
 
 

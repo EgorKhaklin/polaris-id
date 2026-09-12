@@ -5,6 +5,37 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.439 — 2026-09-12 (the silent record was tested; the screen was not)
+
+A duress code is what a person enters when someone is standing over them. The system serves the
+credential normally and raises an alarm nobody in the room can see. Two halves: record it
+silently, and show nothing that says which code was typed.
+
+The first half was tested thoroughly. The card's timing is measured by
+`polaris-duress-timing-drill.py`, including the sharper question of whether a card with an
+enrolled duress PIN differs from one without, and the server records off the request thread so
+the latency does not encode the match, with a production guard against the test-only knob that
+would put it back.
+
+The second half was thinner than it looked. The auth-broker test compared the status code and
+the SET OF JSON KEY NAMES; a response whose `acr` said `polaris:zk` on one path and
+`polaris:possession` on the other would have passed it. The verification path counted rows in
+DuressEvent and VerificationEvent and never looked at the page at all.
+
+**Both are identical in fact**, measured rather than assumed: the broker returns 539 bytes either
+way with the same `acr`, the same `expires_in` and the same headers, and the verification form
+renders 13081 bytes either way, byte-identical once ids and nonces are masked. So the property
+held by accident. An accident is not a guarantee to someone with a person standing over them.
+
+Both now assert it: status, body length, values, rendered page and header names.
+`check_duress_is_indistinguishable` requires both paths to compare the response itself rather
+than its shape, and requires the recording to stay off the request thread. Seven discriminations,
+including the one that matters -- a test present but comparing only key names fails the check.
+
+**251 invariant checks.**
+
+---
+
 ## v9.438 — 2026-09-12 (an exception that was about the harness, not about the check)
 
 `polaris-check-mutation-drill.py` deletes each check's named inputs and requires the check to

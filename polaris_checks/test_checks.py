@@ -13350,3 +13350,57 @@ def test_procedure_mutation_check_discriminates(tmp_path):
     # The drill is gone.
     (tmp_path / "scripts" / "polaris-procedure-mutation-drill.py").unlink()
     assert level("is missing") == "FAIL", "must FAIL when the drill does not exist"
+
+
+def test_duress_indistinguishable_check_discriminates(tmp_path):
+    """A duress test that compares only the shape of a response must fail."""
+    BROKER = ("def test_duress_is_served_identically_and_recorded_silently(self):\n"
+              "    self.assertEqual(jw['acr'], jd['acr'])\n"
+              "    self.assertEqual(len(r_wrong.get_data()), len(r_duress.get_data()))\n")
+    VERIFY = ("def test_a_duress_verification_is_served_identically(self):\n"
+              "    mask = lambda r: sub(r.get_data(as_text=True))\n"
+              "    self.assertEqual(len(plain.get_data()), len(duress.get_data()))\n")
+    APP = "if os.environ.get('POLARIS_DURESS_SYNC') == '1':\n    fail()\n"
+
+    def write(tests=None, app=None):
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web" / "test_app.py").write_text(
+            (BROKER + VERIFY) if tests is None else tests)
+        (tmp_path / "polaris_web" / "app.py").write_text(APP if app is None else app)
+
+    def level(msg_contains=None):
+        out = checks.check_duress_is_indistinguishable(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS when both paths compare the response itself"
+
+    write(tests=VERIFY)
+    assert level("auth-broker path has no served-identically test") == "FAIL", \
+        "must FAIL when the broker path has no identity test at all"
+
+    write(tests=BROKER)
+    assert level("never compares the page") == "FAIL", \
+        "must FAIL when the verification path has none"
+
+    # Present but comparing only the shape: the failure this check exists for.
+    write(tests=BROKER.replace("    self.assertEqual(len(r_wrong.get_data()), "
+                               "len(r_duress.get_data()))\n", "") + VERIFY)
+    assert level("body length or the assurance level") == "FAIL", \
+        "must FAIL when the broker test compares key names but not the body"
+
+    write(tests=BROKER + VERIFY.replace("    self.assertEqual(len(plain.get_data()), "
+                                        "len(duress.get_data()))\n", ""))
+    assert level("byte for byte") == "FAIL", \
+        "must FAIL when the verification test does not compare the page"
+
+    # The recording moves back onto the request thread.
+    write(app="nothing here\n")
+    assert level("off the request thread") == "FAIL", \
+        "must FAIL when the latency can encode the match again"
+
+    (tmp_path / "polaris_web" / "test_app.py").unlink()
+    assert level() == "FAIL", "must FAIL when the suite is absent"
