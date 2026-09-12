@@ -220,6 +220,7 @@ def _register_rp_and_bearer(ta, client_id, secret):
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM RelyingParty WHERE client_id = %s", (client_id,))
+            cur.execute("SELECT set_config('polaris.justification', 'harness fixture: a relying party for this run only', true)")
             cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name) "
                         "VALUES (%s, %s, %s)",
                         (client_id, ta.flask_app.security.hash_password(secret), "Attack RP"))

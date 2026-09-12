@@ -1182,6 +1182,26 @@ increment. The percentage bound on revocation velocity
 (`trg_enforce_revocation_velocity`) still applies; whichever trips first
 refuses. An uncapped agency pays one primary-key lookup per write.
 
+**Relying parties.** Registering an outside relying party grants it standing to ask
+this system about people, so `polaris-id rp-register` requires a `--justification` and
+records it. Changing its policy afterwards is recorded too:
+
+```bash
+polaris-id rp-register "First National Bank" --require-zk \
+    --justification "contracted verification volume, ~300/h, step-up required by contract"
+polaris-id rp-policy <client_id> --no-require-zk \
+    --justification "the bank's proof integration slips to Q4; step-up returns then"
+polaris-id rp-history <client_id>              # every decision, and who made it
+polaris-id rp-history --weakened-only          # only the bars that were lowered
+```
+
+A change that REDUCES what the party must satisfy (the zero-knowledge step-up turned
+off, a required enrollment dropped, the context restriction lifted, the scope widened,
+the credential re-enabled, the rate limit raised) is refused by the DATABASE without a
+20-character justification, so it is refused through psql as well. A tightening needs
+none. The record is written by `trg_relying_party_audited` rather than by this CLI, so
+a change made any other way appears in `rp-history` on the same terms.
+
 **Velocity alerts.** `PolarisIssuanceVelocity`, `PolarisRevocationVelocity`,
 and `PolarisVerificationVelocity` fire when one agency's last hour exceeds an
 absolute floor (20 / 5 / 200) AND four times that agency's own trailing 7-day

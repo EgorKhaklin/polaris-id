@@ -1360,6 +1360,15 @@ _PROOFING = ("INSERT INTO EnrollmentProofing (individual_id, recorded_by_agency_
 _HEX64 = "repeat('a', 64)"
 
 APPEND_ONLY_FIXTURES = {
+    # v9.425: RelyingPartyEvent has no INSERT of its own -- trg_relying_party_audited
+    # is the only writer. So the fixture makes the DECISION and lets the trigger write
+    # the row, which is also the only way a caller could ever produce one.
+    'relyingpartyevent': ('event_id',
+        "SELECT set_config('polaris.justification', "
+        "'append-only fixture: a party registered to attack its event row', true); "
+        "INSERT INTO RelyingParty (client_id, client_secret_hash, org_name) "
+        "VALUES ('rp_append_only_probe_01', repeat('c', 64), 'Append Only Probe'); "
+        "SELECT max(event_id) AS event_id FROM RelyingPartyEvent"),
     'anchorbatch': ('batch_id', None),
     'auditaccesslog': ('access_id',
         "INSERT INTO AuditAccessLog (accessed_table) VALUES ('VerificationEvent') RETURNING access_id"),
@@ -1507,6 +1516,228 @@ class TestEveryAppendOnlyTableRefusesEdits(_CheckBase):
 # the enrollment code's one-way door, which is append-only in one direction only
 # and so does not belong in the table-driven class.
 # ============================================================================
+
+class TestRelyingPartyDecisionsAreRecorded(_CheckBase):
+    """A decision about an outside relying party is recorded, and a weakening says why.
+
+    A relying party is an organisation with standing to ask this system about people.
+    Before v9.425, registering one, turning off the zero-knowledge step-up its holders
+    had to satisfy, and disabling or re-enabling it all wrote nothing anywhere: verified
+    by running them against a loaded database and watching every audit table stay at the
+    same row count.
+
+    The writer is trg_relying_party_audited, not the CLI, so these tests attack the
+    database directly. That is the point of the shape: a change made in psql is recorded
+    on the same terms as one made through the tool.
+    """
+
+    WHY = 'a stated reason long enough to satisfy the floor'
+
+    def setUp(self):
+        super().setUp()
+        self.cur = self.conn.cursor()
+        self.addCleanup(self.cur.close)
+
+    def _reason(self, why=None):
+        self.cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                         (why if why is not None else self.WHY,))
+
+    def _actor(self, who='probe-operator'):
+        self.cur.execute("SELECT set_config('polaris.actor', %s, true)", (who,))
+
+    def _register(self, cid='rp_recorded_probe_00001', **kw):
+        cols = dict(require_zk=True, required_enrollment='ENROLLED', enabled=True,
+                    rate_limit_per_min=120, scope='verify')
+        cols.update(kw)
+        names = ", ".join(cols)
+        self.cur.execute(
+            f"INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, {names}) "
+            f"VALUES (%s, repeat('a', 64), 'Recorded Probe', "
+            + ", ".join(["%s"] * len(cols)) + ") RETURNING rp_id",
+            (cid,) + tuple(cols.values()))
+        return self.cur.fetchone()["rp_id"]
+
+    def _events(self, rp_id):
+        self.cur.execute("SELECT event_type, field, old_value, new_value, weakened, actor, "
+                         "db_role, justification FROM RelyingPartyEvent "
+                         " WHERE rp_id = %s ORDER BY event_id", (rp_id,))
+        return self.cur.fetchall()
+
+    # -- registration ------------------------------------------------------
+
+    def test_registering_a_party_is_recorded(self):
+        self._reason(); self._actor()
+        rp_id = self._register()
+        events = self._events(rp_id)
+        self.assertEqual(len(events), 1, "registration wrote no event")
+        e = events[0]
+        self.assertEqual(e["event_type"], "REGISTERED")
+        self.assertTrue(e["weakened"], "granting standing where there was none is a weakening")
+        self.assertEqual(e["actor"], "probe-operator")
+        self.assertIn(self.WHY, e["justification"])
+        self.assertIn("require_zk=t", e["new_value"],
+                      "the event must record the policy the party was granted")
+
+    def test_registering_a_party_with_no_reason_is_refused(self):
+        """The rule is in the database, so there is no door past it."""
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self._register(cid='rp_no_reason_probe_0001')
+
+    def test_a_reason_too_short_to_be_one_is_refused(self):
+        self._reason('too short')
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self._register(cid='rp_short_reason_probe01')
+
+    # -- weakening ---------------------------------------------------------
+
+    def test_turning_off_the_step_up_is_recorded_as_a_weakening(self):
+        """require_zk TRUE -> FALSE drops the holder from ACR zk to ACR possession."""
+        self._reason(); self._actor()
+        rp_id = self._register()
+        self._reason('the integration window slipped so the step-up comes later')
+        self.cur.execute("UPDATE RelyingParty SET require_zk = FALSE WHERE rp_id = %s", (rp_id,))
+        e = self._events(rp_id)[-1]
+        self.assertEqual((e["event_type"], e["field"]), ("POLICY_CHANGED", "require_zk"))
+        self.assertEqual((e["old_value"], e["new_value"]), ("true", "false"))
+        self.assertTrue(e["weakened"])
+        self.assertIn('integration window', e["justification"])
+
+    def test_every_weakening_is_refused_without_a_reason(self):
+        """One subtest per field the predicate calls a weakening, so a field added to
+        _rp_weakens without a matching refusal shows up here rather than in a review."""
+        self._reason(); self._actor()
+        rp_id = self._register(required_context_id=1)
+        self.cur.execute("SAVEPOINT registered")
+        for sql in ("require_zk = FALSE",
+                    "required_enrollment = NULL",
+                    "required_context_id = NULL",
+                    "scope = 'verify authenticate'",
+                    "rate_limit_per_min = 5000"):
+            with self.subTest(change=sql):
+                self._reason('')
+                with self.assertRaises(pg_errors.InsufficientPrivilege,
+                                       msg=f"{sql} was accepted with no stated reason"):
+                    self.cur.execute(f"UPDATE RelyingParty SET {sql} WHERE rp_id = %s", (rp_id,))
+                self.cur.execute("ROLLBACK TO SAVEPOINT registered")
+
+    def test_re_enabling_a_disabled_party_needs_a_reason(self):
+        """Disabling is a restriction and needs none; re-enabling grants standing back."""
+        self._reason(); self._actor()
+        rp_id = self._register()
+        self._reason('')
+        self.cur.execute("UPDATE RelyingParty SET enabled = FALSE WHERE rp_id = %s", (rp_id,))
+        self.assertEqual(self._events(rp_id)[-1]["event_type"], "DISABLED")
+        self.assertFalse(self._events(rp_id)[-1]["weakened"])
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE RelyingParty SET enabled = TRUE WHERE rp_id = %s", (rp_id,))
+
+    def test_strengthening_needs_no_reason(self):
+        """The rule bounds one direction. Demanding a reason to tighten a policy would
+        make the safe change the expensive one."""
+        self._reason(); self._actor()
+        rp_id = self._register(require_zk=False, required_enrollment=None)
+        self._reason('')
+        self.cur.execute("UPDATE RelyingParty SET require_zk = TRUE, "
+                         "required_enrollment = 'ENROLLED' WHERE rp_id = %s", (rp_id,))
+        weakened = [e["weakened"] for e in self._events(rp_id)[1:]]
+        self.assertTrue(weakened and not any(weakened),
+                        "a tightening was recorded as a weakening")
+
+    def test_one_statement_marks_only_the_field_that_weakened(self):
+        """A mixed change must not tar its tightening half."""
+        self._reason(); self._actor()
+        rp_id = self._register()
+        self._reason('the step-up comes later; the rate comes down to compensate')
+        self.cur.execute("UPDATE RelyingParty SET require_zk = FALSE, rate_limit_per_min = 10 "
+                         " WHERE rp_id = %s", (rp_id,))
+        by_field = {e["field"]: e["weakened"] for e in self._events(rp_id) if e["field"]}
+        self.assertEqual(by_field.get("require_zk"), True)
+        self.assertEqual(by_field.get("rate_limit_per_min"), False)
+
+    # -- the record itself -------------------------------------------------
+
+    def test_a_change_made_outside_the_cli_is_recorded_the_same(self):
+        """The trigger is the writer, so there is no unrecorded path. This whole class
+        is that test; this one names it."""
+        self._reason(); self._actor(who='')
+        rp_id = self._register()
+        e = self._events(rp_id)[0]
+        self.assertIsNone(e["actor"], "an undeclared actor must be absent, not invented")
+        self.assertTrue(e["db_role"], "db_role must always name the role that acted")
+
+    def test_the_record_cannot_be_edited_or_deleted(self):
+        self._reason(); self._actor()
+        rp_id = self._register()
+        self.cur.execute("SAVEPOINT recorded")
+        for sql in ("UPDATE RelyingPartyEvent SET weakened = FALSE WHERE rp_id = %s",
+                    "UPDATE RelyingPartyEvent SET justification = 'rewritten' WHERE rp_id = %s",
+                    "DELETE FROM RelyingPartyEvent WHERE rp_id = %s"):
+            with self.subTest(sql=sql.split()[0] + ' ' + sql.split()[3]):
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    self.cur.execute(sql, (rp_id,))
+                self.cur.execute("ROLLBACK TO SAVEPOINT recorded")
+
+    def test_the_record_outlives_the_party(self):
+        """A contract ends and the party row goes; what was decided about it stays.
+        A restrictive foreign key would forbid the delete and a cascading one would
+        erase the record, so RelyingPartyEvent deliberately has neither."""
+        self._reason(); self._actor()
+        rp_id = self._register()
+        self.cur.execute("DELETE FROM RelyingParty WHERE rp_id = %s", (rp_id,))
+        self.assertEqual(len(self._events(rp_id)), 1,
+                         "the record went with the party it was about")
+
+    def test_the_client_id_cannot_be_repointed(self):
+        """Editing client_id would silently re-attribute every event row above it."""
+        self._reason(); self._actor()
+        rp_id = self._register()
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE RelyingParty SET client_id = 'rp_repointed_probe_001' "
+                             " WHERE rp_id = %s", (rp_id,))
+
+    def test_last_used_at_is_not_recorded(self):
+        """The app writes it on every API call. Recording it would bury the five rows a
+        year that are decisions under a million that are traffic."""
+        self._reason(); self._actor()
+        rp_id = self._register()
+        before = len(self._events(rp_id))
+        self.cur.execute("UPDATE RelyingParty SET last_used_at = now() WHERE rp_id = %s", (rp_id,))
+        self.assertEqual(len(self._events(rp_id)), before)
+
+    def test_a_secret_rotation_is_recorded_without_the_secret(self):
+        self._reason(); self._actor()
+        rp_id = self._register()
+        self.cur.execute("UPDATE RelyingParty SET client_secret_hash = repeat('b', 64) "
+                         " WHERE rp_id = %s", (rp_id,))
+        e = self._events(rp_id)[-1]
+        self.assertEqual(e["event_type"], "SECRET_ROTATED")
+        self.assertFalse(e["weakened"])
+        self.assertEqual((e["old_value"], e["new_value"]), ("(redacted)", "(redacted)"))
+        self.assertNotIn('a' * 64, str(e), "the old hash reached the record")
+
+    def test_the_predicate_classifies_every_policy_column(self):
+        """_rp_weakens returns NULL for a field it does not know, and a NULL would make
+        the justification gate pass silently. Every column that is not plainly
+        bookkeeping must therefore get a TRUE or FALSE answer from it."""
+        self.cur.execute("""
+            SELECT column_name FROM information_schema.columns
+             WHERE table_name = 'relyingparty'
+               AND column_name NOT IN ('rp_id', 'client_id', 'created_at', 'last_used_at')
+        """)
+        columns = [r["column_name"] for r in self.cur.fetchall()]
+        self.assertGreaterEqual(len(columns), 7, "the column query found almost nothing")
+        for column in columns:
+            with self.subTest(column=column):
+                self.cur.execute(
+                    "SELECT _rp_weakens(%s, r, r) IS NOT NULL AS classified "
+                    "  FROM RelyingParty r LIMIT 1", (column,))
+                row = self.cur.fetchone()
+                if row is None:
+                    self.skipTest("no relying party in the sample data to ask about")
+                self.assertTrue(row["classified"],
+                                f"_rp_weakens has no rule for {column}, so a change to it "
+                                f"returns NULL and the justification gate lets it through")
+
 
 class TestAgencyQuotaIsAppendOnly(_CheckBase):
     """A quota decision is kept, not edited (v9.424).
@@ -1725,6 +1956,9 @@ UNIQUE_RULE_FIXTURES = {
     'exchangereceiptlog_receipt_hash_key': (
         "INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (repeat('8', 64))", {}),
     'relyingparty_client_id_key': (
+        # v9.425: registering a party is a weakening and the database wants a reason.
+        "SELECT set_config('polaris.justification', "
+        "'test fixture: the uniqueness probe party', true); "
         "INSERT INTO RelyingParty (client_id, client_secret_hash, org_name) "
         "VALUES ('rp_uniqueness_probe_0001', repeat('7', 64), 'Uniqueness Probe')", {}),
     'idx_card_personalization_one_per_token': (

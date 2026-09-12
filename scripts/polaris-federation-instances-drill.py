@@ -707,8 +707,10 @@ def main():
         import security as _sec
         rp_cid, rp_secret = "rp_drill_auth_" + os.urandom(6).hex(), "drill-secret-" + os.urandom(8).hex()
         with _conn(B_DB) as cb, cb.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.justification', 'harness fixture: a relying party for this run only', true)")
             cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min, scope) "
                         "VALUES (%s, %s, %s, TRUE, 120, 'verify authenticate')", (rp_cid, _sec.hash_password(rp_secret), "Drill Bank"))
+            cur.execute("SELECT set_config('polaris.justification', 'harness fixture: a relying party for this run only', true)")
             cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min, scope) "
                         "VALUES (%s, %s, %s, TRUE, 120, 'verify')", (rp_cid + "v", _sec.hash_password(rp_secret), "Verify-only Bank"))
             cb.commit()

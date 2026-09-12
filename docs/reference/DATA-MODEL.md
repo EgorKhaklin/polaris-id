@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **42 tables** in `01_schema.sql` (v9.394), organized
-into six functional groups. A migrated deployment holds **49 tables**: those,
+The Polaris schema is **43 tables** in `01_schema.sql` (v9.425), organized
+into six functional groups. A migrated deployment holds **50 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -495,6 +495,38 @@ a `justification` length floor of 20 characters so any loosening
 is auditable from the row alone. Implements the PDF §9
 *"constitutional limits on issuer discretion"* leg of the
 issuer-trust-concentration triad. See `docs/design/issuer-discretion.md`.
+
+### `RelyingPartyEvent`
+
+Append-only record of every decision about an outside relying party (v9.425):
+`REGISTERED`, `POLICY_CHANGED`, `ENABLED`, `DISABLED`, `RATE_LIMIT_CHANGED`,
+`SECRET_ROTATED`, `RENAMED`, `SCOPE_CHANGED`. One row per changed field, with the
+before and after as text so the row reads without joining back to a table whose
+current value is by definition no longer what it was.
+
+Written by the `trg_relying_party_audited` trigger from the row diff, not by the
+caller: a change made in psql is recorded on the same terms as one made through
+`polaris rp-policy`. `weakened` marks a change that reduced what the party must
+satisfy before it learns something about a person, which is the column an assessor
+filters on (`polaris rp-history --weakened-only`); `_rp_weakens` holds one rule per
+field and is asked both per field, to stamp that column, and per statement, to
+decide whether a justification is required. A weakening with no stated reason of at
+least 20 characters is refused by the database, the same floor `AgencyQuota` has
+held since v9.190; a tightening needs none.
+
+`actor` is whatever the application declared for the transaction and may be absent;
+`db_role` defaults to `session_user` and never is, so no event is anonymous.
+`client_id` is denormalised here and immutable on `RelyingParty`, because editing it
+would silently re-attribute every event recorded against that credential.
+`last_used_at` is deliberately not recorded: the app writes it on every API call.
+
+Deliberately **not** a foreign key to `RelyingParty`. A contract ends and the party
+row goes; the record of what was decided about it has to outlive it, which a
+restrictive key would forbid and a cascading one would erase. Before v9.425,
+registering a party, turning off its zero-knowledge step-up, and disabling it all
+wrote nothing anywhere. Pinned by `check_relying_party_decisions_cannot_be_silent`
+and `TestRelyingPartyDecisionsAreRecorded`; migration
+`2026-09-11-018-relying-party-events`.
 
 ### `AgencyQuota`
 

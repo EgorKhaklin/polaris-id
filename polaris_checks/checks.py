@@ -5777,6 +5777,9 @@ BESPOKE_IMMUTABILITY_GUARDS = {
     "enforce_attestation_immutability":       "polaris_web/test_app.py",
     "enforce_epoch_immutability":             "polaris_web/test_app.py",
     "enforce_recovery_request_immutability":  "polaris_web/test_check_constraints.py",
+    # v9.425: the writer also refuses one edit -- repointing client_id would silently
+    # re-attribute every event row recorded against that credential.
+    "record_relying_party_change":            "polaris_web/test_check_constraints.py",
     "enforce_retention_policy_immutability":  "polaris_web/test_check_constraints.py",
     "enforce_token_signature_immutability":   "polaris_web/test_app.py",
     "enrollment_code_one_way_door":           "polaris_web/test_check_constraints.py",
@@ -5927,6 +5930,134 @@ def check_immutability_guards_are_derived_from_the_schema(root: pathlib.Path) ->
                       "operation they refuse"
                       % (len(guards), len(guards) - len(BESPOKE_IMMUTABILITY_GUARDS),
                          len(BESPOKE_IMMUTABILITY_GUARDS)))
+
+
+
+# ----------------------------------------------------------------------------
+# v9.425: a decision about an outside relying party cannot be silent.
+#
+# A relying party is an organisation with standing to ask this system about people.
+# Registering one, turning off the zero-knowledge step-up its holders must satisfy,
+# and disabling or re-enabling it all used to write nothing anywhere; verified by
+# running them and watching every audit table stay at the same row count.
+#
+# trg_relying_party_audited now records each of those from the row diff, and the
+# database refuses a change that WEAKENS the policy without a stated reason. Both
+# depend on a per-column rule, and a rule written per column decays the moment a
+# column is added: the new field would change silently, or change with no reason
+# required, and every test above would still pass. So the coverage is derived from
+# the schema rather than listed.
+# ----------------------------------------------------------------------------
+
+#: Columns of RelyingParty that are bookkeeping rather than a decision: the surrogate
+#: key, the credential's own identity, when the row appeared, and the last-call
+#: timestamp the application writes on every request. Everything else governs what the
+#: party may learn or how much it may ask, so the writer and the weakening predicate
+#: must both have a rule for it.
+_RP_BOOKKEEPING = ("rp_id", "client_id", "created_at", "last_used_at")
+
+
+def check_relying_party_decisions_cannot_be_silent(root: pathlib.Path) -> list[Finding]:
+    """Every RelyingParty column that is a decision is covered by the writer and the
+    weakening rule, derived from the schema rather than from a list (v9.425).
+
+    The two mechanisms this check protects are `record_relying_party_change`, which
+    appends an event row per changed field, and `_rp_weakens`, which decides whether a
+    change needs a stated reason. Both work per column. Add `max_queries_per_day` to
+    RelyingParty and, without this check, it would change with no event and no reason
+    demanded, while the suite stayed green: nothing in it knows the column exists.
+
+    So the column list comes from `01_schema.sql`. Every column that is not plainly
+    bookkeeping must appear in the writer and in the predicate, the predicate's fallback
+    must be NULL rather than FALSE (an unclassified field must fail loudly, not default
+    to harmless), and the event table must be append-only and written only by the
+    trigger, since an application path that could insert its own event rows could also
+    decline to.
+    """
+    name = "relying_party_decisions"
+    findings: list[Finding] = []
+
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    if not schema or not triggers:
+        return _fail(name, "01_schema.sql or 06_triggers.sql could not be read")
+
+    m = re.search(r"CREATE TABLE RelyingParty \((.*?)\n\);", schema, re.S)
+    if not m:
+        return _fail(name, "CREATE TABLE RelyingParty not found in 01_schema.sql")
+    columns = []
+    for line in m.group(1).splitlines():
+        cm = re.match(r"\s{4}(\w+)\s+(?:VARCHAR|INTEGER|BOOLEAN|TIMESTAMP|SERIAL|TEXT|DATE)",
+                      line)
+        if cm:
+            columns.append(cm.group(1))
+    decisions = [c for c in columns if c not in _RP_BOOKKEEPING]
+    if len(decisions) < 6:
+        return _fail(name, f"only {len(decisions)} decision column(s) parsed out of "
+                           f"{len(columns)} on RelyingParty; the parser has broken and this "
+                           f"check is passing by finding nothing")
+
+    writer = re.search(r"CREATE OR REPLACE FUNCTION record_relying_party_change\(\)(.*?)\n\$\$;",
+                       triggers, re.S)
+    predicate = re.search(r"CREATE OR REPLACE FUNCTION _rp_weakens\((.*?)\n\$\$;",
+                          triggers, re.S)
+    if not writer or not predicate:
+        return _fail(name, "record_relying_party_change or _rp_weakens is not defined in "
+                           "06_triggers.sql: the record has no writer or the weakening rule "
+                           "has no home")
+    writer_body, predicate_body = writer.group(1), predicate.group(1)
+
+    for column in decisions:
+        if not re.search(r"\bNEW\.%s\b" % column, writer_body):
+            findings.extend(_fail(name, f"RelyingParty.{column} is a decision the writer never "
+                                        f"looks at: a change to it would be recorded nowhere"))
+        if not re.search(r"'%s'" % column, predicate_body):
+            findings.extend(_fail(name, f"_rp_weakens has no rule for RelyingParty.{column}, so "
+                                        f"a change to it is neither a weakening nor not one and "
+                                        f"the justification gate lets it through"))
+
+    # An unclassified field must make the predicate return NULL. A FALSE fallback would
+    # turn every future column into a silent one, which is the failure above with the
+    # alarm disconnected.
+    if not re.search(r"ELSE\s+NULL", predicate_body, re.I):
+        findings.extend(_fail(name, "_rp_weakens falls back to something other than NULL, so a "
+                                    "column nobody classified would count as harmless"))
+
+    # The gate itself.
+    if not re.search(r"_rp_weakens\(\s*NULL", writer_body):
+        findings.extend(_fail(name, "the writer never asks _rp_weakens about the statement as a "
+                                    "whole, so nothing requires a reason for a weakening"))
+    if not re.search(r"length\(trim\(v_why\)\)\s*<\s*20", writer_body):
+        findings.extend(_fail(name, "the writer does not hold a 20-character floor on the stated "
+                                    "reason, so an empty one would satisfy it"))
+    if "session_user" not in schema:
+        findings.extend(_fail(name, "RelyingPartyEvent does not default db_role to session_user, "
+                                    "so an event with no declared actor is anonymous"))
+
+    # The trigger must be the only writer: an application path that can insert its own
+    # event rows can also decline to, which is the hole this whole mechanism closes.
+    if not re.search(r"CREATE TRIGGER trg_relying_party_audited\s+AFTER INSERT OR UPDATE ON "
+                     r"RelyingParty", triggers, re.I):
+        findings.extend(_fail(name, "trg_relying_party_audited is not installed AFTER INSERT OR "
+                                    "UPDATE on RelyingParty, so some changes are not recorded"))
+    for rel in ("polaris_web/app.py", "polaris_cli/polaris.py"):
+        body = _read(root, rel)
+        if re.search(r"INSERT\s+INTO\s+RelyingPartyEvent", body, re.I):
+            findings.extend(_fail(name, f"{rel} inserts into RelyingPartyEvent directly; the "
+                                        f"trigger must be the only writer, or a caller that can "
+                                        f"write its own record can omit one"))
+
+    tests = _read(root, "polaris_web/test_check_constraints.py")
+    if "class TestRelyingPartyDecisionsAreRecorded" not in tests:
+        findings.extend(_fail(name, "test_check_constraints.py lacks "
+                                    "TestRelyingPartyDecisionsAreRecorded"))
+
+    if findings:
+        return findings
+    return _ok(name, f"all {len(decisions)} RelyingParty decision columns are covered by the "
+                     f"recording trigger and the weakening rule, both derived from the schema; "
+                     f"a weakening without a stated reason is refused by the database, and the "
+                     f"trigger is the record's only writer")
 
 
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
@@ -15146,6 +15277,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_paper_pdf_is_current,
     check_retention_engine,
     check_immutability_guards_are_derived_from_the_schema,
+    check_relying_party_decisions_cannot_be_silent,
 ]
 
 

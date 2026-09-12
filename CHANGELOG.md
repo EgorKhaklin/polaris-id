@@ -5,6 +5,84 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.425 — 2026-09-11 (a relying party's bar could be lowered with nothing recorded anywhere)
+
+A relying party is an outside organisation with standing to ask this system about people.
+Three decisions about one wrote nothing, anywhere. Verified by running each against a loaded
+database and watching every audit table stay at the same row count:
+
+- **Registering one.** `polaris rp-register "Probe Bank"` printed a client_id and a secret and
+  left no row in AuthAuditLog, AuditAccessLog, AuthorityKeyEvent or DuressEvent.
+- **Weakening one.** `polaris rp-policy <cid> --no-require-zk` is an in-place UPDATE.
+  `require_zk` is what makes `/api/v1/auth/authorize` demand a zero-knowledge step-up; with it
+  off the holder authenticates at `ACR possession` instead of `ACR zk`. Afterwards there was no
+  evidence anywhere that it had ever been on.
+- **Disabling or re-enabling one.** A silent boolean.
+
+`RelyingParty` cannot become append-only the way `AgencyQuota` did yesterday: the row is live
+and the app writes `last_used_at` on every call. So this is the shape the tree already uses for
+a live subject that must still be accountable, `AuthorityKeyEvent` beside `Agency` and
+`audit_token_state_change` writing `TokenLifecycleEvent` from the diff.
+
+- **`RelyingPartyEvent`**, append-only, one row per changed field, with the before and the after
+  as text so it reads without joining back to a table whose current value is by definition no
+  longer what it was.
+- **`trg_relying_party_audited` is the writer, not the caller.** A change made in psql is
+  recorded on the same terms as one made through the CLI, which is the whole reason to put it
+  there. Verified: five changes made directly in psql all appear in the record.
+- **`weakened`** marks a change that reduced what the party must satisfy before it learns
+  something about a person. That is the column an assessor filters on and the reason the table
+  is worth more than a diff log. `rp-history --weakened-only` asks it.
+- **The database refuses a weakening that does not say why**, with the same 20-character floor
+  `quota-set` has held since v9.190. Enforcing it in the CLI alone would have made it a
+  convention the next caller could skip. A tightening needs no reason: making the safe change
+  the expensive one gets the safe change skipped.
+- **`_rp_weakens` is one rule per field in one place**, asked per field to stamp the column and
+  asked with a NULL field to gate the statement. Two copies would drift and the drift would be
+  silent: a row marked weakened that needed no reason, or a reason demanded for a row that says
+  it strengthened. A mixed statement marks only the half that weakened, which is tested.
+- **`client_id` is immutable.** Editing it would silently re-attribute every event recorded
+  against that credential.
+- **`last_used_at` is not recorded.** The app writes it on every API call. Recording it would
+  bury the five rows a year that are decisions under a million that are traffic.
+- **No foreign key to `RelyingParty`, deliberately.** A contract ends and the party row goes; the
+  record of what was decided about it has to outlive it. A restrictive key would forbid the
+  delete and a cascading one would erase the record. `rp-history` shows a removed party as
+  `(no longer registered)` and still reads its history.
+
+Five mutations, five red: the recording trigger not installed, the justification gate removed,
+the event table's append-only guard removed, `_rp_weakens` losing its rule for one column,
+`client_id` made editable. 15 tests in `test_check_constraints` (so the fast trigger drill
+reaches the triggers directly) and 7 in `test_cli` for the operator door.
+
+**`check_relying_party_decisions_cannot_be_silent`** derives the coverage from the schema. Both
+mechanisms work per column, and a per-column rule decays the moment a column is added: a new
+`max_queries_per_day` would change with no event and no reason demanded, and every test above
+would still pass, because nothing in them knows the column exists. So the check reads the column
+list out of `01_schema.sql` and requires each non-bookkeeping column to appear in the writer and
+in the predicate, requires the predicate's fallback to be NULL rather than FALSE so an
+unclassified field fails loudly instead of defaulting to harmless, and requires the trigger to be
+the record's only writer, since a caller that can write its own event row can also decline to.
+Twelve discriminations.
+
+### Yesterday's check earned its keep today
+
+`check_immutability_guards_are_derived_from_the_schema`, added in v9.424, failed on this ship
+before any of its own tests were written, with both of the findings it was built to produce:
+`record_relying_party_change` refuses an edit and was in neither coverage list, and
+`RelyingPartyEvent` carries `reject_audit_modification` and was not in `APPEND_ONLY_FIXTURES`, so
+the table-driven class would never have attacked it. Both are now satisfied rather than
+suppressed. 16 immutability guards, all derived from the schema.
+
+Also fixed, pre-existing: **`main()` discarded the handler's exit code.** `rp-policy` and
+`rp-history` `return 1` where every other command calls `sys.exit`, so
+`polaris rp-policy <unknown-client-id>` printed "no relying party" and exited 0. A script
+checking the status read a failed policy change as applied.
+
+**245 invariant checks. 43 tables.**
+
+---
+
 ## v9.424 — 2026-09-11 (a quota was a setting; it is now a decision that survives being changed)
 
 `AgencyQuota` bounds how much of the population one agency may touch: issuances and revocations

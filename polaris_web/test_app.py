@@ -498,8 +498,17 @@ class AuthBrokerTests(UnauthenticatedTestCase):
     def _rp(self, scope):
         import os
         cid, secret = "rp_test_auth_" + os.urandom(6).hex(), "test-secret-" + os.urandom(8).hex()
-        flask_app.query("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min, scope) "
-                        "VALUES (%s, %s, %s, TRUE, 120, %s)", (cid, flask_app.security.hash_password(secret), "Test RP", scope), fetch='none')
+        # v9.425: registering a relying party grants standing to ask about people, which
+        # the database refuses without a stated reason. A fixture states one like any
+        # other caller; there is no test-only door past the rule. The set_config and the
+        # INSERT go in ONE statement because query() draws from a pool: as two calls the
+        # GUC can land on a different connection than the insert and the reason is not
+        # there when the trigger looks for it.
+        flask_app.query("SELECT set_config('polaris.justification', "
+                        "'test fixture: a relying party registered for this test only', true); "
+                        "INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min, scope) "
+                        "VALUES (%s, %s, %s, TRUE, 120, %s)",
+                        (cid, flask_app.security.hash_password(secret), "Test RP", scope), fetch='none')
         return cid, secret
 
     def _credential(self):
@@ -596,10 +605,12 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         flask_app.query("UPDATE RelyingParty SET require_zk = TRUE WHERE client_id = %s", (cid,), fetch='none')
         r = self._authorize(cid, tv, sig, challenge)
         self.assertEqual((r.status_code, r.get_json()['error']), (403, 'insufficient_assurance'))
-        flask_app.query("UPDATE RelyingParty SET require_zk = FALSE, required_enrollment = 'EXEMPT' WHERE client_id = %s", (cid,), fetch='none')
+        flask_app.query("SELECT set_config('polaris.justification', 'test fixture: drops the step-up under test', true); "
+                        "UPDATE RelyingParty SET require_zk = FALSE, required_enrollment = 'EXEMPT' WHERE client_id = %s", (cid,), fetch='none')
         r = self._authorize(cid, tv, sig, challenge, required_enrollment='ENROLLED')
         self.assertEqual((r.status_code, r.get_json()['error']), (403, 'insufficient_enrollment'))
-        flask_app.query("UPDATE RelyingParty SET required_enrollment = NULL, required_context_id = 2 WHERE client_id = %s", (cid,), fetch='none')
+        flask_app.query("SELECT set_config('polaris.justification', 'test fixture: drops the enrollment requirement under test', true); "
+                        "UPDATE RelyingParty SET required_enrollment = NULL, required_context_id = 2 WHERE client_id = %s", (cid,), fetch='none')
         r = self._authorize(cid, tv, sig, challenge)
         self.assertEqual((r.status_code, r.get_json()['error']), (403, 'policy_violation'))
         r = self._authorize(cid, tv, sig, challenge, context_id=2)
@@ -11008,6 +11019,8 @@ class RelyingPartyApiTests(PolarisTestCase):
         client_id = 'rp_test_%s_%s' % (suffix, 'x' * 8)
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM RelyingParty WHERE client_id = %s", (client_id,))
+            cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                        ("test fixture: a relying party registered for this test only",))
             cur.execute("INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, enabled, rate_limit_per_min) "
                         "VALUES (%s, %s, %s, %s, %s)",
                         (client_id, flask_app.security.hash_password(secret), 'Test RP ' + suffix, enabled, rate))

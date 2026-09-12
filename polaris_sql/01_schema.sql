@@ -90,6 +90,7 @@ DROP TABLE IF EXISTS VerificationEvent      CASCADE;
 DROP TABLE IF EXISTS TokenLifecycleEvent    CASCADE;
 DROP TABLE IF EXISTS IdentityToken          CASCADE;
 DROP TABLE IF EXISTS AuthAuditLog           CASCADE;
+DROP TABLE IF EXISTS RelyingPartyEvent      CASCADE;
 DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
 DROP TABLE IF EXISTS HolderKeyEvent CASCADE;
@@ -276,6 +277,63 @@ COMMENT ON TABLE RelyingParty IS
   'secret). No who-verified-whom log is kept; bounding is rate limit + metrics.';
 
 CREATE INDEX idx_relyingparty_client_id ON RelyingParty(client_id);
+
+-- v9.425: every decision about an outside relying party, recorded. Registering one,
+-- turning its zero-knowledge step-up off, disabling it: all three used to write
+-- nothing anywhere, verified by running them. RelyingParty cannot become append-only
+-- the way AgencyQuota did in v9.424 -- the row is live and the app writes last_used_at
+-- on every call -- so this is the AuthorityKeyEvent shape: an append-only event table
+-- beside a live subject, written by trg_relying_party_audited from the row diff rather
+-- than by the caller, so a change made in psql is recorded on the same terms as one
+-- made through the CLI. See migration 2026-09-11-018-relying-party-events.
+CREATE TABLE RelyingPartyEvent (
+    event_id        SERIAL PRIMARY KEY,
+    -- Deliberately NOT a foreign key to RelyingParty. A relying party is an outside
+    -- organisation and a contract ends; the party row gets deleted. The record of what
+    -- was decided about it must outlive it, which a restrictive FK would forbid and a
+    -- cascading one would erase. client_id is denormalised here for the same reason, so
+    -- an event reads on its own after its subject is gone. The only writer is the
+    -- trigger, which takes both from NEW, so there is no integrity to lose.
+    rp_id           INTEGER NOT NULL,
+    client_id       VARCHAR(64) NOT NULL,
+    event_type      VARCHAR(30) NOT NULL,
+    -- What changed, as text, so the row reads on its own without joining back to
+    -- a table whose current value is by definition no longer what it was.
+    field           VARCHAR(40),
+    old_value       TEXT,
+    new_value       TEXT,
+    -- TRUE when the change REDUCED what the relying party must satisfy before it
+    -- learns something about a person: the zero-knowledge step-up turned off, a
+    -- required enrollment status dropped, the context restriction lifted, the
+    -- credential enabled, the rate limit raised. This is the column an assessor
+    -- filters on, and the reason the table is worth more than a diff log.
+    weakened        BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Who. `actor` is what the application declared for this transaction and may
+    -- be absent; `db_role` is session_user and never is, so no event is anonymous.
+    actor           VARCHAR(100),
+    db_role         VARCHAR(100) NOT NULL DEFAULT session_user,
+    justification   VARCHAR(500),
+    recorded_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_rp_event_type CHECK (event_type IN (
+        'REGISTERED', 'POLICY_CHANGED', 'ENABLED', 'DISABLED',
+        'RATE_LIMIT_CHANGED', 'SECRET_ROTATED', 'RENAMED', 'SCOPE_CHANGED')),
+    -- A change event names the field it changed; a registration does not.
+    CONSTRAINT chk_rp_event_field CHECK (
+        (event_type = 'REGISTERED' AND field IS NULL) OR
+        (event_type <> 'REGISTERED' AND field IS NOT NULL))
+);
+
+COMMENT ON TABLE RelyingPartyEvent IS
+  'Append-only record of every decision about an outside relying party (v9.425): '
+  'registration, policy change, enable/disable, secret rotation, rename. Written by '
+  'the trg_relying_party_audited trigger from the row diff, not by the caller, so a '
+  'change made in psql is recorded on the same terms as one made through the CLI. '
+  '`weakened` marks a change that reduced what the party must satisfy before it '
+  'learns something about a person -- the zero-knowledge step-up turned off is the '
+  'case this table exists for.';
+
+CREATE INDEX idx_rp_event_rp ON RelyingPartyEvent (rp_id, recorded_at DESC);
+CREATE INDEX idx_rp_event_weakened ON RelyingPartyEvent (recorded_at DESC) WHERE weakened;
 
 -- P8.2c (v9.322): the exchange-receipt TRANSPARENCY LOG. A receipt itself is never
 -- retained (evidence without retention); only its SHA3-256 -- a commitment that

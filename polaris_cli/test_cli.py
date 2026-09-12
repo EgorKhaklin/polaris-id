@@ -964,6 +964,119 @@ class AuditLogCommandTests(CLIBaseTestCase):
 # Help and error handling
 # ============================================================================
 
+
+class RelyingPartyDecisionTests(CLIBaseTestCase):
+    """The operator door onto the relying-party record (v9.425).
+
+    Registering an outside party and lowering the bar its holders must clear were both
+    unrecorded until now. These exercise the door an operator actually uses; the database
+    half (the trigger is the only writer, a weakening is refused without a reason) is in
+    polaris_web/test_check_constraints.py TestRelyingPartyDecisionsAreRecorded.
+    """
+
+    WHY = 'contracted verification volume for the eastern district'
+
+    def _one(self, sql, params=()):
+        """One row, on its own connection, the way the rest of this file queries."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchone()
+        finally:
+            conn.close()
+
+    def _register(self, name, *extra, why=None, expect_success=True):
+        args = ['rp-register', name]
+        if why is not False:
+            args += ['--justification', why or self.WHY]
+        return run_cli(*args, *extra, expect_success=expect_success)
+
+    def _client_id(self, org_name):
+        return self._one(
+            "SELECT client_id FROM RelyingParty WHERE org_name = %s ORDER BY rp_id DESC",
+            (org_name,))['client_id']
+
+    def _event(self, cid, field=None):
+        if field is None:
+            return self._one(
+                "SELECT event_type, weakened, actor, justification FROM RelyingPartyEvent"
+                " WHERE client_id = %s ORDER BY event_id", (cid,))
+        return self._one(
+            "SELECT event_type, field, old_value, new_value, weakened, justification"
+            " FROM RelyingPartyEvent WHERE client_id = %s AND field = %s"
+            " ORDER BY event_id DESC", (cid, field))
+
+    def test_register_records_the_grant_with_its_reason(self):
+        r = self._register('CLI Probe Bank')
+        self.assertIn('Registered relying party', r.stdout)
+        row = self._event(self._client_id('CLI Probe Bank'))
+        self.assertEqual(row['event_type'], 'REGISTERED')
+        self.assertTrue(row['weakened'], 'granting standing is a weakening')
+        self.assertTrue(row['actor'], 'the CLI must declare who is acting')
+        self.assertIn('eastern district', row['justification'])
+
+    def test_register_without_a_reason_is_refused_before_the_database(self):
+        r = self._register('CLI No Reason Bank', why=False, expect_success=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('20 characters', r.stderr)
+        self.assertIsNone(
+            self._one("SELECT rp_id FROM RelyingParty WHERE org_name = %s",
+                      ('CLI No Reason Bank',)),
+            'the party was created anyway')
+
+    def test_weakening_a_policy_without_a_reason_is_refused(self):
+        """The change that matters: turning off the zero-knowledge step-up."""
+        self._register('CLI Stepup Bank', '--require-zk')
+        cid = self._client_id('CLI Stepup Bank')
+        r = run_cli('rp-policy', cid, '--no-require-zk', expect_success=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('reduces what the relying party must satisfy', r.stdout + r.stderr)
+        self.assertTrue(
+            self._one("SELECT require_zk FROM RelyingParty WHERE client_id = %s",
+                      (cid,))['require_zk'],
+            'the step-up was dropped by the refused command')
+
+    def test_weakening_with_a_reason_is_recorded_as_a_weakening(self):
+        self._register('CLI Reasoned Stepup Bank', '--require-zk')
+        cid = self._client_id('CLI Reasoned Stepup Bank')
+        run_cli('rp-policy', cid, '--no-require-zk',
+                '--justification', 'the integration window slipped so the step-up comes later')
+        row = self._event(cid, 'require_zk')
+        self.assertEqual((row['old_value'], row['new_value']), ('true', 'false'))
+        self.assertTrue(row['weakened'])
+        self.assertIn('integration window', row['justification'])
+
+    def test_strengthening_needs_no_reason(self):
+        self._register('CLI Tightening Bank')
+        cid = self._client_id('CLI Tightening Bank')
+        run_cli('rp-policy', cid, '--require-zk')          # no --justification: allowed
+        self.assertFalse(self._event(cid, 'require_zk')['weakened'],
+                         'a tightening was recorded as a weakening')
+
+    def test_rp_history_reads_the_record_and_its_weakenings(self):
+        self._register('CLI History Bank', '--require-zk')
+        cid = self._client_id('CLI History Bank')
+        run_cli('rp-policy', cid, '--no-require-zk',
+                '--justification', 'the step-up is deferred to the Q4 integration window')
+        r = run_cli('rp-history', cid)
+        self.assertIn('REGISTERED', r.stdout)
+        self.assertIn('WEAKENED', r.stdout)
+        self.assertIn('require_zk: true -> false', r.stdout)
+        self.assertIn('Q4 integration window', r.stdout)
+        only = run_cli('rp-history', cid, '--weakened-only')
+        self.assertIn('require_zk', only.stdout)
+        self.assertNotIn('RATE_LIMIT_CHANGED', only.stdout)
+
+    def test_rp_policy_on_an_unknown_party_exits_nonzero(self):
+        """main() discarded the handler's return code until v9.425, so this printed an
+        error and exited 0: a script checking the status read a failed change as applied."""
+        r = run_cli('rp-policy', 'rp_doesnotexist00000000', '--require-zk',
+                    expect_success=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('no relying party', r.stdout + r.stderr)
+
+
 class HelpAndErrorTests(unittest.TestCase):
     """No DB needed for these."""
 

@@ -75,7 +75,7 @@ XL (multi-arc). Risk is delivery risk, not security risk.
 
 ## Where we are (inventory at v9.371)
 
-**Have, working, CI-proven:** a 42-table constraint-enforced schema (49 tables
+**Have, working, CI-proven:** a 43-table constraint-enforced schema (50 tables
 in a migrated deployment) with append-only audit; a 124-route application with
 WebAuthn operator MFA, a server-side session registry, per-role network policy,
 per-agency quotas and the Atlas; an operator CLI; Plonky2 ZK Merkle inclusion
@@ -90,8 +90,8 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 244 invariant
-checks (v9.424) each with a detection test; nineteen operator runbooks and ledgers; the protocol layer
+release; CVE gates on dependencies and images; a coverage floor; 245 invariant
+checks (v9.425) each with a detection test; nineteen operator runbooks and ledgers; the protocol layer
 (P8, complete and released): a signed registry, trust lists, the exchange gateway with
 receipts, a timestamp authority, document signing with long-term validation, an auth broker,
 offline wallet presentations, algorithm agility and versioning, frozen at version 1 with a

@@ -37,6 +37,7 @@ drift from what the program accepts):
     retention-set        Record a retention decision, or adopt a named template
     audit-log            Tail the authentication audit log
     rp-register          Register a relying-party org for the /api/v1 verification API
+    rp-history           Every recorded decision about a relying party, and by whom
     rp-policy            Set a relying party's registered auth-broker policy (step-up, enrollment, context)
     key-register         Register an authority signing key (P8.7b): it becomes the agency's current key
     key-retire           Retire an authority key: an orderly rotation, effective from an instant
@@ -982,6 +983,24 @@ def _read_password_interactively(prompt='New password: '):
             continue
         return pw1
 
+
+
+def _declare_actor(cur, justification=None):
+    """Tell the database who is making this change, for the triggers that record it.
+
+    `record_relying_party_change` (v9.425) writes an event row for every decision
+    about a relying party and reads the actor out of `polaris.actor`. SET LOCAL, so
+    it lasts exactly as long as the transaction that is making the change: a GUC
+    that outlived its transaction would attribute the NEXT change to the same actor.
+
+    The identity is the OS user running the CLI, which is the only identity this
+    process actually has. The trigger records session_user alongside it regardless,
+    so an event is never anonymous even when nothing declares an actor.
+    """
+    cur.execute("SELECT set_config('polaris.actor', %s, true)", (getpass.getuser()[:100],))
+    if justification:
+        cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                    (justification.strip()[:500],))
 
 
 def _audit_operator_action(cur, event_type, username, user_id=None, detail=None):
@@ -1968,6 +1987,8 @@ def build_parser():
     p_rp.add_argument('--required-enrollment', choices=['PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT'], default=None,
                       help='Registered policy: the enrollment status a holder must have')
     p_rp.add_argument('--required-context', type=int, default=None, help='Registered policy: the only context this relying party may authenticate in')
+    p_rp.add_argument('--justification', default=None,
+                      help='Why this party is being granted standing; recorded on the registration event')
 
     # rp-policy (P8.4b, v9.336): the registered auth-broker policy after registration
     p_rpp = sub.add_parser('rp-policy', help="Set a relying party's registered auth-broker policy (step-up, enrollment, context)")
@@ -1977,6 +1998,18 @@ def build_parser():
     p_rpp.add_argument('--required-enrollment', choices=['PENDING_ENROLLMENT', 'ENROLLED', 'EXEMPT', 'none'], default=None,
                        help="The enrollment status a holder must have, or 'none'")
     p_rpp.add_argument('--required-context', default=None, help="The only context to authenticate in (an id), or 'none'")
+    p_rpp.add_argument('--justification', default=None,
+                       help='Why the policy is changing; recorded on the event, and required '
+                            'when the change weakens the policy')
+
+    # rp-history (v9.425): what has been decided about a relying party, and by whom
+    p_rph = sub.add_parser('rp-history',
+                           help='Every recorded decision about a relying party (registration, '
+                                'policy changes, enable/disable)')
+    p_rph.add_argument('client_id', nargs='?', default=None,
+                       help='One relying party (client_id); omit for all of them')
+    p_rph.add_argument('--weakened-only', action='store_true',
+                       help='Only the changes that reduced what the party must satisfy')
 
     # authority key lifecycle (roadmap P8.7b)
     for name, help_ in (('key-register', 'Register an authority signing key (it becomes the agency\'s current key)'),
@@ -2111,6 +2144,30 @@ def cmd_rp_policy(args):
     conn = connect()
     try:
         with conn.cursor() as cur:
+            # v9.425: whether this change weakens the policy is decided by the
+            # database's own predicate, asked against the row as it is and the row as
+            # it would be. Reimplementing the rule here would let the two drift, and
+            # the drift would show up as an operator being asked for a reason the
+            # database did not want, or not asked for one it did.
+            cur.execute("SELECT * FROM RelyingParty WHERE client_id = %s", (args.client_id,))
+            before = cur.fetchone()
+            if before is None:
+                conn.rollback(); print(red(f"no relying party with client_id {args.client_id}")); return 1
+            after = dict(before)
+            for col, val in zip([x.split(' =')[0] for x in sets], vals):
+                after[col] = val
+            cols = list(before.keys())
+            cur.execute(
+                "SELECT _rp_weakens(NULL, ROW(%s)::RelyingParty, ROW(%s)::RelyingParty) AS w"
+                % (", ".join(["%s"] * len(cols)), ", ".join(["%s"] * len(cols))),
+                tuple(before[c] for c in cols) + tuple(after[c] for c in cols))
+            if cur.fetchone()['w'] and len((getattr(args, 'justification', None) or '').strip()) < 20:
+                conn.rollback()
+                print(red("this change reduces what the relying party must satisfy before it "
+                          "learns something about a person.\n--justification must be at least "
+                          "20 characters; it is recorded with the change."))
+                return 1
+            _declare_actor(cur, getattr(args, 'justification', None))
             cur.execute("UPDATE RelyingParty SET " + ", ".join(sets) + " WHERE client_id = %s RETURNING rp_id, require_zk, required_enrollment, required_context_id",
                         tuple(vals) + (args.client_id,))
             row = cur.fetchone()
@@ -2125,6 +2182,65 @@ def cmd_rp_policy(args):
         conn.close()
 
 
+def cmd_rp_history(args):
+    """What has been decided about a relying party, and by whom (v9.425).
+
+    A relying party is an outside organisation with standing to ask this system about
+    people. Three decisions about one used to write nothing anywhere: registering it,
+    turning off the zero-knowledge step-up its holders had to satisfy, and disabling
+    or re-enabling it. This reads the record that now exists.
+
+    --weakened-only answers the question an assessor actually asks: when was this
+    party's bar LOWERED, by whom, and what reason did they give.
+    """
+    where, params = ["TRUE"], []
+    if args.client_id:
+        where.append("e.client_id = %s"); params.append(args.client_id)
+    if args.weakened_only:
+        where.append("e.weakened")
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT e.*, coalesce(r.org_name, '(no longer registered)') AS current_org_name
+                  FROM RelyingPartyEvent e LEFT JOIN RelyingParty r USING (rp_id)
+                 WHERE """ + " AND ".join(where) + """
+                 ORDER BY e.rp_id, e.event_id
+            """, tuple(params))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        if args.client_id:
+            print(dim(f"No recorded decisions for {args.client_id}."
+                      + (" (nothing weakened its policy)" if args.weakened_only else "")))
+        else:
+            print(dim("No relying-party decisions recorded."
+                      + (" Nothing has weakened a policy." if args.weakened_only else "")))
+        return 0
+
+    current_rp = None
+    for r in rows:
+        if r['rp_id'] != current_rp:
+            current_rp = r['rp_id']
+            print(f"\nrelying party #{r['rp_id']} {r['current_org_name']} ({r['client_id']})")
+        flag = red(' WEAKENED') if r['weakened'] else ''
+        what = (r['field'] + ': ' + str(r['old_value']) + ' -> ' + str(r['new_value'])
+                if r['field'] else str(r['new_value']))
+        print(f"  {r['recorded_at']:%Y-%m-%d %H:%M}  {r['event_type']}{flag}")
+        print(f"      {what}")
+        who = r['actor'] or '(no actor declared)'
+        print(dim(f"      by {who} as db role {r['db_role']}"))
+        if r['justification']:
+            print(dim(f"      {r['justification']}"))
+    weakenings = sum(1 for r in rows if r['weakened'])
+    print()
+    print(dim(f"{len(rows)} recorded decision(s), {weakenings} that reduced what a party "
+              f"must satisfy. The record is written by the trg_relying_party_audited "
+              f"trigger, so a change made outside this CLI appears here too."))
+    return 0
+
+
 def cmd_rp_register(args):
     """Register a relying-party organization for the /api/v1 verification API
     (roadmap P3.4). Generates a client_id and a client_secret, stores only the
@@ -2132,6 +2248,15 @@ def cmd_rp_register(args):
     is 'verify' (schema-enforced): it can call POST /api/v1/verify and nothing
     else; with 'authenticate' it may also use the auth broker (P8.4), which keeps no
     record of who logged in where -- identity never becomes a login record."""
+    # v9.425: registering a party grants standing to ask this system about people,
+    # which the database counts as the widest weakening available and refuses without
+    # a reason. Checked here too so the operator gets an argument error rather than a
+    # database one; the database remains the guarantee, this is only the manners.
+    if len((getattr(args, 'justification', None) or '').strip()) < 20:
+        sys.stderr.write(red("--justification must be at least 20 characters: registering a "
+                             "relying party grants it standing to ask about people, and the "
+                             "reason is recorded with the registration.\n"))
+        sys.exit(1)
     generate_password_hash = _require_werkzeug()
     import secrets as _secrets
     client_id = "rp_" + _secrets.token_hex(12)          # matches ^rp_[A-Za-z0-9_-]{16,}$
@@ -2140,6 +2265,7 @@ def cmd_rp_register(args):
     conn = connect()
     try:
         with conn.cursor() as cur:
+            _declare_actor(cur, getattr(args, 'justification', None))
             cur.execute("""
                 INSERT INTO RelyingParty (client_id, client_secret_hash, org_name, rate_limit_per_min, scope,
                                           require_zk, required_enrollment, required_context_id)
@@ -2195,6 +2321,7 @@ HANDLERS = {
     'audit-log':        cmd_audit_log,
     'rp-register':      cmd_rp_register,
     'rp-policy':        cmd_rp_policy,
+    'rp-history':       cmd_rp_history,
     'key-register':     cmd_key_register,
     'key-retire':       cmd_key_retire,
     'key-compromise':   cmd_key_compromise,
@@ -2208,7 +2335,11 @@ def main(argv=None):
         parser.print_help()
         sys.exit(1)
     handler = HANDLERS[args.command]
-    handler(args)
+    # v9.425: propagate the handler's exit code. Most commands call sys.exit
+    # themselves; rp-policy and rp-history `return 1` instead, and until now main
+    # discarded it, so `polaris rp-policy <unknown-client-id>` printed an error and
+    # exited 0. A script checking the status read a failed policy change as applied.
+    sys.exit(handler(args))
 
 
 if __name__ == '__main__':

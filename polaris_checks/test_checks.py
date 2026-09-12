@@ -12776,3 +12776,129 @@ def test_immutability_guards_derived_check_discriminates(tmp_path):
     finally:
         checks.BESPOKE_IMMUTABILITY_GUARDS.clear()
         checks.BESPOKE_IMMUTABILITY_GUARDS.update(original)
+
+
+def test_relying_party_decisions_check_discriminates(tmp_path):
+    """A policy column the writer or the weakening rule does not know about must fail."""
+    COLUMNS = ("rp_id", "client_id", "client_secret_hash", "org_name", "scope", "enabled",
+               "created_at", "last_used_at", "rate_limit_per_min", "require_zk",
+               "required_enrollment", "required_context_id")
+    DECISIONS = [c for c in COLUMNS if c not in checks._RP_BOOKKEEPING]
+
+    SCHEMA = ("CREATE TABLE RelyingParty (\n"
+              + "".join("    %-18s VARCHAR(40),\n" % c for c in COLUMNS)
+              + ");\n\nCREATE TABLE RelyingPartyEvent (\n"
+              "    event_id        SERIAL PRIMARY KEY,\n"
+              "    db_role         VARCHAR(100) NOT NULL DEFAULT session_user\n"
+              ");\n")
+
+    PRED = ("CREATE OR REPLACE FUNCTION _rp_weakens(p_field TEXT, p_old RelyingParty, "
+            "p_new RelyingParty)\nRETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE AS $$\nBEGIN\n"
+            "    RETURN CASE p_field\n"
+            + "".join("        WHEN '%s' THEN FALSE\n" % c for c in DECISIONS)
+            + "        ELSE NULL\n    END;\nEND;\n$$;\n")
+
+    WRITER = ("CREATE OR REPLACE FUNCTION record_relying_party_change() RETURNS TRIGGER\n"
+              "LANGUAGE plpgsql AS $$\nBEGIN\n"
+              "    IF _rp_weakens(NULL, OLD, NEW)\n"
+              "       AND (v_why IS NULL OR length(trim(v_why)) < 20) THEN\n"
+              "        RAISE EXCEPTION 'needs a reason';\n    END IF;\n"
+              + "".join("    IF NEW.%s IS DISTINCT FROM OLD.%s THEN INSERT INTO "
+                        "RelyingPartyEvent DEFAULT VALUES; END IF;\n" % (c, c)
+                        for c in DECISIONS)
+              + "    RETURN NEW;\nEND;\n$$;\n")
+
+    TRIG = ("DROP TRIGGER IF EXISTS trg_relying_party_audited ON RelyingParty;\n"
+            "CREATE TRIGGER trg_relying_party_audited\n"
+            "    AFTER INSERT OR UPDATE ON RelyingParty\n"
+            "    FOR EACH ROW EXECUTE FUNCTION record_relying_party_change();\n")
+
+    TESTS = "class TestRelyingPartyDecisionsAreRecorded:\n    pass\n"
+
+    def write(schema=None, triggers=None, tests=None, app=None, cli=None):
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_cli").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
+            SCHEMA if schema is None else schema)
+        (tmp_path / "polaris_sql" / "06_triggers.sql").write_text(
+            (PRED + WRITER + TRIG) if triggers is None else triggers)
+        (tmp_path / "polaris_web" / "test_check_constraints.py").write_text(
+            TESTS if tests is None else tests)
+        (tmp_path / "polaris_web" / "app.py").write_text(
+            "query('SELECT 1')\n" if app is None else app)
+        (tmp_path / "polaris_cli" / "polaris.py").write_text(
+            "pass\n" if cli is None else cli)
+
+    def level(msg_contains=None):
+        out = checks.check_relying_party_decisions_cannot_be_silent(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS on the good fixture"
+
+    # A new policy column the writer never looks at: it would change silently.
+    extra = SCHEMA.replace("    client_secret_hash VARCHAR(40),\n",
+                           "    client_secret_hash VARCHAR(40),\n"
+                           "    max_queries_per_day INTEGER,\n")
+    write(schema=extra)
+    assert level("max_queries_per_day") == "FAIL", \
+        "must FAIL on a decision column the writer does not record"
+
+    # It is in the writer but the predicate has no rule, so no reason is demanded.
+    write(schema=extra,
+          triggers=PRED + WRITER.replace(
+              "    RETURN NEW;\n",
+              "    IF NEW.max_queries_per_day IS DISTINCT FROM OLD.max_queries_per_day THEN "
+              "INSERT INTO RelyingPartyEvent DEFAULT VALUES; END IF;\n    RETURN NEW;\n") + TRIG)
+    assert level("_rp_weakens has no rule") == "FAIL", \
+        "must FAIL on a decision column the weakening rule does not classify"
+
+    # The predicate's fallback stops being NULL, so every future column reads as harmless.
+    write(triggers=PRED.replace("        ELSE NULL\n", "        ELSE FALSE\n") + WRITER + TRIG)
+    assert level("count as harmless") == "FAIL", \
+        "must FAIL when an unclassified column would default to not-a-weakening"
+
+    # The gate is gone.
+    write(triggers=PRED + WRITER.replace("    IF _rp_weakens(NULL, OLD, NEW)\n"
+                                         "       AND (v_why IS NULL OR length(trim(v_why)) < 20) THEN\n"
+                                         "        RAISE EXCEPTION 'needs a reason';\n    END IF;\n", "") + TRIG)
+    assert level("nothing requires a reason") == "FAIL", \
+        "must FAIL when no weakening needs a stated reason"
+
+    # The floor on the reason is gone, so an empty one passes.
+    write(triggers=PRED + WRITER.replace("length(trim(v_why)) < 20", "FALSE") + TRIG)
+    assert level("20-character floor") == "FAIL", \
+        "must FAIL when any string satisfies the reason"
+
+    # The trigger fires on UPDATE only, so registrations are unrecorded.
+    write(triggers=PRED + WRITER + TRIG.replace("AFTER INSERT OR UPDATE ON RelyingParty",
+                                                "AFTER UPDATE ON RelyingParty"))
+    assert level("not installed AFTER INSERT OR UPDATE") == "FAIL", \
+        "must FAIL when some changes bypass the recorder"
+
+    # An application path can write its own event rows, so it can also write none.
+    write(app="query('INSERT INTO RelyingPartyEvent (rp_id) VALUES (1)')\n")
+    assert level("inserts into RelyingPartyEvent directly") == "FAIL", \
+        "must FAIL when the trigger is not the record's only writer"
+    write(cli="cur.execute('INSERT INTO RelyingPartyEvent (rp_id) VALUES (1)')\n")
+    assert level("inserts into RelyingPartyEvent directly") == "FAIL", \
+        "must FAIL when the CLI can write its own event rows"
+
+    # An event with no declared actor would be anonymous.
+    write(schema=SCHEMA.replace(" NOT NULL DEFAULT session_user", ""))
+    assert level("anonymous") == "FAIL", \
+        "must FAIL when db_role does not default to session_user"
+
+    # The behavioural tests are gone.
+    write(tests="class SomethingElse:\n    pass\n")
+    assert level("TestRelyingPartyDecisionsAreRecorded") == "FAIL", \
+        "must FAIL when nothing tests the mechanism behaviourally"
+
+    # Anti-vacuity: a schema the parser cannot read must fail, not pass.
+    write(schema="CREATE TABLE RelyingParty (\n    rp_id SERIAL\n);\n")
+    assert level("passing by finding nothing") == "FAIL", \
+        "must FAIL rather than pass when almost no decision columns are parsed"
