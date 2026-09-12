@@ -2089,6 +2089,19 @@ jobs:
       - name: Conformance suite — Python reference SDK
         run: python conformance/run_conformance.py --self
 
+      # v9.429 — does the published contract CONSTRAIN a verifier, or merely describe
+      # one? The drill forces each decision field a verifier reports to its permissive
+      # answer -- the verdict an implementation that never performs that check would
+      # give -- and re-runs every case. A field nothing notices is a check an integrator
+      # can skip and still conform. Its negative control forces the authenticity key the
+      # contract reads for each artifact and requires a case to catch every one; three
+      # did not until v9.429, which is how the drill found that agent-proof,
+      # grant-revocation and holder-proof had no case in which the signature was bad.
+      # The remaining unconstrained fields are declared exactly, checked both ways, so
+      # the number cannot grow and the declaration cannot go stale.
+      - name: Conformance mutation drill — does the contract constrain a verifier?
+        run: python scripts/polaris-conformance-mutation-drill.py
+
       # v9.330 (P8.8b) — cross-version compatibility, both directions: the frozen version-1
       # set (cases + vectors pinned by SHA256SUMS, a vendored v9.317 verifier) under the CURRENT
       # detached verifier and Python SDK, and the CURRENT cases under the PINNED older verifier

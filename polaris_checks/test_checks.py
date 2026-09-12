@@ -13158,3 +13158,93 @@ def test_drill_plan_binding_check_discriminates(tmp_path):
     # The files are gone.
     (tmp_path / "scripts" / "polaris-preflight.sh").unlink()
     assert level() == "FAIL", "must FAIL when preflight is absent"
+
+
+def test_conformance_constrains_check_discriminates(tmp_path):
+    """An artifact with no bad-signature case must fail, and so must a drill that cannot
+    notice the contract weakening."""
+    import json as _json
+
+    def cases(bad_signature_for=("alpha", "beta", "gamma")):
+        out = []
+        for art in ("alpha", "beta", "gamma"):
+            out.append({"name": art + "-valid", "artifact": art, "expect": {"authentic": True}})
+            if art in bad_signature_for:
+                out.append({"name": art + "-tampered", "artifact": art,
+                            "expect": {"authentic": False}})
+        # A composed artifact, judged on something other than authenticity: the check
+        # must not demand a bare authenticity case of it.
+        out.append({"name": "chain-proved", "artifact": "chain", "expect": {"proved": True}})
+        out.append({"name": "chain-stranger", "artifact": "chain", "expect": {"proved": False}})
+        while len(out) < 55:
+            n = len(out)
+            out.append({"name": "filler-%d" % n, "artifact": "alpha",
+                        "expect": {"authentic": n % 2 == 0}})
+        return {"cases": out}
+
+    # Markers live in strings, not comments: _read strips comments, which is
+    # deliberate elsewhere in this file and would make every needle here invisible.
+    DRILL = ("SURVIVORS_EXPECTED = ()\n"
+             "print('== negative control ==')\n"
+             "print('NEW survivor')\n"
+             "print('now CONSTRAINED')\n")
+    CI = "      - run: python scripts/polaris-conformance-mutation-drill.py\n"
+
+    def write(c=None, drill=None, ci=None):
+        (tmp_path / "conformance").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "conformance" / "cases.json").write_text(
+            _json.dumps(cases() if c is None else c))
+        (tmp_path / "scripts" / "polaris-conformance-mutation-drill.py").write_text(
+            DRILL if drill is None else drill)
+        (tmp_path / ".github" / "workflows" / "ci.yml").write_text(CI if ci is None else ci)
+
+    def level(msg_contains=None):
+        out = checks.check_conformance_contract_constrains(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS when every judged artifact has a bad-signature case"
+
+    # The real v9.429 defect: an artifact every case calls authentic.
+    write(c=cases(bad_signature_for=("alpha", "beta")))
+    assert level("every published gamma case expects authentic: true") == "FAIL", \
+        "must FAIL on an artifact whose signature no case exercises"
+
+    # A composed artifact judged on `proved` must not be demanded an authenticity case.
+    only_chain = {"cases": [c for c in cases()["cases"] if c["artifact"] == "chain"]
+                  + [c for c in cases()["cases"] if c["artifact"] != "chain"]}
+    write(c=only_chain)
+    assert level() == "OK", "a chain judged on `proved` needs no bare authenticity case"
+
+    # The drill stops declaring what the contract leaves free.
+    write(drill=DRILL.replace("SURVIVORS_EXPECTED = ()\n", ""))
+    assert level("does not declare") == "FAIL", "must FAIL when the gaps are undeclared"
+
+    # It stops noticing a field that becomes unconstrained.
+    write(drill=DRILL.replace("print('NEW survivor')\n", ""))
+    assert level("would not fail the drill") == "FAIL", \
+        "must FAIL when a weakened contract would go unnoticed"
+
+    # It stops noticing a declaration that has gone stale.
+    write(drill=DRILL.replace("print('now CONSTRAINED')\n", ""))
+    assert level("can go stale") == "FAIL", "must FAIL when the declaration cannot go stale-red"
+
+    # It loses its negative control, so "all constrained" could mean nothing ran.
+    write(drill=DRILL.replace("print('== negative control ==')\n", ""))
+    assert level("no negative control") == "FAIL", \
+        "must FAIL when the drill cannot prove the harness executes the cases"
+
+    # It stops running in CI.
+    write(ci="      - run: echo nothing\n")
+    assert level("does not run in CI") == "FAIL", \
+        "must FAIL when the measurement is a one-off"
+
+    # Anti-vacuity: a contract that has shrunk to nothing must not read as clean.
+    write(c={"cases": [{"name": "x", "artifact": "alpha", "expect": {"authentic": False}}]})
+    assert level("asserting about nothing") == "FAIL", \
+        "must FAIL rather than pass when the contract has almost no cases"

@@ -6358,6 +6358,100 @@ def check_drill_plan_is_binding(root: pathlib.Path) -> list[Finding]:
                      "and an unrun one withholds READY unless the waiver is taken and printed")
 
 
+
+# ----------------------------------------------------------------------------
+# v9.429: the published contract must CONSTRAIN a verifier, not merely describe one.
+#
+# conformance/cases.json is what an integrator builds against. Most artifacts carried
+# exactly two cases, a genuine one and a tampered one, which together constrain the
+# signature and nothing else. v9.420 found that concretely for the ID token: the suite
+# verified its signature and never its audience or nonce, so a verifier that ignored
+# both -- and would accept a token minted for one relying party at another -- passed
+# all 71 cases.
+#
+# The mutation drill asks the same question of every field: force the permissive answer
+# and see whether any case notices. Its negative control forces the authenticity key
+# the contract actually reads for each artifact. Three of the nineteen were not caught
+# by any case: agent-proof, grant-revocation and holder-proof each had no case in which
+# the signature was bad, because their only refusal cases fail for a reason that is not
+# the signature (a genuine signature by the wrong key, a replayed nonce, a revoked
+# binding). A verifier that never checked those three signatures conformed.
+# ----------------------------------------------------------------------------
+
+def check_conformance_contract_constrains(root: pathlib.Path) -> list[Finding]:
+    """Every artifact in the published contract has a case where the signature is bad (v9.429).
+
+    Two halves, and the drill is worth nothing without either:
+
+      - Every artifact whose cases assert authenticity must carry at least one case
+        expecting it FALSE. Without one, the contract constrains no signature for that
+        artifact and an implementation that skips the check conforms.
+      - The drill that measures this runs in CI, declares the fields the contract does
+        not constrain as an exact set, and is checked in BOTH directions: a new
+        unconstrained field fails, and so does a declared one that is now covered. A
+        one-directional list stops describing anything and nobody notices.
+    """
+    name = "conformance_constrains"
+    findings: list[Finding] = []
+
+    raw = _read(root, "conformance/cases.json")
+    if not raw:
+        return _fail(name, "conformance/cases.json could not be read")
+    try:
+        cases = json.loads(raw)["cases"]
+    except Exception as exc:
+        return _fail(name, f"conformance/cases.json did not parse: {exc}")
+    if len(cases) < 50:
+        return _fail(name, f"only {len(cases)} conformance case(s); the contract has shrunk or "
+                           f"the parse has broken and this check is asserting about nothing")
+
+    by_artifact: dict = {}
+    for case in cases:
+        by_artifact.setdefault(case.get("artifact", "authenticity-pack"), []).append(case)
+    for artifact, group in sorted(by_artifact.items()):
+        # Only artifacts the cases judge on authenticity: a holder-chain is judged on
+        # `proved` and a cross-authority on `decision`, each of which folds several
+        # checks, and demanding a bare authenticity case of those would be asking for a
+        # case the contract has no field to express.
+        asserted = [c for c in group if "authentic" in c.get("expect", {})]
+        if not asserted:
+            continue
+        if not any(c["expect"]["authentic"] is False for c in asserted):
+            findings.extend(_fail(
+                name, f"every published {artifact} case expects authentic: true, so no case "
+                      f"exercises its signature at all and a verifier that never checks one "
+                      f"conforms"))
+
+    drill = _read(root, "scripts/polaris-conformance-mutation-drill.py")
+    if not drill:
+        return findings + _fail(name, "scripts/polaris-conformance-mutation-drill.py is missing, "
+                                      "so nothing re-measures whether the contract constrains "
+                                      "anything")
+    for needle, why in (
+        ("SURVIVORS_EXPECTED", "the drill does not declare the fields the contract leaves free"),
+        ("NEW survivor", "a field that stops being constrained would not fail the drill"),
+        ("now CONSTRAINED", "a declared survivor that is now covered would not fail the drill, "
+                            "so the declaration can go stale without anyone noticing"),
+        ("negative control", "the drill has no negative control, so '19 of 19 constrained' "
+                             "could mean the harness ran nothing"),
+    ):
+        if needle not in drill:
+            findings.extend(_fail(name, why))
+
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-conformance-mutation-drill.py" not in ci:
+        findings.extend(_fail(name, "the conformance mutation drill does not run in CI, so the "
+                                    "measurement is a one-off and the number it reports is "
+                                    "free to grow"))
+
+    if findings:
+        return findings
+    return _ok(name, f"every artifact the contract judges on authenticity carries a case where "
+                     f"the signature is bad ({len(cases)} cases); the drill that measures what "
+                     f"else the contract constrains declares the gaps exactly, fails in both "
+                     f"directions, and runs in CI")
+
+
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
     """The retention decision is data, floored, append-only, and the purge obeys it.
 
@@ -15579,6 +15673,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_recorded_decisions_keep_their_history,
     check_no_upsert_without_an_arbiter,
     check_drill_plan_is_binding,
+    check_conformance_contract_constrains,
 ]
 
 

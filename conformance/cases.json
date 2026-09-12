@@ -747,6 +747,16 @@
       "note": "P9.1: the holder's own signature over the credential, context, nonce and instant."
     },
     {
+      "name": "holder-proof-tampered",
+      "artifact": "holder-proof",
+      "object_file": "conformance/vectors/holder-proof-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "v9.429: holder-proof had one case and it expected authentic: true. The holder-chain refusals each fail for a non-signature reason (a stranger's key, a replayed nonce, a revoked binding), so forcing the signature check permissive left every case green.",
+      "since": "9.429"
+    },
+    {
       "name": "holder-chain-proved",
       "artifact": "holder-chain",
       "credential_file": "conformance/vectors/holder-credential.json",
@@ -874,6 +884,16 @@
       "note": "P9.8: the SIGNATURE is genuine, but by a key that is not the grant's holder. A verifier must check that binding separately: authenticity alone does not end a grant, or anyone able to publish bytes could revoke somebody else's."
     },
     {
+      "name": "grant-revocation-tampered",
+      "artifact": "grant-revocation",
+      "object_file": "conformance/vectors/grant-revocation-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "v9.429: as for agent-proof. A revocation whose signature nobody verifies is a revocation anyone can mint, which ends a grant that is still valid.",
+      "since": "9.429"
+    },
+    {
       "name": "agent-proof-valid",
       "artifact": "agent-proof",
       "object_file": "conformance/vectors/agent-proof-valid.json",
@@ -894,6 +914,16 @@
       },
       "since": "9.354",
       "note": "P9.8: genuinely signed, by a key the grant does not name. Without the key-matches-grant check a copied grant would be a bearer token."
+    },
+    {
+      "name": "agent-proof-tampered",
+      "artifact": "agent-proof",
+      "object_file": "conformance/vectors/agent-proof-tampered.json",
+      "expect": {
+        "authentic": false
+      },
+      "note": "v9.429: every published agent-proof case expected authentic: true, including the impostor one (a genuine signature by the wrong key is authentic and powerless). So no case exercised the signature at all, and a verifier that never checked it conformed.",
+      "since": "9.429"
     }
   ]
 }
