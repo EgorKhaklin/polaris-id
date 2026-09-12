@@ -51,8 +51,16 @@ def _load_cases():
             payload["assertion"] = _load_file(c["assertion_file"])
             if "now" in c:
                 payload["now"] = c["now"]
+        elif artifact == "id-token":
+            # v9.420: an ID token is not just a signed object. Who it was issued TO
+            # and which login it belongs to are the security properties, so the case
+            # supplies them and the verifier is asked about them.
+            payload["object"] = _load_file(c["object_file"])
+            for k in ("audience", "nonce", "now"):
+                if k in c:
+                    payload[k] = c[k]
         elif artifact in ("epoch-checkpoint", "revocation-feed", "federation-manifest",
-                          "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves",
+                          "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves",
                           "agent-grant", "grant-revocation", "agent-proof"):
             payload["object"] = _load_file(c["object_file"])
             if "now" in c:

@@ -53,6 +53,13 @@ key the case's expected verdict names; the verifier may report additional keys.
   "now": "2026-06-01T00:00:00Z" }
    -> { "authentic": true, "fresh": true, "active": true }
 
+{ "artifact": "id-token",
+  "object": { "...": "a polaris-id-token/1" },
+  "audience": "<the relying party this verifier IS>",
+  "nonce": "<the nonce from the login this verifier started>",
+  "now": "2026-05-01T12:01:00Z" }
+   -> { "authentic": true, "audience_matches": true, "nonce_matches": true, "fresh": true }
+
 { "artifact": "timestamp-anchor",
   "timestamp": { "...": "a polaris-timestamp/1 carrying an unsigned `anchor`" },
   "log_key": "<the timestamp log's public key hex>",
@@ -112,6 +119,14 @@ trusted), and the verdict a conformant verifier MUST return:
 | tampered-token | false | null | genuine signature over a different token_value |
 | wrong-key | false | null | genuine signature checked against an unrelated key |
 | placeholder | false | null | the dev/CI placeholder; not authenticatable offline |
+
+ID-token cases (`artifact: id-token`, verdict `{authentic, audience_matches, nonce_matches,
+fresh}`, v9.420). An ID token is the one artifact whose signature being valid is not the
+question. A token minted for relying party A carries a perfectly good signature when it is
+replayed at relying party B, and a token from an earlier login carries one too. So the contract
+asks three things and not one: is it authentic, was it issued to THIS relying party, and does it
+carry the nonce from THIS login. Before v9.420 an ID token was checked as a generic signed
+artifact, and a verifier that looked only at the signature passed every case in this suite.
 
 Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh, active}`):
 

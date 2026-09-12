@@ -21,8 +21,8 @@ drives it over the published cases and checks every verdict. See conformance/SPE
 import json
 import sys
 
-from . import (verify_authenticity, verify_cross_authority, verify_holder, verify_signed_artifact,
-               verify_status_assertion, verify_timestamp_anchor)
+from . import (verify_authenticity, verify_cross_authority, verify_holder, verify_id_token,
+               verify_signed_artifact, verify_status_assertion, verify_timestamp_anchor)
 
 _SIGNED_ARTIFACTS = {"epoch-checkpoint", "revocation-feed", "federation-manifest",
                      "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "trust-attestation", "holder-binding", "holder-proof", "epoch-leaves",
@@ -46,6 +46,17 @@ def main(argv=None):
     if artifact == "status-assertion":
         v = verify_status_assertion(case.get("assertion") or {}, now=case.get("now"))
         print(json.dumps({"authentic": v.authentic, "fresh": v.fresh, "active": v.active}))
+        return 0
+    if artifact == "id-token":
+        # v9.420: an ID token verified as a generic signed artifact is verified for
+        # its SIGNATURE only, and a token minted for one relying party carries a
+        # perfectly good signature at another. Audience confusion and nonce replay
+        # are the two attacks this artifact exists to stop, so the contract asks
+        # about them.
+        v = verify_id_token(case.get("object") or {}, audience=case.get("audience"),
+                            nonce=case.get("nonce"), now=case.get("now"))
+        print(json.dumps({"authentic": v.authentic, "audience_matches": v.audience_matches,
+                          "nonce_matches": v.nonce_matches, "fresh": v.fresh}))
         return 0
     if artifact in _SIGNED_ARTIFACTS:
         v = verify_signed_artifact(case.get("object") or {}, now=case.get("now"))

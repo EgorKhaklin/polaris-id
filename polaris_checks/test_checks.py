@@ -12531,3 +12531,77 @@ def test_zk_mutation_check_discriminates(tmp_path):
     write()
     (tmp_path / "scripts" / "polaris-zk-mutation-drill.py").unlink()
     assert checks.check_zk_witnesses_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when the drill is absent"
+
+
+def test_id_token_contract_check_discriminates(tmp_path):
+    import json as _json
+    def cases(extra=None):
+        base = [
+            {"name": "id-token-valid", "artifact": "id-token", "expect": {"authentic": True}},
+            {"name": "id-token-tampered", "artifact": "id-token", "expect": {"authentic": False}},
+            {"name": "wrong-aud", "artifact": "id-token",
+             "expect": {"authentic": True, "audience_matches": False}},
+            {"name": "wrong-nonce", "artifact": "id-token",
+             "expect": {"authentic": True, "audience_matches": True, "nonce_matches": False}},
+            {"name": "expired", "artifact": "id-token",
+             "expect": {"authentic": True, "audience_matches": True, "nonce_matches": True,
+                        "fresh": False}},
+            {"name": "own-rp", "artifact": "id-token",
+             "expect": {"authentic": True, "audience_matches": True, "nonce_matches": True,
+                        "fresh": True}},
+        ]
+        return _json.dumps({"cases": (extra if extra is not None else base)})
+    DISPATCH = 'if artifact == "id-token":\n    v = verify_id_token(o, audience=a, nonce=n)\n'
+    TSD = 'artifact === "id-token" ? verifyIdToken(o, a, n) : x\n'
+    good = {
+        "conformance/cases.json": cases(),
+        "conformance/SPEC.md": "-> { authentic, audience_matches, nonce_matches, fresh }\n",
+        "sdk/python/polaris_verify/conformance.py": DISPATCH,
+        "sdk/typescript/src/conformance.ts": TSD,
+        "scripts/test_verify_conformance.py": DISPATCH,
+        "conformance/run_conformance.py": 'payload["audience"] = c["audience"]\n',
+    }
+    def write(overrides=None):
+        files = dict(good); files.update(overrides or {})
+        for rel, body in files.items():
+            f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
+    write()
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+    # the contract stops asking about audience
+    write({"conformance/cases.json": cases([
+        {"name": "a", "artifact": "id-token", "expect": {"authentic": True}},
+        {"name": "b", "artifact": "id-token", "expect": {"authentic": False}},
+        {"name": "c", "artifact": "id-token", "expect": {"authentic": True, "nonce_matches": False}},
+        {"name": "d", "artifact": "id-token", "expect": {"authentic": True, "nonce_matches": True}},
+        {"name": "e", "artifact": "id-token", "expect": {"authentic": True, "fresh": False}},
+    ])})
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL when no case asks about the audience"
+    # every id-token case expects a refusal, so a verifier refusing everything passes
+    write({"conformance/cases.json": cases([
+        {"name": "n%d" % i, "artifact": "id-token",
+         "expect": {"authentic": True, "audience_matches": False, "nonce_matches": False}}
+        for i in range(6)])})
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL without a case where the token's own relying party accepts it"
+    # an implementation stops answering the fuller question
+    write({"sdk/typescript/src/conformance.ts": 'artifact === "signed" ? verifySigned(o) : x\n'})
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL when the TypeScript SDK answers with a signature check"
+    write({"scripts/test_verify_conformance.py": "nothing here\n"})
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL when the detached verifier answers with a signature check"
+    # the runner stops forwarding the audience, so no verifier could discriminate
+    write({"conformance/run_conformance.py": 'payload["object"] = x\n'})
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL when the runner does not forward the audience"
+    # the spec stops stating the verdict an implementor must produce
+    write({"conformance/SPEC.md": "-> { authentic }\n"})
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL when SPEC.md does not state the id-token verdict"
+    # the cases are emptied, which satisfies the assertions above vacuously
+    write({"conformance/cases.json": cases([
+        {"name": "only", "artifact": "id-token",
+         "expect": {"authentic": True, "audience_matches": True, "nonce_matches": True}},
+        {"name": "neg", "artifact": "id-token", "expect": {"audience_matches": False}}])})
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL when too few id-token cases are found, rather than pass by finding nothing"
+    # cases.json does not parse
+    write({"conformance/cases.json": "{not json"})
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL when cases.json does not parse"
+    # cases.json is gone
+    (tmp_path / "conformance" / "cases.json").unlink()
+    assert checks.check_id_token_contract_covers_audience_and_nonce(tmp_path)[0].level == "FAIL", "must FAIL when cases.json is absent"

@@ -371,6 +371,66 @@
       "since": "9.326"
     },
     {
+      "name": "id-token-wrong-audience",
+      "artifact": "id-token",
+      "object_file": "conformance/vectors/id-token-valid.json",
+      "audience": "rp_someone_else_client_0002",
+      "now": "2026-05-01T12:01:00Z",
+      "expect": {
+        "authentic": true,
+        "audience_matches": false
+      },
+      "since": "9.420",
+      "note": "the SAME valid token, offered to a different relying party. Its signature is perfectly good; accepting it is audience confusion. A verifier that checks only the signature passes every other case in this suite and fails here."
+    },
+    {
+      "name": "id-token-wrong-nonce",
+      "artifact": "id-token",
+      "object_file": "conformance/vectors/id-token-valid.json",
+      "audience": "rp_conformance_client_0001",
+      "nonce": "nonce-from-another-login",
+      "now": "2026-05-01T12:01:00Z",
+      "expect": {
+        "authentic": true,
+        "audience_matches": true,
+        "nonce_matches": false
+      },
+      "since": "9.420",
+      "note": "the right relying party, the wrong login. The nonce binds the token to ONE authentication; without it a token captured from an earlier login is replayable."
+    },
+    {
+      "name": "id-token-expired",
+      "artifact": "id-token",
+      "object_file": "conformance/vectors/id-token-valid.json",
+      "audience": "rp_conformance_client_0001",
+      "nonce": "nonce-conformance-0001",
+      "now": "2026-05-01T12:30:00Z",
+      "expect": {
+        "authentic": true,
+        "audience_matches": true,
+        "nonce_matches": true,
+        "fresh": false
+      },
+      "since": "9.420",
+      "note": "authentic and expired are different answers. The signature stays good forever; the window does not."
+    },
+    {
+      "name": "id-token-accepted-by-its-own-relying-party",
+      "artifact": "id-token",
+      "object_file": "conformance/vectors/id-token-valid.json",
+      "audience": "rp_conformance_client_0001",
+      "nonce": "nonce-conformance-0001",
+      "now": "2026-05-01T12:01:00Z",
+      "expect": {
+        "authentic": true,
+        "audience_matches": true,
+        "nonce_matches": true,
+        "fresh": true
+      },
+      "since": "9.420",
+      "note": "the positive control for the three above: without it a verifier that answered False to every question would pass them all."
+    },
+    {
       "name": "trust-list-valid",
       "artifact": "trust-list",
       "object_file": "conformance/vectors/trust-list-valid.json",

@@ -5,6 +5,41 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.420 — 2026-09-11 (a valid signature is not the question an ID token asks)
+
+The conformance suite is the artifact independent implementations build to, so the mutation
+question goes to it: would it notice a verifier that accepts everything? Mostly yes. Stubbing each
+of the SDK's ten verification entry points, seven are caught, some heavily (the generic signed
+artifact fails 21 cases).
+
+Three survived, and one of them matters. `id-token` was routed to the GENERIC signed-artifact
+verifier, so the contract asked one question: does the signature verify over the canonical form.
+That is the one question an ID token does not turn on. A token minted for relying party A carries
+a perfectly good signature when it is replayed at relying party B, and a token from an earlier
+login carries one too. Audience confusion and nonce replay are the two attacks the artifact exists
+to stop, and **a verifier that ignored both passed all 71 cases**.
+
+The capability was never missing. All three verifiers in this tree implement the fuller check, and
+the auth-broker drill exercises every part of it. What was missing is that the CONTRACT did not
+ask, so a third party building to it had no reason to.
+
+Now it asks. Four new cases, and not one needs a new signed vector, because the attack does not
+need a new token: the SAME valid token, offered with a different audience, is the whole of
+audience confusion. Wrong audience, wrong nonce, expired, and its own relying party accepting it,
+that last one being the positive control without which a verifier answering False to everything
+would pass the other three. All three implementations were taught the dispatch: the Python SDK,
+the TypeScript SDK, and the detached verifier, which failed the new cases until it was, which is
+what a contract is for.
+
+Measured both ways: the signature-only verifier failed 0 of 71 cases before and 4 of 75 after.
+`check_id_token_contract_covers_audience_and_nonce` (242) pins the questions, the positive
+control, all three implementations answering, the runner forwarding the parameters, and SPEC.md
+stating the verdict an implementor must produce.
+
+The frozen version-1 set is untouched and the compat suite still reports zero violations in both
+directions: the older pinned verifier declines the newer cases rather than accepting them, which
+is the fail-closed behaviour that discipline exists for.
+
 ## v9.419 — 2026-09-11 (two independent witnesses is a claim about the tests)
 
 The constraints were mutation-tested at v9.407 and the triggers at v9.413, both of them asking

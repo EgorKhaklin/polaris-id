@@ -102,6 +102,15 @@ def _verdict_for(case):
         return {"authentic": v["status_authentic"], "fresh": v["fresh"],
                 "active": (v["status"] == "ACTIVE") if v["status"] is not None else None}
 
+    if artifact == "id-token":
+        # v9.420: the detached verifier answers the same three questions as the two
+        # SDKs. Checking only the signature would let a token minted for one relying
+        # party be accepted at another, which is what the new cases ask about.
+        v = V.verify_id_token(_load(case["object_file"]), audience=case.get("audience"),
+                              nonce=case.get("nonce"), now=case.get("now"))
+        return {"authentic": v["token_authentic"], "audience_matches": v["audience_matches"],
+                "nonce_matches": v["nonce_matches"], "fresh": v["fresh"]}
+
     if artifact in _SIGNED:
         name, key = _SIGNED[artifact]
         v = _call(getattr(V, name), _load(case["object_file"]), now=case.get("now"))
