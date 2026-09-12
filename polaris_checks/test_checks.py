@@ -13269,3 +13269,84 @@ def test_conformance_constrains_check_discriminates(tmp_path):
     write(c={"cases": [{"name": "x", "artifact": "alpha", "expect": {"authentic": False}}]})
     assert level("asserting about nothing") == "FAIL", \
         "must FAIL rather than pass when the contract has almost no cases"
+
+
+def test_procedure_mutation_check_discriminates(tmp_path):
+    """Every way the procedure drill could exist and measure nothing must fail."""
+    DRILL = ("SURVIVORS_EXPECTED: dict[str, str] = {}\n"
+             "CONTROL = ('uc8_revoke_token', 'Co-signer must differ from actor')\n"
+             "def _left_mutated(conn):\n    return []\n"
+             "def mutate(body, a, b):\n"
+             # Needles live in STRINGS, never comments: _read strips comments before the
+             # check sees the file, which is right (it grades code) and has caught three
+             # fixtures in this file that hid a needle in a `#` line.
+             "    span = find('RAISE EXCEPTION', body)\n"
+             "    return body[:a] + 'NULL;' + body[b:]\n"
+             "def report():\n"
+             "    print('unmeasurable: no test class names them')\n"
+             "    print('the catalog came back intact: byte for byte')\n"
+             "    print('repair with: psql -f polaris_sql/05_procedures.sql')\n"
+             "    print('declared survivor(s) are now covered; strike them')\n")
+    CI = ("      - run: python scripts/polaris-procedure-mutation-drill.py\n"
+          "      - run: psql -f polaris_sql/05_procedures.sql\n")
+    SWEEP = "      - run: python scripts/polaris-procedure-mutation-drill.py --exhaustive\n"
+
+    def write(drill=None, ci=None, sweep=None):
+        (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "scripts" / "polaris-procedure-mutation-drill.py").write_text(
+            DRILL if drill is None else drill)
+        (tmp_path / ".github" / "workflows" / "ci.yml").write_text(CI if ci is None else ci)
+        (tmp_path / ".github" / "workflows" / "procedure-sweep.yml").write_text(
+            SWEEP if sweep is None else sweep)
+
+    def level(msg_contains=None):
+        out = checks.check_procedure_refusals_are_mutation_tested(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS on a drill that measures something"
+
+    for needle, expect in (
+        ("RAISE EXCEPTION", "does not target the refusals"),
+        ("NULL;", "not deleting one refusal at a time"),
+        ("CONTROL", "no negative control"),
+        ("SURVIVORS_EXPECTED", "does not declare"),
+        ("unmeasurable", "counted as a survivor"),
+        ("byte for byte", "does not verify the catalog came back intact"),
+        ("_left_mutated", "start on a catalog a previous run left mutated"),
+    ):
+        write(drill=DRILL.replace(needle, "GONE"))
+        assert level(expect) == "FAIL", "must FAIL when %r is absent" % needle
+
+    # A survivor that becomes covered must be able to fail the drill.
+    write(drill=DRILL.replace("print('declared survivor(s) are now covered; strike them')\n", ""))
+    assert level("would not fail the drill") == "FAIL", \
+        "must FAIL when the declaration cannot go stale-red"
+
+    # SURVIVORS_EXPECTED must carry a reason per entry, not be a bare set.
+    write(drill=DRILL.replace("SURVIVORS_EXPECTED: dict[str, str] = {}",
+                              "SURVIVORS_EXPECTED = ()"))
+    assert level("not a mapping") == "FAIL", \
+        "must FAIL when a survivor can be declared without a reason"
+
+    # It never runs.
+    write(ci="      - run: echo nothing\n")
+    assert level("does not run in CI") == "FAIL", "must FAIL when the drill is a one-off"
+
+    # It runs and leaves the schema mutated for every later step.
+    write(ci="      - run: python scripts/polaris-procedure-mutation-drill.py\n")
+    assert level("never reinstalls the canonical") == "FAIL", \
+        "must FAIL when a killed drill would poison the rest of the job"
+
+    # Nothing widens the default mode's narrower net.
+    write(sweep="      - run: echo nothing\n")
+    assert level("never widened") == "FAIL", \
+        "must FAIL when no weekly sweep re-tries the survivors"
+
+    # The drill is gone.
+    (tmp_path / "scripts" / "polaris-procedure-mutation-drill.py").unlink()
+    assert level("is missing") == "FAIL", "must FAIL when the drill does not exist"

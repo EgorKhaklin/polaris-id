@@ -5,6 +5,69 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.434 — 2026-09-12 (27 refusals a stored procedure makes that no test notices)
+
+CHECK constraints have been mutation-tested since v9.407, triggers since v9.413, the ZK
+witnesses since v9.419 and the conformance contract since v9.429. The stored procedures were
+the part of the security boundary that was not, and they are the part with the most to hide.
+A trigger sees one row. `uc8_revoke_token` sees a whole revocation: the token's state, the
+agency's bound, the co-signer, the CRL entry, and it refuses across all of it. Those
+refusals are the multi-step invariants, and they are the only thing standing where a trigger
+cannot reach.
+
+**`scripts/polaris-procedure-mutation-drill.py`** deletes one `RAISE EXCEPTION` at a time,
+leaving the condition and every other statement intact, so the procedure carries on and
+performs the write it was written to refuse. That is narrower than dropping the procedure,
+which would fail every test that calls it and prove only that it is reachable.
+
+**59 refusals across 16 procedures. 22 caught. 10 not measurable here. 27 that nothing
+notices.**
+
+The 27 concentrate exactly where the invariants are multi-step: `uc9_complete_recovery` (7),
+`uc_archive_purge` (5), `uc10_revoke_attestation` (4), `uc11_close_epoch` (3),
+`uc10_attest_trust` (3), `uc_pseudonymize_individual` (3), `uc8_revoke_token` (1),
+`close_anchor_batch` (1). Delete any one and the whole suite stays green while the procedure
+does the thing it refuses. Covering them is the next arc, the way v9.412 covered the fourteen
+triggers v9.411 found; until then the list is exact and checked both ways, so it cannot grow
+and cannot quietly stop describing the procedures.
+
+The default mode runs only the test classes that NAME the procedure under test, which is
+cheap enough to run per push. The weekly `procedure-sweep` workflow re-tries every survivor
+against all 22 exercising classes. **That widened pass caught none of the 27**, so these are
+not an artifact of a narrow net: nothing anywhere notices.
+
+### What the drill had to survive first
+
+**Its negative control refused the first configuration.** Pointed at the two cheap suites, the
+control refusal -- one plainly covered by `IssuerDiscretionBoundsTests` -- could not turn them
+red, so the drill declined to report anything. Procedure coverage lives in the application
+suite; the fast suites were the wrong question.
+
+**A procedure no test names would have read as all-survivors.** An empty test run is green, so
+the three procedures whose coverage lives in `polaris_sim`, `08_tests.sql` and the partition
+drill contributed 10 refusals that the first measurement counted as findings. They are
+reported as not measurable here instead, and excluded from the count.
+
+**It was killed mid-run and left a procedure mutated.** The first exhaustive attempt exhausted
+this machine's memory; no handler catches that. So the drill prints its one-line repair BEFORE
+it touches anything, refuses to start on a catalog a previous run left mutated, and CI
+reinstalls `05_procedures.sql` with `if: always()` immediately after the step -- before the
+attacks suites, which revoke through the real `uc8_revoke_token`. A cleanup path that only
+runs when the program is well behaved is not a cleanup path.
+
+**And `--only` could never pass.** It compared the declaration against every procedure,
+including the ones it had just been told to skip, so each of those read as newly covered. The
+comparison is scoped to what the run measured.
+
+`check_procedure_refusals_are_mutation_tested` pins all of it: one refusal at a time, the
+negative control, the unmeasurable classification, the byte-for-byte catalog restore, the
+named repair, the both-directions declaration, the CI reinstall, and the weekly widening.
+Thirteen discriminations.
+
+**250 invariant checks.**
+
+---
+
 ## v9.433 — 2026-09-12 (the instrument was wrong three ways, and the answer is that there is nothing left to write)
 
 The conformance mutation drill has reported a number since v9.429 and I have been quoting it.

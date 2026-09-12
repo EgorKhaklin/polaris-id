@@ -6467,6 +6467,94 @@ def check_conformance_contract_constrains(root: pathlib.Path) -> list[Finding]:
                      f"directions, and runs in CI")
 
 
+
+# ----------------------------------------------------------------------------
+# v9.434: the refusals a stored procedure makes are mutation-tested.
+#
+# CHECK constraints (v9.407), triggers (v9.413), the ZK witnesses (v9.419) and the
+# conformance contract (v9.429) are each mutation-tested. The stored procedures were
+# the one part of the security boundary that was not, and they are the part with the
+# most to hide: a trigger sees one row, while uc8_revoke_token sees a whole revocation
+# and refuses across the token's state, the agency's bound, the co-signer and the CRL.
+# ----------------------------------------------------------------------------
+
+def check_procedure_refusals_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
+    """Each `RAISE EXCEPTION` in a stored procedure is deleted and something must notice.
+
+    The properties that make the measurement worth its runtime, each of which the drill
+    is decorative without:
+
+      - It deletes ONE refusal at a time and leaves the condition and every other
+        statement intact, so the procedure performs the write it should have refused.
+        Dropping the procedure instead would fail every test that calls it and prove
+        only that it is reachable.
+      - It has a negative control: a refusal known to be covered is deleted first and
+        must turn the tests red. The first configuration of this drill pointed at the
+        wrong suites and the control correctly refused the run.
+      - A procedure no test class names is reported as UNMEASURABLE, not as a survivor.
+        An empty test run is green, so without that distinction every refusal in such a
+        procedure would read as a finding while the drill measured nothing.
+      - It restores every definition and verifies the catalog comes back byte for byte,
+        and because no handler catches a kill, it prints the one-line repair before it
+        touches anything and refuses to start on a catalog a previous run left mutated.
+      - The survivors are declared exactly and checked in BOTH directions, and CI
+        reinstalls the canonical procedures afterwards whatever happened.
+    """
+    name = "procedure_mutation"
+    drill = _read(root, "scripts/polaris-procedure-mutation-drill.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-procedure-mutation-drill.py is missing, so nothing "
+                           "measures whether a procedure's refusals are tested")
+
+    findings: list[Finding] = []
+    for needle, why in (
+        ("RAISE EXCEPTION", "the drill does not target the refusals"),
+        ("NULL;", "the mutation does not replace a refusal with a no-op, so it is not "
+                  "deleting one refusal at a time"),
+        ("CONTROL", "the drill has no negative control, so a clean run could mean the "
+                    "suites never ran"),
+        ("SURVIVORS_EXPECTED", "the drill does not declare the refusals nothing covers"),
+        ("unmeasurable", "a procedure no test names would have every refusal counted as a "
+                         "survivor, which is the drill reporting a finding about nothing"),
+        ("byte for byte", "the drill does not verify the catalog came back intact"),
+        ("05_procedures.sql", "the drill does not name the one-line repair for a killed run"),
+        ("_left_mutated", "the drill would start on a catalog a previous run left mutated"),
+    ):
+        if needle not in drill:
+            findings.extend(_fail(name, why))
+
+    if not re.search(r"SURVIVORS_EXPECTED\s*(?::\s*dict\[str, str\]\s*)?=\s*\{", drill):
+        findings.extend(_fail(name, "SURVIVORS_EXPECTED is not a mapping of refusal to reason, "
+                                    "so a survivor could be declared without one"))
+    for needle, why in (("declared", "a survivor that becomes covered would not fail the drill"),
+                        ("strike them", "the declaration cannot go stale-red, so the list "
+                                        "slowly stops describing anything")):
+        if needle not in drill:
+            findings.extend(_fail(name, why))
+
+    ci = _read(root, ".github/workflows/ci.yml")
+    if "polaris-procedure-mutation-drill.py" not in ci:
+        findings.extend(_fail(name, "the procedure mutation drill does not run in CI, so the "
+                                    "measurement is a one-off"))
+    elif "05_procedures.sql" not in ci:
+        findings.extend(_fail(name, "CI runs the drill but never reinstalls the canonical "
+                                    "procedures, so a killed run leaves every later step "
+                                    "testing a mutated schema"))
+    sweep = _read(root, ".github/workflows/procedure-sweep.yml")
+    if "--exhaustive" not in sweep:
+        findings.extend(_fail(name, "no weekly workflow re-tries the survivors against every "
+                                    "exercising suite, so the default mode's narrower net is "
+                                    "never widened"))
+
+    if findings:
+        return findings
+    return _ok(name, "every RAISE EXCEPTION in a stored procedure is deleted one at a time and "
+                     "something must notice; the drill has a negative control, reports an "
+                     "unmeasurable procedure as such rather than as a finding, restores the "
+                     "catalog byte for byte, names its repair for a killed run, and is widened "
+                     "weekly")
+
+
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
     """The retention decision is data, floored, append-only, and the purge obeys it.
 
@@ -15689,6 +15777,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_no_upsert_without_an_arbiter,
     check_drill_plan_is_binding,
     check_conformance_contract_constrains,
+    check_procedure_refusals_are_mutation_tested,
 ]
 
 

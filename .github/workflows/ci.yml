@@ -416,6 +416,24 @@ jobs:
       - name: Trigger mutation drill (drop each trigger, something must notice)
         run: python scripts/polaris-trigger-mutation-drill.py
 
+      # v9.434 - the fourth member of that family, and the one with the most to
+      # hide. A trigger sees one row; uc8_revoke_token sees a whole revocation --
+      # the token's state, the agency's bound, the co-signer, the CRL entry --
+      # and refuses across all of it. The drill deletes one RAISE EXCEPTION at a
+      # time, leaving the condition and every other statement intact, so the
+      # procedure performs the write it should have refused. Default mode runs
+      # only the test classes that NAME the procedure under test; the weekly
+      # procedure-sweep workflow re-tries every survivor against all of them.
+      - name: Procedure mutation drill (delete each refusal, something must notice)
+        run: python scripts/polaris-procedure-mutation-drill.py
+
+      # A killed drill cannot restore what it mutated. 05_procedures.sql is the
+      # canonical source, so reinstalling it leaves the database trustworthy for
+      # every step after this one regardless of how the drill ended.
+      - name: Reinstall the procedures from canonical source
+        if: always()
+        run: psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f polaris_sql/05_procedures.sql
+
       # v9.275 (roadmap PE.5) — attacks that MUST fail, run every release. The db
       # suite issues a real signed token, revokes it through the real uc8
       # procedure, and asserts /verify treats it as authentic-but-NOT-authoritative

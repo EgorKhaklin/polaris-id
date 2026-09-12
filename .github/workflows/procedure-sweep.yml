@@ -1,0 +1,85 @@
+# ============================================================================
+# procedure-sweep.yml - every refusal a stored procedure makes, deleted one at a
+# time, against every suite that exercises it.
+#
+# CHECK constraints, triggers, the ZK witnesses and the conformance contract are
+# all mutation-tested. The stored procedures are the fourth member of that family
+# and the one with the most to hide: a trigger sees one row, while
+# uc8_revoke_token sees a whole revocation and refuses across all of it.
+#
+# The drill deletes one RAISE EXCEPTION at a time, leaving the condition and every
+# other statement intact, so the procedure performs the write it should have
+# refused. In its default mode each mutation runs only the test classes that NAME
+# the procedure, which is cheap enough for a laptop. This workflow runs the
+# exhaustive mode: any refusal those classes miss is re-tried against every
+# exercising class, so a survivor here is a refusal nothing anywhere notices.
+#
+# Weekly rather than per push because it is 59 mutations against real suites.
+# ============================================================================
+name: Procedure sweep (exhaustive)
+
+on:
+  schedule:
+    - cron: "41 5 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    name: Every procedure refusal, against every exercising suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: polaris_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -h 127.0.0.1"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      POLARIS_DB_HOST: localhost
+      POLARIS_DB_PORT: "5432"
+      POLARIS_DB_NAME: polaris_test
+      POLARIS_DB_USER: postgres
+      PGPASSWORD: postgres
+      POLARIS_DB_PASSWORD: postgres
+      POLARIS_SECRET_KEY: procedure-sweep-secret
+      POLARIS_STATE_DIR: /tmp/polaris-state
+      POLARIS_PQC_PROFILE: placeholder
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the app stack
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r polaris_web/requirements.txt
+
+      - name: Install the postgres client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Load the schema and apply the migrations
+        run: |
+          mkdir -p "$POLARIS_STATE_DIR"
+          cd polaris_sql
+          psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f 00_load_all.sql
+          for f in $(ls migrations/*.up.sql | sort); do
+            psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Every procedure refusal, against every exercising suite
+        run: python scripts/polaris-procedure-mutation-drill.py --exhaustive
+
+      # A killed run cannot restore what it mutated, so leave the database in a
+      # state the next job can trust regardless of how this one ended.
+      - name: Reinstall the procedures from canonical source
+        if: always()
+        run: psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f polaris_sql/05_procedures.sql
