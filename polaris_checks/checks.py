@@ -1044,6 +1044,41 @@ def check_migration_timeouts(root: pathlib.Path) -> list[Finding]:
                "fast instead of stalling the table)")
 
 
+def check_migrations_are_reversible(root: pathlib.Path) -> list[Finding]:
+    """Every .up.sql has a .down.sql beside it (v9.441).
+
+    `polaris-migrate.sh` already refuses a migration with no revert, but it refuses it
+    at DEPLOY time, inside the rolling and failover drills, which need a docker cluster
+    and so do not run on a developer machine. v9.440 shipped a migration whose own
+    header said "REVERSIBLE: the .down.sql drops the trigger and the table" and did not
+    have one. The local gate said READY; CI stopped the deploy.
+
+    The rule the deploy enforces costs nothing to enforce here, where a missing revert
+    is a fact about two filenames.
+    """
+    name = "migrations_reversible"
+    d = root / "polaris_sql" / "migrations"
+    if not d.is_dir():
+        return _fail(name, "polaris_sql/migrations/ is missing")
+    ups = sorted(d.glob("*.up.sql"))
+    if not ups:
+        return _fail(name, "polaris_sql/migrations/ holds no .up.sql at all")
+    orphans = [u.name for u in ups
+               if not u.with_name(u.name[:-len(".up.sql")] + ".down.sql").exists()]
+    if orphans:
+        return _fail(name, "%d migration(s) have no .down.sql beside them, which the deploy "
+                           "refuses to apply: %s" % (len(orphans), ", ".join(orphans)))
+    # The other direction: a revert with nothing to revert is a file that will never run.
+    downs = sorted(d.glob("*.down.sql"))
+    widows = [x.name for x in downs
+              if not x.with_name(x.name[:-len(".down.sql")] + ".up.sql").exists()]
+    if widows:
+        return _fail(name, "%d revert(s) name a migration that does not exist: %s"
+                           % (len(widows), ", ".join(widows)))
+    return _ok(name, "all %d migrations are bidirectional: each .up.sql has the .down.sql the "
+                     "deploy requires, and no revert names a migration that is not there" % len(ups))
+
+
 # ---------------------------------------------------------------------------
 # A persistent-volume UPGRADE does NOT re-run docker-init.sh (postgres init
 # scripts only fire on an empty data dir), so the deploy must itself apply
@@ -15860,6 +15895,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_image_cve_scanning,
     check_sast_scanning,
     check_migration_timeouts,
+    check_migrations_are_reversible,
     check_deploy_syncs_db_objects,
     check_web_concurrency_honored,
     check_prometheus_multiprocess,

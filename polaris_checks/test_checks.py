@@ -13505,3 +13505,46 @@ def test_authority_recorded_check_discriminates(tmp_path):
     write(app="query('INSERT INTO AgencyEvent (agency_id) VALUES (1)')\n")
     assert level("trigger must be the only writer") == "FAIL", \
         "must FAIL when the app can write its own record"
+
+
+def test_migrations_reversible_check_discriminates(tmp_path):
+    """v9.440 shipped a migration whose header promised a .down.sql it did not have.
+
+    The deploy caught it; the local gate said READY. This is the gate catching it.
+    """
+    d = tmp_path / "polaris_sql" / "migrations"
+    d.mkdir(parents=True)
+
+    def level(msg_contains=None):
+        out = checks.check_migrations_are_reversible(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    assert level("holds no .up.sql") == "FAIL", "must FAIL when there are no migrations at all"
+
+    (d / "2026-01-01-001-first.up.sql").write_text("CREATE TABLE A (id int);\n")
+    (d / "2026-01-01-001-first.down.sql").write_text("DROP TABLE A;\n")
+    assert level() == "OK", "must PASS when every migration is bidirectional"
+
+    (d / "2026-01-02-002-second.up.sql").write_text("CREATE TABLE B (id int);\n")
+    assert level("2026-01-02-002-second.up.sql") == "FAIL", \
+        "must FAIL, and name the migration, when a revert is missing"
+
+    (d / "2026-01-02-002-second.down.sql").write_text("DROP TABLE B;\n")
+    assert level() == "OK", "must PASS once the revert is written"
+
+    (d / "2026-01-03-003-orphan.down.sql").write_text("DROP TABLE C;\n")
+    assert level("2026-01-03-003-orphan.down.sql") == "FAIL", \
+        "must FAIL when a revert names a migration that does not exist"
+
+    (d / "2026-01-03-003-orphan.down.sql").unlink()
+    (d / "2026-01-04-004-a.up.sql").write_text("CREATE TABLE D (id int);\n")
+    (d / "2026-01-05-005-b.up.sql").write_text("CREATE TABLE E (id int);\n")
+    out = checks.check_migrations_are_reversible(tmp_path)[0]
+    assert "2 migration(s)" in out.message, "must count every missing revert, not stop at one"
+
+    import shutil
+    shutil.rmtree(tmp_path / "polaris_sql")
+    assert level("is missing") == "FAIL", "must FAIL when the migrations directory is gone"

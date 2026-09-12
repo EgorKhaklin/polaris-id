@@ -5,6 +5,33 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.441 — 2026-09-12 (a migration whose header promised a revert it did not have)
+
+v9.440's migration says, in its own header, "REVERSIBLE: the .down.sql drops the trigger and the
+table." There was no .down.sql. `polaris-migrate.sh` refuses a migration with no revert, so the
+rolling deploy stopped with `missing .down.sql (Sanctum §IV.2 requires bidirectional)` and neither
+app container was replaced. The local gate had said READY.
+
+It said READY because nothing local checks the rule. `polaris-migrate.sh` enforces it at DEPLOY
+time, inside the rolling and failover drills, and both of those need a docker cluster, so on a
+developer machine they are the two drills that cannot run. Individual checks assert a revert
+exists for particular named migrations; none asserted it for all of them.
+
+The revert is written, and it is loud about what it discards: the record of who created each
+issuing authority, who raised the level it operates at, who moved the jurisdiction it operates
+in, and the reasons they gave. Nowhere else holds that. Running it also restores three absences,
+including DELETE on Agency, which lets an authority that issued credentials be made never to have
+existed while thirty-five tables still point at its id.
+
+`check_migrations_are_reversible` now asks the question the deploy asks, where it costs two
+filenames instead of a container rollover: all 39 migrations are bidirectional, and a revert that
+names a migration which does not exist fails too, so the pairing is checked in both directions.
+Verified against the tree as v9.440 left it, where it names the offending file.
+
+**253 invariant checks. 44 tables.**
+
+---
+
 ## v9.440 — 2026-09-12 (the row at the root of the hierarchy had no trigger on it)
 
 Every token in Polaris is issued under an authority, and `Agency.authorization_level` is what
