@@ -31,6 +31,8 @@ drift from what the program accepts):
     user-create          Create a new application user
     user-passwd          Change a user's password (also clears lockout)
     user-deactivate      Deactivate (soft-delete) a user account
+    agency-create        Create an authority, with the reason it exists
+    agency-history       Every recorded decision about an authority
     quota-set            Set per-agency caps; 0 clears a cap
     quota-show           Show per-agency caps (all agencies, or one)
     discretion-set       Set an agency's revocation-share bound
@@ -90,6 +92,7 @@ def navy(s):  return _c('34', s)
 def gold(s):  return _c('33', s)
 def green(s): return _c('32', s)
 def red(s):   return _c('31', s)
+def yellow(s):return _c('33', s)
 def dim(s):   return _c('2', s)
 def bold(s):  return _c('1', s)
 
@@ -1183,6 +1186,124 @@ def cmd_user_deactivate(args):
 
 
 # ----------------------------------------------------------------------------
+# COMMAND: agency-create / agency-history (the authority itself)
+#
+# v9.440. Every other act in this tool has a command: issue, revoke, quota-set,
+# discretion-set, key-register, retention-set, user-create, rp-register. The thing
+# at the root of the hierarchy did not. An authority could be created only through
+# the web console, which means the first step of standing one up -- the step roadmap
+# P7.2 is about automating -- could not be scripted at all.
+# ----------------------------------------------------------------------------
+
+def cmd_agency_create(args):
+    """Create an authority, with the reason it exists.
+
+    An Agency issues credentials, holds signing keys, receives quotas and revocation
+    bounds, and vouches for other authorities in federation; thirty-five tables point
+    at it. Creating one is recorded in AgencyEvent by a database trigger, so this
+    command cannot decline to record it and neither can anything else.
+    """
+    if len((args.justification or '').strip()) < 20:
+        sys.stderr.write(red("--justification must be at least 20 characters: an authority "
+                             "issues credentials, and the record of why it exists is the "
+                             "thing an assessor reads first.\n"))
+        sys.exit(1)
+    if not (1 <= int(args.authorization_level) <= 5):
+        sys.stderr.write(red("--authorization-level must be between 1 and 5 "
+                             "(1 = limited verifier, 5 = federal issuer).\n"))
+        sys.exit(1)
+    actor = (args.actor or os.environ.get('USER') or 'operator')[:100]
+
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.actor', %s, true)", (actor,))
+            cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                        (args.justification.strip()[:500],))
+            cur.execute("""
+                INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level)
+                VALUES (%s, %s, %s, %s) RETURNING agency_id
+            """, (args.name, args.agency_type, args.jurisdiction,
+                  int(args.authorization_level)))
+            agency_id = cur.fetchone()['agency_id']
+            conn.commit()
+        print(green(f"✓ Authority #{agency_id}: {args.name}"))
+        print(f"  {args.agency_type} in {args.jurisdiction}, "
+              f"authorization level {args.authorization_level}")
+        print(dim("  Recorded in AgencyEvent with the reason given. It cannot be deleted: "
+                  "an authority that existed is part of the record."))
+        print(dim("  Next: authorize an algorithm (AgencyAlgorithmAuth), register a signing "
+                  "key (polaris key-register), then attest trust with a peer."))
+        return 0
+    except psycopg2.errors.CheckViolation as e:
+        conn.rollback()
+        sys.stderr.write(red(f"Constraint violation: {str(e).split(chr(10))[0]}\n"))
+        sys.exit(3)
+    except psycopg2.Error as e:
+        conn.rollback()
+        sys.stderr.write(red(f"Database error: {db_error_message(e)}\n"))
+        sys.exit(2)
+    finally:
+        conn.close()
+
+
+def cmd_agency_history(args):
+    """Every recorded decision about an authority, and who made it.
+
+    --widened-only answers the question an assessor asks: when did this authority gain
+    reach it did not have, and what reason was given. It filters on `widened IS NOT
+    FALSE`, not on `widened`, so it includes the changes the database records as
+    unknowable: a move of jurisdiction or of type, which may be a correction or may be a
+    county office becoming a national issuer, and which SQL cannot rank. Filtering on
+    `widened` alone would return a shorter list and a wrong answer.
+    """
+    where, params = ["TRUE"], []
+    if args.agency_id is not None:
+        where.append("e.agency_id = %s"); params.append(args.agency_id)
+    if args.widened_only:
+        where.append("e.widened IS NOT FALSE")
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT e.*, coalesce(a.name, '(no longer present)') AS current_name
+                  FROM AgencyEvent e LEFT JOIN Agency a USING (agency_id)
+                 WHERE """ + " AND ".join(where) + """
+                 ORDER BY e.agency_id, e.event_id
+            """, tuple(params))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        print(dim("No recorded decisions about an authority."
+                  + (" Nothing has widened or rescoped one." if args.widened_only else "")))
+        return 0
+    current = None
+    for r in rows:
+        if r['agency_id'] != current:
+            current = r['agency_id']
+            print(f"\nauthority #{r['agency_id']} {r['current_name']}")
+        flag = (red(' WIDENED') if r['widened']
+                else ('' if r['widened'] is False else yellow(' SCOPE CHANGED')))
+        what = (f"{r['field']}: {r['old_value']} -> {r['new_value']}"
+                if r['field'] else r['new_value'])
+        print(f"  {r['recorded_at']:%Y-%m-%d %H:%M}  {r['event_type']}{flag}")
+        print(f"      {what}")
+        print(dim(f"      by {r['actor'] or '(no actor declared)'} as db role {r['db_role']}"))
+        if r['justification']:
+            print(dim(f"      {r['justification']}"))
+    widened = sum(1 for r in rows if r['widened'])
+    rescoped = sum(1 for r in rows if r['widened'] is None)
+    print()
+    print(dim(f"{len(rows)} recorded decision(s): {widened} that created an authority or "
+              f"raised the level one operates at, {rescoped} that moved one's jurisdiction "
+              f"or type, where the direction is not something the database can decide. "
+              f"Written by the trg_agency_audited trigger, so a change made outside this "
+              f"CLI appears here too."))
+    return 0
+
+
+# ----------------------------------------------------------------------------
 # COMMAND: quota-set / quota-show (per-agency quotas)
 # ----------------------------------------------------------------------------
 
@@ -2105,6 +2226,25 @@ def build_parser():
     p_ud = sub.add_parser('user-deactivate', help='Deactivate (soft-delete) a user account')
     p_ud.add_argument('username')
 
+    # agency-create / agency-history (v9.440): the authority itself, which had no
+    # command at all -- the first step of standing one up could not be scripted.
+    p_ac = sub.add_parser('agency-create', help='Create an authority, with the reason it exists')
+    p_ac.add_argument('name')
+    p_ac.add_argument('--agency-type', required=True,
+                      choices=['FEDERAL', 'STATE', 'COUNTY', 'PRIVATE', 'MUNICIPAL'])
+    p_ac.add_argument('--jurisdiction', required=True, help="e.g. US, US-PA")
+    p_ac.add_argument('--authorization-level', type=int, default=3,
+                      help='1 = limited verifier, 5 = federal issuer (default 3)')
+    p_ac.add_argument('--justification', required=True,
+                      help='Why this authority exists; at least 20 characters, recorded')
+    p_ac.add_argument('--actor', default=None, help='Who is creating it (default: $USER)')
+
+    p_ah = sub.add_parser('agency-history',
+                          help='Every recorded decision about an authority, and who made it')
+    p_ah.add_argument('agency_id', type=int, nargs='?', default=None)
+    p_ah.add_argument('--widened-only', action='store_true',
+                      help='only the changes that created an authority or raised its level')
+
     # quota-set / quota-show
     p_qs = sub.add_parser('quota-set',
                           help='Set per-agency caps; 0 clears a cap')
@@ -2481,6 +2621,8 @@ HANDLERS = {
     'user-create':      cmd_user_create,
     'user-passwd':      cmd_user_passwd,
     'user-deactivate':  cmd_user_deactivate,
+    'agency-create':    cmd_agency_create,
+    'agency-history':   cmd_agency_history,
     'quota-set':        cmd_quota_set,
     'quota-show':       cmd_quota_show,
     'discretion-set':   cmd_discretion_set,

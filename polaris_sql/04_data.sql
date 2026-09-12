@@ -26,7 +26,8 @@
 
 -- Wipe before insert. Order matters: junctions first, then records, then the
 -- central artifact, then principals (FK-dependency order in reverse).
-TRUNCATE TABLE ZkVerificationNonce,
+TRUNCATE TABLE AgencyEvent,
+               ZkVerificationNonce,
                TokenStateEpochLeaf, TokenStateEpoch,
                AgencyTrustAttestation,
                TokenPermission, AgencyAlgorithmAuth,
@@ -56,6 +57,13 @@ INSERT INTO Individual (legal_name, date_of_birth, jurisdiction, enrollment_date
 -- county health authority). Issuers carry authorization_level=5; verifiers
 -- carry lower levels reflecting their narrower scope.
 -- ============================================================================
+
+-- v9.440: the seed states its reason like any other caller. Creating an authority is
+-- refused without one, and a sample database that bypassed the rule would be a sample
+-- of a system that does not have it.
+SELECT set_config('polaris.actor', 'sample-data', false);
+SELECT set_config('polaris.justification',
+                  'notional sample authority, shipped with the demonstration data', false);
 
 INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level) VALUES
     ('US National Identity Service',     'FEDERAL', 'US',    5),  -- 1: federal issuer

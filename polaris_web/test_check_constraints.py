@@ -84,24 +84,41 @@ class _CheckBase(unittest.TestCase):
 # ============================================================================
 
 class TestAgencyChecks(_CheckBase):
-    """agency_type enum + authorization_level 1..5 range."""
+    """agency_type enum + authorization_level 1..5 range.
+
+    Each insert declares a reason first. Since v9.440 `trg_agency_audited` is a BEFORE
+    trigger, so it runs ahead of the table's CHECK constraints and a request with no
+    stated reason is refused before the value is ever examined. Declaring one puts the
+    CHECK back in the position of being the thing that refuses, which is what these
+    tests are about. `TestAuthorityChangesAreRecorded` covers the other refusal.
+    """
+
+    #: Long enough to clear the 20-character floor the trigger enforces.
+    REASON = "constraint test, not a real authority"
+
+    def _expect_check_violation_with_reason(self, sql, constraint_name):
+        self._expect_check_violation(
+            "SELECT set_config('polaris.justification', %s, true); " + sql,
+            params=(self.REASON,),
+            constraint_name=constraint_name,
+        )
 
     def test_agency_type_enum_rejects_unknown(self):
-        self._expect_check_violation(
+        self._expect_check_violation_with_reason(
             "INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level) "
             "VALUES ('Test', 'INVALID', 'Nowhere', 3)",
             constraint_name='agency_type_check',
         )
 
     def test_agency_authorization_level_above_ceiling(self):
-        self._expect_check_violation(
+        self._expect_check_violation_with_reason(
             "INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level) "
             "VALUES ('Test', 'FEDERAL', 'Nowhere', 6)",
             constraint_name='authorization_level',
         )
 
     def test_agency_authorization_level_zero_rejected(self):
-        self._expect_check_violation(
+        self._expect_check_violation_with_reason(
             "INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level) "
             "VALUES ('Test', 'FEDERAL', 'Nowhere', 0)",
             constraint_name='authorization_level',
@@ -1436,6 +1453,14 @@ _PROOFING = ("INSERT INTO EnrollmentProofing (individual_id, recorded_by_agency_
 _HEX64 = "repeat('a', 64)"
 
 APPEND_ONLY_FIXTURES = {
+    # v9.440: AgencyEvent has no INSERT of its own -- trg_agency_audited is the only
+    # writer -- so the fixture creates the AUTHORITY and lets the trigger write the row.
+    'agencyevent': ('event_id',
+        "SELECT set_config('polaris.justification', "
+        "'append-only fixture: an authority created to attack its event row', true); "
+        "INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level) "
+        "VALUES ('Append Only Authority Probe', 'COUNTY', 'US-ZZ', 1); "
+        "SELECT max(event_id) AS event_id FROM AgencyEvent"),
     # v9.425: RelyingPartyEvent has no INSERT of its own -- trg_relying_party_audited
     # is the only writer. So the fixture makes the DECISION and lets the trigger write
     # the row, which is also the only way a caller could ever produce one.
@@ -1986,6 +2011,190 @@ class TestDiscretionPolicyIsAppendOnly(_CheckBase):
                 "INSERT INTO IssuerDiscretionPolicy (agency_id, max_revoke_percent, "
                 "window_days, set_by_admin, justification) VALUES (%s, 9, 30, 'test', 'short')",
                 (self.AGENCY,))
+
+
+class TestAuthorityChangesAreRecorded(_CheckBase):
+    """An authority cannot be created, widened or erased without a record (v9.440).
+
+    An Agency issues credentials, holds signing keys, receives quotas and revocation
+    bounds, and vouches for other authorities; thirty-five foreign keys point at it.
+    Creating one wrote nothing: verified against a loaded database with every audit
+    table unchanged and zero triggers on the table. It could also be renamed, have its
+    authorization_level raised from 3 to 5, and be deleted, all silently.
+
+    The writer is trg_agency_audited, not the console, so these attack the database
+    directly: a change made in psql is recorded on the same terms.
+    """
+
+    WHY = 'a stated reason long enough to satisfy the floor'
+
+    def setUp(self):
+        super().setUp()
+        self.cur = self.conn.cursor()
+        self.addCleanup(self.cur.close)
+
+    def _reason(self, why=None):
+        self.cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                         (self.WHY if why is None else why,))
+
+    def _actor(self, who='probe-operator'):
+        self.cur.execute("SELECT set_config('polaris.actor', %s, true)", (who,))
+
+    def _create(self, name='Recorded Authority Probe', level=2):
+        self.cur.execute(
+            "INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level) "
+            "VALUES (%s, 'COUNTY', 'US-ZZ', %s) RETURNING agency_id", (name, level))
+        return self.cur.fetchone()["agency_id"]
+
+    def _events(self, agency_id):
+        self.cur.execute("SELECT event_type, field, old_value, new_value, widened, actor, "
+                         "db_role, justification FROM AgencyEvent WHERE agency_id = %s "
+                         " ORDER BY event_id", (agency_id,))
+        return self.cur.fetchall()
+
+    def test_creating_an_authority_is_recorded(self):
+        self._reason(); self._actor()
+        aid = self._create()
+        events = self._events(aid)
+        self.assertEqual(len(events), 1, "creating an authority wrote no event")
+        e = events[0]
+        self.assertEqual(e["event_type"], "CREATED")
+        self.assertTrue(e["widened"], "an authority where there was none is a widening")
+        self.assertEqual(e["actor"], "probe-operator")
+        self.assertIn(self.WHY, e["justification"])
+        self.assertIn("authorization_level=2", e["new_value"])
+
+    def test_creating_an_authority_without_a_reason_is_refused(self):
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self._create(name='Unexplained Authority Probe')
+
+    def test_raising_the_level_needs_a_reason_and_is_marked(self):
+        """Level 5 is a federal issuer. Going up is the change that grants something."""
+        self._reason(); self._actor()
+        aid = self._create(level=2)
+        self.cur.execute("SAVEPOINT created")
+        self._reason('')
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE Agency SET authorization_level = 5 WHERE agency_id = %s",
+                             (aid,))
+        self.cur.execute("ROLLBACK TO SAVEPOINT created")
+        self._reason('the authority is taking on federal issuance for the pilot')
+        self.cur.execute("UPDATE Agency SET authorization_level = 5 WHERE agency_id = %s",
+                         (aid,))
+        e = self._events(aid)[-1]
+        self.assertEqual((e["event_type"], e["old_value"], e["new_value"]),
+                         ("LEVEL_CHANGED", "2", "5"))
+        self.assertTrue(e["widened"])
+
+    def test_lowering_the_level_is_recorded_but_needs_no_reason(self):
+        """The rule bounds one direction: making an authority weaker is not a grant."""
+        self._reason(); self._actor()
+        aid = self._create(level=4)
+        self._reason('')
+        self.cur.execute("UPDATE Agency SET authorization_level = 1 WHERE agency_id = %s",
+                         (aid,))
+        e = self._events(aid)[-1]
+        self.assertEqual(e["event_type"], "LEVEL_CHANGED")
+        self.assertFalse(e["widened"], "a reduction was recorded as a widening")
+
+    def test_a_rename_is_recorded_and_needs_no_reason(self):
+        self._reason(); self._actor()
+        aid = self._create()
+        self._reason('')
+        self.cur.execute("UPDATE Agency SET name = 'Renamed Authority Probe' "
+                         " WHERE agency_id = %s", (aid,))
+        e = self._events(aid)[-1]
+        self.assertEqual((e["event_type"], e["field"]), ("RENAMED", "name"))
+        self.assertFalse(e["widened"])
+
+    def test_an_authority_cannot_be_deleted(self):
+        """An authority that existed is part of the record even if it issued nothing."""
+        self._reason(); self._actor()
+        aid = self._create()
+        with self.assertRaises(pg_errors.InsufficientPrivilege) as c:
+            self.cur.execute("DELETE FROM Agency WHERE agency_id = %s", (aid,))
+        self.assertIn("append-only", str(c.exception))
+
+    def test_the_agency_id_cannot_be_repointed(self):
+        """Thirty-five tables reference it; changing it would re-point all of them."""
+        self._reason(); self._actor()
+        aid = self._create()
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("UPDATE Agency SET agency_id = agency_id + 5000 "
+                             " WHERE agency_id = %s", (aid,))
+
+    def test_the_record_cannot_be_edited_or_deleted(self):
+        self._reason(); self._actor()
+        aid = self._create()
+        self.cur.execute("SAVEPOINT recorded")
+        for sql in ("UPDATE AgencyEvent SET widened = FALSE WHERE agency_id = %s",
+                    "UPDATE AgencyEvent SET justification = 'rewritten' WHERE agency_id = %s",
+                    "DELETE FROM AgencyEvent WHERE agency_id = %s"):
+            with self.subTest(sql=sql.split()[0]):
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    self.cur.execute(sql, (aid,))
+                self.cur.execute("ROLLBACK TO SAVEPOINT recorded")
+
+    def test_a_rescope_needs_a_reason(self):
+        """The hole the first cut of this left open.
+
+        `authorization_level` has an ordering, so the database can say a rise in it is a
+        widening. `jurisdiction` is free text: 'US' is not greater than 'US-ZZ' by any
+        comparison SQL has. So a county office could be made a national issuer in one
+        UPDATE, with no reason given, and the record would carry `widened = FALSE`.
+        """
+        self._reason(); self._actor()
+        aid = self._create()
+        self.cur.execute("SAVEPOINT scoped")
+        for column, value in (("jurisdiction", "US"), ("agency_type", "FEDERAL")):
+            with self.subTest(column=column):
+                self._reason("")            # the reason does not carry across
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    self.cur.execute("UPDATE Agency SET %s = %%s WHERE agency_id = %%s"
+                                     % column, (value, aid))
+                self.cur.execute("ROLLBACK TO SAVEPOINT scoped")
+
+    def test_a_rescope_is_recorded_as_a_direction_the_database_cannot_decide(self):
+        """NULL, not FALSE. FALSE would be a claim that nothing was granted, which is
+        exactly what a county-to-nation move disproves, and it would drop the row out of
+        the assessor's `--widened-only` list."""
+        self._reason(); self._actor()
+        aid = self._create()
+        self._reason("promoted to a national issuer under the pilot charter")
+        self.cur.execute("UPDATE Agency SET jurisdiction = 'US', agency_type = 'FEDERAL' "
+                         " WHERE agency_id = %s", (aid,))
+        by_type = {e["event_type"]: e for e in self._events(aid)}
+        for event_type in ("JURISDICTION_CHANGED", "TYPE_CHANGED"):
+            with self.subTest(event_type=event_type):
+                self.assertIn(event_type, by_type, "a rescope wrote no event")
+                self.assertIsNone(by_type[event_type]["widened"],
+                                  "a rescope claims a direction the database cannot rank")
+
+    def test_the_assessors_filter_returns_every_change_that_may_have_granted_reach(self):
+        """`widened IS NOT FALSE` is the filter, and this is why: a rename must not appear
+        in it, and a rescope must."""
+        self._reason(); self._actor()
+        aid = self._create()
+        self._reason("promoted to a national issuer under the pilot charter")
+        self.cur.execute("UPDATE Agency SET jurisdiction = 'US' WHERE agency_id = %s", (aid,))
+        self.cur.execute("UPDATE Agency SET name = 'Renamed Authority Probe' "
+                         " WHERE agency_id = %s", (aid,))
+        self.cur.execute("SELECT event_type FROM AgencyEvent WHERE agency_id = %s "
+                         "   AND widened IS NOT FALSE ORDER BY event_id", (aid,))
+        got = [r["event_type"] for r in self.cur.fetchall()]
+        self.assertEqual(got, ["CREATED", "JURISDICTION_CHANGED"],
+                         "the assessor's filter is not the set of changes that may have "
+                         "granted reach")
+
+    def test_every_seeded_authority_carries_a_creation_event(self):
+        """The load order installs the trigger after the sample data, so those rows are
+        backfilled. A database showing authorities and no record of them reads as a
+        broken recorder."""
+        self.cur.execute("SELECT count(*) AS n FROM Agency a WHERE NOT EXISTS ("
+                         " SELECT 1 FROM AgencyEvent e WHERE e.agency_id = a.agency_id "
+                         "   AND e.event_type = 'CREATED')")
+        self.assertEqual(self.cur.fetchone()["n"], 0,
+                         "an authority exists with no record of having been created")
 
 
 class TestAgencyQuotaIsAppendOnly(_CheckBase):

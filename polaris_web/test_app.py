@@ -982,15 +982,42 @@ class AgencyCRUDTests(PolarisTestCase):
             'First National Bank',
             'Allegheny County Health')
 
+    # v9.440: creating an authority is recorded and the database refuses it without a
+    # stated reason, so every post below carries one.
+    WHY = 'a state authority stood up for this console test'
+
     def test_create_agency(self):
         r = self._post('/agencies/new', data={
             'name': 'Test Agency Beta',
             'agency_type': 'STATE',
             'jurisdiction': 'US-NY',
             'authorization_level': '3',
+            'justification': self.WHY,
         }, follow_redirects=True)
         self.assertEqual(r.status_code, 200)
         self.assertHTML(r, 'Test Agency Beta', 'is created')
+        row = _sql("SELECT event_type, widened, actor, justification FROM AgencyEvent "
+                   " WHERE name = %s", ('Test Agency Beta',), fetch='one')
+        self.assertEqual(row['event_type'], 'CREATED')
+        self.assertTrue(row['widened'], 'an authority where there was none is a widening')
+        self.assertEqual(row['actor'], 'admin', 'the console must name who created it')
+        self.assertIn('console test', row['justification'])
+
+    def test_creating_an_agency_without_a_reason_is_refused(self):
+        """An authority issues credentials, holds keys and vouches for other
+        authorities. Before v9.440 creating one wrote nothing anywhere."""
+        r = self._post('/agencies/new', data={
+            'name': 'Unexplained Authority',
+            'agency_type': 'FEDERAL',
+            'jurisdiction': 'US',
+            'authorization_level': '5',
+        }, follow_redirects=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('justification of at least 20 characters',
+                      r.get_data(as_text=True))
+        self.assertIsNone(_sql("SELECT agency_id FROM Agency WHERE name = %s",
+                               ('Unexplained Authority',), fetch='one'),
+                          'the authority was created anyway')
 
     def test_create_agency_with_invalid_type_fails(self):
         r = self._post('/agencies/new', data={
@@ -998,6 +1025,7 @@ class AgencyCRUDTests(PolarisTestCase):
             'agency_type': 'ALIEN',
             'jurisdiction': 'US',
             'authorization_level': '1',
+            'justification': self.WHY,
         }, follow_redirects=True)
         self.assertEqual(r.status_code, 200)
         # Either CHECK constraint message or "Constraint violation"

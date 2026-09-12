@@ -5,6 +5,39 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.440 — 2026-09-12 (the row at the root of the hierarchy had no trigger on it)
+
+Every token in Polaris is issued under an authority, and `Agency.authorization_level` is what
+decides how much that authority may do. The table had no trigger of any kind.
+
+Measured rather than assumed: creating an authority left every audit table in the schema
+byte-identical, and `pg_trigger` returned zero rows for `Agency`. An authority could be renamed,
+have its `authorization_level` raised from 3 to 5, and be dropped outright, and afterwards
+nothing in the database said any of it had happened or who had done it. The operator tool had no
+command for the row either, so the only path to a new issuing authority was a hand-written
+INSERT.
+
+`AgencyEvent` now sits beside `Agency` on the terms `RelyingPartyEvent` set in v9.425. The
+`trg_agency_audited` trigger writes it from the row diff, so a change made in psql is recorded
+the same as one made through the console. `widened` marks a change that gave an authority more
+reach than it had, which is creation itself and any rise in `authorization_level`, and a widening
+with no stated reason of at least 20 characters is refused by the database, the floor
+`AgencyQuota` has held since v9.190. A rename or a narrowing needs none. DELETE is refused rather
+than recorded: an authority with issued tokens behind it cannot be made never to have existed.
+
+`polaris-id agency-create` and `agency-history --widened-only` are the operator path, and the
+console form carries the same required reason. The seed load backfills a CREATED event for each
+notional authority, idempotently, so a reloaded demonstration database is not a hierarchy with no
+origin.
+
+`check_authority_creation_is_recorded` pins the trigger, the justification floor, the DELETE
+refusal and the append-only guard on the record itself; twelve discriminations, including the
+one that matters, which is a trigger that records the change but takes any reason at all.
+
+**252 invariant checks. 44 tables.**
+
+---
+
 ## v9.439 — 2026-09-12 (the silent record was tested; the screen was not)
 
 A duress code is what a person enters when someone is standing over them. The system serves the

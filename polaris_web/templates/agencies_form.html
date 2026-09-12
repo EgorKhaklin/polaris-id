@@ -38,6 +38,14 @@
             </select>
             <span class="help">1 = limited verifier; 5 = federal issuer</span>
         </div>
+        <div class="form-group">
+            <label for="justification">Justification</label>
+            <textarea id="justification" name="justification" required minlength="20"
+                      rows="3" maxlength="500"
+                      placeholder="Why this authority exists, or why its level is changing"></textarea>
+            <span class="help">At least 20 characters. Creating an authority, or raising the
+            level it operates at, is recorded with this reason and cannot be un-recorded.</span>
+        </div>
     </div>
 
     <div class="form-actions">

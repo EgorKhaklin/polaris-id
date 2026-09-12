@@ -5774,6 +5774,8 @@ def check_paper_pdf_is_current(root: pathlib.Path) -> list[Finding]:
 #: means nobody has checked whether anything tests it.
 BESPOKE_IMMUTABILITY_GUARDS = {
     "enforce_agency_quota_immutability":      "polaris_web/test_check_constraints.py",
+    # v9.440: the authority recorder also refuses a DELETE and an agency_id change.
+    "record_agency_change":                   "polaris_web/test_check_constraints.py",
     "enforce_attestation_immutability":       "polaris_web/test_app.py",
     "enforce_discretion_policy_immutability": "polaris_web/test_check_constraints.py",
     "enforce_epoch_immutability":             "polaris_web/test_app.py",
@@ -6624,6 +6626,124 @@ def check_duress_is_indistinguishable(root: pathlib.Path) -> list[Finding]:
     return _ok(name, "both duress-carrying paths assert the response is identical -- status, "
                      "body length, rendered page and headers -- not just that the silent record "
                      "was written; and the recording stays off the request thread")
+
+
+
+# ----------------------------------------------------------------------------
+# v9.440: creating an authority is recorded, and there is a command to do it.
+#
+# An Agency issues credentials, holds signing keys, receives quotas and revocation
+# bounds, and vouches for other authorities. Thirty-five foreign keys point at it.
+# Creating one wrote nothing: verified by running the insert /agencies/new makes,
+# with every audit table unchanged and zero triggers on the table. It could also be
+# renamed, have its authorization_level raised, and be deleted, all silently.
+#
+# v9.424, v9.425 and v9.426 each gave a decision ABOUT an authority its history.
+# This is the decision underneath them.
+# ----------------------------------------------------------------------------
+
+def check_authority_creation_is_recorded(root: pathlib.Path) -> list[Finding]:
+    """An authority cannot be created, widened or deleted without a record (v9.440).
+
+    Four properties:
+
+      - `AgencyEvent` exists, is append-only, and is written by a TRIGGER rather than
+        by the caller, so a change made in psql is recorded like one made in the
+        console. A caller that can write its own record can decline to.
+      - DELETE is refused outright. An authority that existed is part of the record
+        even if it issued nothing.
+      - Creating one, raising the level it operates at, or moving its jurisdiction or
+        type needs a stated reason at the DATABASE, on the same 20-character floor
+        AgencyQuota has held since v9.190. A rename does not: it grants nothing.
+      - A rescope is recorded as `widened = NULL`, and the operator tool filters on
+        `widened IS NOT FALSE`. `authorization_level` has an ordering, so a rise in it
+        is demonstrably a widening; `jurisdiction` is free text, and no comparison SQL
+        has makes 'US' greater than 'US-ZZ'. Recording a rescope FALSE would let a
+        county office become a national issuer without appearing in the list of changes
+        that gave an authority more reach, and recording it TRUE would put a claim in
+        the record that nothing checked.
+      - There is a command. Every other act in the operator tool has one, and the
+        first step of standing up an authority -- what roadmap P7.2 automates -- could
+        not be scripted while the only path was a web form.
+    """
+    name = "authority_recorded"
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    cli = _read(root, "polaris_cli/polaris.py")
+    if not schema or not triggers or not cli:
+        return _fail(name, "01_schema.sql, 06_triggers.sql or the CLI could not be read")
+
+    findings: list[Finding] = []
+    if "CREATE TABLE AgencyEvent" not in schema:
+        return _fail(name, "AgencyEvent is not declared: creating an authority is recorded "
+                           "nowhere")
+    if "session_user" not in schema:
+        findings.extend(_fail(name, "AgencyEvent does not default db_role to session_user, so "
+                                    "an event with no declared actor is anonymous"))
+
+    if not re.search(r"CREATE TRIGGER trg_agency_audited\s+BEFORE INSERT OR UPDATE OR DELETE "
+                     r"ON Agency", triggers, re.I):
+        findings.extend(_fail(name, "trg_agency_audited is not installed BEFORE INSERT OR "
+                                    "UPDATE OR DELETE on Agency, so some changes to an "
+                                    "authority are not recorded"))
+    body = triggers[triggers.find("FUNCTION record_agency_change"):][:6000]
+    for needle, why in (
+        ("DELETE is refused", "an authority can be deleted, which erases the fact that it "
+                              "existed"),
+        ("length(trim(v_why)) < 20", "creating an authority needs no stated reason, or the "
+                                     "floor on it is gone"),
+        ("authorization_level > OLD.authorization_level",
+         "raising the level an authority operates at is not treated as a widening, so it "
+         "needs no reason"),
+        ("agency_id IS DISTINCT FROM OLD.agency_id",
+         "agency_id is mutable, and changing it would silently re-point thirty-five tables"),
+        ("NEW.jurisdiction IS DISTINCT FROM OLD.jurisdiction",
+         "moving an authority's jurisdiction or type is not gated, so a county office can "
+         "be made a national issuer with no stated reason"),
+        ("v_wide OR v_scope",
+         "the reason is required only for a widening, so a rescope passes unexplained"),
+    ):
+        if needle not in body:
+            findings.extend(_fail(name, why))
+
+    # Whitespace-tolerant: the point is the value written, not how the INSERT is wrapped.
+    for event, column in (("JURISDICTION_CHANGED", "jurisdiction"),
+                          ("TYPE_CHANGED", "agency_type")):
+        if not re.search(r"'%s',\s*'%s',\s*OLD\.%s,\s*NEW\.%s,\s*NULL"
+                         % (event, column, column, column), body):
+            findings.extend(_fail(name, "%s is recorded with a direction the database cannot "
+                                        "rank; FALSE drops it out of the assessor's list and "
+                                        "TRUE asserts what nothing checked" % event))
+
+    if "widened IS NOT FALSE" not in cli:
+        findings.extend(_fail(name, "agency-history --widened-only filters on `widened` rather "
+                                    "than `widened IS NOT FALSE`, so it does not show the "
+                                    "rescopes whose direction the database could not decide"))
+
+    if not re.search(r"CREATE TRIGGER \w+\s+BEFORE UPDATE OR DELETE ON AgencyEvent",
+                     triggers, re.I):
+        findings.extend(_fail(name, "the record itself is not append-only"))
+
+    for needle, why in (("def cmd_agency_create", "there is no command to create an authority, "
+                                                  "so the first step of standing one up cannot "
+                                                  "be scripted"),
+                        ("def cmd_agency_history", "there is no command to read what was "
+                                                   "decided about an authority")):
+        if needle not in cli:
+            findings.extend(_fail(name, why))
+    if re.search(r"INSERT\s+INTO\s+AgencyEvent", _read(root, "polaris_web/app.py"), re.I):
+        findings.extend(_fail(name, "the app writes AgencyEvent rows directly; the trigger must "
+                                    "be the only writer, or a caller that can write its own "
+                                    "record can omit one"))
+
+    if findings:
+        return findings
+    return _ok(name, "creating an authority, renaming it, changing the level or jurisdiction "
+                     "it operates under and rotating its signing key are all recorded by a "
+                     "trigger in an append-only AgencyEvent; DELETE is refused, a creation, a "
+                     "raised level and a rescope each need a stated reason, a rescope is "
+                     "recorded as a direction the database will not guess, and the operator "
+                     "tool can do it")
 
 
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
@@ -15850,6 +15970,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_conformance_contract_constrains,
     check_procedure_refusals_are_mutation_tested,
     check_duress_is_indistinguishable,
+    check_authority_creation_is_recorded,
 ]
 
 

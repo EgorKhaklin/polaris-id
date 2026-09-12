@@ -90,6 +90,7 @@ DROP TABLE IF EXISTS VerificationEvent      CASCADE;
 DROP TABLE IF EXISTS TokenLifecycleEvent    CASCADE;
 DROP TABLE IF EXISTS IdentityToken          CASCADE;
 DROP TABLE IF EXISTS AuthAuditLog           CASCADE;
+DROP TABLE IF EXISTS AgencyEvent            CASCADE;
 DROP TABLE IF EXISTS RelyingPartyEvent      CASCADE;
 DROP TABLE IF EXISTS RelyingParty           CASCADE;
 DROP TABLE IF EXISTS ExchangeReceiptLog     CASCADE;
@@ -277,6 +278,59 @@ COMMENT ON TABLE RelyingParty IS
   'secret). No who-verified-whom log is kept; bounding is rate limit + metrics.';
 
 CREATE INDEX idx_relyingparty_client_id ON RelyingParty(client_id);
+
+-- v9.440: every decision about an AUTHORITY, recorded. Creating one wrote nothing:
+-- verified by running the insert /agencies/new makes, with every audit table unchanged
+-- and zero triggers on the table. An Agency issues credentials, holds keys, receives
+-- quotas and federation trust, and thirty-five foreign keys point at it; it is the
+-- decision underneath the ones AgencyQuota, RelyingParty and IssuerDiscretionPolicy
+-- each record. See migration 2026-09-12-002-agency-events.
+CREATE TABLE AgencyEvent (
+    event_id      SERIAL PRIMARY KEY,
+    -- Deliberately NOT a foreign key, for the reason RelyingPartyEvent is not one
+    -- (v9.425): the record of what an authority was must outlive the row. `name` is
+    -- denormalised here so an event reads on its own afterwards.
+    agency_id     INTEGER NOT NULL,
+    name          VARCHAR(200) NOT NULL,
+    event_type    VARCHAR(30) NOT NULL,
+    field         VARCHAR(40),
+    old_value     TEXT,
+    new_value     TEXT,
+    -- Three-valued on purpose. TRUE: the change strictly increases what this authority
+    -- MAY DO, which is creation where there was none, or a rise in authorization_level.
+    -- NULL: the change moved the authority's SCOPE (its jurisdiction or its type) and the
+    -- database cannot tell which way, because jurisdiction is free text and 'US' is not
+    -- comparable to 'Pilot County' by any ordering SQL has. FALSE: it granted nothing,
+    -- which is a rename or a fall in level.
+    --
+    -- The assessor's filter is therefore `widened IS NOT FALSE`, not `widened`. Marking a
+    -- rescope FALSE would let a county authority become a national one without appearing
+    -- in the list of changes that gave an authority more reach; marking it TRUE would put
+    -- a claim in the record that nothing checked. NULL says what is true, which is that
+    -- someone has to look.
+    widened       BOOLEAN DEFAULT FALSE,
+    actor         VARCHAR(100),
+    db_role       VARCHAR(100) NOT NULL DEFAULT session_user,
+    justification VARCHAR(500),
+    recorded_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_agency_event_type CHECK (event_type IN (
+        'CREATED', 'RENAMED', 'LEVEL_CHANGED', 'TYPE_CHANGED',
+        'JURISDICTION_CHANGED', 'SIGNING_KEY_CHANGED')),
+    CONSTRAINT chk_agency_event_field CHECK (
+        (event_type = 'CREATED' AND field IS NULL) OR
+        (event_type <> 'CREATED' AND field IS NOT NULL))
+);
+
+COMMENT ON TABLE AgencyEvent IS
+  'Append-only record of every decision about an authority (v9.440): its creation, '
+  'its renaming, and any change to the level, type, jurisdiction or signing key it '
+  'operates under. Written by trg_agency_audited from the row diff rather than by the '
+  'caller, so a change made in psql is recorded on the same terms as one made through '
+  'the console. `widened` marks a change that increases what the authority may do -- '
+  'creation, or a raised authorization_level -- which is what an assessor filters for.';
+
+CREATE INDEX idx_agency_event_agency ON AgencyEvent (agency_id, recorded_at DESC);
+CREATE INDEX idx_agency_event_widened ON AgencyEvent (recorded_at DESC) WHERE widened;
 
 -- v9.425: every decision about an outside relying party, recorded. Registering one,
 -- turning its zero-knowledge step-up off, disabling it: all three used to write

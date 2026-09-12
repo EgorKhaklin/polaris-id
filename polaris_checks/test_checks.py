@@ -13404,3 +13404,104 @@ def test_duress_indistinguishable_check_discriminates(tmp_path):
 
     (tmp_path / "polaris_web" / "test_app.py").unlink()
     assert level() == "FAIL", "must FAIL when the suite is absent"
+
+
+def test_authority_recorded_check_discriminates(tmp_path):
+    """Every way an authority could be created, widened or erased unrecorded."""
+    SCHEMA = ("CREATE TABLE AgencyEvent (\n"
+              "    event_id SERIAL PRIMARY KEY,\n"
+              "    db_role VARCHAR(100) NOT NULL DEFAULT session_user\n"
+              ");\n")
+    TRIG = ("CREATE OR REPLACE FUNCTION record_agency_change() RETURNS TRIGGER AS $$\n"
+            "BEGIN\n"
+            "    RAISE EXCEPTION 'Agency is append-only: DELETE is refused.';\n"
+            "    IF (v_wide OR v_scope) AND (v_why IS NULL OR length(trim(v_why)) < 20) THEN\n"
+            "        RAISE EXCEPTION 'needs a reason';\n    END IF;\n"
+            "    v_wide := NEW.authorization_level > OLD.authorization_level;\n"
+            "    v_scope := NEW.jurisdiction IS DISTINCT FROM OLD.jurisdiction;\n"
+            "    IF NEW.agency_id IS DISTINCT FROM OLD.agency_id THEN\n"
+            "        RAISE EXCEPTION 'immutable';\n    END IF;\n"
+            "    INSERT INTO AgencyEvent VALUES (NEW.agency_id, 'JURISDICTION_CHANGED',\n"
+            "        'jurisdiction', OLD.jurisdiction, NEW.jurisdiction, NULL);\n"
+            "    INSERT INTO AgencyEvent VALUES (NEW.agency_id, 'TYPE_CHANGED',\n"
+            "        'agency_type', OLD.agency_type, NEW.agency_type, NULL);\n"
+            "END;\n$$;\n"
+            "DROP TRIGGER IF EXISTS trg_agency_audited ON Agency;\n"
+            "CREATE TRIGGER trg_agency_audited\n"
+            "    BEFORE INSERT OR UPDATE OR DELETE ON Agency\n"
+            "    FOR EACH ROW EXECUTE FUNCTION record_agency_change();\n"
+            "DROP TRIGGER IF EXISTS trg_agency_event_append_only ON AgencyEvent;\n"
+            "CREATE TRIGGER trg_agency_event_append_only\n"
+            "    BEFORE UPDATE OR DELETE ON AgencyEvent\n"
+            "    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n")
+    CLI = ("def cmd_agency_create(args):\n    pass\n"
+           "def cmd_agency_history(args):\n"
+           "    where.append('e.widened IS NOT FALSE')\n")
+    APP = "query('SELECT 1')\n"
+
+    def write(schema=None, trig=None, cli=None, app=None):
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_cli").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "01_schema.sql").write_text(SCHEMA if schema is None else schema)
+        (tmp_path / "polaris_sql" / "06_triggers.sql").write_text(TRIG if trig is None else trig)
+        (tmp_path / "polaris_cli" / "polaris.py").write_text(CLI if cli is None else cli)
+        (tmp_path / "polaris_web" / "app.py").write_text(APP if app is None else app)
+
+    def level(msg_contains=None):
+        out = checks.check_authority_creation_is_recorded(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS when the authority is recorded and scriptable"
+
+    write(schema="CREATE TABLE Something (id int);\n")
+    assert level("recorded nowhere") == "FAIL", "must FAIL with no AgencyEvent at all"
+
+    write(schema=SCHEMA.replace(" NOT NULL DEFAULT session_user", ""))
+    assert level("anonymous") == "FAIL", "must FAIL when an event can have no actor at all"
+
+    write(trig=TRIG.replace("BEFORE INSERT OR UPDATE OR DELETE ON Agency",
+                            "AFTER INSERT ON Agency"))
+    assert level("not recorded") == "FAIL", "must FAIL when some changes bypass the recorder"
+
+    for needle, expect in (
+        ("RAISE EXCEPTION 'Agency is append-only: DELETE is refused.';",
+         "erases the fact that it existed"),
+        ("length(trim(v_why)) < 20", "needs no stated reason"),
+        ("NEW.authorization_level > OLD.authorization_level", "not treated as a widening"),
+        ("NEW.agency_id IS DISTINCT FROM OLD.agency_id", "re-point thirty-five tables"),
+        ("NEW.jurisdiction IS DISTINCT FROM OLD.jurisdiction", "no stated reason"),
+        ("(v_wide OR v_scope)", "a rescope passes unexplained"),
+    ):
+        write(trig=TRIG.replace(needle, "-- gone"))
+        assert level(expect) == "FAIL", "must FAIL when %r is absent" % needle[:34]
+
+    # The rescope must be recorded as a direction the database will not guess. FALSE hides
+    # it from the assessor's filter; TRUE asserts a ranking of free text that nothing did.
+    for event, column, claimed in (("JURISDICTION_CHANGED", "jurisdiction", "FALSE"),
+                                   ("JURISDICTION_CHANGED", "jurisdiction", "TRUE"),
+                                   ("TYPE_CHANGED", "agency_type", "FALSE"),
+                                   ("TYPE_CHANGED", "agency_type", "TRUE")):
+        write(trig=TRIG.replace("NEW.%s, NULL);" % column, "NEW.%s, %s);" % (column, claimed)))
+        assert level("%s is recorded with a direction" % event) == "FAIL", \
+            "must FAIL when %s claims %s" % (event, claimed)
+
+    write(cli=CLI.replace("e.widened IS NOT FALSE", "e.widened"))
+    assert level("does not show the rescopes") == "FAIL", \
+        "must FAIL when the assessor's filter drops the changes it cannot rank"
+
+    write(trig=TRIG.replace("    BEFORE UPDATE OR DELETE ON AgencyEvent\n", "    AFTER INSERT ON AgencyEvent\n"))
+    assert level("not append-only") == "FAIL", "must FAIL when the record can be rewritten"
+
+    write(cli="def cmd_agency_history(args):\n    e.widened IS NOT FALSE\n")
+    assert level("cannot be scripted") == "FAIL", "must FAIL when there is no create command"
+    write(cli="def cmd_agency_create(args):\n    pass\n    e.widened IS NOT FALSE\n")
+    assert level("no command to read") == "FAIL", "must FAIL when the record cannot be read"
+
+    write(app="query('INSERT INTO AgencyEvent (agency_id) VALUES (1)')\n")
+    assert level("trigger must be the only writer") == "FAIL", \
+        "must FAIL when the app can write its own record"

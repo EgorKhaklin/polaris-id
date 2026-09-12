@@ -4568,10 +4568,24 @@ def agencies_list():
 def agencies_new():
     if request.method == 'POST':
         try:
+            # v9.440: creating an authority is recorded, and the record names who and
+            # why. The database refuses it without a reason of at least 20 characters,
+            # so the form asks for one; set_config and the INSERT go in ONE statement
+            # because query() draws from a pool and the GUC must reach the connection
+            # the insert runs on.
+            reason = (request.form.get('justification') or '').strip()
+            if len(reason) < 20:
+                flash('A justification of at least 20 characters is required: creating an '
+                      'authority is recorded and the record has to say why.', 'error')
+                return render_template('agencies_form.html', row=None, action='Create')
             new_id = query("""
+                SELECT set_config('polaris.actor', %s, true);
+                SELECT set_config('polaris.justification', %s, true);
                 INSERT INTO Agency (name, agency_type, jurisdiction, authorization_level)
                 VALUES (%s, %s, %s, %s) RETURNING agency_id
-            """, (request.form['name'],
+            """, (session.get('username') or 'console',
+                  reason,
+                  request.form['name'],
                   request.form['agency_type'],
                   request.form['jurisdiction'],
                   int(request.form['authorization_level'])),

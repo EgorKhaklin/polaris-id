@@ -7,8 +7,8 @@ holds and which invariant guards it. **Job:** every table in the schema
 and its migrations, grouped, with the constraint that makes each
 guarantee true.
 
-The Polaris schema is **43 tables** in `01_schema.sql` (v9.425), organized
-into six functional groups. A migrated deployment holds **50 tables**: those,
+The Polaris schema is **44 tables** in `01_schema.sql` (v9.440), organized
+into six functional groups. A migrated deployment holds **51 tables**: those,
 the `schema_version` migration registry that `00_migrations_table.sql`
 creates, the three tables the migrations under `polaris_sql/migrations/`
 add to a running database (`OperatorWebauthnCredential`, `OperatorSession`,
@@ -540,6 +540,50 @@ registering a party, turning off its zero-knowledge step-up, and disabling it al
 wrote nothing anywhere. Pinned by `check_relying_party_decisions_cannot_be_silent`
 and `TestRelyingPartyDecisionsAreRecorded`; migration
 `2026-09-11-018-relying-party-events`.
+
+### `AgencyEvent`
+
+Append-only record of every decision about an issuing authority (v9.440):
+`CREATED`, `RENAMED`, `LEVEL_CHANGED`, `TYPE_CHANGED`,
+`JURISDICTION_CHANGED`, `SIGNING_KEY_CHANGED`. One row per changed field, with the before and after as
+text, on the same terms as `RelyingPartyEvent`: the row reads without joining
+back to a table whose current value is by definition no longer what it was.
+
+Written by the `trg_agency_audited` trigger from the row diff, not by the caller.
+`name` is denormalised onto the event so a renamed authority's history still reads
+as what it was called at the time.
+
+`widened` is three-valued, and that is the point of it. TRUE means the change
+strictly increased what the authority may do: creation where there was none, or a
+rise in `authorization_level`. FALSE means it granted nothing, which is a rename or
+a fall in level. NULL means the change moved the authority's SCOPE, its
+`jurisdiction` or its `agency_type`, and the database will not guess which way.
+`authorization_level` is an integer and can be compared; `jurisdiction` is free
+text, and no comparison SQL has makes `'US'` greater than `'US-ZZ'`.
+
+So the assessor's filter is `widened IS NOT FALSE`, which is what
+`polaris-id agency-history --widened-only` runs. Recording a rescope as FALSE would
+let a county office become a national issuer without appearing in the list of
+changes that gave an authority more reach. Recording it TRUE would put a claim in
+the record that nothing checked, and would flag a genuine correction as a grant.
+
+A creation, a rise in level and a rescope each need a stated reason of at least 20
+characters or the database refuses the statement, the floor `AgencyQuota` has held
+since v9.190 and `RelyingParty` since v9.425. A rename or a fall in level needs
+none.
+
+DELETE on `Agency` is refused outright rather than recorded. An authority with
+issued tokens behind it cannot be made never to have existed, and a
+`ON DELETE`-recorded row would be an epitaph for a hierarchy that is still
+standing in the token table.
+
+Deliberately **not** a foreign key to `Agency`, for the reason `RelyingPartyEvent`
+is not one to `RelyingParty`. Before v9.440, `Agency` carried no trigger at all:
+creating an authority wrote nothing anywhere, and an authority could be renamed
+and have its `authorization_level` raised from 3 to 5 in silence, while
+`polaris-id` had no command for the row at the root of the hierarchy. Pinned by
+`check_authority_creation_is_recorded` and `TestAuthorityChangesAreRecorded`;
+migration `2026-09-12-002-agency-events`.
 
 ### `AgencyQuota`
 

@@ -1167,6 +1167,129 @@ CREATE TRIGGER trg_discretion_policy_immutable
 
 
 -- ----------------------------------------------------------------------------
+-- record_agency_change: the writer, and the DELETE refusal.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION record_agency_change() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_actor VARCHAR(100) := NULLIF(current_setting('polaris.actor', true), '');
+    v_why   VARCHAR(500) := NULLIF(current_setting('polaris.justification', true), '');
+    v_wide  BOOLEAN;
+    v_scope BOOLEAN;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION
+            'Agency is append-only: DELETE is refused. An authority that existed is '
+            'part of the record even if it issued nothing; thirty-five tables point at '
+            'it, and the ones that do not are the ones that would forget it.'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    v_wide := (TG_OP = 'INSERT')
+              OR (NEW.authorization_level > OLD.authorization_level);
+    -- A move of SCOPE rather than of level: the jurisdiction this authority operates in,
+    -- or what kind of authority it is. The database cannot rank these, so it does not
+    -- claim to: it refuses them without a reason and records them as widened = NULL.
+    -- Otherwise a county office becomes a national issuer in one UPDATE, silently, and
+    -- the list of changes that gave an authority more reach does not contain it.
+    v_scope := (TG_OP = 'UPDATE')
+               AND (NEW.jurisdiction IS DISTINCT FROM OLD.jurisdiction
+                    OR NEW.agency_type IS DISTINCT FROM OLD.agency_type);
+    -- Creating an authority, widening one, or rescoping one must say why. The same
+    -- 20-character floor AgencyQuota has held since v9.190 and RelyingParty since
+    -- v9.425: an authority is the thing all of those bound, so it is not a lighter act.
+    IF (v_wide OR v_scope) AND (v_why IS NULL OR length(trim(v_why)) < 20) THEN
+        RAISE EXCEPTION
+            'creating an authority, raising the level it operates at, or changing the '
+            'jurisdiction or type it operates as, needs a justification of at least 20 '
+            'characters: set polaris.justification (polaris agency-create '
+            '--justification)'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO AgencyEvent (agency_id, name, event_type, widened, actor,
+                                 justification, new_value)
+        VALUES (NEW.agency_id, NEW.name, 'CREATED', TRUE, v_actor, v_why,
+                format('type=%s jurisdiction=%s authorization_level=%s',
+                       NEW.agency_type, NEW.jurisdiction, NEW.authorization_level));
+        RETURN NEW;
+    END IF;
+
+    IF NEW.agency_id IS DISTINCT FROM OLD.agency_id THEN
+        RAISE EXCEPTION
+            'Agency.agency_id is immutable: thirty-five tables reference it, and '
+            'changing it would silently re-point every one of them.'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    IF NEW.name IS DISTINCT FROM OLD.name THEN
+        INSERT INTO AgencyEvent (agency_id, name, event_type, field, old_value,
+                                 new_value, widened, actor, justification)
+        VALUES (NEW.agency_id, NEW.name, 'RENAMED', 'name', OLD.name, NEW.name,
+                FALSE, v_actor, v_why);
+    END IF;
+    IF NEW.authorization_level IS DISTINCT FROM OLD.authorization_level THEN
+        INSERT INTO AgencyEvent (agency_id, name, event_type, field, old_value,
+                                 new_value, widened, actor, justification)
+        VALUES (NEW.agency_id, NEW.name, 'LEVEL_CHANGED', 'authorization_level',
+                OLD.authorization_level::TEXT, NEW.authorization_level::TEXT,
+                NEW.authorization_level > OLD.authorization_level, v_actor, v_why);
+    END IF;
+    IF NEW.agency_type IS DISTINCT FROM OLD.agency_type THEN
+        INSERT INTO AgencyEvent (agency_id, name, event_type, field, old_value,
+                                 new_value, widened, actor, justification)
+        VALUES (NEW.agency_id, NEW.name, 'TYPE_CHANGED', 'agency_type',
+                OLD.agency_type, NEW.agency_type, NULL, v_actor, v_why);
+    END IF;
+    IF NEW.jurisdiction IS DISTINCT FROM OLD.jurisdiction THEN
+        INSERT INTO AgencyEvent (agency_id, name, event_type, field, old_value,
+                                 new_value, widened, actor, justification)
+        VALUES (NEW.agency_id, NEW.name, 'JURISDICTION_CHANGED', 'jurisdiction',
+                OLD.jurisdiction, NEW.jurisdiction, NULL, v_actor, v_why);
+    END IF;
+    IF NEW.signing_public_key_hex IS DISTINCT FROM OLD.signing_public_key_hex THEN
+        -- The key itself is in AuthorityKeyEvent; that it changed on the agency row
+        -- belongs here, so the two records can be read against each other.
+        INSERT INTO AgencyEvent (agency_id, name, event_type, field, old_value,
+                                 new_value, widened, actor, justification)
+        VALUES (NEW.agency_id, NEW.name, 'SIGNING_KEY_CHANGED', 'signing_public_key_hex',
+                left(coalesce(OLD.signing_public_key_hex, '(none)'), 16),
+                left(coalesce(NEW.signing_public_key_hex, '(none)'), 16),
+                FALSE, v_actor, v_why);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_agency_audited ON Agency;
+CREATE TRIGGER trg_agency_audited
+    BEFORE INSERT OR UPDATE OR DELETE ON Agency
+    FOR EACH ROW EXECUTE FUNCTION record_agency_change();
+
+-- The load order installs this trigger AFTER 04_data.sql, so the sample authorities
+-- are inserted before the recorder exists and would leave a database showing six
+-- authorities and no record of any. Backfill exactly what the trigger would have
+-- written, saying plainly that it was the sample load and not an operator: an empty
+-- record next to six agencies reads as a broken recorder, and a fabricated operator
+-- would be worse than either.
+INSERT INTO AgencyEvent (agency_id, name, event_type, widened, actor, justification,
+                         new_value)
+SELECT a.agency_id, a.name, 'CREATED', TRUE, 'sample-data',
+       'notional sample authority, shipped with the demonstration data',
+       format('type=%s jurisdiction=%s authorization_level=%s',
+              a.agency_type, a.jurisdiction, a.authorization_level)
+  FROM Agency a
+ WHERE NOT EXISTS (SELECT 1 FROM AgencyEvent e
+                    WHERE e.agency_id = a.agency_id AND e.event_type = 'CREATED');
+
+DROP TRIGGER IF EXISTS trg_agency_event_append_only ON AgencyEvent;
+CREATE TRIGGER trg_agency_event_append_only
+    BEFORE UPDATE OR DELETE ON AgencyEvent
+    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();
+
+
+-- ----------------------------------------------------------------------------
 -- enforce_retention_policy_immutability (roadmap P1.11)
 --
 -- RetentionPolicy is an audit of record: it holds what an operator decided
