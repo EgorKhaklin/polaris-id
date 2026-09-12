@@ -88,11 +88,14 @@ def _revoke(tid):
     try:
         with conn.cursor() as cur:
             # A permissive per-agency bound so a single revoke is not R11-6-refused.
+            # v9.427: IssuerDiscretionPolicy is append-only since v9.426, so the
+            # ON CONFLICT arbiter this used is gone. Supersede then append.
+            cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                        " WHERE agency_id = 1 AND superseded_at IS NULL")
             cur.execute("""
                 INSERT INTO IssuerDiscretionPolicy
                     (agency_id, max_revoke_percent, window_days, set_by_admin, justification)
                 VALUES (1, 90.00, 30, 'attack_setup', 'attacks/ revoked-token setup')
-                ON CONFLICT (agency_id) DO UPDATE SET max_revoke_percent = EXCLUDED.max_revoke_percent
             """)
             cur.execute("CALL uc8_revoke_token(%s, %s, %s, %s, %s)",
                         (tid, 1, 'ADMINISTRATIVE', 'https://crl.idtoken.gov/test/attack.crl', None))

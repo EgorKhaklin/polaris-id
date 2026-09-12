@@ -5,6 +5,55 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.427 — 2026-09-12 (the gate said READY and CI went red twice on the same line)
+
+v9.424 and v9.425 both failed CI. Same job, same cause, and it was not in either of them: line 98
+of `scripts/polaris-abuse-drill.sh`, which had capped an agency with
+`INSERT INTO AgencyQuota ... ON CONFLICT (agency_id) DO UPDATE` since v9.190.
+
+v9.424 made `AgencyQuota` append-only. The only uniqueness left on `agency_id` became partial
+(`WHERE superseded_at IS NULL`), and Postgres will not take a partial index as an ON CONFLICT
+arbiter unless the statement repeats the predicate, so that line became a statement that cannot
+run. The v9.424 migration header says exactly this about the CLI and calls the migration a
+contract phase because of it. The same sentence was true of a drill that runs only in CI, and I
+did not go looking.
+
+Three things went wrong and all three are worth naming:
+
+- **The gate does not run the drills.** `polaris_checks`, the link check and the sharded product
+  suite were all green, three times. `python3 scripts/polaris-ship.py plan` named
+  `scripts/polaris-abuse-drill.sh` in its verification list for each of those ships and I ran the
+  unit suites instead.
+- **`attacks/attack_db.py` had the same defect** against `IssuerDiscretionPolicy` after v9.426,
+  and would have taken that run red too.
+- **The CI monitors watched nothing.** `gh run list --commit` needs a full SHA and I gave it a
+  short one, so all three returned `[]` and ran to their timeout in silence. A watch that cannot
+  match is indistinguishable from a watch with nothing to report.
+
+Fixed, and then made unrepeatable.
+
+**`check_no_upsert_without_an_arbiter`** derives the table list the same way
+`check_recorded_decisions_keep_their_history` does, a `justification` column plus a
+`superseded_at`, and scans every Python, shell and SQL source outside the migrations. An
+`INSERT ... ON CONFLICT (subject)` against one of those tables fails the gate, unless the
+statement repeats the partial predicate and so names a real arbiter. A `DELETE FROM` one of them
+from a non-test source fails too: same defect, other verb, and it is what the drill's own cleanup
+was doing at line 193. Re-introducing each of the two real defects makes the check report exactly
+that file and line. Eight discriminations.
+
+The abuse drill now runs clean locally: 50 POSTs at 10 rps against a cap of 25, exactly 25
+recorded as 302 and 25 refused as 429, the database holding 25 rows, and the metrics agreeing.
+That is the assertion v9.424 broke, proven rather than assumed.
+
+Four fixtures in `test_app.py` were deleting from `IssuerDiscretionPolicy` to mean "this agency
+has no override". They passed only because agency 2 has no row in fresh sample data, so the
+DELETE matched nothing and the row trigger never fired. They supersede now, which is what "none
+in force" means for a table that keeps its decisions.
+
+**247 invariant checks.**
+
+---
+
 ## v9.426 — 2026-09-12 (the control the docs told you to set, with no way to set it, and no record if you did)
 
 `IssuerDiscretionPolicy` bounds the share of its own tokens one issuing agency may revoke in a

@@ -12990,3 +12990,88 @@ def test_recorded_decisions_check_discriminates(tmp_path):
     write(suite="NOTHING = 1\n")
     assert level("APPEND_ONLY_GUARDS could not be read") == "FAIL", \
         "must FAIL when the guard names cannot be read"
+
+
+def test_upsert_arbiter_check_discriminates(tmp_path):
+    """An upsert or delete against a table whose arbiter is gone must fail the gate."""
+    def decision(name):
+        return ("CREATE TABLE %s (\n    id SERIAL PRIMARY KEY,\n    agency_id INTEGER,\n"
+                "    justification TEXT NOT NULL,\n    superseded_at TIMESTAMP\n);\n" % name)
+
+    SCHEMA = "".join(decision(t) for t in ("alpha", "beta", "gamma"))
+    CLEAN = "cur.execute('SELECT 1')\n"
+
+    written = []
+
+    def write(files=None, schema=None):
+        # Clear what the last case wrote: without this, a file from an earlier
+        # assertion stays on disk and the next case fails for the previous reason.
+        while written:
+            written.pop().unlink(missing_ok=True)
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        for d in ("polaris_web", "polaris_cli", "polaris_checks", "polaris_sim",
+                  "scripts", "attacks", "conformance"):
+            (tmp_path / d).mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "01_schema.sql").write_text(
+            SCHEMA if schema is None else schema)
+        # Enough sources to clear the scan's own anti-vacuity floor.
+        for i in range(24):
+            (tmp_path / "polaris_web" / ("mod%d.py" % i)).write_text(CLEAN)
+        for path, body in (files or {}).items():
+            (tmp_path / path).write_text(body)
+            written.append(tmp_path / path)
+
+    def level(msg_contains=None):
+        out = checks.check_no_upsert_without_an_arbiter(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS when nothing upserts into a versioned decision table"
+
+    # The real v9.424/v9.425 defect: a shell drill with a dead arbiter.
+    write(files={"scripts/drill.sh":
+                 "psql -c \"INSERT INTO alpha (agency_id, justification)\n"
+                 "          VALUES (5, 'x')\n"
+                 "          ON CONFLICT (agency_id) DO UPDATE SET agency_id = 5\"\n"})
+    assert level("scripts/drill.sh") == "FAIL", \
+        "must FAIL on a shell caller upserting into a versioned decision table"
+
+    # The real v9.426 defect: a Python caller, multi-line, inside a triple-quoted string.
+    write(files={"attacks/attack_db.py":
+                 'cur.execute("""\n    INSERT INTO beta\n        (agency_id, justification)\n'
+                 "    VALUES (1, 'x')\n    ON CONFLICT (agency_id) DO UPDATE SET agency_id = 1\n"
+                 '""")\n'})
+    assert level("attacks/attack_db.py") == "FAIL", \
+        "must FAIL on a Python caller upserting across lines"
+
+    # A statement that repeats the partial predicate names a real arbiter and is fine.
+    write(files={"scripts/ok.py":
+                 "cur.execute(\"INSERT INTO alpha (agency_id, justification) VALUES (1, 'x') \"\n"
+                 "            \"ON CONFLICT (agency_id) WHERE superseded_at IS NULL "
+                 "DO UPDATE SET agency_id = 1\")\n"})
+    assert level() == "OK", "a repeated partial predicate is a legitimate arbiter"
+
+    # Deleting from an append-only table is the same defect with a different verb.
+    write(files={"scripts/cleanup.sh": 'psql -c "DELETE FROM gamma WHERE agency_id = 5"\n'})
+    assert level("deletes from gamma") == "FAIL", \
+        "must FAIL when a non-test caller deletes from a versioned decision table"
+
+    # Test files are exempt: refusing the delete is what several of them assert.
+    write(files={"polaris_web/test_things.py":
+                 "cur.execute('DELETE FROM gamma WHERE id = 1')\n"})
+    assert level() == "OK", "a test asserting the refusal must not be flagged"
+
+    # Anti-vacuity: the table derivation must still find tables.
+    write(schema="CREATE TABLE plain (\n    id SERIAL PRIMARY KEY\n);\n")
+    assert level("scanning for almost nothing") == "FAIL", \
+        "must FAIL rather than pass when no versioned decision table is found"
+
+    # Anti-vacuity: and the scan must still find sources.
+    import shutil
+    write()
+    shutil.rmtree(tmp_path / "polaris_web")
+    assert level("passing by finding nothing") == "FAIL", \
+        "must FAIL rather than pass when the source scan finds almost nothing"

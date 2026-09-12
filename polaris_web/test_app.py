@@ -1591,7 +1591,12 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
         tid = self._seed_active_token(2, 1, 'over-bound-no-cosign')
         # Make sure agency 2 has no override.
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM IssuerDiscretionPolicy WHERE agency_id=2")
+            # v9.427: the table refuses DELETE. "No override" now means "none in
+            # force", which is what the bound lookup asks for anyway. The DELETE
+            # passed only because agency 2 has no row in fresh sample data, so it
+            # matched nothing and the row trigger never fired.
+            cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                        " WHERE agency_id=2 AND superseded_at IS NULL")
             conn.commit()
         with self.assertRaises(psycopg2.Error) as ctx:
             self._call_uc8(tid, actor=2, reason='COMPROMISED')
@@ -1603,7 +1608,12 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
         Audit row's reason_code must carry the [COSIGN:1] tag."""
         tid = self._seed_active_token(2, 1, 'over-bound-with-cosign')
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM IssuerDiscretionPolicy WHERE agency_id=2")
+            # v9.427: the table refuses DELETE. "No override" now means "none in
+            # force", which is what the bound lookup asks for anyway. The DELETE
+            # passed only because agency 2 has no row in fresh sample data, so it
+            # matched nothing and the row trigger never fired.
+            cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                        " WHERE agency_id=2 AND superseded_at IS NULL")
             conn.commit()
 
         self._call_uc8(tid, actor=2, reason='COMPROMISED', cosigner=1)
@@ -1639,7 +1649,12 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
         (VARCHAR(40), CHECK-constrained)."""
         tid = self._seed_active_token(2, 1, 'crl-canonical-reason')
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM IssuerDiscretionPolicy WHERE agency_id=2")
+            # v9.427: the table refuses DELETE. "No override" now means "none in
+            # force", which is what the bound lookup asks for anyway. The DELETE
+            # passed only because agency 2 has no row in fresh sample data, so it
+            # matched nothing and the row trigger never fired.
+            cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                        " WHERE agency_id=2 AND superseded_at IS NULL")
             conn.commit()
 
         self._call_uc8(tid, actor=2, reason='ADMINISTRATIVE', cosigner=1)
@@ -1692,7 +1707,12 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
         invariant: the failing call did NOT silently succeed."""
         tid = self._seed_active_token(2, 1, 'atomic-rollback')
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM IssuerDiscretionPolicy WHERE agency_id=2")
+            # v9.427: the table refuses DELETE. "No override" now means "none in
+            # force", which is what the bound lookup asks for anyway. The DELETE
+            # passed only because agency 2 has no row in fresh sample data, so it
+            # matched nothing and the row trigger never fired.
+            cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                        " WHERE agency_id=2 AND superseded_at IS NULL")
             cur.execute("SELECT count(*) AS c FROM RevocationList WHERE token_id=%s", (tid,))
             crl_before = cur.fetchone()['c']
             conn.commit()

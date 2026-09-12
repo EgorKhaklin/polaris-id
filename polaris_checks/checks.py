@@ -6170,6 +6170,106 @@ def check_recorded_decisions_keep_their_history(root: pathlib.Path) -> list[Find
                      f"immutability trigger, or is append-only outright")
 
 
+
+# ----------------------------------------------------------------------------
+# v9.427: nothing may upsert into a table whose upsert arbiter is gone.
+#
+# v9.424, v9.425 and v9.426 each turned a decision table append-only. Each time,
+# the only uniqueness left on the old key became PARTIAL (`WHERE superseded_at IS
+# NULL`), and Postgres will not accept a partial index as an ON CONFLICT arbiter
+# unless the statement repeats the predicate. Every `INSERT ... ON CONFLICT
+# (agency_id) DO UPDATE` against those tables therefore fails at runtime with
+# `there is no unique or exclusion constraint matching the ON CONFLICT
+# specification`, and the immutability trigger would refuse the UPDATE even if the
+# arbiter existed.
+#
+# The unit suites caught the ones inside themselves. Two callers lived outside:
+# `scripts/polaris-abuse-drill.sh` and `attacks/attack_db.py`, which run only in
+# CI. So v9.424 and v9.425 both went red on the same line of the same drill, and
+# the gate said READY both times, because the gate does not run the drills.
+#
+# This check reads the same source of truth and fails at the gate instead.
+# ----------------------------------------------------------------------------
+
+def check_no_upsert_without_an_arbiter(root: pathlib.Path) -> list[Finding]:
+    """No source upserts into a table whose ON CONFLICT arbiter no longer exists (v9.427).
+
+    A table that keeps its decisions has no plain unique constraint on its subject any
+    more; the uniqueness is partial, over the row in force. `INSERT ... ON CONFLICT
+    (subject) DO UPDATE` against one of those is a statement that cannot run, and
+    nothing else in the tree notices until whichever job happens to execute that line.
+
+    The table list is derived the same way `check_recorded_decisions_keep_their_history`
+    derives it -- a `justification` column plus a `superseded_at` -- so a fourth such
+    table gets this protection without being named here. The scan covers every Python,
+    shell and SQL source outside the migrations, since a migration may legitimately
+    describe the old shape while changing it.
+    """
+    name = "upsert_arbiter"
+    findings: list[Finding] = []
+
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if not schema:
+        return _fail(name, "polaris_sql/01_schema.sql could not be read")
+    versioned = [t for t, body in _schema_tables(schema).items()
+                 if re.search(r"^\s+justification\s", body, re.M)
+                 and re.search(r"^\s+superseded_at\s", body, re.M)]
+    if len(versioned) < 3:
+        return _fail(name, f"only {len(versioned)} table(s) that version their decisions were "
+                           f"found; the derivation this check shares with "
+                           f"check_recorded_decisions_keep_their_history has broken and it is "
+                           f"now scanning for almost nothing")
+
+    sources: list[pathlib.Path] = []
+    for pattern in ("polaris_web/*.py", "polaris_cli/*.py", "polaris_checks/*.py",
+                    "polaris_sim/*.py", "scripts/*.py", "scripts/*.sh", "attacks/*.py",
+                    "conformance/*.py", "polaris_sql/*.sql"):
+        sources.extend(sorted(root.glob(pattern)))
+    if len(sources) < 20:
+        return _fail(name, f"only {len(sources)} source file(s) matched; the scan has broken "
+                           f"and this check is passing by finding nothing")
+
+    for path in sources:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for table in versioned:
+            # The INSERT and its ON CONFLICT may be separated by the column list and a
+            # VALUES clause, across lines, in SQL or inside a quoted string.
+            for m in re.finditer(
+                    r"INSERT\s+INTO\s+%s\b(?:(?!INSERT\s+INTO)[\s\S]){0,600}?"
+                    r"ON\s+CONFLICT\s*\(" % table, text, re.I):
+                # A statement that repeats the partial predicate names a real arbiter.
+                tail = text[m.end():m.end() + 200]
+                if re.match(r"[^)]*\)\s*WHERE\s+superseded_at\s+IS\s+NULL", tail, re.I):
+                    continue
+                line = text[:m.start()].count("\n") + 1
+                findings.extend(_fail(
+                    name, f"{path.relative_to(root)}:{line} upserts into {table} with an "
+                          f"ON CONFLICT arbiter that no longer exists: the only uniqueness on "
+                          f"its subject is partial, so this statement fails at runtime. "
+                          f"Supersede the row in force, then append."))
+
+            # Same table, same reason, other verb: an append-only table refuses DELETE,
+            # so a caller outside the test tree that deletes from one is a statement that
+            # cannot run. Test files are exempt because refusing the DELETE is exactly
+            # what several of them assert.
+            if "test" in path.name:
+                continue
+            for m in re.finditer(r"DELETE\s+FROM\s+%s\b" % table, text, re.I):
+                line = text[:m.start()].count("\n") + 1
+                findings.extend(_fail(
+                    name, f"{path.relative_to(root)}:{line} deletes from {table}, which is "
+                          f"append-only and refuses it. Supersede the row instead; that is "
+                          f"what 'no longer in force' means for a table that keeps its "
+                          f"decisions."))
+
+    if findings:
+        return findings
+    return _ok(name, f"no source upserts into or deletes from any of the {len(versioned)} tables "
+                     f"that version their decisions ({', '.join(sorted(versioned))}); each "
+                     f"caller supersedes then appends, which is the only shape those tables "
+                     f"accept")
+
+
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
     """The retention decision is data, floored, append-only, and the purge obeys it.
 
@@ -15389,6 +15489,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_immutability_guards_are_derived_from_the_schema,
     check_relying_party_decisions_cannot_be_silent,
     check_recorded_decisions_keep_their_history,
+    check_no_upsert_without_an_arbiter,
 ]
 
 

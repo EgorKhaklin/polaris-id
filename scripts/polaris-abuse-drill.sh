@@ -93,9 +93,13 @@ echo "== 2. reset the sample data (as the test suite does) and cap agency $AGENC
 for f in 04_data.sql 06_triggers.sql 09_grants.sql 10_auth.sql; do
     "${PSQL[@]}" -f "$ROOT/polaris_sql/$f" >/dev/null 2>&1 || fail "reload of $f failed (run as the schema owner)"
 done
-"${PSQL[@]}" -c "INSERT INTO AgencyQuota (agency_id, verify_per_hour, set_by_admin, justification)
-                 VALUES ($AGENCY, $CAP, 'abuse-drill', 'polaris-abuse-drill: prove the verification cap under load')
-                 ON CONFLICT (agency_id) DO UPDATE SET verify_per_hour = EXCLUDED.verify_per_hour"
+# v9.427: AgencyQuota is append-only since v9.424, so `ON CONFLICT (agency_id)` has no
+# arbiter (the only uniqueness on that column is partial) and the immutability trigger
+# would refuse the update anyway. Supersede then append, which is what quota-set does.
+"${PSQL[@]}" -c "UPDATE AgencyQuota SET superseded_at = now()
+                  WHERE agency_id = $AGENCY AND superseded_at IS NULL;
+                 INSERT INTO AgencyQuota (agency_id, verify_per_hour, set_by_admin, justification)
+                 VALUES ($AGENCY, $CAP, 'abuse-drill', 'polaris-abuse-drill: prove the verification cap under load')"
 baseline=$("${PSQL[@]}" -tAc "SELECT count(*) FROM VerificationEvent WHERE requesting_agency_id=$AGENCY AND event_timestamp > CURRENT_TIMESTAMP - INTERVAL '1 hour'" | tr -d '[:space:]')
 echo "   verifications by agency $AGENCY in the last hour before the run: $baseline"
 
@@ -186,5 +190,8 @@ after_ver=$(metric polaris_verifications_total disclosure_level=ZERO_KNOWLEDGE)
 [ "$refusals" -eq "$refused" ] || fail "polaris_quota_refusals_total{kind=verify,agency_id=$AGENCY}=$refusals, expected $refused"
 [ $(( after_ver - before_ver )) -eq "$recorded" ] || fail "polaris_verifications_total moved by $(( after_ver - before_ver )), expected $recorded"
 grep -q '"event": "quota.refused"' "$WORK/app.log" || fail "no quota.refused structured log line"
-"${PSQL[@]}" -c "DELETE FROM AgencyQuota WHERE agency_id = $AGENCY" >/dev/null
+# v9.427: the table refuses DELETE. Retiring the drill's cap means superseding it,
+# which also leaves the decision readable, the way the SQL self-tests retire theirs.
+"${PSQL[@]}" -c "UPDATE AgencyQuota SET superseded_at = now()
+                  WHERE agency_id = $AGENCY AND superseded_at IS NULL" >/dev/null
 echo "== ABUSE DRILL PASSED: cap $CAP held under load ($recorded recorded, $refused refused as 429), DB=$db_count, metrics agree, alerts unit-tested =="
