@@ -5,6 +5,98 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.424 — 2026-09-11 (a quota was a setting; it is now a decision that survives being changed)
+
+`AgencyQuota` bounds how much of the population one agency may touch: issuances and revocations
+per rolling day, verifications per rolling hour. Its own COMMENT claimed a cap was "auditable
+from the row alone", and `docs/reference/DATA-MODEL.md` repeated it. The CLI wrote:
+
+    INSERT INTO AgencyQuota (...) VALUES (...)
+    ON CONFLICT (agency_id) DO UPDATE
+       SET issue_per_day = EXCLUDED.issue_per_day, ..., set_at = CURRENT_TIMESTAMP,
+           justification = EXCLUDED.justification
+
+So every change overwrote the previous cap, who set it, when, and the reason they gave. Raising
+an agency's ceiling is exactly the act an audit needs to see, and it left no trace except the
+new number. `RetentionPolicy` is the same shape of decision and has been kept correctly since
+v9.379: `superseded_at`, one partial unique index for the row in force, an immutability trigger.
+`AgencyQuota` now matches it.
+
+- `quota_id SERIAL PRIMARY KEY`, `superseded_at TIMESTAMP`, and `uq_effective_agency_quota`
+  (partial unique index `WHERE superseded_at IS NULL`), so exactly one cap can be in force per
+  agency: the lookup in `enforce_agency_quota` reads one row, and which row it is cannot depend
+  on insertion order.
+- `enforce_agency_quota`'s lookup filters on `superseded_at IS NULL`. Without it every cap an
+  agency was ever given would bind at once and the first tight one would be permanent.
+- `trg_agency_quota_immutable` refuses an UPDATE of any decided field including `set_at`,
+  refuses DELETE outright, and makes superseding one-way: a superseded timestamp cannot be
+  moved or cleared.
+- `quota-set` supersedes then appends, in one transaction, and names the row it replaced.
+  `quota-show` answers what is enforced now; `quota-show --history` answers what it replaced
+  and why.
+- Migration `2026-09-11-001-agency-quota-history`, declared `phase: contract` because it is one:
+  the old `ON CONFLICT (agency_id)` has no arbiter once the only uniqueness on that column is
+  partial, so an old instance's `quota-set` refuses during a rolling deploy. Nothing else touches
+  the table, so the blast radius is one operator command failing loudly. The `.down.sql` is
+  lossy and says so at the top: the old shape holds one row per agency and cannot carry history.
+  It also restores the enforcement lookup, because the v9.424 body reads a column the reversal
+  drops and would otherwise fail every capped write with "column superseded_at does not exist".
+  Run end to end against a loaded database: the live cap and who set it survive, the superseded
+  decisions are gone, `agency_id` is the primary key again, and a verification over the restored
+  cap is still refused by the trigger.
+
+Verified rather than asserted. Five mutations, five red: the immutability trigger deleted from
+both catalog and `06_triggers.sql` (six failures), the partial unique index dropped, the
+`superseded_at IS NULL` filter removed from the enforcement lookup, `quota-set`'s supersede step
+removed, `quota-show`'s history branch disabled. The catalog-derived
+`TestEveryUniqueRuleRefusesADuplicate` failed on the new index until its fixture was written,
+which is the v9.416 sweep doing its job unprompted.
+
+The refusal tests are in `test_check_constraints` (`TestAgencyQuotaIsAppendOnly`), not the
+application suite, for the same reason `RetentionPolicy`'s are: the trigger mutation drill's fast
+mode reaches them directly, so the guarantee is measured rather than declared in
+`APP_SUITE_COVERS` and re-measured only once a week. The drill said so itself, reporting
+`trg_agency_quota_immutable` UNTESTED while the tests sat in `test_app`. 38 triggers, 0 untested.
+
+One pre-existing defect surfaced on the way. `AgencyQuotaTests` commits a cap and a cap is
+enforced by a trigger on every write path, so whatever class ran next in that process inherited
+it. Each test in that class starts clean because `PolarisTestCase.setUp` reloads the sample data;
+the next class does not get that. The shard reshuffle put `TestRetentionEngine` after it and the
+purge insert was refused by a leftover three-per-hour cap. Latent since v9.190, fixed with a
+`tearDown` that TRUNCATEs the table, which is also the only way left to empty it.
+
+### The anti-vacuity anchor was keyed on the list it validates
+
+`TestEveryAppendOnlyTableRefusesEdits` exists so C1 is tested once per table that claims it
+rather than once per table somebody wrote a test for, and its anchor asks the catalog which
+tables carry an append-only trigger. The query filters on
+`p.proname = ANY(APPEND_ONLY_GUARDS)`: eight function names typed by hand. A ninth guard is not
+merely unlisted, it is unaskable, because the query that would find it does not look for it. The
+anchor reported full coverage of exactly the set it had been given.
+
+Six `enforce_*_immutability` functions and the enrollment code's one-way door guard seven more
+tables outside that list. `check_immutability_guards_are_derived_from_the_schema` reads the SQL
+instead: every trigger function that refuses an UPDATE or a DELETE must either be in
+`APPEND_ONLY_GUARDS` (and then every table it guards must be in `APPEND_ONLY_FIXTURES`) or be in
+`BESPOKE_IMMUTABILITY_GUARDS` naming the test file that covers it, and that file must actually
+attempt every operation the guard refuses against every table it guards. It parses which
+operations the function itself refuses, so a guard whose body never branches on DELETE is not
+asked for a DELETE test.
+
+It found one on its first run: **`TokenStateEpoch` refuses DELETE and nothing had ever tried it.**
+The update was tested and the leaf delete below it tested the CHILD table, whose refusal comes
+from a different trigger. Deleting the epoch row is the more useful attack of the two, because a
+published Merkle root that can be made to have never existed is what the ZK audit trail rests on.
+`test_token_state_epoch_delete_rejected` closes it, and goes red when `trg_epoch_immutable` is
+dropped.
+
+Nine discriminations in the detection test, including that the check itself fails rather than
+passes when its parser finds almost no guards.
+
+**244 invariant checks.** 15 immutability guards, all derived from the schema.
+
+---
+
 ## v9.423 — 2026-09-11 (the detector was the defect, and it said so about three events)
 
 v9.422 said three AuthAuditLog event types were emitted by nothing and declared them so, with

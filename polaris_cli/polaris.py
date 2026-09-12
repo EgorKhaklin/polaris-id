@@ -1179,9 +1179,21 @@ def _quota_cap(value):
 
 
 def cmd_quota_set(args):
-    """Upsert the AgencyQuota row for one agency. Each of the three caps is
-    independent: omitted = unchanged, 0 = cleared (unlimited), N = set. The
-    justification is required (>= 20 chars) so the row explains itself."""
+    """Record a quota decision for one agency: supersede the row in force, append a new one.
+
+    Each of the three caps is independent: omitted = carried forward from the row in
+    force, 0 = cleared (unlimited), N = set. The justification is required (>= 20 chars)
+    so the row explains itself.
+
+    v9.424: this used to be `ON CONFLICT (agency_id) DO UPDATE`, which overwrote
+    set_by_admin, set_at and justification in place. The table's own COMMENT claimed a
+    cap was "auditable from the row alone" while the previous cap, who set it, when, and
+    why were destroyed by the next change. A quota is a decision about how much of the
+    population one agency may touch; it is the same shape of decision as RetentionPolicy,
+    and it is now kept the same way: append, supersede, never edit. The database enforces
+    it (trg_agency_quota_immutable refuses UPDATE of a decided field and refuses DELETE
+    outright), so a caller that goes around this command cannot rewrite history either.
+    """
     caps = {
         'issue_per_day':   _quota_cap(args.issue_per_day),
         'revoke_per_day':  _quota_cap(args.revoke_per_day),
@@ -1205,33 +1217,39 @@ def cmd_quota_set(args):
             if agency is None:
                 sys.stderr.write(red(f"No such agency: {args.agency_id}\n"))
                 sys.exit(1)
-            cur.execute("SELECT issue_per_day, revoke_per_day, verify_per_hour "
-                        "FROM AgencyQuota WHERE agency_id = %s", (args.agency_id,))
+            cur.execute("SELECT quota_id, issue_per_day, revoke_per_day, verify_per_hour "
+                        "FROM AgencyQuota WHERE agency_id = %s AND superseded_at IS NULL",
+                        (args.agency_id,))
             current = cur.fetchone() or {}
             new_values = {}
             for col, (mode, value) in caps.items():
                 new_values[col] = current.get(col) if mode == 'keep' else value
+            # Supersede then append, in one transaction. The partial unique index
+            # uq_effective_agency_quota means at most one row per agency can be
+            # un-superseded, so if this ordering were ever broken the INSERT fails
+            # rather than leaving two live caps for the trigger to choose between.
+            cur.execute("UPDATE AgencyQuota SET superseded_at = now() "
+                        " WHERE agency_id = %s AND superseded_at IS NULL", (args.agency_id,))
+            superseded = cur.rowcount
             cur.execute("""
                 INSERT INTO AgencyQuota
                     (agency_id, issue_per_day, revoke_per_day, verify_per_hour,
                      set_by_admin, justification)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (agency_id) DO UPDATE
-                   SET issue_per_day   = EXCLUDED.issue_per_day,
-                       revoke_per_day  = EXCLUDED.revoke_per_day,
-                       verify_per_hour = EXCLUDED.verify_per_hour,
-                       set_by_admin    = EXCLUDED.set_by_admin,
-                       set_at          = CURRENT_TIMESTAMP,
-                       justification   = EXCLUDED.justification
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING quota_id
             """, (args.agency_id, new_values['issue_per_day'], new_values['revoke_per_day'],
                   new_values['verify_per_hour'], set_by, args.justification.strip()))
+            quota_id = cur.fetchone()['quota_id']
             conn.commit()
         def show(v):
             return 'unlimited' if v is None else str(v)
-        print(green(f"✓ Quota set for agency #{agency['agency_id']} ({agency['name']})"))
+        print(green(f"✓ Quota #{quota_id} in force for agency "
+                    f"#{agency['agency_id']} ({agency['name']})"))
         print(f"  issue/day: {show(new_values['issue_per_day'])}   "
               f"revoke/day: {show(new_values['revoke_per_day'])}   "
               f"verify/hour: {show(new_values['verify_per_hour'])}")
+        if superseded:
+            print(dim(f"  quota #{current['quota_id']} superseded; it stays readable "
+                      f"(polaris quota-show --history)."))
         print(dim("  Enforced by the enforce_agency_quota trigger on every write path; "
                   "refusals count on polaris_quota_refusals_total."))
     except psycopg2.errors.CheckViolation as e:
@@ -1247,33 +1265,62 @@ def cmd_quota_set(args):
 
 
 def cmd_quota_show(args):
-    """List the AgencyQuota rows (or one agency's), with the agency name."""
+    """What caps are in force (or one agency's), and with --history what they replaced.
+
+    The default answers the operational question: what does the trigger enforce right
+    now. --history answers the accountability one: who raised this agency's issue cap,
+    when, and what reason did they give. Both read the same table; the difference is
+    whether superseded rows are shown, which is only a question a table that KEEPS them
+    can answer (v9.424).
+    """
     conn = connect()
     try:
         with conn.cursor() as cur:
-            if args.agency_id is not None:
-                cur.execute("""
-                    SELECT q.*, a.name FROM AgencyQuota q JOIN Agency a USING (agency_id)
-                     WHERE q.agency_id = %s
-                """, (args.agency_id,))
-            else:
-                cur.execute("""
-                    SELECT q.*, a.name FROM AgencyQuota q JOIN Agency a USING (agency_id)
-                     ORDER BY q.agency_id
-                """)
+            where = "q.agency_id = %s" if args.agency_id is not None else "TRUE"
+            params = (args.agency_id,) if args.agency_id is not None else ()
+            cur.execute(f"""
+                SELECT q.*, a.name FROM AgencyQuota q JOIN Agency a USING (agency_id)
+                 WHERE {where} AND q.superseded_at IS NULL
+                 ORDER BY q.agency_id
+            """, params)
             rows = cur.fetchall()
+            history = []
+            if args.history:
+                cur.execute(f"""
+                    SELECT q.*, a.name FROM AgencyQuota q JOIN Agency a USING (agency_id)
+                     WHERE {where} AND q.superseded_at IS NOT NULL
+                     ORDER BY q.agency_id, q.set_at DESC
+                """, params)
+                history = cur.fetchall()
     finally:
         conn.close()
-    if not rows:
+    if not rows and not history:
         print(dim("No agency quotas set (every agency is unlimited)."))
         return
+
     def show(v):
         return 'unlimited' if v is None else str(v)
+
+    def line(r):
+        return (f"agency #{r['agency_id']} {r['name']}: issue/day={show(r['issue_per_day'])} "
+                f"revoke/day={show(r['revoke_per_day'])} verify/hour={show(r['verify_per_hour'])} "
+                f"(set by {r['set_by_admin']} at {r['set_at']:%Y-%m-%d %H:%M})")
+
     for r in rows:
-        print(f"agency #{r['agency_id']} {r['name']}: issue/day={show(r['issue_per_day'])} "
-              f"revoke/day={show(r['revoke_per_day'])} verify/hour={show(r['verify_per_hour'])} "
-              f"(set by {r['set_by_admin']} at {r['set_at']:%Y-%m-%d %H:%M})")
+        print(line(r))
         print(dim(f"  {r['justification']}"))
+    if args.history:
+        by_agency = {}
+        for r in history:
+            by_agency.setdefault(r['agency_id'], []).append(r)
+        if not by_agency:
+            print(dim("\nNo superseded decisions: every cap in force is the first one set."))
+        for agency_id in sorted(by_agency):
+            print(dim(f"\nsuperseded, agency #{agency_id}:"))
+            for r in by_agency[agency_id]:
+                print(dim(f"  #{r['quota_id']} {line(r)}"))
+                print(dim(f"     superseded {r['superseded_at']:%Y-%m-%d %H:%M}: "
+                          f"{r['justification']}"))
 
 
 # ----------------------------------------------------------------------------
@@ -1904,6 +1951,9 @@ def build_parser():
                       help='Why this cap exists (>= 20 chars; stored on the row)')
     p_qs.add_argument('--set-by', default=None, help='Recorded as set_by_admin (default: $USER)')
     p_qsh = sub.add_parser('quota-show', help='Show per-agency caps (all agencies, or one)')
+    p_qsh.add_argument('--history', action='store_true',
+                       help='also show superseded decisions: who set the previous cap, '
+                            'when, and why')
     p_qsh.add_argument('agency_id', type=int, nargs='?', default=None)
 
     # rp-register (roadmap P3.4 — relying-party API v1)

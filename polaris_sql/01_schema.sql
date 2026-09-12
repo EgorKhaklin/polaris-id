@@ -736,7 +736,12 @@ COMMENT ON TABLE IssuerDiscretionPolicy IS
 -- idempotently by migration 2026-09-01-002-agency-quota.up.sql.
 -- ----------------------------------------------------------------------------
 CREATE TABLE AgencyQuota (
-    agency_id          INTEGER      PRIMARY KEY
+    -- v9.424: quota_id is the key so an agency may hold its whole history.
+    -- One LIVE row per agency is enforced by uq_effective_agency_quota, a
+    -- partial unique index in 02_indexes.sql, the same way RetentionPolicy
+    -- keeps exactly one effective policy per class.
+    quota_id           SERIAL       PRIMARY KEY,
+    agency_id          INTEGER      NOT NULL
                        REFERENCES Agency(agency_id),
     issue_per_day      INTEGER      CHECK (issue_per_day   IS NULL OR issue_per_day   > 0),
     revoke_per_day     INTEGER      CHECK (revoke_per_day  IS NULL OR revoke_per_day  > 0),
@@ -744,15 +749,19 @@ CREATE TABLE AgencyQuota (
     set_by_admin       VARCHAR(50)  NOT NULL,
     set_at             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     justification      TEXT         NOT NULL
-                       CHECK (length(justification) >= 20)
+                       CHECK (length(justification) >= 20),
+    superseded_at      TIMESTAMP
 );
 
 COMMENT ON TABLE AgencyQuota IS
   'Opt-in per-agency caps (v9.190 / P1.8): issuances per rolling day, '
   'revocations per rolling day, verifications per rolling hour. Enforced by '
   'the enforce_agency_quota trigger on every write path. NULL = no cap of '
-  'that kind; no row = no caps. justification >= 20 chars so any cap is '
-  'auditable from the row alone. Set with `polaris quota-set`.';
+  'that kind; no live row = no caps. justification >= 20 chars so any cap '
+  'is auditable from the row alone -- and since v9.424 the row survives the '
+  'next change: setting a cap supersedes the live row and appends a new one, '
+  'the table is immutable apart from that, and uq_effective_agency_quota '
+  'keeps exactly one live row per agency. Set with `polaris quota-set`.';
 
 -- ----------------------------------------------------------------------------
 -- EnrollmentStatusEvent: append-only log of enrollment-state transitions per

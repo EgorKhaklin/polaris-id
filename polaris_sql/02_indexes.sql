@@ -270,6 +270,23 @@ CREATE INDEX idx_verification_agency_time
     ON VerificationEvent (requesting_agency_id, event_timestamp DESC);
 
 -- ----------------------------------------------------------------------------
+-- One effective quota per agency (v9.424).
+--
+-- AgencyQuota keeps its history: changing a cap supersedes the row in force and
+-- appends a new one, so the reason an agency's ceiling was raised survives the
+-- next change. That makes agency_id non-unique, and the enforcement lookup in
+-- enforce_agency_quota() reads exactly one row, so "one un-superseded row per
+-- agency" has to be a database rule rather than a convention the writer keeps.
+-- Without it two live caps would both be candidates and the cap in force would
+-- depend on insertion order, which is the failure mode uq_effective_retention_policy
+-- exists to prevent for the sibling table.
+-- ----------------------------------------------------------------------------
+DROP INDEX IF EXISTS uq_effective_agency_quota;
+CREATE UNIQUE INDEX uq_effective_agency_quota
+    ON AgencyQuota (agency_id)
+    WHERE superseded_at IS NULL;
+
+-- ----------------------------------------------------------------------------
 -- One effective retention policy per (class, jurisdiction) (roadmap P1.11).
 --
 -- COALESCE on the jurisdiction is load-bearing: a plain partial unique index

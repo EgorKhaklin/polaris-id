@@ -12666,3 +12666,113 @@ def test_audit_writers_check_discriminates(tmp_path):
     write()
     (tmp_path / "polaris_sql" / "01_schema.sql").unlink()
     assert checks.check_every_audit_event_has_a_writer(tmp_path)[0].level == "FAIL", "must FAIL when the schema is absent"
+
+
+def test_immutability_guards_derived_check_discriminates(tmp_path):
+    """A guard the schema installs and nobody classified must fail the check."""
+    def guard(fn, phrase="append-only", delete=True):
+        body = "    IF TG_OP = 'DELETE' THEN\n" if delete else ""
+        return ("CREATE OR REPLACE FUNCTION %s() RETURNS TRIGGER LANGUAGE plpgsql AS $$\n"
+                "BEGIN\n%s"
+                "    RAISE EXCEPTION 'this table is %s';\n"
+                "    RETURN NEW;\n"
+                "END;\n$$;\n" % (fn, body, phrase))
+
+    def trigger(name, table, fn, events="BEFORE UPDATE OR DELETE"):
+        return ("DROP TRIGGER IF EXISTS %s ON %s;\nCREATE TRIGGER %s\n    %s ON %s\n"
+                "    FOR EACH ROW EXECUTE FUNCTION %s();\n"
+                % (name, table, name, events, table, fn))
+
+    # Eight generic guards on eight tables, plus one bespoke guard, which is the
+    # arrangement the real tree has: enough to clear the parser's anti-vacuity floor.
+    generic = ["reject_g%d_modification" % i for i in range(11)]
+    sql = "".join(guard(fn) + trigger("trg_g%d" % i, "t%d" % i, fn)
+                  for i, fn in enumerate(generic))
+    sql += guard("enforce_widget_immutability") + trigger("trg_widget", "widget",
+                                                          "enforce_widget_immutability")
+
+    TESTS = ("APPEND_ONLY_GUARDS = (\n"
+             + "".join("    '%s',\n" % fn for fn in generic) + ")\n"
+             "APPEND_ONLY_FIXTURES = {\n"
+             + "".join("    't%d': ('pk', None),\n" % i for i in range(11))
+             + "}\n")
+    COVER = ("class WidgetTests:\n"
+             "    def test_update(self):\n"
+             "        cur.execute('UPDATE widget SET x = 1')\n"
+             "    def test_delete(self):\n"
+             "        cur.execute('DELETE FROM widget WHERE id = 1')\n")
+
+    def write(sql_body=None, tests_body=None, cover=None):
+        (tmp_path / "polaris_sql" / "migrations").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "06_triggers.sql").write_text(
+            sql if sql_body is None else sql_body)
+        (tmp_path / "polaris_web" / "test_check_constraints.py").write_text(
+            (TESTS if tests_body is None else tests_body) + (COVER if cover is None else cover))
+
+    original = dict(checks.BESPOKE_IMMUTABILITY_GUARDS)
+    try:
+        checks.BESPOKE_IMMUTABILITY_GUARDS.clear()
+        checks.BESPOKE_IMMUTABILITY_GUARDS["enforce_widget_immutability"] = \
+            "polaris_web/test_check_constraints.py"
+        write()
+        assert checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)[0].level == "OK", \
+            "must PASS when every guard is either swept or covered by a named test"
+
+        # The bespoke guard is not classified at all: the failure this check exists for.
+        checks.BESPOKE_IMMUTABILITY_GUARDS.clear()
+        out = checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)
+        assert out[0].level == "FAIL" and "enforce_widget_immutability" in out[0].message, \
+            "must FAIL on a guard in neither list: nobody has checked whether anything tests it"
+
+        # Classified, but the named file never attempts the DELETE it refuses.
+        checks.BESPOKE_IMMUTABILITY_GUARDS["enforce_widget_immutability"] = \
+            "polaris_web/test_check_constraints.py"
+        write(cover=COVER.replace("        cur.execute('DELETE FROM widget WHERE id = 1')\n", "        pass\n"))
+        out = checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)
+        assert out[0].level == "FAIL" and "DELETE" in out[0].message, \
+            "must FAIL when the declared covering file does not attempt the refused DELETE"
+
+        # ... nor the UPDATE.
+        write(cover=COVER.replace("        cur.execute('UPDATE widget SET x = 1')\n", "        pass\n"))
+        out = checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)
+        assert out[0].level == "FAIL" and "UPDATE" in out[0].message, \
+            "must FAIL when the declared covering file does not attempt the refused UPDATE"
+
+        # A guard that refuses UPDATE only must NOT be asked for a DELETE test.
+        write(sql_body=sql.replace(guard("enforce_widget_immutability"),
+                                   guard("enforce_widget_immutability", delete=False)),
+              cover=COVER.replace("        cur.execute('DELETE FROM widget WHERE id = 1')\n", "        pass\n"))
+        assert checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)[0].level == "OK", \
+            "must not demand a DELETE test of a guard whose body never branches on DELETE"
+
+        # A table swept by a generic guard but missing from the fixture table.
+        write(tests_body=TESTS.replace("    't9': ('pk', None),\n", ""))
+        out = checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)
+        assert out[0].level == "FAIL" and "t9" in out[0].message, \
+            "must FAIL when a swept table is absent from APPEND_ONLY_FIXTURES"
+
+        # A stale entry: the schema no longer defines that guard.
+        checks.BESPOKE_IMMUTABILITY_GUARDS["enforce_gone_immutability"] = \
+            "polaris_web/test_check_constraints.py"
+        write()
+        out = checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)
+        assert any("enforce_gone_immutability" in f.message for f in out), \
+            "must FAIL on an entry asserting against a guarantee that is gone"
+        del checks.BESPOKE_IMMUTABILITY_GUARDS["enforce_gone_immutability"]
+
+        # Anti-vacuity: too few guards parsed means the parser broke, not that the
+        # schema is clean.
+        write(sql_body=guard("enforce_widget_immutability") + trigger("trg_widget", "widget",
+                                                                     "enforce_widget_immutability"))
+        out = checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)
+        assert out[0].level == "FAIL" and "passing by finding nothing" in out[0].message, \
+            "must FAIL rather than pass when the parser finds almost no guards"
+
+        # The lists it reads are gone.
+        write(tests_body="NOTHING = 1\n")
+        assert checks.check_immutability_guards_are_derived_from_the_schema(tmp_path)[0].level == "FAIL", \
+            "must FAIL when APPEND_ONLY_GUARDS cannot be read"
+    finally:
+        checks.BESPOKE_IMMUTABILITY_GUARDS.clear()
+        checks.BESPOKE_IMMUTABILITY_GUARDS.update(original)

@@ -5747,6 +5747,188 @@ def check_paper_pdf_is_current(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # Vocation - retention is bounded, and the bound is data with a floor.
 # ---------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# v9.424: the append-only coverage anchor must be derived from the schema.
+#
+# `TestEveryAppendOnlyTableRefusesEdits` exists so that C1 is tested once per table
+# that CLAIMS it, rather than once per table somebody wrote a test for, and its
+# anti-vacuity anchor asks the catalog which tables carry an append-only trigger.
+# But that catalog query filters on `p.proname = ANY(APPEND_ONLY_GUARDS)`: a
+# hand-written list of eight function names. A guard whose function is not already
+# in the list does not appear in the catalog answer either, so the anchor reports
+# "every append-only table is covered" while being structurally unable to see the
+# new one. The anchor is keyed on the list it exists to validate.
+#
+# That is not hypothetical. Six `enforce_*_immutability` functions and the enrollment
+# code's one-way door guard seven more tables and are invisible to it; they happen to
+# be covered, by tests written one at a time. This check reads the SCHEMA, finds every
+# trigger function that refuses an UPDATE or a DELETE, and requires each to be
+# accounted for in one of exactly two ways.
+# ----------------------------------------------------------------------------
+
+#: A guard whose coverage is NOT the table-driven class must name the test that covers
+#: it. The value is the test file; the check then verifies that file actually attempts
+#: each operation the guard refuses against each table it guards, so an entry cannot be
+#: a claim. A new bespoke guard with no entry fails: it has not been classified, which
+#: means nobody has checked whether anything tests it.
+BESPOKE_IMMUTABILITY_GUARDS = {
+    "enforce_agency_quota_immutability":      "polaris_web/test_check_constraints.py",
+    "enforce_attestation_immutability":       "polaris_web/test_app.py",
+    "enforce_epoch_immutability":             "polaris_web/test_app.py",
+    "enforce_recovery_request_immutability":  "polaris_web/test_check_constraints.py",
+    "enforce_retention_policy_immutability":  "polaris_web/test_check_constraints.py",
+    "enforce_token_signature_immutability":   "polaris_web/test_app.py",
+    "enrollment_code_one_way_door":           "polaris_web/test_check_constraints.py",
+}
+
+#: Phrases that mark a RAISE as the append-only guarantee. Kept in step with
+#: APPEND_ONLY_REFUSALS in test_check_constraints.py.
+_IMMUTABILITY_PHRASES = ("append-only", "append rather than mutate", "audit-of-record",
+                         "immutable", "cannot be moved or undone", "un-consumed",
+                         "single use", "one-way")
+
+
+class _NoMatch:
+    """A no-match stand-in so a missing block fails loudly below rather than raising."""
+
+    def group(self, _n):
+        return ""
+
+
+def _trigger_functions(sql: str) -> dict:
+    """name -> body, for every `RETURNS TRIGGER` function defined in sql."""
+    out = {}
+    for m in re.finditer(
+            r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(\w+)\s*\(\s*\)\s*"
+            r"RETURNS\s+TRIGGER\b(.*?)\$\$\s*;", sql, re.I | re.S):
+        out[m.group(1).lower()] = m.group(2)
+    return out
+
+
+def _trigger_bindings(sql: str) -> list:
+    """(function, table, ops) for every CREATE TRIGGER in sql that fires on UPDATE/DELETE."""
+    out = []
+    for m in re.finditer(
+            r"CREATE\s+TRIGGER\s+\w+\s+(?:BEFORE|AFTER|INSTEAD\s+OF)\s+(.*?)\s+ON\s+(\w+)"
+            r"(?:.*?)EXECUTE\s+(?:PROCEDURE|FUNCTION)\s+(\w+)\s*\(", sql, re.I | re.S):
+        events, table, fn = m.group(1), m.group(2), m.group(3)
+        ops = frozenset(op for op in ("UPDATE", "DELETE") if re.search(op, events, re.I))
+        if ops:
+            out.append((fn.lower(), table.lower(), ops))
+    return out
+
+
+def check_immutability_guards_are_derived_from_the_schema(root: pathlib.Path) -> list:
+    """The anti-vacuity anchor for C1 cannot be keyed on the list it validates (v9.424).
+
+    `TestEveryAppendOnlyTableRefusesEdits` asks the catalog which tables carry an
+    append-only trigger, and then filters that question by APPEND_ONLY_GUARDS, eight
+    function names typed by hand. A ninth guard is not merely unlisted: it is
+    unaskable, because the query that would have found it does not look for it. The
+    anchor therefore reports full coverage of exactly the set it was already given.
+
+    This check reads the schema instead. Every trigger function that refuses an UPDATE
+    or a DELETE must be accounted for in one of two ways, and a guard in neither is a
+    guarantee the database makes that nobody has classified:
+
+      - listed in APPEND_ONLY_GUARDS, which puts every table it guards into the
+        table-driven class (so each such table must be in APPEND_ONLY_FIXTURES); or
+      - listed in BESPOKE_IMMUTABILITY_GUARDS naming the test file that covers it, and
+        that file must actually attempt every operation the guard refuses against every
+        table it guards. An entry that names a file proving nothing fails here.
+    """
+    name = "immutability_guards_derived"
+    findings = []
+
+    sql_files = sorted((root / "polaris_sql").glob("*.sql"))
+    sql_files += sorted((root / "polaris_sql" / "migrations").glob("*.up.sql"))
+    if not sql_files:
+        return _fail(name, "no SQL sources found; the check cannot see the schema")
+    sql = "\n".join(f.read_text(errors="replace") for f in sql_files)
+
+    functions = _trigger_functions(sql)
+    guards = {}
+    for fn, table, ops in _trigger_bindings(sql):
+        body = functions.get(fn)
+        if body is None:
+            continue
+        low = body.lower()
+        if "raise exception" not in low:
+            continue
+        if not any(phrase in low for phrase in _IMMUTABILITY_PHRASES):
+            continue
+        # The operations the FUNCTION refuses, not merely those it sees: a BEFORE
+        # UPDATE OR DELETE trigger whose body never branches on DELETE is guarding
+        # the update path only, and demanding a DELETE test of it would be wrong.
+        refused = set(op for op in ops if op != "DELETE" or "'delete'" in low)
+        guards.setdefault(fn, set()).update((table, op) for op in refused)
+    if len(guards) < 10:
+        return _fail(name, "only %d immutability guards were parsed out of %d SQL files; the "
+                            "parser has broken and this check is passing by finding nothing"
+                            % (len(guards), len(sql_files)))
+
+    tests = root / "polaris_web" / "test_check_constraints.py"
+    if not tests.exists():
+        return _fail(name, "polaris_web/test_check_constraints.py is missing")
+    text = tests.read_text(errors="replace")
+    listed = set(re.findall(r"'(\w+)'", (re.search(r"APPEND_ONLY_GUARDS\s*=\s*\((.*?)\)",
+                                                   text, re.S) or _NoMatch()).group(1)))
+    fixtures = set(re.findall(r"^\s*'(\w+)':", (re.search(
+        r"APPEND_ONLY_FIXTURES\s*=\s*\{(.*?)\n\}", text, re.S) or _NoMatch()).group(1), re.M))
+    if not listed or not fixtures:
+        return _fail(name, "APPEND_ONLY_GUARDS or APPEND_ONLY_FIXTURES could not be read from "
+                            "test_check_constraints.py")
+
+    cache = {}
+    for fn in sorted(guards):
+        pairs = sorted(guards[fn])
+        tables = sorted(set(t for t, _ in pairs))
+        if fn in listed:
+            missing = [t for t in tables if t not in fixtures]
+            if missing:
+                findings.extend(_fail(name, "%s guards %s, which APPEND_ONLY_FIXTURES does not "
+                                            "list, so the table-driven class never attacks them"
+                                            % (fn, ", ".join(missing))))
+            continue
+        target = BESPOKE_IMMUTABILITY_GUARDS.get(fn)
+        if target is None:
+            findings.extend(_fail(name, "%s refuses edits to %s and is in neither "
+                                        "APPEND_ONLY_GUARDS nor BESPOKE_IMMUTABILITY_GUARDS: "
+                                        "nobody has checked whether anything tests it"
+                                        % (fn, ", ".join(tables))))
+            continue
+        if target not in cache:
+            path = root / target
+            if not path.exists():
+                findings.extend(_fail(name, "BESPOKE_IMMUTABILITY_GUARDS names %s for %s, which "
+                                            "does not exist" % (target, fn)))
+                cache[target] = ""
+                continue
+            cache[target] = path.read_text(errors="replace")
+        body = cache[target]
+        for table, op in pairs:
+            if not re.search(r"\b%s\b[^;\"']{0,200}?\b%s\b" % (op, table), body, re.I):
+                findings.extend(_fail(
+                    name, "%s is declared to cover %s, but never attempts a %s against %s: the "
+                          "declaration asserts coverage that the file does not contain"
+                          % (target, fn, op, table)))
+
+    for fn in sorted(BESPOKE_IMMUTABILITY_GUARDS):
+        if fn not in guards:
+            findings.extend(_fail(name, "BESPOKE_IMMUTABILITY_GUARDS lists %s, which the schema "
+                                        "no longer defines as a guard; the entry is asserting "
+                                        "against a guarantee that is gone" % fn))
+
+    if findings:
+        return findings
+    return _ok(name, "%d immutability guards, all derived from the schema: %d swept by the "
+                      "table-driven class, %d covered by a named test that attempts every "
+                      "operation they refuse"
+                      % (len(guards), len(guards) - len(BESPOKE_IMMUTABILITY_GUARDS),
+                         len(BESPOKE_IMMUTABILITY_GUARDS)))
+
+
 def check_retention_engine(root: pathlib.Path) -> list[Finding]:
     """The retention decision is data, floored, append-only, and the purge obeys it.
 
@@ -14963,6 +15145,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_system_map_covers_the_tree,
     check_paper_pdf_is_current,
     check_retention_engine,
+    check_immutability_guards_are_derived_from_the_schema,
 ]
 
 

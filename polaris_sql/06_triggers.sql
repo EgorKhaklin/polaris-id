@@ -786,7 +786,8 @@ BEGIN
            END
       INTO v_cap
       FROM AgencyQuota
-     WHERE agency_id = v_agency_id;
+     WHERE agency_id = v_agency_id
+       AND superseded_at IS NULL;   -- v9.424: a superseded cap does not bind
     IF v_cap IS NULL THEN
         RETURN NEW;
     END IF;
@@ -873,6 +874,56 @@ COMMENT ON FUNCTION enforce_agency_quota IS
 --   16. enforce_agency_quota('revoke')         (BEFORE UPDATE OF status on IdentityToken — v9.190 / P1.8)
 --   17. enforce_agency_quota('verify')         (BEFORE INSERT on VerificationEvent — v9.190 / P1.8)
 -- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- enforce_agency_quota_immutability (v9.424)
+--
+-- The sibling of enforce_retention_policy_immutability, and for the same
+-- reason: a decision about how much an authority may do is an audit of record,
+-- and editing it in place erases the thing it exists to prove.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION enforce_agency_quota_immutability()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION
+            'AgencyQuota is append-only: DELETE is refused. A quota is a bound '
+            'on an agency''s own power and its history is an audit of record; '
+            'supersede it instead.'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    IF NEW.quota_id      IS DISTINCT FROM OLD.quota_id
+       OR NEW.agency_id     IS DISTINCT FROM OLD.agency_id
+       OR NEW.issue_per_day   IS DISTINCT FROM OLD.issue_per_day
+       OR NEW.revoke_per_day  IS DISTINCT FROM OLD.revoke_per_day
+       OR NEW.verify_per_hour IS DISTINCT FROM OLD.verify_per_hour
+       OR NEW.set_by_admin    IS DISTINCT FROM OLD.set_by_admin
+       OR NEW.set_at          IS DISTINCT FROM OLD.set_at
+       OR NEW.justification   IS DISTINCT FROM OLD.justification THEN
+        RAISE EXCEPTION
+            'AgencyQuota is append-only: only superseded_at may be updated. '
+            'Changing a cap appends a row; it does not rewrite the old one.'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    IF OLD.superseded_at IS NOT NULL
+       AND NEW.superseded_at IS DISTINCT FROM OLD.superseded_at THEN
+        RAISE EXCEPTION
+            'AgencyQuota row % was superseded at %; that cannot be moved or undone.',
+            OLD.quota_id, OLD.superseded_at
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_agency_quota_immutable ON AgencyQuota;
+CREATE TRIGGER trg_agency_quota_immutable
+    BEFORE UPDATE OR DELETE ON AgencyQuota
+    FOR EACH ROW EXECUTE FUNCTION enforce_agency_quota_immutability();
+
 
 -- ----------------------------------------------------------------------------
 -- enforce_retention_policy_immutability (roadmap P1.11)

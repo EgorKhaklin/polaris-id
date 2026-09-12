@@ -1508,6 +1508,80 @@ class TestEveryAppendOnlyTableRefusesEdits(_CheckBase):
 # and so does not belong in the table-driven class.
 # ============================================================================
 
+class TestAgencyQuotaIsAppendOnly(_CheckBase):
+    """A quota decision is kept, not edited (v9.424).
+
+    AgencyQuota bounds how much of the population one agency may touch. It used to
+    be one editable row per agency, so raising a cap destroyed the previous cap, who
+    set it, when, and the reason given, while the table's own COMMENT said a cap was
+    auditable from the row alone. It is now the RetentionPolicy shape, and the tests
+    live here rather than in the application suite for the same reason that one's do:
+    the subject is the trigger and the partial index, so the fast mutation drill can
+    reach them directly instead of taking a declaration on trust.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.cur = self.conn.cursor()
+        self.addCleanup(self.cur.close)
+
+    def _record(self, issue=400, why='a decision recorded so the test can try to rewrite it'):
+        self.cur.execute(
+            "UPDATE AgencyQuota SET superseded_at = now() "
+            " WHERE agency_id = 1 AND superseded_at IS NULL")
+        self.cur.execute(
+            "INSERT INTO AgencyQuota (agency_id, issue_per_day, set_by_admin, justification) "
+            "VALUES (1, %s, 'test', %s) RETURNING quota_id", (issue, why))
+        return self.cur.fetchone()["quota_id"]
+
+    def test_a_recorded_cap_cannot_be_edited(self):
+        """Every field of a decision is frozen except the act of superseding it."""
+        for column, value in (('issue_per_day', 9999), ('set_by_admin', 'someone_else'),
+                              ('justification', 'a different reason, twenty plus characters'),
+                              ('agency_id', 2), ('set_at', 'epoch')):
+            with self.subTest(column=column):
+                qid = self._record()
+                with self.assertRaises(pg_errors.InsufficientPrivilege,
+                                       msg=f"{column} was editable"):
+                    self.cur.execute(
+                        f"UPDATE AgencyQuota SET {column} = %s WHERE quota_id = %s",
+                        (value, qid))
+                self.conn.rollback()
+
+    def test_a_recorded_cap_cannot_be_deleted(self):
+        qid = self._record(why='a decision recorded so the test can try to delete it')
+        with self.assertRaises(pg_errors.InsufficientPrivilege):
+            self.cur.execute("DELETE FROM AgencyQuota WHERE quota_id = %s", (qid,))
+
+    def test_superseding_is_one_way(self):
+        """Un-superseding would put a replaced cap back in force and leave no trace
+        that it had ever been replaced, which is the edit the history exists to stop."""
+        qid = self._record(why='a decision recorded so the test can try to un-supersede it')
+        self.cur.execute("UPDATE AgencyQuota SET superseded_at = now() WHERE quota_id = %s",
+                         (qid,))
+        # Savepoints rather than a rollback: the refusal aborts the transaction, and a
+        # full rollback would also undo the row under test, so the second attempt would
+        # touch nothing and pass without the trigger being involved at all.
+        for attempt in ("superseded_at = NULL",
+                        "superseded_at = now() - interval '9 days'"):
+            with self.subTest(attempt=attempt):
+                self.cur.execute("SAVEPOINT one_way")
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    self.cur.execute(f"UPDATE AgencyQuota SET {attempt} WHERE quota_id = %s",
+                                     (qid,))
+                self.cur.execute("ROLLBACK TO SAVEPOINT one_way")
+
+    def test_two_caps_cannot_be_in_force_for_one_agency(self):
+        """uq_effective_agency_quota, not application care, decides this: the
+        enforcement lookup reads one row, so which row it is cannot depend on
+        insertion order."""
+        self._record(why='the cap in force for this agency, twenty plus chars')
+        with self.assertRaises(pg_errors.UniqueViolation):
+            self.cur.execute(
+                "INSERT INTO AgencyQuota (agency_id, issue_per_day, set_by_admin, justification) "
+                "VALUES (1, 900, 'test', 'a second live cap for one agency, refused')")
+
+
 class TestRevocationListStatusGuard(_CheckBase):
     """A token can only be listed as revoked if it IS revoked."""
 
@@ -1636,6 +1710,9 @@ UNIQUE_RULE_FIXTURES = {
     # One unique index on the table: a plain copy names it.
     'uq_active_attestation': (None, {}),
     'uq_effective_retention_policy': (None, {}),
+    'uq_effective_agency_quota': (
+        "INSERT INTO AgencyQuota (agency_id, issue_per_day, set_by_admin, justification) "
+        "VALUES (1, 100, 'fixture', 'uniqueness probe: the cap in force for agency 1')", {}),
     'uq_one_pending_recovery_per_individual': (None, {}),
     'blockchainanchor_did_key': (None, {}),
     'cryptographicalgorithm_name_key': (None, {}),

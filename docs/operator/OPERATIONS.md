@@ -1162,7 +1162,16 @@ polaris-id quota-set 5 --verify-per-hour 500 --justification "First National Ban
 polaris-id quota-set 2 --issue-per-day 200 --revoke-per-day 20 --justification "PA bureau: enrollment capacity of two offices"
 polaris-id quota-set 5 --verify-per-hour 0 --justification "verification cap lifted after the audit"   # 0 clears one cap
 polaris-id quota-show
+polaris-id quota-show --history          # what each cap replaced, and why
 ```
+
+Setting a cap never overwrites the last one. The live row is superseded and a new
+row appended, so who raised an agency's ceiling, when, and on what stated reason
+stays readable; `quota-show` answers what is enforced now, `quota-show --history`
+answers what it replaced. The database holds that shape rather than trusting the
+writer: `uq_effective_agency_quota` allows one un-superseded row per agency and
+`trg_agency_quota_immutable` refuses an edit of any decided field, refuses DELETE,
+and makes superseding one-way (v9.424).
 
 The `enforce_agency_quota` trigger binds every write path (the stored
 procedures, the SQL console, a bulk loader) and is exact under concurrent

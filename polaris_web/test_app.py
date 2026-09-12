@@ -3324,6 +3324,21 @@ class ZKSnarkTests(PolarisTestCase):
                 cur.execute(
                     "DELETE FROM TokenStateEpochLeaf WHERE epoch_id = 1 AND token_id = 2")
 
+    def test_token_state_epoch_delete_rejected(self):
+        """The epoch row itself, not only its leaves (v9.424).
+
+        trg_epoch_immutable fires BEFORE DELETE OR UPDATE, and the DELETE half was
+        the one operation on this table that nothing attempted: the update was
+        covered above and the leaf delete below it covers the CHILD table, whose
+        refusal comes from a different trigger. Deleting the epoch row is the more
+        useful attack of the two, because a published Merkle root that can be made
+        to have never existed is the ZK audit trail's whole load.
+        """
+        with self._db() as conn, conn.cursor() as cur:
+            with self.assertRaises(psycopg2.errors.InsufficientPrivilege) as caught:
+                cur.execute("DELETE FROM TokenStateEpoch WHERE epoch_id = 1")
+            self.assertIn('audit-of-record', str(caught.exception))
+
     def test_demo_epoch_root_verifies_via_python(self):
         """Round-trip: read the demo epoch's leaves, regenerate the proof
         for one of them, verify against the schema-stored root."""
@@ -10199,12 +10214,41 @@ class AgencyQuotaTests(PolarisTestCase):
     VERIFIER = 5    # First National Bank (seed data): a verifier
     ISSUER = 1      # US National Identity Service: authorized to issue under algorithm 1
 
+    def tearDown(self):
+        """Leave no cap in force.
+
+        A quota is enforced by a trigger on every write path, so a cap this class
+        commits and does not clear refuses writes in every test that runs after it in
+        the same process. `PolarisTestCase.setUp` reloads the sample data, which clears
+        AgencyQuota through `TRUNCATE ... Agency CASCADE`, so each test in THIS class
+        starts clean; the class that runs next does not get that. v9.424's shard
+        reshuffle put TestRetentionEngine after this class and its purge insert was
+        refused by a leftover 3-per-hour cap, which is a pollution that has been
+        latent since v9.190 rather than anything the new shape introduced.
+
+        TRUNCATE rather than DELETE: the table is append-only and the trigger refuses
+        the DELETE, which is the point. TRUNCATE is a distinct privilege that
+        09_grants.sql withholds from the app role, so this is the same discipline the
+        reload uses to clear an audit table as the owner.
+        """
+        try:
+            _sql("TRUNCATE TABLE AgencyQuota", fetch='none')
+        finally:
+            super().tearDown()
+
     def _set_quota(self, agency_id, issue=None, revoke=None, verify=None):
+        """Supersede whatever cap is in force and append the new one (v9.424).
+
+        This used to be `ON CONFLICT (agency_id) DO UPDATE`, which the table no longer
+        permits: agency_id is not unique any more, and trg_agency_quota_immutable
+        refuses an UPDATE of a decided field. The fixture takes the same two steps the
+        CLI takes, so the tests below exercise the path an operator actually uses.
+        """
+        _sql("UPDATE AgencyQuota SET superseded_at = now() "
+             " WHERE agency_id = %s AND superseded_at IS NULL", (agency_id,), fetch='none')
         _sql("INSERT INTO AgencyQuota (agency_id, issue_per_day, revoke_per_day, verify_per_hour, "
              "set_by_admin, justification) VALUES (%s, %s, %s, %s, 'test', "
-             "'AgencyQuotaTests fixture: the caps under test') "
-             "ON CONFLICT (agency_id) DO UPDATE SET issue_per_day=EXCLUDED.issue_per_day, "
-             "revoke_per_day=EXCLUDED.revoke_per_day, verify_per_hour=EXCLUDED.verify_per_hour",
+             "'AgencyQuotaTests fixture: the caps under test')",
              (agency_id, issue, revoke, verify), fetch='none')
 
     def _insert_verification(self, agency_id):
@@ -10401,6 +10445,60 @@ class AgencyQuotaTests(PolarisTestCase):
             msg = flask_app.db_error_to_message(e)
         self.assertTrue(msg.startswith('quota exceeded: agency 5'), msg)
         self.assertNotIn('CONTEXT', msg)
+
+    # ----------------------------------------------------------------------
+    # v9.424: the quota decision is kept, not overwritten.
+    #
+    # The table's COMMENT has always claimed a cap is auditable from the row alone,
+    # while `ON CONFLICT (agency_id) DO UPDATE` destroyed the previous cap, who set
+    # it, when, and why on every change. A quota bounds how much of the population
+    # one agency may touch; raising it is exactly the act an audit needs to see. It
+    # is now the RetentionPolicy shape: append, supersede, never edit.
+    # ----------------------------------------------------------------------
+
+    def _quota_rows(self, agency_id):
+        return _sql("SELECT quota_id, issue_per_day, justification, superseded_at "
+                    "FROM AgencyQuota WHERE agency_id = %s ORDER BY quota_id",
+                    (agency_id,), fetch='all')
+
+    def _append_quota(self, agency_id, issue, why):
+        _sql("UPDATE AgencyQuota SET superseded_at = now() "
+             " WHERE agency_id = %s AND superseded_at IS NULL", (agency_id,), fetch='none')
+        return _sql("INSERT INTO AgencyQuota (agency_id, issue_per_day, set_by_admin, "
+                    "justification) VALUES (%s, %s, 'test', %s) RETURNING quota_id",
+                    (agency_id, issue, why), fetch='one')['quota_id']
+
+    def test_changing_a_cap_keeps_the_decision_it_replaced(self):
+        """Who set the previous cap, when, and why must survive the next change."""
+        self._append_quota(self.VERIFIER, 700, 'AgencyQuotaTests: the first decision, raised')
+        self._append_quota(self.VERIFIER, 300, 'AgencyQuotaTests: the second decision, lowered')
+        rows = self._quota_rows(self.VERIFIER)
+        self.assertGreaterEqual(len(rows), 2, "the earlier decision was overwritten")
+        live = [r for r in rows if r['superseded_at'] is None]
+        self.assertEqual(len(live), 1, "exactly one cap may be in force per agency")
+        self.assertEqual(live[0]['issue_per_day'], 300)
+        justifications = [r['justification'] for r in rows]
+        self.assertIn('AgencyQuotaTests: the first decision, raised', justifications,
+                      "the reason given for the cap that was replaced is gone")
+
+    def test_a_superseded_cap_does_not_bind(self):
+        """The trigger enforces the cap in force, not the tightest cap ever set.
+
+        Without the `superseded_at IS NULL` filter in enforce_agency_quota's lookup,
+        a history table would make every past cap binding at once, and the first
+        tight cap an agency was ever given would be permanent.
+        """
+        self._insert_verification(self.VERIFIER)          # the cap floor is > 0 by CHECK
+        floor = self._verifications_in_hour(self.VERIFIER)
+        self._append_quota(self.VERIFIER, None, 'AgencyQuotaTests: clear the slate')
+        # A cap that refuses the very next write ...
+        self._set_quota(self.VERIFIER, verify=floor)
+        with self.assertRaises(psycopg2.Error):
+            self._insert_verification(self.VERIFIER)
+        # ... superseded by a generous one, stops binding immediately.
+        self._set_quota(self.VERIFIER, verify=floor + 50)
+        self._insert_verification(self.VERIFIER)
+        self.assertEqual(self._verifications_in_hour(self.VERIFIER), floor + 1)
 
 
 class FlashBoundTests(PolarisTestCase):

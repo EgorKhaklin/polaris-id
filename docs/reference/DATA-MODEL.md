@@ -509,9 +509,23 @@ database behaves exactly as before. A capped write is serialized per
 under concurrency; the (cap + 1)th write is refused with
 `quota exceeded: ...` (`check_violation`), which the app answers as HTTP
 429. `justification` has a 20-character floor, as for
-`IssuerDiscretionPolicy`, so the row explains itself. Set with
-`polaris-id quota-set`; migration `2026-09-01-002-agency-quota`. The sibling
-of `IssuerDiscretionPolicy`: a bound on agency behaviour, never on a person.
+`IssuerDiscretionPolicy`, so the row explains itself.
+
+Since v9.424 the table keeps its history: `quota_id` is the primary key,
+`superseded_at` marks a decision that has been replaced, and
+`uq_effective_agency_quota` (a partial unique index `WHERE superseded_at IS
+NULL`) allows exactly one cap in force per agency, which is the row
+`enforce_agency_quota` reads. Changing a cap supersedes the live row and appends
+a new one; `trg_agency_quota_immutable` refuses an UPDATE of any decided field
+and refuses DELETE outright, and superseding is one-way. Before that the CLI
+wrote `ON CONFLICT (agency_id) DO UPDATE`, so each change destroyed the previous
+cap, who set it, when, and why, while this page and the table's own COMMENT both
+said a cap was auditable from the row alone. Raising an agency's ceiling is
+precisely the act an audit needs to see. Set with `polaris-id quota-set`, read
+with `polaris-id quota-show --history`; migrations `2026-09-01-002-agency-quota`
+and `2026-09-11-001-agency-quota-history`. The sibling of
+`IssuerDiscretionPolicy` in what it bounds and of `RetentionPolicy` in how it
+records the bound: an agency's own power, never a person's.
 
 ### `EnrollmentStatusEvent`
 

@@ -719,8 +719,12 @@ class QuotaCommandTests(CLIBaseTestCase):
     def _row(self, agency_id):
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         with conn.cursor() as cur:
-            cur.execute("SELECT issue_per_day, revoke_per_day, verify_per_hour, set_by_admin, justification "
-                        "FROM AgencyQuota WHERE agency_id=%s", (agency_id,))
+            # The cap IN FORCE. Since v9.424 the table keeps superseded decisions too,
+            # so a query without the filter would return whichever row the planner
+            # reached first and the assertions below would be about a replaced cap.
+            cur.execute("SELECT issue_per_day, revoke_per_day, verify_per_hour, set_by_admin, "
+                        "justification FROM AgencyQuota "
+                        " WHERE agency_id=%s AND superseded_at IS NULL", (agency_id,))
             row = cur.fetchone()
         conn.close()
         return row
@@ -728,7 +732,7 @@ class QuotaCommandTests(CLIBaseTestCase):
     def test_quota_set_creates_the_row_and_show_lists_it(self):
         r = run_cli('quota-set', '5', '--verify-per-hour', '25', '--set-by', 'cli-test',
                     '--justification', 'QuotaCommandTests: cap a verifier for the test')
-        self.assertIn('Quota set for agency #5', r.stdout)
+        self.assertIn('in force for agency #5', r.stdout)
         row = self._row(5)
         self.assertEqual(row['verify_per_hour'], 25)
         self.assertIsNone(row['issue_per_day'])
@@ -747,6 +751,39 @@ class QuotaCommandTests(CLIBaseTestCase):
         self.assertIsNone(row['verify_per_hour'])
         self.assertEqual(row['issue_per_day'], 3)
         self.assertIn('lifted', row['justification'])
+
+    def test_quota_set_keeps_the_decision_it_replaced(self):
+        """v9.424: raising a cap must not erase who set the last one, or why.
+
+        This is the whole point of the shape change, asked at the door an operator
+        actually uses. The old command wrote ON CONFLICT DO UPDATE, so the first
+        justification below would not exist after the second command ran.
+        """
+        run_cli('quota-set', '5', '--verify-per-hour', '25', '--set-by', 'first-operator',
+                '--justification', 'QuotaCommandTests: the original contracted volume')
+        run_cli('quota-set', '5', '--verify-per-hour', '900', '--set-by', 'second-operator',
+                '--justification', 'QuotaCommandTests: raised for the migration window')
+        live = self._row(5)
+        self.assertEqual(live['verify_per_hour'], 900)
+        self.assertEqual(live['set_by_admin'], 'second-operator')
+
+        plain = run_cli('quota-show', '5')
+        self.assertIn('verify/hour=900', plain.stdout)
+        self.assertNotIn('original contracted volume', plain.stdout)
+
+        history = run_cli('quota-show', '5', '--history')
+        self.assertIn('superseded', history.stdout)
+        self.assertIn('first-operator', history.stdout)
+        self.assertIn('original contracted volume', history.stdout,
+                      'the reason given for the cap that was replaced is gone')
+
+    def test_quota_show_history_says_so_when_there_is_none(self):
+        """An empty history must read as "no decision has been replaced", not as
+        a blank section the reader has to interpret."""
+        run_cli('quota-set', '5', '--verify-per-hour', '25',
+                '--justification', 'QuotaCommandTests: the only decision so far')
+        r = run_cli('quota-show', '5', '--history')
+        self.assertIn('No superseded decisions', r.stdout)
 
     def test_quota_set_refuses_a_short_justification_and_no_caps(self):
         r = run_cli('quota-set', '5', '--verify-per-hour', '25', '--justification', 'because',
