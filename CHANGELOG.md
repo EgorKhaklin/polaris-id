@@ -5,6 +5,43 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.444 — 2026-09-12 (two drills the gate asked for could not run on the machine it gates)
+
+Under `set -u`, bash 3.2 treats `"${A[@]}"` as an unbound variable when A is empty and kills the
+script. Bash 4.4 and later do not. macOS has shipped bash 3.2 since 2007 for licensing reasons
+that are not going to change, and CI runs Linux with bash 5, so this is invisible where the tests
+run and fatal where the work is done.
+
+`polaris-bulk-drill.sh` and `polaris-partition-drill.sh` could not run locally at all. Their
+`PGHOST_ARG` is empty whenever `POLARIS_DB_HOST` is unset, which is the normal local case, so both
+died on their first psql call with `PGHOST_ARG[@]: unbound variable`. Both are drills
+`polaris-ship.py drills` asks for, so the ship gate could not be satisfied on the maintainer's
+machine and the only route to a verdict on them was a push. That is the same shape as v9.441 and
+v9.442: the local gate was narrower than CI and nothing said so.
+
+Fourteen expansions across six scripts now use `${VAR[@]+"${VAR[@]}"}`, which survives both. The
+two drills run locally with nothing set, verified: bulk at 4219 rows/s and partition through
+monthly partitions, attach, detach and retention routing.
+
+`check_shell_arrays_are_portable` keeps it applied, and the reason it is the STRICT rule is in the
+tree. `polaris-chaos-drill.sh` already carried the safe idiom at line 99, where somebody hit this
+and fixed it, and the identical `docker network connect` 180 lines later was still bare. A rule
+that accepted "the idiom appears somewhere in this file" would have passed that file with the bug
+live in it, and the detection test asserts that case fails. So would a rule that accepted a nearby
+`${#A[@]}` guard: the guard is real protection, but which expansions it dominates is not something
+a checker can decide, and asking for the idiom anyway costs nothing where a guard is present.
+
+Verified against the tree as it stood: the check names `polaris-chaos-drill.sh:282
+(PGB_ALIAS_ARGS)`, the site that was actually wrong.
+
+`check_chaos_program` pinned that line by its full text and went red on the rewrite. Its needle now
+stops at the array name, because what it asserts is that the reconnect passes the ALIASES and not
+how the array is spelled.
+
+**256 invariant checks.**
+
+---
+
 ## v9.443 — 2026-09-12 (the table of who may sign in had no trigger on it)
 
 Two operator scripts turned out never to have run. `polaris-set-webauthn-deadline.sh` writes an

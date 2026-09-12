@@ -13727,3 +13727,63 @@ def test_operator_accounts_recorded_check_discriminates(tmp_path):
     write(cli=CLI.replace("e.widened IS NOT FALSE", "e.widened"))
     assert level("does not show the authority moves") == "FAIL", \
         "must FAIL when the filter drops the changes it cannot rank"
+
+
+def test_shell_arrays_portable_check_discriminates(tmp_path):
+    """The bug this exists for was live in the tree with the fix already applied 180
+    lines above it, so the loose rules are tested here as failures too."""
+    d = tmp_path / "scripts"
+    d.mkdir(parents=True)
+
+    SAFE = ('#!/usr/bin/env bash\n'
+            'set -euo pipefail\n'
+            'ARGS=()\n'
+            '[ -n "${HOST:-}" ] && ARGS=(-h "$HOST")\n'
+            'psql "${ARGS[@]+"${ARGS[@]}"}" -c "SELECT 1"\n')
+
+    def write(body, name="probe-drill.sh"):
+        (d / name).write_text(body)
+
+    def level(msg_contains=None):
+        out = checks.check_shell_arrays_are_portable(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write(SAFE)
+    good = checks.check_shell_arrays_are_portable(tmp_path)[0]
+    assert good.level == "OK", "must PASS when every expansion uses the surviving form"
+
+    write(SAFE.replace('"${ARGS[@]+"${ARGS[@]}"}"', '"${ARGS[@]}"'))
+    bad = checks.check_shell_arrays_are_portable(tmp_path)[0]
+    assert bad.level == "FAIL" and "probe-drill.sh:5 (ARGS)" in bad.message, \
+        "must FAIL and name the file, line and variable"
+
+    # The shape that was actually in the tree: fixed once, missed once. A rule that
+    # accepted "the idiom appears somewhere in this file" would pass this.
+    write(SAFE + 'psql "${ARGS[@]}" -c "SELECT 2"\n')
+    assert level("probe-drill.sh:6 (ARGS)") == "FAIL", \
+        "must FAIL on a bare expansion even when the same file uses the idiom elsewhere"
+
+    # A nearby count guard is real protection, but the rule does not accept it: which
+    # expansions a guard dominates is not something this can decide.
+    write(SAFE.replace('psql "${ARGS[@]+"${ARGS[@]}"}" -c "SELECT 1"\n',
+                       'if [ ${#ARGS[@]} -gt 0 ]; then psql "${ARGS[@]}"; fi\n'))
+    assert level("(ARGS)") == "FAIL", \
+        "must FAIL on a guarded bare expansion too; the rule is the strict one"
+
+    # An array that is never declared empty cannot trip the bug, and demanding the
+    # idiom there would be noise rather than a finding.
+    write('#!/usr/bin/env bash\nset -euo pipefail\nARGS=(-h localhost)\npsql "${ARGS[@]}"\n')
+    assert level() == "OK", "must PASS when the array is never empty"
+
+    # A script that does not set -u is not exposed to this at all.
+    write('#!/usr/bin/env bash\nARGS=()\npsql "${ARGS[@]}"\n')
+    assert level() == "FAIL", "the previous fixture is still present and still failing"
+
+    for f in d.iterdir():
+        f.unlink()
+    write('#!/usr/bin/env bash\nARGS=()\npsql "${ARGS[@]}"\n')
+    assert level("measuring nothing") == "FAIL", \
+        "must FAIL rather than pass vacuously when no script sets -u"

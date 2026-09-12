@@ -23,7 +23,7 @@ set -euo pipefail
 DB="${POLARIS_DB_NAME:-polaris_test}"
 PGUSER_ARG=(); [ -n "${POLARIS_DB_USER:-}" ] && PGUSER_ARG=(-U "$POLARIS_DB_USER")
 PGHOST_ARG=(); [ -n "${POLARIS_DB_HOST:-}" ] && PGHOST_ARG=(-h "$POLARIS_DB_HOST")
-psql_do() { psql -v ON_ERROR_STOP=1 -qtA "${PGHOST_ARG[@]}" "${PGUSER_ARG[@]}" -d "$DB" "$@"; }
+psql_do() { psql -v ON_ERROR_STOP=1 -qtA "${PGHOST_ARG[@]+"${PGHOST_ARG[@]}"}" "${PGUSER_ARG[@]+"${PGUSER_ARG[@]}"}" -d "$DB" "$@"; }
 fail() { echo "::error::$*" >&2; exit 1; }
 command -v psql >/dev/null || fail "psql is required"
 

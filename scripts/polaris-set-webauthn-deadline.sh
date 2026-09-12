@@ -203,7 +203,7 @@ done <<< "${TARGETS_RAW}"
 
 if [[ ${#WRONG_ROLE_USERS[@]} -gt 0 ]]; then
     echo "✗ refusing — these users are not admin/operator:" >&2
-    for u in "${WRONG_ROLE_USERS[@]}"; do echo "    ${u}" >&2; done
+    for u in "${WRONG_ROLE_USERS[@]+"${WRONG_ROLE_USERS[@]}"}"; do echo "    ${u}" >&2; done
     exit "${EXIT_REFUSED_WRONG_ROLE}"
 fi
 

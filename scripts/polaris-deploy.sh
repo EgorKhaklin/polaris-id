@@ -254,7 +254,7 @@ else
     echo "  [5d]  Recreating app (single-app profile; add docker-compose.bluegreen.yml for zero downtime)…"
 fi
 ROLL_OK=1
-for svc in "${APP_SERVICES[@]}"; do
+for svc in "${APP_SERVICES[@]+"${APP_SERVICES[@]}"}"; do
     compose up -d --no-deps --force-recreate "${svc}"
     if wait_healthy "${svc}"; then
         echo "  ✓ ${svc} healthy"
@@ -290,7 +290,7 @@ if [[ "${SMOKE_OK}" -ne 1 || "${ROLL_OK}" -ne 1 ]]; then
     if [[ -n "${PREV_IMAGE_ID}" ]]; then
         echo "  → Rolling back to previous app image…"
         docker tag "${PREV_IMAGE_ID}" polaris-app:prod
-        for svc in "${APP_SERVICES[@]}"; do compose up -d --no-deps --force-recreate "${svc}"; wait_healthy "${svc}" || true; done
+        for svc in "${APP_SERVICES[@]+"${APP_SERVICES[@]}"}"; do compose up -d --no-deps --force-recreate "${svc}"; wait_healthy "${svc}" || true; done
         echo "  ✓ Rolled back. Investigate logs:"
         echo "    docker compose -f polaris_web/docker-compose.prod.yml logs --tail=200 app"
     else

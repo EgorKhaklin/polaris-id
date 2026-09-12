@@ -330,7 +330,7 @@ else
     [[ "$acked_leaderless" -eq 0 ]] || fail "$acked_leaderless inserts were acknowledged while no member held the lease"
     echo "  no member took the lease in ${CEIL_FAILOVER}s: $L0 deferred to $L1, which is ahead of it ($behind such checks) and cannot reach the store; no insert was acknowledged meanwhile"
 fi
-docker network connect "${PARTITION_ALIAS_ARGS[@]}" "$DCS_NET" "polaris-$L1"; PARTITIONED=""
+docker network connect "${PARTITION_ALIAS_ARGS[@]+"${PARTITION_ALIAS_ARGS[@]}"}" "$DCS_NET" "polaris-$L1"; PARTITIONED=""
 if [[ "$outcome2" == leaderless ]]; then
     p2=$(wait_for "$CEIL_FAILOVER" leader_changed_from "" "$L0") || fail "no member took the lease within ${CEIL_FAILOVER}s of the partition healing"
     p2=$(( $(elapsed "$t0") ))

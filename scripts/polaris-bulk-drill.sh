@@ -33,7 +33,7 @@ ROWS="${POLARIS_BULK_DRILL_ROWS:-5000}"
 FLOOR="${POLARIS_BULK_DRILL_FLOOR:-200}"   # rows/s; conservative for shared CI runners
 PGUSER_ARG=(); [ -n "${POLARIS_DB_USER:-}" ] && PGUSER_ARG=(-U "$POLARIS_DB_USER")
 PGHOST_ARG=(); [ -n "${POLARIS_DB_HOST:-}" ] && PGHOST_ARG=(-h "$POLARIS_DB_HOST")
-psql_do() { psql -v ON_ERROR_STOP=1 -qtA "${PGHOST_ARG[@]}" "${PGUSER_ARG[@]}" -d "$DB" "$@"; }
+psql_do() { psql -v ON_ERROR_STOP=1 -qtA "${PGHOST_ARG[@]+"${PGHOST_ARG[@]}"}" "${PGUSER_ARG[@]+"${PGUSER_ARG[@]}"}" -d "$DB" "$@"; }
 fail() { echo "::error::$*" >&2; exit 1; }
 command -v psql >/dev/null || fail "psql is required"
 command -v python3 >/dev/null || fail "python3 is required to synthesize the extract"
@@ -68,7 +68,7 @@ PY
 #    report the set-based rate. Rolled back, nothing persists.
 # ---------------------------------------------------------------------------
 set +e
-OUT="$(sed "s|__CSV__|$CSV|g" <<'SQL' | psql -v ON_ERROR_STOP=1 -q "${PGHOST_ARG[@]}" "${PGUSER_ARG[@]}" -d "$DB" 2>&1
+OUT="$(sed "s|__CSV__|$CSV|g" <<'SQL' | psql -v ON_ERROR_STOP=1 -q "${PGHOST_ARG[@]+"${PGHOST_ARG[@]}"}" "${PGUSER_ARG[@]+"${PGUSER_ARG[@]}"}" -d "$DB" 2>&1
 BEGIN;
 INSERT INTO BulkEnrollmentBatch (issuing_agency_id, algorithm_id, note)
   VALUES (1, 1, 'bulkdrill-perf') RETURNING batch_id \gset
@@ -124,7 +124,7 @@ echo "  throughput ${RATE} rows/s clears the ${FLOOR} rows/s regression floor"
 #      ON_ERROR_STOP psql exits non-zero.
 # ---------------------------------------------------------------------------
 set +e
-INV="$(psql -v ON_ERROR_STOP=1 -q "${PGHOST_ARG[@]}" "${PGUSER_ARG[@]}" -d "$DB" 2>&1 <<'SQL'
+INV="$(psql -v ON_ERROR_STOP=1 -q "${PGHOST_ARG[@]+"${PGHOST_ARG[@]}"}" "${PGUSER_ARG[@]+"${PGUSER_ARG[@]}"}" -d "$DB" 2>&1 <<'SQL'
 -- 2. ATOMICITY: one duplicate physical_serial rolls the whole batch back.
 BEGIN;
 DO $$

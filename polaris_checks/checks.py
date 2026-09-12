@@ -1084,6 +1084,66 @@ def check_local_gate_covers_ci(root: pathlib.Path) -> list[Finding]:
                      "the one that gates the push" % len(ci))
 
 
+def check_shell_arrays_are_portable(root: pathlib.Path) -> list[Finding]:
+    """A shell array that can be empty is expanded in the form that survives (v9.444).
+
+    Under `set -u`, bash 3.2 treats `"${A[@]}"` as an UNBOUND VARIABLE when A is empty
+    and kills the script. Bash 4.4 and later do not, so this is invisible on CI (Linux,
+    bash 5) and fatal on the maintainer's machine (macOS ships bash 3.2, and has since
+    2007, for licensing reasons that are not going to change).
+
+    That asymmetry is the whole problem. `polaris-bulk-drill.sh` and
+    `polaris-partition-drill.sh` could not run locally at all: their PGHOST_ARG is empty
+    whenever POLARIS_DB_HOST is unset, which is the normal local case. Both are drills
+    the ship gate asks for, so the gate could not be satisfied on the machine the work
+    is done on, and the only route to a verdict was a push.
+
+    The rule is the strict one -- every expansion uses `${A[@]+"${A[@]}"}` -- and the
+    strictness is deliberate. `polaris-chaos-drill.sh` already carried the idiom at line
+    99, where somebody hit this and fixed it, and the identical call 180 lines later was
+    still bare. A rule that accepted "the idiom appears somewhere in this file" would
+    have passed that file while the bug was live in it. So would one that accepted a
+    nearby `${#A[@]}` guard: the guard is real protection, but proving which expansions
+    it dominates is not something a reader or a checker can do reliably, and asking for
+    the idiom anyway costs nothing where a guard is already present.
+    """
+    name = "shell_arrays_portable"
+    d = root / "scripts"
+    if not d.is_dir():
+        return _fail(name, "scripts/ is missing")
+
+    offenders: list[str] = []
+    scanned = 0
+    for path in sorted(d.glob("*.sh")):
+        src = path.read_text(errors="replace")
+        if "set -eu" not in src:
+            continue
+        scanned += 1
+        # Arrays the script itself declares empty. One that is always assigned non-empty
+        # cannot trip this, and demanding the idiom there would be noise.
+        empties = sorted(set(re.findall(r"^\s*([A-Z_][A-Z0-9_]*)=\(\)", src, re.M)))
+        for var in empties:
+            for m in re.finditer(r'"\$\{%s\[@\]\}"' % var, src):
+                # The safe idiom contains this same text, preceded by `${VAR[@]+`.
+                if src[max(0, m.start() - 40):m.start()].rstrip().endswith("${%s[@]+" % var):
+                    continue
+                offenders.append("%s:%d (%s)" % (path.name, src[:m.start()].count("\n") + 1, var))
+
+    if not scanned:
+        return _fail(name, "no scripts/*.sh sets -u, so this check is measuring nothing; the "
+                           "parser and the scripts have drifted")
+    if offenders:
+        shown = ", ".join(offenders[:6])
+        return _fail(name, "%d array expansion(s) die under bash 3.2 when the array is empty, "
+                           "which is every run on macOS: %s%s. Write them as "
+                           "${VAR[@]+\"${VAR[@]}\"}."
+                           % (len(offenders), shown,
+                              " (+%d more)" % (len(offenders) - 6) if len(offenders) > 6 else ""))
+    return _ok(name, "every array expansion in the %d scripts that set -u uses the form that "
+                     "survives an empty array on bash 3.2, so a drill the ship gate asks for "
+                     "cannot be one that only runs on CI" % scanned)
+
+
 def check_migrations_are_reversible(root: pathlib.Path) -> list[Finding]:
     """Every .up.sql has a .down.sql beside it (v9.441).
 
@@ -4926,7 +4986,11 @@ def check_chaos_program(root: pathlib.Path) -> list[Finding]:
     for needle in ("--pid=host", "crash polaris-app-green", 'a_drops" -eq 0', "compose stop -t 1 app app-green",
                    '"alertname":"PolarisAppDown"', 'b_drops" -gt 0', "crash polaris-redis",
                    "crash polaris-postgres", "app_ids_before", "docker network disconnect",
-                   'docker network connect "${PGB_ALIAS_ARGS[@]}"', "app_resolves_pgbouncer",
+                   # v9.444: the expansion carries the bash-3.2-safe form now, so the
+                   # needle stops at the array name rather than pinning the whole
+                   # expansion. What it is asserting is that the reconnect passes the
+                   # ALIASES, not how the array is spelled.
+                   'docker network connect "${PGB_ALIAS_ARGS[@]', "app_resolves_pgbouncer",
                    "CEIL_RESTART", "CEIL_DB", "CEIL_PAGE", "polaris-alerts.yml", "alertmanager.yml",
                    "--record", "record_row FAIL"):
         if needle not in drill:
@@ -16069,6 +16133,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sast_scanning,
     check_migration_timeouts,
     check_migrations_are_reversible,
+    check_shell_arrays_are_portable,
     check_local_gate_covers_ci,
     check_deploy_syncs_db_objects,
     check_web_concurrency_honored,

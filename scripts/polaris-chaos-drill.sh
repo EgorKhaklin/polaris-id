@@ -172,7 +172,7 @@ PGB_ALIASES=()
 while IFS= read -r a; do [[ -n "$a" ]] && PGB_ALIASES+=("$a"); done < <(docker inspect -f '{{json (index .NetworkSettings.Networks "'"$NET"'").Aliases}}' polaris-pgbouncer \
     | python3 -c "import json,sys; [print(a) for a in (json.load(sys.stdin) or [])]")
 [[ "${#PGB_ALIASES[@]}" -gt 0 ]] || fail "pgbouncer has no network aliases on $NET; the app dials one"
-PGB_ALIAS_ARGS=(); for a in "${PGB_ALIASES[@]}"; do PGB_ALIAS_ARGS+=(--alias "$a"); done
+PGB_ALIAS_ARGS=(); for a in "${PGB_ALIASES[@]+"${PGB_ALIASES[@]}"}"; do PGB_ALIAS_ARGS+=(--alias "$a"); done
 app_resolves_pgbouncer() { docker exec polaris-app python3 -c "import socket; socket.gethostbyname('pgbouncer')" >/dev/null 2>&1; }
 app_resolves_pgbouncer || fail "the app cannot resolve pgbouncer before the drill"
 
@@ -279,7 +279,7 @@ docker network disconnect "$NET" polaris-pgbouncer >/dev/null
 wait_for 30 db_down >/dev/null || echo "  (readiness never saw the partition)"
 sleep 15
 t0=$(date +%s)
-docker network connect "${PGB_ALIAS_ARGS[@]}" "$NET" polaris-pgbouncer >/dev/null
+docker network connect "${PGB_ALIAS_ARGS[@]+"${PGB_ALIAS_ARGS[@]}"}" "$NET" polaris-pgbouncer >/dev/null
 wait_for 10 app_resolves_pgbouncer >/dev/null || fail "the app cannot resolve pgbouncer after the reconnect; the drill's own primitive lost the aliases (${PGB_ALIASES[*]})"
 wait_for "$CEIL_RESTART" db_healthy >/dev/null || fail "the database path did not recover within ${CEIL_RESTART}s of the reconnect"
 e_t=$(( $(date +%s) - t0 ))
