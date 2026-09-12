@@ -34,7 +34,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import inspect
-import os
 import pathlib
 import sys
 
@@ -80,12 +79,12 @@ NOT_A_DECISION = {
 #: What is NOT here: the key the contract reads for each artifact. All 19 are constrained,
 #: and v9.429 closed the last three (agent-proof, grant-revocation and holder-proof each
 #: had no case in which the signature was bad, so a verifier that never checked theirs
-#: conformed).
+#: conformed). Nor is freshness: v9.430 closed all nine `fresh` fields by pinning a
+#: `now` in each case, one inside the artifact's validity window and one long after.
 SURVIVORS_EXPECTED = (
     "verify_agent_grant.action_in_scope",
     "verify_agent_grant.agent_proved",
     "verify_agent_grant.correlation",
-    "verify_agent_grant.fresh",
     "verify_agent_grant.limits",
     "verify_agent_grant.pairwise_handle",
     "verify_agent_grant.principal_bound",
@@ -99,12 +98,10 @@ SURVIVORS_EXPECTED = (
     "verify_cross_authority.revocation_checked",
     "verify_cross_authority.revoked",
     "verify_cross_authority.via",
-    "verify_epoch_checkpoint.fresh",
     "verify_epoch_checkpoint.issuer_matches",
     "verify_epoch_leaves.commitment_matches",
     "verify_epoch_leaves.count_matches",
     "verify_epoch_leaves.epoch_matches",
-    "verify_epoch_leaves.fresh",
     "verify_epoch_leaves.issuer_trusted",
     "verify_epoch_leaves.leaf_count",
     "verify_exchange_mint.responder_matches",
@@ -118,20 +115,15 @@ SURVIVORS_EXPECTED = (
     "verify_exchange_request.requester_authorized",
     "verify_exchange_request.requester_matches",
     "verify_holder_binding.bound_to_credential",
-    "verify_holder_binding.fresh",
     "verify_holder_binding.issuer_trusted",
     "verify_holder_proof.context_matches",
-    "verify_holder_proof.fresh",
     "verify_id_token.issuer_trusted",
     "verify_manifest.anchors",
-    "verify_manifest.fresh",
     "verify_pack.algorithm",
     "verify_pack.authenticity",
     "verify_pack.token_value",
-    "verify_registry.fresh",
     "verify_registry.issuer_trusted",
     "verify_revocation_feed.commitment_ok",
-    "verify_revocation_feed.fresh",
     "verify_revocation_feed.issuer_matches",
     "verify_signed_document.anchored",
     "verify_signed_document.authentic",
@@ -162,13 +154,11 @@ SURVIVORS_EXPECTED = (
     "verify_signed_document.witnessed",
     "verify_status_assertion.issuer_trusted",
     "verify_status_bundle.commitment_ok",
-    "verify_status_bundle.fresh",
     "verify_status_bundle.publisher_matches",
     "verify_sth.issuer_matches",
     "verify_timestamp_anchor.log_matches",
     "verify_timestamp_anchor.sth_authentic",
     "verify_timestamp.issuer_trusted",
-    "verify_trust_list.fresh",
     "verify_trust_list.issuer_trusted",
 )
 

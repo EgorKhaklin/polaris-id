@@ -13090,7 +13090,13 @@ def test_drill_plan_binding_check_discriminates(tmp_path):
             "    return 0\n"
             "def main(argv=None):\n"
             "    if cmd == \"drills\":\n        return drills(argv[1:])\n")
-    PRE = ("echo step 4b\n"
+    PRE = ("echo '  ruff is not installed here, so NOTHING linted this tree'\n"
+           'if [ "${POLARIS_LINT_WAIVED:-0}" = "1" ]; then\n'
+           "  echo '  ! WAIVED'\n"
+           "else\n"
+           "  fails=$((fails+1))\n"
+           "fi\n"
+           "echo step 4b\n"
            'if drill_out="$( python3 scripts/polaris-ship.py drills --check 2>&1 )"; then\n'
            "  echo ok\n"
            "else\n"
@@ -13154,6 +13160,21 @@ def test_drill_plan_binding_check_discriminates(tmp_path):
     # A silent waiver looks exactly like a satisfied drill.
     write(pre=PRE.replace("echo '  ! WAIVED by POLARIS_DRILLS_WAIVED=1'", "true"))
     assert level("not printed") == "FAIL", "must FAIL when a waiver leaves no trace"
+
+    # The lint step has the same hole the drill step had: it reports having linted
+    # nothing and prints READY anyway. v9.429 shipped an unused import through it.
+    write(pre=PRE.replace('if [ "${POLARIS_LINT_WAIVED:-0}" = "1" ]; then\n'
+                          "  echo '  ! WAIVED'\n"
+                          "else\n"
+                          "  fails=$((fails+1))\n"
+                          "fi\n", ""))
+    assert level("no deliberate waiver for an unlinted tree") == "FAIL", \
+        "must FAIL when an unlinted tree has no honest escape"
+    write(pre=PRE.replace("  fails=$((fails+1))\n  echo", "  echo", 1)
+                 .replace("else\n  fails=$((fails+1))\nfi\necho step 4b",
+                          "else\n  echo '  (unlinted, carrying on)'\nfi\necho step 4b"))
+    assert level("prints READY anyway") == "FAIL", \
+        "must FAIL when an unlinted tree still reaches READY"
 
     # The files are gone.
     (tmp_path / "scripts" / "polaris-preflight.sh").unlink()

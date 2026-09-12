@@ -151,6 +151,32 @@ function isoToEpoch(s: unknown): number | null {
   return Number.isNaN(t) ? null : t / 1000;
 }
 
+/** Formats whose freshness is a REPLAY WINDOW rather than a validity interval, with the
+ * age bound in seconds. A holder proof carries `issued_at` and no `expires_at`: it is a
+ * presentation made for one verifier at one moment, and the question is not "has it
+ * expired" but "is this the one just made for me, or one replayed from earlier".
+ *
+ * v9.430, matching the Python SDK and the detached verifier. Before this all three did not
+ * agree: the detached verifier bounded a holder proof's age at 300 seconds and both SDKs
+ * reported `fresh: null`, so an integrator following an SDK got no replay protection on
+ * presentations. No published case asked about freshness until v9.430, which is why two
+ * shipped reference verifiers could disagree about it unnoticed. */
+const REPLAY_WINDOW_SECONDS: Record<string, number> = { "polaris-holder-proof/1": 300 };
+
+/** A proof may be up to this far ahead of the verifier's clock. Matches the other two; a
+ * skew allowance they did not share would be the same bug again, smaller. */
+const CLOCK_SKEW_SECONDS = 60;
+
+function withinReplayWindow(obj: any, now?: string | null): boolean | null {
+  const seconds = REPLAY_WINDOW_SECONDS[obj?.format];
+  if (seconds === undefined) return null;
+  const issued = isoToEpoch(obj?.issued_at);
+  if (issued === null) return null;
+  const n = now != null ? isoToEpoch(now) : Date.now() / 1000;
+  if (n === null) return null;
+  return issued <= n + CLOCK_SKEW_SECONDS && n - issued <= seconds;
+}
+
 function withinWindow(obj: any, now?: string | null): boolean | null {
   const ia = isoToEpoch(obj?.issued_at);
   const ea = isoToEpoch(obj?.expires_at);
@@ -315,7 +341,10 @@ export function verifySignedArtifact(obj: any, now?: string | null): ArtifactVer
     );
     ok = active.has(String(o.public_key_hex ?? "").toLowerCase());
   }
-  return { authentic: ok, fresh: withinWindow(o, now) };
+  // A replay-windowed format answers freshness the other way round; withinWindow needs
+  // both ends of an interval and such an artifact has only its issuance.
+  const replay = withinReplayWindow(o, now);
+  return { authentic: ok, fresh: replay !== null ? replay : withinWindow(o, now) };
 }
 
 // --- P9.6: timestamp anchor verification (was P8.5c) --------------------------------

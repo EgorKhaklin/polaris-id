@@ -55,8 +55,19 @@ if command -v ruff > /dev/null 2>&1; then
     fails=$((fails+1))
   fi
 else
-  echo "  ! ruff is not installed here, so NOTHING linted this tree. CI lints first"
-  echo "    and fails the product-test job before any test runs: 'pip install ruff'"
+  # v9.430: a gate failure, not a note. This block has said since v9.382 that a silent
+  # preflight is how READY stops meaning anything, and then printed a note and printed
+  # READY anyway. v9.429 shipped an unused import that way: preflight said it had linted
+  # nothing, I read READY, and CI failed on the first step of the product job. The waiver
+  # is the same shape as the drills one, for the same reason: a skip that is chosen and
+  # visible is a decision, a skip that is silent is this bug again.
+  echo "  ✗ ruff is not installed here, so NOTHING linted this tree. CI lints FIRST and"
+  echo "    fails the whole product-test job before any test runs: 'pip install ruff'"
+  if [ "${POLARIS_LINT_WAIVED:-0}" = "1" ]; then
+    echo "  ! WAIVED by POLARIS_LINT_WAIVED=1: this tree is unlinted"
+  else
+    fails=$((fails+1))
+  fi
 fi
 
 # 3. TypeScript SDK â the offline steps of CI's sdk-typescript job, when node

@@ -6333,6 +6333,21 @@ def check_drill_plan_is_binding(root: pathlib.Path) -> list[Finding]:
                                     "never ran it"))
 
     # And preflight must act on it.
+    # v9.430: the same rule for the lint step, which had the same hole. It printed a
+    # note about having linted nothing and let READY through; v9.429 shipped an unused
+    # import that way and CI failed on the product job's first step.
+    if "POLARIS_LINT_WAIVED" not in pre:
+        findings.extend(_fail(name, "preflight has no deliberate waiver for an unlinted tree, "
+                                    "so either it blocks a machine without ruff outright or it "
+                                    "lets one through silently"))
+    else:
+        lint = pre[pre.find("ruff is not installed"):]
+        lint = lint[:lint.find("\nfi")] if "\nfi" in lint else lint
+        if "fails=$((fails+1))" not in lint:
+            findings.extend(_fail(name, "preflight reports that nothing linted the tree and "
+                                        "prints READY anyway, which is how CI fails on the "
+                                        "product job's first step"))
+
     if "drills --check" not in pre:
         findings.extend(_fail(name, "preflight never asks whether the drills this change needs "
                                     "have run"))

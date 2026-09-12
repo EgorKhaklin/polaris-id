@@ -5,6 +5,59 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.430 — 2026-09-12 (asking about freshness found two verifiers that disagreed about replay)
+
+v9.429's drill left 88 fields the published contract does not constrain, declared exactly. Nine
+of them were `fresh`. A verifier that ignores expiry accepts an arbitrarily old answer, and for a
+revocation feed that means a revoked credential keeps verifying, so those went first.
+
+Adding the cases turned up two things nobody was looking for.
+
+**Five of the published "valid" vectors had already expired.** `agent-grant`, `epoch-leaves`,
+`holder-binding`, `registry` and `trust-list` all carry `expires_at: 2026-05-02`, four months
+gone. Every case for them expects `authentic: true` and none mentions freshness, so nothing
+noticed. A case asserting `fresh: true` naively would have started failing in May.
+
+The fix is not to regenerate the vectors, which only moves the date. Each new case pins a `now`:
+one inside the artifact's own validity window expecting `fresh: true`, one long after expecting
+`fresh: false`. Both answers are then true forever, and the vectors may age without the contract
+going quiet. Twenty cases across ten artifacts, 102 in total.
+
+**And the two shipped reference verifiers disagreed about holder-proof replay.** The SDK computes
+freshness as `now` within `[issued_at, expires_at)`. A holder proof has no `expires_at`: it is a
+presentation made for one verifier at one moment, and the detached verifier has always bounded its
+age at 300 seconds with 60 seconds of clock skew allowed. The SDK reported `fresh: null`.
+
+So an integrator following either Python or TypeScript SDK got **no replay protection on
+presentations**, while one following the detached verifier got a 300-second window. That is the
+divergence the conformance suite exists to catch, and it survived because no published case asked
+about freshness until this ship. Both SDKs now carry the same replay window, declared per format
+rather than assumed, with the same skew allowance; a skew the three did not share would be the
+same bug again, smaller. Verified instant by instant: at issuance, two minutes in, an hour in,
+and in 2099, all three agree.
+
+All 102 cases pass under the detached verifier, the Python SDK and the TypeScript SDK, each run
+the way CI runs it.
+
+78 unconstrained fields remain, down from 88, still declared exactly and still checked both ways.
+
+### And the gate had one more place it spoke without binding
+
+v9.429's CI failed. Not on the conformance work: on `ruff`, which found an unused `import os` in
+the new drill. Preflight had said so, in these words: *"ruff is not installed here, so NOTHING
+linted this tree."* Then it printed READY. The block that prints that note has carried a comment
+since v9.382 saying *"a preflight that stays silent about what it did not check is how READY stops
+meaning anything"*, and it was the thing doing it.
+
+Same fix as v9.428 gave the drills, because it is the same defect: an unlinted tree is now a gate
+failure, `POLARIS_LINT_WAIVED=1` gets past it and prints the waiver, and
+`check_drill_plan_is_binding` covers the lint step as well as the drill step. Ruff is installed
+here now and the tree is clean.
+
+**249 invariant checks. 102 conformance cases.**
+
+---
+
 ## v9.429 — 2026-09-12 (three artifacts no published case ever showed a bad signature for)
 
 `conformance/cases.json` is what an integrator builds a verifier against. v9.420 found that the

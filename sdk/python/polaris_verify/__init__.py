@@ -205,6 +205,39 @@ def _iso_to_epoch(s):
     return dt.timestamp()
 
 
+#: Formats whose freshness is a REPLAY WINDOW rather than a validity interval, with the
+#: age bound in seconds. A holder proof carries `issued_at` and no `expires_at`: it is a
+#: presentation made for one verifier at one moment, and the question is not "has it
+#: expired" but "is this the one just made for me, or one replayed from earlier".
+#:
+#: v9.430. Before this the SDK reported `fresh: None` for a holder proof, because
+#: _within_window needs both ends and there is only one. The detached verifier has always
+#: applied a 300-second bound. Two shipped reference verifiers disagreeing about whether a
+#: presentation can be replayed is exactly the divergence the conformance suite exists to
+#: catch, and it went unseen because no published case asked about freshness until v9.430.
+_REPLAY_WINDOW_SECONDS = {"polaris-holder-proof/1": 300}
+
+#: A proof may be up to this far ahead of the verifier's clock. Matches the detached
+#: verifier; a skew allowance the two did not share would be the same bug again, smaller.
+_CLOCK_SKEW_SECONDS = 60
+
+
+def _within_replay_window(obj: dict, now=None):
+    """True iff obj was issued no more than its format's window ago, and not implausibly
+    far in the future. None if the format has no replay window or the instant is
+    unparseable."""
+    seconds = _REPLAY_WINDOW_SECONDS.get(obj.get("format"))
+    if seconds is None:
+        return None
+    issued = _iso_to_epoch(obj.get("issued_at"))
+    if issued is None:
+        return None
+    n = _iso_to_epoch(now) if now is not None else time.time()
+    if n is None:
+        return None
+    return (issued <= n + _CLOCK_SKEW_SECONDS) and ((n - issued) <= seconds)
+
+
 def _within_window(obj: dict, now=None):
     """True iff now is within [issued_at, expires_at). `now` is an ISO-8601 string, or None
     for the current time. None if the window is unparseable."""
@@ -385,7 +418,12 @@ def verify_signed_artifact(obj: dict, now=None) -> ArtifactVerdict:
                   if isinstance(k, dict) and k.get("agency_id") == pub.get("agency_id") and k.get("status") == "active"]
         ok = str(obj.get("public_key_hex") or "").lower() in active
         note = None if ok else "the trust list is not signed by a key it lists as active for its own publisher"
-    return ArtifactVerdict(ok, _within_window(obj, now), note, ran)
+    # A replay-windowed format answers freshness the other way round; _within_window
+    # needs both ends of an interval and such an artifact has only its issuance.
+    fresh = _within_replay_window(obj, now)
+    if fresh is None:
+        fresh = _within_window(obj, now)
+    return ArtifactVerdict(ok, fresh, note, ran)
 
 
 # --- P9.6: timestamp anchor verification (was P8.5c) --------------------------------

@@ -124,6 +124,30 @@
       "since": "9.315"
     },
     {
+      "name": "epoch-checkpoint-fresh",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/vectors/epoch-checkpoint-valid.json",
+      "now": "2026-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "epoch-checkpoint-stale",
+      "artifact": "epoch-checkpoint",
+      "object_file": "conformance/vectors/epoch-checkpoint-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
       "name": "revocation-feed-valid",
       "artifact": "revocation-feed",
       "object_file": "conformance/vectors/revocation-feed-valid.json",
@@ -143,6 +167,30 @@
         "authentic": false
       },
       "since": "9.315"
+    },
+    {
+      "name": "revocation-feed-fresh",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-valid.json",
+      "now": "2026-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "revocation-feed-stale",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
     },
     {
       "name": "manifest-valid",
@@ -166,6 +214,30 @@
       "since": "9.315"
     },
     {
+      "name": "federation-manifest-fresh",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/federation-manifest-valid.json",
+      "now": "2026-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "federation-manifest-stale",
+      "artifact": "federation-manifest",
+      "object_file": "conformance/vectors/federation-manifest-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
       "name": "status-bundle-valid",
       "artifact": "federation-status-bundle",
       "object_file": "conformance/vectors/federation-status-bundle-valid.json",
@@ -185,6 +257,30 @@
         "authentic": false
       },
       "since": "9.315"
+    },
+    {
+      "name": "federation-status-bundle-fresh",
+      "artifact": "federation-status-bundle",
+      "object_file": "conformance/vectors/federation-status-bundle-valid.json",
+      "now": "2026-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "federation-status-bundle-stale",
+      "artifact": "federation-status-bundle",
+      "object_file": "conformance/vectors/federation-status-bundle-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
     },
     {
       "name": "transparency-sth-valid",
@@ -315,6 +411,30 @@
         "authentic": false
       },
       "since": "9.323"
+    },
+    {
+      "name": "registry-fresh",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-valid.json",
+      "now": "2026-05-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "registry-stale",
+      "artifact": "registry",
+      "object_file": "conformance/vectors/registry-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
     },
     {
       "name": "exchange-request-valid",
@@ -528,6 +648,30 @@
       "since": "9.329"
     },
     {
+      "name": "trust-list-fresh",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-valid.json",
+      "now": "2026-05-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "trust-list-stale",
+      "artifact": "trust-list",
+      "object_file": "conformance/vectors/trust-list-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
       "name": "exchange-receipt-valid",
       "artifact": "exchange-receipt",
       "object_file": "conformance/vectors/exchange-receipt-valid.json",
@@ -736,6 +880,30 @@
       "note": "P9.1: the bound key was swapped after signing."
     },
     {
+      "name": "holder-binding-fresh",
+      "artifact": "holder-binding",
+      "object_file": "conformance/vectors/holder-binding-valid.json",
+      "now": "2026-05-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "holder-binding-stale",
+      "artifact": "holder-binding",
+      "object_file": "conformance/vectors/holder-binding-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
       "name": "holder-proof-valid",
       "artifact": "holder-proof",
       "object_file": "conformance/vectors/holder-proof-valid.json",
@@ -755,6 +923,30 @@
       },
       "note": "v9.429: holder-proof had one case and it expected authentic: true. The holder-chain refusals each fail for a non-signature reason (a stranger's key, a replayed nonce, a revoked binding), so forcing the signature check permissive left every case green.",
       "since": "9.429"
+    },
+    {
+      "name": "holder-proof-fresh",
+      "artifact": "holder-proof",
+      "object_file": "conformance/vectors/holder-proof-valid.json",
+      "now": "2026-05-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "holder-proof-stale",
+      "artifact": "holder-proof",
+      "object_file": "conformance/vectors/holder-proof-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
     },
     {
       "name": "holder-chain-proved",
@@ -840,6 +1032,30 @@
       "note": "P9.2: a member swapped after signing; the commitment no longer matches the set."
     },
     {
+      "name": "epoch-leaves-fresh",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-valid.json",
+      "now": "2026-05-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "epoch-leaves-stale",
+      "artifact": "epoch-leaves",
+      "object_file": "conformance/vectors/epoch-leaves-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
+    },
+    {
       "name": "agent-grant-valid",
       "artifact": "agent-grant",
       "object_file": "conformance/vectors/agent-grant-valid.json",
@@ -860,6 +1076,30 @@
       },
       "since": "9.354",
       "note": "P9.8: an action was added after signing. actions is inside the signed statement precisely so this fails."
+    },
+    {
+      "name": "agent-grant-fresh",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": true
+      },
+      "since": "9.430",
+      "note": "v9.430: `now` is pinned so freshness is testable forever. Without a pinned instant the answer drifts with the calendar, which is why the contract never asserted it: five of the published vectors had already expired and no case noticed, because none asked."
+    },
+    {
+      "name": "agent-grant-stale",
+      "artifact": "agent-grant",
+      "object_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2099-01-01T00:00:00Z",
+      "expect": {
+        "authentic": true,
+        "fresh": false
+      },
+      "since": "9.430",
+      "note": "v9.430: the same genuine artifact, read long after it expired. A verifier that ignores expiry accepts an arbitrarily old answer, which for a revocation feed means a revoked credential keeps verifying."
     },
     {
       "name": "grant-revocation-valid",
