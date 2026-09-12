@@ -5,6 +5,55 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.433 — 2026-09-12 (the instrument was wrong three ways, and the answer is that there is nothing left to write)
+
+The conformance mutation drill has reported a number since v9.429 and I have been quoting it.
+This ship checked the instrument instead of the contract, and most of what it found was my own
+measurement error.
+
+**It counted fields that were not fields.** `_fields()` scraped `"key":` out of each verifier's
+source, which catches keys in nested dict literals. `verify_signed_document` builds an inner
+`authentic` that is None at the top level while the contract reads `document_authentic`, and it
+has read as an unconstrained field since v9.429. Observing each verifier's returned keys instead
+of reading its source removes 22 such entries.
+
+**It misclassified what the remaining ones would take to fix.** A survivor is one of two
+different things: every shipped verifier computes the field and no case exercises it, which is a
+case to write; or a conforming verifier does not compute it, in which case no case could
+constrain it without changing that verifier first. The drill now splits them, and the split is
+measured by running the SDK's own conformance adapter and reading what comes back.
+
+That classifier was itself wrong twice before it was right. It first asked whether ANY SDK verdict
+type carried the field, and called `status_assertion.issuer_trusted` writable when the SDK's
+StatusAssertionVerdict has no such field. Then it derived the artifact-to-verifier routing from
+`_SIGNED`, which does not contain status-assertion, holder-chain, cross-authority or
+timestamp-anchor, so those fell back to "any artifact" and were misclassified again. It now
+records the routing while running the cases, which is the only way to know.
+
+**The answer, once it is measured properly: 43 unconstrained fields, and ZERO of them can be
+closed by writing a case.** Every one needs a conforming verifier to compute something it does
+not. The published contract has been pushed to the limit of what its weakest conforming
+implementation does, and the SDK README scopes that implementation deliberately: *"one narrow
+question about a credential a holder presented"*. Tightening the contract further is a decision
+about how much the SDKs should do, which is not a test-writing decision.
+
+### The honest accounting
+
+The number went 88, 78, 72, 65, 43 across five ships. Of that 45-point fall, **18 was work** (ten
+freshness fields in v9.430, six trust fields in v9.431, two commitments in v9.432) and **27 was
+correcting this instrument** (five gated fields miscounted since v9.429, and 22 source-scraping
+artifacts). I reported the intermediate numbers as if they measured the contract. They partly
+measured the drill.
+
+What stands: all 19 artifact authenticity keys are constrained by a published case, 118 cases,
+three verifiers agreeing on every one. Those were measured the same way and each was confirmed by
+a separate check -- the tampered vectors were asserted to fail before being written, and the SDK
+divergences were reproduced instant by instant against each implementation.
+
+**249 invariant checks. 118 conformance cases. 43 unconstrained fields, none of them case-work.**
+
+---
+
 ## v9.432 — 2026-09-12 (a signature can be genuine and the commitment it carries a lie)
 
 A revocation feed publishes a set of revoked credentials and a root that commits to them. The

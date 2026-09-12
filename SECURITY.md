@@ -92,8 +92,11 @@ initial report, extended for Critical findings as the patch warrants.
   (`conformance/`), which independent implementations build to. **What passing the
   conformance suite does and does not prove** is itself worth reading before you rely
   on it: `scripts/polaris-conformance-mutation-drill.py` measures which verdict fields
-  the published cases actually constrain, and 65 of them are not constrained at all. An
-  implementation can pass all 118 cases while never performing those checks. The drill
+  the published cases actually constrain, and 43 of them are not constrained at all. An
+  implementation can pass all 118 cases while never performing those checks. None of the
+  43 can be closed by writing a case: each needs a conforming verifier to compute
+  something it does not, so the contract constrains what its WEAKEST conforming
+  implementation computes. The drill
   declares the list exactly and CI fails if it grows. A divergence between the shipped
   verifiers that the suite fails to catch is a finding we want: v9.430 and v9.431 each
   found one that way (no replay bound on holder proofs in either SDK; no way for either

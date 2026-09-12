@@ -35,6 +35,7 @@ import argparse
 import importlib.util
 import inspect
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -99,8 +100,6 @@ SURVIVORS_EXPECTED = (
     "verify_agent_grant.revoked",
     "verify_cosignature.witness_matches",
     "verify_cross_authority.authentic",
-    "verify_cross_authority.compromised",
-    "verify_cross_authority.key_status",
     "verify_cross_authority.revoked",
     "verify_cross_authority.via",
     "verify_epoch_checkpoint.issuer_matches",
@@ -124,32 +123,12 @@ SURVIVORS_EXPECTED = (
     "verify_pack.authenticity",
     "verify_pack.token_value",
     "verify_revocation_feed.issuer_matches",
-    "verify_signed_document.anchored",
-    "verify_signed_document.authentic",
     "verify_signed_document.binds",
-    "verify_signed_document.credential_unrevoked_at_instant",
-    "verify_signed_document.independent",
-    "verify_signed_document.independent_timestamps",
-    "verify_signed_document.instant",
-    "verify_signed_document.key_status_per_trust_list",
     "verify_signed_document.ltv",
     "verify_signed_document.on_behalf_of",
-    "verify_signed_document.present",
     "verify_signed_document.signed_at",
     "verify_signed_document.signer",
-    "verify_signed_document.signer_key_active_at_instant",
-    "verify_signed_document.signer_key_status_per_trust_list",
     "verify_signed_document.signer_trusted",
-    "verify_signed_document.timestamp_anchored",
-    "verify_signed_document.timestamp_authentic",
-    "verify_signed_document.timestamp_authority_key_status_per_trust_list",
-    "verify_signed_document.timestamp_authority_trusted",
-    "verify_signed_document.timestamp_binds",
-    "verify_signed_document.timestamp_independent",
-    "verify_signed_document.timestamp_witnessed",
-    "verify_signed_document.timestamps",
-    "verify_signed_document.trusted",
-    "verify_signed_document.witnessed",
     "verify_status_assertion.issuer_trusted",
     "verify_status_bundle.publisher_matches",
     "verify_sth.issuer_matches",
@@ -195,12 +174,70 @@ def _run_all(harness, cases) -> list[str]:
 def _fields(verifier) -> set:
     """The decision fields this verifier reports, from one real call is not possible here,
     so from its source: the keys it puts on its verdict."""
-    import re
     try:
         src = inspect.getsource(verifier)
     except (OSError, TypeError):
         return set()
     return {k for k in re.findall(r'"(\w+)":', src) if k not in NOT_A_DECISION}
+
+
+def _sdk_reports(cases):
+    """artifact -> the keys the bundled SDK's conformance adapter actually returns.
+
+    Measured by running the adapter once over every case and reading what comes back, not
+    inferred from its dataclasses: an earlier draft asked whether ANY SDK verdict type
+    carried the field and so called `status_assertion.issuer_trusted` case-writable, when
+    the SDK's StatusAssertionVerdict has no such field and no case could constrain it.
+    Running the thing is the only way to know what it answers.
+    """
+    runner = ROOT / "conformance" / "run_conformance.py"
+    if not runner.exists():
+        return None
+    import subprocess as _sp
+    try:
+        r = _sp.run([sys.executable, str(runner), "--self"], capture_output=True,
+                    text=True, timeout=900, cwd=str(ROOT))
+    except Exception:
+        return None
+    by_name = {c["name"]: c.get("artifact", "authenticity-pack") for c in cases}
+    out = {}
+    for line in r.stdout.splitlines():
+        m = re.match(r"\s*\[(?:PASS|FAIL)\]\s+(\S+)\s+(.*?)(?:\s+\(expected|$)", line)
+        if not m:
+            continue
+        art = by_name.get(m.group(1))
+        if art is None:
+            continue
+        out.setdefault(art, set()).update(
+            kv.split("=")[0] for kv in m.group(2).split() if "=" in kv)
+    return out or None
+
+
+def _sdk_expressible():
+    """The decision fields the bundled Python SDK can report at all.
+
+    A survivor is one of two different things, and treating them alike makes the list
+    unactionable. Either every shipped verifier computes the field and no case exercises
+    it -- write the case -- or a conforming verifier does not compute it, in which case no
+    case could constrain it without first changing that verifier. The SDK's README scopes
+    it to one narrow question about a credential, so the second kind is not a defect in
+    the SDK; it is the reason the published contract cannot ask.
+
+    That is what "conformant" means here, and it is worth saying plainly: the contract
+    constrains what its WEAKEST conforming implementation computes, not what the
+    reference verifier can do.
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "sdk" / "python"))
+        import polaris_verify as P
+    except Exception:
+        return None
+    fields = set()
+    for name in dir(P):
+        obj = getattr(P, name)
+        if hasattr(obj, "__dataclass_fields__"):
+            fields.update(obj.__dataclass_fields__)
+    return fields or None
 
 
 def _observed_false(harness, cases, fn_name, key):
@@ -279,6 +316,18 @@ def main(argv=None) -> int:
     # bury the real findings in entries nobody can act on -- which is how a list stops
     # being read.
     exercised = set()
+    #: verifier -> the artifacts whose cases actually route through it. Recorded, not
+    #: derived from _SIGNED: status-assertion, holder-chain, cross-authority and
+    #: timestamp-anchor have their own adapter branches and appear in no such table, so a
+    #: map built from _SIGNED alone falls back to "any artifact" for them and misclassifies
+    #: their fields. This drill has now mis-split that list twice by inferring it.
+    routes = {}
+    #: verifier -> the keys its verdict ACTUALLY carries, observed. Scraping `"key":` out
+    #: of the source counted nested dict literals as decisions: `verify_signed_document`
+    #: has an inner `authentic` that is None at top level while the contract reads
+    #: `document_authentic`, and it read as an unconstrained field for three ships.
+    observed = {}
+    _current = {"artifact": None}
     originals = {}
     for name in sorted(n for n in dir(V) if n.startswith("verify_") and callable(getattr(V, n))):
         originals[name] = getattr(V, name)
@@ -286,13 +335,24 @@ def main(argv=None) -> int:
         def _rec(fn=originals[name], nm=name):
             def wrapper(*a, **kw):
                 exercised.add(nm)
-                return fn(*a, **kw)
+                if _current["artifact"]:
+                    routes.setdefault(nm, set()).add(_current["artifact"])
+                out = fn(*a, **kw)
+                if isinstance(out, dict):
+                    observed.setdefault(nm, set()).update(out)
+                return out
             wrapper.__signature__ = inspect.signature(fn)
             return wrapper
 
         setattr(V, name, _rec())
     try:
-        _run_all(harness, cases)
+        for _c in cases:
+            _current["artifact"] = _c.get("artifact", "authenticity-pack")
+            try:
+                harness._verdict_for(_c)
+            except Exception:
+                pass
+        _current["artifact"] = None
     finally:
         for name, fn in originals.items():
             setattr(V, name, fn)
@@ -332,7 +392,9 @@ def main(argv=None) -> int:
     checked = 0
     for fn_name in verifiers:
         fn = getattr(V, fn_name)
-        for key in sorted(_fields(fn) - contract_keys.get(fn_name, set())):
+        fields = (observed.get(fn_name, set()) - NOT_A_DECISION
+                  - contract_keys.get(fn_name, set()))
+        for key in sorted(fields):
             for value in (True,):
                 original = _force(V, fn_name, key, value)
                 try:
@@ -362,6 +424,23 @@ def main(argv=None) -> int:
         print("%d of them gate an artifact's authenticity and a published case drives each "
               "false, so the check behind them IS exercised: %s"
               % (len(gated), ", ".join("%s.%s" % g for g in sorted(gated))))
+
+    # Split the survivors into the two kinds, because the work they imply is different.
+    reports = _sdk_reports(cases)
+    # verifier function -> the artifacts the contract routes through it
+    if reports is not None and survivors:
+        def answerable(fn_name, key):
+            # No recorded route means no case reaches this verifier, so nothing about it
+            # is answerable by writing a case alone.
+            return any(key in reports.get(a, set()) for a in routes.get(fn_name, ()))
+        writable = sorted("%s.%s" % x for x in survivors if answerable(*x))
+        blocked = sorted("%s.%s" % x for x in survivors if not answerable(*x))
+        print("\nOf the %d unconstrained field(s):" % len(survivors))
+        print("  %d could be constrained by writing a case: every shipped verifier already "
+              "reports the field.%s" % (len(writable), ("  " + ", ".join(writable)) if writable else ""))
+        print("  %d could not: the bundled SDK has no field for them, so no case could "
+              "constrain one without changing a conforming verifier first. The contract "
+              "constrains what its WEAKEST conforming implementation computes." % len(blocked))
     if skipped:
         print("Not measured (no published case reaches them; their own drills do): %s"
               % ", ".join(skipped))
