@@ -117,7 +117,13 @@ member identifies the holder outright. The verifier would still report that pres
 correlation as bounded, correctly, because the verdict is about the transcript and the anonymity
 set is about the population. `committed_count` is readable off the signed epoch checkpoint;
 nothing requires a relying party to look at it, and no verdict mentions it. Timing, repeat-visit
-patterns and network metadata are not modelled at all. `lab/linkability/`.
+patterns and network metadata are not modelled at all, and the adversary that produced that
+result matches on EXACT EQUALITY only: shown a population that is perfectly linkable with no
+equal field in it, it stays at chance, so the measurement says no field is identical across
+verifiers and not that none is correlated. One channel it can read is transcript LENGTH, which
+carried the entire above-chance residue in that control. Nothing in a bounded Polaris
+presentation varies in size per holder today; a deployment where disclosed attribute sets or
+optional elements made it vary would open that channel. `lab/linkability/`.
 
 **Two facts about the migration path, for the same reader (2026-09-13).** The agility is real
 issuer-side: the algorithm is a row with a `deprecation_date`, `uc6_migrate_algorithm` re-signs a

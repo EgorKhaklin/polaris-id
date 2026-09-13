@@ -112,7 +112,7 @@ def _score(fa: dict, fb: dict) -> int:
     return sum(1 for k, v in fa.items() if k in fb and fb[k] == v)
 
 
-def link(v1: list, v2: list) -> list:
+def link(v1: list, v2: list, rng: random.Random | None = None) -> list:
     """Match each of V1's transcripts to one of V2's. Returns the guessed index per row.
 
     Greedy on the shared-value score, after dropping every feature that is constant across
@@ -131,6 +131,7 @@ def link(v1: list, v2: list) -> list:
     fa = [{k: v for k, v in f.items() if k not in drop} for f in fa]
     fb = [{k: v for k, v in f.items() if k not in drop} for f in fb]
 
+    rng = rng or random.Random(0)
     guesses = []
     for f in fa:
         scores = [_score(f, g) for g in fb]
@@ -138,8 +139,44 @@ def link(v1: list, v2: list) -> list:
         # A tie at zero evidence is a coin flip, and calling it a guess rather than a match
         # is the difference between measuring an adversary and flattering one.
         tied = [i for i, s in enumerate(scores) if s == best]
-        guesses.append(random.choice(tied) if tied else -1)
+        guesses.append(rng.choice(tied) if tied else -1)
     return guesses
+
+
+def run_correlated(holders: int, trials: int, seed: int) -> float:
+    """A population that is PERFECTLY linkable and contains no equal field.
+
+    The blind spot of this whole harness, made visible. Each holder carries a value derived
+    from their identity that differs between the two verifiers by a constant: V1 sees 2h,
+    V2 sees 2h+1. Nothing matches exactly, so `_score` counts zero for every pair, and the
+    adversary guesses. A human looking at two columns would solve it in seconds.
+
+    This exists so the null result on the bounded population is read for what it is. That
+    result says NO FIELD IS IDENTICAL ACROSS VERIFIERS. It does not say no field is
+    correlated, because this adversary cannot see a correlation that is not an equality,
+    and here is a population proving it.
+    """
+    hits = total = 0
+    for t in range(trials):
+        rng = random.Random(seed + t)
+        epoch_root = hashlib.sha3_256(b"epoch-7").hexdigest()
+        order = list(range(holders))
+        shuffled = order[:]
+        rng.shuffle(shuffled)
+
+        def tx(h, scope, offset):
+            t = _transcript(h, scope, 7, epoch_root, 3, rng, False)
+            # The planted leak: informative, and never equal to its counterpart.
+            t["zk_proof"]["public_inputs"]["nonce"] = 2 * h + offset
+            return t
+
+        v1 = [tx(h, SCOPE_V1, 0) for h in order]
+        v2 = [tx(h, SCOPE_V2, 1) for h in shuffled]
+        truth = {row: shuffled.index(h) for row, h in enumerate(order)}
+        for row, guess in enumerate(link(v1, v2, random.Random(seed + t))):
+            hits += int(guess == truth[row])
+            total += 1
+    return hits / total if total else 0.0
 
 
 def run(holders: int, trials: int, expose: bool, seed: int) -> float:
@@ -157,7 +194,7 @@ def run(holders: int, trials: int, expose: bool, seed: int) -> float:
         rng.shuffle(shuffled)
         v2 = [_transcript(h, SCOPE_V2, epoch_id, epoch_root, 3, rng, expose) for h in shuffled]
         truth = {row: shuffled.index(h) for row, h in enumerate(order)}
-        for row, guess in enumerate(link(v1, v2)):
+        for row, guess in enumerate(link(v1, v2, random.Random(seed + t))):
             hits += int(guess == truth[row])
             total += 1
     return hits / total if total else 0.0
@@ -197,6 +234,24 @@ def main() -> int:
     print("  BOUNDED (scoped nullifier only)         top-1 accuracy %.4f" % bounded)
     advantage = bounded - chance
     print("      advantage over chance                              %+.4f" % advantage)
+
+    # What this adversary CANNOT see, demonstrated rather than asserted.
+    leak = run_correlated(args.holders, args.trials, args.seed)
+    print("\n  BLIND SPOT (perfectly linkable, nothing equal)")
+    print("    a population where V2's value is always V1's plus one:")
+    print("    top-1 accuracy %.4f against chance %.4f" % (leak, chance))
+    # Where that residue comes from, isolated rather than guessed: dropping transcript
+    # length from the feature set returns the adversary to chance exactly. Byte length is
+    # the whole of it.
+    if leak > chance + 0.05:
+        print("    ...the adversary found it, so this control no longer demonstrates the "
+              "limit and the claim below can be widened", file=sys.stderr)
+        return 3
+    print("    a human solves this at a glance; the adversary barely beats chance, and the")
+    print("    entire residue is TRANSCRIPT LENGTH: dropping _bytes returns it to chance.")
+    print("    So the result above means NO FIELD IS IDENTICAL across verifiers. It does")
+    print("    not mean no field is correlated: this harness cannot see a correlation that")
+    print("    is not an equality.")
 
     print()
     if advantage > 0.05:

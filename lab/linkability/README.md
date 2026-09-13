@@ -123,6 +123,47 @@ root narrows nothing. Checked before it was modelled.
 
 ---
 
+## Finding 3: what this adversary cannot see, and one thing it can
+
+**2026-09-13.** Finding 2's null result is only worth what the adversary is worth, so the
+adversary was measured too.
+
+**It matches on exact equality and nothing else.** `_score` counts fields where
+`fb[k] == fa[k]`. To show what that misses, `run_correlated` builds a population that is
+*perfectly* linkable and contains no equal field at all: each holder's nonce is `2h` at V1
+and `2h+1` at V2. A person reading two columns solves it instantly.
+
+```
+  BLIND SPOT (perfectly linkable, nothing equal)
+    top-1 accuracy 0.0333 against chance 0.0200
+```
+
+Barely above chance on a population with a perfect signal in it. **So Finding 2 means no
+field is IDENTICAL across verifiers. It does not mean no field is correlated**, and reading
+it as the stronger claim would repeat the mistake of Finding 1 one level up.
+
+**And the residue is transcript length.** The small excess above chance is not noise, and it
+was isolated rather than guessed. Dropping `_bytes` from the feature set:
+
+| | top-1 accuracy |
+|---|---|
+| planted leak, with transcript length | 0.0333 |
+| planted leak, length removed | 0.0153 |
+| chance | 0.0200 |
+
+Removing length returns the adversary to chance. **Byte length is a live channel**, and here
+it leaks only because the planted nonce changes digit count. It produced no advantage on the
+bounded population because nothing there varies in size per holder. A deployment where
+transcript size does vary per holder -- different disclosed attribute sets, variable-length
+fields, optional elements -- would be handing an adversary the one channel this harness is
+demonstrably able to read.
+
+**The harness is reproducible now.** Tie-breaking used the global RNG, so the same seed gave
+different numbers between runs, which is not good enough to support a claim about an effect
+this small. It takes a seeded generator.
+
+---
+
 ## What has NOT been measured
 
 Everything in the threat model except the stable-field case above. In particular, for a
