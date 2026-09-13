@@ -431,6 +431,38 @@ def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when the increment is not a single atomic UPDATE"
 
 
+def test_c3_index_must_be_keyed_on_the_person(tmp_path):
+    """C3 is one ACTIVE token PER PERSON. The column is the person.
+
+    The old pattern matched any unique index on IdentityToken carrying a
+    `WHERE status = 'ACTIVE'` clause and never read what it was keyed on, so re-keying it
+    to physical_serial satisfied C3 while enforcing one active token per serial, which
+    every token already has its own of. Verified against the live database: the real index
+    is on individual_id, so this pins a property that holds.
+    """
+    def write(sql):
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "02_indexes.sql").write_text(sql)
+        (tmp_path / "polaris_sql" / "01_schema.sql").write_text("")
+
+    write("CREATE UNIQUE INDEX uq_one_active_per_person ON IdentityToken (individual_id)\n"
+          "    WHERE status = 'ACTIVE';\n")
+    out = checks.check_one_active_token_index(tmp_path)[0]
+    assert out.level == "OK" and "individual_id" in out.message, \
+        "must PASS when the index is keyed on the person"
+
+    # The mutation the old check could not see.
+    write("CREATE UNIQUE INDEX uq_one_active_per_person ON IdentityToken (physical_serial)\n"
+          "    WHERE status = 'ACTIVE';\n")
+    out = checks.check_one_active_token_index(tmp_path)[0]
+    assert out.level == "FAIL" and "physical_serial" in out.message, \
+        "must FAIL when the index is keyed on something each token has its own of"
+
+    write("CREATE INDEX ix_plain ON IdentityToken (individual_id);\n")
+    assert checks.check_one_active_token_index(tmp_path)[0].level == "FAIL", \
+        "must FAIL when there is no partial UNIQUE index at all"
+
+
 def test_c6_atlas_walk_catches_a_new_leaking_surface(tmp_path):
     """A count of exclusion clauses cannot see a NEW surface that has none.
 

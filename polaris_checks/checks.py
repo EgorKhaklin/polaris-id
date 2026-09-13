@@ -175,10 +175,31 @@ def check_csp_forbids_unsafe_inline(root: pathlib.Path) -> list[Finding]:
 # C3 — one active identity per person, enforced by a partial unique index.
 # ---------------------------------------------------------------------------
 def check_one_active_token_index(root: pathlib.Path) -> list[Finding]:
+    """C3: at most one ACTIVE token PER PERSON, enforced by a partial unique index.
+
+    The index is the enforcement, so checking that it exists is the right shape. What the
+    check did not do was read what it is KEYED ON: the pattern matched any unique index on
+    IdentityToken with a `WHERE status = 'ACTIVE'` clause, so re-keying it to
+    physical_serial would have satisfied C3 while enforcing one active token per SERIAL,
+    which every token has its own of. Verified against the live database when this was
+    written: the index is on individual_id and C3 holds.
+
+    "Per person" is the invariant. The column is the person.
+    """
     sql = _read(root, "polaris_sql/02_indexes.sql") + _read(root, "polaris_sql/01_schema.sql")
-    if re.search(r"UNIQUE\s+INDEX[^;]*IdentityToken[^;]*WHERE\s+status\s*=\s*'ACTIVE'", sql, re.I | re.S):
-        return _ok("c3_one_active", "partial unique index enforces one ACTIVE token per person (C3)")
-    return _fail("c3_one_active", "missing partial-unique index for one-active-token (C3)")
+    m = re.search(r"UNIQUE\s+INDEX[^;]*?IdentityToken\s*\(([^)]*)\)[^;]*?WHERE\s+status\s*=\s*'ACTIVE'",
+                  sql, re.I | re.S)
+    if not m:
+        return _fail("c3_one_active", "missing partial-unique index for one-active-token (C3)")
+    keyed_on = re.sub(r"\s+", " ", m.group(1)).strip()
+    if not re.search(r"\bindividual_id\b", keyed_on, re.I):
+        return _fail("c3_one_active",
+                     "the one-active-token index is keyed on %r, not individual_id. C3 is one "
+                     "ACTIVE token PER PERSON; keyed on anything else the index is unique over "
+                     "something each token already has its own of, and enforces nothing"
+                     % keyed_on[:40])
+    return _ok("c3_one_active", "partial unique index on (%s) enforces one ACTIVE token per "
+                                "person (C3)" % keyed_on)
 
 
 # ---------------------------------------------------------------------------
