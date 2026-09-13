@@ -5184,7 +5184,7 @@ def token_authenticity_pack(tok_id):
         # reconstruct exactly what was signed without reading Polaris code: the
         # signer signs SHA3-256(token_value.encode('utf-8')) under `algorithm`.
         'digest_construction': 'SHA3-256(token_value.encode("utf-8"))',
-        'verify_with': 'python3 scripts/polaris-verify.py --pack <this-file>',
+        'verify_with': 'polaris-verify --pqc-provider auto --pack <this-file>',
     }
     if not real:
         pack['note'] = ('this token was signed with the development placeholder, not a '

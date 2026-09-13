@@ -8269,7 +8269,12 @@ def _reaches_ts_suite(text: str) -> bool:
     second, incidental spelling. Naming the DIRECTORY and an invocation of the runtime
     survives both forms, and the next one.
     """
-    return "sdk/typescript" in text and bool(re.search(r"\bnode\b|\bnpx\b", text))
+    # The directory in either spelling: a shell command writes `sdk/typescript`, a Python
+    # script writes `ROOT / "sdk" / "typescript"`. v9.457 matched only the first and missed
+    # the product-boundary drill, which is a job that runs npm. Same lesson twice: a signal
+    # that happens to match today is not the same as one that describes the property.
+    return (bool(re.search(r"""sdk['"\s]*/['"\s]*typescript""", text))
+            and bool(re.search(r"\bnode\b|\bnpx\b|\bnpm\b", text)))
 
 
 def check_ci_jobs_install_what_they_run(root: pathlib.Path) -> list[Finding]:

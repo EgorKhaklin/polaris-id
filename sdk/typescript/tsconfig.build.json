@@ -1,0 +1,17 @@
+{
+  "//": "The PUBLISH build. tsconfig.json type-checks in place with noEmit; this one emits.",
+  "//2": "Node refuses type stripping inside node_modules (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), so a package whose exports point at .ts is importable by nobody, on any Node version. Measured, not assumed.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "src"
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

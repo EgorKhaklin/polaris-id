@@ -107,5 +107,24 @@ exists in a checkout, would have stayed green here and failed on the first stran
   silent-downgrade shape the contract forbids. It sits in what the contract calls `core/`, so
   it is recorded rather than actioned here.
 
+**The TypeScript SDK was unusable by anyone, and now is not (2026-09-13).** `@polaris/verify`
+declared `exports` pointing at `./src/index.ts`. Node refuses type stripping inside
+`node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), so the published package could
+not be imported by a single consumer, on any Node version including 24. Measured by packing the
+tarball and installing it into a bare project, which is the only way to see it: CI ran
+`node --test` INSIDE `sdk/typescript`, where stripping is allowed. Tested from inside the tree,
+broken as a package, which is the same shape as the Python boundary problem in another language.
+
+It now compiles to `dist/` with type declarations and `exports` points there. An ESM consumer
+imports 21 exports and verifies real ML-DSA-87 material: genuine authentic, tampered refused.
+The boundary drill covers the npm half with its own negative control, a package whose `exports`
+point back at the `.ts` sources, which must be caught.
+
+**A second defect the same day, from the gate itself.** `--pqc-provider auto` probes liboqs at
+startup, and `import oqs` prints "liboqs-python faulthandler is disabled" to STDOUT. With
+`--json` that lands in front of the verdict and a caller's `json.loads` raises on the first
+character. Two authenticity-pack tests found it. stdout belongs to the verdict now; library
+chatter goes to stderr.
+
 **First interop target: not started.** OpenID4VP 1.0 + HAIP verifier, one credential format,
 format to be chosen from the first real use case.

@@ -34,6 +34,7 @@ Dependencies: `pip install liboqs-python` (primary). Optionally
 `cryptography>=48` on OpenSSL 3.5+ for the independent second witness.
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -61,6 +62,22 @@ _PLACEHOLDER = "DETERMINISTIC-PLACEHOLDER-SHA3-256"
 _DEV_PLACEHOLDER_MODE = False
 
 
+def _import_oqs():
+    """Import liboqs with its startup chatter kept off stdout.
+
+    `import oqs` prints "liboqs-python faulthandler is disabled" to STDOUT, and a version
+    mismatch warning besides. With --json that lands in FRONT of the verdict, so a caller
+    doing json.loads(stdout) raises on the first character. Measured: the two authenticity
+    -pack tests broke exactly there once --pqc-provider auto began probing the backend at
+    startup, where before oqs was imported lazily and the placeholder path never reached it.
+
+    stdout belongs to the verdict. Anything a library wants to say goes to stderr.
+    """
+    with contextlib.redirect_stdout(sys.stderr):
+        import oqs  # type: ignore
+    return oqs
+
+
 def set_dev_placeholder_mode(on: bool) -> None:
     """Turn the real ML-DSA backends off for this process. The CLI's --dev-placeholder."""
     global _DEV_PLACEHOLDER_MODE
@@ -79,7 +96,7 @@ def _verify_liboqs(digest: bytes, sig: bytes, pk: bytes, alg=_ALG):
     if not _accepted_alg(alg):
         return False
     try:
-        import oqs  # type: ignore
+        oqs = _import_oqs()
     except Exception:
         return None
     try:
@@ -259,7 +276,7 @@ def selftest() -> int:
     is absent so a CI runner that intends to exercise real crypto fails loudly
     rather than skipping in silence."""
     try:
-        import oqs  # type: ignore
+        oqs = _import_oqs()
     except Exception as e:
         print("selftest needs liboqs-python (the primary witness): %s" % e, file=sys.stderr)
         return 3
@@ -4061,7 +4078,7 @@ def _provider_available(name):
     """True iff this real backend can actually verify on this machine, right now."""
     if name == "oqs":
         try:
-            import oqs  # type: ignore  # noqa: F401
+            _import_oqs()
         except Exception:
             return False
         return True

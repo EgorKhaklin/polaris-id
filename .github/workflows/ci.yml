@@ -2314,7 +2314,15 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Install test — build the wheel, install it clean, verify real material
+      # The drill's npm leg packs the TypeScript SDK and installs the tarball into a bare
+      # project. npm ci here builds the dist/ the package now points `exports` at.
+      - name: Set up Node (the drill packs and installs the TypeScript SDK too)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the TypeScript SDK's pinned dependencies
+        run: cd sdk/typescript && npm ci
+      - name: Install test — build both packages, install them clean, verify real material
         run: python scripts/polaris-product-boundary-drill.py
 
   sdk-typescript:

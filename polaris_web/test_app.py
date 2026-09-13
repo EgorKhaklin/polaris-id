@@ -9180,7 +9180,9 @@ class AuthenticityPackTests(PolarisTestCase):
         imports — exactly how a relying party runs it."""
         import subprocess, sys, json as _json, pathlib
         script = str(pathlib.Path(__file__).resolve().parent.parent / "scripts" / "polaris-verify.py")
-        return subprocess.run([sys.executable, script, "--json"],
+        # polaris-verify 0.1.0 refuses to start until the run says what cryptography it is
+        # doing (exit 4). A relying party declares it, so this test does too.
+        return subprocess.run([sys.executable, script, "--pqc-provider", "auto", "--json"],
                               input=_json.dumps(pack), capture_output=True, text=True)
 
     def test_pack_round_trips_through_the_detached_verifier(self):

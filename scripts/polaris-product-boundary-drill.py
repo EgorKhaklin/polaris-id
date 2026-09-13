@@ -170,6 +170,71 @@ def _check_install(py, cli, cwd, env, label):
     return bad
 
 
+# ---------------------------------------------------------------------------------------
+# The npm half of the same question. `packages/polaris-sdk-ts` is a product artifact too,
+# and it failed this test on every Node version until it was built: `exports` pointed at
+# `./src/index.ts`, and Node refuses type stripping inside node_modules
+# (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING). CI never saw it because `node --test` runs
+# INSIDE sdk/typescript, where stripping is allowed. Tested from inside the tree, broken as
+# a package: the same shape as the Python boundary problem, in another language.
+# ---------------------------------------------------------------------------------------
+
+TS_SDK = ROOT / "sdk" / "typescript"
+
+
+def _npm(args, cwd, env=None):
+    return _run(["npm"] + args, cwd=str(cwd), env=env)
+
+
+def _check_npm(work: pathlib.Path, src: pathlib.Path, label: str):
+    """Pack the SDK, install the tarball in a bare project, import it, verify real material."""
+    bad = []
+    if shutil.which("npm") is None:
+        return ["npm is not installed, so the TypeScript half of the boundary was not tested"]
+
+    work.mkdir(parents=True, exist_ok=True)
+    r = _npm(["pack", "--pack-destination", str(work)], src)
+    if r.returncode != 0:
+        return ["%s: npm pack failed: %s" % (label, r.stderr.strip()[-300:])]
+    tgz = sorted(work.glob("*.tgz"))
+    if not tgz:
+        return ["%s: npm pack produced no tarball" % label]
+
+    consumer = work / "consumer"
+    consumer.mkdir(parents=True, exist_ok=True)
+    (consumer / "package.json").write_text(
+        '{"name":"boundary-consumer","version":"1.0.0","type":"module","private":true}\n')
+    r = _npm(["install", "--silent", str(tgz[-1])], consumer)
+    if r.returncode != 0:
+        return ["%s: the packed tarball does not install: %s" % (label, r.stderr.strip()[-300:])]
+
+    # Import it the way an integrator does, from a project that is not this repository.
+    (consumer / "use.mjs").write_text(
+        "import { readFileSync } from 'node:fs';\n"
+        "import { verifyAuthenticity } from '@polaris/verify';\n"
+        "const out = [];\n"
+        "for (const f of process.argv.slice(2)) {\n"
+        "  const pack = JSON.parse(readFileSync(f, 'utf8'));\n"
+        "  const v = await verifyAuthenticity(pack, [pack.public_key_hex]);\n"
+        "  out.push(v.authentic === true);\n"
+        "}\n"
+        "console.log(JSON.stringify(out));\n")
+    r = _run(["node", "use.mjs", str(GENUINE), str(TAMPERED)], cwd=str(consumer))
+    if r.returncode != 0:
+        bad.append("%s: an ordinary consumer cannot import the installed package: %s"
+                   % (label, (r.stderr or "").strip()[-300:]))
+        return bad
+    try:
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        bad.append("%s: the consumer produced no verdict (%s)" % (label, r.stdout[-200:]))
+        return bad
+    if got != [True, False]:
+        bad.append("%s: the installed package verified %r; a genuine credential must be "
+                   "authentic and its tampered twin must not" % (label, got))
+    return bad
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0] or None)
     ap.add_argument("--keep", action="store_true", help="leave the build and venv in place")
@@ -187,6 +252,7 @@ def main() -> int:
     outside.mkdir()
     env = _clean_env()
     failures = []
+    npm_control_caught = True
     try:
         print("== building the wheel a stranger would install ==")
         wheel = _build_wheel(PKG, work / "dist")
@@ -208,6 +274,40 @@ def main() -> int:
             print("  every leg passed: builds, installs, imports with none of the tree "
                   "present, refuses to start unsure, verifies genuine, refuses tampered, "
                   "and cannot report a dev run as authentic")
+
+        print("== the same question of the TypeScript SDK, as a published package ==")
+        npm_failures = _check_npm(work / "npm", TS_SDK, "npm")
+        for f in npm_failures:
+            print("  FAIL %s" % f)
+        if not npm_failures:
+            print("  packs, installs into a bare project, imports, and verifies real "
+                  "material: genuine authentic, tampered refused")
+        failures += npm_failures
+
+        # NEGATIVE CONTROL for the npm half: a package whose exports point back at the
+        # TypeScript sources is importable by nobody, because Node refuses type stripping
+        # inside node_modules. That was the shipped state until it was measured.
+        print("== negative control: a package that ships only .ts sources ==")
+        npm_control_caught = True
+        if shutil.which("npm") is None:
+            print("  npm is not installed, so this control proves nothing")
+            npm_control_caught = False
+        else:
+            broken_ts = work / "broken-ts"
+            shutil.copytree(TS_SDK, broken_ts,
+                            ignore=shutil.ignore_patterns("node_modules", "dist", "*.tgz"))
+            pj = broken_ts / "package.json"
+            d = json.loads(pj.read_text())
+            d["exports"] = {".": "./src/index.ts"}
+            d["files"] = ["src", "README.md"]
+            d.pop("main", None)
+            d.pop("types", None)
+            d.get("scripts", {}).pop("prepack", None)
+            pj.write_text(json.dumps(d, indent=2) + "\n")
+            caught = _check_npm(work / "npm-control", broken_ts, "npm-control")
+            npm_control_caught = bool(caught)
+            print("  a package whose exports point at .ts is %s"
+                  % ("caught" if npm_control_caught else "NOT CAUGHT"))
 
         # NEGATIVE CONTROL. A verifier that drags the tree in with it must be caught here,
         # or the clean result above is a fact about this script.
@@ -239,6 +339,10 @@ def main() -> int:
             print("\nkept: %s" % work)
 
     print()
+    if not npm_control_caught:
+        print("== PRODUCT BOUNDARY DRILL FAILED: the npm negative control was not caught, so "
+              "the TypeScript result would mean nothing ==", file=sys.stderr)
+        return 1
     if not control_caught:
         print("== PRODUCT BOUNDARY DRILL FAILED: the negative control was not caught, so a "
               "clean result here would mean nothing ==", file=sys.stderr)
