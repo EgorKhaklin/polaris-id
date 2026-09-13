@@ -126,5 +126,25 @@ startup, and `import oqs` prints "liboqs-python faulthandler is disabled" to STD
 character. Two authenticity-pack tests found it. stdout belongs to the verdict now; library
 chatter goes to stderr.
 
+**The npm package could never have been published under its own name (2026-09-13).**
+`@polaris/verify` is a scoped package, and `@polaris` resolves to an existing npm
+organisation. Checked against a calibration that tells a real org from an absent one
+(`polaris` and `microsoft` answer 200, a nonsense name answers 404), so this is measured
+rather than assumed. The name is `polaris-sdk-ts` now, which is the contract's own name for
+the artifact, matches `polaris-sdk-python`, and is unclaimed. Being installable from a
+registry is item one of the 90-day objective, and under the old name it was unreachable.
+
+**Publishing is prepared and not done.** `.github/workflows/publish.yml` is manual-dispatch
+only, defaults to a dry run, and refuses to publish anything that fails the product boundary
+drill. It uses Trusted Publishing on both registries, so no long-lived token sits in the
+repository. `docs/RELEASING.md` carries the one-time setup. Nothing has been published:
+claiming a name and burning a version number are irreversible, and that is the author's call
+to make, not a step to take automatically.
+
+Worth stating plainly, because it is the easy thing to get wrong: **being installable is not
+external use.** A download count is not a person. The rows at the top of this file stay at
+zero until a named wallet, a named conformance profile with a score, a named relying party,
+or a defect from somebody who is not the author fills one in.
+
 **First interop target: not started.** OpenID4VP 1.0 + HAIP verifier, one credential format,
 format to be chosen from the first real use case.

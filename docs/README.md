@@ -21,6 +21,7 @@ root.
 | [RED-TEAM-SCOPE.md](RED-TEAM-SCOPE.md) | The security firm to be commissioned: engagement type, threat actors, in-scope surfaces, deliverables, disclosure timeline. |
 | [THESIS.md](THESIS.md) | The claim behind the project, the test that would have confirmed it, and the record that the window closed unactioned. |
 | [SEED_DATA.md](SEED_DATA.md) | The notional individuals, agencies, tokens and events the sample database loads, and what each demonstrates. |
+| [RELEASING.md](RELEASING.md) | Whoever decides a version of a product artifact should exist outside this repository: what must hold first, the one-time Trusted Publishing setup per registry, and the manual dry-run-by-default workflow. Not the `v9.x` tree version, which is published nowhere. |
 | [CONVENTIONS.md](CONVENTIONS.md) | A contributor: naming, file layout, CHANGELOG shape, cross-reference and prose rules. |
 
 ## Sub-directories

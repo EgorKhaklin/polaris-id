@@ -211,7 +211,7 @@ def _check_npm(work: pathlib.Path, src: pathlib.Path, label: str):
     # Import it the way an integrator does, from a project that is not this repository.
     (consumer / "use.mjs").write_text(
         "import { readFileSync } from 'node:fs';\n"
-        "import { verifyAuthenticity } from '@polaris/verify';\n"
+        "import { verifyAuthenticity } from 'polaris-sdk-ts';\n"
         "const out = [];\n"
         "for (const f of process.argv.slice(2)) {\n"
         "  const pack = JSON.parse(readFileSync(f, 'utf8'));\n"

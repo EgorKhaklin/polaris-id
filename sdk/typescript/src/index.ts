@@ -15,7 +15,7 @@
  * Runtime-agnostic: only @noble/post-quantum plus the platform's fetch/btoa
  * (Node >= 22.6, Deno, Bun, browsers/workers).
  *
- *   import { PolarisVerifier } from "@polaris/verify";
+ *   import { PolarisVerifier } from "polaris-sdk-ts";
  *   const v = new PolarisVerifier({ issuerUrl, clientId, clientSecret, anchors });
  *   const verdict = await v.verifyPresentation(presentation); // -> { decision: "accept", ... }
  *

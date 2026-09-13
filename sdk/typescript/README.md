@@ -1,4 +1,4 @@
-# @polaris/verify (TypeScript SDK)
+# polaris-sdk-ts (TypeScript SDK)
 
 The TypeScript counterpart of the Python reference SDK: a server-side library for a
 relying party to verify Polaris identity credentials. It answers one narrow question
@@ -17,7 +17,7 @@ Runtime-agnostic: only `@noble/post-quantum` plus the platform's `fetch`/`btoa`
 (Node >= 22.6, Deno, Bun, browsers and workers).
 
 ```ts
-import { PolarisVerifier } from "@polaris/verify";
+import { PolarisVerifier } from "polaris-sdk-ts";
 
 const v = new PolarisVerifier({
   issuerUrl: "https://issuer.example",

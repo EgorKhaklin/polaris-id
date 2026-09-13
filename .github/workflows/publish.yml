@@ -1,0 +1,129 @@
+name: Publish product artifacts
+
+# MANUAL ONLY. No push, no tag, no release trigger. Publishing to a public registry is
+# irreversible in the ways that matter: a name is claimed for good and a version number can
+# never be reused, even after a yank. So this runs when a person asks it to and not before,
+# and it defaults to a dry run.
+#
+# The gate is not optional: every job builds the artifact and runs the product boundary
+# drill against it first. Something that fails the install test is not published, because
+# the failure mode this exists to prevent is a stranger's first `pip install` being broken.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to publish'
+        required: true
+        default: 'dry-run-everything'
+        type: choice
+        options:
+          - dry-run-everything
+          - polaris-verify (PyPI)
+          - polaris-sdk-python (PyPI)
+          - polaris-sdk-ts (npm)
+      confirm:
+        description: 'Type PUBLISH to actually publish. Anything else stays a dry run.'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-gate:
+    name: Build every artifact and prove it installs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the TypeScript SDK's pinned dependencies
+        run: cd sdk/typescript && npm ci
+
+      # The same drill CI runs on every push. Publishing is exactly when it matters most.
+      - name: Product boundary — a stranger installs these and uses them
+        run: python scripts/polaris-product-boundary-drill.py
+
+      - name: Build the Python distributions
+        run: |
+          python -m pip install --quiet build twine
+          python -m build --outdir dist/polaris-verify packages/polaris-verify
+          python -m build --outdir dist/polaris-sdk-python sdk/python
+      - name: Validate the distribution metadata
+        run: python -m twine check dist/*/*
+      - name: Pack the npm tarball
+        run: cd sdk/typescript && npm pack --pack-destination "$GITHUB_WORKSPACE/dist"
+
+      - name: What would be published
+        run: |
+          echo "target: ${{ inputs.target }}"
+          if [ "${{ inputs.confirm }}" = "PUBLISH" ]; then
+            echo "confirm: PUBLISH — a real publish will run"
+          else
+            echo "confirm: (not PUBLISH) — DRY RUN, nothing leaves this runner"
+          fi
+          find dist -type f | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+          retention-days: 7
+
+  pypi:
+    name: Publish to PyPI
+    needs: build-and-gate
+    if: inputs.confirm == 'PUBLISH' && (inputs.target == 'polaris-verify (PyPI)' || inputs.target == 'polaris-sdk-python (PyPI)')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Trusted Publishing: PyPI verifies this workflow's OIDC identity, so there is no
+      # long-lived token in the repository to leak. Configure it once per project at
+      # https://pypi.org/manage/account/publishing/ — see docs/RELEASING.md.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
+      - name: Select the one package being published
+        run: |
+          mkdir -p upload
+          case "${{ inputs.target }}" in
+            "polaris-verify (PyPI)")     cp dist/polaris-verify/* upload/ ;;
+            "polaris-sdk-python (PyPI)") cp dist/polaris-sdk-python/* upload/ ;;
+          esac
+          ls -l upload
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: upload
+
+  npm:
+    name: Publish to npm
+    needs: build-and-gate
+    if: inputs.confirm == 'PUBLISH' && inputs.target == 'polaris-sdk-ts (npm)'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      # npm Trusted Publishing, same shape as PyPI's: the registry verifies this
+      # workflow's identity and the package gets a provenance attestation.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - run: cd sdk/typescript && npm ci
+      # prepack builds dist/, which is what `exports` points at. Publishing without it
+      # would ship a package with nothing to import, which is the state this repository
+      # was already in once and measured rather than assumed.
+      - name: Publish
+        run: cd sdk/typescript && npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
