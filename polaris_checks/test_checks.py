@@ -14166,3 +14166,70 @@ def test_no_deleted_apparatus_citations_check_discriminates(tmp_path):
             f.unlink()
     assert level("measuring nothing") == "FAIL", \
         "must FAIL rather than report clean when it scanned no files"
+
+
+def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
+    """The property that cost a re-measurement: the mutation must INVERT, not delete."""
+    DRILL = ('"""the sdk mutation drill"""\n'
+             'DECLARED_SURVIVORS = {}\n'
+             'def invert(line):\n'
+             '    return line.replace("return False", "return True") + "  # MUTATED"\n'
+             'def main():\n'
+             '    print("  negative control: an SDK that accepts anything is caught")\n'
+             '    if not control_caught:\n'
+             '        print("the negative control was not caught")\n'
+             '    if stale:\n'
+             '        print("declared survivor(s) no longer survive")\n')
+    CI = "jobs:\n  test:\n    steps:\n      - run: python scripts/polaris-sdk-mutation-drill.py\n"
+    TESTS = "class RefusalsAreTestedTests(unittest.TestCase):\n    pass\n"
+
+    def write(drill=DRILL, ci=CI, tests=TESTS, drill_present=True):
+        (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "sdk" / "python").mkdir(parents=True, exist_ok=True)
+        f = tmp_path / "scripts" / "polaris-sdk-mutation-drill.py"
+        if drill_present:
+            f.write_text(drill)
+        elif f.exists():
+            f.unlink()
+        (tmp_path / ".github" / "workflows" / "ci.yml").write_text(ci)
+        (tmp_path / "sdk" / "python" / "test_sdk.py").write_text(tests)
+
+    def level(msg_contains=None):
+        out = checks.check_sdk_refusals_are_mutation_tested(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    good = checks.check_sdk_refusals_are_mutation_tested(tmp_path)[0]
+    assert good.level == "OK", "must PASS when the drill inverts, controls, runs in CI and " \
+                               "the SDK has refusal tests"
+
+    write(drill_present=False)
+    bad = checks.check_sdk_refusals_are_mutation_tested(tmp_path)[0]
+    assert bad.level == "FAIL" and "is missing" in bad.message, \
+        "must FAIL when nothing asks whether the SDK's refusals still refuse"
+
+    # Deleting instead of inverting: the function falls through to None, which is falsy,
+    # so the mutation can be inert. This is what under-reported 17 of 18.
+    write(drill=DRILL.replace('line.replace("return False", "return True") + "  # MUTATED"',
+                              '"pass"'))
+    assert level("does not INVERT") == "FAIL", \
+        "must FAIL when the mutation deletes a refusal rather than inverting it"
+
+    write(drill=DRILL.replace('    print("  negative control: an SDK that accepts anything is caught")\n', ""))
+    assert level("no negative control") == "FAIL", \
+        "must FAIL when '0 survivors' cannot be distinguished from a harness that ran nothing"
+
+    write(ci="jobs:\n  test:\n    steps:\n      - run: echo nothing\n")
+    assert level("not wired into CI") == "FAIL", "must FAIL when a lost refusal cannot fail a push"
+
+    write(drill=DRILL.replace("        print(\"declared survivor(s) no longer survive\")\n", ""))
+    assert level("both directions") == "FAIL", \
+        "must FAIL when a stale declaration can outlive the gap it describes"
+
+    write(tests="class SomethingElse(unittest.TestCase):\n    pass\n")
+    assert level("no class exercising") == "FAIL", \
+        "must FAIL when the SDK has no refusal tests for the drill to make go red"

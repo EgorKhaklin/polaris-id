@@ -5,6 +5,53 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.455 — 2026-09-13 (every refusal in the reference verifier could be made to accept)
+
+Six mutation drills existed -- checks, constraints, procedures, triggers, the ZK circuit, the
+conformance contract. None of them asked the question of `sdk/python/polaris_verify`, which is the
+implementation an integrator builds against and the thing the conformance suite certifies: if a
+refusal inside the SDK stopped refusing, would anything go red?
+
+**Eighteen of eighteen.** Every `return False` in the reference verifier could be turned into
+`return True` -- made to ACCEPT what it exists to reject -- with the SDK's own tests and
+`run_conformance.py --self` both green. Among them:
+
+- `grant_within_limits`: a grant's **exhausted use count**, and a **requested amount over the
+  grant's ceiling**. Invert either and the reference verifier authorizes a delegated action
+  beyond the authority the grant states, which is the whole point of P9.8 being bounded.
+- `verify_inclusion`: a **leaf index outside the tree**, and a malformed proof node. Invert and a
+  bogus Merkle proof verifies.
+- `revocation_ends_grant`: the format check and the grant-id match.
+- `grant_covers`: an empty action list treated as "all actions".
+
+**This is not the conformance suite being broken**, and the distinction matters. An SDK whose
+signature backends accept anything IS caught, by both suites -- that is the drill's negative
+control. The published cases reach the happy path and a tampered-signature path; these guards sit
+on inputs no case contains. So the contract certifies what it exercises, and these refusals were
+outside it. They are closed in the SDK's own tests rather than by changing a frozen contract.
+
+Eighteen tests later the drill reports **0 of 18**, and two of them were only reachable once the
+inputs were found: a signature that is not bytes at all, which raises something other than
+`InvalidSignature` and lands in the catch-all arm. Inverting that arm turns every unexpected error
+during verification into an accept, which is the worst direction a failure nobody anticipated can
+take.
+
+**The mutation inverts rather than deletes, and that was learned the hard way.** The first version
+replaced a refusal with `pass`; a function that then falls through returns None, which is falsy
+too, so the mutation can be inert. It reported 17 of 18 -- UNDER-stating the gap -- and the
+eighteenth appeared protected when it was not. `return False` becomes `return True` now, and
+`check_sdk_refusals_are_mutation_tested` refuses a drill that deletes instead.
+
+One thing the tests found on the way: the two signature backends answer an unaccepted algorithm
+differently and both are right. `_verify_liboqs` returns False (refused); `_verify_cryptography`
+returns None (this backend cannot answer, so the caller falls through to the other). The first
+version of the test asserted both return False and was wrong about the contract. What neither may
+do is return True, which is what the assertion says now.
+
+**261 invariant checks. 45 tables.**
+
+---
+
 ## v9.454 — 2026-09-13 (the headline rested on prose; now it rests on a rule)
 
 v9.453 rewrote the front door to say what is true -- signed with ML-DSA-65 under an audited

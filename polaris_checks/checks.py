@@ -8143,6 +8143,76 @@ def check_no_citations_to_deleted_apparatus(root: pathlib.Path) -> list[Finding]
                      "that the apparatus was removed is still allowed to say so" % scanned)
 
 
+def check_sdk_refusals_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
+    """Every refusal in the reference SDK is inverted and something notices (v9.455).
+
+    `sdk/python/polaris_verify` is the implementation an integrator builds against and the
+    thing the conformance suite certifies. Six mutation drills existed -- checks,
+    constraints, procedures, triggers, the ZK circuit, the conformance contract -- and none
+    asked whether a refusal INSIDE the SDK still refuses.
+
+    Measured the first time it was asked: 18 of 18. Every `return False` could be turned
+    into `return True`, made to ACCEPT what it exists to reject, with the SDK's own tests
+    and `run_conformance.py --self` both green. Among them `grant_within_limits` -- a
+    grant's exhausted use count and an amount over its ceiling, which is P9.8 delegation
+    authority -- and `verify_inclusion`'s bound on a leaf index outside the tree.
+
+    That is not the conformance suite being broken. An SDK whose signature backends accept
+    anything IS caught by it, which is the drill's negative control. The published cases
+    reach the happy path and a tampered-signature path; these guards sit on inputs no case
+    contains, which is why they are closed in the SDK's own tests rather than by changing
+    a frozen contract.
+
+    Four properties:
+
+      - The drill exists and INVERTS rather than deletes. Replacing a refusal with `pass`
+        lets the function fall through to None, which is falsy too, so the mutation can be
+        inert and the survivor an artifact of the harness. The first version did that and
+        under-reported 17 of 18.
+      - It carries a negative control, so "0 survivors" is a measurement.
+      - It runs in CI.
+      - Its declared-survivor list is checked in BOTH directions: a name that no longer
+        survives fails the drill, so the list cannot quietly describe a closed gap.
+    """
+    name = "sdk_refusals_mutation_tested"
+    drill = _read(root, "scripts/polaris-sdk-mutation-drill.py")
+    ci = _read(root, ".github/workflows/ci.yml")
+    tests = _read(root, "sdk/python/test_sdk.py")
+    if not drill:
+        return _fail(name, "scripts/polaris-sdk-mutation-drill.py is missing: nothing asks "
+                           "whether a refusal in the reference verifier still refuses")
+    if not ci or not tests:
+        return _fail(name, ".github/workflows/ci.yml or sdk/python/test_sdk.py could not be read")
+
+    findings: list[Finding] = []
+    if "return True" not in drill or "MUTATED" not in drill:
+        findings.extend(_fail(name, "the drill does not INVERT a refusal; deleting one lets the "
+                                    "function fall through to None, which is falsy too, so the "
+                                    "mutation can be inert and a survivor an artifact"))
+    # Both needles are distinct strings on purpose: the first is the line that RUNS the
+    # control, the second the path that acts on it. A looser needle matched the phrase
+    # inside the failure message, so a drill with the control removed still passed.
+    if "negative control:" not in drill or "the negative control was not caught" not in drill:
+        findings.extend(_fail(name, "the drill has no negative control, so '0 survivors' does not "
+                                    "distinguish a protected SDK from a harness that ran nothing"))
+    if "polaris-sdk-mutation-drill.py" not in ci:
+        findings.extend(_fail(name, "the drill is not wired into CI, so a refusal that stops being "
+                                    "covered does not fail a push"))
+    if "DECLARED_SURVIVORS" not in drill or "no longer survive" not in drill:
+        findings.extend(_fail(name, "the drill does not check its declared-survivor list in both "
+                                    "directions; a declaration that outlives the gap it describes "
+                                    "reads as a known limit when it is stale"))
+    if "RefusalsAreTested" not in tests:
+        findings.extend(_fail(name, "sdk/python/test_sdk.py carries no class exercising the SDK's "
+                                    "refusals, so the drill has nothing to make go red"))
+    if findings:
+        return findings
+    return _ok(name, "every refusal in the reference SDK is inverted on each push and both the "
+                     "SDK's tests and the conformance suite must notice; the drill inverts rather "
+                     "than deletes, carries a negative control, and checks its declared-survivor "
+                     "list in both directions")
+
+
 def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
     """An outward surface claims post-quantum AGILITY, never post-quantum SECURITY (v9.452).
 
@@ -16602,6 +16672,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_holder_wallet,
     check_public_claims_honest,
     check_post_quantum_claims_are_agility,
+    check_sdk_refusals_are_mutation_tested,
     check_no_citations_to_deleted_apparatus,
     check_verify_witness_sampling,
     check_constitution_layered,

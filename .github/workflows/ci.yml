@@ -2138,6 +2138,16 @@ jobs:
       - name: Conformance mutation drill — does the contract constrain a verifier?
         run: python scripts/polaris-conformance-mutation-drill.py
 
+      # v9.455 — the reference SDK is what an integrator builds against, and six mutation
+      # drills existed without one asking whether a refusal INSIDE it still refuses. Every
+      # `return False` in polaris_verify is turned into `return True` and both the SDK's
+      # tests and the conformance suite must notice. The first run answered 18 of 18
+      # unprotected, including a grant's exhausted use limit and a Merkle index outside the
+      # tree. Carries a negative control: an SDK whose signature backends accept anything
+      # must be caught, or a clean result means nothing.
+      - name: SDK mutation — every refusal in the reference verifier is caught when inverted
+        run: python scripts/polaris-sdk-mutation-drill.py
+
       # v9.330 (P8.8b) — cross-version compatibility, both directions: the frozen version-1
       # set (cases + vectors pinned by SHA256SUMS, a vendored v9.317 verifier) under the CURRENT
       # detached verifier and Python SDK, and the CURRENT cases under the PINNED older verifier
