@@ -173,7 +173,15 @@ is real issuer-side and a software release verifier-side, because `deprecation_d
 signed artifact. None of the three proposed a mechanism change: lab work does not create product
 guarantees, and all three are recorded in the readiness ledger for the deploying organisation.
 
-**First interop target: not started.**
+**First interop target: assessed, not started (2026-09-13).** `lab/interop/` measures what
+OpenID4VP 1.0 + HAIP would cost, so the credential-format decision the contract defers to a
+real use case can be made with numbers. The finding is that **the format is not the blocker**.
+HAIP makes ES256 mandatory to implement for issuers, verifiers and wallets and mandates nothing
+else; Polaris signs with ML-DSA-65. That is a registered, standards-track COSE algorithm (-49,
+RFC 9964, Recommended: Yes, verified at IANA) and it does not help, because a conforming HAIP
+wallet is not required to support it. A Polaris credential will not verify at a conforming
+verifier whichever format carries it. The protocol layer is absent entirely: no OpenID4VP, no
+vp_token, no DCQL. Three routes with their costs are laid out; all three are VANTA's call.
 
 **Lab, first finding (2026-09-13).** `lab/linkability/` opened with a CORE-BUG against an
 existing promise: `verify_presentation` reported `correlation: "bounded"` whenever a scoped
