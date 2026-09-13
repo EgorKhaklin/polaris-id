@@ -47,6 +47,12 @@ polaris/
 ├── polaris_checks/     ← the flat invariant layer that gates CI (README.md indexes it)
 ├── polaris_sim/        ← the national simulation and benchmark harness (a synthetic USA through the real pipeline)
 ├── polaris_card/       ← the physical token: the card profile as a normative encoding, its dependency-free reference codec, the software token emulator (ISO 7816-4 APDUs), and the published vectors an applet and a reader are written against
+├── packages/           ← the PRODUCT artifacts, versioned independently of the tree
+│   └── polaris-verify/ ← the primary external door: `pip install polaris-verify`, a console command that
+│                         refuses to start until the run declares --pqc-provider or --dev-placeholder.
+│                         Canonical home of the detached verifier; scripts/polaris-verify.py is a shim onto it
+├── lab/                ← research that falsifies Polaris's own claims, and EXTERNAL-NOUNS.md, the scoreboard
+│                         of what has happened OUTSIDE this repository (zeros are valid entries)
 ├── sdk/                ← the verify SDKs a relying party installs: python/ (the reference) and typescript/
 ├── conformance/        ← the verification conformance suite: cases.json, vectors/, the frozen version-1 set (frozen/v1/)
 ├── vectors/            ← the published authenticity vectors (real ML-DSA-65 packs, made by an independent implementation)

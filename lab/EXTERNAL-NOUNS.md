@@ -56,15 +56,25 @@ receive them and verified through the installed package alone; 0 raised.
 
 **Known gaps against the product contract, same date:**
 
-- There is no `polaris-verify` startup to refuse. The contract requires that production
-  startup fail unless `--pqc-provider oqs` or `--dev-placeholder` is explicit. What exists is
-  a library with no console entry point, plus an unpackaged 218 KB detached verifier at
-  `scripts/polaris-verify.py`. The requirement cannot be met until there is something that
-  starts.
-- Verification responses carry no `crypto` field. The SDK does fail CLOSED on placeholder
-  material (`authentic=False`, note "placeholder -- not authenticatable offline"), which is
-  the important half, but the contract asks for `"crypto": "DEV-PLACEHOLDER"` on every
-  relevant log line and verification response, and no verdict dataclass has that field.
+- ~~There is no `polaris-verify` startup to refuse.~~ **CLOSED.**
+  `packages/polaris-verify` 0.1.0 installs a `polaris-verify` console command that exits 4,
+  without reading the caller's files, unless the run declares `--pqc-provider
+  {oqs,cryptography,auto}` or `--dev-placeholder`. Naming a backend that is not usable on the
+  machine is also refused, rather than starting and reporting a verification failure for every
+  credential, which reads as the credentials being bad instead of the verifier being unable.
+  No default, no environment variable.
+- ~~Verification responses carry no `crypto` field.~~ **CLOSED.** Every machine-readable
+  verdict carries `"crypto"`, and a banner goes to stderr on every run.
+
+  Building that gate found a defect in it: `--dev-placeholder` originally declared the mode
+  without entering it, so a genuine ML-DSA-87 pack verified `signature_valid: true` with real
+  cryptography and was stamped `DEV-PLACEHOLDER`. A declared mode that does not change what
+  the process does is a label, not a mode. The flag now turns the real backends off, so a
+  development run cannot produce a true verdict at all.
+
+  It also found a misreported reason: `--verify-dir` blamed a missing ML-DSA library for every
+  artifact that is not an authenticity pack, with a real backend installed and confirmed. The
+  two causes are now distinguished.
 - `sdk/python/pyproject.toml` declares `name = "polaris-verify"`, `version = "1.0.0"`. Under
   the contract 1.0.0 requires a clean-machine install, explicit real-crypto behavior, a named
   external client completing a presentation, a named external conformance suite run, and a
@@ -77,7 +87,11 @@ receive them and verified through the installed package alone; 0 raised.
   the 90-day objective, and it is why every count in the top section is zero.
 - Both SDKs asserted `1.0.0` while unpublished. Reset to `0.1.0` on 2026-09-13 under
   section 4: 1.0.0 has five named conditions and one of them holds.
-- `packages/`, `core/` and `lab/` do not exist as a layout; everything is still one tree.
+- `core/` does not exist as a layout; `packages/` and `lab/` now do. The rest of the tree is
+  unmoved, deliberately: the paths that would move are named 426 times across 86 files, the
+  CHANGELOG and the paper among them, and those record what happened rather than a later
+  layout. `scripts/polaris-verify.py` is a namespace shim onto the packaged verifier, so there
+  is one source of truth and the historical path still loads, module-private names included.
 - The issuer side downgrades on an environment variable (`POLARIS_USE_REAL_PQC`), which is the
   silent-downgrade shape the contract forbids. It sits in what the contract calls `core/`, so
   it is recorded rather than actioned here.

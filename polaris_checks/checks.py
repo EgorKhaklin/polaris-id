@@ -8641,15 +8641,43 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
 # Detection: test_checks injects a psycopg2 import, strips a pack crypto field,
 # deletes a vector, and removes the CI invocation.
 # ---------------------------------------------------------------------------
+#: The detached verifier's canonical source. It moved here in v0.1.0 of polaris-verify,
+#: when the verifier became an independently installable product artifact with a console
+#: entry point. `scripts/polaris-verify.py` is a namespace shim onto this file, kept because
+#: 426 references across 86 files name that path, the CHANGELOG and the paper among them.
+#: A check that greps the old path now greps the shim's docstring, which is why this is one
+#: constant rather than 36 string literals.
+_VERIFIER_REL = "packages/polaris-verify/polaris_verify_cli/verifier.py"
+
+#: The shim. Its job is to keep the historical path loadable, including the module-private
+#: names several drills and the compat suite reach for.
+_VERIFIER_SHIM_REL = "scripts/polaris-verify.py"
+
 _VERIFIER_FORBIDDEN_IMPORTS = ("psycopg2", "flask", "app", "pqc_signing", "custody",
                                "security", "observability", "zk", "anchoring",
                                "webauthn_auth", "tracing")
 
 
 def check_detached_verifier(root: pathlib.Path) -> list[Finding]:
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     if not verifier:
-        return _fail("detached_verifier", "scripts/polaris-verify.py is missing")
+        return _fail("detached_verifier", "%s is missing" % _VERIFIER_REL)
+    # The shim stays a shim. It exists to keep the historical path loadable, and the one
+    # way this arrangement fails is someone pasting verification code back into it: two
+    # verifiers would then disagree silently, which is the failure the compat suite exists
+    # to catch between RELEASES and nothing would catch within one.
+    shim = _read(root, _VERIFIER_SHIM_REL)
+    if not shim:
+        return _fail("detached_verifier", "%s is missing; 426 references name that path"
+                                          % _VERIFIER_SHIM_REL)
+    if "def verify_" in shim or "sha3_256" in shim:
+        return _fail("detached_verifier",
+                     "%s has grown verification code of its own. It is a namespace shim onto "
+                     "%s; a second copy of the verifier would diverge from the first without "
+                     "anything noticing" % (_VERIFIER_SHIM_REL, _VERIFIER_REL))
+    if "polaris_verify_cli" not in shim:
+        return _fail("detached_verifier",
+                     "%s no longer loads the canonical verifier" % _VERIFIER_SHIM_REL)
     # 1. Standalone: no Polaris code, no DB driver (that IS the capability).
     for mod in _VERIFIER_FORBIDDEN_IMPORTS:
         if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", verifier, re.M):
@@ -9199,7 +9227,7 @@ def check_verifier_fuzz(root: pathlib.Path) -> list[Finding]:
         return _fail("verifier_fuzz",
                      "the verifier fuzzer must run in CI (a fuzzer that never runs finds nothing)")
     # The thing it fuzzes stays standalone.
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for mod in _VERIFIER_FORBIDDEN_IMPORTS:
         if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
             return _fail("verifier_fuzz", f"the offline verifier imports {mod!r}; it must stay standalone")
@@ -9406,7 +9434,7 @@ def check_transparency_publication(root: pathlib.Path) -> list[Finding]:
     cannot later drop it. The detached verifier confirms a receipt; a file-backed ledger
     driver records heads (real chain drivers declared); a drill proves the pipeline and
     rejects forgery under real ML-DSA."""
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_publication", "_publication_entry", "polaris-transparency-publication/1"):
         if sym not in v:
             return _fail("transparency_publication",
@@ -9445,7 +9473,7 @@ def check_transparency_gossip(root: pathlib.Path) -> list[Finding]:
     non-repudiable equivocation proof (two log-signed heads that conflict). An independent
     witness daemon cosigns consistent heads, refuses a fork, and by gossip proves a split view;
     the gossip drill runs it under attack every release."""
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_cosignature", "def verify_witnessed_checkpoint",
                 "def verify_equivocation", "_cosignature_canonical",
                 "polaris-transparency-cosignature/1"):
@@ -9483,7 +9511,7 @@ def check_transparency_log(root: pathlib.Path) -> list[Finding]:
     verifier proves an append-only extension and rejects a rewrite, fork, shrink, or
     wrong-key head; and an independent monitor daemon, run over HTTP, alerts on tampering.
     A signed view over AnchorBatch -- no new mutable state."""
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def merkle_tree_head", "def verify_consistency", "def verify_inclusion",
                 "def verify_sth", "def verify_log_consistency", "_sth_canonical",
                 "polaris-transparency-sth/1"):
@@ -9584,7 +9612,7 @@ def check_wire_spec_matches_code(root: pathlib.Path) -> list[Finding]:
         if fmt not in spec:
             return _fail("wire_spec", "the wire spec does not cover the artifact %s" % fmt)
     # Each signed statement's field list matches the code, in the code's order.
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for fmt, fn in _WIRE_SIGNED_TYPES.items():
         keys = _signed_statement_keys(v, fn)
         if not keys:
@@ -9624,7 +9652,7 @@ def check_canonical_equivalence(root: pathlib.Path) -> list[Finding]:
     equality over generated inputs; this check pins the key lists and the CI wiring so the
     two can never drift unnoticed."""
     app = _read(root, "polaris_web/app.py")
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     if not app or not v:
         return _fail("canonical_equivalence", "app.py or scripts/polaris-verify.py is missing")
     pairs = [
@@ -9727,7 +9755,7 @@ def check_epoch_revocation_propagation(root: pathlib.Path) -> list[Finding]:
         return _fail("epoch_revocation",
                      "the checkpoint and feed must derive from the append-only TokenStateEpoch and RevocationList")
     # The detached verifier consumes them OFFLINE and stays standalone.
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_epoch_checkpoint", "def check_epoch_chain", "def verify_revocation_feed",
                 "def check_revocation_progression", "def is_revoked",
                 "_epoch_checkpoint_canonical", "_revocation_feed_canonical",
@@ -9790,7 +9818,7 @@ def check_federation_status_bundle(root: pathlib.Path) -> list[Finding]:
             return _fail("status_bundle",
                          "the bundle must mirror each member's OWN signed feed via %s (no new mutation path)" % sym)
     # The detached verifier consumes it OFFLINE and stays standalone.
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_status_bundle", "def verify_cross_authority_via_bundle",
                 "def bundle_members_root", "_status_bundle_canonical",
                 "polaris-federation-status-bundle/1"):
@@ -9856,7 +9884,7 @@ def check_cross_authority_zk(root: pathlib.Path) -> list[Finding]:
     bind to it, and verifies the Plonky2 proof via the local polaris-zk binary. It reveals no
     credential (zero-knowledge), and ABSTAINS rather than false-accepting when the binary is
     absent."""
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_cross_authority_zk", "def verify_zk_against_root", "def _zk_verify_proof",
                 "polaris-zk"):
         if sym not in v:
@@ -9945,7 +9973,7 @@ def check_holder_side_prover(root: pathlib.Path) -> list[Finding]:
         return _fail("holder_side_prover",
                      "the anonymity set must be PUBLIC: a set a holder must authenticate to fetch tells the "
                      "issuer who is about to prove")
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     for needed, why in (("def verify_epoch_leaves", "the detached verifier must decide a published set offline"),
                         ("def member_index", "a holder must find their own leaf locally, never by asking the issuer"),
                         ("_leaves_root", "the set must be committed to with SHA3-256, checkable in any language")):
@@ -10014,7 +10042,7 @@ def check_holder_key_binding(root: pathlib.Path) -> list[Finding]:
             return _fail("holder_key", f"{why} ({needed})")
     # THE CONSTITUTIONAL GUARD. The holder proof's signed statement must not name the
     # presented code, in either implementation.
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     # Read the SIGNED KEY LIST itself out of each implementation, not the prose around it.
     for src, name in ((app, "polaris_web/app.py"), (verifier, "scripts/polaris-verify.py")):
         m = re.search(r"def _holder_proof_(?:statement|canonical)\(.*?statement = \{k: \w+\.get\(k\) for k in\s*(\([^)]*\))",
@@ -10103,7 +10131,7 @@ def check_attestation_signed(root: pathlib.Path) -> list[Finding]:
         return _fail("attestation_signed",
                      "the federation manifest must publish each attestation's signature, or a consumer can only "
                      "trust that the publisher recorded the edge faithfully")
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     if "def verify_attestation" not in verifier or "require_signed_attestation" not in verifier:
         return _fail("attestation_signed",
                      "the detached verifier must verify an attestation signature and offer to require one "
@@ -10221,7 +10249,7 @@ def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
                 "'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID, _TIMESTAMP_LOG_ID]", "fields.get('anchor_timestamp') is True"):
         if sym not in app:
             return _fail("timestamp_transparency", "polaris_web/app.py must anchor on request and publish the timestamp log (%s missing)" % sym)
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def timestamp_hash", "def verify_timestamp_anchor", "trusted_witnesses=None", "timestamp_quorum=1", "require_anchored=False",
                 '"timestamp_authority_key_status_per_trust_list"', '"independent_timestamps"', "timestamps=None"):
         if sym not in v:
@@ -10349,7 +10377,7 @@ def check_qr_resource_bounds(root: pathlib.Path) -> list[Finding]:
     decompressor runs with an output limit, so a decompression bomb (a compressible payload
     that expands a thousandfold) is refused at the limit rather than inflated. Drilled with a
     real bomb, an oversized payload and a frame flood; stated normatively in the wire spec."""
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("_QR_MAX_FRAMES = 9999", "_QR_MAX_COMPRESSED =", "_QR_MAX_DECOMPRESSED =", "zlib.decompressobj()",
                 "d.decompress(data, _QR_MAX_DECOMPRESSED)", "d.unconsumed_tail or not d.eof", "too many frames"):
         if sym not in v:
@@ -10376,7 +10404,7 @@ def check_ltv_timestamp_trust(root: pathlib.Path) -> list[Finding]:
     without anchors the verdict reports the facts and claims nothing. The signing route can
     take its timestamp from another federated agency. Drilled: untrusted, self-issued, and
     anchorless evidence all fail to claim long-term validity."""
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("timestamp_anchors=None", "verify_timestamp(ts, anchor_keys=timestamp_anchors)",
                 '"timestamp_authority_trusted"', '"timestamp_independent"',
                 'L["timestamp_authority_trusted"] is True and L["timestamp_independent"]'):
@@ -10423,7 +10451,7 @@ def check_exchange_trust_directional(root: pathlib.Path) -> list[Finding]:
     if "trust is directional, not transitive" not in _read(root, "scripts/polaris-federation-instances-drill.py"):
         return _fail("exchange_trust_directional", "the two-instance drill must refuse a third authority's attestation over HTTP")
     for fn, sym in (("polaris_web/app.py", "the RESPONDER attests an authorized exchange occurred"),
-                    ("scripts/polaris-verify.py", "participation is proven by the envelope it signed"),
+                    (_VERIFIER_REL, "participation is proven by the envelope it signed"),
                     ("docs/design/exchange-receipt.md", "A receipt alone cannot prove\nthe requester took part"),
                     ("docs/reference/API.md", "its own valid `AgencyTrustAttestation`")):
         if sym not in _read(root, fn):
@@ -10450,7 +10478,7 @@ def check_protocol_versioning(root: pathlib.Path) -> list[Finding]:
             return _fail("protocol_versioning", "polaris_web/app.py must advertise major.minor and negotiate formats (%s missing)" % sym)
     if app.count("_format_check(") < 3 or re.search(r"\.get\('format'\)\s*!=\s*_[A-Z_]+_FORMAT", app):
         return _fail("protocol_versioning", "every interactive route must negotiate its format through _format_check, not an ad-hoc comparison")
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     if "_VERIFIER_VERSION" not in v or "def registry_speaks" not in v:
         return _fail("protocol_versioning", "scripts/polaris-verify.py must self-identify its release and decide what a registry speaks")
     frozen = root / "conformance" / "frozen" / "v1"
@@ -10530,7 +10558,7 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
             return _fail("algorithm_agility", "polaris_web/app.py must derive algorithms from the key and advertise the accepted set (%s missing)" % sym)
     if app.count("_signing_algorithm(") < 10:
         return _fail("algorithm_agility", "every signed statement body must carry the signing key's algorithm before signing")
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("_ACCEPTED = {", '"ML-DSA-87": ("MLDSA87PublicKey"', "def _accepted_alg",
                 "def _two_witness_verify(digest, sig, pk, alg=_ALG)", "a genuine ML-DSA-44 pack is refused"):
         if sym not in v:
@@ -10606,7 +10634,7 @@ def check_trust_lifecycle(root: pathlib.Path) -> list[Finding]:
             return _fail("trust_lifecycle", "polaris_web/app.py lacks %s (%s)" % (why, sym))
     if "'status': 'active'}" in app.replace("k['status']", "").replace("_key_status(", ""):
         pass  # a literal active elsewhere is fine; the two surfaces above are the pinned ones
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_trust_list", "_trust_list_canonical", "def key_status_at", "trust_list=None", "def registry_key_status",
                 "listed COMPROMISED", "signer_key_status_per_trust_list"):
         if sym not in v:
@@ -10653,7 +10681,7 @@ def check_wallet_presentation(root: pathlib.Path) -> list[Finding]:
     order and refuses when mixed, missing or altered. The wallet emits both; the verifier's CLI
     accepts both; a real-ML-DSA drill round-trips through the wallet. Native clients and the
     WebAuthn browser bridge are recorded as boundaries, not claimed."""
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_presentation", "def encode_presentation_frames", "def decode_presentation_frames",
                 "PLRS1", "polaris-presentation/1", "polaris-qr/1", "usable_offline", "presented_code_present",
                 "never interpreted", '"--presentation"', '"--qr-frames"'):
@@ -10726,7 +10754,7 @@ def check_auth_broker(root: pathlib.Path) -> list[Finding]:
     rpa = _read(root, "polaris_web/rp_auth.py")
     if "def issue_auth_code" not in rpa or "def validate_auth_code" not in rpa or "_CODE_SALT" not in rpa:
         return _fail("auth_broker", "rp_auth.py must issue and validate stateless authorization codes under a salt distinct from access tokens")
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     if "def verify_id_token" not in v or "_id_token_canonical" not in v:
         return _fail("auth_broker", "scripts/polaris-verify.py must verify the ID token offline (verify_id_token)")
     for mod in _VERIFIER_FORBIDDEN_IMPORTS:
@@ -10787,7 +10815,7 @@ def check_document_signing(root: pathlib.Path) -> list[Finding]:
                      ("_revocation_feed_body(agency, now)", "the signer's feed at the instant")):
         if sym not in app:
             return _fail("document_signing", "polaris_web/app.py lacks %s (%s)" % (why, sym))
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_signed_document", "_signed_document_canonical", "def document_signature_material",
                 "def attach_ltv", "def is_revoked_leaf", "valid_long_term", "signer_key_active_at_instant",
                 "credential_unrevoked_at_instant"):
@@ -10865,7 +10893,7 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
         return _fail("exchange_gateway", "the replay register ExchangeNonce must exist and be strictly append-only")
     if "exchangenonce" not in _read(root, "polaris_sql/09_grants.sql").lower():
         return _fail("exchange_gateway", "09_grants.sql must REVOKE UPDATE, DELETE on ExchangeNonce from polaris_app")
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_exchange_request", "_exchange_request_canonical", "def exchange_evidence", "def canonical_body_hash"):
         if sym not in v:
             return _fail("exchange_gateway", "scripts/polaris-verify.py must verify the envelope and the evidence chain offline (%s missing)" % sym)
@@ -10920,7 +10948,7 @@ def check_registry(root: pathlib.Path) -> list[Finding]:
     if advertised != specified:
         return _fail("registry", "the registry's advertised formats must equal the wire spec's: missing %s, extra %s"
                      % (sorted(specified - advertised), sorted(advertised - specified)))
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_registry", "_registry_canonical", "def registry_service", "def registry_authority",
                 "def registry_trusts"):
         if sym not in v:
@@ -10985,7 +11013,7 @@ def check_receipt_transparency(root: pathlib.Path) -> list[Finding]:
                      ("INSERT INTO ExchangeReceiptLog", "appending the receipt hash at mint time")):
         if sym not in app:
             return _fail("receipt_transparency", "polaris_web/app.py lacks %s (%s)" % (why, sym))
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     if "def verify_receipt_inclusion" not in v or "def receipt_hash" not in v:
         return _fail("receipt_transparency", "scripts/polaris-verify.py must prove receipt inclusion offline (verify_receipt_inclusion, receipt_hash)")
     for mod in _VERIFIER_FORBIDDEN_IMPORTS:
@@ -11021,7 +11049,7 @@ def check_timestamp_authority(root: pathlib.Path) -> list[Finding]:
                      ("tsa:", "the per-authority rate bound")):
         if sym not in app:
             return _fail("timestamp_authority", "polaris_web/app.py lacks %s (%s)" % (why, sym))
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_timestamp", "_timestamp_canonical", "def timestamp_binds"):
         if sym not in v:
             return _fail("timestamp_authority", "scripts/polaris-verify.py must verify the timestamp offline (%s missing)" % sym)
@@ -11073,7 +11101,7 @@ def check_exchange_mint_signed_auth(root: pathlib.Path) -> list[Finding]:
                      ("responder_agency_id", "binding the statement to the addressed agency")):
         if sym not in app:
             return _fail("exchange_mint_signed_auth", "polaris_web/app.py lacks %s (%s)" % (why, sym))
-    if "_exchange_mint_canonical" not in _read(root, "scripts/polaris-verify.py"):
+    if "_exchange_mint_canonical" not in _read(root, _VERIFIER_REL):
         return _fail("exchange_mint_signed_auth",
                      "scripts/polaris-verify.py must carry the client-side canonical builder _exchange_mint_canonical")
     if "_exchange_mint_statement" not in _read(root, "polaris_web/test_canonical_equivalence.py"):
@@ -11174,7 +11202,7 @@ def check_exchange_receipt(root: pathlib.Path) -> list[Finding]:
     never the bodies. A third party proves, from the receipt alone, that the responder attests an
     authorized exchange occurred (the requester-signed envelope beside it proves the requester's
     side), with no access to the payload."""
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_exchange_receipt", "_exchange_receipt_canonical", "polaris-exchange-receipt/1"):
         if sym not in v:
             return _fail("exchange_receipt", "scripts/polaris-verify.py must verify the receipt offline (%s missing)" % sym)
@@ -11231,7 +11259,7 @@ def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
                      "the manifest must be issuer-SIGNED and carry anchor cross-publication (anchors) and "
                      "attestation exchange (attestations)")
     # The detached verifier decides it OFFLINE and stays standalone.
-    v = _read(root, "scripts/polaris-verify.py")
+    v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_manifest", "def verify_cross_authority", "_manifest_canonical",
                 "polaris-federation-manifest/1"):
         if sym not in v:
@@ -11306,7 +11334,7 @@ def check_federation_topology(root: pathlib.Path) -> list[Finding]:
          "the non-transitive resolver (_federation_trust_holds) cited by the ADR and present in app.py"),
         ("signing_public_key_hex" in adr and "signing_public_key_hex" in schema,
          "per-authority roots (Agency.signing_public_key_hex) cited by the ADR and present in the schema"),
-        ("verify_pack" in adr and bool(_read(root, "scripts/polaris-verify.py")),
+        ("verify_pack" in adr and bool(_read(root, _VERIFIER_REL)),
          "verification against published keys (the detached verifier verify_pack) cited by the ADR and present"),
     ]
     for ok, desc in bindings:
@@ -11341,7 +11369,7 @@ def check_offline_verification(root: pathlib.Path) -> list[Finding]:
         return _fail("offline_verification",
                      "pqc_signing.signature_over_message must sign the assertion (real ML-DSA or placeholder)")
     # The detached verifier decides it OFFLINE, and stays standalone.
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     for sym in ("def verify_status_assertion", "def verify_stapled", "polaris-status-assertion/1",
                 "_status_assertion_canonical"):
         if sym not in verifier:
@@ -11813,7 +11841,7 @@ def check_commitment_mismatch_is_a_refusal(root: pathlib.Path) -> list[Finding]:
     mismatch returns, BEFORE the artifact is called authentic. The behaviour itself is proven
     by conformance case `epoch-leaves-swapped`, which every implementation must refuse."""
     name = "commitment_refusal"
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     for fn, commitment, authentic in (
             ("verify_epoch_leaves", "commitment_matches", "leaves_authentic"),
             ("verify_revocation_feed", "commitment_ok", "feed_authentic")):
@@ -11875,7 +11903,7 @@ def check_verifier_instant_normalised(root: pathlib.Path) -> list[Finding]:
     So the rule is structural: any verifier that accepts `now` and compares against it must
     route it through `_instant` first."""
     name = "instant_normalised"
-    rel = "scripts/polaris-verify.py"
+    rel = _VERIFIER_REL
     src = _read(root, rel)
     if "def _instant(" not in src:
         return _fail(name, f"{rel} must define _instant() to normalise a caller's `now` into an aware datetime")
@@ -12090,7 +12118,7 @@ def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
                      "the subject must be scoped to the relying party's own client_id; a subject "
                      "with no relying party in it is a global identifier whatever it is called")
 
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     for needed, why in (("def pairwise_handle", "the detached verifier must derive the handle"),
                         ("def handles_link", "and give a verifier the one correct way to compare two")):
         if needed not in verifier:
@@ -12173,7 +12201,7 @@ def check_agent_grant(root: pathlib.Path) -> list[Finding]:
     coercer can demand be filled in or left empty, and either way it turns a revocation into
     a signal about the person. Four fields, and this refuses a fifth."""
     name = "agent_grant"
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     for needed, why in (("def _agent_grant_canonical", "the grant's signed statement"),
                         ("def _grant_revocation_canonical", "the revocation's signed statement"),
                         ("def _agent_proof_canonical", "the agent's proof of the action"),
@@ -12869,7 +12897,7 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
                      "on its own: if it runs second, token_value is refused only for being unknown "
                      "and the guard vanishes the day somebody adds it to the vocabulary")
 
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     if "def verify_mdoc" not in verifier:
         return _fail(name, "the detached verifier must decide an mdoc offline")
     v = verifier.split("def verify_mdoc")[1].split("\ndef ")[0]
@@ -16744,7 +16772,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
                      "stable one would hand back the correlation handle the presentation layer "
                      "bounds")
 
-    verifier = _read(root, "scripts/polaris-verify.py")
+    verifier = _read(root, _VERIFIER_REL)
     if "def verify_verifiable_credential" not in verifier:
         return _fail(name, "the detached verifier must decide a VC offline")
     v = verifier.split("def verify_verifiable_credential")[1].split("\ndef ")[0]

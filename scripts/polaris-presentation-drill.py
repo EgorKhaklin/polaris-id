@@ -108,7 +108,10 @@ def main():
     enroll = subprocess.run(wallet + ["enroll", "--pack", pack_path], capture_output=True, text=True)
     present = subprocess.run(wallet + ["present", "--status-assertion", sa_path, "--context", "1", "--qr", "--out", frames_path],
                              capture_output=True, text=True)
-    decide = subprocess.run([sys.executable, os.path.join(_ROOT, "scripts", "polaris-verify.py"), "--qr-frames", frames_path,
+    decide = subprocess.run([sys.executable, os.path.join(_ROOT, "scripts", "polaris-verify.py"),
+                             # v0.1.0: the verifier refuses to start without a declared
+                             # crypto mode. This drill exercises the REAL path.
+                             "--pqc-provider", "auto", "--qr-frames", frames_path,
                              "--issuer-anchor", anchor_path, "--context", "1", "--json"], capture_output=True, text=True)
     try:   # the oqs import may print a notice ahead of the JSON verdict; parse from the first brace
         cli_verdict = json.loads(decide.stdout[decide.stdout.find("{"):])

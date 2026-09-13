@@ -633,7 +633,7 @@ def test_holder_side_prover_check_discriminates(tmp_path):
     good = {
         'polaris_web/app.py': ("_EPOCH_LEAVES_MAX = 10000\ndef _epoch_leaves_statement(b):\n    pass\n"
                                "def api_v1_epoch_leaves(epoch_id):\n    return None\n"),
-        'scripts/polaris-verify.py': ("def _leaves_root(x):\n    return ''\n"
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': ("def _leaves_root(x):\n    return ''\n"
                                       "def verify_epoch_leaves(b):\n    return _leaves_root(b)\n"
                                       "def member_index(b, seed):\n    return None\n"),
         'scripts/polaris-wallet.py': "from_instance = None\nverify_epoch_leaves(e)\n",
@@ -665,10 +665,10 @@ def test_holder_side_prover_check_discriminates(tmp_path):
     assert out[0].level == "FAIL", "must FAIL if the anonymity set is behind a login"
     assert "PUBLIC" in out[0].message
     # 4. the holder can no longer find their own leaf locally
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def member_index", "def gone")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("def member_index", "def gone")})
     assert checks.check_holder_side_prover(tmp_path)[0].level == "FAIL", "must FAIL without a local lookup"
     # 5. checking the set starts needing the proving library, so a standalone verifier cannot
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace(
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace(
         "    return _leaves_root(b)", "    return subprocess.run(['polaris-zk'])")})
     assert checks.check_holder_side_prover(tmp_path)[0].level == "FAIL", "must FAIL if checking needs the prover"
     # 6. the wallet stops verifying the set before proving against it
@@ -690,7 +690,7 @@ def test_holder_key_binding_check_discriminates(tmp_path):
         'polaris_sql/09_grants.sql': "REVOKE UPDATE ON 'holderkeyevent' FROM polaris_app;\n",
         'polaris_web/app.py': ("def _holder_binding_statement(b):\n    pass\n" + (proof_stmt % "statement")
                                + "def api_v1_holder_key_bind():\n    _possession_authenticated(t, s)\n"),
-        'scripts/polaris-verify.py': ((proof_stmt % "canonical")
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': ((proof_stmt % "canonical")
                                       + "def verify_holder_binding(b):\n    pass\ndef verify_holder_proof(p):\n    pass\n"
                                       + "require_holder_proof = False\nverifier_nonce = None\n"),
         'sdk/python/polaris_verify/__init__.py': "def verify_holder(c, b, p):\n    pass\n",
@@ -717,15 +717,15 @@ def test_holder_key_binding_check_discriminates(tmp_path):
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("_possession_authenticated", "session_user")})
     assert checks.check_holder_key_binding(tmp_path)[0].level == "FAIL", "must FAIL without the possession proof"
     # 3. the proof stops being bound to the verifier's nonce -- a captured proof replays
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("verifier_nonce", "whenever")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("verifier_nonce", "whenever")})
     assert checks.check_holder_key_binding(tmp_path)[0].level == "FAIL", "must FAIL without the nonce binding"
     # 4. an SDK stops deciding the chain
     write({"sdk/typescript/src/index.ts": "// nothing\n"})
     assert checks.check_holder_key_binding(tmp_path)[0].level == "FAIL", "must FAIL if the TS SDK cannot decide it"
     # 5. THE CONSTITUTIONAL ONE: the holder proof starts covering the presented code, so a
     #    coerced presentation becomes distinguishable from a consenting one
-    leaky = good["scripts/polaris-verify.py"].replace("'issued_at', 'algorithm')", "'issued_at', 'presented_code', 'algorithm')")
-    write({"scripts/polaris-verify.py": leaky})
+    leaky = good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("'issued_at', 'algorithm')", "'issued_at', 'presented_code', 'algorithm')")
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": leaky})
     out = checks.check_holder_key_binding(tmp_path)
     assert out[0].level == "FAIL", "must FAIL if the holder proof covers the presented code"
     assert "coerced" in out[0].message, "the failure must say why: it breaks the duress path"
@@ -745,7 +745,7 @@ def test_attestation_signed_check_discriminates(tmp_path):
         'polaris_sql/01_schema.sql': "attestation_format attestation_signature_hex attestation_public_key_hex\nCONSTRAINT attestation_signature_complete CHECK (TRUE)\n",
         'polaris_sql/06_triggers.sql': "RAISE EXCEPTION 'an attestation signature cannot be replaced once recorded';\n",
         'polaris_web/app.py': "def _attestation_statement(body):\n    pass\ndef _sign_attestation(cur, attestation_id):\n    pass\nsigned = _sign_attestation(cur, row['attestation_id'])\n'signature_hex': a.get('attestation_signature_hex')\n",
-        'scripts/polaris-verify.py': "def verify_attestation(att, attesting_agency_id=None, expected_key=None):\n    return {'attester_matches': None, 'key_matches': None}\ndef verify_cross_authority(pack, ctx, ms, require_signed_attestation=False):\n    pass\n",
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': "def verify_attestation(att, attesting_agency_id=None, expected_key=None):\n    return {'attester_matches': None, 'key_matches': None}\ndef verify_cross_authority(pack, ctx, ms, require_signed_attestation=False):\n    pass\n",
         'sdk/python/polaris_verify/__init__.py': "polaris-trust-attestation/1\ndef verify_attestation(att, attesting_agency_id=None, expected_key=None):\n    pass\n",
         'sdk/typescript/src/index.ts': '// "polaris-trust-attestation/1"\nexport function verifyAttestation(a, b, c) { return null; }\n',
         'conformance/cases.json': '{"format": "polaris-conformance/1", "cases": ['
@@ -774,7 +774,7 @@ def test_attestation_signed_check_discriminates(tmp_path):
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("'signature_hex': a.get('attestation_signature_hex')", "pass")})
     assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL if the manifest hides it"
     # 5. the verifier stops binding the edge to the attested key
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("key_matches", "whatever")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("key_matches", "whatever")})
     assert checks.check_attestation_signed(tmp_path)[0].level == "FAIL", "must FAIL without the key binding"
     # 6. an SDK stops checking it -- the stronger decision becomes Polaris-only
     write({"sdk/typescript/src/index.ts": "// nothing\n"})
@@ -5859,8 +5859,16 @@ def test_detached_verifier_check_discriminates(tmp_path):
                             "public_key_hex": pk, "signature_hex": "ab", "token_value": "T",
                             "_vector": {"name": name, "expect": expect}})
 
+    # v0.1.0: the verifier moved into the installable package and scripts/polaris-verify.py
+    # became a namespace shim. The check holds both: the canonical file for the verification
+    # properties, the shim for staying a shim.
+    SHIM = ("import sys\n"
+            "from polaris_verify_cli import verifier as _v\n"
+            "globals().update(vars(_v))\n")
+
     good = {
-        "scripts/polaris-verify.py": VERIFIER,
+        "packages/polaris-verify/polaris_verify_cli/verifier.py": VERIFIER,
+        "scripts/polaris-verify.py": SHIM,
         "polaris_web/app.py": APP,
         ".github/workflows/ci.yml": CI,
         "vectors/ml-dsa-65-valid.json": vec("valid", "valid", "ML-DSA-65", "dead"),
@@ -5879,11 +5887,21 @@ def test_detached_verifier_check_discriminates(tmp_path):
 
     write()
     assert checks.check_detached_verifier(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 0a. the historical path gone: 426 references across the tree name it.
+    write({"scripts/polaris-verify.py": None})
+    out = checks.check_detached_verifier(tmp_path)[0]
+    assert out.level == "FAIL" and "426 references" in out.message, \
+        "must FAIL when the shim that keeps the historical path loadable is deleted"
+    # 0b. the shim grown verification code of its own: two verifiers that can diverge.
+    write({"scripts/polaris-verify.py": SHIM + "def verify_pack(p):\n    return {}\n"})
+    out = checks.check_detached_verifier(tmp_path)[0]
+    assert out.level == "FAIL" and "namespace shim" in out.message, \
+        "must FAIL when a second copy of the verifier appears at the shim path"
     # 1. not standalone — imports a DB driver
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + VERIFIER})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + VERIFIER})
     assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL when the verifier imports psycopg2"
     # 2. drops the independent second witness
-    write({"scripts/polaris-verify.py": VERIFIER.replace("MLDSA65PublicKey", "SomethingElse")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": VERIFIER.replace("MLDSA65PublicKey", "SomethingElse")})
     assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL without the cryptography second witness"
     # 3. the pack route stops exporting the signature (a decal again) — signature_hex
     #    is unique to the export (signing_public_key_hex would still match public_key_hex)
@@ -6370,7 +6388,7 @@ def test_inter_authority_protocol_check_discriminates(tmp_path):
     # v9.296 (P3.2): a signed federation manifest, verified offline (standalone), with
     # self-consistency + freshness + per-context key-bound attestation, run in CI. Each
     # perturbation removes one leg.
-    good = {'polaris_web/app.py': "@app.route('/api/v1/federation-manifest/<int:agency_id>')\ndef api_v1_federation_manifest(agency_id):\n    _manifest_statement(body)\n    pqc_signing.signature_over_message(stmt)\n    return jsonify(anchors=[], attestations=[])\n", 'scripts/polaris-verify.py': "import json, hashlib\nFORMAT = 'polaris-federation-manifest/1'\ndef _manifest_canonical(m):\n    return b''\ndef verify_manifest(m, now=None, max_window_seconds=None, trusted_anchors=None):\n    fresh = True  # rule below\n    RULE = 'declared active anchors self-consistency'\n    return {'fresh': fresh}\ndef verify_cross_authority(pack, context_id, trusted_manifests, now=None, max_window_seconds=None, trusted_anchors=None):\n    x = ('attested_public_key_hex', context_id)\n    return {'decision': 'accept'}\n", 'scripts/polaris-federation-manifest-drill.py': 'def main():\n    verify_cross_authority(p, 1, [m])\n', '.github/workflows/ci.yml': '      - run: python scripts/polaris-federation-manifest-drill.py\n', 'docs/design/inter-authority-protocol.md': '# inter-authority protocol v1\nthe federation manifest.\n', 'polaris_web/test_app.py': 'class FederationManifestTests:\n    def t(self): pass\n'}
+    good = {'polaris_web/app.py': "@app.route('/api/v1/federation-manifest/<int:agency_id>')\ndef api_v1_federation_manifest(agency_id):\n    _manifest_statement(body)\n    pqc_signing.signature_over_message(stmt)\n    return jsonify(anchors=[], attestations=[])\n", 'packages/polaris-verify/polaris_verify_cli/verifier.py': "import json, hashlib\nFORMAT = 'polaris-federation-manifest/1'\ndef _manifest_canonical(m):\n    return b''\ndef verify_manifest(m, now=None, max_window_seconds=None, trusted_anchors=None):\n    fresh = True  # rule below\n    RULE = 'declared active anchors self-consistency'\n    return {'fresh': fresh}\ndef verify_cross_authority(pack, context_id, trusted_manifests, now=None, max_window_seconds=None, trusted_anchors=None):\n    x = ('attested_public_key_hex', context_id)\n    return {'decision': 'accept'}\n", 'scripts/polaris-federation-manifest-drill.py': 'def main():\n    verify_cross_authority(p, 1, [m])\n', '.github/workflows/ci.yml': '      - run: python scripts/polaris-federation-manifest-drill.py\n', 'docs/design/inter-authority-protocol.md': '# inter-authority protocol v1\nthe federation manifest.\n', 'polaris_web/test_app.py': 'class FederationManifestTests:\n    def t(self): pass\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -6384,13 +6402,13 @@ def test_inter_authority_protocol_check_discriminates(tmp_path):
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("pqc_signing.signature_over_message(stmt)", "pass")})
     assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL if the manifest is not signed"
     # 2. verify_manifest drops the self-consistency (signed by own anchor)
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("declared active anchors", "anything")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("declared active anchors", "anything")})
     assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL without self-consistency"
     # 3. verify_cross_authority drops the per-context key binding
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("attested_public_key_hex", "trust_me")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("attested_public_key_hex", "trust_me")})
     assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL without key+context binding"
     # 4. the verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_inter_authority_protocol(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 5. the drill does not run in CI
     write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
@@ -6420,7 +6438,7 @@ def test_epoch_revocation_propagation_check_discriminates(tmp_path):
             "def api_v1_revocation_feed(agency_id):\n"
             "    _revocation_feed_statement(body)  over RevocationList\n"
         ),
-        'scripts/polaris-verify.py': (
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': (
             "import json, hashlib\n"
             "polaris-epoch-checkpoint/1 polaris-revocation-feed/1\n"
             "def _epoch_checkpoint_canonical(cp): return b''\n"
@@ -6456,16 +6474,16 @@ def test_epoch_revocation_propagation_check_discriminates(tmp_path):
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("RevocationList", "SomeMutableCache")})
     assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL if not built over the append-only tables"
     # 3. fork detection is gone
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("'fork'", "'nope'")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("'fork'", "'nope'")})
     assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without fork detection"
     # 4. rollback detection is gone
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("rolled_back", "whatever")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("rolled_back", "whatever")})
     assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without rollback detection"
     # 5. the cross-authority revocation fold-in is gone
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("revocation_checked", "unused")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("revocation_checked", "unused")})
     assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL without fail-closed revocation in cross-authority"
     # 6. the verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_epoch_revocation_propagation(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 7. the drill does not run in CI
     write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
@@ -6494,7 +6512,7 @@ def test_status_bundle_check_discriminates(tmp_path):
             "    _status_bundle_statement(body); _bundle_members_root(members)\n"
             "    pqc_signing.signature_over_message(stmt)\n"
         ),
-        'scripts/polaris-verify.py': (
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': (
             "import json, hashlib\n"
             "polaris-federation-status-bundle/1\n"
             "def _status_bundle_canonical(b): return b''\n"
@@ -6534,16 +6552,16 @@ def test_status_bundle_check_discriminates(tmp_path):
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("_revocation_feed_body", "_something_else")})
     assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL if it does not mirror each member's own feed"
     # 3. the trust+revocation decision does not delegate to verify_cross_authority
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("verify_cross_authority(", "nope(")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("verify_cross_authority(", "nope(")})
     assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without delegation to the member's own feed"
     # 4. an omitted authority is not fail-closed
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("not present in the status bundle", "whatever")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("not present in the status bundle", "whatever")})
     assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without fail-closed omission"
     # 5. the member set is not committed
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("commitment_ok", "unused")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("commitment_ok", "unused")})
     assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL without the set commitment"
     # 6. the verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_federation_status_bundle(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 7. the bundle is not in the canonical-equivalence oracle
     write({"polaris_web/test_canonical_equivalence.py": "# nothing here\n"})
@@ -6578,7 +6596,7 @@ def test_verifier_fuzz_check_discriminates(tmp_path):
             "    asserts a wrongly-ACCEPTED case and any raised exception is a break\n"
         ),
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-verifier-fuzz.py\n',
-        'scripts/polaris-verify.py': 'import json, hashlib\n',
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': 'import json, hashlib\n',
     }
 
     def write(overrides=None):
@@ -6605,7 +6623,7 @@ def test_verifier_fuzz_check_discriminates(tmp_path):
     write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
     assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL if the fuzzer does not run in CI"
     # 6. the fuzzed verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n"})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n"})
     assert checks.check_verifier_fuzz(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 7. the fuzzer is missing entirely
     (tmp_path / "scripts/polaris-verifier-fuzz.py").unlink()
@@ -6618,7 +6636,7 @@ def test_cross_authority_zk_check_discriminates(tmp_path):
     # the local polaris-zk binary (abstain when absent), standalone, with a CLI, a committed
     # fixture, a drill, and CI. Each perturbation removes one leg.
     good = {
-        'scripts/polaris-verify.py': (
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': (
             "import json, hashlib, subprocess\n"
             "the polaris-zk binary is invoked as a subprocess; --zk-proof CLI mode\n"
             "def _zk_verify_proof(b, zk_binary=None): return None  abstain when no binary\n"
@@ -6646,22 +6664,22 @@ def test_cross_authority_zk_check_discriminates(tmp_path):
     write()
     assert checks.check_cross_authority_zk(tmp_path)[0].level == "OK", "must PASS on the full fixture"
     # 1. the decision function is missing
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_cross_authority_zk", "def nope")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("def verify_cross_authority_zk", "def nope")})
     assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without the decision function"
     # 2. trust is not rooted in the signed checkpoint
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("verify_epoch_checkpoint(cp)", "pass")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("verify_epoch_checkpoint(cp)", "pass")})
     assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without checkpoint trust"
     # 3. the proof is not bound to the epoch root
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("epoch_root_hex", "nope_hex")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("epoch_root_hex", "nope_hex")})
     assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without root binding"
     # 4. the proof is not checked via the local binary
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("subprocess", "notproc")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("subprocess", "notproc")})
     assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without the binary subprocess"
     # 5. the verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 6. no CLI mode
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("--zk-proof", "--nope")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("--zk-proof", "--nope")})
     assert checks.check_cross_authority_zk(tmp_path)[0].level == "FAIL", "must FAIL without the --zk-proof CLI"
     # 7. the drill does not prove the abstain case
     write({"scripts/polaris-cross-authority-zk-drill.py": "def main():\n    verify_cross_authority_zk(p, cp, 1, [m])\n"})
@@ -6738,7 +6756,7 @@ def test_wire_spec_check_discriminates(tmp_path):
     )
     good = {
         'docs/reference/WIRE-SPEC.md': spec,
-        'scripts/polaris-verify.py': verify_src,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': verify_src,
         'docs/reference/README.md': "[WIRE-SPEC.md](WIRE-SPEC.md)\n",
     }
 
@@ -6795,7 +6813,7 @@ def test_trust_lifecycle_check_discriminates(tmp_path):
         'polaris_sql/06_triggers.sql': "CREATE TRIGGER trg_authority_key_event_append_only BEFORE UPDATE OR DELETE ON AuthorityKeyEvent EXECUTE FUNCTION f();\n",
         'polaris_sql/09_grants.sql': "'authoritykeyevent'\n",
         'polaris_web/app.py': APP,
-        'scripts/polaris-verify.py': VER,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'polaris_cli/polaris.py': "'key-register' 'key-retire' 'key-compromise'\n",
         'polaris_web/test_canonical_equivalence.py': "flask_app._trust_list_statement\n",
         'docs/reference/WIRE-SPEC.md': "polaris-trust-list/1\n",
@@ -6823,9 +6841,9 @@ def test_trust_lifecycle_check_discriminates(tmp_path):
     assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if key history is editable"
     write({'polaris_web/app.py': APP.replace("for k in _authority_keys(agency_id, ag['signing_public_key_hex'])]", "'active'")})
     assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if the manifest hardcodes active"
-    write({'scripts/polaris-verify.py': VER.replace("listed COMPROMISED", "ignored")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("listed COMPROMISED", "ignored")})
     assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if a compromised issuer key does not reject"
-    write({'scripts/polaris-verify.py': VER.replace("def key_status_at", "def nope")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("def key_status_at", "def nope")})
     assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL without status-at-an-instant"
     write({'polaris_cli/polaris.py': "# no lifecycle\n"})
     assert checks.check_trust_lifecycle(tmp_path)[0].level == "FAIL", "must FAIL if the CLI cannot record the lifecycle"
@@ -6843,7 +6861,7 @@ def test_wallet_presentation_check_discriminates(tmp_path):
            "def decode_presentation_frames(f): return None, 'x'  polaris-presentation/1\n"
            "ap.add_argument(\"--presentation\"); ap.add_argument(\"--qr-frames\")\n")
     good = {
-        'scripts/polaris-verify.py': VER,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'scripts/polaris-wallet.py': 'p.add_argument("--qr"); p.add_argument("--status-assertion"); p.add_argument("--zk-proof"); V.encode_presentation_frames(p)\n',
         'scripts/polaris-relying-party.py': 'cred = presentation.get("credential")\n',
         'docs/reference/WIRE-SPEC.md': "polaris-presentation/1 polaris-qr/1\n",
@@ -6861,11 +6879,11 @@ def test_wallet_presentation_check_discriminates(tmp_path):
 
     write()
     assert checks.check_wallet_presentation(tmp_path)[0].level == "OK", "must PASS on the full fixture"
-    write({'scripts/polaris-verify.py': VER.replace("def decode_presentation_frames", "def nope")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("def decode_presentation_frames", "def nope")})
     assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL without the frame decoder"
-    write({'scripts/polaris-verify.py': VER.replace("never interpreted", "decoded and checked")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("never interpreted", "decoded and checked")})
     assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the presentation code is interpreted offline"
-    write({'scripts/polaris-verify.py': "import psycopg2\n" + VER})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': "import psycopg2\n" + VER})
     assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     write({'scripts/polaris-wallet.py': "# no qr\n"})
     assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the wallet cannot emit frames"
@@ -6895,7 +6913,7 @@ def test_auth_broker_check_discriminates(tmp_path):
         'polaris_sql/06_triggers.sql': "CREATE TRIGGER trg_auth_code_append_only BEFORE UPDATE OR DELETE ON AuthCodeConsumed EXECUTE FUNCTION f();\n",
         'polaris_sql/09_grants.sql': "'authcodeconsumed'\n",
         'polaris_web/rp_auth.py': "_CODE_SALT = 'x'\ndef issue_auth_code(k, p): pass\ndef validate_auth_code(k, c, max_age=60): pass\n",
-        'scripts/polaris-verify.py': "import json\ndef _id_token_canonical(t): return b''\ndef verify_id_token(t, **k): return {}\n",
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': "import json\ndef _id_token_canonical(t): return b''\ndef verify_id_token(t, **k): return {}\n",
         'sdk/python/polaris_verify/__init__.py': "def verify_id_token(tok, audience=None, nonce=None, now=None): pass\n",
         'sdk/typescript/src/index.ts': "export function verifyIdToken(tok: any) {}\n",
         'polaris_web/test_canonical_equivalence.py': "flask_app._id_token_statement\n",
@@ -6963,7 +6981,7 @@ def test_document_signing_check_discriminates(tmp_path):
            "def verify_signed_document(d, **k): return {'valid_long_term': False, 'ltv': {'signer_key_active_at_instant': None, 'credential_unrevoked_at_instant': None}}\n")
     good = {
         'polaris_web/app.py': APP,
-        'scripts/polaris-verify.py': VER,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'scripts/polaris-wallet.py': "def cmd_sign(args): pass\n",
         'polaris_web/test_canonical_equivalence.py': "flask_app._signed_document_statement\n",
         'docs/reference/WIRE-SPEC.md': "polaris-signed-document/1\n",
@@ -6993,7 +7011,7 @@ def test_document_signing_check_discriminates(tmp_path):
     assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if an inactive credential could sign"
     write({'polaris_web/app.py': APP.replace("_document_signature_material", "_signed_document_statement")})
     assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp does not bind the signature"
-    write({'scripts/polaris-verify.py': VER.replace("valid_long_term", "valid")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("valid_long_term", "valid")})
     assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL without long-term validity in the verifier"
     write({'scripts/polaris-wallet.py': "# no sign\n"})
     assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if the wallet cannot sign"
@@ -7026,7 +7044,7 @@ def test_exchange_gateway_check_discriminates(tmp_path):
         'polaris_sql/01_schema.sql': "CREATE TABLE ExchangeNonce (nonce VARCHAR(64));\n",
         'polaris_sql/06_triggers.sql': "CREATE TRIGGER trg_exchange_nonce_append_only BEFORE UPDATE OR DELETE ON ExchangeNonce EXECUTE FUNCTION f();\n",
         'polaris_sql/09_grants.sql': "'exchangenonce'\n",
-        'scripts/polaris-verify.py': ("import json\ndef _exchange_request_canonical(e): return b''\ndef canonical_body_hash(o): return ''\n"
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': ("import json\ndef _exchange_request_canonical(e): return b''\ndef canonical_body_hash(o): return ''\n"
                                       "def verify_exchange_request(e, **k): return {}\ndef exchange_evidence(e, r): return True\n"),
         'polaris_web/test_canonical_equivalence.py': "flask_app._exchange_request_statement\n",
         'docs/reference/WIRE-SPEC.md': "polaris-exchange-request/1\n",
@@ -7061,7 +7079,7 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the receipt does not carry the signed time"
     write({'polaris_sql/06_triggers.sql': "-- no trigger\n"})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the replay register is not append-only"
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace("def exchange_evidence", "def nope")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace("def exchange_evidence", "def nope")})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the offline evidence chain"
     write({'scripts/polaris-federation-instances-drill.py': "# no exchange\n"})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if not driven across two instances"
@@ -7083,7 +7101,7 @@ def test_registry_check_discriminates(tmp_path):
     )
     good = {
         'polaris_web/app.py': APP,
-        'scripts/polaris-verify.py': (
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': (
             "import json\n"
             "def _registry_canonical(r): return b''\n"
             "def verify_registry(r, **k):\n    not signed by the key it lists for its own publisher\n    return {}\n"
@@ -7118,9 +7136,9 @@ def test_registry_check_discriminates(tmp_path):
     assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL if a format the spec lacks is advertised"
     write({'polaris_web/app.py': APP.replace("v_athena_trust_agreement", "AgencyTrustAttestation")})
     assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL if the trust graph does not come from Athena"
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace("lists for its own publisher", "whatever")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace("lists for its own publisher", "whatever")})
     assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL without the publisher self-consistency rule"
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace("def registry_trusts", "def nope")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace("def registry_trusts", "def nope")})
     assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL without the discovery helpers"
     write({'conformance/cases.json': '{"cases": []}\n'})
     assert checks.check_registry(tmp_path)[0].level == "FAIL", "must FAIL without conformance cases"
@@ -7150,7 +7168,7 @@ def test_receipt_transparency_check_discriminates(tmp_path):
             "@app.route('/api/v1/exchange-receipt/inclusion/<receipt_hash>')\n"
             "def _receipt_log_append(h): query('INSERT INTO ExchangeReceiptLog (receipt_hash) VALUES (%s)')\n"
         ),
-        'scripts/polaris-verify.py': "import json\ndef receipt_hash(r): return ''\ndef verify_receipt_inclusion(r, p, s, log_key=None): return {}\n",
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': "import json\ndef receipt_hash(r): return ''\ndef verify_receipt_inclusion(r, p, s, log_key=None): return {}\n",
         'scripts/polaris-transparency-monitor.py': 'ap.add_argument("--log", choices=("anchors", "receipts"))\n',
         'scripts/polaris-federation-instances-drill.py': 'V.verify_receipt_inclusion(receipt, p, s)  "--log", "receipts"\n',
         'polaris_web/test_app.py': "class ExchangeReceiptLogTests(PolarisTestCase): pass\n",
@@ -7180,7 +7198,7 @@ def test_receipt_transparency_check_discriminates(tmp_path):
     assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL without per-receipt inclusion evidence"
     write({'polaris_web/app.py': good['polaris_web/app.py'].replace("INSERT INTO ExchangeReceiptLog", "SELECT 1")})
     assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if minting does not append to the log"
-    write({'scripts/polaris-verify.py': "import psycopg2\n" + good['scripts/polaris-verify.py']})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': "import psycopg2\n" + good['packages/polaris-verify/polaris_verify_cli/verifier.py']})
     assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     write({'scripts/polaris-transparency-monitor.py': "# anchors only\n"})
     assert checks.check_receipt_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the monitor cannot watch the receipt log"
@@ -7201,7 +7219,7 @@ def test_timestamp_authority_check_discriminates(tmp_path):
             "    the content itself is never sent\n"
             "    security.rate_limiter.allow('tsa:%d' % agency_id, 600, 60)\n"
         ),
-        'scripts/polaris-verify.py': (
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': (
             "import json, hashlib\n"
             "def _timestamp_canonical(t): return b''\n"
             "def verify_timestamp(t, **k): return {}\n"
@@ -7229,9 +7247,9 @@ def test_timestamp_authority_check_discriminates(tmp_path):
     assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL without the route"
     write({'polaris_web/app.py': good['polaris_web/app.py'].replace("the content itself is never sent", "we accept content")})
     assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL without the digest-only rule"
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace("def timestamp_binds", "def nope")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace("def timestamp_binds", "def nope")})
     assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL without the binding helper"
-    write({'scripts/polaris-verify.py': "import psycopg2\n" + good['scripts/polaris-verify.py']})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': "import psycopg2\n" + good['packages/polaris-verify/polaris_verify_cli/verifier.py']})
     assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     write({'polaris_web/test_canonical_equivalence.py': "# nothing\n"})
     assert checks.check_timestamp_authority(tmp_path)[0].level == "FAIL", "must FAIL if not oracle-pinned"
@@ -7264,7 +7282,7 @@ def test_exchange_mint_signed_auth_check_discriminates(tmp_path):
     )
     good = {
         'polaris_web/app.py': APP,
-        'scripts/polaris-verify.py': "def _exchange_mint_canonical(m): return b''\n",
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': "def _exchange_mint_canonical(m): return b''\n",
         'polaris_web/test_canonical_equivalence.py': "flask_app._exchange_mint_statement\n",
         'docs/reference/WIRE-SPEC.md': "polaris-exchange-mint/1\n",
         'scripts/polaris-federation-instances-drill.py': "base_b + '/api/v1/exchange-receipt/1/signed'  NO session\n",
@@ -7289,7 +7307,7 @@ def test_exchange_mint_signed_auth_check_discriminates(tmp_path):
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the freshness window"
     write({'polaris_web/app.py': APP.replace("exmint:", "nolimit:")})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the per-responder rate bound"
-    write({'scripts/polaris-verify.py': "nothing\n"})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': "nothing\n"})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL without the client-side canonical builder"
     write({'polaris_web/test_canonical_equivalence.py': "nothing\n"})
     assert checks.check_exchange_mint_signed_auth(tmp_path)[0].level == "FAIL", "must FAIL if the statement is not oracle-pinned"
@@ -7371,7 +7389,7 @@ def test_exchange_receipt_check_discriminates(tmp_path):
     # attestation, minted at an endpoint that takes only hashes, in the oracle + wire spec, run
     # in CI. Each perturbation removes one leg.
     good = {
-        'scripts/polaris-verify.py': (
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': (
             "import json, hashlib\n"
             "polaris-exchange-receipt/1\n"
             "def _exchange_receipt_canonical(r): return b''\n"
@@ -7404,16 +7422,16 @@ def test_exchange_receipt_check_discriminates(tmp_path):
     write()
     assert checks.check_exchange_receipt(tmp_path)[0].level == "OK", "must PASS on the full fixture"
     # 1. the verify function is missing
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_exchange_receipt", "def nope")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("def verify_exchange_receipt", "def nope")})
     assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL without the verify function"
     # 2. the receipt does not commit by hash
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("request_hash", "request_body")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("request_hash", "request_body")})
     assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL if it does not commit by hash"
     # 3. authorization is not confirmed
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("requester_authorized", "whatever")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("requester_authorized", "whatever")})
     assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL without authorization"
     # 4. the verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_exchange_receipt(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 5. the mint endpoint is missing
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("/api/v1/exchange-receipt", "/api/v1/nope")})
@@ -7513,7 +7531,7 @@ def test_canonical_equivalence_check_discriminates(tmp_path):
     )
     good = {
         "polaris_web/app.py": app,
-        "scripts/polaris-verify.py": verify,
+        "packages/polaris-verify/polaris_verify_cli/verifier.py": verify,
         "polaris_web/test_canonical_equivalence.py": "SIGNED_TYPES = {}\ndef cross_impl_equivalence(): pass\n",
         "scripts/polaris-coverage.sh": "run polaris_web unittest test_canonical_equivalence\n",
     }
@@ -7527,7 +7545,7 @@ def test_canonical_equivalence_check_discriminates(tmp_path):
     write()
     assert checks.check_canonical_equivalence(tmp_path)[0].level == "OK", "must PASS on the full fixture"
     # 1. a key list drifts between the two sides
-    write({"scripts/polaris-verify.py": verify.replace('"authority"', '"AUTHORITY_RENAMED"')})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": verify.replace('"authority"', '"AUTHORITY_RENAMED"')})
     assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL if a signed key list differs"
     # 2. one side drops the sorted-key canonical form
     write({"polaris_web/app.py": app.replace("sort_keys=True", "sort_keys=False", 1)})
@@ -7544,7 +7562,7 @@ def test_transparency_log_check_discriminates(tmp_path):
     # v9.301 (P3.3): a public append-only RFC-6962 log over AnchorBatch, verified offline
     # (standalone), with an independent monitor that alerts on tampering, run in CI, spec'd.
     good = {
-        "scripts/polaris-verify.py": (
+        "packages/polaris-verify/polaris_verify_cli/verifier.py": (
             "import json, hashlib\n"
             "polaris-transparency-sth/1\n"
             "def merkle_tree_head(e): return b''\n"
@@ -7577,10 +7595,10 @@ def test_transparency_log_check_discriminates(tmp_path):
     write()
     assert checks.check_transparency_log(tmp_path)[0].level == "OK", "must PASS on the full fixture"
     # 1. the verifier loses append-only detection
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_log_consistency", "def gone")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("def verify_log_consistency", "def gone")})
     assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL without verify_log_consistency"
     # 2. the verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_transparency_log(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 3. an endpoint is missing
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("/api/v1/transparency/entries", "/api/v1/nope")})
@@ -7605,7 +7623,7 @@ def test_transparency_gossip_check_discriminates(tmp_path):
     # threshold, and a non-repudiable equivocation proof, with a witness daemon and a gossip
     # drill run in CI. Each perturbation removes one leg.
     good = {
-        "scripts/polaris-verify.py": (
+        "packages/polaris-verify/polaris_verify_cli/verifier.py": (
             "import json, hashlib\n"
             "polaris-transparency-cosignature/1\n"
             "def _cosignature_canonical(c): return b''\n"
@@ -7634,10 +7652,10 @@ def test_transparency_gossip_check_discriminates(tmp_path):
     write()
     assert checks.check_transparency_gossip(tmp_path)[0].level == "OK", "must PASS on the full fixture"
     # 1. the equivocation proof is gone
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_equivocation", "def gone")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("def verify_equivocation", "def gone")})
     assert checks.check_transparency_gossip(tmp_path)[0].level == "FAIL", "must FAIL without verify_equivocation"
     # 2. the verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_transparency_gossip(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 3. the witness never ALERTs
     write({"scripts/polaris-transparency-witness.py": "def cosign(head, key_file): pass\nprint('all good')\n"})
@@ -7655,7 +7673,7 @@ def test_transparency_publication_check_discriminates(tmp_path):
     # file-backed append-only ledger driver, and a drill, run in CI. Each perturbation
     # removes one leg.
     good = {
-        "scripts/polaris-verify.py": (
+        "packages/polaris-verify/polaris_verify_cli/verifier.py": (
             "import json, hashlib\n"
             "polaris-transparency-publication/1\n"
             "def _publication_entry(a, b, c): return ''\n"
@@ -7681,10 +7699,10 @@ def test_transparency_publication_check_discriminates(tmp_path):
     write()
     assert checks.check_transparency_publication(tmp_path)[0].level == "OK", "must PASS on the full fixture"
     # 1. the receipt verifier is gone
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_publication", "def gone")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("def verify_publication", "def gone")})
     assert checks.check_transparency_publication(tmp_path)[0].level == "FAIL", "must FAIL without verify_publication"
     # 2. the verifier is not standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_transparency_publication(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 3. the ledger has no backend driver
     write({"scripts/polaris-transparency-ledger.py": "import anchoring\nanchoring.log_tree_head; anchoring.log_inclusion_proof\n"})
@@ -7736,7 +7754,7 @@ def test_federation_topology_check_discriminates(tmp_path):
     # v9.292 (P3.1): the topology ADR records federated-over-central + the threat-model
     # delta + the vocation grounding, and is kept honest against the code. Each
     # perturbation removes one leg.
-    good = {'docs/design/federation-topology.md': '# Federation topology (ADR)\nStatus: Accepted 2026-09-08\nDecision: federated per-authority instances; no central instance/root/service.\nCross-authority trust is explicit and non-transitive.\n## Threat-model delta\ncentral vs federated; a central instance is a monopoly.\nGrounded: AgencyTrustAttestation, _federation_trust_holds, signing_public_key_hex, verify_pack.\n', 'polaris_sql/01_schema.sql': 'CREATE TABLE AgencyTrustAttestation (...);\nsigning_public_key_hex TEXT\n', 'polaris_web/app.py': 'def _federation_trust_holds(v, t, c):\n    return True\n', 'scripts/polaris-verify.py': 'def verify_pack(pack, anchor_keys=None):\n    return {}\n', 'docs/design/README.md': '| [federation-topology.md](federation-topology.md) | the ADR |\n'}
+    good = {'docs/design/federation-topology.md': '# Federation topology (ADR)\nStatus: Accepted 2026-09-08\nDecision: federated per-authority instances; no central instance/root/service.\nCross-authority trust is explicit and non-transitive.\n## Threat-model delta\ncentral vs federated; a central instance is a monopoly.\nGrounded: AgencyTrustAttestation, _federation_trust_holds, signing_public_key_hex, verify_pack.\n', 'polaris_sql/01_schema.sql': 'CREATE TABLE AgencyTrustAttestation (...);\nsigning_public_key_hex TEXT\n', 'polaris_web/app.py': 'def _federation_trust_holds(v, t, c):\n    return True\n', 'packages/polaris-verify/polaris_verify_cli/verifier.py': 'def verify_pack(pack, anchor_keys=None):\n    return {}\n', 'docs/design/README.md': '| [federation-topology.md](federation-topology.md) | the ADR |\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -7770,7 +7788,7 @@ def test_offline_verification_check_discriminates(tmp_path):
     # v9.291 (P3.6): a short-lived signed status assertion + offline stapled verify.
     # Signed by the issuer, verified offline (standalone), freshness/window enforced,
     # run in CI. Each perturbation removes one leg.
-    good = {'polaris_web/app.py': "@app.route('/api/v1/status-assertion', methods=['POST'])\ndef api_v1_status_assertion():\n    _status_assertion_statement(tv, st, ia, ea)\n    pqc_signing.signature_over_message(stmt)\n    return jsonify(expires_at=ea)\n", 'polaris_web/pqc_signing.py': "def signature_over_message(message, agency_id=None):\n    return b'', 'ML-DSA-65', None\n", 'scripts/polaris-verify.py': "import json, hashlib\ndef _status_assertion_canonical(a):\n    return b''\ndef verify_status_assertion(a, now=None, max_window_seconds=None, anchor_keys=None):\n    fresh = True\n    return {'fresh': fresh, 'format': 'polaris-status-assertion/1'}\ndef verify_stapled(pack, a, now=None, max_window_seconds=None, anchor_keys=None):\n    return {'decision': 'accept'}\n", 'scripts/polaris-offline-status-drill.py': 'def main():\n    verify_stapled(p, a)\n', '.github/workflows/ci.yml': '      - run: python scripts/polaris-offline-status-drill.py\n', 'polaris_web/test_app.py': 'class OfflineStatusAssertionTests:\n    def t(self): pass\n'}
+    good = {'polaris_web/app.py': "@app.route('/api/v1/status-assertion', methods=['POST'])\ndef api_v1_status_assertion():\n    _status_assertion_statement(tv, st, ia, ea)\n    pqc_signing.signature_over_message(stmt)\n    return jsonify(expires_at=ea)\n", 'polaris_web/pqc_signing.py': "def signature_over_message(message, agency_id=None):\n    return b'', 'ML-DSA-65', None\n", 'packages/polaris-verify/polaris_verify_cli/verifier.py': "import json, hashlib\ndef _status_assertion_canonical(a):\n    return b''\ndef verify_status_assertion(a, now=None, max_window_seconds=None, anchor_keys=None):\n    fresh = True\n    return {'fresh': fresh, 'format': 'polaris-status-assertion/1'}\ndef verify_stapled(pack, a, now=None, max_window_seconds=None, anchor_keys=None):\n    return {'decision': 'accept'}\n", 'scripts/polaris-offline-status-drill.py': 'def main():\n    verify_stapled(p, a)\n', '.github/workflows/ci.yml': '      - run: python scripts/polaris-offline-status-drill.py\n', 'polaris_web/test_app.py': 'class OfflineStatusAssertionTests:\n    def t(self): pass\n'}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -7784,16 +7802,16 @@ def test_offline_verification_check_discriminates(tmp_path):
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("pqc_signing.signature_over_message(stmt)", "pass")})
     assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL if the assertion is not signed"
     # 2. the offline verifier drops the freshness/window enforcement
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("max_window_seconds", "ignored")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("max_window_seconds", "ignored")})
     assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL without the window bound"
     # 3. the verifier is no longer standalone
-    write({"scripts/polaris-verify.py": "import psycopg2\n" + good["scripts/polaris-verify.py"]})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + good["packages/polaris-verify/polaris_verify_cli/verifier.py"]})
     assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL if the verifier is not standalone"
     # 4. the drill is not wired into CI
     write({".github/workflows/ci.yml": "      - run: echo nothing\n"})
     assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not run in CI"
     # 5. verify_stapled is gone
-    write({"scripts/polaris-verify.py": good["scripts/polaris-verify.py"].replace("def verify_stapled", "def other")})
+    write({"packages/polaris-verify/polaris_verify_cli/verifier.py": good["packages/polaris-verify/polaris_verify_cli/verifier.py"].replace("def verify_stapled", "def other")})
     assert checks.check_offline_verification(tmp_path)[0].level == "FAIL", "must FAIL without offline stapled verify"
     # 6. the endpoint test is gone
     write({"polaris_web/test_app.py": "class Other:\n    pass\n"})
@@ -8086,7 +8104,7 @@ def test_algorithm_agility_check_discriminates(tmp_path):
                                        "def algorithm_name(agency_id=None): return 'ML-DSA-65'\ndef algorithm_for_public_key_hex(h): return None\n"
                                        "def generate_keypair(algorithm=None): return {}\n"),
         'polaris_web/app.py': APP,
-        'scripts/polaris-verify.py': VER,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'sdk/python/polaris_verify/__init__.py': 'ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87PublicKey"}\ndef _accepted(a): return True\n',
         'sdk/typescript/src/index.ts': TS,
         'conformance/cases.json': '{"cases": [{"name": "pack-mldsa87-valid"}, {"name": "pack-mldsa44-unaccepted"}, {"name": "status-assertion-mldsa87-active"}, {"name": "trust-list-migration"}, {"name": "trust-list-migration-retired-signer"}]}\n',
@@ -8115,7 +8133,7 @@ def test_algorithm_agility_check_discriminates(tmp_path):
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL without the ML-DSA-44 refusal case"
     write({'polaris_web/pqc_signing.py': good['polaris_web/pqc_signing.py'] + "with _oqs.Signature(_ALG_NAME) as s: pass\n"})
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the signer hardcodes its parameter set"
-    write({'scripts/polaris-verify.py': VER.replace("ML-DSA-44 pack is refused", "ML-DSA-44 pack is accepted")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("ML-DSA-44 pack is refused", "ML-DSA-44 pack is accepted")})
     assert checks.check_algorithm_agility(tmp_path)[0].level == "FAIL", "must FAIL if the selftest does not prove the floor"
 
 
@@ -8131,7 +8149,7 @@ def test_protocol_versioning_check_discriminates(tmp_path):
     sums = "".join("%s  %s\n" % (_h.sha256(v.encode()).hexdigest(), k) for k, v in frozen_files.items())
     good = {
         'polaris_web/app.py': APP,
-        'scripts/polaris-verify.py': '_VERIFIER_VERSION = "9.330"\ndef registry_speaks(reg, f): return False\n',
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': '_VERIFIER_VERSION = "9.330"\ndef registry_speaks(reg, f): return False\n',
         'conformance/frozen/v1/SHA256SUMS': sums,
         'conformance/cases.json': '{"cases": [{"name": "a", "since": "9.314", "expect": {"authentic": true}}]}\n',
         'scripts/polaris-compat-suite.py': "predated fail-closed SHA256SUMS\ndef decide(V, case): return {}, None\n",
@@ -8172,7 +8190,7 @@ def test_exchange_trust_directional_check_discriminates(tmp_path):
         'polaris_web/app.py': APP,
         'polaris_web/test_app.py': "def test_exchange_authorization_is_the_responders_own_attestation(self): pass\n",
         'scripts/polaris-federation-instances-drill.py': "trust is directional, not transitive\n",
-        'scripts/polaris-verify.py': "participation is proven by the envelope it signed\n",
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': "participation is proven by the envelope it signed\n",
         'docs/design/exchange-receipt.md': "A receipt alone cannot prove\nthe requester took part\n",
         'docs/reference/API.md': "its own valid `AgencyTrustAttestation`\n",
     }
@@ -8201,7 +8219,7 @@ def test_ltv_timestamp_trust_check_discriminates(tmp_path):
            "    L = {\"timestamp_authority_trusted\": None, \"timestamp_independent\": None}\n"
            "    ok = L[\"timestamp_authority_trusted\"] is True and L[\"timestamp_independent\"]\n")
     good = {
-        'scripts/polaris-verify.py': VER,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'polaris_web/app.py': "tid = fields.get('timestamp_agency_id')\n",
         'scripts/polaris-document-signing-drill.py': "SELF-issued timestamp; does NOT trust; without trusted timestamp-authority anchors\n",
         'scripts/polaris-trust-lifecycle-drill.py': "V.verify_signed_document(doc, timestamp_anchors=TSA)\n",
@@ -8217,9 +8235,9 @@ def test_ltv_timestamp_trust_check_discriminates(tmp_path):
     write()
     first = checks.check_ltv_timestamp_trust(tmp_path)[0]
     assert first.level == "OK", "must PASS on the full fixture: " + first.message
-    write({'scripts/polaris-verify.py': VER.replace("verify_timestamp(ts, anchor_keys=timestamp_anchors)", "verify_timestamp(ts)")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("verify_timestamp(ts, anchor_keys=timestamp_anchors)", "verify_timestamp(ts)")})
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp is verified without anchors"
-    write({'scripts/polaris-verify.py': VER.replace(' and L["timestamp_independent"]', "")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace(' and L["timestamp_independent"]', "")})
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL if a self-issued timestamp counts"
     write({'scripts/polaris-document-signing-drill.py': "only the happy path\n"})
     assert checks.check_ltv_timestamp_trust(tmp_path)[0].level == "FAIL", "must FAIL without the negative drill cases"
@@ -8233,7 +8251,7 @@ def test_qr_resource_bounds_check_discriminates(tmp_path):
            "def decode_presentation_frames(frames):\n    return None, 'too many frames'\n"
            "    d = zlib.decompressobj()\n    raw = d.decompress(data, _QR_MAX_DECOMPRESSED)\n    if d.unconsumed_tail or not d.eof: pass\n")
     good = {
-        'scripts/polaris-verify.py': VER,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'scripts/polaris-presentation-drill.py': "DECOMPRESSION BOMB; compressed-size bound; too many frames\n",
         'docs/reference/WIRE-SPEC.md': "A receiver MUST bound what it accepts\n",
     }
@@ -8245,7 +8263,7 @@ def test_qr_resource_bounds_check_discriminates(tmp_path):
     write()
     first = checks.check_qr_resource_bounds(tmp_path)[0]
     assert first.level == "OK", "must PASS on the full fixture: " + first.message
-    write({'scripts/polaris-verify.py': VER.replace("d.decompress(data, _QR_MAX_DECOMPRESSED)", "zlib.decompress(data)")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("d.decompress(data, _QR_MAX_DECOMPRESSED)", "zlib.decompress(data)")})
     assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL on an unbounded inflater"
     write({'scripts/polaris-presentation-drill.py': "happy path only\n"})
     assert checks.check_qr_resource_bounds(tmp_path)[0].level == "FAIL", "must FAIL without the bomb drill"
@@ -8368,7 +8386,7 @@ def test_timestamp_transparency_check_discriminates(tmp_path):
         'polaris_sql/migrations/2026-09-09-007-timestamp-log.up.sql': "CREATE TABLE IF NOT EXISTS TimestampLog ();\n",
         'polaris_sql/migrations/2026-09-09-007-timestamp-log.down.sql': "DROP TABLE IF EXISTS TimestampLog;\n",
         'polaris_web/app.py': APP,
-        'scripts/polaris-verify.py': VER,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VER,
         'scripts/polaris-timestamp-transparency-drill.py': "AFTER THE THEFT; SPLIT VIEW; QUORUM; the residual risk, stated\n",
         '.github/workflows/ci.yml': "      - run: python scripts/polaris-timestamp-transparency-drill.py\n",
         'scripts/polaris-federation-instances-drill.py': '{"anchor": True}; V.verify_timestamp_anchor(x)\n',
@@ -8392,7 +8410,7 @@ def test_timestamp_transparency_check_discriminates(tmp_path):
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp log is not append-only"
     write({'polaris_web/app.py': APP.replace("if body.get('anchor') is True:", "always_anchor()")})
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if anchoring is not the caller's choice"
-    write({'scripts/polaris-verify.py': VER.replace("def verify_timestamp_anchor", "def verify_something_else")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("def verify_timestamp_anchor", "def verify_something_else")})
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the verifier cannot check an anchor"
     write({'scripts/polaris-timestamp-transparency-drill.py': "# happy path only\n"})
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL without the stolen-key drill"
@@ -8423,7 +8441,7 @@ def test_commitment_refusal_check_discriminates(tmp_path):
         "    v[\"feed_authentic\"] = True\n"
         "    return v\n")
     good = {
-        'scripts/polaris-verify.py': good_verify,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify,
         'sdk/python/polaris_verify/__init__.py': 'leaves_root_hex = 1\n',
         'sdk/typescript/src/index.ts': 'const x = "leaves_root_hex";\n',
         'conformance/cases.json': '{"cases": ['
@@ -8443,14 +8461,14 @@ def test_commitment_refusal_check_discriminates(tmp_path):
 
     # The mismatch becomes a note instead of a return: leaves_authentic stays true, and a
     # caller reading it takes the attacker's set as the anonymity set.
-    write({'scripts/polaris-verify.py': good_verify.replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify.replace(
         "    if not v['commitment_matches']:\n        return v\n",
         "    if not v['commitment_matches']:\n        v['note'] = 'mismatch'\n")})
     assert checks.check_commitment_mismatch_is_a_refusal(tmp_path)[0].level == "FAIL", \
         "must FAIL when a broken leaves commitment is annotated instead of refused"
 
     # The artifact is called authentic BEFORE the commitment is even computed.
-    write({'scripts/polaris-verify.py': good_verify.replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify.replace(
         "    v[\"commitment_ok\"] = revoked_root(f) == f.get('revoked_root_hex')\n"
         "    if not v['commitment_ok']:\n"
         "        return v\n"
@@ -8488,7 +8506,7 @@ def test_instant_normalised_check_discriminates(tmp_path):
         "    return verify_thing(obj, now=now)\n")
 
     def write(body):
-        f = tmp_path / 'scripts' / 'polaris-verify.py'
+        f = tmp_path / 'packages' / 'polaris-verify' / 'polaris_verify_cli' / 'verifier.py'
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(body)
 
@@ -8640,7 +8658,7 @@ def test_pairwise_presentation_check_discriminates(tmp_path):
     good = {
         'polaris_web/app.py': ("def _pairwise_subject(token_value, client_id):\n    return ''\n"
                                "code = {'sub': _pairwise_subject(token_value, rp['client_id'])}\n"),
-        'scripts/polaris-verify.py': good_verify,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify,
         'sdk/python/polaris_verify/__init__.py': "def pairwise_handle(k, s):\n    return None\n",
         'sdk/typescript/src/index.ts': "export function pairwiseHandle(k, s) { return null; }\n",
         'scripts/polaris-wallet.py': "args.verifier_scope\n",
@@ -8669,24 +8687,24 @@ def test_pairwise_presentation_check_discriminates(tmp_path):
         "must FAIL when the subject is not scoped to the relying party's client_id"
 
     # A handle with no scope is quietly globalised instead of refused.
-    write({'scripts/polaris-verify.py': good_verify.replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify.replace(
         "    if not k or not scope:\n        return None\n", "")})
     assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
         "must FAIL when a scopeless handle is hashed instead of refused"
 
     # The domain tag goes, so a handle could be confused with another SHA3-256 value.
-    write({'scripts/polaris-verify.py': good_verify.replace("_PAIRWISE_TAG + ", "")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify.replace("_PAIRWISE_TAG + ", "")})
     assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the handle carries no domain tag"
 
     # The verdict stops being able to say the unflattering word: every presentation would
     # look like the strong form.
-    write({'scripts/polaris-verify.py': good_verify.replace('"exposed"', '"bounded"')})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify.replace('"exposed"', '"bounded"')})
     assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the verdict cannot report that a plain credential is exposed"
 
     # The verdict stops reporting correlation at all.
-    write({'scripts/polaris-verify.py': good_verify.replace('"correlation"', '"note"')})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify.replace('"correlation"', '"note"')})
     assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the verdict makes no correlation statement"
 
@@ -8734,7 +8752,7 @@ def test_agent_grant_check_discriminates(tmp_path):
         "    if unknown:\n        return False, 'refusing rather than ignoring them'\n"
         "    return True, None\n")
     good = {
-        'scripts/polaris-verify.py': VERIFY,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY,
         'polaris_web/app.py': ("def _agent_grant_statement(b): pass\n"
                                "def _grant_revocation_statement(b): pass\n"
                                "def _agent_proof_statement(b): pass\n"),
@@ -8750,7 +8768,7 @@ def test_agent_grant_check_discriminates(tmp_path):
                                                  "correlation is exposed\n"),
         'docs/reference/WIRE-SPEC.md': "### polaris-agent-grant/1\n",
     }
-    good['scripts/polaris-verify.py'] = VERIFY + (
+    good['packages/polaris-verify/polaris_verify_cli/verifier.py'] = VERIFY + (
         '\nap.add_argument("--agent-grant")\nap.add_argument("--action")\n'
         'ap.add_argument("--service-nonce")\n')
 
@@ -8765,48 +8783,48 @@ def test_agent_grant_check_discriminates(tmp_path):
 
     # The limits leave the signed statement: a grant can be widened in transit and the
     # widened grant still verifies.
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace('"limits", ', "")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace('"limits", ', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the limits sit outside the grant's signature"
 
     # So does the action list.
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace('"actions", ', "")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace('"actions", ', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the actions sit outside the grant's signature"
 
     # A malformed action list stops collapsing to empty, so a grant naming nothing could be
     # read as naming everything.
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
         "    actions = [str(a) for a in actions] if isinstance(actions, (list, tuple)) else []\n",
         "    actions = actions or ['*']\n")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a grant with no actions is not treated as granting nothing"
 
     # Anyone who can publish bytes can end someone else's delegation.
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
         '    note = "the revocation is signed by a key other than the grant\'s holder"\n', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a revocation need not be signed by the grant's own holder"
 
     # The grant becomes a bearer token: no agent key check.
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
         '    note = "the agent proof is signed by a key the grant does not name"\n', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the agent need not hold the key the grant names"
 
     # A captured proof replays at a second service.
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace('    note = "a replay"\n', "")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace('    note = "a replay"\n', "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a proof is not bound to the service's own nonce"
 
     # A reason field appears on the revocation, and becomes a place to signal duress.
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
         '"revoked_at", "algorithm")', '"revoked_at", "reason", "algorithm")')})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when a revocation's signed statement carries a reason field"
 
     # An unknown limit is ignored instead of refused.
-    write({'scripts/polaris-verify.py': good['scripts/polaris-verify.py'].replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good['packages/polaris-verify/polaris_verify_cli/verifier.py'].replace(
         "    if unknown:\n        return False, 'refusing rather than ignoring them'\n", "")})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when an unrecognised limit is ignored rather than refused"
@@ -8829,7 +8847,7 @@ def test_agent_grant_check_discriminates(tmp_path):
 
     # A service can no longer decide a grant from the command line, so checking an agent's
     # authority means writing Python, which means it will not be checked.
-    write({'scripts/polaris-verify.py': VERIFY})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY})
     assert checks.check_agent_grant(tmp_path)[0].level == "FAIL", \
         "must FAIL when the detached verifier has no --agent-grant CLI"
 
@@ -9342,7 +9360,7 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
     DOC = "This is a format bridge, not a trust bridge.\n"
     good = {
         'polaris_web/mdoc.py': MOD,
-        'scripts/polaris-verify.py': VERIFY,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY,
         'scripts/polaris-mdoc-bridge-drill.py': DRILL,
         'docs/design/mdoc-bridge.md': DOC,
     }
@@ -9393,20 +9411,20 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when nothing refuses the token value"
 
     # THE VERDICT COLLAPSES: a digest check reported as an issuer check.
-    write({'scripts/polaris-verify.py': VERIFY.replace('"reader_interop": None', '"note": None')})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace('"reader_interop": None', '"note": None')})
     assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the verdict does not state what a conforming reader cannot do"
-    write({'scripts/polaris-verify.py': VERIFY.replace('"digests_match": None, ', "")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace('"digests_match": None, ', "")})
     assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the digest check is not reported separately"
 
     # The signature stops covering the protected header, so its algorithm is relabellable.
-    write({'scripts/polaris-verify.py': VERIFY.replace("Signature1", "payload")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace("Signature1", "payload")})
     assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the COSE signature is over the payload rather than the Sig_structure"
 
     # The MSO signature stops being two-witnessed like every other signed artifact.
-    write({'scripts/polaris-verify.py': VERIFY.replace("    _two_witness_verify(d, s, p, a)\n", "")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace("    _two_witness_verify(d, s, p, a)\n", "")})
     assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the MSO signature is not two-witnessed"
 
@@ -11718,7 +11736,7 @@ def test_vc_format_check_discriminates(tmp_path):
     DOC = "This attests a verification result, not an identity.\n"
     good = {
         'polaris_web/vc.py': MOD,
-        'scripts/polaris-verify.py': VERIFY,
+        'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY,
         'scripts/polaris-vc-format-drill.py': DRILL,
         'docs/design/vc-format.md': DOC,
     }
@@ -11771,20 +11789,20 @@ def test_vc_format_check_discriminates(tmp_path):
         "must FAIL when the subject identifier is not per-verifier or absent"
 
     # THE CANONICALISATION SPLIT: the app signs bytes the verifier never reconstructs.
-    write({'scripts/polaris-verify.py': VERIFY.replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace(
         "    return json.dumps(d, sort_keys=True)\n", "    return json.dumps(d)\n")})
     assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
         "must FAIL when the verifier canonicalises differently from the signer"
 
     # The verifier stops COMPARING against the pinned suite, so a relabelled document is
     # accepted. Removing the constant alone is not the regression; removing the comparison is.
-    write({'scripts/polaris-verify.py': VERIFY.replace(
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace(
         "    if p.get('cryptosuite') != _VC_CRYPTOSUITE:\n        return v\n", "")})
     assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
         "must FAIL when the verifier does not compare against the pinned cryptosuite"
 
     # The verdict collapses the parse into the verification.
-    write({'scripts/polaris-verify.py': VERIFY.replace('"verifier_interop": None', '"note": None')})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace('"verifier_interop": None', '"note": None')})
     assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
         "must FAIL when the verdict does not state what a general verifier cannot do"
 

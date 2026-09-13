@@ -1871,8 +1871,8 @@ jobs:
       # needs no working-directory, which is exactly the property under test.
       - name: Detached verifier — selftest + re-verify published vectors
         run: |
-          python scripts/polaris-verify.py --selftest
-          python scripts/polaris-verify.py --verify-dir vectors
+          python scripts/polaris-verify.py --pqc-provider oqs --selftest
+          python scripts/polaris-verify.py --pqc-provider oqs --verify-dir vectors
 
       # v9.275 (roadmap PE.5) — attacks that MUST fail, run every release, not
       # greps. The crypto suite throws real ML-DSA-65 forgeries and tampers at the
