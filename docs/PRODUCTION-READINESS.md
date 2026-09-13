@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v9.437): not production-ready for real identity data.** Every
+**Status (v9.458): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
@@ -81,6 +81,30 @@ cool-down, the three out-of-band channels and the third-person witness in
 DELETE path against the audit tables. **All 27 are covered as of v9.437**, and the drill runs on
 every push that touches a procedure with its declared-survivor list empty and checked in both
 directions, so one that stops being covered fails rather than going quiet.
+
+Three more facts from v9.437 to v9.458, all of them about the reference SDKs an integrator
+actually builds against. **Both shipped verifiers could be made to accept what they exist to
+reject.** Every refusal in each SDK was inverted in turn and the suites re-run: 18 of 18 in the
+Python reference implementation, 9 of 14 in the TypeScript one, accepted with both that SDK's own
+tests and the conformance runner green. The two that matter most to a relying party are an agent
+grant's exhausted use count and an amount over its ceiling, which is the bound that makes P9.8
+delegation something other than a bearer token, and the TypeScript SDK's constant-time comparison,
+whose length guard inverted makes a five-byte value compare EQUAL to a 32-byte Merkle root. All are
+closed in the SDKs' own tests, and the drill now inverts all 32 refusals on every push with a
+per-SDK negative control, so a result of zero survivors is distinguishable from a harness that
+never ran.
+
+**That is not the conformance suite being broken, and the distinction bounds what conformance
+means.** An SDK whose signature backends accept anything IS caught by the published cases. These
+guards sit on inputs no case contains, so the contract certified what it exercised and these
+refusals were outside it. An integrator relying on conformance alone should read it as the floor
+it is.
+
+**A drill can be wired into CI and still not run.** The two-SDK drill was added to a job that has
+Python and a built liboqs and no Node dependency tree. It refused to report rather than calling an
+unverifiable tree clean, which is the correct refusal, but the job then failed on its own setup
+rather than on a finding. A red build that says nothing about the tree is how a real finding gets
+waved through. The job installs what it runs now, and a check holds every job to that.
 
 **And the measurement instruments were wrong three times in ways that flattered them.** The
 conformance drill counted 22 fields that were not fields and misclassified what fixing the rest

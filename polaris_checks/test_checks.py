@@ -14030,7 +14030,8 @@ def test_post_quantum_claims_are_agility_check_discriminates(tmp_path):
               "The default writes DETERMINISTIC-PLACEHOLDER-SHA3-256.\n")
     SURFACE = "Polaris signs with post-quantum ML-DSA-65. Limits: PRODUCTION-READINESS.md\n"
 
-    def write(ledger=LEDGER, readme=SURFACE, site=SURFACE, mission=SURFACE, citation=SURFACE):
+    def write(ledger=LEDGER, readme=SURFACE, site=SURFACE, mission=SURFACE, citation=SURFACE,
+              notice=SURFACE):
         (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
         (tmp_path / "site").mkdir(parents=True, exist_ok=True)
         (tmp_path / "docs" / "PRODUCTION-READINESS.md").write_text(ledger)
@@ -14038,6 +14039,9 @@ def test_post_quantum_claims_are_agility_check_discriminates(tmp_path):
         (tmp_path / "site" / "index.html").write_text(site)
         (tmp_path / "MISSION.md").write_text(mission)
         (tmp_path / "CITATION.cff").write_text(citation)
+        # v9.458: NOTICE travels further than any of these, because Apache 2.0 section 4
+        # requires a redistributor to carry it. It is held to the same rule.
+        (tmp_path / "NOTICE").write_text(notice)
 
     def level(msg_contains=None):
         out = checks.check_post_quantum_claims_are_agility(tmp_path)
@@ -14084,6 +14088,13 @@ def test_post_quantum_claims_are_agility_check_discriminates(tmp_path):
 
     write(site=SURFACE + "quantum safe\n")
     assert level("site/index.html") == "FAIL", "the rule holds on the site, not only the README"
+
+    # v9.458: and on NOTICE, which a redistributor is required to carry, so it reaches
+    # readers who never see the README or the site. Adding it to the surfaces list is
+    # only worth something if a claim placed THERE is what turns the check red.
+    write(notice=SURFACE + "Polaris is quantum-resistant.\n")
+    assert level("NOTICE") == "FAIL", \
+        "the rule holds on NOTICE, which travels with every redistributed copy"
 
     # A claim with no pointer to where the limits are stated.
     write(mission="Polaris signs with post-quantum ML-DSA-65.\n")
@@ -14166,6 +14177,76 @@ def test_no_deleted_apparatus_citations_check_discriminates(tmp_path):
             f.unlink()
     assert level("measuring nothing") == "FAIL", \
         "must FAIL rather than report clean when it scanned no files"
+
+
+def test_license_pinned_check_discriminates(tmp_path):
+    """One license, stated the same way everywhere a consumer reads it.
+
+    The manifest arm is the one that matters: it is globbed, so the fixture proves a
+    package added later is in scope rather than needing to be remembered.
+    """
+    LICENSE = ("                                 Apache License\n"
+               "                           Version 2.0, January 2004\n"
+               "   Copyright 2026 Egor Khaklin\n")
+    NOTICE = "Polaris\nThis product is licensed under the Apache License, Version 2.0.\n"
+    README = ("[![License](https://img.shields.io/badge/license-Apache--2.0-3b6e48)](LICENSE)\n"
+              "## License\n\n[Apache License 2.0](LICENSE). Copyright 2026 Egor Khaklin.\n")
+    PKG = '{\n  "name": "polaris-verify",\n  "license": "Apache-2.0"\n}\n'
+
+    def write(license=LICENSE, notice=NOTICE, readme=README, pkg=PKG, extra=None):
+        for f in tmp_path.rglob("*"):
+            if f.is_file():
+                f.unlink()
+        (tmp_path / "LICENSE").write_text(license)
+        if notice is not None:
+            (tmp_path / "NOTICE").write_text(notice)
+        (tmp_path / "README.md").write_text(readme)
+        (tmp_path / "sdk" / "typescript").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "sdk" / "typescript" / "package.json").write_text(pkg)
+        if extra is not None:
+            rel, text = extra
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text(text)
+
+    def level(msg_contains=None):
+        out = checks.check_license_is_pinned(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS when LICENSE, NOTICE, the manifest and the README agree"
+
+    # A LICENSE whose appendix was never filled in grants a template, not a license.
+    write(license=LICENSE.replace("Copyright 2026 Egor Khaklin",
+                                  "Copyright [yyyy] [name of copyright owner]"))
+    assert level("placeholder") == "FAIL", \
+        "must FAIL when the copyright line is still the Apache appendix placeholder"
+
+    write(notice=None)
+    assert level("NOTICE is missing") == "FAIL", \
+        "must FAIL when the file Apache 2.0 section 4 requires a redistributor to carry is gone"
+
+    # The shape this exists for: a package added later with no license field at all,
+    # which npm and crates.io both render as no permission granted.
+    write(extra=("polaris_cli/pyproject.toml", '[project]\nname = "polaris"\n'))
+    assert level("declares no Apache-2.0 license") == "FAIL", \
+        "must FAIL when a newly added package manifest states no license"
+
+    # And the same manifest, correct, must pass: the rule is the declaration, not the path.
+    write(extra=("polaris_cli/pyproject.toml",
+                 '[project]\nname = "polaris"\nlicense = { text = "Apache-2.0" }\n'))
+    assert level() == "OK", "a new package that DOES declare the license must pass"
+
+    write(readme=README.replace("license-Apache--2.0", "license-MIT"))
+    assert level("badge") == "FAIL", \
+        "must FAIL when the answer most readers actually read disagrees with the file"
+
+    # Nothing to measure is not a clean tree.
+    write(pkg='{\n  "private": true\n}\n')
+    assert level("measured nothing") == "FAIL", \
+        "must FAIL rather than report clean when no package manifest was found"
 
 
 def test_ci_toolchain_present_check_discriminates(tmp_path):

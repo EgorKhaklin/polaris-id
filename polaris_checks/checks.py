@@ -8052,7 +8052,14 @@ _OVERCLAIM_PHRASES = (
 
 #: Surfaces a reader outside the project sees. The operator console is not here: it is
 #: read by somebody who already has an account on the instance.
-_OUTWARD_SURFACES = ("README.md", "site/index.html", "MISSION.md", "CITATION.cff")
+#:
+#: NOTICE joined this list in v9.458. It is the most outward surface the project has --
+#: Apache 2.0 section 4 requires a redistributor to carry it, so it travels with every
+#: copy of the code, further than the README and much further than the site. It was
+#: outside every honesty check, and it said the project was "maintained as a working
+#: system prepared for national deployment" while every checked surface said reference
+#: implementation on notional data.
+_OUTWARD_SURFACES = ("README.md", "site/index.html", "MISSION.md", "CITATION.cff", "NOTICE")
 
 #: The readiness ledger is where the limitation lives, so a claim must point at it.
 _PQ_LIMITATION_REL = "docs/PRODUCTION-READINESS.md"
@@ -8319,6 +8326,115 @@ def check_ci_jobs_install_what_they_run(root: pathlib.Path) -> list[Finding]:
         return findings
     return _ok(name, "each of the %d CI jobs that reaches the TypeScript SDK installs its "
                      "dependencies and pins Node" % checked)
+
+
+#: The one SPDX identifier this work is under. Apache 2.0 rather than MIT or BSD because
+#: of section 3: an express, irrevocable patent grant from every contributor, with a
+#: defensive termination clause. For a reference implementation of a lattice signature
+#: scheme -- a field whose patent landscape is younger than the algorithms -- a permissive
+#: license that grants copyright permission and says nothing about patents leaves the
+#: integrator to carry that risk alone. Copyleft would contradict the purpose: the point
+#: is to be built on, including by the deployments this models.
+_LICENSE_SPDX = "Apache-2.0"
+
+#: Manifests a package manager reads a license out of. Globbed rather than listed, so a
+#: package added later is in scope without anyone remembering to add it here.
+_MANIFEST_GLOBS = ("**/package.json", "**/pyproject.toml", "**/Cargo.toml", "**/*.cff")
+
+#: Build output and vendored dependency trees. Their manifests are other people's.
+_MANIFEST_SKIP = ("node_modules", "target", "venv", "__pycache__", ".git", "vendor",
+                  "site-packages", ".hypothesis", ".ruff_cache")
+
+
+def check_license_is_pinned(root: pathlib.Path) -> list[Finding]:
+    """One license, declared the same way everywhere a consumer reads it (v9.458).
+
+    Apache 2.0 was already correct here and every manifest already agreed. Nothing
+    enforced either. A new package could ship with no `license` field at all, which
+    npm and crates.io both render as "unlicensed" (meaning: no permission granted), and
+    the tree would be green. That is not a hypothetical shape of mistake; it is the
+    single most common licensing defect in a multi-package repository.
+
+    Four properties:
+
+    - LICENSE is Apache 2.0 and its appendix is FILLED IN. A LICENSE that still carries
+      `[yyyy] [name of copyright owner]` grants the reader a template, not a license.
+    - NOTICE exists and names the same license. Apache 2.0 section 4 requires a
+      redistributor to carry NOTICE; the README tells them to, so it has to be there.
+    - Every manifest a package manager reads declares the same SPDX identifier. Globbed,
+      not listed, so a package added tomorrow is covered without anyone remembering.
+    - The README's badge and License section say the same thing, because that is the
+      answer most people actually read.
+
+    The license itself is a decision, not an invariant, and this check does not defend
+    the choice. What it defends is that the tree states ONE answer. If the choice ever
+    changes, this check fails everywhere the old answer is still written down, which is
+    exactly the list of edits that change would need.
+    """
+    name = "license_pinned"
+    findings: list[Finding] = []
+
+    lic = _read_raw(root, "LICENSE")
+    if not lic:
+        return _fail(name, "LICENSE is missing; without it the default is no permission at all, "
+                           "whatever the README says")
+    if "Apache License" not in lic or "Version 2.0" not in lic:
+        findings.extend(_fail(name, "LICENSE is not the Apache 2.0 text, but the manifests and "
+                                    "the README say Apache-2.0"))
+    for placeholder in ("[yyyy]", "[name of copyright owner]"):
+        if placeholder in lic:
+            findings.extend(_fail(name, "LICENSE still carries the %r placeholder from the "
+                                        "appendix, so the copyright line was never filled in and "
+                                        "the file reads as a template rather than a grant"
+                                        % placeholder))
+    if not re.search(r"Copyright\s+\d{4}\s+\S", lic):
+        findings.extend(_fail(name, "LICENSE names no copyright holder and year"))
+
+    notice = _read_raw(root, "NOTICE")
+    if not notice:
+        findings.extend(_fail(name, "NOTICE is missing; Apache 2.0 section 4 requires a "
+                                    "redistributor to carry it and the README tells them to"))
+    elif "Apache License" not in notice:
+        findings.extend(_fail(name, "NOTICE does not name the license the work is under"))
+
+    # Every manifest a package manager reads. Globbed so a new package is in scope.
+    seen = 0
+    for pattern in _MANIFEST_GLOBS:
+        for path in sorted(root.glob(pattern)):
+            rel = path.relative_to(root).as_posix()
+            if any(part in _MANIFEST_SKIP for part in path.parts):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            # Only manifests that DECLARE a package are in scope: a pyproject that is
+            # nothing but tool configuration has no license to state.
+            if path.name == "pyproject.toml" and "[project]" not in text:
+                continue
+            if path.name == "Cargo.toml" and "[package]" not in text:
+                continue
+            if path.name == "package.json" and '"name"' not in text:
+                continue
+            seen += 1
+            if _LICENSE_SPDX not in text:
+                findings.extend(_fail(name, "%s declares no %s license; a package manager reads "
+                                            "a missing license field as no permission granted"
+                                            % (rel, _LICENSE_SPDX)))
+    if not seen:
+        return _fail(name, "no package manifest was found to check, so this measured nothing")
+
+    readme = _read_raw(root, "README.md")
+    if not readme:
+        findings.extend(_fail(name, "README.md could not be read"))
+    else:
+        if "license-Apache--2.0" not in readme:
+            findings.extend(_fail(name, "the README's license badge does not say Apache-2.0"))
+        if "Apache License 2.0" not in readme:
+            findings.extend(_fail(name, "the README's License section does not name Apache 2.0"))
+
+    if findings:
+        return findings
+    return _ok(name, "LICENSE is Apache 2.0 with its copyright line filled in, NOTICE carries it, "
+                     "and all %d package manifests plus the README badge and License section "
+                     "declare the same identifier" % seen)
 
 
 def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
@@ -16782,6 +16898,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_post_quantum_claims_are_agility,
     check_sdk_refusals_are_mutation_tested,
     check_ci_jobs_install_what_they_run,
+    check_license_is_pinned,
     check_no_citations_to_deleted_apparatus,
     check_verify_witness_sampling,
     check_constitution_layered,

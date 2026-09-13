@@ -5,6 +5,42 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.458 — 2026-09-13 (the license was right and nothing held it there)
+
+A question worth asking directly: keep Apache 2.0, or change it. Measured first, then answered.
+
+**Keep it.** The reason is section 3, the express and irrevocable patent grant, with a clause
+that terminates it for anyone who brings a patent suit over the work. MIT and BSD grant copyright
+permission and say nothing about patents. For a reference implementation of a lattice signature
+scheme that is the wrong silence to ship: the patent landscape around post-quantum cryptography is
+younger than the algorithms, and an integrator building a production verifier out of this code
+would be carrying that risk with nothing from the license. Copyleft would defeat the purpose,
+which is to be built on, including by the deployments this models.
+
+Nothing in the dependency tree argues otherwise, and that was checked rather than assumed. Every
+Python, Rust and npm dependency is permissive (Apache-2.0, MIT, BSD-2/3-Clause, PSF-2.0, or dual
+MIT/Apache-2.0) with one exception: psycopg2, LGPL 3 with an OpenSSL exception, used as an
+unmodified library through its public API. Its obligations attach to psycopg2, not to this work.
+NOTICE now says so by name instead of listing it among four dependencies that "each retain their
+own license", which is true and useless to anyone doing a review.
+
+**What was actually missing was enforcement.** All five package manifests already declared
+Apache-2.0, the LICENSE appendix was filled in, NOTICE existed. Nothing held any of it there. A
+package added later with no `license` field renders on npm and crates.io as no permission granted,
+and the tree would have been green. `check_license_is_pinned` globs for manifests rather than
+listing them, so a package added tomorrow is in scope without anyone remembering, and it holds
+LICENSE, NOTICE, the README badge and the README's License section to one identifier. A tree where
+it finds no manifest FAILS rather than reporting clean.
+
+**And NOTICE was outside every honesty check.** It is the furthest-travelling surface the project
+has, because section 4 requires a redistributor to carry it, and it said the project was
+"maintained as a working system prepared for national deployment" while every checked surface said
+reference implementation on notional data. It now says what the others say, and it is in
+`_OUTWARD_SURFACES`, so the post-quantum agility rule holds it too: it points at the readiness
+ledger rather than leaving the word unqualified.
+
+---
+
 ## v9.457 — 2026-09-13 (a job that could not run what it was asked to run)
 
 v9.456 wired the two-SDK mutation drill into the `pqc-real` CI job. That job has Python and a

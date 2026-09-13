@@ -16,13 +16,18 @@ About this work
 ================================================================================
 
 Polaris is a reference implementation of a national identity token system:
-post-quantum signatures, zero-knowledge verification, and an append-only
-audit of record, enforced in the database schema rather than in policy.
+ML-DSA-65 signatures under an audited algorithm-migration path, zero-knowledge
+verification, and an append-only audit of record, enforced in the database
+schema rather than in policy. What the cryptography does and does not buy,
+including what a break in the underlying lattice assumption would cost, is
+stated in docs/PRODUCTION-READINESS.md.
 
 It began as the author's project for SCS-230 (Database Management Systems)
 at Seton Hill University in spring 2026 and is maintained as a working
-system prepared for national deployment. The constitution (the ten hard
-constraints C1 to C10 and the vocation) is MISSION.md.
+reference implementation on notional data. It has never held real identity
+data, it is not deployed to any population, and the physical token it models
+is not manufactured. The constitution (the ten hard constraints C1 to C10 and
+the vocation) is MISSION.md.
 
 ================================================================================
 Components and their separate notices
@@ -42,9 +47,20 @@ the on-map attribution control. D3 and TopoJSON (both BSD-3-Clause) are
 vendored for the earlier globe renderer; original copyright notices are
 preserved in the vendored source.
 
-The web application uses Flask, Werkzeug, psycopg2, and redis-py. Each
+The web application uses Flask, Werkzeug, psycopg2 and redis-py. Each
 retains its own license; consult requirements.txt for versions and the
-upstream repositories for license text.
+upstream repositories for license text. Named specifically because it is the
+one dependency whose license is not permissive: psycopg2 (used through the
+psycopg2-binary wheel) is LGPL 3 with an OpenSSL exception. It is used as an
+unmodified library through its public API, which is the use the LGPL is
+written for; its terms attach to psycopg2 itself, not to this work. A
+redistributor who MODIFIES psycopg2 takes on the LGPL's obligations for that
+modified copy.
+
+Every other dependency of every package (Python, Rust and npm) is under a
+permissive license: Apache-2.0, MIT, BSD-2/3-Clause, PSF-2.0, or a dual
+MIT/Apache-2.0. None is incompatible with this work's Apache 2.0 license, and
+none imposes a copyleft obligation on it.
 
 The macOS launcher (Polaris.command + polaris_mac_launch.sh) is original
 to this work.
