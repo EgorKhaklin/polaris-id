@@ -129,6 +129,61 @@ class ScopedNullifierTests(unittest.TestCase):
 ROOT_JUNK = object()
 
 
+class CorrelationIsAboutTheTranscriptTests(unittest.TestCase):
+    """`correlation: bounded` is a claim about THIS transcript, not about the mechanism.
+
+    Until it was measured, the verdict was set whenever a scoped nullifier was present and
+    never checked its own stated premise, that the presentation showed no stable
+    credential. A presentation carrying a nullifier AND the full credential pack reported
+    "bounded" while handing the verifier a stable token value, issuer key and signature.
+    Two colluding verifiers link on any one of the three in a single comparison, and both
+    of their verifiers had told them the correlation was bounded.
+
+    That is the shape the lab exists to catch: a mechanism was present, so the property was
+    assumed. Mechanism existence is not the property.
+    """
+
+    CRED = {"format": "polaris-authenticity-pack/1", "token_value": "STABLE-TOKEN-0001",
+            "algorithm": "ML-DSA-65", "public_key_hex": "aa" * 1952,
+            "signature_hex": "bb" * 3309}
+    ZK = {"proof_hex": "00", "public_inputs": {"nullifier_hex": "cc" * 32}}
+
+    def _corr(self, **parts):
+        pres = {"format": "polaris-presentation/1"}
+        pres.update(parts)
+        return V.verify_presentation(pres, verifier_scope="verifier-A")
+
+    def test_a_nullifier_beside_the_credential_is_not_bounded(self):
+        v = self._corr(credential=self.CRED, zk_proof=self.ZK)
+        self.assertEqual(v["correlation"], "exposed",
+                         "a transcript containing a stable token value is correlatable "
+                         "whatever handle the verifier keys its records by")
+
+    def test_a_nullifier_with_the_credential_withheld_is_bounded(self):
+        v = self._corr(zk_proof=self.ZK)
+        self.assertEqual(v["correlation"], "bounded")
+        self.assertEqual(v["pairwise_handle"], "cc" * 32)
+
+    def test_the_holder_key_alone_exposes_it(self):
+        """The holder key is the same value at every verifier, which is exactly why the
+        pairwise handle is derived FROM it and why showing it defeats the point."""
+        v = self._corr(zk_proof=self.ZK,
+                       holder_binding={"holder_public_key_hex": "dd" * 32})
+        self.assertEqual(v["correlation"], "exposed")
+
+    def test_each_stable_field_alone_is_enough(self):
+        for field in ("token_value", "public_key_hex", "signature_hex"):
+            with self.subTest(field=field):
+                v = self._corr(credential={"format": "polaris-authenticity-pack/1",
+                                           field: "ee" * 8},
+                               zk_proof=self.ZK)
+                self.assertEqual(v["correlation"], "exposed",
+                                 "%s is identical at every verifier" % field)
+
+    def test_no_nullifier_is_never_bounded(self):
+        self.assertEqual(self._corr(credential=self.CRED)["correlation"], "exposed")
+
+
 class HolderProofStatementTests(unittest.TestCase):
     """P9.1's constitutional property, on the bytes."""
 

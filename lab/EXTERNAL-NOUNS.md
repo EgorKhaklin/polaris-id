@@ -163,5 +163,15 @@ Separately, the link checker was wrong to demand a build-output path exist at al
 passed or failed on whether somebody had run a build. Paths through `dist`, `build`, `target`,
 `node_modules` and `__pycache__` are no longer treated as source references.
 
-**First interop target: not started.** OpenID4VP 1.0 + HAIP verifier, one credential format,
+**First interop target: not started.**
+
+**Lab, first finding (2026-09-13).** `lab/linkability/` opened with a CORE-BUG against an
+existing promise: `verify_presentation` reported `correlation: "bounded"` whenever a scoped
+nullifier was present, never checking its own stated premise that the presentation showed no
+stable credential. A transcript carrying a nullifier AND the full credential pack reported
+bounded while handing the verifier a stable token value, issuer key and signature, any one of
+which two colluding verifiers match in a single string comparison. Fixed and regression-tested
+the same day. The rest of the threat model (presentation size, timing, issuer metadata, status
+artifacts, transcript structure) is NOT measured, and `bounded` now means no field is trivially
+identical across verifiers, not that an adversary has no advantage. OpenID4VP 1.0 + HAIP verifier, one credential format,
 format to be chosen from the first real use case.

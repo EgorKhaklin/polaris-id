@@ -3951,6 +3951,37 @@ def grant_within_limits(grant, uses_so_far=0, amount=None):
     return True, None
 
 
+#: Fields a presentation may carry that are THE SAME VALUE at every verifier. Any one of
+#: them lets two verifiers who kept the raw transcript match their records, whatever handle
+#: they were told to key on. The holder key is here too: it is stable across verifiers by
+#: construction, which is exactly what makes the pairwise handle derived FROM it useful and
+#: the key itself dangerous to show.
+_STABLE_CROSS_VERIFIER_FIELDS = (
+    ("credential", "token_value", "a stable token value"),
+    ("credential", "public_key_hex", "the issuer's public key"),
+    ("credential", "signature_hex", "the issuer's signature over this credential"),
+    ("holder_binding", "holder_public_key_hex", "the holder's public key"),
+)
+
+
+def _stable_cross_verifier_material(presentation, cred):
+    """Name the first thing in this transcript that is identical at every verifier, or None.
+
+    Used to decide whether a scoped nullifier actually bounded anything. A verifier that
+    was shown a stable value can correlate on it regardless of what it keys its records by.
+    """
+    if not isinstance(presentation, dict):
+        return None
+    sources = {"credential": cred if isinstance(cred, dict) else {},
+               "holder_binding": presentation.get("holder_binding")
+               if isinstance(presentation.get("holder_binding"), dict) else {}}
+    for where, field, human in _STABLE_CROSS_VERIFIER_FIELDS:
+        val = sources.get(where, {}).get(field)
+        if isinstance(val, str) and val.strip():
+            return human
+    return None
+
+
 def verify_presentation(presentation, anchor_keys=None, now=None, max_window_seconds=None, expected_context=None,
                         expected_nonce=None, require_holder_proof=False, verifier_scope=None):
     """Decide a presentation OFFLINE (P8.6): the credential's authenticity (and, with anchor
@@ -4022,11 +4053,31 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
         zk_pi = (presentation.get("zk_proof") or {}).get("public_inputs") \
             if isinstance(presentation.get("zk_proof"), dict) else None
         zk_nullifier = str((zk_pi or {}).get("nullifier_hex") or "").lower() or None
-        if zk_nullifier:
-            # The strong form: the verifier holds a value derived under its own scope from a
-            # secret it never sees, and the presentation showed it no stable credential.
+        # "bounded" is a claim ABOUT THIS TRANSCRIPT, not about the mechanism that produced
+        # it. Until now it was set whenever a nullifier was present, and never checked the
+        # premise its own comment stated. Measured: a presentation carrying a nullifier AND
+        # the full credential pack reported "bounded" while handing the verifier a stable
+        # token value, issuer key and signature. Two colluding verifiers link on any of the
+        # three in one comparison, and both of their verifiers had told them the correlation
+        # was bounded. Mechanism existence is not the property.
+        exposed_by = _stable_cross_verifier_material(presentation, cred)
+        if zk_nullifier and not exposed_by:
+            # The strong form, and now it is earned: the verifier holds a value derived under
+            # its own scope from a secret it never sees, and the presentation showed it no
+            # stable credential.
             v["pairwise_handle"] = zk_nullifier
             v["correlation"] = "bounded"
+        elif zk_nullifier:
+            # A nullifier that arrived alongside the material it exists to withhold. The
+            # handle is still the right thing to key records by; the correlation is not
+            # bounded, and saying so is the whole job of this field.
+            v["pairwise_handle"] = zk_nullifier
+            v["correlation"] = "exposed"
+            if not v["note"]:
+                v["note"] = ("this presentation carries a scoped nullifier AND %s, so a "
+                             "second verifier holding the same transcript can correlate on "
+                             "it: the nullifier bounds what is STORED, not what was SHOWN"
+                             % exposed_by)
         else:
             # The weaker, honest form. Keying records on this handle still stops two verifiers
             # matching people by comparing STORED records, which is the realistic threat. It
