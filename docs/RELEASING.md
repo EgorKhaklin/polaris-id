@@ -103,6 +103,20 @@ use the *pending* publisher form.
 
 ## Publishing
 
+**The dry run has been executed.** 2026-09-13, run 34761304289: `build-and-gate` green, both
+publish jobs correctly skipped, and it produced
+
+```
+dist/polaris-verify/polaris_verify-0.1.0-py3-none-any.whl      twine check PASSED
+dist/polaris-verify/polaris_verify-0.1.0.tar.gz                twine check PASSED
+dist/polaris-sdk-python/polaris_sdk_python-0.1.0-py3-none-any.whl   twine check PASSED
+dist/polaris-sdk-python/polaris_sdk_python-0.1.0.tar.gz             twine check PASSED
+dist/polaris-sdk-ts-0.1.0.tgz
+```
+
+So the mechanism is exercised, not merely written: a workflow nobody has ever run is a plan.
+The remaining untested step is the authenticated publish itself, which cannot be rehearsed.
+
 Actions → **Publish product artifacts** → Run workflow.
 
 - **Dry run** (the default): leave `target` at `dry-run-everything` and `confirm` empty.

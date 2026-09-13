@@ -134,7 +134,11 @@ rather than assumed. The name is `polaris-sdk-ts` now, which is the contract's o
 the artifact, matches `polaris-sdk-python`, and is unclaimed. Being installable from a
 registry is item one of the 90-day objective, and under the old name it was unreachable.
 
-**Publishing is prepared and not done.** `.github/workflows/publish.yml` is manual-dispatch
+**Publishing is prepared, dry-run EXERCISED, and not done.** The dry run ran on 2026-09-13
+(run 34761304289): five artifacts built, all four Python distributions passed `twine check` on
+the runner, the npm tarball packed, both publish jobs correctly skipped. A workflow nobody has
+run is a plan, so this is the difference between the two. The only untested step left is the
+authenticated publish, which cannot be rehearsed. `.github/workflows/publish.yml` is manual-dispatch
 only, defaults to a dry run, and refuses to publish anything that fails the product boundary
 drill. It uses Trusted Publishing on both registries, so no long-lived token sits in the
 repository. `docs/RELEASING.md` carries the one-time setup. Nothing has been published:
