@@ -146,5 +146,22 @@ external use.** A download count is not a person. The rows at the top of this fi
 zero until a named wallet, a named conformance profile with a score, a named relying party,
 or a defect from somebody who is not the author fills one in.
 
+**The local gate now predicts CI (2026-09-13).** Three times in one session it said READY on
+a tree CI then rejected, every time for the same reason: this working directory held files a
+fresh checkout does not. An untracked `lab/` that `check_system_map` only counts once tracked.
+A built `sdk/typescript/dist/` that made `package.json`'s `exports` resolve. A gate whose
+verdict depends on what happens to be lying around predicts nothing, and each miss cost a red
+build and a fix-forward commit.
+
+`polaris-preflight.sh` now also runs the check layer and the link check against a `git archive`
+of the INDEX, which is the checkout CI performs: staged work counted, untracked files absent by
+construction. It reproduced CI's failure exactly (the same two unresolved references) before the
+fix landed, which is the only evidence that it does anything.
+
+Separately, the link checker was wrong to demand a build-output path exist at all. `main`,
+`types` and `exports` point at compiled output a fresh checkout has never built, so the check
+passed or failed on whether somebody had run a build. Paths through `dist`, `build`, `target`,
+`node_modules` and `__pycache__` are no longer treated as source references.
+
 **First interop target: not started.** OpenID4VP 1.0 + HAIP verifier, one credential format,
 format to be chosen from the first real use case.

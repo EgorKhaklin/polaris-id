@@ -32,6 +32,40 @@ else
   fails=$((fails+1))
 fi
 
+# 1b. The same two checks, against the tree AS CI WILL SEE IT.
+#
+# Three times in one session the local gate said READY on a tree CI then rejected, every
+# time because this working directory holds files a fresh checkout does not: an untracked
+# lab/ that check_system_map only counts once tracked, and a built sdk/typescript/dist/
+# that made a link resolve. A gate whose verdict depends on what happens to be lying
+# around does not predict anything.
+#
+# `git archive` writes exactly what is committed, so this is the checkout CI performs.
+# Untracked and ignored files are absent by construction, which is the whole point.
+if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  _pristine="$(mktemp -d)"
+  # The INDEX, not HEAD: staged work is what is about to be committed, and a gate that
+  # ignored it would report on the previous commit while you fix the current one.
+  # Untracked files are still absent, which is the property being tested.
+  _tree="$(git -C "$ROOT" write-tree 2>/dev/null || echo HEAD)"
+  if git -C "$ROOT" archive "$_tree" 2>/dev/null | tar -x -C "$_pristine" 2>/dev/null; then
+    # The EXPORT's own scripts, not this working tree's. Running the local link checker
+    # against the export would mix a fixed checker with committed content and report a
+    # pass that neither tree would produce -- which is exactly what it did the first time.
+    if (cd "$_pristine" && python3 -m polaris_checks.run > /tmp/_polaris_pristine.out 2>&1 \
+        && bash "$_pristine/scripts/polaris-link-check.sh" --ci >> /tmp/_polaris_pristine.out 2>&1); then
+      echo "  ✓ pristine checkout: the same gate passes on what is actually committed"
+    else
+      echo "  ✗ pristine checkout: passes here, fails on a fresh clone —"
+      { grep '✗' /tmp/_polaris_pristine.out; grep -A 4 '^BROKEN' /tmp/_polaris_pristine.out; } \
+        | head -8 | sed 's/^/    /'
+      echo "    (untracked files are invisible to this on purpose: git add them, then re-run)"
+      fails=$((fails+1))
+    fi
+  fi
+  rm -rf "$_pristine"
+fi
+
 # 2. Cross-reference integrity.
 if bash "${HERE}/polaris-link-check.sh" --ci > /tmp/_polaris_links.out 2>&1; then
   echo "  ✓ polaris-link-check: all references resolve"

@@ -76,6 +76,9 @@ MD_LINK = re.compile(r'\]\(([^)]+)\)')
 # Match relative path mentions in code:
 #   '../X.md', '../../Y.md', './X.md', or just 'X.md' inside a comment
 # We require the line to look like a comment (#, //, --) OR a string literal.
+#: Directories that hold BUILD OUTPUT, never checked into git. A reference into one
+#: is correct and unresolvable at the same time, until something builds it.
+BUILD_OUTPUT_DIRS = {'dist', 'build', 'target', 'node_modules', '__pycache__'}
 CODE_PATH = re.compile(r'''(?:['\"])(\.{1,2}/[\w./-]+\.(?:md|py|sh|sql|html|js|css|json))(?:['\"])''')
 # Match Jinja template paths: {% extends "base.html" %} etc.
 JINJA_PATH = re.compile(r"['\"]([\w./-]+\.(?:html|md|css|js))['\"]")
@@ -157,6 +160,14 @@ for dirpath, dirs, files in os.walk(root):
             for m in CODE_PATH.finditer(line):
                 target = m.group(1)
                 resolved = os.path.normpath(os.path.join(os.path.dirname(path), target))
+                # A path INTO a build output is not a source path. A package manifest
+                # points `main`, `types` and `exports` at compiled output that a fresh
+                # checkout has never built, so demanding it exist makes this pass or fail
+                # on whether someone happened to run a build. Measured: it passed locally
+                # with dist/ present and failed CI on the same commit, which is the wrong
+                # way round for a check to behave.
+                if any(part in BUILD_OUTPUT_DIRS for part in target.split('/')):
+                    continue
                 checked += 1
                 if not os.path.exists(resolved):
                     broken.append((rel, lineno, target, 'code path'))
