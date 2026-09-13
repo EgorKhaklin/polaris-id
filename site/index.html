@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Polaris: a reference implementation of an issuer-unlinkable, compulsion-resistant identity-token system signed with ML-DSA-65 under an audited algorithm-migration path</title>
-<meta name="description" content="A working reference implementation of an issuer-unlinkable, compulsion-resistant identity-token system signed with ML-DSA-65 under an audited algorithm-migration path. Educational; notional data only. The guarantees live in the database; CI boots the production-profile stack on every push. A reference implementation, not a deployment.">
-<meta property="og:title" content="Polaris: a reference implementation of an issuer-unlinkable, compulsion-resistant identity-token system signed with ML-DSA-65 under an audited algorithm-migration path">
-<meta property="og:description" content="A credential verification engine signed with ML-DSA-65: issue, hold, present, and verify a credential offline against published keys or online against current status. Issuer-unlinkable in its default verification mode, compulsion-resistant by construction. A reference implementation on notional data; CI proves it on every push.">
+<title>Polaris: a reference implementation of an issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path</title>
+<meta name="description" content="A working reference implementation of an issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path. Educational; notional data only. The guarantees live in the database; CI boots the production-profile stack on every push. A reference implementation, not a deployment.">
+<meta property="og:title" content="Polaris: a reference implementation of an issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path">
+<meta property="og:description" content="A credential verification engine signed with ML-DSA-65: issue, hold, present, and verify a credential offline against published keys or online against current status. Issuer-unlinkable in its default verification mode, duress-aware by construction. A reference implementation on notional data; CI proves it on every push.">
 <meta property="og:image" content="https://egorkhaklin.github.io/polaris-id/atlas-globe.png">
 <meta property="og:image:alt" content="The Polaris Atlas: a dark operational map of North America with verification clusters and the coverage figures. Notional data.">
 <meta property="og:image:width" content="2400">
@@ -190,7 +190,7 @@ footer a{color:var(--ink-dim)}
 <div class="hero">
     <img src="polaris_logo_clean.png" alt="The Polaris emblem: a gold sun on a navy shield" width="180" height="180" fetchpriority="high" decoding="async">
     <h1>POLARIS</h1>
-    <p class="sub">A working reference implementation of an issuer-unlinkable, compulsion-resistant
+    <p class="sub">A working reference implementation of an issuer-unlinkable, duress-aware
         identity-token system, signed with ML-DSA-65 under an audited algorithm-migration path.</p>
     <p class="scope">Educational project · notional data only</p>
     <p class="motto">Fixus inter mutabilia · fixed amid the mutable</p>
@@ -200,7 +200,7 @@ footer a{color:var(--ink-dim)}
     </div>
     <p class="strip">
         <strong>45</strong> schema tables · <strong>124</strong> routes ·
-        <strong>263</strong> machine-checked invariants ·
+        <strong>264</strong> machine-checked invariants ·
         <strong>ML-DSA-65</strong> signing default ·
         <strong>X25519MLKEM768</strong> TLS edge ·
         <strong>Plonky2</strong> ZK + second witness
@@ -312,7 +312,7 @@ footer a{color:var(--ink-dim)}
     <div class="numbers">
         <div class="num"><b>755</b><span>product tests, live DB</span></div>
         <div class="num"><b>84</b><span>crypto-witness tests</span></div>
-        <div class="num"><b>263</b><span>invariant checks</span></div>
+        <div class="num"><b>264</b><span>invariant checks</span></div>
         <div class="num"><b>20</b><span>CI jobs</span></div>
         <div class="num"><b>5</b><span>services booted in CI</span></div>
     </div>
@@ -322,7 +322,7 @@ footer a{color:var(--ink-dim)}
         <li><strong>Backups restore, provably.</strong> An encrypted backup and restore round-trip runs in CI with a fail-closed negative check, and the HA profile's automated failover is drilled on every push.</li>
         <li><strong>The post-quantum handshake is proven, not claimed.</strong> CI negotiates X25519MLKEM768 against a real certificate on every push, and signs with real ML-DSA-65 inside the production image.</li>
         <li><strong>CVEs gate the build.</strong> Both the dependency surface and all five self-built container images are scanned on every push; a fixable CRITICAL fails CI.</li>
-        <li><strong>Every check can prove it works.</strong> Each of the 263 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
+        <li><strong>Every check can prove it works.</strong> Each of the 264 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
     </ul>
 </section>
 

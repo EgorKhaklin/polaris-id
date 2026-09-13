@@ -14267,6 +14267,69 @@ def test_license_pinned_check_discriminates(tmp_path):
         "must FAIL rather than report clean when no package manifest was found"
 
 
+def test_duress_claims_are_aware_check_discriminates(tmp_path):
+    """The word was weakened because the evidence did not support it, not as a hedge.
+
+    The mechanism resists a casual coercer at the counter. It does not resist an informed
+    coercer beside the holder, and against lawful access it is net-negative: DuressEvent is
+    append-only with no purge path, so signalling duress manufactures indelible evidence
+    that the holder resisted.
+    """
+    LEDGER = ("The casual coercer is resisted.\n"
+              "DuressEvent is append-only with no purge path, so lawful access is the case "
+              "the mechanism makes worse.\n"
+              "The word is duress-aware.\n")
+    CLEAN = "Polaris is an issuer-unlinkable, duress-aware identity-token system.\n"
+
+    def write(ledger=LEDGER, **surfaces):
+        (tmp_path / "lab" / "duress").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "site").mkdir(parents=True, exist_ok=True)
+        if ledger is None:
+            f = tmp_path / "lab" / "duress" / "README.md"
+            if f.exists():
+                f.unlink()
+        else:
+            (tmp_path / "lab" / "duress" / "README.md").write_text(ledger)
+        for rel, body in {"README.md": CLEAN, "site/index.html": CLEAN, "MISSION.md": CLEAN,
+                          "CITATION.cff": CLEAN, "NOTICE": CLEAN, "CLAUDE.md": CLEAN}.items():
+            (tmp_path / rel).write_text(surfaces.get(rel.replace("/", "_").replace(".", "_"), body))
+
+    def level(msg_contains=None):
+        out = checks.check_duress_claims_are_aware(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS when every surface says duress-aware"
+
+    # The claim itself, on the surface a stranger reads first.
+    write(README_md=CLEAN + "Polaris is compulsion-resistant.\n")
+    assert level("compulsion-resistant") == "FAIL", \
+        "must FAIL when an outward surface claims compulsion RESISTANCE"
+
+    # And the spellings somebody reaches for instead.
+    for phrase in ("coercion-resistant", "resists compulsion", "compulsion resistant"):
+        write(site_index_html=CLEAN + "It is %s.\n" % phrase)
+        assert level(phrase) == "FAIL", "must FAIL on %r" % phrase
+
+    # The assessment has to say which coercer IS resisted, or the weaker word reads as a
+    # blanket rejection of a mechanism that works.
+    write(ledger=LEDGER.replace("The casual coercer is resisted.\n", ""))
+    assert level("does not name the coercer") == "FAIL", \
+        "must FAIL when the assessment does not name the coercer the mechanism resists"
+
+    # And why lawful access is the case it worsens rather than merely misses.
+    write(ledger=LEDGER.replace("append-only with no purge path, ", ""))
+    assert level("lawful access") == "FAIL", \
+        "must FAIL when the assessment does not say why the record is indelible"
+
+    write(ledger=None)
+    assert level("could not be read") == "FAIL", \
+        "must FAIL when there is no assessment behind the weaker claim"
+
+
 def test_ci_toolchain_present_check_discriminates(tmp_path):
     """The property v9.456 shipped without: a job that runs a tool it cannot run.
 

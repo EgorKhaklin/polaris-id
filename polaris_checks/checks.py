@@ -8087,6 +8087,87 @@ _APPARATUS_HISTORY = ("CHANGELOG.md", "DEVNOTES/", "polaris_sql/migrations/",
                       "docs/paper/", "meta/")
 
 
+#: Phrasing that claims the system RESISTS compulsion, rather than that it notices duress.
+#: Measured in lab/duress/: the mechanism resists a casual coercer at the counter, does not
+#: resist an informed coercer standing beside the holder (the code is typed on the
+#: verifier's terminal, and enrolment is opt-in so its absence is interrogable), and does
+#: not resist lawful or institutional access at all -- against which it is net-negative,
+#: because DuressEvent is append-only with no purge path, so the mechanism manufactures
+#: indelible evidence that the holder resisted.
+_COMPULSION_ASSERTIONS = ("compulsion-resistant", "compulsion resistant",
+                          "coercion-resistant", "coercion resistant",
+                          "resists compulsion", "resistant to compulsion")
+
+#: Where the assessment lives, so a surface making the weaker claim has somewhere to point.
+_DURESS_LIMITATION_REL = "lab/duress/README.md"
+
+
+def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
+    """No outward surface claims compulsion RESISTANCE (2026-09-13).
+
+    The operating contract: "If evidence does not support 'compulsion-resistant', product
+    vocabulary MUST be weakened, e.g.: 'duress-aware'." `lab/duress/README.md` assessed the
+    three coercers the contract names and the evidence does not support it.
+
+    The word is not banned because the mechanism is fake. It works, against the coercer it
+    was designed for. It is banned because it names the adversary the mechanism is WEAKEST
+    against: an institution that can later compel disclosure reads every `DuressEvent`, and
+    C1's append-only guarantee is what makes that record impossible to remove. A holder who
+    signals duress under a regime that later subpoenas the issuer has produced permanent
+    evidence that they resisted.
+
+    "duress-aware" is accurate: the system notices, records and routes a duress signal.
+
+    The CHANGELOG and the paper are exempt. Both are dated records of what was claimed at a
+    version, and editing them to match a later assessment would be rewriting the past
+    rather than the tree. `lab/duress/` is exempt because assessing a word requires
+    naming it.
+    """
+    name = "duress_claims_are_aware"
+    ledger = _read_raw(root, _DURESS_LIMITATION_REL)
+    if not ledger:
+        return _fail(name, "%s could not be read, so there is no assessment behind the "
+                           "weaker claim and nothing to point a surface at"
+                           % _DURESS_LIMITATION_REL)
+    for needle, why in (
+        ("casual coercer", "the assessment does not name the coercer the mechanism DOES "
+                           "resist, so it reads as a rejection rather than a bound"),
+        ("append-only", "the assessment does not say why lawful access is the case the "
+                        "mechanism makes worse rather than merely fails to help"),
+        ("duress-aware", "the assessment does not name the word that replaced the one it "
+                         "rejected"),
+    ):
+        if needle not in ledger:
+            return _fail(name, why)
+
+    findings: list[Finding] = []
+    checked = 0
+    for rel in _OUTWARD_SURFACES + ("CLAUDE.md", "polaris_web/templates/base.html",
+                                    "docs/design/README.md", "docs/design/duress-codes.md"):
+        text = _read_raw(root, rel)
+        if not text:
+            continue
+        checked += 1
+        low = text.lower()
+        for phrase in _COMPULSION_ASSERTIONS:
+            if phrase in low:
+                findings.extend(_fail(name, "%s says %r. The duress path resists a casual "
+                                            "coercer at the counter; it does not resist an "
+                                            "informed coercer beside the holder, and against "
+                                            "lawful access it is net-negative because the "
+                                            "DuressEvent it appends can never be removed. "
+                                            "Say duress-aware (see %s)"
+                                            % (rel, phrase, _DURESS_LIMITATION_REL)))
+    if not checked:
+        return _fail(name, "no outward surface could be read, so this measured nothing")
+    if findings:
+        return findings
+    return _ok(name, "none of the %d outward surfaces claims compulsion RESISTANCE; the "
+                     "assessment in %s names the coercer the mechanism resists, the two it "
+                     "does not, and why an indelible DuressEvent makes institutional access "
+                     "the case it worsens" % (checked, _DURESS_LIMITATION_REL))
+
+
 def check_no_citations_to_deleted_apparatus(root: pathlib.Path) -> list[Finding]:
     """Nothing live cites a governing document that was deleted (v9.453).
 
@@ -16929,6 +17010,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_holder_wallet,
     check_public_claims_honest,
     check_post_quantum_claims_are_agility,
+    check_duress_claims_are_aware,
     check_sdk_refusals_are_mutation_tested,
     check_ci_jobs_install_what_they_run,
     check_license_is_pinned,

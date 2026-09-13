@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use or build on Polaris, please cite it as below."
-title: "Polaris: a reference implementation of an issuer-unlinkable, compulsion-resistant identity-token system signed with ML-DSA-65 under an audited algorithm-migration path"
+title: "Polaris: a reference implementation of an issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path"
 type: software
 authors:
   - family-names: Khaklin

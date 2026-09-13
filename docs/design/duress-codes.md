@@ -1,6 +1,6 @@
 # Duress codes
 
-**Reader:** an engineer or an assessor. **Job:** The compulsion-resistant verification path, and why a coercer cannot see it.
+**Reader:** an engineer or an assessor. **Job:** The duress-aware verification path: which coercer cannot see it, and which can.
 
 A verification either succeeds or fails, and a coercer standing over the
 holder can read that result. So the holder under coercion has no move: refusing

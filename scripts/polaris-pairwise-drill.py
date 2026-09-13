@@ -132,15 +132,30 @@ def main():
     ok &= _row("...and the handle is still what it should STORE",
                verdict["pairwise_handle"], V.pairwise_handle(TOKEN_A, CLINIC))
 
-    # 10. THE STRONG FORM. With a ZK proof, the handle is the scoped nullifier.
+    # 10. THE STRONG FORM, which is defined by what it WITHHOLDS. Until 2026-09-13 this
+    # case was built as dict(presentation, zk_proof=...) -- the plain presentation above,
+    # still carrying TOKEN_A, with a proof bolted on -- and it asserted that the result was
+    # BOUNDED. The drill existed to state the bound and was asserting a bound that was not
+    # there. The strong form withholds the credential; that is the whole of it.
     nullifier = "9e" * 32
-    zk_presentation = dict(presentation, zk_proof={
-        "proof_hex": "00", "public_inputs": {"epoch_root_hex": "ab" * 32, "epoch_id": 3,
-                                             "context_id": 4, "nonce": 1, "scope": 77,
-                                             "nullifier_hex": nullifier}})
+    ZK = {"proof_hex": "00", "public_inputs": {"epoch_root_hex": "ab" * 32, "epoch_id": 3,
+                                               "context_id": 4, "nonce": 1, "scope": 77,
+                                               "nullifier_hex": nullifier}}
+    zk_presentation = {"format": "polaris-presentation/1", "context_id": 4, "zk_proof": ZK}
     zk_verdict = V.verify_presentation(zk_presentation, verifier_scope=CLINIC)
-    ok &= _row("a ZK presentation reports its correlation as BOUNDED", zk_verdict["correlation"], "bounded")
+    ok &= _row("a ZK presentation that WITHHOLDS the credential is BOUNDED",
+               zk_verdict["correlation"], "bounded")
     ok &= _row("...and its handle is the scoped nullifier", zk_verdict["pairwise_handle"], nullifier)
+
+    # 10b. And the case the old fixture actually built: a nullifier arriving beside the
+    # material it exists to withhold. Two verifiers holding this transcript correlate on the
+    # token value in one comparison, whatever handle they were told to key on.
+    mixed = dict(presentation, zk_proof=ZK)
+    mixed_verdict = V.verify_presentation(mixed, verifier_scope=CLINIC)
+    ok &= _row("a nullifier beside a stable token value is EXPOSED, not bounded",
+               mixed_verdict["correlation"], "exposed")
+    ok &= _row("...and the handle it should store is still the nullifier",
+               mixed_verdict["pairwise_handle"], nullifier)
 
     # 11. Without a scope the verifier is given no handle at all, rather than a global one.
     plain = V.verify_presentation(presentation)
