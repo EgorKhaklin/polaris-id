@@ -119,6 +119,19 @@ set is about the population. `committed_count` is readable off the signed epoch 
 nothing requires a relying party to look at it, and no verdict mentions it. Timing, repeat-visit
 patterns and network metadata are not modelled at all. `lab/linkability/`.
 
+**Two facts about the migration path, for the same reader (2026-09-13).** The agility is real
+issuer-side: the algorithm is a row with a `deprecation_date`, `uc6_migrate_algorithm` re-signs a
+token under a new one, and CI re-signs a whole population under real ML-DSA-87 on every push.
+**A verifier cannot learn that an algorithm has been deprecated.** `deprecation_date` reaches no
+signed artifact: the registry publishes `protocol.algorithms` as a bare name list, the trust list
+carries per-KEY status only, and the detached verifier's accepted set is a hardcoded dict. So
+retiring an algorithm is a software release to every relying party, not a migration, and adding
+one is too. **Key revocation does not substitute:** if the assumption breaks an attacker forges
+under any key the trust list calls active, so revoking one stops nothing and revoking all of them
+is how "every credential issued under the broken algorithm is lost" is actually reached, one
+`key-compromise` at a time with no algorithm-level lever. Rollback and the mixed window during a
+partial migration are unmeasured. `lab/crypto-migration/`.
+
 **And the measurement instruments were wrong three times in ways that flattered them.** The
 conformance drill counted 22 fields that were not fields and misclassified what fixing the rest
 would take, twice. Of a 45-point fall in its headline number, 18 was work and 27 was correcting

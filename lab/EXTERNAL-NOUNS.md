@@ -163,6 +163,16 @@ Separately, the link checker was wrong to demand a build-output path exist at al
 passed or failed on whether somebody had run a build. Paths through `dist`, `build`, `target`,
 `node_modules` and `__pycache__` are no longer treated as source references.
 
+**Lab, all three priority questions now have answers (2026-09-13).** `lab/linkability/`:
+no adversary advantage beyond the anonymity set, measured with a positive control, and the
+anonymity set IS the epoch's membership which the schema floors at one. `lab/duress/`: the
+evidence did not support "compulsion-resistant" and the vocabulary is now "duress-aware";
+against post-hoc institutional access the mechanism is net-negative, because an append-only
+DuressEvent is indelible evidence that the holder resisted. `lab/crypto-migration/`: the agility
+is real issuer-side and a software release verifier-side, because `deprecation_date` reaches no
+signed artifact. None of the three proposed a mechanism change: lab work does not create product
+guarantees, and all three are recorded in the readiness ledger for the deploying organisation.
+
 **First interop target: not started.**
 
 **Lab, first finding (2026-09-13).** `lab/linkability/` opened with a CORE-BUG against an
