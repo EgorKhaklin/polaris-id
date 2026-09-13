@@ -1,6 +1,6 @@
 {
   "name": "@polaris/verify",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Server-side SDK to verify Polaris identity credentials (offline authenticity + online status).",
   "type": "module",
   "license": "Apache-2.0",

@@ -35,7 +35,7 @@ import time
 import urllib.request
 from typing import List, Optional
 
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 ALGORITHM = "ML-DSA-65"   # the default parameter set
 # P8.8a: the accepted FIPS 204 parameter sets -> the cryptography witness class. ML-DSA-44 is
 # below the floor and is rejected like any unknown algorithm.
