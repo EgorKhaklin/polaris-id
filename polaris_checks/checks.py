@@ -2523,8 +2523,47 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
                            "_ATLAS_MAX_REGIONS") if c not in app]
     if missing:
         return _fail("c8_atlas_caps", "missing atlas hard-cap constant(s): " + ", ".join(missing) + " (C8)")
-    return _ok("c8_atlas_caps", "/api/atlas/* endpoints have hard result-set caps (C8): "
-               "clusters, points, events, categories, and regions")
+
+    # The constants existing is not the invariant. Until v9.459 this check asserted only
+    # that five names appeared in app.py, so a route could drop its cap, or a new route
+    # could arrive without one, and C8 would stay green because the constants were still
+    # defined somewhere. Mechanism present, property assumed: the same shape as the
+    # correlation verdict. Measured when this was written: all ten caller-controlled counts
+    # across the seventeen atlas routes ARE clamped, so this pins a property that holds
+    # rather than reporting one that does not.
+    #
+    # The hazard C8 names is a result set a CALLER can grow. A route returning a
+    # fixed-shape aggregate is bounded by construction and needs no cap; a route that reads
+    # a count from the query string does.
+    lines = app.splitlines()
+    starts = [(i, m.group(1)) for i, line in enumerate(lines)
+              for m in [re.search(r"@app\.route\('(/api/atlas[^']*)'", line)] if m]
+    if not starts:
+        return _fail("c8_atlas_caps", "no /api/atlas routes found in app.py, so C8 has "
+                                      "nothing to be true of")
+    countish = re.compile(r"request\.args\.get\(\s*['\"](buckets|limit|n|top|max|count|size|per_page)['\"]")
+    unclamped = []
+    checked = 0
+    for n, (i, route) in enumerate(starts):
+        end = starts[n + 1][0] if n + 1 < len(starts) else min(i + 160, len(lines))
+        body = "\n".join(lines[i:end])
+        for param in sorted(set(countish.findall(body))):
+            checked += 1
+            clamped = re.search(r"%s\s*(?:<=|<|>)\s*0|%s\s*>\s*\d+|min\(\s*%s|_ATLAS_MAX"
+                                % (param, param, param), body)
+            if not clamped:
+                unclamped.append("%s?%s=" % (route, param))
+    if unclamped:
+        return _fail("c8_atlas_caps",
+                     "atlas route(s) read a caller-controlled count and never clamp it: "
+                     + ", ".join(unclamped[:4]) + ". C8 bounds the RESULT SET, and a cap "
+                     "constant defined elsewhere does not bound a route that ignores it")
+    if not checked:
+        return _fail("c8_atlas_caps", "no atlas route reads a caller-controlled count, which "
+                                      "means this check measured nothing about C8")
+    return _ok("c8_atlas_caps", "/api/atlas/* endpoints have hard result-set caps (C8): the "
+               "five cap constants exist AND all %d caller-controlled counts across %d atlas "
+               "routes are clamped" % (checked, len(starts)))
 
 
 # ---------------------------------------------------------------------------

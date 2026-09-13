@@ -431,6 +431,53 @@ def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when the increment is not a single atomic UPDATE"
 
 
+def test_c8_atlas_caps_checks_routes_not_only_constants(tmp_path):
+    """C8 bounds the RESULT SET, not the constant table.
+
+    Until v9.459 this check asserted only that five cap names appeared in app.py, so a
+    route could drop its clamp, or a new route arrive without one, and C8 stayed green
+    because the constants were still defined somewhere else in the file. Mechanism present,
+    property assumed: the same shape as the correlation verdict.
+    """
+    CONSTS = ("_ATLAS_MAX_CLUSTERS=5000\n_ATLAS_MAX_POINTS=2000\n_ATLAS_MAX_EVENTS=500\n"
+              "_ATLAS_MAX_CATEGORIES=50\n_ATLAS_MAX_REGIONS=200\n")
+    CLAMPED = ("@app.route('/api/atlas/series')\n"
+               "def atlas_series():\n"
+               "    buckets = int(request.args.get('buckets', '60'))\n"
+               "    if buckets <= 0 or buckets > 240:\n"
+               "        raise ValueError('out of range')\n")
+
+    def write(body):
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web" / "app.py").write_text(CONSTS + body)
+
+    write(CLAMPED)
+    assert checks.check_c8_atlas_caps(tmp_path)[0].level == "OK", \
+        "must PASS when every caller-controlled count is clamped"
+
+    # The defect: the count is read and never bounded, with the constants still present.
+    write("@app.route('/api/atlas/series')\n"
+          "def atlas_series():\n"
+          "    buckets = int(request.args.get('buckets', '60'))\n")
+    out = checks.check_c8_atlas_caps(tmp_path)[0]
+    assert out.level == "FAIL" and "never clamp it" in out.message, \
+        "must FAIL when a route reads a caller-controlled count and does not clamp it"
+
+    # A NEW route arriving without a clamp, beside one that has it: the realistic case.
+    write(CLAMPED + "@app.route('/api/atlas/newthing')\n"
+                    "def atlas_newthing():\n"
+                    "    limit = int(request.args.get('limit', '50'))\n")
+    out = checks.check_c8_atlas_caps(tmp_path)[0]
+    assert out.level == "FAIL" and "newthing" in out.message, \
+        "must FAIL on a newly added unbounded route even when the others are fine"
+
+    # And a tree where nothing reads a count measured nothing about C8.
+    write("@app.route('/api/atlas/stats')\ndef atlas_stats():\n    return {}\n")
+    out = checks.check_c8_atlas_caps(tmp_path)[0]
+    assert out.level == "FAIL" and "measured nothing" in out.message, \
+        "must FAIL rather than report clean when no route reads a caller-controlled count"
+
+
 def test_c8_atlas_caps_check_fails_without_constants(tmp_path):
     (tmp_path / "polaris_web").mkdir()
     (tmp_path / "polaris_web" / "app.py").write_text("# no atlas caps here\n")
@@ -447,11 +494,24 @@ def test_c8_atlas_caps_check_fails_without_constants(tmp_path):
         "_ATLAS_MAX_EVENTS=500\n_ATLAS_MAX_CATEGORIES=50\n")
     out = checks.check_c8_atlas_caps(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when the regions cap is missing"
+    # v9.459: the five constants are necessary and NOT sufficient. C8 bounds the result
+    # set, so passing also needs a route that reads a caller-controlled count and clamps
+    # it. Constants with no route at all now fails, which is the point: it measured nothing.
     (tmp_path / "polaris_web" / "app.py").write_text(
         "_ATLAS_MAX_CLUSTERS=5000\n_ATLAS_MAX_POINTS=2000\n"
         "_ATLAS_MAX_EVENTS=500\n_ATLAS_MAX_CATEGORIES=50\n_ATLAS_MAX_REGIONS=500\n")
     out = checks.check_c8_atlas_caps(tmp_path)
-    assert out[0].level == "OK", "must PASS with all five caps present"
+    assert out[0].level == "FAIL", "five constants and no atlas route measures nothing"
+
+    (tmp_path / "polaris_web" / "app.py").write_text(
+        "_ATLAS_MAX_CLUSTERS=5000\n_ATLAS_MAX_POINTS=2000\n"
+        "_ATLAS_MAX_EVENTS=500\n_ATLAS_MAX_CATEGORIES=50\n_ATLAS_MAX_REGIONS=500\n"
+        "@app.route('/api/atlas/events')\n"
+        "def atlas_events():\n"
+        "    limit = int(request.args.get('limit', '50'))\n"
+        "    limit = min(limit, _ATLAS_MAX_EVENTS)\n")
+    out = checks.check_c8_atlas_caps(tmp_path)
+    assert out[0].level == "OK", "must PASS with all five caps present AND a clamped route"
 
 
 def test_c9_concurrency_check_fails_without_threading_tests(tmp_path):
