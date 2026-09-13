@@ -4489,6 +4489,18 @@ class DuressCodeTests(PolarisTestCase):
         self._logout()
         self._login('operator')
 
+        # Every operator-reachable page, not one. This test caught a regression on
+        # 2026-09-13 only by luck: the word had been put into base.html's meta
+        # description, which every page inherits, so checking /verifications happened to
+        # find it. A leak on any single OTHER page would have passed. The property is
+        # "an operator never sees the word", so the sweep is the property.
+        for path in ('/dashboard', '/individuals', '/agencies', '/tokens', '/verifications'):
+            page = self.client.get(path)
+            if page.status_code != 200:
+                continue
+            self.assertNotIn('duress', page.get_data(as_text=True).lower(),
+                             "an operator reading %s must not learn the mechanism exists" % path)
+
         r = self.client.get('/verifications')
         self.assertEqual(r.status_code, 200)
         body = r.get_data(as_text=True).lower()

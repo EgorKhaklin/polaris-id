@@ -100,6 +100,26 @@ shape as the post-quantum agility guard, so a future README cannot quietly resto
 
 ---
 
+## Finding: weakening the claim nearly broke the one defence that works
+
+**2026-09-13, caught by CI the same day.**
+
+Replacing "compulsion-resistant by design" with "duress-aware by design" in the console's
+`base.html` meta description put the literal word **duress** into every operator page.
+`test_anti_revealing_verifications_list_excludes_duress` went red immediately.
+
+The mechanism's single working defence is that an operator surface reveals nothing, and the
+edit that weakened the *claim* damaged the *property*. The nav entry to the duress queue is
+role-gated to admin and auditor for exactly this reason; an unconditional meta tag is not
+gated by anything. The console now names no duress property in any wording, which is
+correct: it is a surface a coercer reads over an operator's shoulder, not a place to state
+what the system does.
+
+The test caught it by luck rather than by design. It read one page, `/verifications`, and
+found the leak only because `base.html` is inherited by all of them. A leak on any single
+other page would have passed. It now sweeps every operator-reachable page, because the
+property is "an operator never sees the word", not "one page does not show it".
+
 ## What is NOT proposed here
 
 No mechanism changes. A holder-side panic signal, a deniable enrolment that makes absence
