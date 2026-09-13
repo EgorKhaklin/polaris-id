@@ -164,7 +164,7 @@ else
 fi
 
 # v9.02: --bind-to <username> persists the SHA-256 hash into
-# AppUser.recovery_code_hash. Closes the v8.97 Sanctum §V deferred
+# AppUser.recovery_code_hash. Closes the v8.97 deferred
 # in-app verification flow. The cleartext mnemonic is NEVER stored
 # server-side; only its hash. The operator keeps the printed copy.
 if [[ -n "${BIND_TO}" ]]; then

@@ -9,7 +9,7 @@
 --
 --   - Migrations live in polaris_sql/migrations/ as plain SQL files
 --   - Each change has TWO files: <name>.up.sql + <name>.down.sql
---   - Bidirectional (Sanctum §IV.2) — down file required even for
+--   - Bidirectional — a down file is required even for
 --     irreversible changes (the file documents that no revert is possible)
 --   - Applied in lexicographic order via scripts/polaris-migrate.sh
 --   - SHA-256-of-file recorded for tamper-detection at revert time
@@ -21,7 +21,7 @@
 -- TokenStateEpoch, DuressEvent, LifecycleArchiveCheckpoint, plus the
 -- 3 filesystem AoR instances).
 --
--- Append-only invariant per Sanctum §IV.3: never DELETE/UPDATE; revert
+-- Append-only invariant: never DELETE/UPDATE; revert
 -- appends a NEW row (event_type='reverted'); the original apply-row
 -- stays untouched as the historical record.
 --
@@ -68,7 +68,7 @@ CREATE INDEX idx_schema_version_recent
 
 COMMENT ON TABLE schema_version IS
     'Schema migration registry (v8.95 / Position C). Append-only per '
-    'Sanctum §IV.3. Each row records a single event (applied or reverted) '
+    'Append-only. Each row records a single event (applied or reverted) '
     'with SHA-256 of the file that ran. 13th audit-of-record instance.';
 
 -- Append-only trigger.
@@ -90,7 +90,7 @@ BEGIN
     RAISE EXCEPTION
         '% on schema_version is forbidden: '
         'this table is the audit-of-record for schema migrations '
-        '(v8.95 / Sanctum §IV.3); rows accumulate forever, revert events '
+        '(v8.95); rows accumulate forever, revert events '
         'append rather than mutate.',
         TG_OP
         USING ERRCODE = 'insufficient_privilege';

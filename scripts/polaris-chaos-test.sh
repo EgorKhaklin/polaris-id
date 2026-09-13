@@ -2,12 +2,12 @@
 # ============================================================================
 # polaris-chaos-test.sh — chaos injection + fail-safe-never-open assertions
 #
-# v9.27 / BIG MISSION Tier 8 #10. A security system is judged by how
+# v9.27. A security system is judged by how
 # it breaks, not how it runs. This script injects three failure modes
 # and asserts that under each, the system REFUSES the operation
 # (fails safe) rather than silently succeeding (fails open).
 #
-# **Load-bearing assertion (per Sanctum 2026-05-16 §II T8#10):**
+# **Load-bearing assertion:**
 # "Never open" — an attacker exploiting any of these failure modes
 # must not be able to get a positive outcome (e.g., a token issued
 # despite DB-unreachable, a ZK proof "verified" despite missing
@@ -28,7 +28,7 @@
 #      Assertion: anchor batch remains OPEN; partial close is rolled
 #      back; no leaked half-closed batch.
 #
-# Per Anti-Architect (Sanctum §II T8#10):
+# The accounting this keeps honest:
 #   - Each scenario is REPEATABLE (deterministic).
 #   - CI-runnable, ≤5 min wall.
 #   - Pass bar: all 3 refuse correctly.
@@ -136,7 +136,7 @@ def scenario_db_unreachable_mid_recovery():
     """
     # Precondition: psql must be on PATH (the script shells out to it).
     # If psql isn't available, this scenario is INCONCLUSIVE — not a
-    # fail-open, just unverified. Honest accounting per Anti-Architect.
+    # fail-open, just unverified. Reported as unverified rather than as passing.
     if not _shell_has("psql"):
         return {"scenario": "db_unreachable_mid_recovery",
                 "passed": None,  # None = inconclusive (not fail, not pass)

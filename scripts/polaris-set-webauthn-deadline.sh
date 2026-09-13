@@ -3,7 +3,7 @@
 # polaris-set-webauthn-deadline.sh — set webauthn_required_after for an
 #                                    admin/operator account
 #
-# v9.23 / BIG MISSION Critical #1. Operator-facing helper that sets the
+# v9.23. Operator-facing helper that sets the
 # enforcement deadline for WebAuthn-MFA. The v8.97 infrastructure already
 # enforces the four-state machine (not_required / grace_period /
 # mfa_required / mfa_overdue) based on this column; this script is the

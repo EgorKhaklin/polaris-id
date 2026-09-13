@@ -23,7 +23,7 @@
 --   (added by migration 2026-05-14-002-operator-webauthn). Seed admin keeps
 --   it NULL so dev tests are not time-dependent. Production admin accounts
 --   should be created via scripts/polaris-create-operator.sh which sets a
---   30-day deadline by default (per Sanctum §IV.4 architect-recommended
+--   30-day deadline by default (the recommended
 --   resolution). See a recorded decision.
 -- ============================================================================
 

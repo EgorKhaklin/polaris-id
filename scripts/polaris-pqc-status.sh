@@ -2,9 +2,9 @@
 # ============================================================================
 # polaris-pqc-status.sh — operator-facing PQC availability check
 #
-# v9.24 / BIG MISSION Tier 2 #7. Reports whether the real ML-DSA-65
+# v9.24. Reports whether the real ML-DSA-65
 # signing path is available + enabled. Honest accounting per the
-# v9.24 Sanctum: the headline post-quantum claim should not exceed
+# v9.24: the headline post-quantum claim should not exceed
 # what is operationally true.
 #
 # Usage:

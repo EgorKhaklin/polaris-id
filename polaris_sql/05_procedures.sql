@@ -1511,7 +1511,7 @@ COMMENT ON PROCEDURE uc12_record_duress(INTEGER, INTEGER, INTEGER, VARCHAR) IS
 -- uc_archive_purge — Arc B Phase 2b · constitutional carve-out for archive-
 --                    then-delete (v8.87)
 --
--- Closes the deletion-from-hot question per the OPEN Sanctum at
+-- Closes the deletion-from-hot question open at
 -- a recorded decision (Position B, DECIDED).
 --
 -- This procedure is THE ONLY legitimate path through which DELETE may

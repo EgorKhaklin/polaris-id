@@ -8069,6 +8069,80 @@ _PQ_SECURITY_ASSERTIONS = (
 )
 
 
+#: Names of the apparatus deleted wholesale at v9.55 (~18,150 LOC and the mythology).
+#: They are cited nowhere in the tree any more, and a citation to them cannot resolve.
+_RETIRED_APPARATUS = ("Sanctum", "BIG MISSION", "Anti-Architect")
+
+#: History. The CHANGELOG records what happened, the migrations are what ran, and
+#: DEVNOTES holds the working record; rewriting any of them to remove a name would be
+#: editing the past rather than the tree.
+_APPARATUS_HISTORY = ("CHANGELOG.md", "DEVNOTES/", "polaris_sql/migrations/",
+                      "docs/paper/", "meta/")
+
+
+def check_no_citations_to_deleted_apparatus(root: pathlib.Path) -> list[Finding]:
+    """Nothing live cites a governing document that was deleted (v9.453).
+
+    v9.55 deleted the apparatus wholesale, the mythology docs with it. Three hundred and
+    ninety-seven versions later, 46 references across 24 live files still cited it as the
+    authority for a rule -- section numbers of a document that is not in the repository --
+    and one of them was the error an operator reads when a migration has no down file.
+
+    An operator who hits that error, goes looking for the cited section, and finds no such
+    document has been sent after something that is not there. The rule the citation stood
+    for is real and worth stating; the pointer is not. Each is now the reason it encoded --
+    "a migration that cannot be reversed is one you can only go forward from" -- which is
+    both true and useful to the person reading it.
+
+    Two were worse than dangling. `01_schema.sql` counted the deleted apparatus's session
+    table among the audit-of-record instances, so AnchorBatch was the FIFTH and
+    AgencyTrustAttestation the SIXTH by a tally including a table the catalog does not
+    have. They are the fourth and fifth.
+
+    What this does NOT refuse is a sentence recording that the apparatus was removed.
+    MISSION.md carries one, explaining that the owner's recorded direction authorizes an
+    amendment now, and that is the honest treatment rather than a violation: any name here
+    is allowed within 200 characters of the words removed, retired, deleted or no longer.
+    A check that refused it would be demanding the tree forget rather than be accurate, and
+    would be routed around the first time somebody needed to explain the history.
+
+    The examples above are paraphrased for the same reason: this file is live, so quoting
+    a citation verbatim here would be one.
+    """
+    name = "no_deleted_apparatus_citations"
+    offenders: list[str] = []
+    scanned = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix not in (".py", ".sql", ".sh", ".md", ".html"):
+            continue
+        rel = str(path.relative_to(root))
+        if any(h in rel for h in _APPARATUS_HISTORY) or "node_modules" in rel \
+                or rel.startswith(".git") or "/target/" in rel or "venv" in rel:
+            continue
+        text = path.read_text(errors="replace")
+        scanned += 1
+        for term in _RETIRED_APPARATUS:
+            for m in re.finditer(re.escape(term), text):
+                window = text[max(0, m.start() - 200):m.end() + 200]
+                # A sentence ABOUT the removal is the honest treatment and is allowed.
+                if re.search(r"\b(removed|retired|deleted|no longer)\b", window, re.I):
+                    continue
+                offenders.append("%s:%d (%s)"
+                                 % (rel, text[:m.start()].count("\n") + 1, term))
+    if not scanned:
+        return _fail(name, "no files were scanned, so this check is measuring nothing")
+    if offenders:
+        shown = ", ".join(offenders[:5])
+        return _fail(name, "%d live citation(s) to the apparatus deleted at v9.55, which a "
+                           "reader cannot resolve because the documents are not in the tree: "
+                           "%s%s. State the rule the citation stood for instead."
+                           % (len(offenders), shown,
+                              " (+%d more)" % (len(offenders) - 5) if len(offenders) > 5 else ""))
+    return _ok(name, "no live file among %d cites the apparatus deleted at v9.55; the rules "
+                     "those citations stood for are stated as rules, and a sentence recording "
+                     "that the apparatus was removed is still allowed to say so" % scanned)
+
+
 def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
     """An outward surface claims post-quantum AGILITY, never post-quantum SECURITY (v9.452).
 
@@ -16514,6 +16588,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_holder_wallet,
     check_public_claims_honest,
     check_post_quantum_claims_are_agility,
+    check_no_citations_to_deleted_apparatus,
     check_verify_witness_sampling,
     check_constitution_layered,
     check_no_scifi_schema,

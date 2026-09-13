@@ -4,7 +4,8 @@
 #
 # v8.95 / Position C from a recorded decision.
 # Custom polaris-native: hand-written SQL files in pairs (.up + .down);
-# state in `schema_version` table (append-only per Sanctum §IV.3);
+# state in `schema_version` table (append-only: a revert is a new row, never an
+# UPDATE or DELETE, so the history of what ran cannot be edited);
 # SHA-256-of-file recorded at apply time and verified at revert time.
 #
 # Migration file naming (enforced by schema_version.name CHECK):
@@ -12,7 +13,8 @@
 #     polaris_sql/migrations/<YYYY-MM-DD>-<NNN>-<slug>.up.sql
 #     polaris_sql/migrations/<YYYY-MM-DD>-<NNN>-<slug>.down.sql
 #
-# Both files are REQUIRED (Sanctum §IV.2 bidirectional). The .down may
+# Both files are REQUIRED: a migration that cannot be reversed is one you can only
+# go forward from. The .down may
 # be effectively a no-op (e.g., a comment explaining the change is
 # irreversible — the file documents that, and stays as audit-of-record).
 #
@@ -241,7 +243,7 @@ validate_filenames() {
             exit "${EXIT_FILENAME}"
         fi
         if [[ ! -f "${MIGRATIONS_DIR}/${name}.down.sql" ]]; then
-            echo "error: migration '${name}' missing .down.sql (Sanctum §IV.2 requires bidirectional)" >&2
+            echo "error: migration '${name}' has no .down.sql; every migration must be\n       reversible, so the down file is required even when it only drops what the up\n       file added" >&2
             exit "${EXIT_FILENAME}"
         fi
     done < <(list_on_disk)

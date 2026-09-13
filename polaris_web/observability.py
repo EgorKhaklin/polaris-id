@@ -249,7 +249,7 @@ def record_duress_event(*, individual_id: int = 0, agency_id: int = 0) -> None:
     duress counter + emits a structured log line. The OPERATOR is
     expected to alert on this.
 
-    Per the v9.27 Sanctum: this is the load-bearing anti-coercion
+    v9.27: this is the load-bearing anti-coercion
     observability primitive. If this never fires when it should,
     the duress-code mechanism (R11-5) is decorative.
     """

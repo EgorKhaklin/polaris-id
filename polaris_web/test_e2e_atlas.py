@@ -75,7 +75,7 @@ class TestAtlasGlobeE2E(unittest.TestCase):
 
     Three tests; each completes in <5s with a warm browser cache. The
     suite is deliberately small — measurement, not exhaustive coverage.
-    Per the v9.27 Anti-Architect constraint on the chaos test: each
+    The v9.27 constraint on the chaos test: each
     scenario must catch a real failure mode the static suite cannot.
     """
 

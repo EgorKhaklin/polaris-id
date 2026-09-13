@@ -6,7 +6,7 @@
 # WITHOUT compromising C1 (the rows stay in the hot tables; the archive
 # is a backup, not a move). The "rotate-from-hot" half of an archive
 # policy is genuinely constitutional — it touches C1's append-only
-# invariant — and is on file as an OPEN Sanctum awaiting VANTA's
+# invariant — and is on file as an open question awaiting VANTA's
 # decision (a recorded decision).
 #
 # What this script does:

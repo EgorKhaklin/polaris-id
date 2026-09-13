@@ -5,6 +5,70 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.453 — 2026-09-12 (forty-six citations to a document that is not in the repository)
+
+v9.55 deleted the apparatus wholesale -- about 18,150 lines and the mythology docs with it.
+Three hundred and ninety-seven versions later, **46 references across 24 live files still cited
+it as the authority for a rule**, and one of them was an error message an operator reads:
+
+    error: migration 'X' missing .down.sql (Sanctum §IV.2 requires bidirectional)
+
+Somebody who hits that, goes looking for §IV.2 and finds no such document in the repository has
+been sent after something that is not there. The rules those citations stood for are real and
+worth stating; the pointers are not. Each is now the reason it encoded -- a migration that cannot
+be reversed is one you can only go forward from; `schema_version` is append-only so a revert is a
+new row rather than an edit -- which is both true and more useful than a section number.
+
+Two were worse than dangling. `01_schema.sql` counted the deleted apparatus's session table among
+the audit-of-record instances, so AnchorBatch was the FIFTH and AgencyTrustAttestation the SIXTH
+by a tally that included a table the catalog does not have. They are the fourth and fifth.
+
+And one was in the module this matters most for. `pqc_signing.py` explained the placeholder by
+citing a deleted tier list, including in `availability_report()["notes"]`, which is
+runtime-visible. It now states what the module actually does: real signing behind
+`POLARIS_USE_REAL_PQC=1`, a labelled 32-byte placeholder without it, and where the limits are
+written down.
+
+`check_no_citations_to_deleted_apparatus` holds it. What it does NOT refuse is a sentence
+recording that the apparatus was removed -- MISSION.md carries one, explaining that the owner's
+recorded direction authorizes an amendment now, and that is the honest treatment rather than a
+violation. Any retired name is allowed within 200 characters of "removed", "retired", "deleted" or
+"no longer". The CHANGELOG, the migrations and DEVNOTES are exempt outright: they record what
+happened, and rewriting them to satisfy a check would be editing the past. The check's own
+docstring paraphrases its examples rather than quoting them, because this file is live and a
+verbatim citation in it would be one.
+
+**Two documents were also past their re-read window**, which `check_presentation_surface` caught
+on the same push, and both needed more than a stamp.
+
+SECURITY.md had no mention of the placeholder. A researcher reading its in-scope list would
+reasonably report that credential signatures do not verify on a default checkout -- which is the
+named development profile, already known, and now said so, along with what IS in scope there: the
+guard failing, a placeholder that is not labelled, or a verifier that accepts one as a signature.
+
+CONTRIBUTING.md told a contributor that `polaris-test.sh` passing is one of the conditions for a
+merge, without saying that it runs **four of the eighteen suites CI runs**. v9.443 passed every
+suite that document names and broke `polaris_sim.test_sim` in CI twice. It says so now.
+
+**And the front door stopped calling itself post-quantum.** v9.452 established that the
+defensible claim is agility rather than settled security; the headline had not caught up, and the
+GitHub About box had reached the point of putting "post-quantum" in scare quotes -- which signals
+doubt without explaining it, and is worse than either saying it plainly or not saying it.
+
+The headline now reads the same on all five surfaces it appears on (README, the site title,
+description, og:title and subtitle, CLAUDE.md, CITATION.cff and the repository description):
+**an issuer-unlinkable, compulsion-resistant identity-token system signed with ML-DSA-65 under an
+audited algorithm-migration path.** Every clause of that is a fact about this repository. The
+system IS signed with ML-DSA-65; the migration path IS audited and runs in CI; and nothing there
+asserts that Module-LWE stays hard, which is the part no repository can assert about itself.
+
+"What Polaris is" now says so in the first sentence rather than leaving a reader to find the
+limitation four documents away, and links to it.
+
+**260 invariant checks. 45 tables.**
+
+---
+
 ## v9.452 — 2026-09-12 (post-quantum agility is the claim; post-quantum security is not ours to make)
 
 An outside argument put it sharply: "post-quantum is fake because nobody knows how large quantum

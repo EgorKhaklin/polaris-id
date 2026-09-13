@@ -7,8 +7,9 @@ fresh session, read this first.
 
 ## What Polaris is
 
-A working reference implementation of a post-quantum, issuer-unlinkable,
-compulsion-resistant national identity-token system. Educational; notional data
+A working reference implementation of an issuer-unlinkable, compulsion-resistant
+national identity-token system, signed with ML-DSA-65 under an audited
+algorithm-migration path. Educational; notional data
 only. The real system:
 
 - [`polaris_sql/`](polaris_sql/): 45-table schema, stored procedures, triggers (the security boundary).

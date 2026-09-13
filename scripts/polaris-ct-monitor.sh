@@ -20,7 +20,7 @@
 # returns a non-zero exit code so cron / monitoring systems pick up
 # the signal.
 #
-# Architect's recommended cadence (Sanctum §IV.5): daily at 06:00 UTC.
+# Recommended cadence: daily at 06:00 UTC.
 # CT logs have ~2-hour propagation latency; once a day catches every
 # unexpected issuance within ≤24h.
 #

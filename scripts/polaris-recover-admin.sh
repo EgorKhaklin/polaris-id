@@ -74,7 +74,7 @@
 # EMERGENCY_PASSWORD_LOGIN_AUTHORIZED with detail
 # 'recovered_via=printed_recovery_code'.
 #
-# Closes the v8.97 Sanctum §V deferred-pending-demand item.
+# Closes the v8.97 deferred-pending-demand item.
 # ============================================================================
 
 set -euo pipefail

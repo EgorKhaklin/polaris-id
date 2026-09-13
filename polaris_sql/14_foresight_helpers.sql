@@ -1,7 +1,7 @@
 -- ============================================================================
 -- 14_foresight_helpers.sql — Layer-1 surface for foresight signals (v9.12)
 --
--- Per the v9.12 Sanctum (polaris-odyssey-debate, Position B), a Layer-1
+-- v9.12, Position B: a Layer-1
 -- bundle was committed as part of the same composite ship that introduced
 -- the foresight surface. This file is that bundle.
 --

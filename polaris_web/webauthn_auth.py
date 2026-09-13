@@ -40,7 +40,7 @@ Defense-in-depth:
     mldsa module; an authenticator that implements it enrolls a post-quantum
     credential, every other one falls through to ES256/EdDSA/RS256.
 
-Sanctum §IV resolutions applied (architect-recommended defaults):
+Defaults applied:
   1. MFA required for admin, optional for operator, not for auditor
   2. Both platform + hardware authenticators allowed (knob to restrict)
   3. Recovery: second-admin pairing (polaris-recover-admin.sh) AND

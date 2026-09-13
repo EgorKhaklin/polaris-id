@@ -14087,3 +14087,62 @@ def test_post_quantum_claims_are_agility_check_discriminates(tmp_path):
     (tmp_path / "docs" / "PRODUCTION-READINESS.md").unlink()
     assert level("could not be read") == "FAIL", \
         "must FAIL rather than pass vacuously when the ledger is gone"
+
+
+def test_no_deleted_apparatus_citations_check_discriminates(tmp_path):
+    """The names are assembled rather than written, because this file is live and a
+    literal citation in it would be one of the things the check refuses."""
+    RETIRED = "Sanct" + "um"
+    CLEAN = "# a migration must be reversible so you can go back\n"
+
+    def write(rel, body, clean=True):
+        for f in sorted(tmp_path.rglob("*")):
+            if f.is_file():
+                f.unlink()
+        (tmp_path / pathlib.Path(rel).parent).mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(body)
+        if clean:
+            (tmp_path / "scripts").mkdir(exist_ok=True)
+            (tmp_path / "scripts" / "clean.sh").write_text(CLEAN)
+
+    def level(msg_contains=None):
+        out = checks.check_no_citations_to_deleted_apparatus(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write("scripts/x.sh", CLEAN)
+    good = checks.check_no_citations_to_deleted_apparatus(tmp_path)[0]
+    assert good.level == "OK", "must PASS on a tree that cites nothing deleted"
+
+    # A live citation, in a comment and in an operator-visible message alike.
+    write("scripts/x.sh", "# append-only per %s IV.3\n" % RETIRED)
+    bad = checks.check_no_citations_to_deleted_apparatus(tmp_path)[0]
+    assert bad.level == "FAIL" and "scripts/x.sh" in bad.message, \
+        "must FAIL and name the file when a live comment cites the deleted apparatus"
+
+    write("scripts/x.sh", 'echo "missing down file (%s requires it)"\n' % RETIRED)
+    assert level("scripts/x.sh") == "FAIL", \
+        "an error message an operator reads is the worst place for a dangling citation"
+
+    write("polaris_web/x.py", '"""v9.24 / BIG %s Tier 2 #7."""\n' % "MISSION")
+    assert level() == "FAIL", "the other retired names count too"
+
+    # A sentence ABOUT the removal is the honest treatment, not a violation. Refusing it
+    # would demand the tree forget rather than be accurate.
+    for word in ("removed", "retired", "deleted", "no longer"):
+        write("MISSION.md", "The %s apparatus was %s at v9.55.\n" % (RETIRED, word))
+        assert level() == "OK", "a sentence saying it was %s must be allowed" % word
+
+    # History is not rewritten to satisfy a check.
+    for rel in ("CHANGELOG.md", "polaris_sql/migrations/a.up.sql", "DEVNOTES/record.md"):
+        write(rel, "per %s IV.3\n" % RETIRED)
+        assert level() == "OK", "%s records what happened and is exempt" % rel
+
+    # And a tree with nothing to scan is not a clean tree.
+    for f in sorted(tmp_path.rglob("*")):
+        if f.is_file():
+            f.unlink()
+    assert level("measuring nothing") == "FAIL", \
+        "must FAIL rather than report clean when it scanned no files"

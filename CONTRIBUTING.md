@@ -36,7 +36,15 @@ A pull request is ready when all of these hold:
   database needed).
 - `./scripts/polaris-test.sh` passes: the DB-backed suites in `polaris_web/` and
   `polaris_cli/` against a local PostgreSQL (`quick` skips the slow
-  concurrency and property tests while iterating).
+  concurrency and property tests while iterating). **This is four of the eighteen
+  suites CI runs, not the product suite.** `polaris-test.sh` and
+  `polaris-ship.py run` both cover `test_app`, `test_check_constraints`,
+  `test_invariants_property` and `test_redaction_property`;
+  `scripts/polaris-coverage.sh` runs fourteen more. Preflight prints the rest as
+  runnable commands, and `check_local_gate_covers_ci` fails if a suite CI runs is
+  one the ship tool has never heard of. v9.443 passed every suite named here and
+  broke `polaris_sim.test_sim` in CI twice before that check existed, so running
+  only what this line names is how a change reaches CI already broken.
 - The SQL self-tests in `polaris_sql/08_tests.sql` pass; they run when the
   database container initializes.
 - `./scripts/polaris-link-check.sh --ci` resolves every reference.
@@ -203,4 +211,4 @@ system is encouraged, provided the constitutional constraints are not weakened
 in the derivative; documenting a derivative to the same audit-of-record
 standard is asked for, not required by the license.
 
-*Maintainer: Egor Khaklin. Last updated: 2026-09-11 (v9.432).*
+*Maintainer: Egor Khaklin. Last updated: 2026-09-12 (v9.453).*

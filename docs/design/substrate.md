@@ -342,7 +342,7 @@ Each row records:
   in `TokenStateEpoch.merkle_root` bound to `(epoch_id, context_id,
   nonce)` public inputs. FRI-based, hash-only: post-quantum-
   comfortable. The C3+A4+B3 pick from the alignment-exploration
-  Sanctum. Closes Substrate-D arc to 5/5.
+  decision. Closes Substrate-D arc to 5/5.
 - **Fail mode:** A circuit soundness bug accepts invalid witnesses
   silently. A breaking change in upstream Plonky2 forces a re-port
   (B3 architecture keeps the schema stable across SNARK migrations).

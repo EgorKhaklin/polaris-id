@@ -5,7 +5,7 @@ The Rust binary lives at `polaris_zk/target/release/polaris-zk` (configurable
 via the POLARIS_ZK_BINARY env var). We talk to it via subprocess + JSON over
 stdin/stdout. The binary is small; all proof state stays in the pipe.
 
-This is the C3+A4+B3 ship picked in the M2-1 alignment-exploration Sanctum:
+This is the C3+A4+B3 ship picked at M2-1:
   C3 — transparent setup (no ceremony; Plonky2 is FRI-based)
   A4 — Plonky2 SNARK family
   B3 — hybrid-Merkle circuit reusing R10-2 AnchorBatch infrastructure

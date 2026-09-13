@@ -1211,8 +1211,8 @@ COMMENT ON TABLE TokenSignature IS
 -- transaction reference once the batch has been pushed to a PQ-capable
 -- distributed ledger.
 --
--- AnchorBatch is the FIFTH audit-of-record instance in Polaris (after
--- TokenLifecycleEvent, RecoveryRequest, TokenSignature, and Sanctum sessions);
+-- AnchorBatch is the FOURTH audit-of-record instance in Polaris (after
+-- TokenLifecycleEvent, RecoveryRequest and TokenSignature);
 -- see docs/design/audit-of-record.md. The append-only invariant is enforced by
 -- extending the reject_audit_modification trigger to this table (in
 -- 06_triggers.sql).
@@ -1266,9 +1266,9 @@ ALTER TABLE BlockchainAnchor
 -- (V == I) OR an active attestation V→I→C exists. NO TRANSITIVE TRUST:
 -- the verification query looks for exactly one row; it never recurses.
 --
--- AgencyTrustAttestation is the SIXTH audit-of-record instance in
--- Polaris (after TokenLifecycleEvent, RecoveryRequest, TokenSignature,
--- AnchorBatch, and the cognitive-layer Sanctum sessions). Bounded
+-- AgencyTrustAttestation is the FIFTH audit-of-record instance in
+-- Polaris (after TokenLifecycleEvent, RecoveryRequest, TokenSignature
+-- and AnchorBatch). Bounded
 -- mutation: (revocation_date, revocation_reason) move together once,
 -- one-way. Enforced by enforce_attestation_immutability trigger.
 --

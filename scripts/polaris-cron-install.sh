@@ -2,7 +2,7 @@
 # ============================================================================
 # polaris-cron-install.sh — install operator crontab wiring
 #
-# v9.23 / BIG MISSION Medium #4. Idempotent installer that wires the
+# v9.23. Idempotent installer that wires the
 # existing Polaris operator scripts into the system crontab at
 # documented cadences:
 #

@@ -125,6 +125,23 @@ initial report, extended for Critical findings as the patch warrants.
 - **Upstream vulnerabilities in third-party dependencies** not yet pinned in
   the `polaris_web/requirements*.txt` files. Report those upstream; they are
   picked up by the dependency policy below.
+- **The placeholder signing default.** Without `POLARIS_USE_REAL_PQC=1` and liboqs,
+  `TokenSignature.signature_bytes` holds a 32-byte value labelled
+  `DETERMINISTIC-PLACEHOLDER-SHA3-256` that verifies against no key, where real
+  ML-DSA-65 produces 3,309. That is the default, including in CI, and it is a named
+  development profile rather than a defect: production fails closed at boot without
+  real signing (`check_real_pqc_default_boot`), and the profile warns loudly when used
+  unnamed. A report that credential signatures do not verify on a default checkout is
+  this, and is already known. What IS in scope is the guard failing -- a production
+  boot that does not fail closed, a placeholder that is not labelled, or a verifier
+  that accepts a placeholder as though it were a signature.
+
+  Related, and worth reading before relying on the word: the cryptographic claim is
+  **algorithm agility under an audited migration path**, not settled security against a
+  quantum adversary. ML-DSA-65 rests on Module-LWE hardness, which this repository
+  cannot establish. What a break would and would not cost -- including that a
+  credential's classical half during cutover is protected by nothing here -- is stated
+  in [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 ---
 
@@ -191,5 +208,5 @@ policy.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-12 (v9.432)*
+*Last updated: 2026-09-12 (v9.453)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

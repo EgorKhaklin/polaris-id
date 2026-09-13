@@ -1,10 +1,10 @@
 """polaris_web/pqc_signing.py — real ML-DSA-65 (FIPS 204) signing path.
 
-v9.24 / BIG MISSION Tier 2 #7. Until this module, Polaris's headline
-post-quantum claim was rendered by a deterministic string in
-`token_value`. The Anti-Architect's AP8 (larping) detector named this
-as the most damning critique: "the system's headline claim is post-
-quantum signing and it is currently a deterministic string."
+v9.24. Until this module, Polaris's headline post-quantum claim was
+rendered by a deterministic string in `token_value` -- the system's
+headline claim was post-quantum signing and it was a deterministic
+string. That is the critique this module exists to answer, and the
+reason the placeholder below is labelled rather than silent.
 
 This module integrates the FIPS 204 (ML-DSA-65) signing path via
 liboqs-python (the Open Quantum Safe project's Python binding to the
@@ -41,7 +41,7 @@ disagreement is a cryptographic red flag and the signature is refused. When the
 witness library is too old to provide ML-DSA, the verdict degrades to the lone
 primary (the pre-v9.133 behaviour), so the second witness never weakens the path.
 
-**Honest accounting (per the Anti-Architect's joint resolution):**
+**Honest accounting:**
 
 This module ships the integration. It does NOT migrate existing
 tokens. Pre-v9.24 tokens carry deterministic `token_value` strings;
@@ -217,9 +217,11 @@ def availability_report() -> dict:
         # custody is reported as an error string rather than raising here.
         "custody": _custody_report(),
         "notes": (
-            "Per BIG MISSION v9.24 Sanctum T2#7: real signing ships as "
-            "scaffolding behind POLARIS_USE_REAL_PQC=1. Migration of "
-            "existing token_value entries is a separate operator decision."
+            "Real signing ships behind POLARIS_USE_REAL_PQC=1 (v9.24); without "
+            "it the signature is a labelled 32-byte SHA3-256 placeholder that "
+            "verifies against no key. Migration of existing token_value entries "
+            "is a separate operator decision. What a break in the lattice "
+            "assumptions would and would not cost is in PRODUCTION-READINESS.md."
         ),
     }
 
