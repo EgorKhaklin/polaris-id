@@ -4,10 +4,10 @@
 architecture.** The front door says *issuer-unlinkable*. That is a claim about the issuer.
 This directory is about the other side: two verifiers who kept what they were shown.
 
-**Status: one finding, the study not yet run.** The finding below came from reading the
-question carefully enough to build a counterexample. The measured study, with a dataset and
-an adversary, is not done, and nothing here should be read as evidence that the remaining
-threat model holds.
+**Status: two findings, one measured study, most of the threat model still unmeasured.**
+Finding 1 came from reading the question carefully enough to build a counterexample. Finding
+2 is measured, with a positive control. What is listed under "What has NOT been measured" is
+exactly that, and nothing here should be read as evidence that the rest holds.
 
 ---
 
@@ -68,6 +68,58 @@ Regression tests in `scripts/test_verify_p9.py`.
 **What the fix does not do.** It corrects a verdict. It does not make any presentation more
 private than it was, and no deployed behaviour changed. A relying party reading
 `correlation` now gets an answer about the transcript in front of it.
+
+---
+
+## Finding 2: the privacy is exactly the epoch's membership, and nothing floors it
+
+**2026-09-13. Measured, not fixed: this is a deployment fact, not a defect.**
+
+`adversary.py` implements threat model T and runs it against two populations. The positive
+control comes first, because a matcher that never succeeds at anything is not evidence of
+privacy, only of being broken.
+
+```
+  POSITIVE CONTROL (credential exposed)   top-1 accuracy 1.0000
+      the adversary works: it links what is linkable
+
+  BOUNDED, by epoch population:
+     holders     chance   accuracy    advantage
+           2     0.5000     0.4375      -0.0625
+           5     0.2000     0.1750      -0.0250
+          10     0.1000     0.0800      -0.0200
+          50     0.0200     0.0210      +0.0010
+         200     0.0050     0.0054      +0.0004
+```
+
+Nullifiers are derived with the tree's own Poseidon, so the scoping under test is the
+scoping that ships. The adversary is indiscriminate: it flattens every scalar in the
+transcript plus its byte length, drops whatever is constant across the population (the
+epoch root, the format, the scope), and matches on what is left.
+
+**The result: no advantage beyond the anonymity set.** Accuracy tracks 1/N at every size.
+Within an epoch, scoping does what the word implies against this adversary.
+
+**And that is the whole point: N is the epoch's membership.** `TokenStateEpoch` constrains
+`committed_count > 0` and `committed_count <= 10000`. There is no floor above one. An epoch
+that closes with three members gives a colluding pair a 1-in-3 guess; an epoch that closes
+with one member identifies the holder outright, and `verify_presentation` would still report
+that presentation's correlation as `bounded`, correctly, because no field in the transcript
+is identical across verifiers. The verdict is about the transcript. The anonymity set is
+about the population, and nothing in a transcript carries it.
+
+A relying party can read `committed_count` off the signed epoch checkpoint
+(`/api/v1/epoch-checkpoint/<agency_id>`), so the number is available to anyone who wants it.
+Nothing requires them to look, and no verdict mentions it.
+
+**Not built.** Reporting the anonymity set alongside `correlation` would be a new product
+guarantee, which lab work does not get to create. It is recorded here and in the readiness
+ledger as a limitation for the deploying organisation to decide about.
+
+One speculation that did not survive checking: the epoch root looked like it might partition
+the population by issuing agency, which would have multiplied the adversary's advantage by
+the number of agencies. `TokenStateEpoch` has no agency column. The epoch is global, so the
+root narrows nothing. Checked before it was modelled.
 
 ---
 

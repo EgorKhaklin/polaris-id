@@ -106,6 +106,19 @@ unverifiable tree clean, which is the correct refusal, but the job then failed o
 rather than on a finding. A red build that says nothing about the tree is how a real finding gets
 waved through. The job installs what it runs now, and a check holds every job to that.
 
+**One fact about unlinkability that a deploying organisation has to decide about (2026-09-13).**
+Against a colluding pair of verifiers who pool complete transcripts, a presentation that
+withholds the credential gives no advantage beyond the anonymity set: measured top-1 accuracy
+tracks 1/N at every population size from 2 to 200, with a positive control that links the
+exposed population at 1.0. **N is the epoch's membership.** `TokenStateEpoch` constrains
+`committed_count > 0` and `<= 10000`, so there is no floor above one: an epoch that closes with
+three members gives a colluding pair a one-in-three guess, and an epoch that closes with one
+member identifies the holder outright. The verifier would still report that presentation's
+correlation as bounded, correctly, because the verdict is about the transcript and the anonymity
+set is about the population. `committed_count` is readable off the signed epoch checkpoint;
+nothing requires a relying party to look at it, and no verdict mentions it. Timing, repeat-visit
+patterns and network metadata are not modelled at all. `lab/linkability/`.
+
 **And the measurement instruments were wrong three times in ways that flattered them.** The
 conformance drill counted 22 fields that were not fields and misclassified what fixing the rest
 would take, twice. Of a 45-point fall in its headline number, 18 was work and 27 was correcting
