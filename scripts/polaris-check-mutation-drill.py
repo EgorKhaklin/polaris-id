@@ -211,6 +211,7 @@ def main():
     shutil.copytree(ROOT, base, ignore=IGNORE)
 
     survived, mutated, skipped_opaque, skipped_nothing = [], 0, 0, 0
+    nothing_to_mutate: list[str] = []
     work = pathlib.Path("/tmp/polaris-mutation-run")
 
     print("can a check pass on a tree where its property is gone?")
@@ -226,6 +227,7 @@ def main():
                           if f.is_file()]
         if not files or not needles:
             skipped_nothing += 1
+            nothing_to_mutate.append(fn.name)
             continue
         if not all(f.endswith(MUTABLE_SUFFIXES) for f in files):
             skipped_nothing += 1
@@ -287,6 +289,18 @@ def main():
     print("  ...of those, still passing on a broken tree  %4d" % len(survived))
     print("  skipped: inputs this harness cannot enumerate %3d" % skipped_opaque)
     print("  skipped: nothing to mutate                   %4d" % skipped_nothing)
+    if skipped_nothing:
+        # Naming them, not just counting them. This line used to read as a footnote, and
+        # it is the drill's blind spot: `needles_of` collects STRING LITERALS to comment
+        # out, so a check that asserts through a regex offers nothing to mutate and lands
+        # here. Measured on 2026-09-13: of six checks found to verify a proxy for their
+        # invariant rather than the invariant, FOUR were in this bucket. The population
+        # most likely to be pinned to a mechanism is the population this drill cannot
+        # reach, so "0 of N survive" is a statement about the reachable N.
+        print("      ...which means they are NOT mutation-tested. The drill mutates string")
+        print("      literals; a check asserting through a regex has none. First 12:")
+        for nm in sorted(nothing_to_mutate)[:12]:
+            print("        %s" % nm)
     print("  checks whose named inputs were DELETED       %4d" % deletion_tested)
     print("  ...of those, still passing with them gone    %4d  (%d known and listed)"
           % (len(deletion_survivors), len(DELETION_SURVIVORS_EXPECTED)))

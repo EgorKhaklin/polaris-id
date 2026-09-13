@@ -189,6 +189,26 @@ Separately, the link checker was wrong to demand a build-output path exist at al
 passed or failed on whether somebody had run a build. Paths through `dist`, `build`, `target`,
 `node_modules` and `__pycache__` are no longer treated as source references.
 
+**The check layer audited against its own claims (2026-09-13).** Six checks were found to
+verify a PROXY for their invariant rather than the invariant: a cap constant's existence (C8), a
+class name (C9), a count of exclusion clauses (C6), an index's WHERE clause without its key
+(C3), a table's existence without anything flowing through it (C7), and the word "replay"
+appearing somewhere in app.py (ZK anti-replay). **Every one of the six properties turned out to
+HOLD**, verified against the live database or the source. Nothing in the system was broken; what
+was broken was the ability to notice if it stopped.
+
+And the instrument that should have caught them could not: `needles_of` in the check-mutation
+drill collects STRING LITERALS to comment out, so a check asserting through a regex offers
+nothing to mutate. FOUR of the six were in that bucket, reported as "skipped: nothing to
+mutate" -- a count that read as a footnote. The drill names those 163 checks now and says
+plainly that they are not mutation-tested, so "0 of 92 survive" is read as a statement about
+the reachable 92.
+
+C2 and C5 were examined and found sound, as were the four remaining checks that assert a
+DB-enforced mechanism. Of 42 such checks, 36 already read what the mechanism is parameterized
+on; the defects were concentrated in the oldest constitutional checks, not spread through the
+layer.
+
 **Lab, all three priority questions now have answers (2026-09-13).** `lab/linkability/`:
 no adversary advantage beyond the anonymity set, measured with a positive control, and the
 anonymity set IS the epoch's membership which the schema floors at one. `lab/duress/`: the
