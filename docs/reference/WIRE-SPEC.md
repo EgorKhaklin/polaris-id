@@ -426,7 +426,7 @@ The detached verifier decides the whole chain from the command line, so a servic
 have to write code to check an agent's authority:
 
 ```
-polaris-verify.py --agent-grant grant.json --holder-binding binding.json \
+polaris-verify.py --pqc-provider auto --agent-grant grant.json --holder-binding binding.json \
     --credential cred.json --agent-proof proof.json --grant-revocation rev.json \
     --action read:status --service-nonce "$NONCE" --issuer-anchor anchor.json
 ```

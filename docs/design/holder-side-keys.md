@@ -120,7 +120,7 @@ the person. Four fields, and `check_agent_grant` refuses a fifth.
 A service decides the whole chain offline from the command line:
 
 ```bash
-polaris-verify.py --agent-grant grant.json --holder-binding binding.json \
+polaris-verify.py --pqc-provider auto --agent-grant grant.json --holder-binding binding.json \
     --credential cred.json --agent-proof proof.json --grant-revocation rev.json \
     --action read:status --service-nonce "$NONCE" --issuer-anchor anchor.json
 ```

@@ -8102,6 +8102,74 @@ _COMPULSION_ASSERTIONS = ("compulsion-resistant", "compulsion resistant",
 _DURESS_LIMITATION_REL = "lab/duress/README.md"
 
 
+def check_documented_verifier_commands_run(root: pathlib.Path) -> list[Finding]:
+    """Every documented `polaris-verify` invocation declares a crypto mode (v0.1.0).
+
+    polaris-verify refuses to start unless the run says what cryptography it is doing. That
+    is the point of it. It also means every command already written down became wrong the
+    moment the gate shipped, and two of them were: the README's own copy-pasteable
+    `--selftest` and `--verify-dir vectors` both exited 4 on the front page for four ships,
+    and nothing noticed, because no check runs what the documentation says to run.
+
+    This does not execute them, which would need liboqs and a clone. It asserts the
+    property that actually broke: an invocation that names the verifier and asks it to DO
+    something must also carry `--pqc-provider` or `--dev-placeholder`. `--help` and bare
+    mentions of the path are not invocations and are left alone.
+    """
+    name = "documented_commands_run"
+    #: Surfaces that tell a reader to run something. The CHANGELOG is excluded: it records
+    #: commands as they were at a version, and a command that was correct then is not a
+    #: defect now.
+    docs = sorted(
+        [p for p in root.glob("*.md")]
+        + [p for p in root.glob("docs/**/*.md")]
+        + [p for p in root.glob("packages/**/*.md")]
+        + [p for p in root.glob("sdk/**/*.md") if "node_modules" not in p.parts]
+    )
+    #: An invocation: the command or the script path, followed by flags on the same line.
+    invocation = re.compile(r"(?:polaris-verify(?:\.py)?)((?:\s+--?[\w-]+(?:[= ][^\s`]+)?)*)")
+    findings: list[Finding] = []
+    checked = 0
+    for path in docs:
+        rel = path.relative_to(root).as_posix()
+        if rel == "CHANGELOG.md" or rel.startswith("DEVNOTES/"):
+            continue
+        # ONLY fenced code blocks. A fenced block is an instruction to run something; prose
+        # that names a command while describing what shipped is a description, and ROADMAP.md
+        # is full of the second kind. The first version of this check did not distinguish
+        # them and reported ten findings, of which three were real. A signal that happens to
+        # match is not the property, which is the same lesson as the CI-toolchain check.
+        in_block = False
+        for lineno, line in enumerate(path.read_text(encoding="utf-8", errors="replace")
+                                      .splitlines(), 1):
+            if line.lstrip().startswith("```"):
+                in_block = not in_block
+                continue
+            if not in_block:
+                continue
+            for m in invocation.finditer(line):
+                flags = m.group(1)
+                if not flags.strip():
+                    continue                      # a bare mention of the name or the path
+                if "--help" in flags or "--version" in flags:
+                    continue                      # neither starts a verification
+                checked += 1
+                if "--pqc-provider" not in flags and "--dev-placeholder" not in flags:
+                    findings.extend(_fail(name, "%s:%d documents `polaris-verify%s`, which "
+                                                "exits 4 without --pqc-provider or "
+                                                "--dev-placeholder. A documented command "
+                                                "that does not run is worse than no command"
+                                                % (rel, lineno, flags[:60])))
+    if not checked:
+        return _fail(name, "no documented polaris-verify invocation was found, so either the "
+                           "documentation stopped showing how to run it or this check stopped "
+                           "seeing it")
+    if findings:
+        return findings
+    return _ok(name, "all %d documented polaris-verify invocations declare a crypto mode, so "
+                     "a reader who copies one gets a verdict rather than a refusal" % checked)
+
+
 def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
     """No outward surface claims compulsion RESISTANCE (2026-09-13).
 
@@ -17011,6 +17079,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_public_claims_honest,
     check_post_quantum_claims_are_agility,
     check_duress_claims_are_aware,
+    check_documented_verifier_commands_run,
     check_sdk_refusals_are_mutation_tested,
     check_ci_jobs_install_what_they_run,
     check_license_is_pinned,

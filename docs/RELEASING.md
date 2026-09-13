@@ -20,6 +20,26 @@ that distinguishes a real org from an absent one.
 
 ---
 
+## Installing before any of that
+
+Nothing is blocked on publishing. An external party can install and run the verifier today,
+from a public URL, and this is measured on a clean machine rather than assumed:
+
+```bash
+pip install "polaris-verify[cryptography] @ git+https://github.com/EgorKhaklin/polaris-id#subdirectory=packages/polaris-verify"
+polaris-verify --pqc-provider auto --pack credential.json
+```
+
+The `#subdirectory=` fragment is not optional. The repository root has no `pyproject.toml`,
+so the form a newcomer tries first, `pip install git+https://github.com/EgorKhaklin/polaris-id`,
+fails with *"does not appear to be a Python project"*.
+
+This installs whatever is on the default branch, not a fixed version, so it is the right tool
+for someone evaluating and the wrong one for anyone depending on it. That is the argument for
+publishing, and it is a different argument from "otherwise nobody can use it".
+
+---
+
 ## Before anything is published
 
 `0.1.0` is deliberate. The go-forward contract gives `1.0.0` five conditions, and a version

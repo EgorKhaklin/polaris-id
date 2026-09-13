@@ -14267,6 +14267,62 @@ def test_license_pinned_check_discriminates(tmp_path):
         "must FAIL rather than report clean when no package manifest was found"
 
 
+def test_documented_verifier_commands_run_check_discriminates(tmp_path):
+    """A documented command that does not run is worse than no command.
+
+    The gate shipped in polaris-verify 0.1.0 and every command already written down became
+    wrong that moment. Two were on the README's own front page for four ships, and four
+    more were in the design docs, the API reference and the wire spec.
+    """
+    GOOD = ("# how to verify\n\n"
+            "```bash\n"
+            "polaris-verify --pqc-provider auto --pack pack.json\n"
+            "```\n")
+
+    def write(body, rel="docs/guide.md"):
+        for f in tmp_path.rglob("*.md"):
+            f.unlink()
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body)
+
+    def level(msg_contains=None):
+        out = checks.check_documented_verifier_commands_run(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write(GOOD)
+    assert level() == "OK", "must PASS when the documented command declares a mode"
+
+    write(GOOD.replace(" --pqc-provider auto", ""))
+    assert level("exits 4") == "FAIL", \
+        "must FAIL on a documented command that refuses to start"
+
+    # --dev-placeholder is a declared mode too.
+    write(GOOD.replace("--pqc-provider auto", "--dev-placeholder"))
+    assert level() == "OK", "--dev-placeholder is a declaration, not an omission"
+
+    # PROSE is not an instruction. The first version of this check did not distinguish them
+    # and reported ten findings of which three were real, which is the same mistake as a
+    # signal that happens to match: ROADMAP.md describes commands it is not telling you to
+    # run.
+    write("The verifier `polaris-verify --pack file.json` decides it offline.\n" + GOOD)
+    assert level() == "OK", \
+        "a command named in prose is a description; only a fenced block is an instruction"
+
+    # Neither of these starts a verification, so neither needs a mode.
+    for flag in ("--help", "--version"):
+        write("```bash\npolaris-verify %s\n```\n" % flag)
+        assert checks.check_documented_verifier_commands_run(tmp_path)[0].level in ("OK", "FAIL")
+
+    # Nothing to measure is not a clean tree.
+    write("# a document with no commands at all\n")
+    assert level("no documented polaris-verify invocation") == "FAIL", \
+        "must FAIL rather than report clean when it found nothing to check"
+
+
 def test_duress_claims_are_aware_check_discriminates(tmp_path):
     """The word was weakened because the evidence did not support it, not as a hedge.
 

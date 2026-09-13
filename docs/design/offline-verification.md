@@ -55,7 +55,7 @@ record of who fetched it.
 The reference verifier is `scripts/polaris-verify.py`:
 
 ```bash
-python3 scripts/polaris-verify.py --pack pack.json --status-assertion assertion.json \
+python3 scripts/polaris-verify.py --pqc-provider auto --pack pack.json --status-assertion assertion.json \
         --issuer-anchor issuer.json --max-window 86400
 ```
 

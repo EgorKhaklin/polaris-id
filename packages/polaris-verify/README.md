@@ -5,9 +5,19 @@ on its own: no Polaris server, no database, no operator console, no network unle
 it to fetch status.
 
 ```bash
-pip install "polaris-verify[cryptography]"
+# Not on PyPI yet. This works today, from a clean machine, and is measured:
+pip install "polaris-verify[cryptography] @ git+https://github.com/EgorKhaklin/polaris-id#subdirectory=packages/polaris-verify"
+
 polaris-verify --pqc-provider auto --pack credential.json
 ```
+
+The `#subdirectory=` fragment is required and is easy to miss: this repository holds several
+packages, so its root has no `pyproject.toml`, and `pip install git+…` without the fragment
+fails with *"does not appear to be a Python project"*, which reads as "this is not
+installable" rather than "look one directory down".
+
+Once it is published the command becomes `pip install "polaris-verify[cryptography]"`. See
+[RELEASING.md](../../docs/RELEASING.md) for why nothing is published yet.
 
 ## It refuses to start until you say what cryptography it is doing
 
