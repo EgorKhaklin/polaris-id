@@ -173,6 +173,21 @@ is real issuer-side and a software release verifier-side, because `deprecation_d
 signed artifact. None of the three proposed a mechanism change: lab work does not create product
 guarantees, and all three are recorded in the readiness ledger for the deploying organisation.
 
+**The published verifier contract was unusable by a third party (2026-09-13, fixed).**
+`conformance/SPEC.md` says a verifier "prints its verdict as JSON on stdout" and names
+`python -m polaris_verify.conformance` as the reference implementation of that contract. With
+liboqs installed, `import oqs` printed its banner to STDOUT in front of the verdict, so any
+third-party runner doing `json.loads(stdout)` raised on the first character. Nothing caught it:
+`run_conformance.py --self` calls the SDK in-process, and the only subprocess-driven CI job
+drives the TypeScript SDK, which has no liboqs. That exact combination -- Python SDK, external
+subprocess, liboqs present -- was never exercised. It is a CI step now, and all 118 cases pass
+through it.
+
+Found by writing a verifier from SPEC.md alone and running the suite against it, which is what a
+third party does. The same exercise confirmed the suite correctly VOIDs a verifier that rejects
+everything: exit 2, with the 49 passing refusal cases named as worthless without a positive
+control.
+
 **First interop target: assessed, not started (2026-09-13).** `lab/interop/` measures what
 OpenID4VP 1.0 + HAIP would cost, so the credential-format decision the contract defers to a
 real use case can be made with numbers. The finding is that **the format is not the blocker**.

@@ -97,11 +97,31 @@ def _verify_cryptography(digest, sig, pk, alg=ALGORITHM):
         return False
 
 
+def _import_oqs():
+    """Import liboqs with its startup chatter kept off stdout.
+
+    `import oqs` prints "liboqs-python faulthandler is disabled" to STDOUT. This module IS
+    the verifier contract's reference implementation -- conformance/SPEC.md says a verifier
+    "prints its verdict as JSON on stdout" and names `python -m polaris_verify.conformance`
+    as the example -- so a third party whose runner does json.loads(stdout) got a parse
+    error on the first character whenever liboqs was installed.
+
+    Nothing caught it: `run_conformance.py --self` calls this SDK in-process rather than as
+    a subprocess, and the CI job that drives a verifier as a subprocess drives the
+    TypeScript one, which has no liboqs. Measured by running the documented command.
+    """
+    import contextlib
+    import sys as _sys
+    with contextlib.redirect_stdout(_sys.stderr):
+        import oqs  # type: ignore
+    return oqs
+
+
 def _verify_liboqs(digest, sig, pk, alg=ALGORITHM):
     if not _accepted(alg):
         return False
     try:
-        import oqs  # type: ignore
+        oqs = _import_oqs()
     except Exception:
         return None
     try:

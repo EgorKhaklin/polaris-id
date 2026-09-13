@@ -2125,6 +2125,16 @@ jobs:
       - name: Conformance suite — Python reference SDK
         run: python conformance/run_conformance.py --self
 
+      # The SAME SDK driven the way a third party drives one: as a SUBPROCESS over stdin
+      # and stdout, which is the contract conformance/SPEC.md publishes. `--self` above
+      # calls it in-process, and the only subprocess-driven job was the TypeScript one,
+      # which has no liboqs. So nothing exercised "Python SDK, as an external verifier,
+      # with liboqs installed" -- and in that exact combination `import oqs` printed its
+      # banner to STDOUT, in front of the verdict, so a third party's json.loads(stdout)
+      # raised on the first character.
+      - name: Conformance suite — Python SDK as an EXTERNAL subprocess (the published contract)
+        run: PYTHONPATH=sdk/python python conformance/run_conformance.py --verifier "python -m polaris_verify.conformance"
+
       # v9.429 — does the published contract CONSTRAIN a verifier, or merely describe
       # one? The drill forces each decision field a verifier reports to its permissive
       # answer -- the verdict an implementation that never performs that check would
