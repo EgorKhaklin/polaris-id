@@ -5,6 +5,51 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.456 — 2026-09-13 (the other reference implementation)
+
+v9.455 inverted every refusal in the Python SDK and closed eighteen of eighteen. It asked the
+question of one implementation. Polaris ships **two** reference verifiers, both certified by the
+same conformance suite, and an integrator picks whichever matches their stack. The TypeScript one
+had never been asked.
+
+**Nine of fourteen.** Fourteen refusals in `sdk/typescript/src/index.ts`, nine of them able to
+accept what they exist to reject with `node --test` and the conformance runner both green. The one
+worth naming:
+
+- **`sameBytes`, the constant-time comparison.** Its first act is a length guard. Inverted, arrays
+  of different lengths fall through to a loop over the shorter one and compare EQUAL. A five-byte
+  value matches a 32-byte Merkle root. That is the comparison every signature, root and digest
+  check in the TypeScript SDK funnels through, and nothing in either suite noticed it was gone.
+- `verifyInclusion`'s bounds check on the leaf index, and its node-shape check.
+- `grantWithinLimits`' use-count ceiling and amount ceiling, the same pair the Python SDK had open.
+- `grantCovers`' empty-action-list guard, `revocationEndsGrant`'s id match.
+
+Six tests close them. The drill now runs both SDKs: **32 refusals, 4 declared survivors with
+stated reasons, and a per-SDK negative control** that inverts every refusal at once and confirms
+the harness can produce a survivor at all. Without that control, "0 survivors" and "the suite
+never ran" print the same number.
+
+**Three harness errors, each caught by the harness.** The TypeScript refusal regex was anchored to
+a line start, so it matched nothing in a file that writes `if (cond) return false;` -- a vacuous
+"0 of 0" that looked like a pass. The labeller only recognised top-level functions, so class
+methods were all attributed to whichever function preceded them. And the sandbox copy excluded
+`node_modules`, so the baseline could not resolve its own imports; the drill refused to report
+rather than calling an unbuildable tree clean. The declared-survivor list is checked in both
+directions, which is what caught the mislabelled names: a declared survivor that no longer
+survives fails the drill just as a new survivor does.
+
+`check_sdk_refusals_are_mutation_tested` now requires both SDKs to be in the drill's reach and the
+TypeScript suite to exercise the length guard by name.
+
+**A timing test that could not say what it measured.** `_assertRanInParallel` compared elapsed
+time against a serialized estimate; when the sample was unusable (the runner stalled and elapsed
+exceeded the estimate despite real parallelism) it reported a plain assertion failure that read as
+a concurrency regression. It now names the case: the measurement is unusable, not the property.
+`polaris-ship.py triage` carries a `concurrency-measurement-stall` signature so a rerun is the
+named response rather than an investigation.
+
+---
+
 ## v9.455 — 2026-09-13 (every refusal in the reference verifier could be made to accept)
 
 Six mutation drills existed -- checks, constraints, procedures, triggers, the ZK circuit, the

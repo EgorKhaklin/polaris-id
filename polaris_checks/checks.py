@@ -8205,6 +8205,20 @@ def check_sdk_refusals_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
     if "RefusalsAreTested" not in tests:
         findings.extend(_fail(name, "sdk/python/test_sdk.py carries no class exercising the SDK's "
                                     "refusals, so the drill has nothing to make go red"))
+    # v9.456: BOTH reference implementations. The TypeScript SDK is certified by the same
+    # conformance suite and had 9 of its 14 refusals unprotected, among them sameBytes's
+    # length guard -- inverted, byte arrays of different lengths compare as EQUAL.
+    if "typescript" not in drill or "sdk/typescript/src/index.ts" not in drill:
+        findings.extend(_fail(name, "the drill covers only one SDK; the TypeScript reference "
+                                    "implementation is certified by the same conformance suite "
+                                    "and an integrator may build against either"))
+    ts_tests = _read(root, "sdk/typescript/test/sdk.test.ts")
+    if not ts_tests:
+        findings.extend(_fail(name, "sdk/typescript/test/sdk.test.ts could not be read"))
+    elif "sameBytes length guard" not in ts_tests:
+        findings.extend(_fail(name, "the TypeScript suite does not exercise the length guard in "
+                                    "its constant-time comparison; inverted, a 32-byte root "
+                                    "matches a five-byte value"))
     if findings:
         return findings
     return _ok(name, "every refusal in the reference SDK is inverted on each push and both the "

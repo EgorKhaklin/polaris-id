@@ -484,6 +484,16 @@ FLAKE_SIGNATURES = [
     # repository does not exist`, a definite answer from a registry that is up. This one is
     # DeadlineExceeded or a timeout resolving metadata, which is the registry not answering.
     # Rerunning clears the second and never clears the first, so they must not be one rule.
+    # v9.456: the concurrency tests measure one worker, then two, and assert the pair cost
+    # less than one plus most of another sleep. A runner that stalls between the two
+    # readings produces an elapsed ABOVE even the serialized estimate, which is a
+    # measurement that cannot happen and therefore says nothing. The test names it now;
+    # this classifies the build.
+    ("concurrency-measurement-stall",
+     r"the measurement is UNUSABLE, not a failure of parallelism",
+     "a concurrency test's timing sample exceeded even its own serialized estimate, which "
+     "two parallel workers cannot do; the runner stalled mid-measurement. Not a "
+     "concurrency regression; rerun the failed jobs"),
     ("buildkit-frontend",
      r"failed to resolve source metadata for docker\.io/docker/dockerfile|"
      r"DeadlineExceeded.*failed to resolve source metadata|"

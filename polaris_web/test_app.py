@@ -5563,11 +5563,26 @@ class ConcurrencyTests(PolarisTestCase):
         """Two workers ran concurrently if together they cost less than one plus most
         of another sleep. Serialized, they cost one plus a WHOLE extra sleep."""
         ceiling = baseline + self.PARALLEL_SLEEP * 0.6
+        serialized = baseline + self.PARALLEL_SLEEP
+        if elapsed >= serialized:
+            # v9.456: this sample says nothing about parallelism either way. Two workers
+            # cannot be SLOWER than running them one after another, so a reading above
+            # the serialized estimate means the machine stalled between the baseline and
+            # this measurement, not that the work serialized. Seen on 2026-09-13:
+            # elapsed=0.662s against a serialized estimate of 0.606s, green on a rerun.
+            # Named here so a red build reads as the unusable measurement it is rather
+            # than as a concurrency regression.
+            self.fail(
+                f"{what}: the measurement is UNUSABLE, not a failure of parallelism. "
+                f"elapsed={elapsed:.3f}s exceeds even the serialized estimate of "
+                f"{serialized:.3f}s (one worker alone took {baseline:.3f}s), and two "
+                f"workers cannot be slower than two workers run in sequence. The machine "
+                f"stalled mid-measurement; re-run this job.")
         self.assertLess(
             elapsed, ceiling,
             f"{what} should run in parallel; elapsed={elapsed:.3f}s, "
             f"one worker alone took {baseline:.3f}s on this machine, so a serialized "
-            f"pair would cost about {baseline + self.PARALLEL_SLEEP:.3f}s")
+            f"pair would cost about {serialized:.3f}s")
     """Tests for the v6 concurrency hardening. Run a handful of operations
     in parallel against the live database and assert the invariants hold."""
 

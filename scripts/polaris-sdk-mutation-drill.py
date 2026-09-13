@@ -39,108 +39,171 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SDK_REL = "sdk/python/polaris_verify/__init__.py"
+#: Both reference implementations. An integrator builds against one of these, and the
+#: conformance suite certifies both, so the question is the same for each: if a refusal
+#: inside it stopped refusing, would anything notice?
+SDKS = {
+    "python": {
+        "source": "sdk/python/polaris_verify/__init__.py",
+        "tests": ([sys.executable, "-m", "unittest", "test_sdk"], "sdk/python"),
+        "conformance": None,          # --self drives the python SDK
+    },
+    "typescript": {
+        "source": "sdk/typescript/src/index.ts",
+        "tests": (["node", "--test"], "sdk/typescript"),
+        "conformance": ["--verifier", "node sdk/typescript/src/conformance.ts"],
+    },
+}
 
-#: Refusals that are allowed to survive, each with the reason. Empty, and checked in BOTH
-#: directions: a name here that no longer survives fails the drill too, so the list cannot
-#: quietly describe a gap that has been closed.
-DECLARED_SURVIVORS: dict[str, str] = {}
+#: Refusals allowed to survive, each with the reason, keyed "sdk:function:line". Checked
+#: in BOTH directions: a name here that no longer survives fails the drill too, so the
+#: list cannot quietly describe a gap that has been closed.
+#:
+#: The four below are the TypeScript SDK's, and they are different in kind from a gap.
+#: hexToBytes throws on malformed hex; removing the throw makes it return garbage bytes
+#: and the verdict is STILL not-authentic, so no test can distinguish the two -- the guard
+#: is belt and braces over a decision made downstream. The two HTTP throws are on the
+#: ONLINE PolarisVerifier path, which needs a live server; both offline suites are the
+#: wrong instrument for them, and reaching them would mean standing a stub server inside
+#: the SDK's unit tests to exercise an error branch that returns the same verdict anyway.
+DECLARED_SURVIVORS: dict[str, str] = {
+    "typescript:hexToBytes:64":
+        "removing the throw yields garbage bytes and the same not-authentic verdict",
+    "typescript:hexToBytes:68":
+        "removing the throw yields garbage bytes and the same not-authentic verdict",
+    "typescript:accessToken:753":
+        "an HTTP status guard on the online path; no offline suite reaches it",
+    "typescript:onlineStatus:767":
+        "an HTTP status guard on the online path; no offline suite reaches it",
+}
 
-_IGNORE = shutil.ignore_patterns(".git", "node_modules", "target", "__pycache__",
+#: node_modules is NOT ignored: the TypeScript SDK's tests cannot resolve their imports
+#: without it, and a copy that omits it makes the baseline fail. The drill then refuses to
+#: report rather than calling an unrunnable tree clean -- which is what it did the first
+#: time this list had node_modules in it.
+_IGNORE = shutil.ignore_patterns(".git", "target", "__pycache__",
                                  ".hypothesis", "venv", ".ruff_cache")
 
 
-def _invert(line: str) -> str | None:
-    """A refusal turned into an acceptance, or None if this line is not a refusal."""
+def _invert(line: str, lang: str) -> str | None:
+    """A refusal turned into an acceptance, or None if this line is not a refusal.
+
+    TypeScript writes them as trailing statements -- `if (cond) return false;` -- so an
+    anchored pattern matches nothing there. The first version of this used one, reported
+    0 of 0 for that SDK, and a zero over an empty set is not a clean result.
+    """
     s = line.rstrip("\n")
-    if re.match(r"^\s*return False\s*$", s):
-        return s.replace("return False", "return True") + "  # MUTATED\n"
-    if re.match(r"^\s*return False,", s):
-        return s.replace("return False,", "return True,", 1) + "  # MUTATED\n"
-    if re.match(r"^\s*raise \w", s):
-        return " " * (len(s) - len(s.lstrip())) + "pass  # MUTATED\n"
+    ind = " " * (len(s) - len(s.lstrip()))
+    if lang == "python":
+        if re.match(r"^\s*return False\s*$", s):
+            return s.replace("return False", "return True") + "  # MUTATED\n"
+        if re.match(r"^\s*return False,", s):
+            return s.replace("return False,", "return True,", 1) + "  # MUTATED\n"
+        if re.match(r"^\s*raise \w", s):
+            return ind + "pass  # MUTATED\n"
+        return None
+    if re.search(r"\breturn false\b", s):
+        return s.replace("return false", "return true", 1) + "  // MUTATED\n"
+    if re.search(r"\bthrow new \w", s):
+        return re.sub(r"throw new \w+\([^;]*\);", "/* MUTATED */;", s, count=1) + "\n"
     return None
 
 
-def _label(lines: list[str], i: int) -> str:
-    """function:line, so a survivor names something a reader can open."""
+def _label(lines: list[str], i: int, lang: str) -> str:
+    """sdk:function:line, so a survivor names something a reader can open.
+
+    Class METHODS count. The first version matched only top-level definitions, so two
+    refusals inside a PolarisVerifier method were labelled with the unrelated function
+    that happened to precede the class -- a name that sends a reader to the wrong place,
+    which is the one thing a survivor label must not do.
+    """
+    if lang == "python":
+        pats = (r"^\s*def (\w+)",)
+    else:
+        pats = (r"^(?:export )?(?:async )?function (\w+)",
+                r"^\s+(?:async |private |public |static )*(\w+)\s*\([^)]*\)\s*[:{]")
     for j in range(i, -1, -1):
-        m = re.match(r"^def (\w+)", lines[j]) or re.match(r"^\s{0,4}def (\w+)", lines[j])
-        if m:
-            return "%s:%d" % (m.group(1), i + 1)
-    return "line %d" % (i + 1)
+        for pat in pats:
+            m = re.match(pat, lines[j])
+            if m and m.group(1) not in ("if", "for", "while", "switch", "catch", "return"):
+                return "%s:%s:%d" % (lang, m.group(1), i + 1)
+    return "%s:line %d" % (lang, i + 1)
 
 
-def _both_suites_pass(work: pathlib.Path) -> bool:
-    """What CI runs against the SDK: its own tests, and the conformance suite."""
+def _suites_pass(work: pathlib.Path, sdk: dict) -> bool:
+    """What CI runs against this SDK: its own tests, and the conformance suite."""
+    cmd, cwd = sdk["tests"]
+    conf = [sys.executable, "conformance/run_conformance.py"]
+    conf += sdk["conformance"] if sdk["conformance"] else ["--self"]
     try:
-        a = subprocess.run([sys.executable, "-m", "unittest", "test_sdk"],
-                           cwd=work / "sdk" / "python", capture_output=True, timeout=300)
-        b = subprocess.run([sys.executable, "conformance/run_conformance.py", "--self"],
-                           cwd=work, capture_output=True, timeout=900)
-    except subprocess.TimeoutExpired:
+        a = subprocess.run(cmd, cwd=work / cwd, capture_output=True, timeout=300)
+        b = subprocess.run(conf, cwd=work, capture_output=True, timeout=900)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
     return a.returncode == 0 and b.returncode == 0
 
 
 def main() -> int:
-    sdk = ROOT / SDK_REL
-    if not sdk.is_file():
-        print("sdk-mutation drill: %s is missing" % SDK_REL, file=sys.stderr)
-        return 3
-    src = sdk.read_text()
-    lines = src.splitlines(keepends=True)
-    sites = [(i, _invert(l)) for i, l in enumerate(lines)]
-    sites = [(i, m) for i, m in sites if m]
-    if not sites:
-        print("sdk-mutation drill: no refusals found in the SDK; the parser and the file "
-              "have drifted and a clean result would mean nothing", file=sys.stderr)
-        return 1
-
-    print("== SDK mutation: %d refusals in %s, each inverted ==" % (len(sites), SDK_REL))
+    for lang, sdk in SDKS.items():
+        if not (ROOT / sdk["source"]).is_file():
+            print("sdk-mutation drill: %s is missing" % sdk["source"], file=sys.stderr)
+            return 3
 
     work = pathlib.Path(tempfile.mkdtemp()) / "tree"
     shutil.copytree(ROOT, work, ignore=_IGNORE)
-    target = work / SDK_REL
+    survivors: list[str] = []
+    total = 0
     try:
-        if not _both_suites_pass(work):
-            print("sdk-mutation drill: the UNMUTATED tree does not pass both suites, so no "
-                  "mutation result would mean anything", file=sys.stderr)
-            return 1
-        print("  baseline: the unmutated SDK passes its tests and the conformance suite")
+        for lang, sdk in SDKS.items():
+            src = (ROOT / sdk["source"]).read_text()
+            lines = src.splitlines(keepends=True)
+            sites = [(i, m) for i, m in
+                     ((i, _invert(l, lang)) for i, l in enumerate(lines)) if m]
+            if not sites:
+                print("sdk-mutation drill: no refusals found in %s; the parser and the file "
+                      "have drifted and a clean result would mean nothing" % sdk["source"],
+                      file=sys.stderr)
+                return 1
+            total += len(sites)
+            target = work / sdk["source"]
+            print("== %s: %d refusals in %s ==" % (lang, len(sites), sdk["source"]))
 
-        # NEGATIVE CONTROL. If a whole signature backend accepting everything is NOT
-        # caught, this harness is not exercising the SDK and every survivor below would be
-        # a fact about the harness rather than about the tree.
-        control = re.sub(r"(def _verify_cryptography\([^)]*\):\n)", r"\1    return True\n",
-                         src, count=1)
-        control = re.sub(r"(def _verify_liboqs\([^)]*\):\n)", r"\1    return True\n",
-                         control, count=1)
-        target.write_text(control)
-        control_caught = not _both_suites_pass(work)
-        target.write_text(src)
-        print("  negative control: an SDK whose signature backends accept ANYTHING is %s"
-              % ("caught" if control_caught else "NOT CAUGHT"))
-        if not control_caught:
-            print("\n== SDK MUTATION DRILL FAILED: the negative control was not caught, so a "
-                  "clean result here would mean nothing ==", file=sys.stderr)
-            return 1
+            if not _suites_pass(work, sdk):
+                print("sdk-mutation drill: the UNMUTATED %s tree does not pass both suites, so "
+                      "no mutation result would mean anything" % lang, file=sys.stderr)
+                return 1
 
-        survivors: list[str] = []
-        for i, mutated_line in sites:
-            m = lines[:]
-            m[i] = mutated_line
-            target.write_text("".join(m))
-            if _both_suites_pass(work):
-                survivors.append(_label(lines, i))
+            # NEGATIVE CONTROL. A whole refusal-bearing function turned into an acceptance
+            # must be caught, or every survivor below is a fact about this harness.
+            first_i, _ = sites[0]
+            control = lines[:]
+            for i, m in sites:
+                control[i] = m
+            target.write_text("".join(control))
+            caught = not _suites_pass(work, sdk)
             target.write_text(src)
+            print("  negative control: an SDK with EVERY refusal inverted is %s"
+                  % ("caught" if caught else "NOT CAUGHT"))
+            if not caught:
+                print("\n== SDK MUTATION DRILL FAILED: the negative control was not caught for "
+                      "%s, so a clean result there would mean nothing ==" % lang, file=sys.stderr)
+                return 1
+
+            for i, mutated in sites:
+                m = lines[:]
+                m[i] = mutated
+                target.write_text("".join(m))
+                if _suites_pass(work, sdk):
+                    survivors.append(_label(lines, i, lang))
+                target.write_text(src)
     finally:
         shutil.rmtree(work.parent, ignore_errors=True)
 
     undeclared = [s for s in survivors if s not in DECLARED_SURVIVORS]
     stale = [s for s in DECLARED_SURVIVORS if s not in survivors]
 
-    print("  refusals inverted                        %4d" % len(sites))
+    print()
+    print("  refusals inverted across both SDKs       %4d" % total)
     print("  ...of those, accepted by both suites     %4d  (%d declared)"
           % (len(survivors), len(DECLARED_SURVIVORS)))
 
@@ -154,14 +217,14 @@ def main() -> int:
         for s in undeclared:
             print("  %s can be inverted -- made to ACCEPT what it refuses -- with both the "
                   "SDK's tests and the conformance suite green" % s)
-        print("\n== SDK MUTATION DRILL FAILED: %d refusal(s) in the reference SDK are "
-              "unprotected. An integrator builds against this file ==" % len(undeclared),
+        print("\n== SDK MUTATION DRILL FAILED: %d refusal(s) in a reference SDK are "
+              "unprotected. An integrator builds against these files ==" % len(undeclared),
               file=sys.stderr)
         return 1
 
-    print("\n== SDK MUTATION DRILL PASSED: every one of the %d refusals in the reference SDK "
-          "is caught when inverted, and the negative control proves the harness can produce a "
-          "survivor ==" % len(sites))
+    print("\n== SDK MUTATION DRILL PASSED: every one of the %d refusals across both reference "
+          "SDKs is caught when inverted, except %d declared with reasons, and the negative "
+          "control proves the harness can produce a survivor ==" % (total, len(DECLARED_SURVIVORS)))
     return 0
 
 

@@ -14171,6 +14171,8 @@ def test_no_deleted_apparatus_citations_check_discriminates(tmp_path):
 def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
     """The property that cost a re-measurement: the mutation must INVERT, not delete."""
     DRILL = ('"""the sdk mutation drill"""\n'
+             'SDKS = {"python": "sdk/python/polaris_verify/__init__.py",\n'
+             '        "typescript": "sdk/typescript/src/index.ts"}\n'
              'DECLARED_SURVIVORS = {}\n'
              'def invert(line):\n'
              '    return line.replace("return False", "return True") + "  # MUTATED"\n'
@@ -14182,11 +14184,14 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
              '        print("declared survivor(s) no longer survive")\n')
     CI = "jobs:\n  test:\n    steps:\n      - run: python scripts/polaris-sdk-mutation-drill.py\n"
     TESTS = "class RefusalsAreTestedTests(unittest.TestCase):\n    pass\n"
+    TS_TESTS = 'test("a root of the wrong length does not match (sameBytes length guard)", ok);\n'
 
-    def write(drill=DRILL, ci=CI, tests=TESTS, drill_present=True):
+    def write(drill=DRILL, ci=CI, tests=TESTS, ts_tests=TS_TESTS, drill_present=True):
         (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
         (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
         (tmp_path / "sdk" / "python").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "sdk" / "typescript" / "test").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "sdk" / "typescript" / "test" / "sdk.test.ts").write_text(ts_tests)
         f = tmp_path / "scripts" / "polaris-sdk-mutation-drill.py"
         if drill_present:
             f.write_text(drill)
@@ -14222,6 +14227,18 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
     write(drill=DRILL.replace('    print("  negative control: an SDK that accepts anything is caught")\n', ""))
     assert level("no negative control") == "FAIL", \
         "must FAIL when '0 survivors' cannot be distinguished from a harness that ran nothing"
+
+    # v9.456: the drill that covers one of two shipped reference implementations. This
+    # was the real state of the tree -- 14 TypeScript refusals unscanned, 9 unprotected.
+    write(drill=DRILL.replace('        "typescript": "sdk/typescript/src/index.ts"}\n', '}\n'))
+    assert level("covers only one SDK") == "FAIL", \
+        "must FAIL when a shipped reference implementation is outside the drill's reach"
+
+    # And a TypeScript suite that does not reach the constant-time comparison's length
+    # guard: inverted, a 32-byte root matches a five-byte value and nothing goes red.
+    write(ts_tests='test("verifies a genuine proof", ok);\n')
+    assert level("length guard") == "FAIL", \
+        "must FAIL when the TypeScript suite cannot make the length guard's inversion red"
 
     write(ci="jobs:\n  test:\n    steps:\n      - run: echo nothing\n")
     assert level("not wired into CI") == "FAIL", "must FAIL when a lost refusal cannot fail a push"

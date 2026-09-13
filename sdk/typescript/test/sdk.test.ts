@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
-         nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant } from "../src/index.ts";
+         nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant,
+         verifyInclusion } from "../src/index.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const vec = (n: string) => JSON.parse(readFileSync(join(ROOT, "vectors", n), "utf8"));
@@ -132,4 +133,86 @@ test("only the holder who signed a grant can revoke it", () => {
   assert.equal(revocationEndsGrant({ ...rev, grant_id: "other" }, GRANT), false,
     "a revocation naming another grant must not end this one");
   assert.equal(revocationEndsGrant({ ...rev, format: "polaris-status-assertion/1" }, GRANT), false);
+});
+
+// ---------------------------------------------------------------------------
+// Every refusal in this file, exercised so that inverting it goes red.
+//
+// scripts/polaris-sdk-mutation-drill.py turns each `return false` into `return true`
+// and each `throw` into nothing, then asks whether these tests and the conformance
+// suite notice. The first run over this file answered 9 of 14 unprotected, among them
+// sameBytes's length guard -- inverted, two byte arrays of DIFFERENT lengths compare
+// as equal, so a 32-byte Merkle root matches a five-byte value.
+//
+// sameBytes and hexToBytes are internal, so they are reached through the public API
+// rather than exported for a test: exporting them would widen a published SDK's
+// surface to suit its own suite.
+// ---------------------------------------------------------------------------
+
+test("a leaf index outside the tree does not verify", () => {
+  const leaf = new Uint8Array(32).fill(0x11), root = new Uint8Array(32).fill(0x22);
+  for (const [idx, size] of [[-1, 4], [4, 4], [99, 4], [1.5, 4]] as [number, number][]) {
+    assert.equal(verifyInclusion(idx, size, leaf, root, []), false, `idx=${idx} size=${size}`);
+  }
+});
+
+test("a malformed proof node does not verify", () => {
+  const leaf = new Uint8Array(32).fill(0x11), root = new Uint8Array(32).fill(0x22);
+  assert.equal(verifyInclusion(0, 4, leaf, root, ["nope" as any]), false,
+               "a path element that is not bytes must not verify");
+  assert.equal(verifyInclusion(0, 1, leaf, root, [new Uint8Array(32)]), false,
+               "a one-leaf tree admits no path; a supplied one must not verify");
+});
+
+test("a root of the wrong length does not match (sameBytes length guard)", () => {
+  // A single-leaf tree: the computed root IS the leaf, so this isolates the comparison.
+  const leaf = new Uint8Array(32).fill(0x11);
+  assert.equal(verifyInclusion(0, 1, leaf, leaf, []), true, "the leaf is the root of a 1-leaf tree");
+  assert.equal(verifyInclusion(0, 1, leaf, new Uint8Array(5).fill(0x11), []), false,
+               "a root of a different LENGTH must not compare equal");
+  assert.equal(verifyInclusion(0, 1, leaf, new Uint8Array(0), []), false,
+               "an empty root must not compare equal");
+});
+
+test("malformed hex is refused rather than parsed", () => {
+  // hexToBytes throws on odd-length or non-string input; verifyAuthenticity must turn
+  // that into a verdict of not-authentic, never a pass and never an escaping throw.
+  const pack = vec("ml-dsa-65-valid.json");
+  for (const bad of ["abc", "zz", "", null, 1234]) {
+    const broken = { ...pack, public_key_hex: bad as any };
+    let verdict: any;
+    assert.doesNotThrow(() => { verdict = verifyAuthenticity(broken); },
+                        `public_key_hex=${String(bad)} must not throw out of the SDK`);
+    assert.notEqual(verdict.authentic, true, `public_key_hex=${String(bad)} must not verify`);
+  }
+  for (const bad of ["abc", "zz", ""]) {
+    const broken = { ...pack, signature_hex: bad };
+    let verdict: any;
+    assert.doesNotThrow(() => { verdict = verifyAuthenticity(broken); });
+    assert.notEqual(verdict.authentic, true, `signature_hex=${bad} must not verify`);
+  }
+});
+
+test("linking refuses anything that is not a pair of strings", () => {
+  for (const fn of [nullifiersLink, handlesLink]) {
+    for (const [a, b] of [[null, "ab"], ["ab", null], [1, 2], [{}, []], [undefined, "ab"]]) {
+      assert.equal((fn as any)(a, b), false,
+                   `${fn.name} must not answer for non-strings`);
+    }
+  }
+});
+
+test("a revocation must be an object, and name this grant", () => {
+  const grant = { grant_id: "g-1", public_key_hex: "AA".repeat(32) };
+  const good = { format: "polaris-grant-revocation/1", grant_id: "g-1",
+                 public_key_hex: "aa".repeat(32) };
+  assert.equal(revocationEndsGrant(good, grant), true, "the matching revocation ends it");
+  for (const [label, bad] of [["not an object", "revoked"],
+                              ["null", null],
+                              ["wrong format", { ...good, format: "polaris-grant/1" }],
+                              ["another grant's id", { ...good, grant_id: "g-2" }],
+                              ["a different key", { ...good, public_key_hex: "bb".repeat(32) }]] as [string, any][]) {
+    assert.equal(revocationEndsGrant(bad, grant), false, `${label} must not end this grant`);
+  }
+  assert.equal(revocationEndsGrant(good, "grant" as any), false, "a non-object grant ends nothing");
 });
