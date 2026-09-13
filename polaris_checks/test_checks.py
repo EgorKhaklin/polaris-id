@@ -431,6 +431,62 @@ def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when the increment is not a single atomic UPDATE"
 
 
+def test_c9_concurrency_check_sees_a_hollow_class(tmp_path):
+    """The class name was standing in for the property.
+
+    The old check was two greps over the whole file: "class ConcurrencyTests" somewhere,
+    and "threading.Thread" somewhere. Measured in the real tree, threading.Thread occurs
+    three times OUTSIDE that class, so an empty ConcurrencyTests satisfied both and C9
+    reported green with no concurrency test at all.
+    """
+    REAL = ("class ConcurrencyTests(PolarisTestCase):\n"
+            "    def test_a(self):\n"
+            "        t = threading.Thread(target=f); t.start(); t.join()\n"
+            "        self.assertEqual(1, 1)\n"
+            "    def test_b(self):\n"
+            "        t = threading.Thread(target=g); t.start(); t.join()\n"
+            "        self.assertTrue(True)\n")
+    #: The decisive detail: real threading elsewhere in the file, as in the tree.
+    ELSEWHERE = ("class OtherTests(PolarisTestCase):\n"
+                 "    def test_unrelated(self):\n"
+                 "        threading.Thread(target=h).start()\n")
+
+    def write(body):
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web" / "test_app.py").write_text(body)
+
+    write(REAL + ELSEWHERE)
+    assert checks.check_c9_concurrency_threading(tmp_path)[0].level == "OK", \
+        "must PASS when the class really exercises threads"
+
+    # The mutation the old check could not see.
+    write("class ConcurrencyTests(PolarisTestCase):\n    pass\n" + ELSEWHERE)
+    out = checks.check_c9_concurrency_threading(tmp_path)[0]
+    assert out.level == "FAIL" and "hollow" in out.message, \
+        "must FAIL on an empty class even when threading.Thread appears elsewhere"
+
+    # Threads started and never joined, and nothing asserted: a test that cannot fail.
+    write("class ConcurrencyTests(PolarisTestCase):\n"
+          "    def test_a(self):\n"
+          "        threading.Thread(target=f).start()\n"
+          "    def test_b(self):\n"
+          "        threading.Thread(target=g).start()\n" + ELSEWHERE)
+    out = checks.check_c9_concurrency_threading(tmp_path)[0]
+    assert out.level == "FAIL" and "no .join()" in out.message, \
+        "must FAIL when threads are started but never joined or asserted on"
+
+    # "not mocks" is in the constitutional wording, so it is checked.
+    write(REAL.replace("t = threading.Thread(target=f)",
+                       "t = mock.patch('threading.Thread')") + ELSEWHERE)
+    out = checks.check_c9_concurrency_threading(tmp_path)[0]
+    assert out.level == "FAIL" and "mocks threading" in out.message, \
+        "must FAIL when the scheduler is mocked; a mock cannot produce the interleaving"
+
+    write(ELSEWHERE)
+    assert checks.check_c9_concurrency_threading(tmp_path)[0].level == "FAIL", \
+        "must FAIL when there is no ConcurrencyTests class at all"
+
+
 def test_c8_atlas_caps_checks_routes_not_only_constants(tmp_path):
     """C8 bounds the RESULT SET, not the constant table.
 
@@ -517,8 +573,16 @@ def test_c8_atlas_caps_check_fails_without_constants(tmp_path):
 def test_c9_concurrency_check_fails_without_threading_tests(tmp_path):
     (tmp_path / "polaris_web").mkdir()
     suite = tmp_path / "polaris_web" / "test_app.py"
+    # v9.459: this fixture used to be one method named `t` with a single unjoined thread
+    # and no assertion, and the check passed on it. The GOOD fixture was itself hollow,
+    # which is how a detection test ends up encoding the same weakness as its check.
     suite.write_text("import threading\n\nclass ConcurrencyTests:\n"
-                     "    def t(self):\n        threading.Thread(target=f).start()\n")
+                     "    def test_a(self):\n"
+                     "        t = threading.Thread(target=f); t.start(); t.join()\n"
+                     "        self.assertEqual(1, 1)\n"
+                     "    def test_b(self):\n"
+                     "        t = threading.Thread(target=g); t.start(); t.join()\n"
+                     "        self.assertTrue(True)\n")
     assert checks.check_c9_concurrency_threading(tmp_path)[0].level == "OK", "must PASS on the good fixture"
     suite.write_text("class FooTests:\n    pass\n")
     out = checks.check_c9_concurrency_threading(tmp_path)

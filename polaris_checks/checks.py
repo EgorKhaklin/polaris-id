@@ -2570,10 +2570,63 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
 # C9 — concurrency hazards are tested with real threading, not mocks.
 # ---------------------------------------------------------------------------
 def check_c9_concurrency_threading(root: pathlib.Path) -> list[Finding]:
+    """C9: concurrency hazards are tested with REAL THREADING, not mocks.
+
+    Until v9.459 this was two greps over the whole file: the class name exists somewhere,
+    and `threading.Thread` appears somewhere. Measured: `threading.Thread` occurs three
+    times OUTSIDE ConcurrencyTests, so
+
+        class ConcurrencyTests(PolarisTestCase):
+            pass
+
+    satisfied both conditions and C9 reported green with no concurrency test at all. The
+    class name was standing in for the property, which is the same substitution C8 made
+    with its cap constants.
+
+    Scoped to the class BODY now, and asking for the shape of a real concurrency test:
+    threads started, threads joined, and outcomes asserted. The floors are deliberately
+    low. This is a guard against the class being hollowed out, not a quota, and a quota
+    would be the next thing to satisfy without meaning.
+    """
     t = _read(root, "polaris_web/test_app.py")
-    if "class ConcurrencyTests" in t and re.search(r"threading\.Thread", t):
-        return _ok("c9_concurrency", "ConcurrencyTests exercises real threading (C9)")
-    return _fail("c9_concurrency", "no ConcurrencyTests with threading.Thread in test_app.py (C9)")
+    if not t:
+        return _fail("c9_concurrency", "polaris_web/test_app.py could not be read (C9)")
+    lines = t.splitlines()
+    start = next((i for i, l in enumerate(lines) if l.startswith("class ConcurrencyTests")), None)
+    if start is None:
+        return _fail("c9_concurrency", "no ConcurrencyTests class in test_app.py (C9)")
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("class ")),
+               len(lines))
+    body = "\n".join(lines[start:end])
+
+    tests = len(re.findall(r"def test_", body))
+    threads = len(re.findall(r"threading\.Thread", body))
+    joins = len(re.findall(r"\.join\(\)", body))
+    asserts = len(re.findall(r"self\.assert", body))
+    # "not mocks" is in the constitutional wording, so it is checked rather than assumed.
+    mocked = re.search(r"(?:mock|patch)\s*\(\s*['\"]?threading", body, re.I)
+
+    if mocked:
+        return _fail("c9_concurrency", "ConcurrencyTests mocks threading; C9 requires REAL "
+                                       "threads, because a mocked scheduler cannot produce "
+                                       "the interleaving the hazard needs")
+    short = []
+    if tests < 2:
+        short.append("%d test(s)" % tests)
+    if threads < 2:
+        short.append("%d threading.Thread use(s)" % threads)
+    if joins < 1:
+        short.append("no .join()")
+    if asserts < 2:
+        short.append("%d assertion(s)" % asserts)
+    if short:
+        return _fail("c9_concurrency",
+                     "ConcurrencyTests is present but hollow (" + ", ".join(short) + "). C9 is "
+                     "about hazards being EXERCISED; the class existing is not the property, "
+                     "and threading.Thread elsewhere in the file does not count")
+    return _ok("c9_concurrency", "ConcurrencyTests exercises real threading (C9): %d tests, "
+               "%d threads started, %d joined, %d assertions, no mocked scheduler"
+               % (tests, threads, joins, asserts))
 
 
 # ---------------------------------------------------------------------------
