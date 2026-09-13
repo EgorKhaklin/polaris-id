@@ -38,8 +38,8 @@
  implies about staleness, given a verifier that checks what it is told to.
 
  MODELS: status-assertion IN polaris_web/app.py
- MODELS: verify_status_assertion IN scripts/polaris-verify.py
- MODELS: max_window_seconds IN scripts/polaris-verify.py
+ MODELS: verify_status_assertion IN packages/polaris-verify/polaris_verify_cli/verifier.py
+ MODELS: max_window_seconds IN packages/polaris-verify/polaris_verify_cli/verifier.py
  ***************************************************************************)
 
 EXTENDS Naturals, FiniteSets
