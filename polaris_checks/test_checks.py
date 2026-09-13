@@ -431,6 +431,55 @@ def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when the increment is not a single atomic UPDATE"
 
 
+def test_c7_requires_the_metadata_to_actually_flow(tmp_path):
+    """The table existing is the mechanism; metadata flowing through it is the property.
+
+    The old check asserted only that CREATE TABLE CryptographicAlgorithm appeared in the
+    schema, so an app that declared the table and then hardcoded quantum_resistant in a
+    dict would have satisfied C7.
+    """
+    SCHEMA = ("CREATE TABLE CryptographicAlgorithm (\n"
+              "  algorithm_id SERIAL PRIMARY KEY,\n"
+              "  name VARCHAR(60) NOT NULL,\n"
+              "  quantum_resistant BOOLEAN NOT NULL,\n"
+              "  security_level_bits INTEGER NOT NULL,\n"
+              "  deprecation_date DATE\n);\n")
+    APP = ("rows = query('SELECT alg.name, alg.quantum_resistant, alg.deprecation_date "
+           "FROM CryptographicAlgorithm alg')\n")
+
+    def write(schema=SCHEMA, app=APP):
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "01_schema.sql").write_text(schema)
+        (tmp_path / "polaris_web" / "app.py").write_text(app)
+
+    write()
+    assert checks.check_crypto_algorithm_is_data(tmp_path)[0].level == "OK", \
+        "must PASS when the table holds the metadata and the app reads it"
+
+    write(schema="-- no table here\n")
+    assert checks.check_crypto_algorithm_is_data(tmp_path)[0].level == "FAIL", \
+        "must FAIL when there is no table"
+
+    # The table exists and holds nothing: a name column is not metadata.
+    write(schema="CREATE TABLE CryptographicAlgorithm (algorithm_id SERIAL, name VARCHAR(60));\n")
+    out = checks.check_crypto_algorithm_is_data(tmp_path)[0]
+    assert out.level == "FAIL" and "holds no algorithm metadata" in out.message, \
+        "must FAIL when the table carries none of the descriptive columns"
+
+    # The mutation the old check could not see: the table exists, the app ignores it.
+    write(app="QUANTUM_RESISTANT = {'ML-DSA-65': True}   # hardcoded instead\n")
+    out = checks.check_crypto_algorithm_is_data(tmp_path)[0]
+    assert out.level == "FAIL" and "never SELECTs" in out.message, \
+        "must FAIL when the app hardcodes the metadata the table was created to hold"
+
+    # Joined but unused: the join is not the property either.
+    write(app="rows = query('SELECT alg.algorithm_id FROM CryptographicAlgorithm alg')\n")
+    out = checks.check_crypto_algorithm_is_data(tmp_path)[0]
+    assert out.level == "FAIL" and "reads none of its metadata" in out.message, \
+        "must FAIL when the app joins the table but reads no metadata from it"
+
+
 def test_c3_index_must_be_keyed_on_the_person(tmp_path):
     """C3 is one ACTIVE token PER PERSON. The column is the person.
 

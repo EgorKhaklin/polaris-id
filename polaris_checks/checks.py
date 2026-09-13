@@ -303,11 +303,55 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # C7 — cryptographic algorithm is data, not hardcoded.
 # ---------------------------------------------------------------------------
+#: The descriptive facts C7 puts in the table rather than in code. NOT the accepted-algorithm
+#: allowlist or the backend class map: those must be code, because a database row cannot
+#: authorise a signature algorithm whose implementation does not exist.
+_C7_METADATA_COLUMNS = ("quantum_resistant", "deprecation_date", "security_level_bits")
+
+
 def check_crypto_algorithm_is_data(root: pathlib.Path) -> list[Finding]:
+    """C7: algorithm metadata flows THROUGH CryptographicAlgorithm, not hardcoded.
+
+    The check asserted that the table exists. The table existing is the mechanism; the
+    metadata flowing through it is the property, and an app that defined the table and then
+    hardcoded `quantum_resistant` in a dict would have passed.
+
+    Measured when this was written, so it pins something true: app.py joins
+    CryptographicAlgorithm in five places and selects quantum_resistant, deprecation_date
+    and name from it.
+
+    What is deliberately NOT required to be data: pqc_signing's ACCEPTED_ALGORITHMS and
+    _WITNESS_CLASSES. Those are a security allowlist and a backend-class mapping, and a row
+    in a table cannot conjure an implementation. C7 is about the descriptive facts.
+    """
     schema = _read(root, "polaris_sql/01_schema.sql")
-    if re.search(r"CREATE\s+TABLE\s+CryptographicAlgorithm", schema, re.I):
-        return _ok("c7_crypto_data", "CryptographicAlgorithm table holds algorithm metadata (C7)")
-    return _fail("c7_crypto_data", "no CryptographicAlgorithm table — algorithm must be data, not hardcoded (C7)")
+    if not re.search(r"CREATE\s+TABLE\s+CryptographicAlgorithm", schema, re.I):
+        return _fail("c7_crypto_data", "no CryptographicAlgorithm table — algorithm must be "
+                                       "data, not hardcoded (C7)")
+    declared = [c for c in _C7_METADATA_COLUMNS if re.search(r"\b%s\b" % c, schema, re.I)]
+    if not declared:
+        return _fail("c7_crypto_data",
+                     "CryptographicAlgorithm carries none of %s, so the table exists and holds "
+                     "no algorithm metadata for anything to flow through (C7)"
+                     % ", ".join(_C7_METADATA_COLUMNS))
+
+    app = _read(root, "polaris_web/app.py")
+    if not app:
+        return _fail("c7_crypto_data", "polaris_web/app.py could not be read (C7)")
+    if not re.search(r"(?:FROM|JOIN)\s+CryptographicAlgorithm\b", app, re.I):
+        return _fail("c7_crypto_data",
+                     "the app never SELECTs from CryptographicAlgorithm. The table exists and "
+                     "nothing flows through it, which is the state C7 forbids: the metadata is "
+                     "then wherever the code put it (C7)")
+    read_cols = [c for c in declared if re.search(r"(?:alg|a)\.%s\b|\b%s\b" % (c, c), app, re.I)]
+    if not read_cols:
+        return _fail("c7_crypto_data",
+                     "the app joins CryptographicAlgorithm but reads none of its metadata "
+                     "columns (%s); joining a table without using what it holds is not the "
+                     "metadata flowing through it (C7)" % ", ".join(declared))
+    return _ok("c7_crypto_data", "algorithm metadata is data and flows through it (C7): the "
+               "table declares %s and the app reads %s from it"
+               % (", ".join(declared), ", ".join(read_cols)))
 
 
 # ---------------------------------------------------------------------------
