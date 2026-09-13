@@ -153,6 +153,45 @@ def _check_install(py, cli, cwd, env, label):
         bad.append("%s: a TAMPERED credential was not refused (signature_valid=%r)"
                    % (label, t.get("signature_valid")))
 
+    # 4b. THE TRUST ROOT, which is the contract's own middle step: "fresh machine ->
+    # install polaris-verify -> CONFIGURE TRUST ROOT -> verify fixture". Every leg above
+    # passes anchors inline or not at all, which is not a thing an integrator can do. An
+    # anchor FILE is, and the half that matters is the refusal: a genuine signature by a
+    # key the relying party did not anchor must be reported authentic AND untrusted, and
+    # must exit non-zero, because that is what a deployment scripts on.
+    import json as _json
+    genuine = _json.loads(GENUINE.read_text())
+    right = cwd / "anchor-right.json"
+    wrong = cwd / "anchor-wrong.json"
+    right.write_text(_json.dumps([genuine.get("public_key_hex")]))
+    wrong.write_text(_json.dumps(["ab" * 2592]))   # well-formed, and not the issuer's
+
+    r = _run([str(cli), "--pqc-provider", "auto", "--json", "--issuer-anchor", str(right),
+              "--pack", str(GENUINE)], cwd=cwd, env=env)
+    try:
+        a = json.loads(r.stdout[r.stdout.index("{"):]) if "{" in r.stdout else {}
+    except ValueError:
+        a = {}
+    if not (a.get("signature_valid") and a.get("issuer_trusted") is True):
+        bad.append("%s: the correct anchor file did not yield issuer_trusted (valid=%r "
+                   "trusted=%r)" % (label, a.get("signature_valid"), a.get("issuer_trusted")))
+
+    r = _run([str(cli), "--pqc-provider", "auto", "--json", "--issuer-anchor", str(wrong),
+              "--pack", str(GENUINE)], cwd=cwd, env=env)
+    try:
+        w = json.loads(r.stdout[r.stdout.index("{"):]) if "{" in r.stdout else {}
+    except ValueError:
+        w = {}
+    if w.get("issuer_trusted") is not False:
+        bad.append("%s: a credential signed by a key the anchor file does NOT name was not "
+                   "reported untrusted (issuer_trusted=%r)" % (label, w.get("issuer_trusted")))
+    if w.get("signature_valid") is not True:
+        bad.append("%s: the wrong anchor also changed the signature verdict; authenticity "
+                   "and trust must stay separate" % label)
+    if r.returncode == 0:
+        bad.append("%s: an untrusted issuer exited 0, so a deployment scripting on the exit "
+                   "code accepts a credential it does not trust" % label)
+
     # 5. development crypto cannot produce an authentic verdict, and says so
     r = _run([str(cli), "--dev-placeholder", "--json", "--pack", str(GENUINE)], cwd=cwd, env=env)
     try:
