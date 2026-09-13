@@ -2145,7 +2145,17 @@ jobs:
       # unprotected, including a grant's exhausted use limit and a Merkle index outside the
       # tree. Carries a negative control: an SDK whose signature backends accept anything
       # must be caught, or a clean result means nothing.
-      - name: SDK mutation — every refusal in the reference verifier is caught when inverted
+      # v9.457: the drill covers BOTH reference SDKs, so this job needs the TypeScript
+      # one to build. Without node_modules the unmutated TS tree fails its own suite and
+      # the drill refuses to report -- correctly, but the job dies on setup rather than
+      # on a finding. node itself is preinstalled on the runner; the dependencies are not.
+      - name: Set up Node (the drill inverts the TypeScript SDK too)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the TypeScript SDK's pinned dependencies
+        run: cd sdk/typescript && npm ci
+      - name: SDK mutation — every refusal in BOTH reference verifiers is caught when inverted
         run: python scripts/polaris-sdk-mutation-drill.py
 
       # v9.330 (P8.8b) — cross-version compatibility, both directions: the frozen version-1

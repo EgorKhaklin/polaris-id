@@ -14168,6 +14168,66 @@ def test_no_deleted_apparatus_citations_check_discriminates(tmp_path):
         "must FAIL rather than report clean when it scanned no files"
 
 
+def test_ci_toolchain_present_check_discriminates(tmp_path):
+    """The property v9.456 shipped without: a job that runs a tool it cannot run.
+
+    The defect is one hop from the step that fails. The job runs a PYTHON script; the
+    Python script runs `node --test` inside sdk/typescript. Reading the job's own commands
+    would show no Node dependency at all, which is why the fixture puts the need in the
+    script rather than in the step.
+    """
+    SCRIPT = ('"""the sdk mutation drill"""\n'
+              'TESTS = (["node", "--test"], "sdk/typescript")\n')
+    SETUP = ("      - uses: actions/setup-node@v4\n"
+             "        with:\n"
+             "          node-version: '24'\n"
+             "      - run: cd sdk/typescript && npm ci\n")
+
+    def write(setup=SETUP, script=SCRIPT):
+        (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "scripts" / "polaris-sdk-mutation-drill.py").write_text(script)
+        (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+            "name: ci\n"
+            "on: [push]\n"
+            "jobs:\n"
+            "  lint:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: python -m polaris_checks.run\n"
+            "  pqc-real:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            + setup +
+            "      - run: python scripts/polaris-sdk-mutation-drill.py\n")
+
+    def level(msg_contains=None):
+        out = checks.check_ci_jobs_install_what_they_run(tmp_path)
+        if msg_contains is not None:
+            assert any(msg_contains in f.message for f in out), \
+                "expected %r in %r" % (msg_contains, [f.message for f in out])
+        return out[0].level
+
+    write()
+    assert level() == "OK", "must PASS when the job that reaches the TS suite installs it"
+
+    # The shipped defect: the drill is wired into a job with no dependency install.
+    write(setup="      - uses: actions/setup-node@v4\n")
+    assert level("never installs its dependencies") == "FAIL", \
+        "must FAIL when a job runs the TypeScript suite without node_modules"
+
+    # And the version the suite's type stripping depends on, left to the runner.
+    write(setup="      - run: cd sdk/typescript && npm ci\n")
+    assert level("has to be pinned") == "FAIL", \
+        "must FAIL when the Node version the .ts sources need is not pinned"
+
+    # The hop itself: if the need is only visible inside the invoked script, and the check
+    # stops following it, nothing is measured and that must not read as clean.
+    write(setup="", script='"""the sdk mutation drill"""\nTESTS = "python -m unittest"\n')
+    assert level("no CI job was found") == "FAIL", \
+        "must FAIL rather than report clean when it found nothing to measure"
+
+
 def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
     """The property that cost a re-measurement: the mutation must INVERT, not delete."""
     DRILL = ('"""the sdk mutation drill"""\n'

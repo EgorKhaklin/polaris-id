@@ -8227,6 +8227,100 @@ def check_sdk_refusals_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
                      "list in both directions")
 
 
+def _ci_jobs(ci_yaml: str) -> dict:
+    """ci.yml split into `{job name: its block}` without a YAML dependency.
+
+    `_ci_job_count` counts the same keys; this returns the bodies, because the question
+    here is not how many jobs there are but what each one runs and what it installs.
+    """
+    jobs: dict[str, list[str]] = {}
+    inside = False
+    current = None
+    for line in ci_yaml.splitlines():
+        if re.match(r"^jobs:\s*$", line):
+            inside = True
+            continue
+        if not inside:
+            continue
+        if line and not line.startswith(" ") and not line.startswith("#"):
+            break  # next top-level key; a stripped comment leaves a bare '#' in column 0
+        m = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if m:
+            current = m.group(1)
+            jobs[current] = []
+        elif current is not None:
+            jobs[current].append(line)
+    return {k: "\n".join(v) for k, v in jobs.items()}
+
+
+def _reaches_ts_suite(text: str) -> bool:
+    """Does this text run the TypeScript SDK, directly or through a script it invokes?
+
+    Deliberately structural rather than a list of command spellings. The first version
+    matched `node --test` literally and missed the drill's own `["node", "--test"]`, which
+    is the same invocation as a Python argv list: it found the real job only through a
+    second, incidental spelling. Naming the DIRECTORY and an invocation of the runtime
+    survives both forms, and the next one.
+    """
+    return "sdk/typescript" in text and bool(re.search(r"\bnode\b|\bnpx\b", text))
+
+
+def check_ci_jobs_install_what_they_run(root: pathlib.Path) -> list[Finding]:
+    """A CI job that runs the TypeScript SDK installs its dependencies (v9.457).
+
+    Shipped and measured in v9.456: the two-SDK mutation drill was wired into the
+    `pqc-real` job, which has Python and liboqs and no Node dependency tree. The drill
+    behaved correctly -- it checks that the UNMUTATED tree passes both suites before it
+    believes any mutation result, found that it did not, and refused to report. But the
+    job then died on its own setup rather than on a finding, which is a red build that
+    says nothing about the tree.
+
+    The failure is one step removed from the step that fails, and that is the part worth
+    pinning: the job runs a PYTHON script, and the Python script runs `node --test` inside
+    `sdk/typescript`. Nothing reading the job's own commands would see a Node dependency.
+    So this follows one hop into any repository script a step invokes.
+
+    A job that reaches the TypeScript SDK's suite must `npm ci` it, and must pin the Node
+    version rather than take the runner's default: the suite executes `.ts` sources
+    directly under Node's type stripping, which older Node does not do at all.
+    """
+    name = "ci_toolchain_present"
+    ci = _read(root, ".github/workflows/ci.yml")
+    if not ci:
+        return _fail(name, ".github/workflows/ci.yml could not be read")
+    jobs = _ci_jobs(ci)
+    if not jobs:
+        return _fail(name, "no jobs parsed out of ci.yml, so this measured nothing")
+
+    findings: list[Finding] = []
+    checked = 0
+    for job, body in sorted(jobs.items()):
+        # What this job runs directly, plus the source of any repository script it invokes.
+        reach = [body]
+        for rel in sorted(set(re.findall(r"(scripts/[A-Za-z0-9_.-]+\.(?:py|sh))", body))):
+            reach.append(_read(root, rel))
+        if not any(_reaches_ts_suite(t) for t in reach):
+            continue
+        checked += 1
+        if not re.search(r"npm\s+(?:ci|install)", body):
+            findings.extend(_fail(name, "the %r job reaches the TypeScript SDK's suite but never "
+                                        "installs its dependencies; without node_modules the "
+                                        "unmutated tree fails its own tests and the job dies on "
+                                        "setup rather than on a finding" % job))
+        if "actions/setup-node" not in body:
+            findings.extend(_fail(name, "the %r job runs the TypeScript SDK's suite on whatever "
+                                        "Node the runner happens to ship; the suite executes .ts "
+                                        "sources directly under type stripping, so the version "
+                                        "has to be pinned" % job))
+    if not checked:
+        return _fail(name, "no CI job was found to reach the TypeScript SDK's suite, so either "
+                           "the suite stopped running in CI or this check stopped seeing it")
+    if findings:
+        return findings
+    return _ok(name, "each of the %d CI jobs that reaches the TypeScript SDK installs its "
+                     "dependencies and pins Node" % checked)
+
+
 def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
     """An outward surface claims post-quantum AGILITY, never post-quantum SECURITY (v9.452).
 
@@ -16687,6 +16781,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_public_claims_honest,
     check_post_quantum_claims_are_agility,
     check_sdk_refusals_are_mutation_tested,
+    check_ci_jobs_install_what_they_run,
     check_no_citations_to_deleted_apparatus,
     check_verify_witness_sampling,
     check_constitution_layered,

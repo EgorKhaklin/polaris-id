@@ -5,6 +5,40 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.457 — 2026-09-13 (a job that could not run what it was asked to run)
+
+v9.456 wired the two-SDK mutation drill into the `pqc-real` CI job. That job has Python and a
+built liboqs. It has no Node dependency tree, and the drill's TypeScript half runs `node --test`
+inside `sdk/typescript`.
+
+The drill behaved exactly as designed: before believing any mutation result it checks that the
+UNMUTATED tree passes both suites, found that it did not, and refused to report. That is the right
+refusal. But the job then died on its own setup rather than on a finding, which is a red build
+that says nothing about the tree, and a red build that says nothing is how a real finding gets
+waved through as "that job is flaky again".
+
+`pqc-real` now sets up Node 24 and runs `npm ci` for the TypeScript SDK before the drill.
+
+**The check that would have caught it.** `check_ci_jobs_install_what_they_run` asks, for every job
+in `ci.yml`, whether it reaches the TypeScript SDK's suite, and if so whether it installs the
+SDK's dependencies and pins the Node version. The version is not cosmetic: the suite executes
+`.ts` sources directly under Node's type stripping, which older Node does not do.
+
+**The need is one hop from the step.** The job runs a PYTHON script; the Python script runs
+`node --test` inside `sdk/typescript`. Nothing in the job's own commands mentions Node at all, so
+the check follows any repository script a step invokes and reads its source too. Both jobs that
+reach the SDK are found that way, and a tree where none is found FAILS rather than reporting
+clean.
+
+**The first version of that check found the right job for the wrong reason.** It matched
+`node --test` as a literal, which does not appear in the drill, whose invocation is the argv list
+`["node", "--test"]`; it found `pqc-real` only through a second, incidental spelling in the
+conformance arguments. Delete that one string and the check would have gone quietly blind. The
+signal is now structural, naming the directory and an invocation of the runtime, which survives
+both spellings and the next one.
+
+---
+
 ## v9.456 — 2026-09-13 (the other reference implementation)
 
 v9.455 inverted every refusal in the Python SDK and closed eighteen of eighteen. It asked the
