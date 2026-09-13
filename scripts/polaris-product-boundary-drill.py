@@ -235,6 +235,50 @@ def _check_npm(work: pathlib.Path, src: pathlib.Path, label: str):
     return bad
 
 
+def _check_npm_from_clone(work: pathlib.Path, src: pathlib.Path, label: str):
+    """Install the SDK the way somebody who cloned the repository does: `npm install <dir>`.
+
+    Measured 2026-09-13, and it was broken. The build ran from `prepack`, which fires for
+    pack and publish and NOT for a directory install, so the installed package arrived with
+    no `dist/` while its `exports` pointed into it. npm reported success; the failure
+    appeared only at import, as ERR_MODULE_NOT_FOUND, in the consumer's code.
+
+    The drill did not catch it because it packed a tarball, which is the path that works.
+    A harness that only exercises the happy path is testing itself.
+    """
+    bad = []
+    if shutil.which("npm") is None:
+        return ["npm is not installed, so the clone path was not tested"]
+    # A PRISTINE copy: no dist/, because a fresh clone has none (it is gitignored build
+    # output). node_modules is kept, because the build needs its own devDependencies and a
+    # consumer runs `npm ci` in the package first. Without stripping dist/ this leg was
+    # vacuous: an earlier step in this drill runs `npm pack`, whose prepack builds dist/ IN
+    # THE SOURCE TREE, so the leg passed even with the bug it was written for restored.
+    # Measured, by restoring the bug and watching it pass.
+    pristine = work / "pristine-clone"
+    # symlinks=True: node_modules/.bin holds symlinks to the build tools, and copying them
+    # as files leaves `tsc` unrunnable. Without it this leg failed for a reason that had
+    # nothing to do with the property.
+    shutil.copytree(src, pristine, ignore=shutil.ignore_patterns("dist", "*.tgz"),
+                    symlinks=True)
+
+    consumer = work / "clone-consumer"
+    consumer.mkdir(parents=True, exist_ok=True)
+    (consumer / "package.json").write_text(
+        '{"name":"clone-consumer","version":"1.0.0","type":"module","private":true}\n')
+    r = _npm(["install", "--silent", str(pristine)], consumer)
+    if r.returncode != 0:
+        return ["%s: `npm install <dir>` failed: %s" % (label, r.stderr.strip()[-300:])]
+    (consumer / "use.mjs").write_text(
+        "import * as sdk from 'polaris-sdk-ts';\n"
+        "console.log(Object.keys(sdk).length);\n")
+    r = _run(["node", "use.mjs"], cwd=str(consumer))
+    if r.returncode != 0:
+        bad.append("%s: a consumer who installed from a clone cannot import it: %s"
+                   % (label, (r.stderr or "").strip()[-200:]))
+    return bad
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0] or None)
     ap.add_argument("--keep", action="store_true", help="leave the build and venv in place")
@@ -283,6 +327,14 @@ def main() -> int:
             print("  packs, installs into a bare project, imports, and verifies real "
                   "material: genuine authentic, tampered refused")
         failures += npm_failures
+
+        print("== and the way somebody with a clone installs it ==")
+        clone_failures = _check_npm_from_clone(work / "npm-clone", TS_SDK, "npm-clone")
+        for f in clone_failures:
+            print("  FAIL %s" % f)
+        if not clone_failures:
+            print("  `npm install <dir>` produces a package that imports")
+        failures += clone_failures
 
         # NEGATIVE CONTROL for the npm half: a package whose exports point back at the
         # TypeScript sources is importable by nobody, because Node refuses type stripping

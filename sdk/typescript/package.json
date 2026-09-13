@@ -17,7 +17,7 @@
     "test": "node --test",
     "conformance": "node src/conformance.ts",
     "build": "tsc -p tsconfig.build.json",
-    "prepack": "npm run build"
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@noble/post-quantum": "^0.7.1"

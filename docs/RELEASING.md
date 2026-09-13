@@ -35,7 +35,20 @@ so the form a newcomer tries first, `pip install git+https://github.com/EgorKhak
 fails with *"does not appear to be a Python project"*.
 
 This installs whatever is on the default branch, not a fixed version, so it is the right tool
-for someone evaluating and the wrong one for anyone depending on it. That is the argument for
+for someone evaluating and the wrong one for anyone depending on it.
+
+**The TypeScript SDK has no equivalent.** npm has no `#subdirectory=`, so
+`npm install github:EgorKhaklin/polaris-id` fails (`Could not read package.json`, exit 254) and
+there is no one-line form that works. A clone is the path:
+
+```bash
+cd sdk/typescript && npm ci
+cd /your/project && npm install /path/to/polaris-id/sdk/typescript
+```
+
+So publishing means two different things for the two packages: for `polaris-verify` it buys a
+fixed version over a moving branch, and for `polaris-sdk-ts` it buys the first one-command
+install there has ever been. That is the argument for
 publishing, and it is a different argument from "otherwise nobody can use it".
 
 ---

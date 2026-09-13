@@ -71,3 +71,22 @@ same runner:
 ```bash
 python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts"
 ```
+
+## Installing
+
+Not on npm yet ([why](../../docs/RELEASING.md)). From a clone:
+
+```bash
+cd sdk/typescript && npm ci     # the build needs its own devDependencies
+cd /your/project && npm install /path/to/polaris-id/sdk/typescript
+```
+
+`npm install <dir>` symlinks the package and runs `prepare`, which compiles `dist/`. That
+hook is `prepare` and not `prepack` on purpose: `prepack` fires only for pack and publish, so
+with it a clone install produced a package whose `exports` pointed at a `dist/` that was never
+built, and the failure appeared in the consumer's code as `ERR_MODULE_NOT_FOUND` rather than at
+install time.
+
+`npm install github:EgorKhaklin/polaris-id` does not work and says so (`Could not read
+package.json`): this repository holds several packages and its root is not one of them. npm has
+no equivalent of pip's `#subdirectory=`, so until this is published, a clone is the path.
