@@ -3350,8 +3350,63 @@ def check_local_clock_convention(root: pathlib.Path) -> list[Finding]:
 # spatial layers and the /verifications list would otherwise expose the precise
 # location that de-anonymizes a ZK holder (spatial side-channel).
 # ---------------------------------------------------------------------------
+def _atlas_zk_location_leaks(atlas: str) -> tuple[list, int]:
+    """Atlas functions that expose a VERIFICATION location without redacting ZK.
+
+    C6 is that the Atlas redacts zero-knowledge locations server-side. The count-based
+    check below cannot see a NEW surface: four exclusion clauses still satisfy "at least
+    three", so a fifth spatial function added without one passes. That is the same blind
+    spot C8 had with its cap constants.
+
+    Redaction has TWO legitimate forms in this schema and the property is what matters,
+    not which one is used:
+
+      exclusion  WHERE ... disclosure_level <> 'ZERO_KNOWLEDGE'   (the row never appears)
+      nulling    CASE WHEN disclosure_level = 'ZERO_KNOWLEDGE'
+                      THEN NULL ELSE latitude END                 (the row appears, blind)
+
+    `atlas_recent_events` uses the second, which is right for an event feed: the event is
+    still visible and its location is not. A check that knew only the first would have
+    called it a leak.
+
+    Functions over TokenLifecycleEvent are not in scope: that table has no disclosure_level
+    and C6 is about verification events.
+    """
+    leaks = []
+    scanned = 0
+    for m in re.finditer(r"CREATE OR REPLACE FUNCTION (\w+)\((.*?)\$\$;", atlas, re.S):
+        name, body = m.group(1), m.group(0)
+        if not re.search(r"\bVerificationEvent\b", body, re.I):
+            continue
+        # What the function RETURNS, not what it mentions. atlas_stats and atlas_timeline
+        # name latitude and longitude only in bbox WHERE clauses and return counts and time
+        # buckets; an earlier version of this walk read the whole body and called both of
+        # them leaks. The question is whether a LOCATION LEAVES the function.
+        rt = re.search(r"RETURNS TABLE\s*\((.*?)\)\s*(?:AS|LANGUAGE)", body, re.S | re.I)
+        returned = rt.group(1) if rt else ""
+        if not re.search(r"\b(?:lat|lon|latitude|longitude|centroid|geom)\b", returned, re.I):
+            continue          # returns no location; C6 has nothing to redact here
+        scanned += 1
+        excluded = "disclosure_level <> 'ZERO_KNOWLEDGE'" in body
+        nulled = bool(re.search(r"CASE\s+WHEN[^;]{0,120}?disclosure_level\s*=\s*'ZERO_KNOWLEDGE'"
+                                r"[^;]{0,80}?THEN\s+NULL", body, re.S | re.I))
+        if not (excluded or nulled):
+            leaks.append(name)
+    return leaks, scanned
+
+
 def check_c6_atlas_redacts_zk_location(root: pathlib.Path) -> list[Finding]:
     atlas = _read(root, "polaris_sql/11_atlas.sql")
+    leaks, scanned = _atlas_zk_location_leaks(atlas)
+    if leaks:
+        return _fail("c6_atlas_zk",
+                     "atlas function(s) return a verification LOCATION without redacting "
+                     "zero-knowledge events: " + ", ".join(sorted(leaks)[:4]) + ". C6 requires "
+                     "either excluding the ZK rows or nulling their coordinates; a count of "
+                     "exclusion clauses elsewhere does not cover a surface that has neither")
+    if atlas and not scanned:
+        return _fail("c6_atlas_zk", "no atlas function returns a verification location, so this "
+                                    "measured nothing about C6")
     excludes = atlas.count("disclosure_level <> 'ZERO_KNOWLEDGE'")
     if excludes < 3:
         return _fail("c6_atlas_zk",

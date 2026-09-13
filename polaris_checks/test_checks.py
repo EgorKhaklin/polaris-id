@@ -431,6 +431,56 @@ def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when the increment is not a single atomic UPDATE"
 
 
+def test_c6_atlas_walk_catches_a_new_leaking_surface(tmp_path):
+    """A count of exclusion clauses cannot see a NEW surface that has none.
+
+    The old check required at least three `disclosure_level <> 'ZERO_KNOWLEDGE'` clauses
+    and named two functions explicitly. Four clauses still satisfy "at least three", so a
+    fifth spatial function added without one passed, which is the blind spot C8 had.
+
+    Redaction has two legitimate forms here and the property is what matters, not which:
+    excluding the ZK rows, or returning NULL coordinates for them. atlas_recent_events uses
+    the second, correctly, because an event feed should still show the event.
+    """
+    BASE = ("CREATE OR REPLACE FUNCTION atlas_points_verifications(p INT)\n"
+            "RETURNS TABLE (lat DOUBLE PRECISION, lon DOUBLE PRECISION) AS $$\n"
+            "  SELECT ve.latitude, ve.longitude FROM VerificationEvent ve\n"
+            "   WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE';\n$$;\n")
+
+    def leaks(sql):
+        return checks._atlas_zk_location_leaks(sql)[0]
+
+    assert leaks(BASE) == [], "a function that excludes ZK rows must pass"
+
+    NULLED = ("CREATE OR REPLACE FUNCTION atlas_recent_events(p INT)\n"
+              "RETURNS TABLE (lat DOUBLE PRECISION, lon DOUBLE PRECISION) AS $$\n"
+              "  SELECT CASE WHEN ve.disclosure_level = 'ZERO_KNOWLEDGE'\n"
+              "              THEN NULL ELSE ve.latitude END, ve.longitude\n"
+              "    FROM VerificationEvent ve;\n$$;\n")
+    assert leaks(NULLED) == [], "nulling the coordinates is the other legitimate form"
+
+    LEAK = ("CREATE OR REPLACE FUNCTION atlas_newlayer(p INT)\n"
+            "RETURNS TABLE (lat DOUBLE PRECISION, lon DOUBLE PRECISION) AS $$\n"
+            "  SELECT ve.latitude, ve.longitude FROM VerificationEvent ve;\n$$;\n")
+    assert leaks(BASE + LEAK) == ["atlas_newlayer"], \
+        "a NEW spatial surface with neither form must be caught, beside compliant ones"
+
+    # Mentioning latitude in a bbox filter is not returning it. atlas_stats and
+    # atlas_timeline do exactly this, and an earlier version of the walk called both leaks.
+    FILTERS = ("CREATE OR REPLACE FUNCTION atlas_stats(p INT)\n"
+               "RETURNS TABLE (n_verifs BIGINT) AS $$\n"
+               "  SELECT count(*) FROM VerificationEvent ve\n"
+               "   WHERE ve.latitude IS NOT NULL AND ve.longitude IS NOT NULL;\n$$;\n")
+    assert leaks(FILTERS) == [], \
+        "a function that filters on location but returns counts exposes no location"
+
+    # Lifecycle events have no disclosure_level; C6 is about verification events.
+    LIFECYCLE = ("CREATE OR REPLACE FUNCTION atlas_points_lifecycles(p INT)\n"
+                 "RETURNS TABLE (lat DOUBLE PRECISION, lon DOUBLE PRECISION) AS $$\n"
+                 "  SELECT le.latitude, le.longitude FROM TokenLifecycleEvent le;\n$$;\n")
+    assert leaks(LIFECYCLE) == [], "TokenLifecycleEvent is out of scope for C6"
+
+
 def test_c9_concurrency_check_sees_a_hollow_class(tmp_path):
     """The class name was standing in for the property.
 
@@ -725,8 +775,11 @@ def test_c6_atlas_zk_check_fails_when_zk_location_not_redacted(tmp_path):
     # v9.253: a passing fixture exercises the three spatial exclusions (clusters,
     # points, hexbin), the hexbin- and jurisdiction-specific assertions, and the
     # recent-events redaction.
+    # v9.459: the fixture names VerificationEvent, as the real functions do. It used to
+    # use a bare `ve.` alias with no FROM, so the function walk added in this version
+    # scanned nothing at all and correctly reported that it had measured nothing.
     HEX = ("CREATE OR REPLACE FUNCTION atlas_hexbin(p_x DOUBLE PRECISION) RETURNS TABLE (lat DOUBLE PRECISION)\n"
-           "AS $$ SELECT 1 WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE' $$;\n")
+           "AS $$ SELECT 1 FROM VerificationEvent ve WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE' $$;\n")
     GEO = ("CREATE OR REPLACE FUNCTION atlas_geo_jurisdictions(p_x TIMESTAMP) RETURNS TABLE (n_zk BIGINT)\n"
            "AS $$ SELECT avg(ve.latitude) FILTER (WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE'), count(*) AS n_zk $$;\n")
     good_atlas = (
