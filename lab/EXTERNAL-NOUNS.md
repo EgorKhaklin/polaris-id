@@ -48,11 +48,22 @@ belongs in the bottom section, not the top.
 Recorded here so the top section is never padded with it. Everything below was run by the
 author against the author's own code, and none of it counts toward the 180-day line.
 
-**Install test, 2026-09-13: PASSES mechanically.** Clean Python 3.12 venv outside the
-repository, `pip install sdk/python`. Resolved dependencies: `cryptography` and its transitive
-`cffi`/`pycparser`. Nothing else. No PostgreSQL, no Flask, no Redis, no `polaris_checks`, no
-Atlas. 67 published conformance vectors were copied out of the tree as an outsider would
-receive them and verified through the installed package alone; 0 raised.
+**Install test, 2026-09-13: PASSES, and now runs on every push.** It is no longer a thing
+somebody remembered to try. `scripts/polaris-product-boundary-drill.py` builds a WHEEL from
+`packages/polaris-verify/`, installs it into a throwaway virtual environment, and runs the
+verifier from a working directory that is not the repository, with `PYTHONPATH` and every
+`POLARIS_*` variable stripped. It asserts the forbidden runtime surface is absent (Flask,
+psycopg2, polaris_checks, polaris_web, polaris_cli, polaris_sim, redis), that the command
+refuses to start without a declared crypto mode, that a genuine ML-DSA-87 credential verifies
+and its tampered twin does not, and that `--dev-placeholder` cannot report anything authentic.
+
+It carries a negative control: a second wheel is built with `import psycopg2` bolted onto the
+verifier, and the harness has to catch it. Without that, "every leg passed" and "the harness
+ran nothing" print the same thing. CI job `product-boundary`.
+
+This matters because every other suite in this repository runs from INSIDE the repository
+with the repository on `sys.path`. An import of `polaris_web`, or a read of a file that only
+exists in a checkout, would have stayed green here and failed on the first stranger's machine.
 
 **Known gaps against the product contract, same date:**
 

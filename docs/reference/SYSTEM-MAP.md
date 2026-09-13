@@ -77,7 +77,7 @@ polaris/
 ├── conformance/        ← the verification conformance suite: the published cases + a language-agnostic runner (SPEC.md); passing it is the integration contract
 ├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
 │
-├── .github/workflows/  ← ci.yml (19 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)
+├── .github/workflows/  ← ci.yml (20 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ```
 
@@ -97,6 +97,10 @@ polaris/
 - `helm-kind`: the Kubernetes reference profile boots to healthy on kind with Calico-enforced policies and restricted PSS.
 - `pqc-real`: real ML-DSA-65 sign and verify (liboqs), cross-checked by the cryptography second witness.
 - `federation-two-instances`: boots two independent instances, each its own database and real ML-DSA-65 root, and drives cross-authority federation over HTTP; a relying party accepts a foreign credential from a manifest, epoch checkpoint and revocation feed pulled over the wire, and the decision flips as attestations and revocations change (P3.10). The first job with both a database and real liboqs.
+- `product-boundary`: the required install test, as a stranger runs it. Builds a wheel from
+  `packages/polaris-verify/`, installs it into a throwaway venv, and verifies real signed
+  material from a directory that is not the repository, with none of Polaris importable.
+  Carries a negative control: a verifier that drags `psycopg2` in with it must be caught.
 - `sdk-typescript`: the TypeScript verify SDK (`sdk/typescript/`) type-checked, unit-tested, and driven through the language-agnostic conformance runner (`@noble/post-quantum` ML-DSA-65 agreeing with liboqs and OpenSSL).
 - `cve-scan`: dependency CVE audit (pip-audit) plus SAST (bandit).
 - `image-cve-scan`: Trivy scan of the self-built prod images; gates on fixable CRITICALs.

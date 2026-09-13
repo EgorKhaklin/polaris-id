@@ -2296,6 +2296,27 @@ jobs:
   # ML-DSA-65 is a third independent implementation agreeing with liboqs and
   # OpenSSL on the vectors.
   # --------------------------------------------------------------------------
+  # The product boundary, as the contract states it: fresh machine -> install
+  # polaris-verify -> verify fixture. This job exists because every other suite runs from
+  # inside the repository with the repository on sys.path, so an import of polaris_web or a
+  # read of a file that only exists in a checkout would stay green here and fail on the
+  # first stranger's machine. The drill builds a WHEEL, installs it into a throwaway venv,
+  # and runs the verifier from a directory that is not the repo. It carries a negative
+  # control: a verifier with `import psycopg2` bolted on must be caught, or the clean result
+  # is a fact about the harness.
+  product-boundary:
+    name: Product boundary — a stranger installs polaris-verify and uses it
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install test — build the wheel, install it clean, verify real material
+        run: python scripts/polaris-product-boundary-drill.py
+
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance
     runs-on: ubuntu-latest
