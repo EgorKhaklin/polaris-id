@@ -431,6 +431,54 @@ def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when the increment is not a single atomic UPDATE"
 
 
+def test_zk_anti_replay_requires_the_uniqueness_key(tmp_path):
+    """Single use is a key, not a word.
+
+    The check required the table, an INSERT, and the substring "replay" anywhere in
+    app.py. Dropping the PRIMARY KEY left all three true while every verified bundle
+    replayed: consuming a nonce would insert a row that inserts again happily.
+    """
+    SCHEMA = ("CREATE TABLE ZkVerificationNonce (\n"
+              "    epoch_id     INTEGER     NOT NULL,\n"
+              "    context_id   BIGINT      NOT NULL,\n"
+              "    nonce        BIGINT      NOT NULL,\n"
+              "    CONSTRAINT pk_zk PRIMARY KEY (epoch_id, context_id, nonce)\n"
+              ");\n")
+    # The "replay" needle lives in a STRING, not a comment: _read strips comments from
+    # .py sources, which is the whole point of it, and a fixture that hides its needle in
+    # one is testing the comment stripper.
+    APP = ("INSERT INTO ZkVerificationNonce (epoch_id, context_id, nonce) VALUES (%s,%s,%s)\n"
+           "reason = 'nonce already consumed (replay)'\n")
+
+    def write(schema=SCHEMA, app=APP):
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "01_schema.sql").write_text(schema)
+        (tmp_path / "polaris_web" / "app.py").write_text(app)
+
+    write()
+    assert checks.check_zk_verify_anti_replay(tmp_path)[0].level == "OK", \
+        "must PASS when the spent tuple is keyed"
+
+    # The mutation the old check could not see.
+    write(schema=SCHEMA.replace(
+        "    CONSTRAINT pk_zk PRIMARY KEY (epoch_id, context_id, nonce)\n", ""))
+    out = checks.check_zk_verify_anti_replay(tmp_path)[0]
+    assert out.level == "FAIL" and "no PRIMARY KEY or UNIQUE" in out.message, \
+        "must FAIL when nothing makes the consumed nonce unrepeatable"
+
+    # Narrowed so the nonce itself is outside the key: a replay with a new nonce value is
+    # a different row, and the old bundle's nonce can be spent twice.
+    write(schema=SCHEMA.replace("(epoch_id, context_id, nonce)", "(epoch_id, context_id)"))
+    out = checks.check_zk_verify_anti_replay(tmp_path)[0]
+    assert out.level == "FAIL" and "omits nonce" in out.message, \
+        "must FAIL when the uniqueness omits a column the replay varies"
+
+    write(app="# nothing consumes anything\n")
+    assert checks.check_zk_verify_anti_replay(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the app never consumes the nonce"
+
+
 def test_c7_requires_the_metadata_to_actually_flow(tmp_path):
     """The table existing is the mechanism; metadata flowing through it is the property.
 
@@ -1226,7 +1274,13 @@ def test_zk_anti_replay_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     sql.mkdir(); web.mkdir()
 
-    TABLE = "CREATE TABLE ZkVerificationNonce (epoch_id INTEGER, nonce BIGINT);\n"
+    # v9.459: single use is enforced by the key, so the fixture carries one. It used to be
+    # a two-column table with no PRIMARY KEY, which is a nonce store that cannot refuse a
+    # second insert -- exactly the state the strengthened check exists to reject.
+    TABLE = ("CREATE TABLE ZkVerificationNonce (\n"
+             "  epoch_id INTEGER, context_id BIGINT, nonce BIGINT,\n"
+             "  CONSTRAINT pk_zk PRIMARY KEY (epoch_id, context_id, nonce)\n"
+             ");\n")
     CONSUME = ("INSERT INTO ZkVerificationNonce (epoch_id, context_id, nonce) "
                "VALUES (%s,%s,%s) ON CONFLICT DO NOTHING RETURNING consumed_at\n"
                "return jsonify(verified=False, reason='nonce already consumed (replay)')\n")

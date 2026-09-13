@@ -3577,8 +3577,31 @@ def check_zk_verify_anti_replay(root: pathlib.Path) -> list[Finding]:
     if "replay" not in app.lower():
         return _fail("zk_anti_replay",
                      "/api/zk/verify consumes the nonce but never rejects the replay case (R2/T-T2)")
+
+    # SINGLE-USE is the property, and it is a key, not a word. Consuming the nonce means
+    # inserting the spent tuple and having the SECOND insert fail; without a PRIMARY KEY or
+    # UNIQUE over that tuple the insert simply succeeds twice and every bundle replays.
+    # Until v9.459 this check required the table, the INSERT, and the substring "replay"
+    # anywhere in app.py, so dropping the key left it green. Verified against the live
+    # database when this was written: PRIMARY KEY (epoch_id, context_id, nonce).
+    m = re.search(r"CREATE TABLE ZkVerificationNonce\s*\((.*?)\n\);", schema, re.S | re.I)
+    ddl = m.group(1) if m else ""
+    key = re.search(r"(?:PRIMARY\s+KEY|UNIQUE)\s*\(([^)]*)\)", ddl, re.I)
+    if not key:
+        return _fail("zk_anti_replay",
+                     "ZkVerificationNonce has no PRIMARY KEY or UNIQUE constraint, so consuming "
+                     "a nonce inserts a row that can be inserted again. Single use is enforced "
+                     "by the key or not at all (R2/T-T2)")
+    keyed = re.sub(r"\s+", " ", key.group(1)).lower()
+    missing = [c for c in ("epoch_id", "context_id", "nonce") if c not in keyed]
+    if missing:
+        return _fail("zk_anti_replay",
+                     "ZkVerificationNonce's uniqueness is over (%s) and omits %s. A replay "
+                     "differing only in an omitted column is a different row and is accepted "
+                     "(R2/T-T2)" % (keyed, ", ".join(missing)))
     return _ok("zk_anti_replay",
-               "/api/zk/verify consumes a single-use nonce; replays are rejected (R2/T-T2)")
+               "/api/zk/verify consumes a single-use nonce; the replay hits UNIQUE (%s) and is "
+               "rejected by the database (R2/T-T2)" % keyed)
 
 
 # ---------------------------------------------------------------------------
