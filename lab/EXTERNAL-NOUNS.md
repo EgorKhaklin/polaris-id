@@ -21,10 +21,32 @@ belongs in the bottom section, not the top.
 
 ### External conformance profile
 
+The one the contract means, an OpenID4VC/HAIP profile, has not been run and cannot be until
+there is an OpenID4VP endpoint to point it at (`lab/interop/`).
+
     Profile:                   (none run)
     Run date:                  (none)
     Score:                     __ / __
     Published:                 no
+
+**One external test corpus IS run, on every push, and it is not that.** Recorded here because
+leaving the section blank implies nothing outside this repository ever touches the code, which
+is not true:
+
+    Corpus:                    Project Wycheproof, C2SP/wycheproof
+                               testvectors_v1/mldsa_65_verify_test.json @ 613a2e44cb64
+    Run:                       every push, CI job pqc-real
+    Score:                     58 / 58, under BOTH witnesses (liboqs and cryptography)
+    Result:                    CONFORMANT
+
+What it is: a third-party, independently authored corpus of ML-DSA-65 verification vectors,
+pinned to a commit, where accepting a signature Wycheproof calls invalid is a failure.
+
+What it is NOT, and the distinction is the whole point of this file: it tests the
+**cryptographic primitive**, not the credential protocol, and not one presentation was
+exchanged with anybody. It is evidence that Polaris's ML-DSA verification agrees with an
+outside authority on 58 cases. It is not a wallet, not an interoperability result, and it does
+not move any row above.
 
 ### External relying party / operator
 
