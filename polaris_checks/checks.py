@@ -8811,6 +8811,17 @@ _VERIFIER_FORBIDDEN_IMPORTS = ("psycopg2", "flask", "app", "pqc_signing", "custo
                                "security", "observability", "zk", "anchoring",
                                "webauthn_auth", "tracing")
 
+#: Networking, forbidden in the DETACHED VERIFIER ONLY. The word the product rests on:
+#: verify_presentation says it decides OFFLINE, and the detached verifier currently cannot
+#: make a network call because it contains no code that could -- zero references to urllib,
+#: http.client, socket or requests. "Contains nothing that could" is a stronger guarantee
+#: than "did not today", and it is worth keeping structurally rather than rediscovering.
+#:
+#: Deliberately NOT applied to the SDK or the relying party, which share the list above.
+#: Both import urllib on purpose, for the ONLINE status path, and a first attempt at this
+#: put networking in the shared tuple and turned two checks red for doing the right thing.
+_VERIFIER_FORBIDDEN_NETWORK = ("urllib", "http", "requests", "socket", "aiohttp", "httpx")
+
 
 def check_detached_verifier(root: pathlib.Path) -> list[Finding]:
     verifier = _read(root, _VERIFIER_REL)
@@ -8839,6 +8850,13 @@ def check_detached_verifier(root: pathlib.Path) -> list[Finding]:
                          f"scripts/polaris-verify.py imports {mod!r}; the detached verifier must be standalone "
                          "(only a standard ML-DSA-65 library) so a relying party runs it with no Polaris code "
                          "and no database")
+    for mod in _VERIFIER_FORBIDDEN_NETWORK:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", verifier, re.M):
+            return _fail("detached_verifier",
+                         f"the detached verifier imports {mod!r}. It decides OFFLINE, and it holds that "
+                         "property by containing no code that could reach a network at all, which is "
+                         "stronger than not reaching one today. The online status path belongs to the "
+                         "SDK and the relying party, which are allowed it")
     # 2. Real crypto, not a stub.
     if "sha3_256" not in verifier:
         return _fail("detached_verifier",

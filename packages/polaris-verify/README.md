@@ -38,6 +38,15 @@ verifier being unable.
 Under `--dev-placeholder` every verdict carries `"crypto": "DEV-PLACEHOLDER"` and a banner
 goes to stderr. Development crypto is never mistaken for production crypto.
 
+## Offline means it cannot reach a network
+
+Not "does not today". The verifier contains no networking code at all: zero references to
+`urllib`, `http.client`, `socket` or `requests`, and `check_detached_verifier` fails the build
+if one appears. An air-gapped relying party is running the same code path as a connected one.
+
+The online status path is a different thing and lives elsewhere, in the SDK and the relying
+party, both of which are allowed `urllib` on purpose.
+
 ## What it verifies
 
 Authenticity packs, presentations and QR frames, status assertions (offline, with a

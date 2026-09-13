@@ -5900,6 +5900,15 @@ def test_detached_verifier_check_discriminates(tmp_path):
     # 1. not standalone — imports a DB driver
     write({"packages/polaris-verify/polaris_verify_cli/verifier.py": "import psycopg2\n" + VERIFIER})
     assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL when the verifier imports psycopg2"
+    # 1b. OFFLINE is the word the product rests on, and the verifier holds it by containing
+    # no code that could reach a network at all. The SDK and the relying party are allowed
+    # urllib for the online status path; this file is not.
+    for mod in ("urllib", "socket", "requests", "http"):
+        write({"packages/polaris-verify/polaris_verify_cli/verifier.py":
+               "import %s\n" % mod + VERIFIER})
+        out = checks.check_detached_verifier(tmp_path)[0]
+        assert out.level == "FAIL" and "OFFLINE" in out.message, \
+            "must FAIL when the offline verifier imports %r" % mod
     # 2. drops the independent second witness
     write({"packages/polaris-verify/polaris_verify_cli/verifier.py": VERIFIER.replace("MLDSA65PublicKey", "SomethingElse")})
     assert checks.check_detached_verifier(tmp_path)[0].level == "FAIL", "must FAIL without the cryptography second witness"
