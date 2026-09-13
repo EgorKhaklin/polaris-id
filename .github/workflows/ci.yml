@@ -712,7 +712,7 @@ jobs:
       # without checking what that job installs is how the mdoc drill (cbor2) and the
       # quantum-event drill (psycopg2) each went red after they were added.
       - name: Set up Node (for the pinned axe-core)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -2150,7 +2150,7 @@ jobs:
       # the drill refuses to report -- correctly, but the job dies on setup rather than
       # on a finding. node itself is preinstalled on the runner; the dependencies are not.
       - name: Set up Node (the drill inverts the TypeScript SDK too)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -2317,7 +2317,7 @@ jobs:
       # The drill's npm leg packs the TypeScript SDK and installs the tarball into a bare
       # project. npm ci here builds the dist/ the package now points `exports` at.
       - name: Set up Node (the drill packs and installs the TypeScript SDK too)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -2332,7 +2332,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Install pinned dependencies
