@@ -192,6 +192,36 @@ def _check_install(py, cli, cwd, env, label):
         bad.append("%s: an untrusted issuer exited 0, so a deployment scripting on the exit "
                    "code accepts a credential it does not trust" % label)
 
+    # 4c. NO SILENT ENVIRONMENT-VARIABLE DOWNGRADE, which section 5 of the contract
+    # requires in those words. The gate above proves a mode must be DECLARED; this proves
+    # the declaration cannot be made for the caller by the environment. Every leg elsewhere
+    # in this drill strips POLARIS_* to show the verifier works without them, which is the
+    # opposite property and does not test this one at all.
+    poisoned = dict(env)
+    # The values matter as much as the names. An earlier version set
+    # POLARIS_PQC_PROVIDER=none, which cannot satisfy the gate even if something read it,
+    # so the leg would have missed a downgrade that read a VALID value. These are values
+    # that WOULD be accepted if any of them were consulted.
+    poisoned.update({"POLARIS_USE_REAL_PQC": "0", "POLARIS_PQC_PROFILE": "placeholder",
+                     "POLARIS_DEV_PLACEHOLDER": "1", "POLARIS_PQC_PROVIDER": "auto",
+                     "POLARIS_CRYPTO": "auto", "POLARIS_VERIFY_PROVIDER": "auto",
+                     "PQC_PROVIDER": "auto"})
+    r = _run([str(cli), "--pack", str(GENUINE)], cwd=cwd, env=poisoned)
+    if r.returncode != 4:
+        bad.append("%s: an environment variable satisfied the crypto-mode gate (exit %d); "
+                   "the contract forbids a silent environment downgrade and the declaration "
+                   "must come from the caller" % (label, r.returncode))
+    r = _run([str(cli), "--pqc-provider", "auto", "--json", "--pack", str(GENUINE)],
+             cwd=cwd, env=poisoned)
+    try:
+        e = json.loads(r.stdout[r.stdout.index("{"):]) if "{" in r.stdout else {}
+    except ValueError:
+        e = {}
+    if e.get("crypto") == "DEV-PLACEHOLDER" or not e.get("signature_valid"):
+        bad.append("%s: an environment variable downgraded a run that asked for a REAL "
+                   "provider (crypto=%r valid=%r)" % (label, e.get("crypto"),
+                                                      e.get("signature_valid")))
+
     # 5. development crypto cannot produce an authentic verdict, and says so
     r = _run([str(cli), "--dev-placeholder", "--json", "--pack", str(GENUINE)], cwd=cwd, env=env)
     try:
