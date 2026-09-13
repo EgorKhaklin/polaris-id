@@ -14051,9 +14051,29 @@ def test_post_quantum_claims_are_agility_check_discriminates(tmp_path):
     assert good.level == "OK", "must PASS when a surface claims post-quantum and points at the " \
                                "ledger, and the ledger carries the limitation"
 
-    # The word itself is not the offence. A surface may say post-quantum.
-    write(readme="This is a post-quantum credential engine. See PRODUCTION-READINESS.md\n")
-    assert level() == "OK", "'post-quantum' is accurate about the algorithm and must not be refused"
+    # The word itself is not the offence. A surface may say post-quantum about the thing
+    # that IS post-quantum -- the signature, the key exchange, the registered algorithm.
+    # v9.454 sharpened this: the example here used to be "a post-quantum credential
+    # engine", which is the construction the check now refuses, so the fixture was
+    # asserting the wrong thing was accurate.
+    write(readme="Credentials carry post-quantum ML-DSA-65 signatures. PRODUCTION-READINESS.md\n")
+    assert level() == "OK", "'post-quantum' about the SIGNATURE is accurate and must not be refused"
+
+    # v9.454: post-quantum as an adjective on the SYSTEM is refused, and the true uses
+    # are not. This is the line the check has to hold precisely: refusing the accurate
+    # statements alongside the overstated one would make it something to route around.
+    for claim in ("Polaris is a post-quantum identity-token system.",
+                  "Polaris is a post-quantum credential verification engine.",
+                  "a post-quantum credential platform"):
+        write(readme=SURFACE + claim + " PRODUCTION-READINESS.md\n")
+        assert level("adjective on the system") == "FAIL", \
+            "must FAIL on %r" % claim[:44]
+    for true_use in ("The TLS edge negotiates post-quantum key exchange.",
+                     "It carries post-quantum signatures (ML-DSA-65 by default).",
+                     "SLH-DSA sits registered beside the post-quantum default.",
+                     "Signed with ML-DSA-65 under an audited algorithm-migration path."):
+        write(readme=SURFACE + true_use + "\n")
+        assert level() == "OK", "must PASS on the accurate statement %r" % true_use[:44]
 
     # Asserting the security IS the offence, on every outward surface.
     for phrase in ("quantum-resistant", "quantum-safe", "quantum-proof", "quantum-secure",

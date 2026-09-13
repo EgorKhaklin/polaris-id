@@ -8214,6 +8214,20 @@ def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
                                         "is meant to hold cannot be inspected" % rel))
             continue
         low = text.lower()
+        # v9.454: "post-quantum" as an adjective on the SYSTEM is the overstatement, and
+        # it is separable from the true uses. "The TLS edge negotiates post-quantum key
+        # exchange" and "post-quantum signatures (ML-DSA-65)" are facts about a protocol
+        # and an algorithm; "a post-quantum credential verification engine" is a claim
+        # that the system cannot be broken by a quantum adversary, which is a claim about
+        # Module-LWE. v9.453 rewrote the README's version of that sentence and left the
+        # site's, which is what this rule found.
+        for m in re.finditer(r"post-quantum[^.\n]{0,70}?\b(system|engine|platform|identity)\b",
+                             low):
+            findings.extend(_fail(name, "%s says %r -- post-quantum as an adjective on the system "
+                                        "itself. Name what is post-quantum (the signature, the key "
+                                        "exchange, the registered algorithm) or name the claim "
+                                        "(agility under an audited migration path); the system is "
+                                        "neither" % (rel, m.group(0)[:60])))
         for phrase in _PQ_SECURITY_ASSERTIONS:
             if phrase in low:
                 findings.extend(_fail(name, "%s says %r, which asserts the security rather than "

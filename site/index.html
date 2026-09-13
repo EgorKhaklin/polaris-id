@@ -209,8 +209,12 @@ footer a{color:var(--ink-dim)}
 
 <section id="what" aria-labelledby="what-h">
     <h2 id="what-h">What Polaris is</h2>
-    <p class="lede">Polaris is a <strong>post-quantum credential verification engine</strong>, on a
-        schema backbone. An authority issues a credential signed with ML-DSA-65; a holder holds it
+    <p class="lede">Polaris is a <strong>credential verification engine</strong> on a schema
+        backbone, and the cryptographic claim is <strong>algorithm agility under an audited
+        migration path</strong> rather than settled security against a quantum adversary:
+        ML-DSA-65 rests on Module-LWE hardness, which is mathematics and not a property of
+        this repository, while the algorithm being a row in the schema rather than a constant
+        is. An authority issues a credential signed with ML-DSA-65; a holder holds it
         and presents it; and anyone can check it two ways. <strong>Authenticity</strong> is offline:
         a standalone detached verifier confirms the signature against published keys, with no Polaris
         code, no database and no network. <strong>Authorization</strong> is answered online by a

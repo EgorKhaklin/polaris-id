@@ -5,6 +5,39 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.454 — 2026-09-13 (the headline rested on prose; now it rests on a rule)
+
+v9.453 rewrote the front door to say what is true -- signed with ML-DSA-65 under an audited
+algorithm-migration path -- and that left a gap worth naming rather than leaving implied. The
+rules `check_post_quantum_claims_are_agility` pinned were the denylist of settled-security
+phrasing and the requirement to point at the limitation. It deliberately permitted the words
+"post-quantum", because they are accurate about ML-DSA-65, about the SLH-DSA hedge and about the
+X25519MLKEM768 edge, and a check that refused a true statement gets routed around. So a future
+headline could have gone back to "a post-quantum identity-token system" and still passed.
+
+The overstatement is separable from the accurate use, and the separating line is grammatical.
+"The TLS edge negotiates post-quantum key exchange" is a fact about a protocol. "Post-quantum
+signatures (ML-DSA-65 by default)" is a fact about an algorithm. "A post-quantum credential
+verification engine" is a claim that the SYSTEM cannot be broken by a quantum adversary, which is
+a claim about Module-LWE staying hard. The check now refuses post-quantum used as an adjective on
+the system, engine or platform, and permits every use that names the thing which actually is one.
+
+Writing that rule immediately found what the v9.453 pass had missed: `site/index.html` still
+opened its lede with "Polaris is a post-quantum credential verification engine", because that
+rewrite corrected the README's version of the sentence and not the site's. The site now carries
+the same framing as everything else, and says why -- ML-DSA-65 rests on Module-LWE hardness, which
+is mathematics rather than a property of this repository, while the algorithm being a row in the
+schema rather than a constant is.
+
+One detection case from v9.452 had to be corrected rather than kept. It asserted that "a
+post-quantum credential engine" must PASS, as the example of an accurate use the check must not
+refuse -- and that is precisely the construction now refused. The fixture was asserting the wrong
+thing was accurate; it now uses a statement about the SIGNATURE, which is one.
+
+**260 invariant checks. 45 tables.**
+
+---
+
 ## v9.453 — 2026-09-12 (forty-six citations to a document that is not in the repository)
 
 v9.55 deleted the apparatus wholesale -- about 18,150 lines and the mythology docs with it.
