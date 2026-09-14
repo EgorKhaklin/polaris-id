@@ -33,6 +33,26 @@ pip install "polaris-verify[cryptography] @ git+https://github.com/EgorKhaklin/p
 polaris-verify --pqc-provider auto --pack credential.json
 ```
 
+```bash
+pip install "polaris-oid4vp @ git+https://github.com/EgorKhaklin/polaris-id#subdirectory=packages/polaris-oid4vp"
+```
+
+**Both were run from the public URL on 2026-09-14, in an empty environment, and are what
+the output below actually was.** The product boundary drill builds its wheels from the
+working tree, which answers a different question: whether the code in front of you installs.
+This answers whether what GitHub is serving does.
+
+    polaris-verify --pqc-provider auto --pack pack-mldsa87-valid.json
+        crypto: cryptography · algorithm: ML-DSA-87 · signature_valid: True     exit 0
+    polaris-verify --pack pack-mldsa87-valid.json        (no declared crypto mode)
+        "There is no default and no environment variable for this."            exit 4
+
+    polaris-oid4vp, on the conformance suite's own captured response
+        authentic: True, claims given_name / family_name / vct                 exit 0
+        the same response under a nonce we did not send                      refused, code `nonce`
+
+    polaris_web, polaris_checks, flask, psycopg2                    all absent from the venv
+
 The `#subdirectory=` fragment is not optional. The repository root has no `pyproject.toml`,
 so the form a newcomer tries first, `pip install git+https://github.com/EgorKhaklin/polaris-id`,
 fails with *"does not appear to be a Python project"*.

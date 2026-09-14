@@ -183,6 +183,24 @@ HTTPS surface. `scripts/polaris-oid4vp-conformance-drill.py` drives the whole pl
 is in the conformance section above: 11 of 11 modules clean, 7 of them scored automatically by
 the suite. It is a local, unpublished, uncertified run, and that section says so four times.
 
+
+**Installable from a public URL, measured against the public URL (2026-09-14).** The product
+boundary drill builds its wheels from the working tree, which answers whether the code in
+front of you installs. This answers whether what GitHub is serving does, which is the only
+install path that exists while nothing is published:
+
+    pip install "polaris-verify[cryptography] @ git+https://github.com/...#subdirectory=packages/polaris-verify"
+    pip install "polaris-oid4vp @ git+https://github.com/...#subdirectory=packages/polaris-oid4vp"
+
+Both succeed. In an environment stripped to nothing (`env -i`), polaris-verify verifies a
+real ML-DSA-87 pack and exits 4 with no declared crypto mode; polaris-oid4vp opens the
+conformance suite's own captured response and refuses the same response under a nonce it did
+not send. `polaris_web`, `polaris_checks`, `flask` and `psycopg2` are all absent.
+
+**This is still not external use.** Nobody outside ran either command. It is the first item
+of the 90-day objective, measured against the artifact a stranger would actually fetch rather
+than the one on this disk.
+
 **Known gaps against the product contract, same date:**
 
 - ~~There is no `polaris-verify` startup to refuse.~~ **CLOSED.**
