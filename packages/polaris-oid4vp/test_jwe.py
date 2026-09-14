@@ -175,10 +175,22 @@ class StructuralRefusalsCoverageFoundTests(unittest.TestCase):
         self._expect(".".join(parts), "96-bit iv")
 
     def test_a_segment_that_is_not_base64url_is_refused(self):
-        parts = self.token.split(".")
-        parts[3] = "!!!!"
-        with self.assertRaises(JweError):
-            decrypt_compact(".".join(parts), self.key)
+        """It has to actually reach the decode, which the obvious input does not.
+
+        `parts[3] = "!!!!"` looks like the test and is not: base64 decoding with validation
+        off STRIPS characters outside the alphabet, so four exclamation marks decode to
+        empty bytes and the refusal arrives later, from the AES-GCM tag. The assertion
+        passed and the line it was written for never ran. A single character cannot be
+        padded to a valid length, so this is an input the decoder must refuse.
+        """
+        for segment in (2, 3, 4):
+            parts = self.token.split(".")
+            parts[segment] = "a"
+            with self.assertRaises(JweError) as caught:
+                decrypt_compact(".".join(parts), self.key)
+            self.assertIn("not base64url", str(caught.exception),
+                          "segment %d was refused for some other reason, so the decode "
+                          "guard still has nothing exercising it" % segment)
 
     def test_a_decrypted_json_array_is_not_a_response(self):
         token = encrypt_compact(b'["vp_token"]', self.key.public_key())

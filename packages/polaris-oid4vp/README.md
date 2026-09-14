@@ -135,9 +135,17 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_conformance_capture
 ```
 
-125 tests in five files at 99% line coverage, and they are not equal in weight.
+125 tests in five files at 99% line coverage, and they are not equal in weight. Coverage is
+the weakest of the three instruments here: it says a line ran.
 
-`test_sdjwt` (23) and `test_jwe` (14) are this package agreeing with itself: the material is
+**And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`
+takes each of the 51 refusals in turn, makes it ACCEPT what it refuses, and runs the whole
+suite: a refusal the suite still passes with is one no test asserts on. 48 are caught, and
+the 3 that survive are the `cryptography is not installed` guards, which a suite that runs
+cannot reach without removing the thing it needs in order to run. It found one real gap the
+99% figure had hidden, described below.
+
+`test_sdjwt` (23) and `test_jwe` (22) are this package agreeing with itself: the material is
 built here and checked here. Each carries a positive control, because a verifier that refuses
 everything passes every refusal test ever written, and both directions were checked by
 patching the verifier rather than assumed. A verifier that always accepts fails 19 of the 23;

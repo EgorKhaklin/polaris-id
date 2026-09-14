@@ -2389,6 +2389,12 @@ jobs:
       # every other test in the package stays green.
       - name: The listening surface — status codes, content types, routing
         run: cd packages/polaris-oid4vp && python -m unittest test_serve
+      # 99% line coverage says every line RAN. It does not say a test would fail if a line
+      # stopped refusing, and those are different questions. Seven of the conformance plan's
+      # eleven modules pass only on a 4xx, so every one of them is a refusal in this package,
+      # and the conformance drill that would notice needs Docker and a running suite.
+      - name: OID4VP mutation — every refusal is caught when inverted
+        run: python scripts/polaris-oid4vp-mutation-drill.py
 
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance
