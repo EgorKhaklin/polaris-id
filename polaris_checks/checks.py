@@ -17369,6 +17369,50 @@ def check_published_readmes_have_no_relative_links(root: pathlib.Path) -> list[F
                "work off-repo and are still checked against this tree" % len(_PUBLISHED_READMES))
 
 
+# Apache-2.0 section 4(a) requires a recipient of the work to be given a copy of the licence,
+# and 4(d) requires the NOTICE file to travel with it when the work has one. All four
+# publishable artifacts DECLARED Apache-2.0 and none of them shipped either file: the wheels
+# carried no licence at all and the npm `files` list named only dist and the README. A
+# published version cannot be amended, so the omission would have been permanent per version.
+_PUBLISHABLE_PACKAGES = ("packages/polaris-verify", "packages/polaris-oid4vp",
+                         "sdk/python", "sdk/typescript")
+
+
+def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]:
+    for pkg in _PUBLISHABLE_PACKAGES:
+        for name in ("LICENSE", "NOTICE"):
+            path = root / pkg / name
+            if not path.is_file():
+                return _fail("distribution_licence",
+                             "%s/%s is missing. The package declares Apache-2.0, and a "
+                             "distribution that declares a licence without carrying its text "
+                             "does not satisfy it. setuptools picks these up from the package "
+                             "directory by default; a root-level copy is not in the sdist"
+                             % (pkg, name))
+            if len(_read_path(path)) < 1000:
+                return _fail("distribution_licence",
+                             "%s/%s is too short to be the licence text" % (pkg, name))
+
+    # npm includes LICENSE on its own but NOT NOTICE, and a `files` allowlist overrides even
+    # that, so this is the one artifact where naming them is the whole mechanism.
+    pkg_json = _read(root, "sdk/typescript/package.json")
+    if not pkg_json:
+        return _fail("distribution_licence", "sdk/typescript/package.json is missing")
+    try:
+        files = json.loads(pkg_json).get("files") or []
+    except Exception as e:  # noqa: BLE001
+        return _fail("distribution_licence", "sdk/typescript/package.json is not valid JSON (%s)" % e)
+    for name in ("LICENSE", "NOTICE"):
+        if name not in files:
+            return _fail("distribution_licence",
+                         "sdk/typescript/package.json has a `files` allowlist that omits %r, "
+                         "so the published tarball will not carry it whatever is on disk"
+                         % name)
+    return _ok("distribution_licence",
+               "all %d publishable artifacts carry the Apache-2.0 text and the NOTICE file, "
+               "and the npm allowlist names both" % len(_PUBLISHABLE_PACKAGES))
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
@@ -17469,6 +17513,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_detached_verifier,
     check_oid4vp_verifier_boundary,
     check_published_readmes_have_no_relative_links,
+    check_distributions_carry_their_licence,
     check_dyno_published,
     check_attacks_run,
     check_federation_real,

@@ -15034,3 +15034,49 @@ def test_published_readme_links_check_discriminates(tmp_path):
     # A missing README is a missing project page, not a pass by absence.
     gone = checks.check_published_readmes_have_no_relative_links(write(drop=NAMES[1]))
     assert any(f.level == "FAIL" for f in gone), gone
+
+
+def test_distribution_licence_check_discriminates(tmp_path):
+    # All four publishable artifacts declared Apache-2.0 and shipped neither the licence
+    # text nor the NOTICE file. A published version cannot be amended, so the omission would
+    # have been permanent. The good fixture carries both everywhere and names both in the
+    # npm allowlist; each perturbation removes exactly one of those.
+    PKGS = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python",
+            "sdk/typescript")
+    TEXT = "Apache License Version 2.0 " + ("x" * 1200)
+    GOOD_JSON = '{"name": "polaris-sdk-ts", "files": ["dist", "README.md", "LICENSE", "NOTICE"]}'
+
+    def write(drop=None, short=None, package_json=GOOD_JSON):
+        root = tmp_path / ("case%d" % write.n)
+        write.n += 1
+        for pkg in PKGS:
+            (root / pkg).mkdir(parents=True, exist_ok=True)
+            for name in ("LICENSE", "NOTICE"):
+                if drop == (pkg, name):
+                    continue
+                (root / pkg / name).write_text("short" if short == (pkg, name) else TEXT)
+        (root / "sdk/typescript/package.json").write_text(package_json)
+        return root
+    write.n = 0
+
+    ok = checks.check_distributions_carry_their_licence(write())
+    assert all(f.level == "OK" for f in ok), ok
+
+    for pkg in PKGS:
+        for name in ("LICENSE", "NOTICE"):
+            bad = checks.check_distributions_carry_their_licence(write(drop=(pkg, name)))
+            assert any(f.level == "FAIL" for f in bad), (pkg, name)
+            assert pkg in bad[0].message and name in bad[0].message, bad[0].message
+
+    # A stub standing in for the licence is not the licence.
+    stub = checks.check_distributions_carry_their_licence(write(short=(PKGS[0], "LICENSE")))
+    assert any(f.level == "FAIL" for f in stub), stub
+
+    # npm's allowlist overrides what is on disk, so omitting a name there is the whole defect.
+    for missing in ("LICENSE", "NOTICE"):
+        allow = [f for f in ["dist", "README.md", "LICENSE", "NOTICE"] if f != missing]
+        listed = checks.check_distributions_carry_their_licence(
+            write(package_json='{"name": "x", "files": [%s]}'
+                  % ", ".join('"%s"' % f for f in allow)))
+        assert any(f.level == "FAIL" for f in listed), missing
+        assert "allowlist" in listed[0].message, listed[0].message
