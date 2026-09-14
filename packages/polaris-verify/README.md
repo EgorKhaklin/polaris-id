@@ -4,6 +4,15 @@ A detached verifier for Polaris credentials and signed artifacts. It decides aut
 on its own: no Polaris server, no database, no operator console, no network unless you ask
 it to fetch status.
 
+> **Project name and import name differ, and the obvious guess lands elsewhere.** This
+> project, `polaris-verify`, installs the `polaris-verify` COMMAND and the module
+> `polaris_verify_cli`. The module `polaris_verify` belongs to a different project,
+> `polaris-sdk-python`, which is the library. They install side by side without colliding,
+> and `pip install polaris-verify` followed by `import polaris_verify` is the mistake this
+> paragraph exists to prevent. The names were fixed before either was published and are not
+> worth changing after: `conformance/SPEC.md` publishes `python -m polaris_verify.conformance`
+> as the reference verifier command, so the module name is part of a contract.
+
 ```bash
 # Not on PyPI yet. This works today, from a clean machine, and is measured:
 pip install "polaris-verify[cryptography] @ git+https://github.com/EgorKhaklin/polaris-id#subdirectory=packages/polaris-verify"

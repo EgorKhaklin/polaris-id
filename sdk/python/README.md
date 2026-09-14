@@ -4,6 +4,13 @@ A server-side SDK for a relying party to verify Polaris identity credentials. It
 answers one narrow question about a credential a holder presented: is it authentic,
 and is it authoritative right now? It never returns a person's data.
 
+> **Project name and import name differ, and the obvious guess lands elsewhere.** This
+> project, `polaris-sdk-python`, installs the module `polaris_verify`. The project called
+> `polaris-verify` is a different thing: the command-line verifier, which installs
+> `polaris_verify_cli`. They coexist without colliding. The module keeps its name because
+> `conformance/SPEC.md` publishes `python -m polaris_verify.conformance` as the reference
+> verifier command, so it is part of a contract rather than a preference.
+
 - **Authenticity** (offline, cacheable): the ML-DSA-65 signature over
   `SHA3-256(token_value)`, verified with `cryptography` (and liboqs as a second
   witness when present), optionally against trusted issuer anchor keys.
