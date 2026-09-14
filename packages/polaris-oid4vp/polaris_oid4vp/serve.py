@@ -55,15 +55,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         form = urllib.parse.parse_qs(raw)
         try:
             status, body, verdict = self.verifier.handle_direct_post(form)
+            # The operator's side of the split. Everything the wallet is NOT told goes here,
+            # where the person running the verifier can read it and an attacker cannot.
+            if status != 200 and verdict is not None:
+                self.log_error("refused: %s: %s", verdict.code, verdict.reason)
         except Exception:  # noqa: BLE001
             # The wallet must never see a 5xx for a response it sent: a 5xx says "retry",
             # and nothing it can retry will help. An unexpected exception here is this
             # verifier's bug, so it goes to the server's own log and the wallet gets the
             # same 400 every other unacceptable response gets.
             self.log_error("handle_direct_post raised", exc_info=True)
-            status, body, verdict = 400, {"error": "invalid_request",
-                                          "error_description": "the response could not be "
-                                                               "processed"}, None
+            # The same constant body an ordinary refusal gets. A distinguishable one would
+            # tell an attacker they had found an input that crashes the verifier, which is
+            # the single most interesting thing they could learn from probing it.
+            from .verifier import Verifier as _V
+            status, body, verdict = 400, dict(_V.REFUSAL_BODY), None
         if self.on_verdict:
             self.on_verdict(status, body, verdict)
         return self._send(status, body)

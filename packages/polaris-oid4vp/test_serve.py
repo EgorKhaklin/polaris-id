@@ -140,8 +140,12 @@ class ResponseUriTests(ServeTestCase):
         self.assertEqual(ctype, "application/json")
         self.assertEqual(set(json.loads(body)), {"redirect_uri"})
 
-    def test_every_conformance_refusal_arrives_as_a_4xx_on_the_wire(self):
-        """The decision reaching the wire, which is the only form the plan can score."""
+    def test_every_conformance_refusal_arrives_as_a_4xx_and_says_nothing_else(self):
+        """The decision reaching the wire, which is the only form the plan can score.
+
+        And ONLY that. The bodies must be indistinguishable: a 4xx that names which check
+        failed is a per-check oracle, which is what this used to assert the presence of.
+        """
         cases = {
             "issuer_signature": {"corrupt_issuer_sig": True},
             "kb_signature": {"corrupt_kb_sig": True},
@@ -150,6 +154,7 @@ class ResponseUriTests(ServeTestCase):
             "kb_freshness": {"iat": 1},
             "sd_hash": {"sd_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
         }
+        bodies = set()
         for code, kw in cases.items():
             _, jar = self.verifier.new_request()
             form = self.wallet.respond(jar, **kw)
@@ -157,14 +162,16 @@ class ResponseUriTests(ServeTestCase):
                                         {"response": form["response"][0]})
             self.assertEqual(status, 400, "%s answered %d" % (code, status))
             self.assertEqual(ctype, "application/json")
-            payload = json.loads(body)
-            self.assertEqual(payload["error"], "invalid_request")
-            self.assertIn(code, payload["error_description"])
+            self.assertEqual(json.loads(body)["error"], "invalid_request")
+            self.assertNotIn(code, body.decode(), "%s names itself on the wire" % code)
+            bodies.add(body)
+        self.assertEqual(len(bodies), 1,
+                         "the wire distinguishes %d refusal causes" % len(bodies))
 
     def test_an_empty_post_is_400_not_500(self):
         status, _, body = _post(self.base + "/response", {})
         self.assertEqual(status, 400)
-        self.assertIn("no 'response'", json.loads(body)["error_description"])
+        self.assertEqual(json.loads(body)["error"], "invalid_request")
 
     def test_junk_in_the_response_field_is_400_not_500(self):
         for junk in ("", "x", "a.b.c", "not a jwe at all", "\x00\x01\x02"):
@@ -203,7 +210,7 @@ class ResponseUriTests(ServeTestCase):
         self.assertEqual(ctype, "application/json")
         self.assertEqual(json.loads(body)["error"], "invalid_request")
 
-    def test_a_verdict_callback_sees_what_the_wire_saw(self):
+    def test_a_verdict_callback_sees_MORE_than_the_wire_did(self):
         seen = []
         cert_pem, key_pem = _client_chain()
         verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
@@ -225,7 +232,11 @@ class ResponseUriTests(ServeTestCase):
             httpd.server_close()
         self.assertEqual([s for s, _ in seen], [200, 400])
         self.assertTrue(seen[0][1].authentic)
-        self.assertIsNone(seen[1][1])
+        # The operator's half of the split: the callback is told the cause the wallet was
+        # not. Asserting None here was asserting that nobody was told, which was true only
+        # because the cause was going out on the wire instead.
+        self.assertFalse(seen[1][1].authentic)
+        self.assertEqual(seen[1][1].code, "nonce")
 
 
 class TransportTests(unittest.TestCase):

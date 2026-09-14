@@ -1484,7 +1484,12 @@ def webauthn_register_finish():
         security._audit(get_db, 'WEBAUTHN_REGISTRATION_REFUSED',
             username=user['username'], user_id=user['user_id'],
             detail=f'policy: {str(e)[:470]}')
-        return jsonify(error=f'registration refused by policy: {e}'), 400
+        # The exception's text goes to the LOG, not into the response body. It is benign
+        # today (an attestation-format or AAGUID policy message about the caller's own
+        # device) and the pattern is not: interpolating an exception into an HTTP body leaks
+        # whatever a future raise site decides to put in it, and nothing here would notice.
+        app.logger.warning('webauthn registration refused by policy: %s', e)
+        return jsonify(error='registration refused by policy'), 400
     except Exception as e:
         security._audit(get_db, 'WEBAUTHN_REGISTRATION_REFUSED',
             username=user['username'], user_id=user['user_id'],

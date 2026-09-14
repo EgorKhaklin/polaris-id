@@ -138,9 +138,10 @@ class ServeCommandTests(unittest.TestCase):
         wallet = Wallet()
         verifier = verifier_from(tmp, "verifier.test", 9443)
         _, jar = verifier.new_request()
-        status, body, _ = verifier.handle_direct_post(wallet.respond(jar))
+        status, body, verdict = verifier.handle_direct_post(wallet.respond(jar))
         self.assertEqual(status, 400)
-        self.assertIn("issuer_key", body["error_description"])
+        self.assertEqual(body, verifier.REFUSAL_BODY, "the cause is on the wire")
+        self.assertEqual(verdict.code, "issuer_key", "the operator was not told either")
 
 
 if __name__ == "__main__":

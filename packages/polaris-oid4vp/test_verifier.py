@@ -269,31 +269,39 @@ class TheSevenRefusalsReachTheWireTests(VerifierTestCase):
     """One per negative module. The plan passes each of these on a 4xx and nothing else."""
 
     def _refused(self, **kw):
-        _, status, body = self.exchange(**kw)
+        """Refuse on the wire, and return the code from the VERDICT, not from the body.
+
+        The body is a constant. Reading the cause out of it is what an attacker would do,
+        and the whole point of the change these tests were rewritten for is that they
+        cannot.
+        """
+        _, jar = self.verifier.new_request()
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar, **kw))
         self.assertEqual(status, 400, "answered %d, so this module would FAIL" % status)
-        self.assertEqual(body["error"], "invalid_request")
-        return body["error_description"]
+        self.assertEqual(body, self.verifier.REFUSAL_BODY, "the wire body varies with the cause")
+        self.assertIsNotNone(verdict, "the operator was told nothing either")
+        return verdict.code
 
     def test_invalid_credential_signature_is_4xx(self):
-        self.assertIn("issuer_signature", self._refused(corrupt_issuer_sig=True))
+        self.assertEqual("issuer_signature", self._refused(corrupt_issuer_sig=True))
 
     def test_invalid_sd_hash_is_4xx(self):
-        self.assertIn("sd_hash", self._refused(sd_hash=b64u_encode(b"x" * 32)))
+        self.assertEqual("sd_hash", self._refused(sd_hash=b64u_encode(b"x" * 32)))
 
     def test_invalid_kb_jwt_signature_is_4xx(self):
-        self.assertIn("kb_signature", self._refused(corrupt_kb_sig=True))
+        self.assertEqual("kb_signature", self._refused(corrupt_kb_sig=True))
 
     def test_invalid_kb_jwt_nonce_is_4xx(self):
-        self.assertIn("nonce", self._refused(nonce="not-the-one-we-sent"))
+        self.assertEqual("nonce", self._refused(nonce="not-the-one-we-sent"))
 
     def test_invalid_kb_jwt_aud_is_4xx(self):
-        self.assertIn("audience", self._refused(audience="x509_hash:somebody-else"))
+        self.assertEqual("audience", self._refused(audience="x509_hash:somebody-else"))
 
     def test_kb_jwt_iat_in_past_is_4xx(self):
-        self.assertIn("kb_freshness", self._refused(iat=int(time.time()) - 365 * 86400))
+        self.assertEqual("kb_freshness", self._refused(iat=int(time.time()) - 365 * 86400))
 
     def test_kb_jwt_iat_in_future_is_4xx(self):
-        self.assertIn("kb_freshness", self._refused(iat=int(time.time()) + 365 * 86400))
+        self.assertEqual("kb_freshness", self._refused(iat=int(time.time()) + 365 * 86400))
 
 
 class TheTransportRefusalsTests(VerifierTestCase):
@@ -308,12 +316,12 @@ class TheTransportRefusalsTests(VerifierTestCase):
         form = self.wallet.respond(their_jar)
         status, body, _ = self.verifier.handle_direct_post(form)
         self.assertEqual(status, 400)
-        self.assertIn("did not decrypt", body["error_description"])
+        self.assertEqual(body, self.verifier.REFUSAL_BODY)
 
     def test_an_empty_post_is_4xx(self):
         status, body, _ = self.verifier.handle_direct_post({})
         self.assertEqual(status, 400)
-        self.assertIn("no 'response'", body["error_description"])
+        self.assertEqual(body, self.verifier.REFUSAL_BODY)
 
     def test_a_replayed_response_is_4xx_the_second_time(self):
         _, jar = self.verifier.new_request()
@@ -322,19 +330,19 @@ class TheTransportRefusalsTests(VerifierTestCase):
         second, body, _ = self.verifier.handle_direct_post(form)
         self.assertEqual(first, 200)
         self.assertEqual(second, 400, "the same presentation was accepted twice")
-        self.assertIn("did not decrypt", body["error_description"])
+        self.assertEqual(body, self.verifier.REFUSAL_BODY)
 
     def test_a_vp_token_with_two_credentials_is_4xx(self):
         _, status, body = self.exchange(vp_token={"pid": ["a~b~c"], "other": ["d~e~f"]})
         self.assertEqual(status, 400)
-        self.assertIn("one presentation", body["error_description"])
+        self.assertEqual(body, self.verifier.REFUSAL_BODY)
 
     def test_a_smuggled_disclosure_is_4xx(self):
         smuggled = b64u_encode(json.dumps(["s9", "is_over_18", True],
                                           separators=(",", ":")).encode())
         _, status, body = self.exchange(extra_disclosure=smuggled)
         self.assertEqual(status, 400)
-        self.assertIn("disclosure", body["error_description"])
+        self.assertEqual(body, self.verifier.REFUSAL_BODY)
 
     def test_nothing_ever_answers_5xx(self):
         """A 5xx tells the wallet to retry something that will never work."""
@@ -352,9 +360,10 @@ class TheTransportRefusalsTests(VerifierTestCase):
                             request_ttl_seconds=0)
         _, jar = verifier.new_request()
         form = self.wallet.respond(jar)
-        status, body, _ = verifier.handle_direct_post(form)
+        status, body, verdict = verifier.handle_direct_post(form)
         self.assertEqual(status, 400)
-        self.assertIn("expired", body["error_description"])
+        self.assertEqual(body, verifier.REFUSAL_BODY)
+        self.assertIn("expired", verdict.reason, "the operator was not told why either")
 
 
 class TheLastTwoRefusalsTests(VerifierTestCase):
@@ -366,7 +375,7 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         form = self.wallet.respond(jar, state="some-other-request")
         status, body, _ = self.verifier.handle_direct_post(form)
         self.assertEqual(status, 400)
-        self.assertIn("state does not match", body["error_description"])
+        self.assertEqual(body, self.verifier.REFUSAL_BODY)
 
     def test_two_threads_racing_the_same_response_leave_exactly_one_winner(self):
         """The `answered` flag guards a window that a SEQUENTIAL replay never reaches.
@@ -414,9 +423,74 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         statuses = sorted(status for status, _, _ in results)
         self.assertEqual(statuses, [200, 400],
                          "one presentation was accepted twice: %r" % statuses)
-        loser = [body for status, body, _ in results if status == 400][0]
-        self.assertIn("already been answered", loser["error_description"])
+        loser = [v for status, _, v in results if status == 400][0]
+        self.assertIn("already been answered", loser.reason)
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TheWireTellsAnAttackerNothingTests(VerifierTestCase):
+    """Every refusal looks identical from outside. The reason reaches the operator only.
+
+    The first version of this verifier put the refusal code and its explanation in
+    `error_description`, justified as debuggability for the wallet. That serves a
+    cooperative wallet and hands an attacker a per-check oracle: probe once, be told which
+    check failed, work on that one. Three of the messages leaked more than the code. The
+    audience refusal echoed this verifier's own client_id. The freshness refusal named the
+    acceptance window in seconds. The decrypt refusal enumerated its causes, disclosing that
+    outstanding-request state and an expiry exist.
+    """
+
+    CAUSES = {
+        "issuer_signature": {"corrupt_issuer_sig": True},
+        "kb_signature": {"corrupt_kb_sig": True},
+        "nonce": {"nonce": "a-nonce-nobody-asked-for"},
+        "audience": {"audience": "x509_hash:somebody-else"},
+        "kb_freshness": {"iat": 1},
+        "sd_hash": {"sd_hash": "A" * 43},
+        "disclosure": {"extra_disclosure": "WyJzOSIsImlzX2FkbWluIix0cnVlXQ"},
+    }
+
+    def test_every_refusal_is_byte_identical_on_the_wire(self):
+        seen = {}
+        for label, kw in self.CAUSES.items():
+            _, jar = self.verifier.new_request()
+            status, body, verdict = self.verifier.handle_direct_post(
+                self.wallet.respond(jar, **kw))
+            self.assertEqual(status, 400, label)
+            seen[label] = json.dumps(body, sort_keys=True)
+            self.assertEqual(verdict.code, label, "the operator got the wrong reason")
+        distinct = set(seen.values())
+        self.assertEqual(len(distinct), 1,
+                         "the wire distinguishes %d causes: %s" % (len(distinct), seen))
+
+    def test_the_wire_never_carries_a_refusal_code_or_a_number(self):
+        """No code, and no figure an attacker could read a threshold or a count out of."""
+        for label, kw in self.CAUSES.items():
+            _, jar = self.verifier.new_request()
+            _, body, _ = self.verifier.handle_direct_post(self.wallet.respond(jar, **kw))
+            wire = json.dumps(body)
+            for code in self.CAUSES:
+                self.assertNotIn(code, wire, "%s leaks the code %r" % (label, code))
+            self.assertFalse(any(ch.isdigit() for ch in wire),
+                             "%s puts a number on the wire: %s" % (label, wire))
+
+    def test_the_wire_does_not_echo_anything_the_caller_supplied(self):
+        """Echoing input back is how the audience refusal used to leak two identifiers."""
+        marker = "x509_hash:MARKER-SUPPLIED-BY-THE-CALLER"
+        _, jar = self.verifier.new_request()
+        _, body, _ = self.verifier.handle_direct_post(
+            self.wallet.respond(jar, audience=marker))
+        self.assertNotIn("MARKER", json.dumps(body))
+        self.assertNotIn(self.verifier.client_id, json.dumps(body),
+                         "the refusal echoes this verifier's own client_id")
+
+    def test_a_crash_is_not_distinguishable_from_a_refusal(self):
+        """Finding an input that crashes the verifier is the most interesting thing an
+        attacker could learn from probing it, so it must look like everything else."""
+        _, jar = self.verifier.new_request()
+        _, good_body, _ = self.verifier.handle_direct_post(
+            self.wallet.respond(jar, nonce="wrong"))
+        self.assertEqual(good_body, self.verifier.REFUSAL_BODY)

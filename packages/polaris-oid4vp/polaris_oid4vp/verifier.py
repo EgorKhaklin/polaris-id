@@ -45,7 +45,7 @@ except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
 from .jwe import JweError, b64u_encode, decrypt_response
-from .sdjwt import verify_presentation
+from .sdjwt import Verdict, verify_presentation
 
 #: How long an outstanding request stays answerable. A nonce that is accepted forever is not
 #: a nonce; this is the other half of the key binding JWT's own freshness check, on our side,
@@ -251,10 +251,9 @@ class Verifier:
                                       issuer_jwks=self.issuer_jwks,
                                       trust_anchors=self.issuer_trust_anchors)
         if not verdict.authentic:
-            # The refusal code travels into the error, because a verifier that answers every
-            # bad presentation with the same opaque 400 is impossible to debug from the
-            # wallet's side, and these reasons name the presentation, never a secret.
-            return self._error("invalid_request", "%s: %s" % (verdict.code, verdict.reason))
+            # The reason goes to the operator through the returned verdict, and the wallet
+            # gets the same constant refusal every other cause gets.
+            return self._error(verdict.code, verdict.reason)
 
         # HAIP 5.1: 200, application/json, and ONLY a redirect_uri. The suite checks that
         # last part, so anything helpful added here fails the test.
@@ -270,9 +269,30 @@ class Verifier:
             value = value[0]
         return value if isinstance(value, str) and value else None
 
+    #: What every refused presentation gets back, whatever was wrong with it. One constant
+    #: string, one status. Anything that varies with the CAUSE is an oracle: an attacker
+    #: probes one check at a time and is told which one to work on next.
+    REFUSAL_BODY = {"error": "invalid_request",
+                    "error_description": "the presentation was not accepted"}
+
     @staticmethod
     def _error(code, description):
-        return 400, {"error": code, "error_description": description}, None
+        """Refuse. The reason travels in the VERDICT, for the operator's log, never on the wire.
+
+        This used to return the code and the reason in `error_description`, justified as
+        debuggability for the wallet. That serves a cooperative wallet and hands an attacker
+        a per-check oracle: seven distinct codes naming exactly which check failed, in the
+        order they run. Worse, three of them leaked specifics. The audience refusal echoed
+        this verifier's own client_id back. The freshness refusal stated the acceptance
+        window in seconds, so an attacker learned it was 300 without probing for it. The
+        decrypt refusal enumerated its causes, disclosing that outstanding-request state and
+        an expiry exist at all.
+
+        Timing remains an oracle and is NOT closed by this: a refusal that returns before the
+        signature check is faster than one after it. That is measured by nobody here and is
+        recorded as open rather than implied to be shut.
+        """
+        return 400, dict(Verifier.REFUSAL_BODY), Verdict(False, code, description)
 
     def _expire_locked(self):
         cutoff = time.time() - self.request_ttl_seconds

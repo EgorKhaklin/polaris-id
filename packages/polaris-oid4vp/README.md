@@ -71,6 +71,24 @@ verdict.authentic, verdict.code, verdict.reason, verdict.claims
 that reads them out of the presentation it is checking has made two of those seven tests pass
 by not performing them, and has made every presentation replayable.
 
+**The reason codes above are for the OPERATOR. They never go on the wire.** Every refused
+presentation gets one constant body, whatever was wrong with it:
+
+```json
+{"error": "invalid_request", "error_description": "the presentation was not accepted"}
+```
+
+A response that named the failing check would be a per-check oracle: probe once, be told
+which check to work on next, and receive the verification order for free. An earlier version
+did exactly that, justified as debuggability for the wallet, and three of its messages leaked
+more than the code, including this verifier's own `client_id` echoed back and the replay
+window stated in seconds. The cause now reaches the operator through the returned `Verdict`
+and the server log, where the person running the verifier can read it and a stranger cannot.
+
+**Timing is still an oracle and this does not close it.** A refusal that returns before the
+signature check is faster than one that returns after it. Nothing here measures that, and it
+is recorded as open rather than implied to be shut.
+
 [`polaris_oid4vp/jwe.py`](polaris_oid4vp/jwe.py) opens the response. HAIP pins
 `direct_post.jwt`, so the `vp_token` arrives as a JWE encrypted to a key the verifier
 published in `client_metadata.jwks`, and it has to be decrypted before there is anything to

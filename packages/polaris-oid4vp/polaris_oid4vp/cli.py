@@ -162,10 +162,14 @@ def _cmd_serve(args) -> int:
     httpd = serve(verifier, host=args.bind, port=args.port,
                   certfile=str(pki / FILES["tls_cert"]), keyfile=str(pki / FILES["tls_key"]),
                   verbose=args.verbose,
+                  # The operator sees the reason; the wallet never does. body carries the
+                  # same constant refusal whatever went wrong.
                   on_verdict=lambda status, body, verdict: print(
-                      "  <- %d %s" % (status, "authentic, claims %s" % sorted(verdict.claims)
+                      "  <- %d %s" % (status,
+                                      "authentic, claims %s" % sorted(verdict.claims)
                                       if verdict and verdict.authentic
-                                      else body.get("error_description", ""))))
+                                      else "refused: %s: %s" % (verdict.code, verdict.reason)
+                                      if verdict else "refused")))
     print("polaris-oid4vp serving on https://%s:%d" % (args.host, args.port))
     print("  client_id     %s" % verifier.client_id)
     print("  request_uri   %s%s" % (verifier.request_uri, ""))
