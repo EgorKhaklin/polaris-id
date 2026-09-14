@@ -321,11 +321,18 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   } catch (e) {
     return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
   }
+  let commitmentNote: string | undefined;
   if (ok && o.format === "polaris-epoch-leaves/1") {
     // P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex.
     const leaves = Array.isArray(o.all_leaves_hex) ? o.all_leaves_hex : [];
     ok = revokedRoot(leaves) === String(o.leaves_root_hex ?? "").toLowerCase() && leaves.length === o.leaf_count;
-    if (!ok) return { authentic: false, fresh: null, note: "the published leaves do not match the committed set" };
+    // NOT an early return. This is one of five commitment checks in this function and the
+    // other four fall through to the tail, so returning here reported `fresh: null` where
+    // its four siblings report the window's answer: the same class of failure, two
+    // different freshness verdicts, inside one implementation. The Python SDK falls
+    // through for all five, so the disagreement was also across the two reference SDKs,
+    // on a key no published case constrains, which is why nothing caught it.
+    if (!ok) commitmentNote = "the published leaves do not match the committed set";
   }
   if (ok && o.format === "polaris-revocation-feed/1") {
     ok = revokedRoot(o.revoked_leaves) === String(o.revoked_root_hex ?? "").toLowerCase();
@@ -365,7 +372,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     : anchors.map((a) => String(a).toLowerCase())
              .includes(String(o.public_key_hex ?? "").toLowerCase());
   return { authentic: ok, fresh: replay !== null ? replay : withinWindow(o, now),
-           issuerTrusted };
+           issuerTrusted, ...(commitmentNote ? { note: commitmentNote } : {}) };
 }
 
 // --- P9.6: timestamp anchor verification (was P8.5c) --------------------------------

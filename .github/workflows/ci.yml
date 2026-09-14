@@ -2193,6 +2193,15 @@ jobs:
           python scripts/polaris-contract-reach-drill.py
           python scripts/polaris-contract-reach-drill.py --prove-control
 
+      # Both reference SDKs pass all 118 cases. That is weaker than it sounds: a case
+      # constrains only the keys it names, so on every other key the two can disagree with
+      # nothing noticing, and an integrator reads one and deploys the other. This compares
+      # them to EACH OTHER, key for key, rather than to the contract.
+      - name: The two reference SDKs answer identically, on every key
+        run: |
+          python scripts/polaris-sdk-agreement-drill.py
+          python scripts/polaris-sdk-agreement-drill.py --prove-control
+
       # v9.279 (roadmap PE.8) — real numbers from the runner: single-core ML-DSA-65
       # sign/verify throughput, printed with the box spec and version. Re-measured
       # every release so the published dyno (docs/reference/DYNO.md) cannot rot; the

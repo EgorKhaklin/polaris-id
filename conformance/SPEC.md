@@ -173,6 +173,17 @@ The drill refuses to report at all if its measurement collected nothing, because
 measurement and a contract that constrains nothing print the same list. `--prove-control`
 runs it with collection disabled and requires that refusal.
 
+**The same gap, between the two reference implementations.** Both the Python and TypeScript
+SDKs pass all 118 cases, and a case constrains only the keys it names, so on every other key
+they could differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py`
+compares them to EACH OTHER, key for key, on every case, and CI runs it. It found one:
+`epoch-leaves-swapped` reported `fresh: true` from Python and `fresh: null` from TypeScript,
+because the TypeScript epoch-leaves commitment check returned early where its four siblings
+fell through. Fixed, and pinned by a test whose failure message names both values.
+
+They now return identical verdicts, key for key, on every published case, including the keys
+no case constrains.
+
 ## Self-certifying
 
 ```bash

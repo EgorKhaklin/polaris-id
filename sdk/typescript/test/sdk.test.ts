@@ -306,3 +306,28 @@ test("every structural refusal refuses (table-driven)", async () => {
       `${label} must not be reported authentic; the verifier returned ${v.authentic}`);
   }
 });
+
+test("a broken commitment reports freshness the same way in every artifact", () => {
+  // Five formats in verifySignedArtifact check a commitment that rides outside the signed
+  // statement. Four fell through to the tail and reported the window's answer for `fresh`;
+  // epoch-leaves returned early with `fresh: null`. Same class of failure, two different
+  // verdicts, inside one implementation, and the Python SDK fell through for all five, so
+  // the two published reference SDKs disagreed. No conformance case constrains `fresh` on
+  // that artifact, so the suite could not see it: scripts/polaris-sdk-agreement-drill.py
+  // found it by comparing the SDKs to each other instead of to the contract.
+  const swapped = JSON.parse(readFileSync(
+    join(ROOT, "conformance", "vectors", "epoch-leaves-swapped.json"), "utf8"));
+  const feed = JSON.parse(readFileSync(
+    join(ROOT, "conformance", "vectors", "revocation-feed-commitment-mismatch.json"), "utf8"));
+  const now = "2026-05-01T00:00:30Z";
+
+  const leaves = verifySignedArtifact(swapped, now);
+  const revocation = verifySignedArtifact(feed, now);
+  assert.equal(leaves.authentic, false, "a swapped leaf set is not authentic");
+  assert.equal(revocation.authentic, false, "a mismatched feed commitment is not authentic");
+  assert.equal(typeof leaves.fresh, typeof revocation.fresh,
+    `epoch-leaves reported fresh=${JSON.stringify(leaves.fresh)} while revocation-feed ` +
+    `reported ${JSON.stringify(revocation.fresh)}: the same failure answering differently`);
+  assert.equal(leaves.note, "the published leaves do not match the committed set",
+    "falling through must not lose the reason");
+});
