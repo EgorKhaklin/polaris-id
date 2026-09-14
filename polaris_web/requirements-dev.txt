@@ -35,7 +35,7 @@ playwright>=1.62.0,<2.0
 # scripts/polaris-coverage.sh runs the suites under coverage, combines them, and
 # gates CI on a line-coverage floor. Subprocess coverage (test_cli shells into
 # polaris.py) relies on coverage.process_startup(), which this provides.
-coverage>=7.6,<8.0
+coverage>=7.16.0,<8.0
 
 # ---- Lint: ruff (v9.306) ----
 # The pyflakes-family hygiene gate (unused imports, unused locals, undefined
