@@ -14940,6 +14940,14 @@ def test_advisory_lock_contention_check_discriminates(tmp_path):
         "        def revoke(agency_id):\n"
         "            return lambda cur: cur.execute('CALL uc8_revoke_token(%s)', (agency_id,))\n"
         "        self.assertDoesNotContend(revoke(2), revoke(3), 'Cross-agency revocations')\n"
+        "    def test_uc8_revoke_takes_its_advisory_lock(self):\n"
+        "        def revoke(tok):\n"
+        "            return lambda cur: cur.execute('CALL uc8_revoke_token(%s)', (tok,))\n"
+        "        self.assertContends(revoke(1), revoke(2), 'Same-agency revocations')\n"
+        "    def test_uc11_close_epoch_takes_its_advisory_lock(self):\n"
+        "        def close(n):\n"
+        "            return lambda cur: cur.execute('CALL uc11_close_epoch(%s)', (n,))\n"
+        "        self.assertContends(close(1), close(2), 'Concurrent epoch closures')\n"
     )
 
     def write(procs=GOOD_PROCS, tests=GOOD_TESTS):
@@ -14990,6 +14998,24 @@ def test_advisory_lock_contention_check_discriminates(tmp_path):
 
     # And the check must not pass an empty room: no locks at all is not a clean bill.
     bad = checks.check_advisory_locks_have_a_contention_test(write(procs="-- nothing\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # The test takes the lock BY HAND and then calls the procedure that takes it.
+    # Both threads then serialize on the TEST's lock and the procedure's own locking
+    # is never measured, which is how two serialization tests came to pass against
+    # procedures whose lock statement had been deleted outright.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        tests=GOOD_TESTS.replace(
+            "        def revoke(agency_id):\n",
+            "        cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', (k,))\n"
+            "        def revoke(agency_id):\n")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # Nothing proves the lock is TAKEN. Every cross-entity test still passes against
+    # a procedure that locks nothing, since two calls that never contend are exactly
+    # what no lock looks like.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        tests=GOOD_TESTS.replace("assertContends", "assertNothing")))
     assert any(f.level == "FAIL" for f in bad), bad
 
 

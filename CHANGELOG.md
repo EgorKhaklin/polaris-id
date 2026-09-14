@@ -5,6 +5,56 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.460 — 2026-09-14 (the other direction, and two locks that cannot be watched)
+
+v9.459 fixed five tests that claimed two operations on DIFFERENT entities do not serialize. Two
+tests in the same class claim the opposite, that operations on the SAME entity do, and they were
+worse.
+
+Both took the advisory lock BY HAND. The test computed
+`hashtext('polaris.federation.attest.4')` itself, acquired it, slept inside the transaction, and
+then called the procedure. Both threads serialized on the TEST's lock, so the procedure's locking
+never entered the measurement. Measured rather than argued: `uc10_attest_trust` and
+`uc11_close_epoch` were reinstalled with their `PERFORM pg_advisory_xact_lock(...)` line **deleted
+outright**, and both tests passed.
+
+Taken with v9.459 that is the whole picture. The cross-entity tests prove a key SEPARATES and pass
+happily against a procedure holding no lock at all, because two calls that never contend are
+exactly what no lock looks like. The serialization tests were supposed to be the other half.
+**Nothing in the suite would have noticed any of these six procedures giving up its lock.**
+
+`assertContends` is the mirror of `assertDoesNotContend` and holds through the PROCEDURE. Four
+domains are now proven to take their lock: `uc6_migrate_algorithm`, `uc8_revoke_token`,
+`uc10_attest_trust`, `uc11_close_epoch`, each red against its own lockless build.
+
+**Two are not observable, and the honest answer was to say so rather than ship a green test.** Both
+were written first and both passed against a lockless procedure, which is how they were caught:
+
+  * `uc9_complete_recovery` locks on `claimed_individual_id`, and
+    `uq_one_pending_recovery_per_individual` allows one PENDING recovery per individual. Any two
+    calls sharing the key target the same row and serialize on its `FOR UPDATE` regardless.
+  * `close_anchor_batch` locks on `algorithm_id` and batches every pending row under it. Holding
+    the first open does not help: under READ COMMITTED the probe cannot see the holder's
+    uncommitted batching, reads the same set, and blocks on the UPDATE either way.
+
+Neither lock is redundant. Each closes a window before its own SELECT. But from outside the
+procedure they cannot be told from the row locks beside them, and `_UNOBSERVABLE_LOCKS` records
+that with the reason rather than leaving a test that cannot tell.
+
+**Three of the four lock-presence tests were wrong on their first draft, in the way this ship is
+about.** They probed with the same entity as the holder, so they blocked on a unique index or a
+row lock and passed against lockless builds. `uc6` was repaired by migrating to a DIFFERENT target
+algorithm, which shares `token_id` with the holder but not `TokenSignature`'s
+`(token_id, algorithm_id)`. The other two could not be repaired and became the two declarations
+above. The helper now separates "blocked at the lock" from "reached its own validation and
+objected there", because those look identical if you only watch whether the call returned.
+
+`check_advisory_locks_have_a_contention_test` gained both rules: a test may not execute
+`pg_advisory_xact_lock` itself and then call a procedure that takes one, and every domain needs a
+holding-direction test or a declared reason. Its first version failed on the tree by matching its
+own explanatory docstrings, which is the same error one level up, and it now matches a quoted SQL
+literal instead of the word.
+
 ## v9.459 — 2026-09-14 (five concurrency tests, none of which could fail)
 
 CI went red on a timing test by 7 milliseconds: `elapsed=0.557s not less than 0.55`. The obvious

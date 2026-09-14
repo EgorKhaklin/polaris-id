@@ -17464,6 +17464,23 @@ _GLOBAL_LOCK_DOMAINS = {
 }
 
 
+#: Procedures whose advisory lock cannot be observed separately from the row locks
+#: around it, with the reason. Both were measured before being declared: a test was
+#: written, run against the procedure with its pg_advisory_xact_lock line deleted, and
+#: passed. The lock is not redundant in either case; it is simply not distinguishable
+#: from outside, and saying so beats a green test that cannot tell.
+_UNOBSERVABLE_LOCKS = {
+    "uc9_complete_recovery":
+        "keyed on claimed_individual_id, and uq_one_pending_recovery_per_individual "
+        "allows one PENDING recovery per individual, so two calls sharing the key "
+        "target the same row and serialize on its FOR UPDATE regardless",
+    "close_anchor_batch":
+        "keyed on algorithm_id, and the procedure batches every pending row under that "
+        "algorithm, so two calls sharing the key target the same rows; under READ "
+        "COMMITTED the probe cannot see the holder's uncommitted batching either",
+}
+
+
 def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Finding]:
     procs = _read(root, _ADVISORY_PROCS_REL)
     if not procs:
@@ -17512,11 +17529,34 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
                      "against keys that ignored the entity they were keyed on: ask Postgres "
                      "with lock_timeout instead" % _ADVISORY_TESTS_REL)
 
-    # Which procedures does a contention test actually drive?
-    driven = set()
+    # A test that takes the lock BY HAND substitutes its own for the procedure's,
+    # and the procedure's locking never enters the measurement. Two serialization
+    # tests did exactly this and both passed against procedures whose
+    # pg_advisory_xact_lock line had been deleted outright.
+    for body in re.split(r"\n    def ", tests):
+        # A quoted SQL literal that takes the lock, not prose about one: this check's
+        # first version matched its own explanatory docstrings.
+        executed = [line for line in body.splitlines()
+                    if re.search(r"""['"]\s*SELECT pg_advisory_xact_lock""", line)
+                    and not line.lstrip().startswith("#")]
+        if not executed:
+            continue
+        hand_taken = set(re.findall(r"CALL (\w+)\(", body)) & set().union(*domains.values())
+        if hand_taken:
+            return _fail("advisory_lock_tests",
+                         "a test acquires pg_advisory_xact_lock itself and then calls %s, "
+                         "which takes the same lock. Both threads serialize on the TEST's "
+                         "lock, so the procedure's own locking is never measured and the "
+                         "test stays green if the procedure stops locking entirely"
+                         % ", ".join(sorted(hand_taken)))
+
+    # Which procedures does each direction actually drive?
+    driven, held = set(), set()
     for body in re.split(r"\n    def ", tests):
         if "assertDoesNotContend" in body:
             driven.update(re.findall(r"CALL (\w+)\(", body))
+        if "assertContends" in body:
+            held.update(re.findall(r"CALL (\w+)\(", body))
 
     for domain in sorted(domains):
         if domain in _GLOBAL_LOCK_DOMAINS:
@@ -17537,11 +17577,34 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
                          "behind whichever one is in flight"
                          % (domain, ", ".join(sorted(domains[domain]))))
 
+    # The other direction. A cross-entity test proves the key SEPARATES; it says
+    # nothing about whether the lock is taken at all, and a procedure that stopped
+    # locking would pass every one of them. Each domain therefore needs a contention
+    # test in the holding direction, or a declared reason why one cannot exist.
+    for domain in sorted(domains):
+        procs = domains[domain]
+        if procs & held:
+            continue
+        undeclared = procs - set(_UNOBSERVABLE_LOCKS)
+        if undeclared:
+            return _fail("advisory_lock_tests",
+                         "nothing proves %s takes the advisory lock on %r at all. Every "
+                         "cross-entity test still passes against a procedure that locks "
+                         "nothing, because two calls that never contend are exactly what "
+                         "no lock looks like. Either drive it with assertContends or "
+                         "declare in _UNOBSERVABLE_LOCKS why the lock cannot be told "
+                         "apart from the row locks around it"
+                         % (", ".join(sorted(undeclared)), domain))
+
     per_entity = [d for d in domains if d not in _GLOBAL_LOCK_DOMAINS]
     return _ok("advisory_lock_tests",
-               "all %d per-entity advisory-lock domains are driven by a contention test that "
-               "asks Postgres rather than a clock, and the %d global domain(s) are declared"
-               % (len(per_entity), len(_GLOBAL_LOCK_DOMAINS)))
+               "all %d advisory-lock domains are driven by contention tests that ask Postgres "
+               "rather than a clock: %d per-entity keys are proven to SEPARATE, every domain "
+               "is proven to be TAKEN or declared unobservable with its reason (%d), no test "
+               "substitutes a hand-taken lock for the procedure's, and %d global domain(s) "
+               "are declared"
+               % (len(domains), len(per_entity), len(_UNOBSERVABLE_LOCKS),
+                  len(_GLOBAL_LOCK_DOMAINS)))
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [

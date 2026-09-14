@@ -5637,6 +5637,87 @@ class ConcurrencyTests(PolarisTestCase):
                          '%s: the holder failed after taking its lock' % what)
         self.assertFalse(holder.is_alive(), '%s: the holder never let go' % what)
 
+    #: How long a probe waits before a CONTENDS test concludes it is blocked. Short
+    #: on purpose: the holder holds for the whole probe window, so a probe that is
+    #: going to get through gets through in milliseconds.
+    CONTENDS_TIMEOUT = '2s'
+
+    def assertContends(self, hold, probe, what):
+        """Two operations DO share an advisory-lock key, and the procedure is what
+        takes it. The mirror of assertDoesNotContend, and the direction that catches a
+        lock going missing rather than a key going coarse.
+
+        THE HOLD MUST GO THROUGH THE PROCEDURE. Until v9.460 the two serialization
+        tests in this class took the advisory lock BY HAND -- the test computed
+        `hashtext('polaris.federation.attest.4')` itself, acquired it, slept inside the
+        transaction, and then called the procedure. Both threads therefore serialized
+        on the TEST's lock, and the procedure's own locking never entered the
+        measurement. Proven on 2026-09-14: both procedures were reinstalled with the
+        `PERFORM pg_advisory_xact_lock(...)` line deleted outright, and both tests
+        passed. Between them and the five cross-entity tests, nothing in the suite
+        would have noticed any of these procedures giving up its lock entirely.
+        """
+        holding, release = threading.Event(), threading.Event()
+        failures = {}
+
+        def hold_it():
+            conn = None
+            try:
+                conn = self._new_conn()
+                with conn.cursor() as cur:
+                    hold(cur)      # the PROCEDURE takes the lock, not this test
+                holding.set()
+                release.wait(timeout=30)
+                conn.commit()
+            except Exception as exc:   # noqa: BLE001 - reported, never swallowed
+                failures['holder'] = repr(exc)
+                holding.set()
+            finally:
+                if conn is not None:
+                    conn.close()
+
+        holder = threading.Thread(target=hold_it)
+        holder.start()
+        blocked = passthrough = None
+        try:
+            self.assertTrue(holding.wait(timeout=30),
+                            '%s: the holder never reached its lock' % what)
+            self.assertEqual(failures, {},
+                             '%s: the holder failed, so nothing held a lock' % what)
+            conn = self._new_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SET lock_timeout = %s", (self.CONTENDS_TIMEOUT,))
+                    try:
+                        probe(cur)
+                        conn.commit()
+                    except psycopg2.errors.LockNotAvailable as exc:
+                        conn.rollback()
+                        blocked = str(exc).strip()
+                    except psycopg2.Error as exc:
+                        # It reached its own logic and objected there, so it was never
+                        # held at the lock. That is a passthrough, not a test error.
+                        conn.rollback()
+                        passthrough = str(exc).strip().splitlines()[0]
+            finally:
+                conn.close()
+        finally:
+            release.set()
+            holder.join(timeout=30)
+
+        self.assertIsNotNone(
+            blocked,
+            '%s: the second operation went straight through while the first was still '
+            'holding its transaction open, so the procedure is not taking the advisory '
+            'lock this test exists to prove it takes. The consequence is not a slow '
+            'system: it is two callers inside the same critical section, which is the '
+            'race the lock was added to close.%s'
+            % (what, '' if passthrough is None else
+               ' It got as far as its own validation and objected there: %s' % passthrough))
+        self.assertEqual(failures, {},
+                         '%s: the holder failed after taking its lock' % what)
+        self.assertFalse(holder.is_alive(), '%s: the holder never let go' % what)
+
     """Tests for the v6 concurrency hardening. Run a handful of operations
     in parallel against the live database and assert the invariants hold."""
 
@@ -6498,11 +6579,14 @@ class ConcurrencyTests(PolarisTestCase):
     # operations parallelize.
     # -------------------------------------------------------------------
     def test_uc10_same_attesting_agency_serializes(self):
-        """Two parallel uc10_attest_trust calls under the same attesting
-        agency must serialize at the advisory lock. Each thread manually
-        acquires the lock first, then sleeps INSIDE the transaction so the
-        lock is held during the sleep window. With serial execution, total
-        time ≈ 2 × pg_sleep; with parallel, ≈ 1 × pg_sleep."""
+        """Two uc10_attest_trust calls under the same attesting agency serialize.
+
+        The docstring this replaces described the defect: "each thread manually
+        acquires the lock first, then sleeps INSIDE the transaction". Acquiring it
+        by hand means both threads serialize on the TEST's lock and the procedure's
+        own locking never enters the measurement. Reinstalling uc10_attest_trust
+        with its pg_advisory_xact_lock line deleted left that version green.
+        """
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT user_id FROM AppUser WHERE username='admin'")
             admin = cur.fetchone()['user_id']
@@ -6511,36 +6595,16 @@ class ConcurrencyTests(PolarisTestCase):
             cur.execute("SELECT context_id FROM VerificationContext WHERE context_type='MOTOR_VEHICLE'")
             ctx_mv = cur.fetchone()['context_id']
 
-        # Both threads target attesting=4 (TSA), so they share the lock key.
-        lock_key_sql = "polaris.federation.attest.4"
+        # Both calls use attesting=4 (TSA), so the procedure computes the same key
+        # for each. Two different contexts, so nothing but the lock separates them.
+        def attest(context_id):
+            return lambda cur: cur.execute(
+                "CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
+                (4, 1, context_id,
+                 (datetime.now().date() + timedelta(days=180)), admin))
 
-        def attest_holding_lock(context_id):
-            with self._new_conn() as conn, conn.cursor() as cur:
-                # Acquire the same lock the procedure will reacquire (no-op
-                # second time), then sleep INSIDE the transaction. The lock
-                # is xact-scoped, so it stays held through the sleep.
-                cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
-                            (lock_key_sql,))
-                cur.execute("SELECT pg_sleep(0.3)")
-                cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
-                            (4, 1, context_id,
-                             (datetime.now().date() + timedelta(days=180)),
-                             admin))
-                conn.commit()
-
-        import time
-        t0 = time.perf_counter()
-        threads = [
-            threading.Thread(target=attest_holding_lock, args=(ctx_voting,)),
-            threading.Thread(target=attest_holding_lock, args=(ctx_mv,)),
-        ]
-        for t in threads: t.start()
-        for t in threads: t.join()
-        elapsed = time.perf_counter() - t0
-
-        # Serialized: ~0.6s; parallel would be ~0.3s. Lock enforces serial.
-        self.assertGreater(elapsed, 0.55,
-            f'Same-attesting-agency attests should serialize; elapsed={elapsed:.3f}s')
+        self.assertContends(attest(ctx_voting), attest(ctx_mv),
+                            'Same-attesting-agency attests')
 
     def test_uc10_cross_attesting_agency_parallelizes(self):
         """uc10_attest_trust calls from different attesting agencies hold
@@ -6600,35 +6664,124 @@ class ConcurrencyTests(PolarisTestCase):
              [{'token_id': 3, 'leaf_hash': 'dd' * 32, 'proof_path': []}]),
         ]
 
-        def close_with_lock_hold(root_hex, leaves):
+        def close_epoch(root_hex, leaves):
+            return lambda cur: cur.execute(
+                "CALL uc11_close_epoch(%s, %s, %s, %s)",
+                (root_hex, datetime.now() + timedelta(days=10), admin, Json(leaves)))
+
+        self.assertContends(close_epoch(*payloads[0]), close_epoch(*payloads[1]),
+                            'Concurrent epoch closures')
+
+    # -------------------------------------------------------------------
+    # Does the procedure TAKE its lock at all? The same-entity tests above
+    # check the consequence of the lock (no split batch, no double recovery),
+    # which is the right thing to assert but not a reliable detector: the race
+    # they watch for only manifests when the threads interleave, and on
+    # 2026-09-14 close_anchor_batch was reinstalled with its
+    # pg_advisory_xact_lock line deleted and the outcome test passed anyway.
+    # These four ask the lock manager instead, one per remaining domain.
+    # -------------------------------------------------------------------
+    def test_uc8_revoke_takes_its_advisory_lock(self):
+        """Two tokens, one agency. The agency is the key, so the second waits."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            set_discretion_bound(cur, (2,), 95.00,
+                                 why='C9 lock-presence test: permissive for agency 2')
+            conn.commit()
+
+        def seed(label):
             with self._new_conn() as conn, conn.cursor() as cur:
-                # Manually grab the same lock the procedure will reacquire,
-                # then sleep INSIDE the transaction.
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext('polaris.zk.close-epoch'))")
-                cur.execute("SELECT pg_sleep(0.3)")
-                cur.execute(
-                    "CALL uc11_close_epoch(%s, %s, %s, %s)",
-                    (root_hex,
-                     datetime.now() + timedelta(days=10),
-                     admin,
-                     Json(leaves)))
+                cur.execute("""
+                    INSERT INTO Individual (legal_name, date_of_birth, jurisdiction)
+                    VALUES (%s, '1990-01-01', 'US-PA') RETURNING individual_id
+                """, ('C9 LOCKPRESENCE %s' % label,))
+                iid = cur.fetchone()['individual_id']
+                cur.execute("""
+                    INSERT INTO IdentityToken
+                        (token_value, physical_serial, hardware_model,
+                         biometric_binding_type, individual_id, issuing_agency_id,
+                         algorithm_id, status, issued_date, expiration_date)
+                    VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, 2, 1, 'RESERVE',
+                            CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date)
+                    RETURNING token_id
+                """, ('TKN-C9-LP-%s' % label, 'SN-C9-LP-%s' % label, iid))
+                tid = cur.fetchone()['token_id']
+                cur.execute("SELECT set_config('polaris.actor_agency_id', '2', false)")
+                cur.execute("SELECT set_config('polaris.reason_code', 'TEST_SEED', false)")
+                cur.execute("UPDATE IdentityToken SET status='ACTIVE', "
+                            "activated_date=CURRENT_TIMESTAMP WHERE token_id=%s", (tid,))
                 conn.commit()
+            return tid
 
-        import time
-        t0 = time.perf_counter()
-        threads = [
-            threading.Thread(target=close_with_lock_hold, args=(r, ls))
-            for r, ls in payloads
-        ]
-        for t in threads: t.start()
-        for t in threads: t.join()
-        elapsed = time.perf_counter() - t0
+        def revoke(token_id):
+            return lambda cur: cur.execute(
+                "CALL uc8_revoke_token(%s, %s, %s, %s, %s)",
+                (token_id, 2, 'ADMINISTRATIVE',
+                 'https://crl.idtoken.gov/test/lockpresence.crl', None))
 
-        # Serial: ~0.6s. The lock holds across the sleep window.
-        self.assertGreater(elapsed, 0.55,
-            f'Concurrent epoch closures should serialize at the advisory lock; '
-            f'elapsed={elapsed:.3f}s')
+        self.assertContends(revoke(seed('a')), revoke(seed('b')),
+                            'Same-agency revocations')
+
+    def test_uc6_migrate_takes_its_advisory_lock(self):
+        """One token, two migrations. The lock is taken before any validation,
+        so the second blocks at the lock rather than on the token's state."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO Individual (legal_name, date_of_birth, jurisdiction)
+                VALUES ('C9 lockpresence migrate', '1990-01-01', 'US-PA')
+                RETURNING individual_id
+            """)
+            iid = cur.fetchone()['individual_id']
+            cur.execute("""
+                INSERT INTO IdentityToken
+                    (token_value, physical_serial, hardware_model,
+                     biometric_binding_type, individual_id, issuing_agency_id,
+                     algorithm_id, status, issued_date, expiration_date)
+                VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, 1, 1, 'RESERVE',
+                        CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date)
+                RETURNING token_id
+            """, ('TKN-C9-LPM-%s' % iid, 'SN-C9-LPM-%s' % iid, iid))
+            tid = cur.fetchone()['token_id']
+            cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, "
+                        "signature_bytes) VALUES (%s, 1, %s)",
+                        (tid, ('LPSEED_%d' % tid).encode()))
+            conn.commit()
+
+        # Two DIFFERENT target algorithms. TokenSignature is unique on
+        # (token_id, algorithm_id), so migrating to 2 and to 3 writes different
+        # rows and nothing but the advisory key -- token_id -- is shared. The
+        # first version of this test migrated to algorithm 2 twice and blocked on
+        # that unique index rather than on the lock, so it passed against a
+        # procedure with no lock at all.
+        def migrate(algorithm_id):
+            return lambda cur: cur.execute(
+                "CALL uc6_migrate_algorithm(%s, %s, %s, %s)",
+                (tid, algorithm_id, ('LPMIG_%d' % algorithm_id).encode(), False))
+
+        self.assertContends(migrate(2), migrate(3), 'Same-token migrations')
+
+    # uc9_complete_recovery's advisory lock is NOT independently observable, and
+    # this is where a test proving it takes one would go. The key is
+    # claimed_individual_id; the procedure then loads the RecoveryRequest FOR
+    # UPDATE. `uq_one_pending_recovery_per_individual` is a partial unique index
+    # allowing one PENDING recovery per individual, so any two calls that share the
+    # advisory key necessarily target the SAME row and would serialize on the row
+    # lock whether or not the advisory lock existed. A test here would block either
+    # way: it was written, it passed against uc9_complete_recovery with the
+    # pg_advisory_xact_lock line deleted, and it was removed rather than kept as a
+    # green result that means nothing. The lock is not redundant -- it closes the
+    # window before the SELECT -- but from outside the procedure the two are
+    # indistinguishable, and saying so is worth more than a test that cannot tell.
+
+    # close_anchor_batch's advisory lock is NOT independently observable either,
+    # and for the same shape of reason as uc9's. The key is algorithm_id and the
+    # procedure batches EVERY pending row under that algorithm, so two calls that
+    # share the key necessarily target the same rows. Holding the first open does
+    # not help: under READ COMMITTED the probe cannot see the holder's uncommitted
+    # batching, reads the same pending set, and blocks on the UPDATE whether or not
+    # the advisory lock is there. Written, measured against close_anchor_batch with
+    # its pg_advisory_xact_lock line deleted, passed, and removed. What the lock
+    # buys is that the second caller never READS the stale set in the first place,
+    # and that difference is invisible from outside the procedure.
 
     def test_uc11_close_epoch_both_rows_committed(self):
         """Sanity check: after the two threads above finish, both epoch
