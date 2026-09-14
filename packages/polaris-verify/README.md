@@ -17,7 +17,7 @@ fails with *"does not appear to be a Python project"*, which reads as "this is n
 installable" rather than "look one directory down".
 
 Once it is published the command becomes `pip install "polaris-verify[cryptography]"`. See
-[RELEASING.md](../../docs/RELEASING.md) for why nothing is published yet.
+[RELEASING.md](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/RELEASING.md) for why nothing is published yet.
 
 ## It refuses to start until you say what cryptography it is doing
 

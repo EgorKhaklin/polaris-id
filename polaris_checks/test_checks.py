@@ -14990,3 +14990,47 @@ def test_oid4vp_verifier_boundary_check_discriminates(tmp_path):
      / "polaris_oid4vp" / "jwe.py").write_text("import flask\n")
     bad = checks.check_oid4vp_verifier_boundary(tmp_path / ("case%d" % (write.n - 1)))
     assert any(f.level == "FAIL" for f in bad), bad
+
+
+def test_published_readme_links_check_discriminates(tmp_path):
+    # A README that becomes a registry project page must not link relatively: those links
+    # are dead there, and a published version's description can never be edited, so the
+    # break outlives the fix. The good fixture links absolutely; each perturbation
+    # reintroduces one relative link in one of the four.
+    # The URL is its own literal so the link checker sees where it ends. Written inline it
+    # ran on into the trailing escape and was reported as a path that does not resolve,
+    # which is the checker being right about an ambiguous string rather than a false alarm.
+    SPEC = "https://github.com/EgorKhaklin/polaris-id/blob/main/conformance/SPEC.md"
+    GOOD = "# polaris\n\nSee [the spec](%s).\n" % SPEC
+    RELATIVE = "# polaris\n\nSee [the spec](../../conformance/SPEC.md).\n"
+    NAMES = ("packages/polaris-verify/README.md", "packages/polaris-oid4vp/README.md",
+             "sdk/python/README.md", "sdk/typescript/README.md")
+
+    def write(bad=None, body=RELATIVE, drop=None):
+        root = tmp_path / ("case%d" % write.n)
+        write.n += 1
+        for name in NAMES:
+            if name == drop:
+                continue
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(GOOD if name != bad else body)
+        return root
+    write.n = 0
+
+    ok = checks.check_published_readmes_have_no_relative_links(write())
+    assert all(f.level == "OK" for f in ok), ok
+
+    for name in NAMES:
+        bad = checks.check_published_readmes_have_no_relative_links(write(bad=name))
+        assert any(f.level == "FAIL" for f in bad), name
+        assert name in bad[0].message, bad[0].message
+
+    # A single-dot relative link is the same defect wearing a different prefix.
+    dot = checks.check_published_readmes_have_no_relative_links(
+        write(bad=NAMES[0], body="# polaris\n\nSee [it](./RELEASING.md).\n"))
+    assert any(f.level == "FAIL" for f in dot), dot
+
+    # A missing README is a missing project page, not a pass by absence.
+    gone = checks.check_published_readmes_have_no_relative_links(write(drop=NAMES[1]))
+    assert any(f.level == "FAIL" for f in gone), gone

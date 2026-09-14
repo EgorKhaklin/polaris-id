@@ -7,7 +7,7 @@ ES256, with holder key binding, delivered over `direct_post.jwt`.
 **Status: 0.1.0. It passes all eleven modules of the conformance plan against a locally
 hosted OpenID Foundation suite**, seven of them scored automatically. Nothing has been
 certified, nothing published, and no external party has used it. See
-[the scoreboard](../../lab/EXTERNAL-NOUNS.md) for exactly how much that is and is not.
+[the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md) for exactly how much that is and is not.
 
 ---
 
@@ -31,7 +31,7 @@ The OpenID Foundation's conformance suite has a test plan for exactly that role,
 `oid4vp-1final-verifier-haip-test-plan`, and in it **the suite signs the credential**, so
 Polaris's own ML-DSA-65 issuance is not involved. The measurement that established this, along
 with the plan's contents and a run that gets every automated condition green, is in
-[`lab/interop/`](../../lab/interop/).
+[`lab/interop/`](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/README.md).
 
 Eleven modules apply to SD-JWT VC. **Seven are negative**: the wallet sends a presentation
 broken in one specific way and the verifier has to refuse it. Those seven are scored

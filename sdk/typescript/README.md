@@ -64,7 +64,7 @@ npx tsc --noEmit              # type-check
 ## Conformance
 
 `node src/conformance.ts` implements the language-agnostic verifier CLI the Polaris
-[conformance suite](../../conformance/SPEC.md) drives; passing it is the integration
+[conformance suite](https://github.com/EgorKhaklin/polaris-id/blob/main/conformance/SPEC.md) drives; passing it is the integration
 contract. Both this SDK and the Python reference SDK pass the same cases with the
 same runner:
 
@@ -74,7 +74,7 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 
 ## Installing
 
-Not on npm yet ([why](../../docs/RELEASING.md)). From a clone:
+Not on npm yet ([why](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/RELEASING.md)). From a clone:
 
 ```bash
 cd sdk/typescript && npm ci     # the build needs its own devDependencies

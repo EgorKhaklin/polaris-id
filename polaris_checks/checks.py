@@ -17332,6 +17332,43 @@ def check_oid4vp_verifier_boundary(root: pathlib.Path) -> list[Finding]:
                "held to a response the OpenID Foundation conformance suite produced")
 
 
+# A package README becomes the project page on PyPI or npm, where a relative path into this
+# repository is a dead link. It is also PERMANENT: a published version's description cannot
+# be edited, so the broken link outlives the fix. The repair is an absolute blob URL, which
+# `polaris-link-check.sh` still resolves back to a path in this tree and still verifies, so
+# nothing is traded away for it.
+_PUBLISHED_READMES = (
+    "packages/polaris-verify/README.md",
+    "packages/polaris-oid4vp/README.md",
+    "sdk/python/README.md",
+    "sdk/typescript/README.md",
+)
+_RELATIVE_LINK = re.compile(r"\]\((\.{1,2}/[^)]*)\)")
+
+
+def check_published_readmes_have_no_relative_links(root: pathlib.Path) -> list[Finding]:
+    broken = []
+    for rel in _PUBLISHED_READMES:
+        text = _read(root, rel)
+        if not text:
+            return _fail("published_readme_links", "%s is missing, and it is the project page "
+                                                   "a registry renders" % rel)
+        for line_no, line in enumerate(text.splitlines(), 1):
+            for m in _RELATIVE_LINK.finditer(line):
+                broken.append("%s:%d -> %s" % (rel, line_no, m.group(1)))
+    if broken:
+        return _fail("published_readme_links",
+                     "%d relative link(s) in a README that becomes a registry project page, "
+                     "where they are dead and where a published version's description can "
+                     "never be edited: %s. Write it as a blob/main URL under "
+                     "github.com/EgorKhaklin/polaris-id instead, which the link checker "
+                     "still resolves back to a path in this tree and still verifies"
+                     % (len(broken), "; ".join(broken[:4])))
+    return _ok("published_readme_links",
+               "the %d READMEs that become registry project pages link absolutely, so they "
+               "work off-repo and are still checked against this tree" % len(_PUBLISHED_READMES))
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
@@ -17431,6 +17468,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_real_pqc_default_boot,
     check_detached_verifier,
     check_oid4vp_verifier_boundary,
+    check_published_readmes_have_no_relative_links,
     check_dyno_published,
     check_attacks_run,
     check_federation_real,

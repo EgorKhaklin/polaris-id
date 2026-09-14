@@ -31,5 +31,23 @@
   "files": [
     "dist",
     "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EgorKhaklin/polaris-id.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/EgorKhaklin/polaris-id/tree/main/sdk/typescript",
+  "bugs": {
+    "url": "https://github.com/EgorKhaklin/polaris-id/issues"
+  },
+  "keywords": [
+    "identity",
+    "credential",
+    "verifier",
+    "ml-dsa",
+    "post-quantum",
+    "sd-jwt",
+    "openid4vp"
   ]
 }

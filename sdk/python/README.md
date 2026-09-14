@@ -52,4 +52,4 @@ version-1 set under `scripts/polaris-compat-suite.py`, which runs on every CI pu
 This SDK is the reference implementation of the Polaris verification **conformance
 suite** (`../../conformance/`). `python -m polaris_verify.conformance` implements the
 language-agnostic verifier CLI the suite drives; passing the suite is the integration
-contract. See [`conformance/SPEC.md`](../../conformance/SPEC.md).
+contract. See [`conformance/SPEC.md`](https://github.com/EgorKhaklin/polaris-id/blob/main/conformance/SPEC.md).
