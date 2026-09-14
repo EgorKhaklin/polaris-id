@@ -128,16 +128,27 @@ use the *pending* publisher form.
 
 ## Publishing
 
-**The dry run has been executed.** 2026-09-13, run 34761304289: `build-and-gate` green, both
-publish jobs correctly skipped, and it produced
+**The dry run has been executed, and re-executed since a fourth artifact appeared.**
+2026-09-14, run 34859291906: `build-and-gate` green, both publish jobs correctly skipped,
+`target: dry-run-everything`, `confirm: (not PUBLISH) -- DRY RUN, nothing leaves this
+runner`, and it produced
 
 ```
-dist/polaris-verify/polaris_verify-0.1.0-py3-none-any.whl      twine check PASSED
-dist/polaris-verify/polaris_verify-0.1.0.tar.gz                twine check PASSED
-dist/polaris-sdk-python/polaris_sdk_python-0.1.0-py3-none-any.whl   twine check PASSED
-dist/polaris-sdk-python/polaris_sdk_python-0.1.0.tar.gz             twine check PASSED
+dist/polaris-verify/polaris_verify-0.1.0-py3-none-any.whl            twine check PASSED
+dist/polaris-verify/polaris_verify-0.1.0.tar.gz                      twine check PASSED
+dist/polaris-sdk-python/polaris_sdk_python-0.1.0-py3-none-any.whl    twine check PASSED
+dist/polaris-sdk-python/polaris_sdk_python-0.1.0.tar.gz              twine check PASSED
+dist/polaris-oid4vp/polaris_oid4vp-0.1.0-py3-none-any.whl            twine check PASSED
+dist/polaris-oid4vp/polaris_oid4vp-0.1.0.tar.gz                      twine check PASSED
 dist/polaris-sdk-ts-0.1.0.tgz
 ```
+
+**The earlier record was stale and would have been trusted.** Run 34761304289 on 2026-09-13
+is the one this section used to name, and it predates `polaris-oid4vp` entirely: it built
+five files, not seven, and never exercised the artifact that now carries a conformance
+result. A dry run that did not build one of the things being published is a rehearsal of a
+different performance, and reading it as cover for all four would have been exactly the
+failure this section exists to prevent.
 
 So the mechanism is exercised, not merely written: a workflow nobody has ever run is a plan.
 The remaining untested step is the authenticated publish itself, which cannot be rehearsed.
