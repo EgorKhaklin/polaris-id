@@ -2349,6 +2349,16 @@ jobs:
         run: python -m pip install --quiet 'cryptography>=42'
       - name: SD-JWT VC verification — the seven conformance refusals
         run: cd packages/polaris-oid4vp && python -m unittest test_sdjwt
+      # HAIP pins direct_post.jwt, so the response arrives encrypted and has to be opened
+      # before there is anything to verify. ECDH-ES over P-256 with A128GCM/A256GCM, which
+      # is the one mode the profile requires.
+      - name: Encrypted authorization response — ECDH-ES, and the ways it must not open
+        run: cd packages/polaris-oid4vp && python -m unittest test_jwe
+      # The one test in the tree whose material this project did not make: a real response
+      # from the OpenID Foundation conformance suite's wallet, committed as a fixture.
+      # Everything else in this package is the package agreeing with itself.
+      - name: A response the conformance suite produced, opened and verified
+        run: cd packages/polaris-oid4vp && python -m unittest test_conformance_capture
 
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance

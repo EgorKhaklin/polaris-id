@@ -17244,7 +17244,9 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 # Flask app or the check layer, a stranger has to install the whole system to verify one
 # presentation, which is exactly the failure the product boundary is written to prevent.
 _OID4VP_REL = "packages/polaris-oid4vp/polaris_oid4vp/sdjwt.py"
+_OID4VP_JWE_REL = "packages/polaris-oid4vp/polaris_oid4vp/jwe.py"
 _OID4VP_TESTS_REL = "packages/polaris-oid4vp/test_sdjwt.py"
+_OID4VP_CAPTURE_REL = "packages/polaris-oid4vp/testdata/conformance-suite-capture.json"
 _OID4VP_FORBIDDEN = ("polaris_web", "polaris_checks", "polaris_cli", "polaris_sim",
                      "psycopg2", "flask", "redis")
 
@@ -17255,7 +17257,7 @@ def check_oid4vp_verifier_boundary(root: pathlib.Path) -> list[Finding]:
         return _fail("oid4vp_boundary", "%s is missing" % _OID4VP_REL)
 
     for mod in _OID4VP_FORBIDDEN:
-        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", src, re.M):
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", src + _read(root, _OID4VP_JWE_REL), re.M):
             return _fail("oid4vp_boundary",
                          "the OpenID4VP verifier imports %r. It is a separate package so that "
                          "verifying one presentation does not require installing the operator "
@@ -17305,9 +17307,25 @@ def check_oid4vp_verifier_boundary(root: pathlib.Path) -> list[Finding]:
                          "no test names the %r refusal. The conformance plan has seven "
                          "negative modules and each one is a way a presentation can be "
                          "wrong; an untested refusal is one the suite will find" % code)
+    # The only material in this package that this project did not make. Every other test
+    # here is the package agreeing with itself, and two consistent mistakes pass a round
+    # trip exactly as cleanly as two correct implementations do.
+    capture = _read(root, _OID4VP_CAPTURE_REL)
+    if not capture:
+        return _fail("oid4vp_boundary",
+                     "%s is missing. Without a response some OTHER implementation produced, "
+                     "nothing in this package is evidence of interoperability: it is a "
+                     "round trip between two halves written by the same hand"
+                     % _OID4VP_CAPTURE_REL)
+    if "conformance suite" not in capture or "response_jwe" not in capture:
+        return _fail("oid4vp_boundary",
+                     "%s no longer records where it came from, or no longer carries the "
+                     "response. A fixture whose provenance is gone is indistinguishable "
+                     "from one this repository generated for itself" % _OID4VP_CAPTURE_REL)
     return _ok("oid4vp_boundary",
                "the OpenID4VP verifier imports no Polaris code, takes its nonce and audience "
-               "from the caller, and its refusal tests stand on a positive control")
+               "from the caller, its refusal tests stand on a positive control, and it is "
+               "held to a response the OpenID Foundation conformance suite produced")
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [

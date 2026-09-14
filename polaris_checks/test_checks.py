@@ -14930,13 +14930,20 @@ def test_oid4vp_verifier_boundary_check_discriminates(tmp_path):
         "        pass\n"
     )
 
-    def write(src=GOOD_SRC, tests=GOOD_TESTS):
+    GOOD_CAPTURE = '{"source": "OpenID Foundation conformance suite", "response_jwe": "a.b.c.d.e"}'
+
+    def write(src=GOOD_SRC, tests=GOOD_TESTS, capture=GOOD_CAPTURE):
         root = tmp_path / ("case%d" % write.n)
         write.n += 1
         pkg = root / "packages" / "polaris-oid4vp" / "polaris_oid4vp"
         pkg.mkdir(parents=True)
         (pkg / "sdjwt.py").write_text(src)
+        (pkg / "jwe.py").write_text("import base64\n")
         (root / "packages" / "polaris-oid4vp" / "test_sdjwt.py").write_text(tests)
+        if capture is not None:
+            data = root / "packages" / "polaris-oid4vp" / "testdata"
+            data.mkdir()
+            (data / "conformance-suite-capture.json").write_text(capture)
         return root
     write.n = 0
 
@@ -14966,4 +14973,20 @@ def test_oid4vp_verifier_boundary_check_discriminates(tmp_path):
     # One untested refusal is one the conformance suite will find first.
     bad = checks.check_oid4vp_verifier_boundary(
         write(tests=GOOD_TESTS.replace("'sd_hash', ", "")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # No externally-produced fixture: the package is only agreeing with itself.
+    bad = checks.check_oid4vp_verifier_boundary(write(capture=None))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # A fixture with its provenance erased cannot be told from one generated here.
+    bad = checks.check_oid4vp_verifier_boundary(
+        write(capture='{"source": "made locally", "response_jwe": "a.b.c.d.e"}'))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # The JWE half is inside the same boundary.
+    bad = checks.check_oid4vp_verifier_boundary(write())
+    (tmp_path / ("case%d" % (write.n - 1)) / "packages" / "polaris-oid4vp"
+     / "polaris_oid4vp" / "jwe.py").write_text("import flask\n")
+    bad = checks.check_oid4vp_verifier_boundary(tmp_path / ("case%d" % (write.n - 1)))
     assert any(f.level == "FAIL" for f in bad), bad

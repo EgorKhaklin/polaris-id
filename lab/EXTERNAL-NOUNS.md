@@ -113,8 +113,21 @@ is worth keeping. `check_oid4vp_verifier_boundary` holds the line: no Polaris im
 nonce and audience keyword-only and supplied by the caller, and a positive control present in
 the tests.
 
-**The transport half is not built and nothing external has seen any of it.** No run, no score,
-no row above moves.
+`polaris_oid4vp/jwe.py` opens the encrypted response HAIP pins: ECDH-ES over P-256 with
+A128GCM or A256GCM, and nothing else, because `alg` arrives in an attacker-controlled header.
+
+**And one thing in this package is not self-referential.** A complete `direct_post.jwt`
+response produced by the conformance suite's own wallet is committed as
+`testdata/conformance-suite-capture.json`. The JWE was built by Nimbus JOSE in Java and the
+SD-JWT by the suite's own code; it decrypts under this package's ECDH-ES and Concat KDF, and
+the presentation inside VERIFIES, disclosing exactly the two claims the DCQL query asked for
+out of the eleven the credential commits to. The same fixture is refused a year later, under
+another nonce, under another audience, and with one disclosure rewritten.
+
+That is interoperability on the transport and on the credential, measured on material this
+project did not make. **It is still not a conformance result and no row above moves**: the
+suite ran locally, nothing was scored, nothing was published, and the seven negative modules
+cannot run until something answers 4xx. The listener is not built.
 
 **Known gaps against the product contract, same date:**
 

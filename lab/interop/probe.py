@@ -56,6 +56,11 @@ HOST = "host.docker.internal"
 PORT = 9443
 ALIAS = "polaris-lab"
 
+#: The nonce this run asked for. Written out with the capture, because the whole point of a
+#: nonce is that a verifier checks the presentation against what IT sent, and a capture
+#: without it cannot be used to check anything.
+_NONCE = ""
+
 
 def b64u(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
@@ -128,14 +133,22 @@ def credential_signing_jwk() -> dict:
 
 # ------------------------------------------------------------------- the request object
 
-def build_request_object(chain: dict) -> str:
+def build_request_object(chain: dict, workdir: pathlib.Path) -> str:
     """An ES256-signed JAR with an x5c header, carrying a DCQL query for one credential."""
+    global _NONCE
+    _NONCE = b64u(hashlib.sha256(("%f" % time.time()).encode()).digest())
     enc = ec.generate_private_key(ec.SECP256R1())
-    pub = enc.private_numbers().public_numbers
+    priv = enc.private_numbers()
+    pub = priv.public_numbers
     enc_jwk = {"kty": "EC", "crv": "P-256", "use": "enc", "alg": "ECDH-ES",
                "kid": "polaris-lab-enc",
                "x": b64u(pub.x.to_bytes(32, "big")),
                "y": b64u(pub.y.to_bytes(32, "big"))}
+    # The private half is kept so the JWE the wallet POSTs back can be opened LATER, by
+    # something else. This file still does not open it: capturing an artifact and making a
+    # claim about it are different jobs, and only the second one is about Polaris.
+    (workdir / "response_decryption_jwk.json").write_text(json.dumps(
+        dict(enc_jwk, d=b64u(priv.private_value.to_bytes(32, "big")))))
 
     now = int(time.time())
     claims = {
@@ -145,7 +158,7 @@ def build_request_object(chain: dict) -> str:
         "response_type": "vp_token",
         "response_mode": "direct_post.jwt",
         "response_uri": "https://%s:%d/response" % (HOST, PORT),
-        "nonce": b64u(hashlib.sha256(("%f" % time.time()).encode()).digest()),
+        "nonce": _NONCE,
         "state": b64u(hashlib.sha256(b"polaris-lab-state").digest()[:16]),
         "iat": now,
         "exp": now + 300,
@@ -246,17 +259,26 @@ def main() -> int:
     workdir.mkdir(parents=True, exist_ok=True)
 
     chain = build_chain(workdir)
-    (workdir / "request.jwt").write_text(build_request_object(chain))
+    (workdir / "request.jwt").write_text(build_request_object(chain, workdir))
     httpd = serve(workdir)
     print("probe endpoints on https://%s:%d (request_uri and response_uri)" % (HOST, PORT))
 
+    credential_jwk = credential_signing_jwk()
     config = {
         "alias": ALIAS,
         "description": "lab/interop probe: what the HAIP verifier plan demands",
         "client": {"client_id": chain["client_id"],
                    "request_object_trust_anchor_pem": chain["ca_pem"]},
-        "credential": {"signing_jwk": credential_signing_jwk()},
+        "credential": {"signing_jwk": credential_jwk},
     }
+    # The capture manifest. A JWE on its own is bytes; these four values are what turn it
+    # into something a verifier can be held to.
+    (workdir / "capture.json").write_text(json.dumps({
+        "client_id": chain["client_id"],
+        "nonce": _NONCE,
+        "issuer_jwk": {k: v for k, v in credential_jwk.items() if k != "d"},
+        "note": "produced by the OpenID Foundation conformance suite's fake wallet",
+    }, indent=2))
     variant = urllib.parse.quote(json.dumps({"credential_format": "sd_jwt_vc",
                                              "response_mode": "direct_post.jwt"}))
     plan = api(args.suite, "/api/plan?planName=oid4vp-1final-verifier-haip-test-plan"

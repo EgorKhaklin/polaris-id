@@ -69,21 +69,46 @@ verdict.authentic, verdict.code, verdict.reason, verdict.claims
 that reads them out of the presentation it is checking has made two of those seven tests pass
 by not performing them, and has made every presentation replayable.
 
+[`polaris_oid4vp/jwe.py`](polaris_oid4vp/jwe.py) opens the response. HAIP pins
+`direct_post.jwt`, so the `vp_token` arrives as a JWE encrypted to a key the verifier
+published in `client_metadata.jwks`, and it has to be decrypted before there is anything to
+check. ECDH-ES direct key agreement over P-256 with A128GCM or A256GCM, and **nothing else**:
+`alg` and `enc` arrive in an attacker-controlled header, so a short list and a refusal for
+everything outside it is the useful thing for a verifier to have.
+
 ## What is not here yet
 
-The transport: serving a signed request object at a `request_uri`, receiving the wallet's
-`direct_post.jwt` POST, decrypting the JWE, and answering 200 or 4xx. `lab/interop/probe.py`
-has already driven that whole exchange against the conformance suite, so the shape is known;
-it is not implemented here.
+The listener: serving the signed request object at a `request_uri`, accepting the wallet's
+POST, and answering 200 or 4xx. [`lab/interop/probe.py`](../../lab/interop/probe.py) has
+driven that whole exchange against the conformance suite and gets every automated condition
+green, so the shape is known. It is not implemented here, and until it is, the seven negative
+modules cannot be run: refusing one of them IS an HTTP 4xx.
 
 ## Tests
 
 ```bash
-cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt
+cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_conformance_capture
 ```
 
-23 tests. The first three are a positive control: this module's own wallet mints a valid
-presentation and the verifier must accept it. Without that, "it refused" and "it never accepts
-anything" look identical, and every other test in the file would be worthless. Both directions
-are checked: a verifier patched to always accept fails 19 of them, one patched to always
-refuse fails 4.
+46 tests in three files, and they are not equal in weight.
+
+`test_sdjwt` (23) and `test_jwe` (14) are this package agreeing with itself: the material is
+built here and checked here. Each carries a positive control, because a verifier that refuses
+everything passes every refusal test ever written, and both directions were checked by
+patching the verifier rather than assumed. A verifier that always accepts fails 19 of the 23;
+one that always refuses fails 4.
+
+`test_conformance_capture` (9) is the one that is evidence of something. It holds a real
+`direct_post.jwt` response produced by the **OpenID Foundation conformance suite's wallet**,
+committed as a fixture so it runs with no Docker and no network. The JWE was built by Nimbus
+JOSE in Java and the SD-JWT by the suite's own code: if this package's ECDH-ES, its Concat
+KDF, its AAD binding or its disclosure digests were subtly wrong, it would not open. It opens,
+and the presentation inside verifies, disclosing exactly the two claims the DCQL query asked
+for out of the eleven the credential commits to.
+
+The same fixture proves the refusals: a year later it is stale, under another nonce or
+another audience it is not ours, with `given_name` rewritten from Jean to Jeanne the digest no
+longer matches what the issuer signed.
+
+**None of that is a conformance result.** The suite ran locally, nothing was scored or
+published, and `lab/EXTERNAL-NOUNS.md` stays at zero.
