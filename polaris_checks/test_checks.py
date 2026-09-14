@@ -14913,6 +14913,86 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
         "must FAIL when the SDK has no refusal tests for the drill to make go red"
 
 
+def test_advisory_lock_contention_check_discriminates(tmp_path):
+    # Five ConcurrencyTests claimed two operations on different entities do not
+    # serialize, and all five passed against lock keys that ignored the entity. The
+    # good fixture is what the tree looks like now: a per-entity key, a global key
+    # declared as such, and a contention test that asks Postgres with lock_timeout.
+    # Each perturbation removes exactly one of those.
+    GOOD_PROCS = (
+        "CREATE OR REPLACE PROCEDURE uc8_revoke_token(p_agency_id INTEGER)\n"
+        "LANGUAGE plpgsql AS $$\nBEGIN\n"
+        "    PERFORM pg_advisory_xact_lock(\n"
+        "        hashtext('polaris.revoke.' || p_agency_id::TEXT));\n"
+        "END$$;\n"
+        "CREATE OR REPLACE PROCEDURE uc11_close_epoch()\n"
+        "LANGUAGE plpgsql AS $$\nBEGIN\n"
+        "    PERFORM pg_advisory_xact_lock(hashtext('polaris.zk.close-epoch'));\n"
+        "END$$;\n"
+    )
+    GOOD_TESTS = (
+        "class ConcurrencyTests(PolarisTestCase):\n"
+        "    def assertDoesNotContend(self, hold, probe, what):\n"
+        "        cur.execute('SET lock_timeout = %s', (self.LOCK_TIMEOUT,))\n"
+        "        except psycopg2.errors.LockNotAvailable as exc:\n"
+        "            blocked = str(exc)\n"
+        "    def test_uc8_cross_agency_revocations_do_not_block(self):\n"
+        "        def revoke(agency_id):\n"
+        "            return lambda cur: cur.execute('CALL uc8_revoke_token(%s)', (agency_id,))\n"
+        "        self.assertDoesNotContend(revoke(2), revoke(3), 'Cross-agency revocations')\n"
+    )
+
+    def write(procs=GOOD_PROCS, tests=GOOD_TESTS):
+        root = tmp_path / ("alock%d" % write.n)
+        write.n += 1
+        (root / "polaris_sql").mkdir(parents=True)
+        (root / "polaris_web").mkdir(parents=True)
+        (root / "polaris_sql" / "05_procedures.sql").write_text(procs)
+        (root / "polaris_web" / "test_app.py").write_text(tests)
+        return root
+    write.n = 0
+
+    ok = checks.check_advisory_locks_have_a_contention_test(write())
+    assert all(f.level == "OK" for f in ok), ok
+
+    # A new per-entity lock with no contention test. The symptom is not a red suite:
+    # it is every revocation in the system queueing behind whichever one is running.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        procs=GOOD_PROCS + (
+            "CREATE OR REPLACE PROCEDURE uc6_migrate_algorithm(p_token_id INTEGER)\n"
+            "LANGUAGE plpgsql AS $$\nBEGIN\n"
+            "    PERFORM pg_advisory_xact_lock(\n"
+            "        hashtext('polaris.migrate.' || p_token_id::TEXT));\n"
+            "END$$;\n")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # The entity dropped from an existing key: undeclared, so it reads as a mistake.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        procs=GOOD_PROCS.replace("'polaris.revoke.' || p_agency_id::TEXT",
+                                 "'polaris.revoke.everything'")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # The test stops driving the procedure: the lock is live and unwatched again.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        tests=GOOD_TESTS.replace("CALL uc8_revoke_token(%s)", "CALL something_else(%s)")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # No lock_timeout: a shared key stops being an error and becomes a slow pass,
+    # which is exactly how the five got their green.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        tests=GOOD_TESTS.replace("lock_timeout", "statement_budget")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # The stopwatch returns. It is one loaded runner away from meaning nothing.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        tests=GOOD_TESTS + "        self.assertLess(elapsed, 0.55, 'should be parallel')\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # And the check must not pass an empty room: no locks at all is not a clean bill.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(procs="-- nothing\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+
 def test_oid4vp_verifier_boundary_check_discriminates(tmp_path):
     # The OpenID4VP verifier must stay installable without the rest of Polaris, must take
     # the nonce and audience from its CALLER rather than from the presentation it is

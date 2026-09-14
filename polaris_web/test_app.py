@@ -5548,53 +5548,95 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 class ConcurrencyTests(PolarisTestCase):
-    #: The deliberate delay each concurrent worker holds, so two that block each other
-    #: take twice as long as two that do not.
-    PARALLEL_SLEEP = 0.3
+    #: How long a probe waits before Postgres calls it blocked. Generous: the only
+    #: thing on the other side is a transaction this class is deliberately holding
+    #: open, so a probe that waits this long waited forever.
+    LOCK_TIMEOUT = '5s'
 
-    def _serial_baseline(self):
-        """One worker's round trip: the sleep plus this machine's overhead, measured now.
+    def assertDoesNotContend(self, hold, probe, what):
+        """Two operations do not share an advisory-lock key. Asked, not timed.
 
-        The parallelism assertions used to compare against an ABSOLUTE threshold -- two
-        0.3s sleeps serialized would be 0.6s, so under 0.55s meant parallel. That holds
-        until a loaded runner's overhead exceeds a whole sleep, and on 2026-09-11 it did:
-        a genuinely parallel run took 0.616s and the suite called it serialized.
+        `hold(cur)` runs the operation whose lock must be held. Its transaction is
+        kept OPEN for the duration, so whatever `pg_advisory_xact_lock` it took is
+        still held when `probe(cur)` runs. `probe` runs under `lock_timeout`, so a
+        shared key raises `lock_not_available` instead of merely running slowly, and
+        Postgres names the offending key expression in the error it raises.
 
-        Measuring one worker here absorbs whatever the machine is doing, so the
-        comparison is between two numbers taken seconds apart on the same hardware
-        rather than between a number and a guess made when the test was written.
+        WHY NOT A STOPWATCH. Until v9.459 five tests in this class timed two threads
+        against an estimate of the serialized cost. Every one of them was vacuous, and
+        the same defect produced all five: each slept BEFORE its CALL, while the
+        procedures take their advisory lock as the CALL's first statement and hold it
+        to commit. So both threads always slept concurrently, and the stopwatch
+        measured the sleep rather than the lock. Proven on 2026-09-14 rather than
+        argued: rewriting close_anchor_batch, uc8_revoke_token, uc9_complete_recovery,
+        uc6_migrate_algorithm and uc10_attest_trust with lock keys that ignore
+        algorithm, agency, individual, token and attesting agency respectively left
+        all five tests green.
+
+        The estimate was unsound on its own terms too. `baseline` measured one BARE
+        round trip -- connect, pg_sleep, commit -- while each worker also ran the
+        procedure under test, so a genuinely serialized pair cost more than
+        one baseline plus one sleep, and landed in the band v9.456 had labelled
+        impossible and told you to re-run. Measured with the global-key mutant
+        installed: elapsed=0.643s against a serialized estimate of 0.606s. A real
+        regression would have been reported as a stalled machine.
+
+        A lock wait has none of that. It does not move when the runner is busy, and it
+        is the lock manager's own answer rather than an inference from a clock.
         """
-        import time
-        t0 = time.perf_counter()
-        with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT pg_sleep(%s)", (self.PARALLEL_SLEEP,))
-            conn.commit()
-        return time.perf_counter() - t0
+        holding, release = threading.Event(), threading.Event()
+        failures = {}
 
-    def _assertRanInParallel(self, elapsed, baseline, what):
-        """Two workers ran concurrently if together they cost less than one plus most
-        of another sleep. Serialized, they cost one plus a WHOLE extra sleep."""
-        ceiling = baseline + self.PARALLEL_SLEEP * 0.6
-        serialized = baseline + self.PARALLEL_SLEEP
-        if elapsed >= serialized:
-            # v9.456: this sample says nothing about parallelism either way. Two workers
-            # cannot be SLOWER than running them one after another, so a reading above
-            # the serialized estimate means the machine stalled between the baseline and
-            # this measurement, not that the work serialized. Seen on 2026-09-13:
-            # elapsed=0.662s against a serialized estimate of 0.606s, green on a rerun.
-            # Named here so a red build reads as the unusable measurement it is rather
-            # than as a concurrency regression.
-            self.fail(
-                f"{what}: the measurement is UNUSABLE, not a failure of parallelism. "
-                f"elapsed={elapsed:.3f}s exceeds even the serialized estimate of "
-                f"{serialized:.3f}s (one worker alone took {baseline:.3f}s), and two "
-                f"workers cannot be slower than two workers run in sequence. The machine "
-                f"stalled mid-measurement; re-run this job.")
-        self.assertLess(
-            elapsed, ceiling,
-            f"{what} should run in parallel; elapsed={elapsed:.3f}s, "
-            f"one worker alone took {baseline:.3f}s on this machine, so a serialized "
-            f"pair would cost about {serialized:.3f}s")
+        def hold_it():
+            conn = None
+            try:
+                conn = self._new_conn()
+                with conn.cursor() as cur:
+                    hold(cur)
+                holding.set()          # the lock is held from here until the commit
+                release.wait(timeout=30)
+                conn.commit()
+            except Exception as exc:   # noqa: BLE001 - reported, never swallowed
+                failures['holder'] = repr(exc)
+                holding.set()
+            finally:
+                if conn is not None:
+                    conn.close()
+
+        holder = threading.Thread(target=hold_it)
+        holder.start()
+        blocked = None
+        try:
+            self.assertTrue(holding.wait(timeout=30),
+                            '%s: the holder never reached its lock' % what)
+            self.assertEqual(failures, {},
+                             '%s: the holder failed, so nothing held a lock' % what)
+            conn = self._new_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SET lock_timeout = %s", (self.LOCK_TIMEOUT,))
+                    try:
+                        probe(cur)
+                        conn.commit()
+                    except psycopg2.errors.LockNotAvailable as exc:
+                        conn.rollback()
+                        blocked = str(exc).strip()
+            finally:
+                conn.close()
+        finally:
+            release.set()
+            holder.join(timeout=30)
+
+        self.assertIsNone(
+            blocked,
+            '%s: the second operation waited on a lock while the first was held open, '
+            'so the two share a lock key. A key that does not separate them serializes '
+            'every such operation in the system behind whichever one is in flight. '
+            'Postgres said: %s' % (what, blocked))
+        self.assertEqual(failures, {},
+                         '%s: the holder failed after taking its lock' % what)
+        self.assertFalse(holder.is_alive(), '%s: the holder never let go' % what)
+
     """Tests for the v6 concurrency hardening. Run a handful of operations
     in parallel against the live database and assert the invariants hold."""
 
@@ -5931,40 +5973,23 @@ class ConcurrencyTests(PolarisTestCase):
         tid_a = seed_active(2, 'a')
         tid_b = seed_active(3, 'b')
 
-        outcomes = []
-        outcomes_lock = threading.Lock()
-
         def revoke(agency_id, token_id):
-            try:
-                with self._new_conn() as conn, conn.cursor() as cur:
-                    # Brief pg_sleep ensures both threads hold their lock
-                    # concurrently if they're not blocking each other.
-                    cur.execute("SELECT pg_sleep(0.3)")
-                    cur.execute(
-                        "CALL uc8_revoke_token(%s, %s, %s, %s, %s)",
-                        (token_id, agency_id, 'ADMINISTRATIVE',
-                         'https://crl.idtoken.gov/test/cross.crl', None))
-                    conn.commit()
-                with outcomes_lock: outcomes.append(('ok', agency_id))
-            except psycopg2.Error as e:
-                with outcomes_lock: outcomes.append(('err', agency_id, str(e)))
+            return lambda cur: cur.execute(
+                "CALL uc8_revoke_token(%s, %s, %s, %s, %s)",
+                (token_id, agency_id, 'ADMINISTRATIVE',
+                 'https://crl.idtoken.gov/test/cross.crl', None))
 
-        import time
-        baseline = self._serial_baseline()
-        t0 = time.perf_counter()
-        threads = [
-            threading.Thread(target=revoke, args=(2, tid_a)),
-            threading.Thread(target=revoke, args=(3, tid_b)),
-        ]
-        for t in threads: t.start()
-        for t in threads: t.join()
-        elapsed = time.perf_counter() - t0
+        self.assertDoesNotContend(revoke(2, tid_a), revoke(3, tid_b),
+                                  'Cross-agency revocations')
 
-        # Both should succeed
-        successes = [o for o in outcomes if o[0] == 'ok']
-        self.assertEqual(len(successes), 2,
-            f"Both cross-agency revocations should succeed: {outcomes}")
-        self._assertRanInParallel(elapsed, baseline, 'Cross-agency revocations')
+        # Both landed. The helper proves they did not wait on each other; this proves
+        # they happened, which a lock test that never checks its own effect does not.
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id, status FROM IdentityToken "
+                        "WHERE token_id IN (%s, %s) ORDER BY token_id", (tid_a, tid_b))
+            states = {r['token_id']: r['status'] for r in cur.fetchall()}
+        self.assertEqual(states, {tid_a: 'REVOKED', tid_b: 'REVOKED'},
+                         'both cross-agency revocations should have taken effect')
 
     # -------------------------------------------------------------------
     # R11-2 / M2-7 — pg_advisory_xact_lock on claimed_individual_id
@@ -6083,41 +6108,30 @@ class ConcurrencyTests(PolarisTestCase):
             rid_b = make_pending('B')
             conn.commit()
 
-        outcomes = []
-        outcomes_lock = threading.Lock()
-
         def complete(rid, suffix):
-            try:
-                with self._new_conn() as conn, conn.cursor() as cur:
-                    cur.execute("SELECT pg_sleep(0.3)")
-                    cur.execute("""
-                        CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        rid, admin_uid, 'APPROVED', f'cross {suffix}',
-                        f'TKN-UC9-XR-{suffix}', f'SN-UC9-XR-{suffix}',
-                        1, 'IRIS', 'MULTI_MODAL',
-                        f'https://crl.idtoken.gov/xr/{suffix}',
-                    ))
-                    conn.commit()
-                with outcomes_lock: outcomes.append(('ok', rid))
-            except psycopg2.Error as e:
-                with outcomes_lock: outcomes.append(('err', rid, str(e)))
+            return lambda cur: cur.execute("""
+                CALL uc9_complete_recovery(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                rid, admin_uid, 'APPROVED', f'cross {suffix}',
+                f'TKN-UC9-XR-{suffix}', f'SN-UC9-XR-{suffix}',
+                1, 'IRIS', 'MULTI_MODAL',
+                f'https://crl.idtoken.gov/xr/{suffix}',
+            ))
 
-        import time
-        baseline = self._serial_baseline()
-        t0 = time.perf_counter()
-        threads = [
-            threading.Thread(target=complete, args=(rid_a, 'A')),
-            threading.Thread(target=complete, args=(rid_b, 'B')),
-        ]
-        for t in threads: t.start()
-        for t in threads: t.join()
-        elapsed = time.perf_counter() - t0
+        self.assertDoesNotContend(complete(rid_a, 'A'), complete(rid_b, 'B'),
+                                  'Cross-individual recoveries')
 
-        successes = [o for o in outcomes if o[0] == 'ok']
-        self.assertEqual(len(successes), 2,
-            f"Both cross-individual recoveries should succeed: {outcomes}")
-        self._assertRanInParallel(elapsed, baseline, 'Cross-individual recoveries')
+        # Both landed. The helper proves they did not wait on each other; this proves
+        # they happened, which a lock test that never checks its own effect does not.
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT recovery_id, status, resulting_token_id IS NOT NULL AS issued
+                  FROM RecoveryRequest WHERE recovery_id IN (%s, %s)
+            """, (rid_a, rid_b))
+            landed = {r['recovery_id']: (r['status'], r['issued'])
+                      for r in cur.fetchall()}
+        self.assertEqual(landed, {rid_a: ('APPROVED', True), rid_b: ('APPROVED', True)},
+                         'both cross-individual recoveries should have taken effect')
 
     # -------------------------------------------------------------------
     # R11-1 / M2-6 — pg_advisory_xact_lock on token_id serializes
@@ -6314,25 +6328,22 @@ class ConcurrencyTests(PolarisTestCase):
         tid_b = seed()
 
         def migrate(token_id, label):
-            with self._new_conn() as conn, conn.cursor() as cur:
-                cur.execute("SELECT pg_sleep(0.3)")  # hold lock for noticeable time
-                cur.execute("CALL uc6_migrate_algorithm(%s, %s, %s, %s)",
-                            (token_id, 2, f'XMIG_{label}'.encode(), False))
-                conn.commit()
+            return lambda cur: cur.execute(
+                "CALL uc6_migrate_algorithm(%s, %s, %s, %s)",
+                (token_id, 2, f'XMIG_{label}'.encode(), False))
 
-        import time
-        baseline = self._serial_baseline()
-        t0 = time.perf_counter()
-        threads = [
-            threading.Thread(target=migrate, args=(tid_a, 'A')),
-            threading.Thread(target=migrate, args=(tid_b, 'B')),
-        ]
-        for t in threads: t.start()
-        for t in threads: t.join()
-        elapsed = time.perf_counter() - t0
+        self.assertDoesNotContend(migrate(tid_a, 'A'), migrate(tid_b, 'B'),
+                                  'Cross-token migrations')
 
-        # If serialized: ~0.6s; if parallel: ~0.3s.
-        self._assertRanInParallel(elapsed, baseline, 'Cross-token migrations')
+        # Both migrations landed: each token carries its algorithm-2 signature.
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT token_id FROM TokenSignature
+                 WHERE token_id IN (%s, %s) AND algorithm_id = 2
+            """, (tid_a, tid_b))
+            migrated = {r['token_id'] for r in cur.fetchall()}
+        self.assertEqual(migrated, {tid_a, tid_b},
+                         'both cross-token migrations should have taken effect')
 
     # -------------------------------------------------------------------
     # R10-2 / M2-2 — Per-algorithm advisory-lock on close_anchor_batch.
@@ -6408,6 +6419,25 @@ class ConcurrencyTests(PolarisTestCase):
     # Different algorithm_id → different advisory-lock key → parallel.
     # -------------------------------------------------------------------
     def test_close_anchor_batch_cross_algorithm_parallel(self):
+        """Two closes under different algorithms must not wait on each other.
+
+        NOT A STOPWATCH, AND IT USED TO BE ONE. Until v9.459 this measured wall
+        clock: each thread slept 0.3s and the pair had to finish under 0.55s.
+        Two things were wrong with that. The sleep came BEFORE the CALL, and
+        close_anchor_batch takes its advisory lock as the CALL's first statement
+        and holds it to commit, so both threads slept concurrently whether or
+        not their keys collided. Rewriting the procedure with a constant lock
+        key that ignores the algorithm entirely left this test green. And the
+        0.55s line was 9% away from the value a healthy run produced, so it went
+        red on a loaded CI runner for reasons that had nothing to do with locks.
+
+        What it does instead: one worker calls the procedure for algorithm 2 and
+        holds its transaction open, so algorithm 2's lock is held for as long as
+        this test wants. The main thread then closes algorithm 3 under a
+        lock_timeout. A distinct key returns at once; a shared key waits for a
+        commit that has not happened yet and raises. No threshold, and the
+        answer does not move when the machine is busy.
+        """
         from anchoring import compute_batch
         from psycopg2.extras import Json
 
@@ -6425,9 +6455,8 @@ class ConcurrencyTests(PolarisTestCase):
             """)
             conn.commit()
 
-        def close_for(alg_id):
+        def batch_args(alg_id):
             with self._new_conn() as conn, conn.cursor() as cur:
-                cur.execute("SELECT pg_sleep(0.3)")  # hold transaction
                 cur.execute("""
                     SELECT a.anchor_id, a.commitment_hash
                       FROM BlockchainAnchor a
@@ -6437,25 +6466,30 @@ class ConcurrencyTests(PolarisTestCase):
                 """, (alg_id,))
                 leaves = [(int(r['anchor_id']), r['commitment_hash'])
                           for r in cur.fetchall()]
-                root, proofs = compute_batch(leaves)
-                cur.execute("CALL close_anchor_batch(%s, %s, %s)",
-                            (alg_id, root, Json(proofs)))
-                conn.commit()
+            self.assertTrue(leaves, f'nothing pending under algorithm {alg_id}')
+            root, proofs = compute_batch(leaves)
+            return (alg_id, root, Json(proofs))
 
-        import time
-        t0 = time.perf_counter()
-        threads = [
-            threading.Thread(target=close_for, args=(2,)),
-            threading.Thread(target=close_for, args=(3,)),
-        ]
-        for t in threads: t.start()
-        for t in threads: t.join()
-        elapsed = time.perf_counter() - t0
+        alg2, alg3 = batch_args(2), batch_args(3)
 
-        # Serialized would be ~0.6s; parallel ~0.3s.
-        self.assertLess(elapsed, 0.55,
-            f'Cross-algorithm batch closes should run in parallel; '
-            f'elapsed={elapsed:.3f}s (would be ~0.6s if same lock)')
+        def close(args):
+            return lambda cur: cur.execute(
+                "CALL close_anchor_batch(%s, %s, %s)", args)
+
+        self.assertDoesNotContend(close(alg2), close(alg3),
+                                  'Cross-algorithm batch closes')
+
+        # Both landed. The helper proves they did not wait on each other; this proves
+        # they happened, which a lock test that never checks its own effect does not.
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT algorithm_id FROM AnchorBatch
+                 WHERE algorithm_id IN (2, 3)
+                   AND created_at > CURRENT_TIMESTAMP - INTERVAL '2 minutes'
+            """)
+            closed = {r['algorithm_id'] for r in cur.fetchall()}
+        self.assertEqual(closed, {2, 3},
+                         'both cross-algorithm batch closes should have taken effect')
 
     # -------------------------------------------------------------------
     # R11-3 / M2-8 — Per-attesting-agency advisory-lock on
@@ -6518,29 +6552,27 @@ class ConcurrencyTests(PolarisTestCase):
             ctx_mv = cur.fetchone()['context_id']
 
         def attest(attesting_id):
-            with self._new_conn() as conn, conn.cursor() as cur:
-                cur.execute("SELECT pg_sleep(0.3)")
-                # Different attesting agencies → different lock keys.
-                # attesting=4 attests to agency_id=2 in MV; attesting=5 attests to agency_id=2 in MV.
-                cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
-                            (attesting_id, 2, ctx_mv,
-                             (datetime.now().date() + timedelta(days=180)),
-                             admin))
-                conn.commit()
+            # attesting=4 and attesting=5 both attest to agency 2 in MV, so the
+            # attesting agency is the only thing separating their lock keys.
+            return lambda cur: cur.execute(
+                "CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
+                (attesting_id, 2, ctx_mv,
+                 (datetime.now().date() + timedelta(days=180)), admin))
 
-        import time
-        t0 = time.perf_counter()
-        threads = [
-            threading.Thread(target=attest, args=(4,)),
-            threading.Thread(target=attest, args=(5,)),
-        ]
-        for t in threads: t.start()
-        for t in threads: t.join()
-        elapsed = time.perf_counter() - t0
+        self.assertDoesNotContend(attest(4), attest(5),
+                                  'Cross-attesting-agency attests')
 
-        # Parallel: ~0.3s. If serialized, would be ~0.6s.
-        self.assertLess(elapsed, 0.55,
-            f'Cross-attesting-agency attests should run in parallel; elapsed={elapsed:.3f}s')
+        # Both landed. The helper proves they did not wait on each other; this proves
+        # they happened, which a lock test that never checks its own effect does not.
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT attesting_agency_id FROM AgencyTrustAttestation
+                 WHERE attesting_agency_id IN (4, 5) AND attested_agency_id = 2
+                   AND context_id = %s AND revocation_date IS NULL
+            """, (ctx_mv,))
+            attested = {r['attesting_agency_id'] for r in cur.fetchall()}
+        self.assertEqual(attested, {4, 5},
+                         'both cross-attesting-agency attests should have taken effect')
 
     # -------------------------------------------------------------------
     # R10-1 / M2-1 — Per-procedure advisory-lock on uc11_close_epoch.

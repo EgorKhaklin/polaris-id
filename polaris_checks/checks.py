@@ -17435,6 +17435,115 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
                % len(_PUBLISHABLE_PACKAGES))
 
 
+# ---------------------------------------------------------------------------
+# C9 — every per-entity advisory lock has a test that would notice if the
+# entity were dropped from its key.
+# ---------------------------------------------------------------------------
+# On 2026-09-14 five tests in ConcurrencyTests claimed to prove that two
+# operations on DIFFERENT entities do not serialize. All five were vacuous, and
+# one defect produced all five: each slept before its CALL, while the procedures
+# take their advisory lock as the CALL's first statement and hold it to commit.
+# Both threads therefore always slept concurrently and the stopwatch measured the
+# sleep. Rewriting close_anchor_batch, uc8_revoke_token, uc9_complete_recovery,
+# uc6_migrate_algorithm and uc10_attest_trust with keys that ignore algorithm,
+# agency, individual, token and attesting agency left every one of them green.
+#
+# They are now written against `lock_timeout`, which is Postgres answering rather
+# than a clock being interpreted. This keeps that true for the NEXT lock: a new
+# per-entity key with no contention test is the same gap arriving again, and it
+# would be invisible because the suite would be green.
+_ADVISORY_PROCS_REL = "polaris_sql/05_procedures.sql"
+_ADVISORY_TESTS_REL = "polaris_web/test_app.py"
+
+#: Lock domains that are deliberately GLOBAL, with the reason. A single key here
+#: is the design, not an oversight, so there is no cross-entity behaviour to test.
+_GLOBAL_LOCK_DOMAINS = {
+    "polaris.zk.close-epoch":
+        "epoch_id comes from a SERIAL and closures must not skip a gap, so every "
+        "closure in the system serializes on one key by design",
+}
+
+
+def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Finding]:
+    procs = _read(root, _ADVISORY_PROCS_REL)
+    if not procs:
+        return _fail("advisory_lock_tests", "%s is missing" % _ADVISORY_PROCS_REL)
+
+    # domain -> the procedures that lock it, and whether the key carries a parameter.
+    domains: dict[str, set] = {}
+    parameterised: dict[str, bool] = {}
+    current = "module"
+    for line in procs.splitlines():
+        m = re.match(r"\s*CREATE OR REPLACE PROCEDURE (\w+)\(", line)
+        if m:
+            current = m.group(1)
+        m = re.search(r"hashtext\('([a-z0-9.\-]+?)\.?'\s*(\|\|)?", line)
+        if m and "advisory" in procs[max(0, procs.index(line) - 200):procs.index(line) + 200]:
+            domain, joined = m.group(1), bool(m.group(2))
+            domains.setdefault(domain, set()).add(current)
+            parameterised[domain] = parameterised.get(domain, False) or joined
+    if not domains:
+        return _fail("advisory_lock_tests",
+                     "no advisory-lock keys found in %s. Either the locks are gone, in "
+                     "which case C9 rests on nothing, or this check no longer reads them "
+                     "and would stay silent through either" % _ADVISORY_PROCS_REL)
+
+    tests = _read(root, _ADVISORY_TESTS_REL)
+    if not tests:
+        return _fail("advisory_lock_tests", "%s is missing" % _ADVISORY_TESTS_REL)
+
+    # The helper has to make a wait into an ERROR. Without lock_timeout a shared key
+    # is merely slow, every probe eventually succeeds, and the whole family goes back
+    # to passing for the wrong reason.
+    if "lock_timeout" not in tests or "LockNotAvailable" not in tests:
+        return _fail("advisory_lock_tests",
+                     "%s no longer sets lock_timeout around its contention probe. A probe "
+                     "without one does not fail when it waits, it just takes longer, and a "
+                     "shared lock key becomes a slow pass" % _ADVISORY_TESTS_REL)
+
+    # The pattern that produced all five. A parallelism claim decided by comparing a
+    # stopwatch against a constant is one loaded runner away from meaning nothing, in
+    # either direction.
+    stopwatch = re.search(r"assertLess\(\s*elapsed\s*,\s*[0-9]", tests)
+    if stopwatch:
+        return _fail("advisory_lock_tests",
+                     "%s decides a parallelism claim by comparing elapsed time against a "
+                     "hardcoded constant. That is how five advisory-lock tests came to pass "
+                     "against keys that ignored the entity they were keyed on: ask Postgres "
+                     "with lock_timeout instead" % _ADVISORY_TESTS_REL)
+
+    # Which procedures does a contention test actually drive?
+    driven = set()
+    for body in re.split(r"\n    def ", tests):
+        if "assertDoesNotContend" in body:
+            driven.update(re.findall(r"CALL (\w+)\(", body))
+
+    for domain in sorted(domains):
+        if domain in _GLOBAL_LOCK_DOMAINS:
+            continue
+        if not parameterised.get(domain):
+            return _fail("advisory_lock_tests",
+                         "the advisory lock %r takes no parameter, so every caller of %s "
+                         "serializes behind every other. If that is the design, declare it "
+                         "in _GLOBAL_LOCK_DOMAINS with the reason; if it is not, the key "
+                         "has lost the entity it was meant to separate on"
+                         % (domain, ", ".join(sorted(domains[domain]))))
+        if not (domains[domain] & driven):
+            return _fail("advisory_lock_tests",
+                         "the per-entity advisory lock %r is held by %s and no test calls "
+                         "assertDoesNotContend on any of them. Nothing would notice if the "
+                         "entity were dropped from the key, and the symptom is not a failing "
+                         "test: it is every operation of that kind in the system queueing "
+                         "behind whichever one is in flight"
+                         % (domain, ", ".join(sorted(domains[domain]))))
+
+    per_entity = [d for d in domains if d not in _GLOBAL_LOCK_DOMAINS]
+    return _ok("advisory_lock_tests",
+               "all %d per-entity advisory-lock domains are driven by a contention test that "
+               "asks Postgres rather than a clock, and the %d global domain(s) are declared"
+               % (len(per_entity), len(_GLOBAL_LOCK_DOMAINS)))
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
@@ -17534,6 +17643,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_real_pqc_default_boot,
     check_detached_verifier,
     check_oid4vp_verifier_boundary,
+    check_advisory_locks_have_a_contention_test,
     check_published_readmes_have_no_relative_links,
     check_distributions_carry_their_licence,
     check_dyno_published,

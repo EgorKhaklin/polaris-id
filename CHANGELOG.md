@@ -5,6 +5,71 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.459 — 2026-09-14 (five concurrency tests, none of which could fail)
+
+CI went red on a timing test by 7 milliseconds: `elapsed=0.557s not less than 0.55`. The obvious
+repair is to move the number. Reading the test first was better.
+
+`test_close_anchor_batch_cross_algorithm_parallel` existed to prove that two batch closes under
+DIFFERENT algorithms do not serialize, because `close_anchor_batch` locks
+`hashtext('polaris.anchor.close-batch.' || algorithm_id)` and the algorithm is what separates
+them. It ran two threads, each sleeping 0.3s, and required the pair to finish in under 0.55s on
+the reasoning that a shared lock would cost 0.6s.
+
+**The sleep came before the CALL.** The procedure takes its advisory lock as its first statement
+and holds it until commit, so at the moment both threads were sleeping neither held anything. Two
+threads sleeping concurrently take 0.3s whether or not their keys collide. The stopwatch was
+measuring the sleep.
+
+Proven rather than argued. The procedure was rewritten with the lock key
+`hashtext('polaris.anchor.close-batch.GLOBAL')` -- one key for every algorithm in the system --
+installed into the test database, and the test passed. Then the same question was put to the rest
+of the family, and the same mutation was applied to `uc8_revoke_token`, `uc9_complete_recovery`,
+`uc6_migrate_algorithm` and `uc10_attest_trust`, dropping agency, individual, token and attesting
+agency from their keys. **All five tests passed against lock keys that ignored the entity they
+were keyed on.** Five tests, one defect, and it was in every one of them.
+
+All five now ask Postgres instead of a clock. One worker calls the procedure and holds its
+transaction open, so its advisory lock is genuinely held; the other runs under `lock_timeout`, so a
+shared key raises `lock_not_available` rather than merely taking longer. There is no threshold and
+no calibration, the answer does not move when the runner is busy, and the failure message carries
+the offending key expression verbatim from Postgres:
+
+    canceling statement due to lock timeout
+    CONTEXT: SQL statement "SELECT pg_advisory_xact_lock(
+            hashtext('polaris.anchor.close-batch.GLOBAL'))"
+
+Each one also now asserts its own effect landed: both tokens REVOKED, both recoveries APPROVED with
+a token issued, both migrations signed, both batches closed, both attestations recorded. A lock test
+that never checks the work happened can be satisfied by two operations that both did nothing.
+
+**A timing helper that told you to re-run a real regression.** `_assertRanInParallel` treated any
+reading above `baseline + PARALLEL_SLEEP` as an unusable measurement, on the reasoning that two
+workers cannot be slower than two run in sequence. The reasoning holds; the estimate it was applied
+to does not. `baseline` timed one BARE round trip while each worker also ran the procedure under
+test, so a genuinely serialized pair costs more than the estimate and lands in the band labelled
+impossible. Measured against the global-key mutant: elapsed=0.643s versus a serialized estimate of
+0.606s. A real shared-key regression would have been reported as "the machine stalled
+mid-measurement; re-run this job." The helper is gone along with the approach.
+
+`check_advisory_locks_have_a_contention_test` (269) keeps it that way. Every advisory-lock domain
+in `05_procedures.sql` that carries a parameter must be driven by a test calling
+`assertDoesNotContend`; a domain with a single global key must be declared with its reason
+(`polaris.zk.close-epoch` is, because epoch_id comes from a SERIAL and closures must not skip a
+gap). It also fails if the helper stops setting `lock_timeout`, since without one a shared key is
+not an error but a slow pass, and if a parallelism claim is ever again decided by comparing elapsed
+time against a constant. The check found one more thing on its first run: the batch-close test had
+been rewritten inline before the shared helper existed and was not using it.
+
+The five tests run in 9.3s where they took 11.6s, because none of them sleeps any more. That is the
+smallest thing about this ship. The finding is that this family went red, was repaired twice in
+three days, and neither repair touched the reason it could not fail. v9.397 replaced the absolute
+thresholds with a measured baseline after a parallel run clocked 0.616s and was called serialized.
+v9.456 added the unusable-measurement branch. Both were repairs to the calibration, which had never
+been the problem. And v9.397 migrated three of the five call sites: the two left on the original
+hardcoded 0.55 were `close_anchor_batch` and `uc10_attest_trust`, and the one that went red
+yesterday was the first of those two.
+
 ## v9.458 — 2026-09-13 (the license was right and nothing held it there)
 
 A question worth asking directly: keep Apache 2.0, or change it. Measured first, then answered.
