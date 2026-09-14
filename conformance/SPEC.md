@@ -173,16 +173,34 @@ The drill refuses to report at all if its measurement collected nothing, because
 measurement and a contract that constrains nothing print the same list. `--prove-control`
 runs it with collection disabled and requires that refusal.
 
-**The same gap, between the two reference implementations.** Both the Python and TypeScript
-SDKs pass all 118 cases, and a case constrains only the keys it names, so on every other key
-they could differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py`
-compares them to EACH OTHER, key for key, on every case, and CI runs it. It found one:
-`epoch-leaves-swapped` reported `fresh: true` from Python and `fresh: null` from TypeScript,
-because the TypeScript epoch-leaves commitment check returned early where its four siblings
-fell through. Fixed, and pinned by a test whose failure message names both values.
+**The same gap, between the implementations.** Three verifiers here check these artifacts:
+the detached verifier a relying party installs, and the two reference SDKs. All three pass all
+118 cases, and a case constrains only the keys it names, so on every other key they could
+differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py` compares them
+to EACH OTHER, key for key, on every case, and CI runs it.
 
-They now return identical verdicts, key for key, on every published case, including the keys
-no case constrains.
+It found one defect and one boundary.
+
+The defect: `epoch-leaves-swapped` reported `fresh: true` from Python and `fresh: null` from
+TypeScript, because the TypeScript epoch-leaves commitment check returned early where its four
+siblings fell through, so one implementation answered the same question two ways. Fixed, and
+pinned by a test whose failure message names both values. **The two SDKs now return identical
+verdicts, key for key, on every published case.**
+
+The boundary: **36 unconstrained divergences remain, every one of them between the detached
+verifier and an SDK**, on two keys and for two reasons.
+
+| key | detached | SDKs | why |
+|---|---|---|---|
+| `fresh`, on an artifact that failed authentication (16 cases) | `null` | the window's answer | the detached verifier RETURNS at the failure, so freshness is never asked. The SDKs fall through to a tail that answers it regardless, which is separately true of a forgery |
+| `issuer_trusted`, on the two cross-authority cases | `true` | `false` | on the detached side this key is not reported by the verifier at all: the conformance adapter derives it from `key_status`, which asks "is this key revoked or unknown" rather than "is it in the anchor set the caller supplied" |
+
+Neither convention is wrong and this contract does not choose between them. A relying party
+gating on `fresh is not false` cannot tell the difference; one gating on `fresh is true` can,
+and in every one of those cases `authentic` is already false, so the authenticity gate refuses
+first either way. Harmonising them would be a behaviour change justified by nothing but
+tidiness, so the drill accounts for these two rules and **fails on any divergence outside
+them**. The known ones stay visible rather than being buried in a count.
 
 ## Self-certifying
 
