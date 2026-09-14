@@ -4,8 +4,10 @@
 presentation produced by a wallet that has never heard of Polaris: an SD-JWT VC signed with
 ES256, with holder key binding, delivered over `direct_post.jwt`.
 
-**Status: 0.1.0, and the transport half is not built yet.** What exists is the half that
-decides. Nothing here has been certified, and no external party has used it.
+**Status: 0.1.0. It passes all eleven modules of the conformance plan against a locally
+hosted OpenID Foundation suite**, seven of them scored automatically. Nothing has been
+certified, nothing published, and no external party has used it. See
+[the scoreboard](../../lab/EXTERNAL-NOUNS.md) for exactly how much that is and is not.
 
 ---
 
@@ -76,21 +78,55 @@ check. ECDH-ES direct key agreement over P-256 with A128GCM or A256GCM, and **no
 `alg` and `enc` arrive in an attacker-controlled header, so a short list and a refusal for
 everything outside it is the useful thing for a verifier to have.
 
-## What is not here yet
+[`polaris_oid4vp/verifier.py`](polaris_oid4vp/verifier.py) is the listening half, and
+**the answer IS the result**: seven of the eleven modules pass the moment the verifier
+responds 4xx, so every refusal the two files above can produce has to reach the wire as one. A
+verifier that swallows a forged presentation and returns 200 fails seven tests at once in a
+way that looks like nothing happening. [`serve.py`](polaris_oid4vp/serve.py) is the
+two-endpoint HTTPS surface, standard library only, so a relying party installs this and no web
+framework.
 
-The listener: serving the signed request object at a `request_uri`, accepting the wallet's
-POST, and answering 200 or 4xx. [`lab/interop/probe.py`](../../lab/interop/probe.py) has
-driven that whole exchange against the conformance suite and gets every automated condition
-green, so the shape is known. It is not implemented here, and until it is, the seven negative
-modules cannot be run: refusing one of them IS an HTTP 4xx.
+A fresh response-encryption key per request, because the suite checks the key is not reused
+and is right to: one long-lived key makes every presentation ever sent to this verifier
+readable by whoever later obtains it.
+
+## The conformance run
+
+```bash
+git clone --depth 1 https://gitlab.com/openid/conformance-suite.git
+cd conformance-suite && docker compose -f docker-compose-prebuilt.yml up -d
+python3 scripts/polaris-oid4vp-conformance-drill.py
+```
+
+    happy-flow                    REVIEW (screenshot)
+    minimal-cnf-jwk               REVIEW (screenshot)
+    request-uri-method-post       REVIEW (screenshot)
+    request-uri-fetched-twice     REVIEW (screenshot)
+    invalid-kb-jwt-signature      PASS
+    invalid-credential-signature  PASS
+    invalid-sd-hash               PASS
+    invalid-kb-jwt-nonce          PASS
+    invalid-kb-jwt-aud            PASS
+    kb-jwt-iat-in-past            PASS
+    kb-jwt-iat-in-future          PASS
+
+The four REVIEW modules have zero failures and zero warnings; they end in REVIEW because the
+suite wants a screenshot of a verifier displaying a successful verification, which the drill
+cannot produce and will not fake.
+
+The drill carries a negative control and is VOID without it: it re-runs the happy flow against
+a verifier patched to answer 400 to everything, and the suite has to notice. Otherwise a suite
+that had stopped sending anything and a verifier that refuses everything print the same seven
+green modules.
 
 ## Tests
 
 ```bash
-cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_conformance_capture
+cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verifier \
+    test_conformance_capture
 ```
 
-46 tests in three files, and they are not equal in weight.
+71 tests in four files, and they are not equal in weight.
 
 `test_sdjwt` (23) and `test_jwe` (14) are this package agreeing with itself: the material is
 built here and checked here. Each carries a positive control, because a verifier that refuses
@@ -109,6 +145,12 @@ for out of the eleven the credential commits to.
 The same fixture proves the refusals: a year later it is stale, under another nonce or
 another audience it is not ours, with `given_name` rewritten from Jean to Jeanne the digest no
 longer matches what the issuer signed.
+
+`test_verifier` (25) drives the whole exchange in process, with a wallet that READS the
+request object rather than being told what is in it: if the request object were malformed, that
+wallet could not answer it. Seven of its tests assert each conformance refusal arrives as an
+HTTP 400 rather than merely being noticed, because a 400 is the whole of what those modules
+measure.
 
 **None of that is a conformance result.** The suite ran locally, nothing was scored or
 published, and `lab/EXTERNAL-NOUNS.md` stays at zero.

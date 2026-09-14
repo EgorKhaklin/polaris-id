@@ -21,13 +21,38 @@ belongs in the bottom section, not the top.
 
 ### External conformance profile
 
-The one the contract means, an OpenID4VC/HAIP profile, has not been run and cannot be until
-there is an OpenID4VP endpoint to point it at (`lab/interop/`).
+The one the contract means has now been run, against a SELF-HOSTED instance, and is not
+published.
 
-    Profile:                   (none run)
-    Run date:                  (none)
-    Score:                     __ / __
+    Profile:                   OpenID for Verifiable Presentations 1.0 Final/HAIP:
+                               Test a verifier (oid4vp-1final-verifier-haip-test-plan)
+                               variants sd_jwt_vc + direct_post.jwt
+    Suite:                     OpenID Foundation conformance suite, MIT, prebuilt images
+                               at e3b5558d, run locally under Docker
+    Run date:                  2026-09-14
+    Score:                     11 of 11 modules clean.
+                               7 of 7 negative modules PASS, scored automatically by the
+                               suite on a 4xx from polaris-oid4vp.
+                               4 of 4 positive modules: zero FAILURE, zero WARNING,
+                               finishing REVIEW, which needs a screenshot of a verifier
+                               displaying a successful verification.
     Published:                 no
+    Certified:                 no
+
+**Read the qualifications, they are not decoration.** The suite is the OpenID Foundation's own
+software and the plan is the one used for certification, so the seven automatic passes are
+machine-checked verdicts produced by code this project did not write. Everything else about
+this is internal: it ran on this machine, nobody outside started it, no result was submitted
+anywhere, and certification is a hosted run plus a fee plus a screenshot this drill will not
+fake. **No outside party has done anything.** The 90-day item *"an external OpenID conformance
+suite is running"* is met in the literal sense and in no stronger one.
+
+The run carries a negative control and is void without it: a verifier patched to answer 400 to
+everything is re-run against the happy flow, and the suite has to notice. It does, with two
+failures. Without that leg, a suite that had stopped sending anything and a verifier that
+refuses everything would both print seven green modules.
+
+Reproduce with `python3 scripts/polaris-oid4vp-conformance-drill.py` against a local suite.
 
 **The suite itself is now running, and it has scored something that is not Polaris.**
 2026-09-14: the OpenID Foundation conformance suite runs locally from its prebuilt images, and
@@ -125,9 +150,14 @@ out of the eleven the credential commits to. The same fixture is refused a year 
 another nonce, under another audience, and with one disclosure rewritten.
 
 That is interoperability on the transport and on the credential, measured on material this
-project did not make. **It is still not a conformance result and no row above moves**: the
-suite ran locally, nothing was scored, nothing was published, and the seven negative modules
-cannot run until something answers 4xx. The listener is not built.
+project did not make.
+
+**And then the listener was built, and the seven negative modules ran.**
+`polaris_oid4vp/verifier.py` builds the signed request object, serves it, receives the
+`direct_post.jwt` POST and answers 200 or 4xx; `polaris_oid4vp/serve.py` is the two-endpoint
+HTTPS surface. `scripts/polaris-oid4vp-conformance-drill.py` drives the whole plan. The result
+is in the conformance section above: 11 of 11 modules clean, 7 of them scored automatically by
+the suite. It is a local, unpublished, uncertified run, and that section says so four times.
 
 **Known gaps against the product contract, same date:**
 

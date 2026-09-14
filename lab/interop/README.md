@@ -332,19 +332,22 @@ Everything this section listed has been answered except the one thing that matte
   red; still untried.
 - Anything about wallet certification, the other role, which Polaris is not.
 
-**The next thing is no longer a measurement.** Everything cheap has been measured, and the
-expensive thing turned out to be cheaper than the first version of this file estimated: the
-request side is a known recipe with a green run behind it. What stands between this repository
-and an external conformance result is the verifier itself, and only that: decrypt the JWE,
-check the SD-JWT VC issuer signature against the x5c the wallet presents, check the disclosure
-digests, check the key binding JWT's signature, `nonce`, `aud` and `iat`, and answer 200 or
-4xx accordingly.
+**And then it was built.** `packages/polaris-oid4vp` is the verifier this assessment was
+scoping: SD-JWT VC verification, ECDH-ES response decryption, the signed request object, and a
+two-endpoint HTTPS listener that answers 200 or 4xx. It runs the whole plan clean, 11 of 11
+modules, with the seven negative ones scored automatically by the suite. The result and its
+qualifications are in [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md), where they belong; the
+short version is that a local unpublished run against the OpenID Foundation's own software is
+a real thing and is not a certification.
 
-That is a product behavior change. It qualifies under the merge rule as EXT-INTEROP with the
-suite named and the plan named, it is scoped by the contract to exactly one credential format,
-and the evidence above says that format is SD-JWT VC by a factor of eleven to four. It is not
-lab work and this file does not get to start it. What this file has done is make sure that
-when it is started, nothing about the target is a guess.
+**What this assessment got right and wrong, kept here on purpose.** Right: that the protocol
+layer was the whole cost and the format choice was downstream of it. Wrong, badly, in its
+first version: it measured Polaris as issuer against a wall that does not stand in the
+verifier's way at all, and put three options in front of a decision that needed none of them.
+The correction took one afternoon of running the thing instead of reading about it, and the
+first version had been written the same day. That is the lesson worth keeping: the assessment
+was careful, sourced, and pointed the wrong way, and nothing in its own reasoning could have
+told it so.
 
 ---
 

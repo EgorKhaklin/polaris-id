@@ -2359,6 +2359,11 @@ jobs:
       # Everything else in this package is the package agreeing with itself.
       - name: A response the conformance suite produced, opened and verified
         run: cd packages/polaris-oid4vp && python -m unittest test_conformance_capture
+      # The refusals as HTTP status codes, which is the form the conformance plan scores.
+      # Noticing a forged presentation and answering 200 anyway fails seven modules at once
+      # while every unit test stays green.
+      - name: The verifier on a wire — seven refusals that must arrive as 4xx
+        run: cd packages/polaris-oid4vp && python -m unittest test_verifier
 
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance

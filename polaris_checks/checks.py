@@ -17245,6 +17245,8 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
 # presentation, which is exactly the failure the product boundary is written to prevent.
 _OID4VP_REL = "packages/polaris-oid4vp/polaris_oid4vp/sdjwt.py"
 _OID4VP_JWE_REL = "packages/polaris-oid4vp/polaris_oid4vp/jwe.py"
+_OID4VP_SERVE_REL = "packages/polaris-oid4vp/polaris_oid4vp/serve.py"
+_OID4VP_VERIFIER_REL = "packages/polaris-oid4vp/polaris_oid4vp/verifier.py"
 _OID4VP_TESTS_REL = "packages/polaris-oid4vp/test_sdjwt.py"
 _OID4VP_CAPTURE_REL = "packages/polaris-oid4vp/testdata/conformance-suite-capture.json"
 _OID4VP_FORBIDDEN = ("polaris_web", "polaris_checks", "polaris_cli", "polaris_sim",
@@ -17257,7 +17259,9 @@ def check_oid4vp_verifier_boundary(root: pathlib.Path) -> list[Finding]:
         return _fail("oid4vp_boundary", "%s is missing" % _OID4VP_REL)
 
     for mod in _OID4VP_FORBIDDEN:
-        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", src + _read(root, _OID4VP_JWE_REL), re.M):
+        surface = src + _read(root, _OID4VP_JWE_REL) + _read(root, _OID4VP_SERVE_REL) \
+            + _read(root, _OID4VP_VERIFIER_REL)
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", surface, re.M):
             return _fail("oid4vp_boundary",
                          "the OpenID4VP verifier imports %r. It is a separate package so that "
                          "verifying one presentation does not require installing the operator "
