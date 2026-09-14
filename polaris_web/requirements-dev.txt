@@ -18,7 +18,7 @@
 -r requirements.txt
 
 # ---- Test-only: property testing (10 Hypothesis tests) ----
-hypothesis>=6.165.10,<7.0
+hypothesis>=6.167.1,<7.0
 
 # ---- Test-only: pytest (ZK two-witness suites, v9.44/v9.46) ----
 # polaris_zk/witness2/test_witness2.py and polaris_web/test_zk_second_witness.py
