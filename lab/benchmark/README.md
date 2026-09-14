@@ -294,3 +294,122 @@ from a broken measurement is worse than one that refuses.
 Adding the two expectations to `cases.json` changes a published contract, which is a product
 decision. It is cheap, the vectors already exist, and the gap is documented in
 `conformance/SPEC.md`. It is still VANTA's call and is not made here.
+
+
+---
+
+## BENCHMARK: revocation before an offline presentation
+
+**SCENARIO:** a credential is revoked **immediately before** an offline presentation.
+
+**EXTERNAL SYSTEM:** Privado ID. **Not run**, so every number is UNKNOWN. One structural note
+from the public documentation: its MTP circuit resolves issuer state, which is an online
+dependency, while the signature-based circuit is documented as usable off-chain. Which of
+those a deployment picks decides this scenario for it, and this pass did not measure either.
+
+**POLARIS ARTIFACT:** `packages/polaris-verify` at `3e4a39a`, driven by
+[`scenario-3-revocation.py`](scenario-3-revocation.py) against the published vectors.
+
+### The answer, as a number
+
+    the published status assertion
+      issued_at    2026-01-01T00:00:00Z
+      expires_at   2027-01-01T00:00:00Z
+      window       31536000 seconds = 365 days
+
+    fresh, 365 days after issuance, with the verifier's default bound   True
+
+**The stale acceptance window is 365 days.** A revocation recorded one second after that
+assertion was issued is invisible to an offline verifier for the rest of the year. Not
+"eventually consistent", not "policy dependent": three hundred and sixty five days, on the
+vector this repository publishes as its example of a valid one.
+
+What bounds it is the relying party, not the verifier:
+
+    max_window_seconds=300        fresh=False
+    max_window_seconds=86400      fresh=False
+    max_window_seconds=31536000   fresh=True
+    default (None)                fresh=True     -- accepts whatever the issuer chose
+
+### POLARIS WINS
+
+- **Authenticity and status are separate verdicts, and there is no field to misread.**
+  `verify_pack` on a credential with no status assertion returns `signature_valid` and
+  nothing about validity at all. A relying party cannot accidentally read "this signature is
+  genuine" as "this credential is still good", because the second answer is simply absent.
+- **A refusal names its reasons as a list.** `verify_stapled` returned
+  `decision: reject, reasons: ['the status assertion is not bound to this credential']`. The
+  binding between an assertion and the credential it describes is checked, and a mismatched
+  pair is refused rather than accepted on two individually valid signatures.
+
+### EXTERNAL SYSTEM WINS
+
+UNKNOWN. Not run.
+
+### POLARIS COMPLEXITY WITH NO PROVEN BENEFIT
+
+Not complexity this time. **A default.**
+
+`max_window_seconds` defaults to `None`, which accepts any staleness the issuer chose. A
+relying party that does not know to pass a bound inherits the issuer's number, and on the
+published vector that number is a year.
+
+**And Polaris does the opposite thing, deliberately, one module away.** `grant_within_limits`
+REFUSES a limit key it does not understand, on the stated reasoning that a bounded grant must
+not silently become unbounded. That is the same hazard with the opposite default. One place
+refuses what it cannot bound; the other accepts what it was not told to bound.
+
+### LESSONS TO ABSORB
+
+1. **An offline system's freshness bound is a number, and it should be stated as one.** Every
+   system in this family trades staleness for offline capability. The failure is not having
+   the trade, it is describing it in adjectives.
+2. **The safe value belongs in the default, not in the documentation.** A caller who reads
+   nothing should get the conservative behaviour.
+
+### POLARIS DIFFERENTIATORS WORTH PRESERVING
+
+The separation of authenticity from status, with no status field on the authenticity verdict.
+That is the property that makes the 365 days *visible* rather than hidden: a relying party has
+to go and ask a second question, and the answer carries its own window.
+
+### EXTERNAL DEPENDENCIES / BLOCKERS
+
+Privado's behaviour here needs its issuer and state resolution stood up. Until then the
+comparison is one-sided.
+
+### NEXT ACTION
+
+**LAB.**
+
+Changing a default is a product behaviour change and it would alter what existing callers
+get. It is not required by an external interoperability target, an external user, or an
+external security finding, and Polaris does not currently promise a bounded default, so it is
+not CORE-BUG either. Recorded, with the inconsistency against `grant_within_limits` named,
+for VANTA.
+
+---
+
+## Closing: the directive's five questions
+
+**What lesson should Polaris absorb?** That a credential with no attributes cannot
+participate in attribute verification, which is what this whole ecosystem is for; and that
+safe values belong in defaults.
+
+**What should Polaris NOT copy?** A blockchain-resident state model. Nothing measured here
+argues for it, and offline verification with zero network calls is a property Polaris
+currently has and would lose.
+
+**Which Polaris property is genuinely differentiated?** Measured, not claimed: the native ZK
+path's unlinkability under an adversary with a positive control, against nine correlation
+handles on the interop path; offline verification with zero network calls; and the separation
+of authenticity from status such that neither can be misread as the other.
+
+**What complexity should disappear?** `disclosure_level`'s three modes, which name a
+capability the product does not have.
+
+**What external system should Polaris talk to next?** The OpenID Foundation conformance suite
+it already passes, run against the hosted instance rather than a local one, so the result is
+somebody else's record rather than this repository's.
+
+Benchmarking stops here. It informed three decisions and authorised none.
