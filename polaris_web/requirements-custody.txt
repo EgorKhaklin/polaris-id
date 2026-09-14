@@ -2,5 +2,5 @@
 # driver needs nothing beyond liboqs; install this for the pkcs11 or awskms
 # driver: pip install -r polaris_web/requirements-custody.txt. Pinned like
 # requirements.txt; Dependabot's pip ecosystem covers this directory.
-python-pkcs11==0.9.5
+python-pkcs11==0.10.0
 boto3==1.43.85
