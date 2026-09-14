@@ -17408,9 +17408,29 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
                          "sdk/typescript/package.json has a `files` allowlist that omits %r, "
                          "so the published tarball will not carry it whatever is on disk"
                          % name)
+    # A registry project page is an outward surface, and the standing rule is that one must
+    # not read as more settled than the thing is. sdk/python declared NO classifiers: on PyPI
+    # that is a page with no maturity signal at all for a 0.1.0 nobody outside has used.
+    for pkg in ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python"):
+        toml = _read(root, pkg + "/pyproject.toml")
+        if not toml:
+            return _fail("distribution_licence", "%s/pyproject.toml is missing" % pkg)
+        if "Development Status ::" not in toml:
+            return _fail("distribution_licence",
+                         "%s declares no Development Status classifier, so its project page "
+                         "carries no maturity signal. At 0.1.0 with no outside user, silence "
+                         "there reads as more settled than the thing is" % pkg)
+        if "License :: OSI Approved :: Apache Software License" not in toml:
+            return _fail("distribution_licence",
+                         "%s declares Apache-2.0 but carries no matching License classifier, "
+                         "so the licence it ships and the licence its page advertises are "
+                         "established by two different mechanisms and only one is checked"
+                         % pkg)
     return _ok("distribution_licence",
                "all %d publishable artifacts carry the Apache-2.0 text and the NOTICE file, "
-               "and the npm allowlist names both" % len(_PUBLISHABLE_PACKAGES))
+               "the npm allowlist names both, and every Python package states its maturity "
+               "and its licence in the metadata a registry renders"
+               % len(_PUBLISHABLE_PACKAGES))
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [

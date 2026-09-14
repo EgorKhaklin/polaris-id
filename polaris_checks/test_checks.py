@@ -15056,6 +15056,10 @@ def test_distribution_licence_check_discriminates(tmp_path):
                     continue
                 (root / pkg / name).write_text("short" if short == (pkg, name) else TEXT)
         (root / "sdk/typescript/package.json").write_text(package_json)
+        for pkg in ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python"):
+            (root / pkg / "pyproject.toml").write_text(
+                '  "Development Status :: 3 - Alpha",\n'
+                '  "License :: OSI Approved :: Apache Software License",\n')
         return root
     write.n = 0
 
@@ -15071,6 +15075,20 @@ def test_distribution_licence_check_discriminates(tmp_path):
     # A stub standing in for the licence is not the licence.
     stub = checks.check_distributions_carry_their_licence(write(short=(PKGS[0], "LICENSE")))
     assert any(f.level == "FAIL" for f in stub), stub
+
+    # A project page with no maturity signal reads as more settled than a 0.1.0 is, and a
+    # licence advertised by one mechanism while shipped by another is only half checked.
+    for drop_line in ("Development Status :: 3 - Alpha",
+                      "License :: OSI Approved :: Apache Software License"):
+        root = write()
+        for pkg in ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python"):
+            (root / pkg / "pyproject.toml").write_text(
+                "\n".join('  "%s",' % c for c in
+                           ("Development Status :: 3 - Alpha",
+                            "License :: OSI Approved :: Apache Software License")
+                           if c != drop_line))
+        meta = checks.check_distributions_carry_their_licence(root)
+        assert any(f.level == "FAIL" for f in meta), drop_line
 
     # npm's allowlist overrides what is on disk, so omitting a name there is the whole defect.
     for missing in ("LICENSE", "NOTICE"):
