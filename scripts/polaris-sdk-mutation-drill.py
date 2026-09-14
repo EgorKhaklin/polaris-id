@@ -31,6 +31,7 @@ Exit 0 when every survivor is declared, 1 on an undeclared one, 3 if the SDK is 
 
     python3 scripts/polaris-sdk-mutation-drill.py [--quick]
 """
+import argparse
 import pathlib
 import re
 import shutil
@@ -196,13 +197,70 @@ def _suites_pass(work: pathlib.Path, sdk: dict) -> bool:
     conf += sdk["conformance"] if sdk["conformance"] else ["--self"]
     try:
         a = subprocess.run(cmd, cwd=work / cwd, capture_output=True, timeout=300)
+        # Short-circuit. The verdict is `a and b`, so once the SDK's own tests have caught
+        # the mutation the conformance run cannot change the answer, and it is the
+        # expensive half: 118 cases, each a subprocess. Running it anyway cost most of the
+        # drill's wall clock for no information. Same semantics, less work.
+        if a.returncode != 0:
+            return False
         b = subprocess.run(conf, cwd=work, capture_output=True, timeout=900)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
-    return a.returncode == 0 and b.returncode == 0
+    return b.returncode == 0
+
+
+#: What this drill is about. A change to any of these can turn a caught refusal into a
+#: survivor or the reverse: the SDK sources obviously, their SUITES because a deleted test
+#: uncovers a refusal, and the drill itself because its inversion decides what a refusal is.
+#: `conformance/` is in the list because `_suites_pass` runs the conformance RUNNER as well
+#: as each SDK's own tests, so a deleted case can uncover a refusal with no SDK file moving
+#: at all. Leaving it out would have made --changed skip exactly the ship that broke things.
+_SDK_PATHS = ("sdk/python/polaris_verify", "sdk/python/test_sdk.py",
+              "sdk/typescript/src", "sdk/typescript/test",
+              "conformance",
+              "scripts/polaris-sdk-mutation-drill.py")
+
+
+def _sdks_moved():
+    """Did this ship touch an SDK, its suite, or this drill? None if that cannot be known.
+
+    Deliberately coarse, for the same reason the procedure drill is: if anything in reach
+    moved, run all 87. Under-selecting silently skips the thing that moved, which is the
+    failure this drill exists to prevent.
+
+    None rather than False when no baseline is reachable -- a shallow checkout, say --
+    because "I could not tell" and "nothing changed" must not look alike.
+    """
+    try:
+        base = subprocess.check_output(["git", "rev-parse", "HEAD~1"], cwd=str(ROOT),
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+        out = subprocess.check_output(["git", "diff", "--name-only", base, "--", *_SDK_PATHS],
+                                      cwd=str(ROOT), text=True, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    return bool(out.strip())
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0] or None)
+    ap.add_argument("--changed", action="store_true",
+                    help="run only when this ship touched an SDK, its suite, or this drill")
+    args = ap.parse_args()
+
+    if args.changed:
+        moved = _sdks_moved()
+        if moved is None:
+            print("--changed cannot tell what this ship touched (no reachable HEAD~1). That is "
+                  "not the same as 'nothing changed', so this is a refusal rather than a clean "
+                  "run: give the checkout fetch-depth: 2, or run without --changed.",
+                  file=sys.stderr)
+            return 2
+        if not moved:
+            print("  this ship did not touch an SDK, its suite or this drill: nothing to "
+                  "mutate. Run without --changed for the full 87.")
+            return 0
+        print("  an SDK, a suite or this drill moved in this ship: inverting every refusal")
+
     for lang, sdk in SDKS.items():
         if not (ROOT / sdk["source"]).is_file():
             print("sdk-mutation drill: %s is missing" % sdk["source"], file=sys.stderr)

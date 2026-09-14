@@ -1758,8 +1758,13 @@ jobs:
           --health-retries 5
 
     steps:
+      # fetch-depth 2 so the SDK drill's --changed has a baseline. Without it HEAD~1 is
+      # unreachable and the drill REFUSES rather than reporting a clean run, which is the
+      # right behaviour and would fail this job.
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v7
@@ -2166,7 +2171,7 @@ jobs:
       - name: Install the TypeScript SDK's pinned dependencies
         run: cd sdk/typescript && npm ci
       - name: SDK mutation — every refusal in BOTH reference verifiers is caught when inverted
-        run: python scripts/polaris-sdk-mutation-drill.py
+        run: python scripts/polaris-sdk-mutation-drill.py --changed
 
       # v9.330 (P8.8b) — cross-version compatibility, both directions: the frozen version-1
       # set (cases + vectors pinned by SHA256SUMS, a vendored v9.317 verifier) under the CURRENT
