@@ -32,6 +32,7 @@ Exit 0 when every survivor is declared, 1 on an undeclared one, 3 if the SDK is 
     python3 scripts/polaris-sdk-mutation-drill.py [--quick]
 """
 import argparse
+import hashlib
 import pathlib
 import re
 import shutil
@@ -67,14 +68,20 @@ SDKS = {
 #: ONLINE PolarisVerifier path, which needs a live server; both offline suites are the
 #: wrong instrument for them, and reaching them would mean standing a stub server inside
 #: the SDK's unit tests to exercise an error branch that returns the same verdict anyway.
+#: Keyed `sdk:function:fingerprint`, the fingerprint being six hex of the refusal's own
+#: text. It used to end in a LINE NUMBER, and an eight-line insertion elsewhere in the
+#: TypeScript SDK moved five declarations onto unrelated code: CI reported five gaps closed
+#: that had not closed. The quiet direction is worse, a shifted number landing on another
+#: refusal that also survives, which reports nothing and leaves the declaration describing a
+#: site it was never about. Content cannot drift.
 DECLARED_SURVIVORS: dict[str, str] = {
-    "typescript:hexToBytes:64":
+    "typescript:hexToBytes:56b25d":
         "removing the throw yields garbage bytes and the same not-authentic verdict",
-    "typescript:hexToBytes:68":
+    "typescript:hexToBytes:7c7d1e":
         "removing the throw yields garbage bytes and the same not-authentic verdict",
-    "typescript:accessToken:753":
+    "typescript:accessToken:a4b2f8":
         "an HTTP status guard on the online path; no offline suite reaches it",
-    "typescript:onlineStatus:767":
+    "typescript:onlineStatus:0192d7":
         "an HTTP status guard on the online path; no offline suite reaches it",
 
     # --- Reached only when the CRYPTO BACKEND IS ABSENT OR DISAGREES ------------------
@@ -82,25 +89,25 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # backend installed, which is the precondition for these lines never being taken. They
     # are not untested refusals; they are refusals the test environment cannot produce
     # without removing the thing the tests need in order to run.
-    "python:verify_authenticity:162":
+    "python:verify_authenticity:a78e3f":
         "the no-backend-available branch; a suite with cryptography installed cannot reach it",
-    "python:verify_authenticity:165":
+    "python:verify_authenticity:a78e3f#2":
         "the two witnesses DISAGREE; inducing it needs one backend patched to lie",
-    "python:verify_status_assertion:301":
+    "python:verify_status_assertion:4a55a6":
         "ok is None: the verification could not run, which needs no backend installed",
-    "python:verify_signed_artifact:425":
+    "python:verify_signed_artifact:930d0e":
         "ok is None: the verification could not run, which needs no backend installed",
-    "python:verify_cosignature:544":
+    "python:verify_cosignature:930d0e":
         "ok is None: the verification could not run, which needs no backend installed",
-    "python:verify_attestation:721":
+    "python:verify_attestation:930d0e":
         "ok is None: the verification could not run, which needs no backend installed",
-    "typescript:verifyStatusAssertion:212":
+    "typescript:verifyStatusAssertion:83de9a":
         "the catch-all arm: reachable only by making the crypto library throw",
-    "typescript:verifySignedArtifact:322":
+    "typescript:verifySignedArtifact:b96e23":
         "the catch-all arm: reachable only by making the crypto library throw",
-    "typescript:verifyCosignature:448":
+    "typescript:verifyCosignature:b96e23":
         "the catch-all arm: reachable only by making the crypto library throw",
-    "typescript:verifyAttestation:647":
+    "typescript:verifyAttestation:b96e23":
         "the catch-all arm: reachable only by making the crypto library throw",
 
     # --- Reached only AFTER a signature genuinely verifies ---------------------------
@@ -110,9 +117,9 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # is a signing fixture this suite does not carry. The distinction it draws -- authentic
     # versus authoritative -- is real, and it is asserted in the detached verifier's own
     # tests rather than here.
-    "python:verify_cosignature:546":
+    "python:verify_cosignature:b4e432":
         "downstream of a real signature verifying; needs a genuine cosignature fixture",
-    "typescript:verifyCosignature:451":
+    "typescript:verifyCosignature:c2f6c1":
         "downstream of a real signature verifying; needs a genuine cosignature fixture",
 
     # --- Initial values, not refusals ------------------------------------------------
@@ -120,9 +127,9 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # function returns, so inverting it changes nothing observable. The drill cannot tell
     # an initializer from a return, and this is the honest answer rather than a test that
     # would be asserting the assignment order of a local.
-    "python:verify_timestamp_anchor:570":
+    "python:verify_timestamp_anchor:7959f1":
         "an initial verdict value, overwritten on every path before return",
-    "python:verify_holder:667":
+    "python:verify_holder:a1ce5e":
         "an initial verdict value, overwritten on every path before return",
 }
 
@@ -169,8 +176,21 @@ def _invert(line: str, lang: str) -> str | None:
     return None
 
 
-def _label(lines: list[str], i: int, lang: str) -> str:
-    """sdk:function:line, so a survivor names something a reader can open.
+def _fingerprint(line: str) -> str:
+    """Six hex of the refusal's own text, whitespace collapsed.
+
+    The survivor key used to end in a LINE NUMBER, and that made the declared list brittle
+    in the worst way. Inserting eight lines elsewhere in the TypeScript SDK shifted five
+    declarations onto different code and CI reported five closed gaps that had not closed.
+    The louder risk is the other direction: a shifted number that lands on ANOTHER refusal
+    which also survives reports nothing at all, and the declaration then describes a site it
+    has never been about. Addressing the line by its content cannot drift.
+    """
+    return hashlib.sha256(" ".join(line.split()).encode("utf-8")).hexdigest()[:6]
+
+
+def _function_of(lines: list[str], i: int, lang: str) -> str:
+    """The enclosing function name, so a survivor names something a reader can open.
 
     Class METHODS count. The first version matched only top-level definitions, so two
     refusals inside a PolarisVerifier method were labelled with the unrelated function
@@ -186,8 +206,48 @@ def _label(lines: list[str], i: int, lang: str) -> str:
         for pat in pats:
             m = re.match(pat, lines[j])
             if m and m.group(1) not in ("if", "for", "while", "switch", "catch", "return"):
-                return "%s:%s:%d" % (lang, m.group(1), i + 1)
-    return "%s:line %d" % (lang, i + 1)
+                return m.group(1)
+    return "line %d" % (i + 1)
+
+
+def _label(lines: list[str], i: int, lang: str) -> str:
+    """sdk:function:fingerprint. Stable under edits above it, changed by edits TO it.
+
+    Two refusals inside one function can be textually identical, and then one fingerprint
+    would name two sites and the declared list could not tell them apart. An occurrence
+    index is appended when that happens, so the key stays unique without becoming a line
+    number again.
+    """
+    fn = _function_of(lines, i, lang)
+    fp = _fingerprint(lines[i])
+    seen = sum(1 for j in range(i) if _fingerprint(lines[j]) == fp
+               and _function_of(lines, j, lang) == fn)
+    return "%s:%s:%s%s" % (lang, fn, fp, "#%d" % (seen + 1) if seen else "")
+
+
+def _where(lines: list[str], i: int, lang: str) -> str:
+    """The same site with its current line, for a reader rather than for the key."""
+    return "%s:%s line %d" % (lang, _function_of(lines, i, lang), i + 1)
+
+
+def _liboqs_present() -> bool:
+    """Is the primary ML-DSA backend importable here?
+
+    It decides which refusals are REACHABLE. `_verify_liboqs` returns False when the library
+    itself throws, and with no library the import fails earlier and that line is dead: the
+    inversion changes nothing and the site reports as a survivor. CI installs liboqs and sees
+    18 survivors; this machine, without it, sees 19.
+
+    That difference is a trap rather than a curiosity. A developer running this locally gets
+    a failure CI does not produce, declares the extra survivor to make it green, and CI then
+    fails the other way with "1 declared survivor no longer survives". The declared list is
+    calibrated against an environment, so the drill has to say which one it is in.
+    """
+    try:
+        import oqs  # noqa: F401  presence is the point
+    except Exception:  # noqa: BLE001  any import failure means the same thing
+        return False
+    return True
 
 
 def _suites_pass(work: pathlib.Path, sdk: dict) -> bool:
@@ -327,6 +387,22 @@ def main() -> int:
     print("  refusals inverted across both SDKs       %4d" % total)
     print("  ...of those, accepted by both suites     %4d  (%d declared)"
           % (len(survivors), len(DECLARED_SURVIVORS)))
+
+    # The declared list is calibrated against an environment with liboqs, because liboqs
+    # decides which refusals are reachable at all. Comparing against it from an environment
+    # without one produces a verdict about this machine, in EITHER direction: an extra
+    # survivor that CI does not see, or a declared one that looks closed. Saying so is the
+    # only honest option; failing would send a developer to "fix" the declared list and
+    # break CI, and passing would call a mismatch agreement.
+    if not _liboqs_present():
+        for s in undeclared:
+            print("  (inconclusive) %s survives here" % s)
+        print("\n== INCONCLUSIVE: liboqs is not installed, so the refusals it makes "
+              "reachable are dead code on this machine and the survivor set is not the one "
+              "the declared list was calibrated against (%d here, undeclared %d, stale %d). "
+              "The comparison that counts runs in CI, which installs it. Install liboqs to "
+              "run the real thing locally. ==" % (len(survivors), len(undeclared), len(stale)))
+        return 0
 
     if stale:
         print("\n== SDK MUTATION DRILL FAILED: %d declared survivor(s) no longer survive, so "
