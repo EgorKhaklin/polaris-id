@@ -10,10 +10,13 @@ version, which is not a product version and is not published anywhere.
 | Artifact | Registry | Name | Current |
 |---|---|---|---|
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 0.1.0, unpublished |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 0.1.0, unpublished |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 0.1.0, unpublished |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 0.1.0, unpublished |
 
-All three names were confirmed unclaimed on 2026-09-13. The npm package was `@polaris/verify`
+All four names were confirmed unclaimed: the first three on 2026-09-13, `polaris-oid4vp` on
+2026-09-14, each against a calibration that tells an absent name from a present one
+(`cryptography` and `requests` answer 200; the candidate and a nonsense name answer 404). The npm package was `@polaris/verify`
 until that date and had to change: `@polaris` resolves to an existing npm organisation, so
 that scope could never have been published to. Checked, not assumed, against a calibration
 that distinguishes a real org from an absent one.
@@ -63,9 +66,10 @@ used yet.
 What must hold for any publish:
 
 1. `python scripts/polaris-product-boundary-drill.py` passes. The workflow runs it and will
-   not publish past a failure. It builds a wheel, installs it into a throwaway environment
-   with none of Polaris present, verifies real signed material, and packs and installs the
-   npm tarball into a bare project. It carries two negative controls.
+   not publish past a failure. It builds each wheel, installs it into a throwaway environment
+   with none of Polaris present, verifies real signed material, packs and installs the npm
+   tarball into a bare project, and opens a conformance-suite response with `polaris-oid4vp`
+   from outside the repository. It carries three negative controls.
 2. `python -m twine check` passes on every distribution.
 3. The version was bumped. **A version number on a registry can never be reused**, even
    after a yank, so a mistake costs a number rather than being undone.
@@ -83,7 +87,8 @@ use the *pending* publisher form.
 
 1. Go to <https://pypi.org/manage/account/publishing/>.
 2. Add a pending publisher:
-   - PyPI project name: `polaris-verify` (then repeat for `polaris-sdk-python`)
+   - PyPI project name: `polaris-verify` (then repeat for `polaris-sdk-python` and
+     `polaris-oid4vp`)
    - Owner: `EgorKhaklin`
    - Repository name: `polaris-id`
    - Workflow name: `publish.yml`

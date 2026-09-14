@@ -20,6 +20,7 @@ on:
           - dry-run-everything
           - polaris-verify (PyPI)
           - polaris-sdk-python (PyPI)
+          - polaris-oid4vp (PyPI)
           - polaris-sdk-ts (npm)
       confirm:
         description: 'Type PUBLISH to actually publish. Anything else stays a dry run.'
@@ -54,6 +55,7 @@ jobs:
           python -m pip install --quiet build twine
           python -m build --outdir dist/polaris-verify packages/polaris-verify
           python -m build --outdir dist/polaris-sdk-python sdk/python
+          python -m build --outdir dist/polaris-oid4vp packages/polaris-oid4vp
       - name: Validate the distribution metadata
         run: python -m twine check dist/*/*
       - name: Pack the npm tarball
@@ -78,7 +80,7 @@ jobs:
   pypi:
     name: Publish to PyPI
     needs: build-and-gate
-    if: inputs.confirm == 'PUBLISH' && (inputs.target == 'polaris-verify (PyPI)' || inputs.target == 'polaris-sdk-python (PyPI)')
+    if: inputs.confirm == 'PUBLISH' && (inputs.target == 'polaris-verify (PyPI)' || inputs.target == 'polaris-sdk-python (PyPI)' || inputs.target == 'polaris-oid4vp (PyPI)')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -97,6 +99,7 @@ jobs:
           case "${{ inputs.target }}" in
             "polaris-verify (PyPI)")     cp dist/polaris-verify/* upload/ ;;
             "polaris-sdk-python (PyPI)") cp dist/polaris-sdk-python/* upload/ ;;
+            "polaris-oid4vp (PyPI)")     cp dist/polaris-oid4vp/* upload/ ;;
           esac
           ls -l upload
       - uses: pypa/gh-action-pypi-publish@release/v1

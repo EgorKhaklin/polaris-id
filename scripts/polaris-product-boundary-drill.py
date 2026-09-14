@@ -25,6 +25,13 @@ on the path. What it proves:
   5. `--dev-placeholder` cannot produce an authentic verdict at all, and every
      machine-readable verdict carries the crypto mode.
 
+The same question is asked of the other two product artifacts. `polaris-sdk-ts` packs,
+installs into a bare project and verifies real material. `polaris-oid4vp` installs from a
+wheel and opens the one artifact in this repository that this repository did not make: a
+`direct_post.jwt` response produced by the OpenID Foundation conformance suite's wallet,
+verified from a directory that is not the repository, with the fixture COPIED there because
+a stranger has their own material rather than ours in place.
+
 NEGATIVE CONTROL. A drill that only ever reports success is indistinguishable from one
 that never ran. Before trusting any pass above, this builds a DELIBERATELY BROKEN wheel --
 the verifier with `import psycopg2` at the top -- and requires the harness to catch it. If
@@ -55,12 +62,51 @@ FORBIDDEN_AT_RUNTIME = ("flask", "psycopg2", "polaris_checks", "polaris_web",
 GENUINE = ROOT / "conformance" / "vectors" / "pack-mldsa87-valid.json"
 TAMPERED = ROOT / "conformance" / "vectors" / "pack-mldsa87-tampered.json"
 
+#: The OpenID4VP verifier, the product's other external door. Its install test is the same
+#: question with different material: a stranger installs it and verifies a presentation the
+#: OpenID Foundation conformance suite produced, from outside this repository.
+OID4VP = ROOT / "packages" / "polaris-oid4vp"
+OID4VP_CAPTURE = OID4VP / "testdata" / "conformance-suite-capture.json"
+
+#: The script the stranger runs. It imports only the installed package and reads only the
+#: fixture handed to it, which is the whole point: nothing here may resolve through the tree.
+OID4VP_PROGRAM = """
+import json, sys, urllib.parse
+from cryptography.hazmat.primitives.asymmetric import ec
+from polaris_oid4vp.jwe import b64u_decode, decrypt_response
+from polaris_oid4vp.sdjwt import verify_presentation
+
+data = json.load(open(sys.argv[1]))
+jwk = data["response_decryption_jwk"]
+key = ec.derive_private_key(int.from_bytes(b64u_decode(jwk["d"]), "big"), ec.SECP256R1())
+token = data["response_jwe"]
+if token.startswith("response="):
+    token = urllib.parse.parse_qs(token)["response"][0]
+presentation = decrypt_response(token, key)["vp_token"]["pid"]
+presentation = presentation[0] if isinstance(presentation, list) else presentation
+kb_iat = json.loads(b64u_decode(presentation.split("~")[-1].split(".")[1]))["iat"]
+
+def verdict(p, **kw):
+    args = dict(expected_nonce=data["nonce"], expected_audience=data["client_id"],
+                issuer_jwks=[data["issuer_jwk"]], now=kb_iat)
+    args.update(kw)
+    return verify_presentation(p, **args)
+
+good = verdict(presentation)
+tampered = verdict(presentation[:-4] + "AAAA")
+elsewhere = verdict(presentation, expected_nonce="a-nonce-nobody-sent")
+print(json.dumps({"authentic": bool(good.authentic), "claims": sorted(good.claims),
+                  "tampered_refused": not tampered.authentic,
+                  "wrong_nonce_refused": not elsewhere.authentic,
+                  "wrong_nonce_code": elsewhere.code}))
+"""
+
 
 def _run(cmd, cwd=None, env=None):
     return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=900)
 
 
-def _build_wheel(src, out):
+def _build_wheel(src, out, prefix="polaris_verify"):
     """Build a wheel from `src` into `out`. None if the build itself failed."""
     # Build isolation ON: pip fetches its own setuptools, which is what a stranger's
     # `pip install polaris-verify` does. Reusing this interpreter's build tools would test
@@ -69,7 +115,7 @@ def _build_wheel(src, out):
     if r.returncode != 0:
         print(r.stdout[-2000:], r.stderr[-2000:], file=sys.stderr)
         return None
-    wheels = sorted(out.glob("polaris_verify-*.whl"))
+    wheels = sorted(out.glob("%s-*.whl" % prefix))
     return wheels[0] if wheels else None
 
 
@@ -348,12 +394,73 @@ def _check_npm_from_clone(work: pathlib.Path, src: pathlib.Path, label: str):
     return bad
 
 
+def _check_oid4vp(work: pathlib.Path, src: pathlib.Path, env, label):
+    """Install polaris-oid4vp from a wheel and verify the conformance capture outside the tree.
+
+    The material is the one artifact in this repository that this repository did not make: a
+    `direct_post.jwt` response produced by the OpenID Foundation conformance suite's wallet.
+    A stranger installing this package and opening that response is the whole product claim
+    in one command.
+    """
+    failures = []
+    wheel = _build_wheel(src, work / "dist", prefix="polaris_oid4vp")
+    if wheel is None:
+        return ["%s: the wheel did not build" % label]
+
+    venv = work / "venv"
+    if _run([sys.executable, "-m", "venv", str(venv)]).returncode != 0:
+        return ["%s: the venv did not create" % label]
+    bindir = venv / ("Scripts" if os.name == "nt" else "bin")
+    py = bindir / ("python.exe" if os.name == "nt" else "python")
+    r = _run([str(py), "-m", "pip", "-q", "install", str(wheel)])
+    if r.returncode != 0:
+        return ["%s: the wheel did not install: %s" % (label, r.stderr[-300:])]
+
+    # 1. None of the tree came along. The package declares `cryptography` and nothing else,
+    #    so anything from this list being importable means it was installed as a dependency.
+    for mod in FORBIDDEN_AT_RUNTIME:
+        probe = _run([str(py), "-c", "import %s" % mod], cwd=str(work), env=env)
+        if probe.returncode == 0:
+            failures.append("%s: %r is importable in the fresh environment" % (label, mod))
+
+    # 2. The install test proper, run from a directory that is not the repository, with the
+    #    fixture COPIED there: a stranger has their own material, not ours in place.
+    outside = work / "elsewhere"
+    outside.mkdir(exist_ok=True)
+    shutil.copy(OID4VP_CAPTURE, outside / "capture.json")
+    (outside / "verify.py").write_text(OID4VP_PROGRAM)
+    r = _run([str(py), "verify.py", "capture.json"], cwd=str(outside), env=env)
+    if r.returncode != 0:
+        return failures + ["%s: the verify program failed: %s" % (label, r.stderr[-400:])]
+    try:
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        return failures + ["%s: the verify program printed no verdict (%s): %r"
+                           % (label, e, r.stdout[-200:])]
+
+    if not got.get("authentic"):
+        failures.append("%s: the conformance suite's own presentation did not verify" % label)
+    for claim in ("given_name", "family_name", "vct"):
+        if claim not in got.get("claims", []):
+            failures.append("%s: the verified claims omit %r" % (label, claim))
+    if not got.get("tampered_refused"):
+        failures.append("%s: a tampered presentation was accepted" % label)
+    # The nonce check is the one that stops replay, and it is the one a verifier can pass
+    # every other leg without performing.
+    if not got.get("wrong_nonce_refused"):
+        failures.append("%s: a presentation made for another request was accepted" % label)
+    elif got.get("wrong_nonce_code") != "nonce":
+        failures.append("%s: refused a wrong nonce for the wrong reason (%s)"
+                        % (label, got.get("wrong_nonce_code")))
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0] or None)
     ap.add_argument("--keep", action="store_true", help="leave the build and venv in place")
     args = ap.parse_args()
 
-    for p in (PKG, GENUINE, TAMPERED):
+    for p in (PKG, GENUINE, TAMPERED, OID4VP, OID4VP_CAPTURE):
         if not p.exists():
             print("product-boundary drill: %s is missing" % p, file=sys.stderr)
             return 3
@@ -366,6 +473,7 @@ def main() -> int:
     env = _clean_env()
     failures = []
     npm_control_caught = True
+    oid_control_caught = True
     try:
         print("== building the wheel a stranger would install ==")
         wheel = _build_wheel(PKG, work / "dist")
@@ -387,6 +495,16 @@ def main() -> int:
             print("  every leg passed: builds, installs, imports with none of the tree "
                   "present, refuses to start unsure, verifies genuine, refuses tampered, "
                   "and cannot report a dev run as authentic")
+
+        print("== a stranger installs polaris-oid4vp and opens a conformance response ==")
+        oid_failures = _check_oid4vp(work / "oid4vp", OID4VP, env, "oid4vp")
+        for f in oid_failures:
+            print("  FAIL %s" % f)
+        if not oid_failures:
+            print("  builds, installs with none of the tree present, and verifies the "
+                  "OpenID Foundation suite's own presentation from outside the repository: "
+                  "authentic, tampered refused, another request's nonce refused")
+        failures += oid_failures
 
         print("== the same question of the TypeScript SDK, as a published package ==")
         npm_failures = _check_npm(work / "npm", TS_SDK, "npm")
@@ -453,6 +571,22 @@ def main() -> int:
                 control_caught = bool(caught)
                 print("  a verifier importing psycopg2 is %s"
                       % ("caught" if control_caught else "NOT CAUGHT"))
+
+        # The same control for the OpenID4VP half. The leg above passed on its first run,
+        # which is exactly when a leg most needs a control: a harness that cannot produce a
+        # failure and a product that has none print the same line.
+        print("== negative control: an OpenID4VP verifier that accepts anything ==")
+        broken_oid = work / "broken-oid4vp"
+        shutil.copytree(OID4VP, broken_oid,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", "build"))
+        sdjwt = broken_oid / "polaris_oid4vp" / "sdjwt.py"
+        sdjwt.write_text(sdjwt.read_text().replace(
+            "def _refuse(code, reason):\n    return Verdict(False, code, reason)",
+            "def _refuse(code, reason):\n    return Verdict(True, code, reason)"))
+        oid_control_caught = bool(_check_oid4vp(work / "oid4vp-control", broken_oid, env,
+                                                "oid4vp-control"))
+        print("  a verifier that refuses nothing is %s"
+              % ("caught" if oid_control_caught else "NOT CAUGHT"))
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -460,6 +594,11 @@ def main() -> int:
             print("\nkept: %s" % work)
 
     print()
+    if not oid_control_caught:
+        print("== the OpenID4VP control was NOT caught: a package whose verifier accepts "
+              "every forged presentation passed this drill's leg, so that leg is a fact "
+              "about this script and not about the product ==", file=sys.stderr)
+        return 2
     if not npm_control_caught:
         print("== PRODUCT BOUNDARY DRILL FAILED: the npm negative control was not caught, so "
               "the TypeScript result would mean nothing ==", file=sys.stderr)
@@ -472,7 +611,7 @@ def main() -> int:
         print("== PRODUCT BOUNDARY DRILL FAILED: %d leg(s) of the required install test did "
               "not hold ==" % len(failures), file=sys.stderr)
         return 2
-    print("== PRODUCT BOUNDARY DRILL PASSED: polaris-verify builds, installs on a machine "
+    print("== PRODUCT BOUNDARY DRILL PASSED: every product artifact builds, installs on a machine "
           "with none of Polaris on it, and does the job a relying party installs it for. The "
           "negative control proves this harness can produce a failure. ==")
     return 0
