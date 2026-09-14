@@ -10124,7 +10124,13 @@ def test_review_packet_check_discriminates(tmp_path):
                  'polaris_web/transparency.py', 'polaris_web/coexistence.py',
                  'polaris_web/proofing.py', 'README.md', 'docs/RED-TEAM-SCOPE.md',
                  'scripts/polaris-transparency-ledger.py', 'scripts/polaris-verify-load.py',
-                 'polaris_sql/01_schema.sql']
+                 'polaris_sql/01_schema.sql',
+                 # L-11's second and third witnesses: the two external checks that make its
+                 # "every guarantee is checked by machinery written by the same author"
+                 # clause false. Adding a witness means adding its file here, and forgetting
+                 # to is what turned this list red.
+                 '.github/workflows/ci.yml',
+                 'scripts/polaris-oid4vp-conformance-drill.py']
 
     def write(old=None, new=None):
         for rel in ['docs/REVIEW-PACKET.md',
