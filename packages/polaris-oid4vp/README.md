@@ -90,6 +90,37 @@ A fresh response-encryption key per request, because the suite checks the key is
 and is right to: one long-lived key makes every presentation ever sent to this verifier
 readable by whoever later obtains it.
 
+## Running one
+
+Installing this used to leave you with a library and no way to start a verifier. Two
+commands now:
+
+```bash
+polaris-oid4vp keygen --out ./pki --host verifier.example
+polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
+```
+
+**`keygen` is the half that is not obvious.** The profile pins `client_id_prefix=x509_hash`,
+and the conformance suite refuses two certificate shapes that look perfectly reasonable:
+
+- a **self-signed leaf**: *"Leaf certificate in x5c chain must not be self-signed"*
+- the registered **trust anchor inside the chain**: *"Trust anchor certificate must not be
+  included in x5c chain"*
+
+Each cost a failed conformance run to discover. `keygen` produces a CA, a leaf it signs, and
+a self-signed certificate for the listener, and prints the `client_id` plus the path to the
+anchor a counterparty registers. `test_cli.py` asserts those shapes rather than asserting
+five files appeared, the conformance drill builds its own certificates through this same
+command so the two cannot drift, and the product boundary drill checks the installed command
+from a throwaway environment.
+
+Serving with no `--issuer-jwks` refuses every presentation with `issuer_key`. That is the
+correct answer for a verifier that trusts nobody, and it is a trap, so the command says so on
+stderr rather than letting it read as a verifier that works.
+
+**The keys it makes are for testing.** A deployment's request-signing certificate comes from
+whatever authority its ecosystem trusts.
+
 ## The conformance run
 
 ```bash
@@ -132,10 +163,10 @@ as many failures as a passing one.
 
 ```bash
 cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verifier \
-    test_serve test_conformance_capture
+    test_serve test_cli test_conformance_capture
 ```
 
-125 tests in five files at 99% line coverage, and they are not equal in weight. Coverage is
+137 tests in six files at 99% line coverage, and they are not equal in weight. Coverage is
 the weakest of the three instruments here: it says a line ran.
 
 **And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`

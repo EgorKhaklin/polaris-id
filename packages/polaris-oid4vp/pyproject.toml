@@ -25,6 +25,9 @@ classifiers = [
 # would only produce a verifier that cannot verify.
 dependencies = ["cryptography>=42"]
 
+[project.scripts]
+polaris-oid4vp = "polaris_oid4vp.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/EgorKhaklin/polaris-id"
 Assessment = "https://github.com/EgorKhaklin/polaris-id/tree/main/lab/interop"

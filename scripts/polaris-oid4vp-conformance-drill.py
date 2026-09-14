@@ -33,7 +33,6 @@ suite that had quietly stopped sending anything look exactly alike without it. T
 if either control goes unnoticed, and says which.
 """
 import argparse
-import datetime
 import json
 import pathlib
 import ssl
@@ -45,11 +44,9 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "packages" / "polaris-oid4vp"))
 
-from cryptography import x509  # noqa: E402
-from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
-from cryptography.x509.oid import NameOID  # noqa: E402
 
+from polaris_oid4vp.cli import FILES, keygen  # noqa: E402
 from polaris_oid4vp.jwe import b64u_encode  # noqa: E402
 from polaris_oid4vp.serve import serve  # noqa: E402
 from polaris_oid4vp.verifier import Verifier  # noqa: E402
@@ -99,47 +96,19 @@ def api(base, path, method="GET", body=None, timeout=90):
 
 
 def build_pki(workdir):
-    """A CA, a leaf for the request object, and a self-signed TLS cert for the listener."""
-    now = datetime.datetime.now(datetime.timezone.utc)
-    ca_key = ec.generate_private_key(ec.SECP256R1())
-    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "polaris verifier CA")])
-    ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
-          .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
-          .not_valid_before(now - datetime.timedelta(days=1))
-          .not_valid_after(now + datetime.timedelta(days=365))
-          .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-          .add_extension(x509.KeyUsage(False, False, False, False, False, True, True,
-                                       False, False), critical=True)
-          .sign(ca_key, hashes.SHA256()))
-    leaf_key = ec.generate_private_key(ec.SECP256R1())
-    leaf = (x509.CertificateBuilder()
-            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, HOST)]))
-            .issuer_name(ca_name).public_key(leaf_key.public_key())
-            .serial_number(x509.random_serial_number())
-            .not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=90))
-            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(HOST)]), critical=False)
-            .sign(ca_key, hashes.SHA256()))
+    """The certificates the profile requires, from the PACKAGE rather than from here.
 
-    tls_key = ec.generate_private_key(ec.SECP256R1())
-    tls_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, HOST)])
-    tls = (x509.CertificateBuilder().subject_name(tls_name).issuer_name(tls_name)
-           .public_key(tls_key.public_key()).serial_number(x509.random_serial_number())
-           .not_valid_before(now - datetime.timedelta(days=1))
-           .not_valid_after(now + datetime.timedelta(days=90))
-           .add_extension(x509.SubjectAlternativeName([x509.DNSName(HOST)]), critical=False)
-           .sign(tls_key, hashes.SHA256()))
-    (workdir / "tls_cert.pem").write_bytes(tls.public_bytes(serialization.Encoding.PEM))
-    (workdir / "tls_key.pem").write_bytes(tls_key.private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption()))
+    This function used to carry its own copy of the CA-and-leaf construction. Two copies of
+    a rule the conformance suite enforces is two places for it to drift, and the copy inside
+    the drill is the one that would stay right while the shipped one rotted: the drill is
+    what gets run against the suite. `polaris-oid4vp keygen` is now the single source, and
+    this reads what it wrote.
+    """
+    keygen(workdir, HOST)
     return {
-        "ca_pem": ca.public_bytes(serialization.Encoding.PEM).decode(),
-        "leaf_pem": leaf.public_bytes(serialization.Encoding.PEM),
-        "leaf_key_pem": leaf_key.private_bytes(serialization.Encoding.PEM,
-                                               serialization.PrivateFormat.PKCS8,
-                                               serialization.NoEncryption()),
+        "ca_pem": (workdir / FILES["anchor"]).read_text(),
+        "leaf_pem": (workdir / FILES["client_cert"]).read_bytes(),
+        "leaf_key_pem": (workdir / FILES["client_key"]).read_bytes(),
     }
 
 
@@ -239,8 +208,8 @@ def main() -> int:
         request_uri="https://%s:%d/request.jwt" % (HOST, PORT),
         response_uri="https://%s:%d/response" % (HOST, PORT),
         issuer_jwks=[{k: v for k, v in issuer_jwk.items() if k != "d"}])
-    httpd = serve(verifier, port=PORT, certfile=str(workdir / "tls_cert.pem"),
-                  keyfile=str(workdir / "tls_key.pem"))
+    httpd = serve(verifier, port=PORT, certfile=str(workdir / FILES["tls_cert"]),
+                  keyfile=str(workdir / FILES["tls_key"]))
     print("verifier listening on https://%s:%d, client_id %s...\n"
           % (HOST, PORT, verifier.client_id[:26]))
 

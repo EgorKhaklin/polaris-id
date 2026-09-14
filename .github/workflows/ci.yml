@@ -2395,6 +2395,10 @@ jobs:
       # and the conformance drill that would notice needs Docker and a running suite.
       - name: OID4VP mutation — every refusal is caught when inverted
         run: python scripts/polaris-oid4vp-mutation-drill.py
+      # keygen encodes two certificate rules the conformance suite enforces and that cost a
+      # failed run each to discover. The tests assert the SHAPE, not that files appeared.
+      - name: The verifier's entry point, and the certificates it must produce
+        run: cd packages/polaris-oid4vp && python -m unittest test_cli
 
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance

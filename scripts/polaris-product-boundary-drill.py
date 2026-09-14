@@ -68,6 +68,25 @@ TAMPERED = ROOT / "conformance" / "vectors" / "pack-mldsa87-tampered.json"
 OID4VP = ROOT / "packages" / "polaris-oid4vp"
 OID4VP_CAPTURE = OID4VP / "testdata" / "conformance-suite-capture.json"
 
+#: The two certificate rules the conformance suite enforces, checked against what the
+#: installed `keygen` produced. Both were discovered by failing a run: "Leaf certificate in
+#: x5c chain must not be self-signed" and "Trust anchor certificate must not be included in
+#: x5c chain". A command that silently produced the wrong shape would look fine until the
+#: suite was pointed at it.
+OID4VP_PKI_PROBE = """
+import pathlib, sys
+from cryptography import x509
+from polaris_oid4vp.cli import FILES, verifier_from
+pki = pathlib.Path(sys.argv[1])
+leaf = x509.load_pem_x509_certificate((pki / FILES["client_cert"]).read_bytes())
+anchor = x509.load_pem_x509_certificate((pki / FILES["anchor"]).read_bytes())
+assert leaf.issuer != leaf.subject, "the leaf is self-signed"
+assert leaf.issuer == anchor.subject, "the leaf is not signed by the anchor"
+v = verifier_from(pki, "verifier.example", 9443)
+assert len(v.x5c) == 1, "the chain carries more than the leaf"
+assert v.client_id.startswith("x509_hash:"), v.client_id
+"""
+
 #: The script the stranger runs. It imports only the installed package and reads only the
 #: fixture handed to it, which is the whole point: nothing here may resolve through the tree.
 OID4VP_PROGRAM = """
@@ -423,7 +442,28 @@ def _check_oid4vp(work: pathlib.Path, src: pathlib.Path, env, label):
         if probe.returncode == 0:
             failures.append("%s: %r is importable in the fresh environment" % (label, mod))
 
-    # 2. The install test proper, run from a directory that is not the repository, with the
+    # 2. The console script exists and produces certificates of the shape the conformance
+    #    profile requires. A library with no entry point is a product a stranger cannot run,
+    #    and the two certificate rules it encodes each cost a failed conformance run.
+    bindir = venv / ("Scripts" if os.name == "nt" else "bin")
+    cli = bindir / ("polaris-oid4vp.exe" if os.name == "nt" else "polaris-oid4vp")
+    if not cli.exists():
+        failures.append("%s: the polaris-oid4vp command was not installed" % label)
+    else:
+        pki = work / "pki"
+        r = _run([str(cli), "keygen", "--out", str(pki), "--host", "verifier.example"],
+                 cwd=str(work), env=env)
+        if r.returncode != 0:
+            failures.append("%s: keygen exited %d: %s" % (label, r.returncode, r.stderr[-200:]))
+        elif "x509_hash:" not in r.stdout:
+            failures.append("%s: keygen printed no client_id" % label)
+        else:
+            probe = _run([str(py), "-c", OID4VP_PKI_PROBE, str(pki)], cwd=str(work), env=env)
+            if probe.returncode != 0:
+                failures.append("%s: the generated certificates are the wrong shape: %s"
+                                % (label, probe.stderr.strip()[-200:]))
+
+    # 3. The install test proper, run from a directory that is not the repository, with the
     #    fixture COPIED there: a stranger has their own material, not ours in place.
     outside = work / "elsewhere"
     outside.mkdir(exist_ok=True)
