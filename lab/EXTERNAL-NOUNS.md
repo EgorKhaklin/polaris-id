@@ -29,6 +29,14 @@ there is an OpenID4VP endpoint to point it at (`lab/interop/`).
     Score:                     __ / __
     Published:                 no
 
+**The suite itself is now running, which is not a score.** 2026-09-14: the OpenID Foundation
+conformance suite runs locally from its prebuilt images, and
+`oid4vp-1final-verifier-haip-test-plan` has been instantiated against it (HTTP 201, plan
+`5qUv58nocNpfX`, 11 modules under `credential_format=sd_jwt_vc`,
+`response_mode=direct_post.jwt`). **Every one of those modules is waiting for a request nothing
+sends.** A created plan is a configuration screen, the rows above stay blank, and they stay
+blank until a module returns a verdict.
+
 **One external test corpus IS run, on every push, and it is not that.** Recorded here because
 leaving the section blank implies nothing outside this repository ever touches the code, which
 is not true:
@@ -245,15 +253,27 @@ third party does. The same exercise confirmed the suite correctly VOIDs a verifi
 everything: exit 2, with the 49 passing refusal cases named as worthless without a positive
 control.
 
-**First interop target: assessed, not started (2026-09-13).** `lab/interop/` measures what
-OpenID4VP 1.0 + HAIP would cost, so the credential-format decision the contract defers to a
-real use case can be made with numbers. The finding is that **the format is not the blocker**.
-HAIP makes ES256 mandatory to implement for issuers, verifiers and wallets and mandates nothing
-else; Polaris signs with ML-DSA-65. That is a registered, standards-track COSE algorithm (-49,
-RFC 9964, Recommended: Yes, verified at IANA) and it does not help, because a conforming HAIP
-wallet is not required to support it. A Polaris credential will not verify at a conforming
-verifier whichever format carries it. The protocol layer is absent entirely: no OpenID4VP, no
-vp_token, no DCQL. Three routes with their costs are laid out; all three are VANTA's call.
+**First interop target: assessed, then re-assessed because the first assessment faced the
+wrong way (2026-09-13, corrected 2026-09-14).** `lab/interop/` measures what OpenID4VP 1.0 +
+HAIP would cost. Its first finding was that the credential format is not the blocker and the
+signature algorithm is: HAIP makes ES256 mandatory to implement and Polaris signs with
+ML-DSA-65, a registered standards-track COSE algorithm (-49, RFC 9964, Recommended: Yes,
+verified at IANA) that a conforming wallet is nonetheless not required to support.
+
+That is true of **Polaris as issuer** and it is not the direction the product sits in. The
+product artifact is a verifier, the contract's target is a HAIP **verifier**, and in the
+conformance suite's verifier test plan **the suite signs the credential**. ML-DSA-65 never
+enters the exchange, so the wall the first assessment was built around does not apply to the
+milestone it was written for. Verified against the running suite, not reasoned about: the HAIP
+verifier plan pins `client_id_prefix=x509_hash`, `request_method=request_uri_signed` and
+`response_mode=direct_post.jwt`, and offers 11 modules for SD-JWT VC against 4 for mdoc, which
+also inverts the format argument, since Polaris's existing mdoc bridge would buy the thinner
+plan. Seven of the eleven are negative tests that pass automatically on a 4xx.
+
+What actually blocks it is a protocol layer that does not exist: no OpenID4VP, no vp_token, no
+DCQL, no SD-JWT VC, no JWE, and nothing in `packages/polaris-verify` that opens a socket. The
+three issuer-direction routes are still real and still VANTA's call, but they are a different
+milestone and the verifier work was never behind them.
 
 **Lab, first finding (2026-09-13).** `lab/linkability/` opened with a CORE-BUG against an
 existing promise: `verify_presentation` reported `correlation: "bounded"` whenever a scoped

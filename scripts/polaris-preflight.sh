@@ -80,8 +80,19 @@ fi
 #     linting. If ruff is absent the gate says so rather than passing quietly: a
 #     preflight that stays silent about what it did not check is how READY stops
 #     meaning anything.
+#     v9.451: it also has to look where ruff actually is. `pip install ruff` into an
+#     environment whose scripts directory is not on PATH leaves `python3 -m ruff` working
+#     and `command -v ruff` empty, and this gate then announced that NOTHING linted a tree
+#     that lints clean. A gate that cannot find an installed tool reports the same thing as
+#     a missing one, which is the failure it was written to prevent, one level up.
+RUFF=""
 if command -v ruff > /dev/null 2>&1; then
-  if ruff check . > /tmp/_polaris_ruff.out 2>&1; then
+  RUFF="ruff"
+elif python3 -m ruff --version > /dev/null 2>&1; then
+  RUFF="python3 -m ruff"
+fi
+if [ -n "$RUFF" ]; then
+  if $RUFF check . > /tmp/_polaris_ruff.out 2>&1; then
     echo "  ✓ ruff: no pyflakes findings"
   else
     echo "  ✗ ruff: $(grep -c '^' /tmp/_polaris_ruff.out) line(s) —"
@@ -95,8 +106,9 @@ else
   # nothing, I read READY, and CI failed on the first step of the product job. The waiver
   # is the same shape as the drills one, for the same reason: a skip that is chosen and
   # visible is a decision, a skip that is silent is this bug again.
-  echo "  ✗ ruff is not installed here, so NOTHING linted this tree. CI lints FIRST and"
-  echo "    fails the whole product-test job before any test runs: 'pip install ruff'"
+  echo "  ✗ ruff is not installed here (neither on PATH nor as 'python3 -m ruff'), so"
+  echo "    NOTHING linted this tree. CI lints FIRST and fails the whole product-test job"
+  echo "    before any test runs: 'pip install ruff'"
   if [ "${POLARIS_LINT_WAIVED:-0}" = "1" ]; then
     echo "  ! WAIVED by POLARIS_LINT_WAIVED=1: this tree is unlinted"
   else
