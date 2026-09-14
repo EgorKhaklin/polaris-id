@@ -185,3 +185,112 @@ Polaris consumes, not a defect in Polaris.
 The two findings worth carrying forward are questions, not features: whether an attribute
 credential belongs in Polaris at all, and whether `disclosure_level` should keep naming modes
 the product cannot produce. Both are decisions for VANTA, and neither is made here.
+
+
+---
+
+## BENCHMARK: delegated authority
+
+**SCENARIO:** a holder authorises an AI agent to perform **one scoped action**.
+
+**EXTERNAL SYSTEM:** Privado ID, public documentation. **NO DIRECT EQUIVALENT.** Its "Agent
+API" is an issuer-node transport endpoint, not human-to-agent delegation. The delegation
+material found publicly under these terms is research literature, not that system's product
+surface. Nothing is compared here, and Polaris earns nothing for the feature existing: the
+directive's test is whether it is useful and **understandable**.
+
+**POLARIS ARTIFACT:** `packages/polaris-verify` at `6ab4345`, driven by
+[`scenario-2-agent.py`](scenario-2-agent.py), against the published vectors.
+
+### What a verifier is handed
+
+`verify_agent_grant` returns **11 fields**: `grant_authentic`, `fresh`, `principal_bound`,
+`action_in_scope`, `limits`, `revoked`, `agent_proved`, `pairwise_handle`, `correlation`,
+`usable`, `note`. The separation is defended in the code and the defence is sound: a service
+seeing one boolean cannot tell "this grant was revoked" from "this agent does not hold the
+key it names", and those call for different responses.
+
+**`usable` is the single safe field**, an AND over the rest. A verifier that reads
+`grant_authentic` instead gets a genuine signature on a revoked, expired or out-of-scope
+grant. That is eleven fields where ten are diagnostic and one is the answer, and nothing in
+the type system says which.
+
+Scope behaves, measured on the published grant:
+
+    grant_covers('read:status')          True
+    grant_covers('transfer.unlimited')   False
+    grant_covers(grant with no actions)  False      an empty list grants NOTHING
+    grant_within_limits(fresh)           True
+    limits key the verifier misreads     False      refused, not ignored
+
+That last one is the good design in this area: an unrecognised limit key is **refused**
+rather than treated as absent, so a grant saying `max_transfers: 3` cannot silently become
+unbounded at a service that never heard of it.
+
+### THE TRAP, measured
+
+A third party integrates against the published conformance contract. What can it still get
+wrong? Two of the suite's own vectors, run:
+
+| vector | contract constrains | binding check | consequence |
+|---|---|---|---|
+| `grant-revocation-impostor` | `authentic: True` | `revocation_ends_grant` → **False** | anyone may sign bytes naming a `grant_id`; only the holder who signed the grant may end it. A verifier reading the constrained field alone lets a stranger kill a legitimate delegation |
+| `agent-proof-impostor` | `authentic: True` | proof key ≠ the grant's agent key → **False** | a genuine signature proving agency for an agent this grant never named |
+
+**Two artifacts that are authentic by the contract and must still be refused.** The checks
+that refuse them, `revocation_ends_grant` and `grant_covers`, are entered by **no published
+case**, measured independently by `scripts/polaris-contract-reach-drill.py`.
+
+The suite **ships the attack and does not ask about it.** Both vectors exist, both are
+published, both are named `impostor`; only the expectation is missing. Constraining them
+would cost two lines of `cases.json` and no new material.
+
+### POLARIS WINS
+
+- Delegation exists at all, offline, with scope, limits, expiry, revocation and a separate
+  agent proof. No equivalent was found in the benchmark's product surface.
+- **An unknown limit key is refused rather than ignored.** The failure it prevents is a
+  bounded grant silently becoming unbounded, which is invisible when it happens.
+- **An empty action list grants nothing.** The opposite reading turns a grant back into the
+  unbounded credential hand-over grants exist to replace.
+
+### EXTERNAL SYSTEM WINS
+
+Nothing measured. NO DIRECT EQUIVALENT is not a Polaris win; it is an absence of comparison.
+
+### POLARIS COMPLEXITY WITH NO PROVEN BENEFIT
+
+- **Eleven fields with one right answer.** `usable` is an AND over the others and is what a
+  verifier must read. The ten diagnostics are justified, but nothing marks which field is the
+  decision, and reading `grant_authentic` is both the obvious mistake and a silent one.
+
+### LESSONS TO ABSORB
+
+1. **A conformance contract that constrains only authenticity certifies verifiers that act on
+   unbound artifacts.** This is the same shape as the v9.420 ID-token finding already recorded
+   in the mutation drill: signature valid, audience never checked. It recurred in delegation.
+2. **Shipping an attack vector without an expectation is worse than not shipping it.** It
+   reads as coverage.
+
+### POLARIS DIFFERENTIATORS WORTH PRESERVING
+
+Human-to-AI-agent delegation, scoped and bounded and offline, with refusal on unknown limits.
+Nothing in this scenario argues against it. The criticism is of the contract around it and of
+which field a verifier is steered toward, not of the mechanism.
+
+### EXTERNAL DEPENDENCIES / BLOCKERS
+
+The harness VOIDS without a real ML-DSA backend. Its first run reported "0 artifacts that are
+authentic and must be refused", which was true only because nothing verified: every signature
+returned `None`, meaning could not run. A second defect in the same harness, a `hasattr`
+fallback returning `{"authentic": None}`, produced the same clean zero from a silent default.
+Both are fixed and the void is explicit, because a benchmark that reports a comfortable zero
+from a broken measurement is worse than one that refuses.
+
+### NEXT ACTION
+
+**LAB.**
+
+Adding the two expectations to `cases.json` changes a published contract, which is a product
+decision. It is cheap, the vectors already exist, and the gap is documented in
+`conformance/SPEC.md`. It is still VANTA's call and is not made here.
