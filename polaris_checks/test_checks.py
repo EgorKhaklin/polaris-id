@@ -528,6 +528,62 @@ def test_c7_requires_the_metadata_to_actually_flow(tmp_path):
         "must FAIL when the app joins the table but reads no metadata from it"
 
 
+def test_cli_help_refuses_an_empty_registry(tmp_path):
+    """"lists all 0 commands" is not a pass.
+
+    Found by the check-mutation drill on 2026-09-13, once it learned to comment out what a
+    check's REGEX matches rather than only its string literals. With the registry lines
+    commented out, `commands` and `listed` are both empty, the two set differences are
+    empty, and the check reported success over nothing at all.
+    """
+    src = ('#!/usr/bin/env python3\n'
+           '"""polaris\n\n'
+           '    issue      do the thing\n'
+           '    revoke     undo the thing\n\n'
+           'exit codes: 0 ok\n'
+           '--version\n"""\n'
+           "HANDLERS = {\n    'issue': a,\n    'revoke': b,\n}\n")
+
+    def write(body):
+        (tmp_path / "polaris_cli").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_cli" / "polaris.py").write_text(body)
+
+    write(src)
+    assert checks.check_cli_help_lists_every_command(tmp_path)[0].level == "OK", \
+        "must PASS when every registered command is documented"
+
+    # The mutation: the registry entries commented out, so both sides are empty.
+    gutted = src.replace("    'issue': a,\n    'revoke': b,\n", "")
+    write(gutted)
+    out = checks.check_cli_help_lists_every_command(tmp_path)[0]
+    assert out.level == "FAIL" and "ZERO commands" in out.message, \
+        "must FAIL when the registry parses to nothing; empty against empty is not a pass"
+
+
+def test_version_canonical_refuses_a_missing_import(tmp_path):
+    """Neither importing nor redefining is the import having gone missing.
+
+    app.py USES POLARIS_VERSION, so a file that does neither would not run. The check used
+    to return OK on that branch, which meant commenting out the import passed it.
+    """
+    def write(body):
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web" / "app.py").write_text(body)
+
+    write("from __version__ import POLARIS_VERSION\nx = POLARIS_VERSION\n")
+    assert checks.check_version_is_canonical(tmp_path)[0].level == "OK", \
+        "must PASS when app.py imports the canonical version"
+
+    write("POLARIS_VERSION = '9.99'\n")
+    assert checks.check_version_is_canonical(tmp_path)[0].level == "FAIL", \
+        "must FAIL when app.py redefines the version"
+
+    write("# MUTATED-OUT: from __version__ import POLARIS_VERSION\nx = POLARIS_VERSION\n")
+    out = checks.check_version_is_canonical(tmp_path)[0]
+    assert out.level == "FAIL" and "gone missing" in out.message, \
+        "must FAIL when the canonical import is commented out"
+
+
 def test_c3_index_must_be_keyed_on_the_person(tmp_path):
     """C3 is one ACTIVE token PER PERSON. The column is the person.
 

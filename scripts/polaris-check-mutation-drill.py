@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 import shutil
 import sys
 
@@ -138,6 +139,38 @@ def needles_of(fn):
     return out
 
 
+def regexes_of(fn):
+    """Patterns the check matches with `re.search` / `re.match` / `re.findall` / `re.finditer`.
+
+    The other half of "what this check greps for". `needles_of` collects strings used in
+    `in` / `not in`, which misses every check that asserts through a regex -- and measured
+    on 2026-09-13, four of the six checks found to verify a proxy for their invariant were
+    in exactly that group, reported as "nothing to mutate" and never tested.
+
+    Only literal patterns are taken. A computed one cannot be mutated against a file
+    without running it, and a check with only those still lands in the skipped bucket
+    rather than being quietly half-mutated.
+    """
+    out = set()
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if not (isinstance(f, ast.Attribute) and f.attr in
+                ("search", "match", "findall", "finditer", "fullmatch")):
+            continue
+        if not (isinstance(f.value, ast.Name) and f.value.id == "re"):
+            continue
+        if node.args and isinstance(node.args[0], ast.Constant) \
+                and isinstance(node.args[0].value, str):
+            pat = node.args[0].value
+            # A pattern that matches everything would comment the file out wholesale and
+            # prove nothing about this check.
+            if 3 <= len(pat) <= 400 and pat not in (".*", ".+", r"\s*"):
+                out.add(pat)
+    return out
+
+
 def _dir_of(node):
     """Reconstruct `root / 'a' / 'b'` into a relative path, or None if it is not that.
 
@@ -218,6 +251,7 @@ def main():
     print()
     for name, fn in sorted(fns.items()):
         files, needles = reads_of(fn), needles_of(fn)
+        patterns = regexes_of(fn)
         # `glob_dir`, not `base`: `base` is the pristine tree copy, and shadowing it here
         # made the next copytree read from "".
         for glob_dir, pattern in globs_of(fn):
@@ -225,7 +259,7 @@ def main():
             if d.is_dir():
                 files += [str(f.relative_to(ROOT)) for f in sorted(d.glob(pattern))
                           if f.is_file()]
-        if not files or not needles:
+        if not files or not (needles or patterns):
             skipped_nothing += 1
             nothing_to_mutate.append(fn.name)
             continue
@@ -246,7 +280,16 @@ def main():
             marker = "--" if rel.endswith(".sql") else "#"
             out = []
             for line in target.read_text(encoding="utf-8", errors="replace").split("\n"):
-                if any(n in line for n in needles) and not line.lstrip().startswith(marker):
+                hit = any(n in line for n in needles)
+                if not hit:
+                    for pat in patterns:
+                        try:
+                            if re.search(pat, line):
+                                hit = True
+                                break
+                        except re.error:
+                            continue          # a pattern this harness cannot compile alone
+                if hit and not line.lstrip().startswith(marker):
                     out.append(marker + " MUTATED-OUT: " + line.strip())
                     changed = True
                 else:

@@ -385,7 +385,14 @@ def check_version_is_canonical(root: pathlib.Path) -> list[Finding]:
         return _ok("version_canonical", "app.py imports the canonical __version__")
     if re.search(r"POLARIS_VERSION\s*=\s*['\"]", app):
         return _fail("version_canonical", "app.py redefines POLARIS_VERSION instead of importing __version__")
-    return _ok("version_canonical", "no redefined version literal in app.py")
+    # Neither importing nor redefining is not a clean tree: app.py USES POLARIS_VERSION, so
+    # the canonical import has gone missing and the module would not run. This branch used
+    # to return OK, which meant commenting out the import passed the check -- found by the
+    # mutation drill on 2026-09-13, once it learned to mutate what a regex matches.
+    return _fail("version_canonical",
+                 "app.py neither imports the canonical __version__ nor defines a version of "
+                 "its own. It uses POLARIS_VERSION, so the import has gone missing rather "
+                 "than the file having no opinion about versions")
 
 
 # ---------------------------------------------------------------------------
@@ -3258,6 +3265,10 @@ def check_cli_help_lists_every_command(root: pathlib.Path) -> list[Finding]:
     if not registry:
         return _fail("cli_help", "polaris_cli/polaris.py has no HANDLERS registry")
     commands = set(re.findall(r"'([a-z0-9-]+)':", registry.group(1)))
+    if not commands:
+        return _fail("cli_help", "the HANDLERS registry parsed to ZERO commands, so the "
+                                 "docstring comparison below is empty against empty and "
+                                 "reports success. 'lists all 0 commands' is not a pass")
     doc = re.match(r'(?s)\A#![^\n]*\n"""(.*?)"""', src)
     if not doc:
         return _fail("cli_help", "polaris_cli/polaris.py has no module docstring")
