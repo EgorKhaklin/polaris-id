@@ -42,7 +42,12 @@ PKG = ROOT / "packages" / "polaris-oid4vp"
 #: directly rather than through mutation.
 SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py")
 
-SUITES = ("test_sdjwt", "test_jwe", "test_verifier", "test_serve", "test_conformance_capture")
+#: Every suite in the package. A new test file that is not listed here is invisible to this
+#: drill, which is a silent way to lose coverage of a refusal: the file exists, the refusal
+#: is tested, and the drill still calls it unprotected or, worse, calls it protected by
+#: something else.
+SUITES = ("test_sdjwt", "test_jwe", "test_verifier", "test_serve", "test_cli",
+          "test_conformance_capture")
 
 #: Refusals a passing suite cannot reach, with the reason. Every one is the same shape: the
 #: guard fires only when `cryptography` is ABSENT, and a suite that runs has it installed,
@@ -106,10 +111,27 @@ def _label(lines, i, source):
                            "#%d" % (seen + 1) if seen else "")
 
 
+def _run_suite(work: pathlib.Path):
+    return subprocess.run([sys.executable, "-m", "unittest", *SUITES],
+                          cwd=str(work), capture_output=True, text=True, timeout=600)
+
+
 def _suite_passes(work: pathlib.Path) -> bool:
-    proc = subprocess.run([sys.executable, "-m", "unittest", *SUITES],
-                          cwd=str(work), capture_output=True, timeout=600)
-    return proc.returncode == 0
+    return _run_suite(work).returncode == 0
+
+
+def _confirm_survivor(work: pathlib.Path):
+    """A survivor has to pass TWICE, and the second run's output is kept.
+
+    CI reported a survivor this machine could not reproduce: the same mutation, the same
+    suites, caught here and passing there. One green run is not evidence that a mutation is
+    undetected, only that one run did not detect it, and the two are worth telling apart. So
+    a survivor is confirmed by a second run, and when it is undeclared the suite's own output
+    is printed, because "1 undeclared survivor" with no output is a message that cannot be
+    acted on from a CI log.
+    """
+    proc = _run_suite(work)
+    return proc.returncode == 0, proc
 
 
 def main() -> int:
@@ -161,14 +183,23 @@ def main() -> int:
             return 1
         print("  negative control: a package with every refusal inverted is caught")
 
-        survivors = []
+        survivors, flaky = [], []
         for source, i, mutated, label in sites:
             lines = originals[source].splitlines(keepends=True)
             lines[i] = mutated
             (pkg / source).write_text("".join(lines), encoding="utf-8")
             try:
                 if _suite_passes(pkg):
-                    survivors.append((label, lines[i].split("# MUTANT")[0].strip()))
+                    again, proc = _confirm_survivor(pkg)
+                    if again:
+                        survivors.append((label, lines[i].split("# MUTANT")[0].strip()))
+                        if label not in DECLARED_SURVIVORS:
+                            print("  ! %s survived twice. The suite's second run said:"
+                                  % label)
+                            for out_line in (proc.stdout or proc.stderr).strip().splitlines()[-4:]:
+                                print("      %s" % out_line[:100])
+                    else:
+                        flaky.append(label)
             finally:
                 (pkg / source).write_text(originals[source], encoding="utf-8")
             if args.verbose:
@@ -182,6 +213,9 @@ def main() -> int:
     stale = [label for label in DECLARED_SURVIVORS if label not in names]
 
     print()
+    if flaky:
+        print("  %d mutation(s) passed once and failed on the re-run, so they are CAUGHT: %s"
+              % (len(flaky), ", ".join(flaky)))
     print("  refusals inverted           %4d" % len(sites))
     print("  ...accepted by the suite    %4d  (%d declared)"
           % (len(survivors), len(DECLARED_SURVIVORS)))
