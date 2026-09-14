@@ -217,6 +217,11 @@ def outcome(tally, needs_screenshot):
     return "no terminal entry", False
 
 
+def _stop(httpd):
+    httpd.shutdown()
+    httpd.server_close()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--suite", default="https://localhost:8443")
@@ -315,26 +320,26 @@ def main() -> int:
         print("== VOID: the suite did not notice a verifier that refuses everything, so the "
               "positive modules above are a statement about this harness and not about the "
               "verifier ==", file=sys.stderr)
-        httpd.shutdown()
+        _stop(httpd)
         return 3
     if unnoticed:
         print("== VOID: %d negative module(s) passed a verifier that accepts every forgery, "
               "so their PASS above says nothing about this verifier =="
               % len(unnoticed), file=sys.stderr)
-        httpd.shutdown()
+        _stop(httpd)
         return 3
     if not_clean:
         print("== %d module(s) did not come out clean: %s =="
               % (len(not_clean), ", ".join(m.replace("oid4vp-1final-verifier-", "")
                                            for m in not_clean)), file=sys.stderr)
-        httpd.shutdown()
+        _stop(httpd)
         return 1
     automatic = sum(1 for m, needs, _, _ in rows if not needs)
     print("== %d of %d modules clean. The %d negative ones are scored automatically on a 4xx; "
           "the rest end in REVIEW because the suite wants a screenshot of a verifier "
           "verifying, which this drill will not fake. NOT a certification and not published. =="
           % (len(rows), len(rows), automatic))
-    httpd.shutdown()
+    _stop(httpd)
     return 0
 
 

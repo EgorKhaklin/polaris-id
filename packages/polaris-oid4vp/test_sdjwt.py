@@ -312,5 +312,259 @@ class X5CTests(unittest.TestCase):
         self.assertEqual(v.code, "issuer_key")
 
 
+class RefusalsCoverageFoundTests(unittest.TestCase):
+    """Refusals that existed with nothing exercising them, found by measuring coverage.
+
+    Every one of these is a way a presentation can be wrong that the conformance plan does
+    NOT send. The plan is eleven modules; the refusal surface is wider than eleven, and the
+    parts it does not reach are exactly the parts that rot unnoticed.
+    """
+
+    def _mutate_issuer_payload(self, mutate):
+        """Rebuild a presentation with the issuer payload changed, signature and all."""
+        w = Wallet()
+        disclosures = [_disclosure("salt0", "given_name", "Jean")]
+        digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest())
+                   for d in disclosures]
+        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                   "iat": int(time.time()), "_sd": digests, "_sd_alg": "sha-256",
+                   "cnf": {"jwk": _public_jwk(w.holder_key)}}
+        mutate(payload, disclosures)
+        issuer_jwt = _jws(w.issuer_key, {"alg": "ES256", "typ": "dc+sd-jwt",
+                                         "kid": "issuer-1"}, payload)
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
+        kb = _jws(w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
+                   "sd_hash": b64u_encode(
+                       hashlib.sha256(presented.encode("ascii")).digest())})
+        return w, presented + kb
+
+    def test_an_unknown_sd_alg_is_refused_rather_than_assumed_to_be_sha256(self):
+        w, presentation = self._mutate_issuer_payload(
+            lambda payload, d: payload.__setitem__("_sd_alg", "sha-512"))
+        v = w.verify(presentation)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "sd_alg")
+
+    def test_an_array_element_disclosure_resolves(self):
+        """The `{"...": digest}` form. The suite's own PID uses it for `nationalities`, and
+        the DCQL query in the conformance run filters it out, so the plan never sent one."""
+        element = b64u_encode(json.dumps(["saltN", "FR"], separators=(",", ":")).encode())
+        digest = b64u_encode(hashlib.sha256(element.encode("ascii")).digest())
+
+        def mutate(payload, disclosures):
+            payload["nationalities"] = [{"...": digest}]
+            disclosures.append(element)
+
+        w, presentation = self._mutate_issuer_payload(mutate)
+        v = w.verify(presentation)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        self.assertEqual(v.claims["nationalities"], ["FR"])
+
+    def test_a_disclosure_that_resolves_to_nothing_is_refused(self):
+        """Committed to by the issuer, but pointing at no digest the payload still uses."""
+        orphan = b64u_encode(json.dumps(["saltO", "x"], separators=(",", ":")).encode())
+        digest = b64u_encode(hashlib.sha256(orphan.encode("ascii")).digest())
+
+        def mutate(payload, disclosures):
+            # The digest is committed inside an array the resolver reaches, but the
+            # disclosure is a 2-element array in an _sd slot, so nothing consumes it.
+            payload["_sd"].append(digest)
+            disclosures.append(orphan)
+
+        w, presentation = self._mutate_issuer_payload(mutate)
+        v = w.verify(presentation)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+
+    def test_the_same_disclosure_presented_twice_is_refused(self):
+        w = Wallet()
+        presentation = w.present()
+        head, rest = presentation.split("~", 1)
+        first = rest.split("~")[0]
+        v = w.verify(head + "~" + first + "~" + rest)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+
+    def test_a_disclosure_that_is_not_an_array_is_refused(self):
+        w = Wallet()
+        junk = b64u_encode(json.dumps({"not": "an array"}).encode())
+        v = w.verify(w.present(extra_disclosure=junk))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+
+    def test_a_disclosure_that_does_not_decode_is_refused(self):
+        w = Wallet()
+        v = w.verify(w.present(extra_disclosure="!!!not-base64!!!"))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+
+    def test_a_key_binding_jwt_with_a_non_numeric_iat_is_refused(self):
+        w = Wallet()
+        v = w.verify(w.present(iat="yesterday"))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "kb_freshness")
+
+    def test_a_boolean_iat_is_not_a_number(self):
+        """True == 1 in Python, so a bool sails through an isinstance(int) check."""
+        w = Wallet()
+        v = w.verify(w.present(iat=True))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "kb_freshness")
+
+    def test_a_key_binding_jwt_declaring_another_algorithm_is_refused(self):
+        w = Wallet()
+        presentation = w.present()
+        head, kb = presentation.rsplit("~", 1)
+        header_b64, payload_b64, sig = kb.split(".")
+        header = json.loads(b64u_decode_for_test(header_b64))
+        header["alg"] = "HS256"
+        patched = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+        v = w.verify(head + "~" + ".".join([patched, payload_b64, sig]))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "kb_alg")
+
+    def test_a_credential_whose_cnf_jwk_is_unusable_is_refused(self):
+        def mutate(payload, disclosures):
+            payload["cnf"] = {"jwk": {"kty": "RSA", "n": "AAAA", "e": "AQAB"}}
+
+        w, presentation = self._mutate_issuer_payload(mutate)
+        v = w.verify(presentation)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "kb_cnf")
+
+    def test_an_x5c_that_is_not_an_array_is_refused(self):
+        w = Wallet()
+        presentation = w.present()
+        issuer_jwt, rest = presentation.split("~", 1)
+        header_b64, payload_b64, sig = issuer_jwt.split(".")
+        header = json.loads(b64u_decode_for_test(header_b64))
+        header["x5c"] = "a string, not a chain"
+        patched = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+        v = w.verify(".".join([patched, payload_b64, sig]) + "~" + rest)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_an_x5c_leaf_that_does_not_parse_is_refused(self):
+        w = Wallet()
+        presentation = w.present()
+        issuer_jwt, rest = presentation.split("~", 1)
+        header_b64, payload_b64, sig = issuer_jwt.split(".")
+        header = json.loads(b64u_decode_for_test(header_b64))
+        header["x5c"] = [base64.b64encode(b"not a certificate").decode()]
+        patched = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+        v = verify_presentation(".".join([patched, payload_b64, sig]) + "~" + rest,
+                                expected_nonce=NONCE, expected_audience=AUDIENCE,
+                                trust_anchors=[object()])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_signature_of_the_wrong_length_is_refused_not_padded(self):
+        w = Wallet()
+        presentation = w.present()
+        issuer_jwt, rest = presentation.split("~", 1)
+        head, _, sig = issuer_jwt.rpartition(".")
+        short = b64u_encode(b64u_decode_for_test(sig)[:40])
+        v = w.verify(head + "." + short + "~" + rest)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_signature")
+
+    def test_a_jwk_that_is_not_an_object_is_refused(self):
+        w = Wallet()
+        v = verify_presentation(w.present(), expected_nonce=NONCE,
+                                expected_audience=AUDIENCE,
+                                issuer_jwks=["not-a-jwk", {"kty": "EC", "crv": "P-521"}])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_p256_jwk_with_short_coordinates_is_refused(self):
+        w = Wallet()
+        short = dict(w.issuer_jwk, x=b64u_encode(b"\x01" * 8))
+        v = verify_presentation(w.present(), expected_nonce=NONCE,
+                                expected_audience=AUDIENCE, issuer_jwks=[short])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_jws_without_three_parts_is_refused(self):
+        w = Wallet()
+        presentation = w.present()
+        _, rest = presentation.split("~", 1)
+        v = w.verify("only.two~" + rest)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "malformed")
+
+    def test_a_jws_whose_payload_is_not_an_object_is_refused(self):
+        w = Wallet()
+        presentation = w.present()
+        issuer_jwt, rest = presentation.split("~", 1)
+        header_b64, _, sig = issuer_jwt.split(".")
+        v = w.verify(".".join([header_b64, b64u_encode(b"[1,2,3]"), sig]) + "~" + rest)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "malformed")
+
+    def test_a_verdict_renders_both_ways(self):
+        w = Wallet()
+        good = w.verify(w.present())
+        bad = w.verify(w.present(nonce="x"))
+        self.assertIn("authentic", repr(good))
+        self.assertIn("refused", repr(bad))
+        self.assertEqual(good.as_dict()["authentic"], True)
+        self.assertEqual(bad.as_dict()["code"], "nonce")
+
+
+class ResolverAndOptionsTests(unittest.TestCase):
+    """The remaining reachable branches, each a thing a real credential can contain."""
+
+    def test_digests_nested_below_a_list_are_collected(self):
+        """A credential's structure is arbitrary JSON. The collector has to walk all of it,
+        or a disclosure hides under one list level and is accepted uncommitted."""
+        buried = _disclosure("saltB", "licence_number", "X1")
+        digest = b64u_encode(hashlib.sha256(buried.encode("ascii")).digest())
+        w = Wallet()
+        disclosures = [_disclosure("salt0", "given_name", "Jean"), buried]
+        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                   "iat": int(time.time()),
+                   "_sd": [b64u_encode(hashlib.sha256(disclosures[0].encode("ascii")).digest())],
+                   "documents": [{"kind": "permit", "_sd": [digest]}],
+                   "cnf": {"jwk": _public_jwk(w.holder_key)}}
+        issuer_jwt = _jws(w.issuer_key, {"alg": "ES256", "typ": "dc+sd-jwt",
+                                         "kid": "issuer-1"}, payload)
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
+        kb = _jws(w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
+        v = w.verify(presented + kb)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        self.assertEqual(v.claims["documents"][0]["licence_number"], "X1")
+
+    def test_key_binding_can_be_waived_only_by_the_caller(self):
+        """Off by default, because a presentation without it is a copy anybody can replay."""
+        w = Wallet()
+        bare = w.present(drop_key_binding=True)
+        self.assertFalse(w.verify(bare).authentic)
+        v = w.verify(bare, require_key_binding=False)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        self.assertEqual(v.claims["given_name"], "Jean")
+
+    def test_a_key_binding_jwt_that_does_not_parse_is_refused(self):
+        w = Wallet()
+        head, _ = w.present().rsplit("~", 1)
+        v = w.verify(head + "~" + "not.a.valid.jwt")
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "malformed")
+
+    def test_an_issuer_jwk_list_is_tried_until_one_works(self):
+        w = Wallet()
+        v = verify_presentation(w.present(), expected_nonce=NONCE,
+                                expected_audience=AUDIENCE,
+                                issuer_jwks=[{"kty": "EC", "crv": "P-521", "x": "AA", "y": "AA"},
+                                             dict(w.issuer_jwk, kid=None)])
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+
+def b64u_decode_for_test(value):
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

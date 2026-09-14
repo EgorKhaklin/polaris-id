@@ -2364,6 +2364,12 @@ jobs:
       # while every unit test stays green.
       - name: The verifier on a wire — seven refusals that must arrive as 4xx
         run: cd packages/polaris-oid4vp && python -m unittest test_verifier
+      # serve.py was at 0% line coverage: the conformance drill exercises it and the drill
+      # needs Docker, so nothing in CI touched the file that turns a verdict into a status
+      # code. A listener answering 200 while the verifier said 400 fails seven modules while
+      # every other test in the package stays green.
+      - name: The listening surface — status codes, content types, routing
+        run: cd packages/polaris-oid4vp && python -m unittest test_serve
 
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance

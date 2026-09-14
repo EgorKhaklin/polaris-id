@@ -180,6 +180,12 @@ def _issuer_public_key(header, issuer_jwks, trust_anchors):
     if issuer_jwks:
         kid = header.get("kid")
         for jwk in issuer_jwks:
+            # A configured JWK list is operator input and can hold anything. Reading `kid`
+            # off a string raised AttributeError straight out of a function whose contract
+            # says it never raises on bad input, which on the wire is a broken connection
+            # where a 4xx belongs.
+            if not isinstance(jwk, dict):
+                continue
             if kid and jwk.get("kid") and jwk["kid"] != kid:
                 continue
             try:

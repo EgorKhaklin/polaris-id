@@ -132,10 +132,10 @@ as many failures as a passing one.
 
 ```bash
 cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verifier \
-    test_conformance_capture
+    test_serve test_conformance_capture
 ```
 
-75 tests in four files, and they are not equal in weight.
+125 tests in five files at 99% line coverage, and they are not equal in weight.
 
 `test_sdjwt` (23) and `test_jwe` (14) are this package agreeing with itself: the material is
 built here and checked here. Each carries a positive control, because a verifier that refuses
@@ -155,11 +155,15 @@ The same fixture proves the refusals: a year later it is stale, under another no
 another audience it is not ours, with `given_name` rewritten from Jean to Jeanne the digest no
 longer matches what the issuer signed.
 
-`test_verifier` (29) drives the whole exchange in process, with a wallet that READS the
+`test_verifier` (31) drives the whole exchange in process, with a wallet that READS the
 request object rather than being told what is in it: if the request object were malformed, that
 wallet could not answer it. Seven of its tests assert each conformance refusal arrives as an
 HTTP 400 rather than merely being noticed, because a 400 is the whole of what those modules
 measure.
+
+`test_serve` (18) asserts the decision becomes an HTTP response: status codes, content types,
+routing, form parsing, TLS. It exists because `serve.py` was at **0% coverage** and nothing in
+CI touched the file that turns a verdict into a status code.
 
 **None of that is a conformance result.** The suite ran locally, nothing was scored or
 published, and `lab/EXTERNAL-NOUNS.md` stays at zero.

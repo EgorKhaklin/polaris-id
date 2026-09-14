@@ -357,5 +357,66 @@ class TheTransportRefusalsTests(VerifierTestCase):
         self.assertIn("expired", body["error_description"])
 
 
+class TheLastTwoRefusalsTests(VerifierTestCase):
+    """Both found by coverage, and one of them only exists under concurrency."""
+
+    def test_a_state_that_does_not_match_its_own_session_is_4xx(self):
+        """The response decrypts under our key and then names a different request."""
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar, state="some-other-request")
+        status, body, _ = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 400)
+        self.assertIn("state does not match", body["error_description"])
+
+    def test_two_threads_racing_the_same_response_leave_exactly_one_winner(self):
+        """The `answered` flag guards a window that a SEQUENTIAL replay never reaches.
+
+        Once a request is answered its session is removed, so a second POST fails to decrypt
+        and never gets near the flag. The flag exists for the case where both requests read
+        the outstanding session BEFORE either removed it, and a plain pair of threads does
+        not reliably produce that: the first often finishes inside one scheduler slice, the
+        second then takes the decrypt path, and the test passes while the branch it claims
+        to exercise is never entered. Coverage said so.
+
+        So the window is held open deliberately: both threads are made to sit inside
+        `decrypt_response`, after the snapshot and before the lock, until both have arrived.
+        The refusal is then asserted BY NAME, because "one of them got a 400" is true of the
+        wrong reason too.
+        """
+        import threading
+
+        from polaris_oid4vp import verifier as verifier_module
+
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        results = []
+        inside = threading.Barrier(2, timeout=10)
+        real_decrypt = verifier_module.decrypt_response
+
+        def decrypt_then_wait(token, key):
+            body = real_decrypt(token, key)
+            inside.wait()
+            return body
+
+        def race():
+            results.append(self.verifier.handle_direct_post(form))
+
+        verifier_module.decrypt_response = decrypt_then_wait
+        try:
+            threads = [threading.Thread(target=race) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=15)
+        finally:
+            verifier_module.decrypt_response = real_decrypt
+
+        statuses = sorted(status for status, _, _ in results)
+        self.assertEqual(statuses, [200, 400],
+                         "one presentation was accepted twice: %r" % statuses)
+        loser = [body for status, body, _ in results if status == 400][0]
+        self.assertIn("already been answered", loser["error_description"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

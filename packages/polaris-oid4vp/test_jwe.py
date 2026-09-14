@@ -133,5 +133,69 @@ class RefusalTests(unittest.TestCase):
         self.assertIn("not JSON", str(caught.exception))
 
 
+class StructuralRefusalsCoverageFoundTests(unittest.TestCase):
+    """Paths that existed with nothing reaching them, found by measuring coverage."""
+
+    def setUp(self):
+        self.key = ec.generate_private_key(ec.SECP256R1())
+        self.token = encrypt_compact(json.dumps(BODY).encode(), self.key.public_key())
+
+    def _expect(self, token, fragment, key=None):
+        with self.assertRaises(JweError) as caught:
+            decrypt_compact(token, key or self.key)
+        self.assertIn(fragment, str(caught.exception))
+
+    def test_a_token_that_is_not_a_string_is_refused(self):
+        for junk in (None, 42, b"bytes", ["a", "b"]):
+            with self.assertRaises(JweError):
+                decrypt_compact(junk, self.key)
+
+    def test_a_protected_header_that_is_not_an_object_is_refused(self):
+        parts = self.token.split(".")
+        parts[0] = b64u_encode(b'["not", "an", "object"]')
+        self._expect(".".join(parts), "not a JSON object")
+
+    def test_an_epk_missing_a_coordinate_is_refused(self):
+        parts = self.token.split(".")
+        header = json.loads(_decode(parts[0]))
+        header["epk"].pop("y")
+        parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+        self._expect(".".join(parts), "does not decode")
+
+    def test_an_epk_with_short_coordinates_is_refused(self):
+        parts = self.token.split(".")
+        header = json.loads(_decode(parts[0]))
+        header["epk"]["x"] = b64u_encode(b"\x01" * 8)
+        parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+        self._expect(".".join(parts), "32 bytes")
+
+    def test_an_iv_of_the_wrong_length_is_refused(self):
+        parts = self.token.split(".")
+        parts[2] = b64u_encode(b"\x00" * 16)
+        self._expect(".".join(parts), "96-bit iv")
+
+    def test_a_segment_that_is_not_base64url_is_refused(self):
+        parts = self.token.split(".")
+        parts[3] = "!!!!"
+        with self.assertRaises(JweError):
+            decrypt_compact(".".join(parts), self.key)
+
+    def test_a_decrypted_json_array_is_not_a_response(self):
+        token = encrypt_compact(b'["vp_token"]', self.key.public_key())
+        with self.assertRaises(JweError) as caught:
+            decrypt_response(token, self.key)
+        self.assertIn("not a JSON object", str(caught.exception))
+
+    def test_encrypting_under_an_unsupported_enc_is_refused(self):
+        with self.assertRaises(JweError) as caught:
+            encrypt_compact(b"x", self.key.public_key(), "A128CBC-HS256")
+        self.assertIn("not supported", str(caught.exception))
+
+
+def _decode(value):
+    import base64
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
