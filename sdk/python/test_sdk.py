@@ -246,3 +246,155 @@ class RefusalsAreTestedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MalformedInputIsRefusedTests(unittest.TestCase):
+    """Every structural refusal, driven from a table.
+
+    v9.455 inverted the SDK's `return False` statements and closed 18 of 18. It did not
+    reach the refusals expressed as a CONSTRUCTED VERDICT -- `AuthenticityVerdict(False,
+    ..., note="pack missing token_value or signature_hex")` -- and there are 26 of those.
+    Inverted, each returns an AUTHENTIC verdict for material it exists to reject: a pack
+    with no signature at all, a status assertion in the wrong format, an attestation whose
+    signature is a development placeholder.
+
+    Table-driven because the refusals are regular and a hand-written test per case covers
+    the cases somebody remembered.
+    """
+
+    #: (label, callable, input) -> the verdict's authenticity must be falsy.
+    CASES = [
+        ("pack missing signature_hex",
+         pv.verify_authenticity,
+         {"format": "polaris-authenticity-pack/1", "token_value": "T",
+          "algorithm": "ML-DSA-65", "public_key_hex": "ab" * 1952}),
+        ("pack missing token_value",
+         pv.verify_authenticity,
+         {"format": "polaris-authenticity-pack/1", "algorithm": "ML-DSA-65",
+          "signature_hex": "ab" * 3309, "public_key_hex": "cd" * 1952}),
+        ("pack with non-hex signature",
+         pv.verify_authenticity,
+         {"format": "polaris-authenticity-pack/1", "token_value": "T",
+          "algorithm": "ML-DSA-65", "signature_hex": "zz-not-hex",
+          "public_key_hex": "cd" * 1952}),
+        ("pack with an unaccepted algorithm",
+         pv.verify_authenticity,
+         {"format": "polaris-authenticity-pack/1", "token_value": "T",
+          "algorithm": "ML-DSA-44", "signature_hex": "ab" * 100,
+          "public_key_hex": "cd" * 100}),
+        ("status assertion in the wrong format",
+         pv.verify_status_assertion,
+         {"format": "not-a-status-assertion", "algorithm": "ML-DSA-65",
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+        ("status assertion signed with the dev placeholder",
+         pv.verify_status_assertion,
+         {"format": "polaris-status-assertion/1", "algorithm": pv.PLACEHOLDER_LABEL,
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+        ("id token in the wrong format",
+         pv.verify_id_token,
+         {"format": "not-an-id-token", "algorithm": "ML-DSA-65",
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+        ("artifact of an unknown type",
+         pv.verify_signed_artifact,
+         {"format": "polaris-nonesuch/1", "algorithm": "ML-DSA-65",
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+        ("artifact signed with the dev placeholder",
+         pv.verify_signed_artifact,
+         {"format": "polaris-revocation-feed/1", "algorithm": pv.PLACEHOLDER_LABEL,
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+        ("cosignature in the wrong format",
+         pv.verify_cosignature,
+         {"format": "not-a-cosignature", "algorithm": "ML-DSA-65",
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+        ("cosignature signed with the dev placeholder",
+         pv.verify_cosignature,
+         {"format": "polaris-transparency-cosignature/1", "algorithm": pv.PLACEHOLDER_LABEL,
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+        ("attestation with no signature at all (legacy)",
+         pv.verify_attestation,
+         {"format": "polaris-trust-attestation/1", "algorithm": "ML-DSA-65"}),
+        ("attestation in the wrong format",
+         pv.verify_attestation,
+         {"format": "not-an-attestation", "algorithm": "ML-DSA-65",
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+        ("attestation signed with the dev placeholder",
+         pv.verify_attestation,
+         {"format": "polaris-trust-attestation/1", "algorithm": pv.PLACEHOLDER_LABEL,
+          "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}),
+    ]
+
+    def test_a_cosignature_from_the_wrong_witness_is_refused(self):
+        """The expected-key branch, which no structural input reaches.
+
+        A cosignature can be perfectly valid and still be from the wrong witness. That is
+        the difference between authentic and authoritative, and inverting this line accepts
+        a genuine signature by a key the caller did not ask for.
+        """
+        cosig = {"format": "polaris-transparency-cosignature/1", "algorithm": "ML-DSA-65",
+                 "public_key_hex": "ab" * 1952, "signature_hex": "cd" * 3309}
+        v = pv.verify_cosignature(cosig, witness_key="ff" * 1952)
+        self.assertFalse(v.authentic,
+                         "a cosignature whose key is not the expected witness must be "
+                         "refused even when the signature itself is well formed")
+
+    def test_every_structural_refusal_refuses(self):
+        for label, fn, obj in self.CASES:
+            with self.subTest(case=label):
+                v = fn(obj)
+                authentic = getattr(v, "authentic", None)
+                self.assertFalse(
+                    authentic,
+                    "%s must not be reported authentic; the verifier returned %r"
+                    % (label, authentic))
+
+
+def _conformance_vector(name):
+    """A published conformance vector: real signed material, genuine or tampered."""
+    with open(os.path.join(_ROOT, "conformance", "vectors", name)) as f:
+        return json.load(f)
+
+
+@unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
+class TamperedMaterialIsRefusedTests(unittest.TestCase):
+    """The SIGNATURE-FAILURE return paths, which structural input cannot reach.
+
+    `return ArtifactVerdict(False, None, note, ran)` is taken only when real material was
+    verified and the signature did not check out. Malformed input returns earlier, so the
+    table of structural refusals never reaches these lines: inverting them accepts a
+    genuine artifact whose signature has been altered, which is the single thing a verifier
+    exists to refuse.
+
+    Driven from the published tampered vectors, so the material is real rather than
+    constructed to fail.
+    """
+
+    TAMPERED = [
+        ("epoch-checkpoint-tampered.json", pv.verify_signed_artifact),
+        ("revocation-feed-tampered.json", pv.verify_signed_artifact),
+        ("federation-manifest-tampered.json", pv.verify_signed_artifact),
+        ("trust-list-tampered.json", pv.verify_signed_artifact),
+        ("registry-tampered.json", pv.verify_signed_artifact),
+        ("signed-document-tampered.json", pv.verify_signed_artifact),
+        ("timestamp-tampered.json", pv.verify_signed_artifact),
+        ("transparency-sth-tampered.json", pv.verify_signed_artifact),
+        ("exchange-receipt-tampered.json", pv.verify_signed_artifact),
+        ("exchange-request-tampered.json", pv.verify_signed_artifact),
+        ("status-assertion-tampered.json", pv.verify_status_assertion),
+        ("id-token-tampered.json", pv.verify_id_token),
+        ("trust-attestation-rekeyed.json", pv.verify_attestation),
+    ]
+
+    def test_every_tampered_vector_is_refused(self):
+        for name, fn in self.TAMPERED:
+            with self.subTest(vector=name):
+                try:
+                    obj = _conformance_vector(name)
+                except FileNotFoundError:
+                    self.fail("published vector %s is missing; this test cannot measure "
+                              "anything without it" % name)
+                v = fn(obj)
+                authentic = getattr(v, "authentic", None)
+                self.assertFalse(
+                    authentic,
+                    "%s carries an altered signature and must not be reported authentic; "
+                    "the verifier returned %r" % (name, authentic))

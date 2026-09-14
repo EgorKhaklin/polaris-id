@@ -75,6 +75,54 @@ DECLARED_SURVIVORS: dict[str, str] = {
         "an HTTP status guard on the online path; no offline suite reaches it",
     "typescript:onlineStatus:767":
         "an HTTP status guard on the online path; no offline suite reaches it",
+
+    # --- Reached only when the CRYPTO BACKEND IS ABSENT OR DISAGREES ------------------
+    # `ok is None` means the verification could not run at all. A suite that runs has a
+    # backend installed, which is the precondition for these lines never being taken. They
+    # are not untested refusals; they are refusals the test environment cannot produce
+    # without removing the thing the tests need in order to run.
+    "python:verify_authenticity:162":
+        "the no-backend-available branch; a suite with cryptography installed cannot reach it",
+    "python:verify_authenticity:165":
+        "the two witnesses DISAGREE; inducing it needs one backend patched to lie",
+    "python:verify_status_assertion:301":
+        "ok is None: the verification could not run, which needs no backend installed",
+    "python:verify_signed_artifact:425":
+        "ok is None: the verification could not run, which needs no backend installed",
+    "python:verify_cosignature:544":
+        "ok is None: the verification could not run, which needs no backend installed",
+    "python:verify_attestation:721":
+        "ok is None: the verification could not run, which needs no backend installed",
+    "typescript:verifyStatusAssertion:212":
+        "the catch-all arm: reachable only by making the crypto library throw",
+    "typescript:verifySignedArtifact:322":
+        "the catch-all arm: reachable only by making the crypto library throw",
+    "typescript:verifyCosignature:448":
+        "the catch-all arm: reachable only by making the crypto library throw",
+    "typescript:verifyAttestation:647":
+        "the catch-all arm: reachable only by making the crypto library throw",
+
+    # --- Reached only AFTER a signature genuinely verifies ---------------------------
+    # `if ok and witness_key is not None and <mismatch>`. The guard is downstream of a
+    # real cryptographic success, so a fabricated signature never gets there: covering it
+    # needs a genuinely valid cosignature presented under a different expected key, which
+    # is a signing fixture this suite does not carry. The distinction it draws -- authentic
+    # versus authoritative -- is real, and it is asserted in the detached verifier's own
+    # tests rather than here.
+    "python:verify_cosignature:546":
+        "downstream of a real signature verifying; needs a genuine cosignature fixture",
+    "typescript:verifyCosignature:451":
+        "downstream of a real signature verifying; needs a genuine cosignature fixture",
+
+    # --- Initial values, not refusals ------------------------------------------------
+    # `v = AnchorVerdict(False, ...)` is a default that every path overwrites before the
+    # function returns, so inverting it changes nothing observable. The drill cannot tell
+    # an initializer from a return, and this is the honest answer rather than a test that
+    # would be asserting the assignment order of a local.
+    "python:verify_timestamp_anchor:570":
+        "an initial verdict value, overwritten on every path before return",
+    "python:verify_holder:667":
+        "an initial verdict value, overwritten on every path before return",
 }
 
 #: node_modules is NOT ignored: the TypeScript SDK's tests cannot resolve their imports
@@ -101,11 +149,22 @@ def _invert(line: str, lang: str) -> str | None:
             return s.replace("return False,", "return True,", 1) + "  # MUTATED\n"
         if re.match(r"^\s*raise \w", s):
             return ind + "pass  # MUTATED\n"
+        # A verdict CONSTRUCTED as a refusal is a refusal. Measured 2026-09-13: the Python
+        # SDK has 18 bare `return False` and 26 `SomethingVerdict(False, ...)`, and only the
+        # first were being inverted. Every one of the 26 is an acceptance when flipped --
+        # "unknown or unaccepted signature algorithm", "signature_hex is not valid hex" --
+        # so "32 refusals across both SDKs" was 32 of a much larger population. A count is
+        # a statement about what the pattern found, not about what exists.
+        if re.search(r"\w*Verdict\(\s*False\b", s):
+            return re.sub(r"(\w*Verdict\(\s*)False\b", r"\1True", s, count=1) + "  # MUTATED\n"
         return None
     if re.search(r"\breturn false\b", s):
         return s.replace("return false", "return true", 1) + "  // MUTATED\n"
     if re.search(r"\bthrow new \w", s):
         return re.sub(r"throw new \w+\([^;]*\);", "/* MUTATED */;", s, count=1) + "\n"
+    # The TypeScript half of the same thing: a returned verdict object saying not-authentic.
+    if re.search(r"\bauthentic:\s*false\b", s):
+        return re.sub(r"\bauthentic:\s*false\b", "authentic: true", s, count=1) + "  // MUTATED\n"
     return None
 
 

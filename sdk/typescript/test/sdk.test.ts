@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant,
-         verifyInclusion } from "../src/index.ts";
+         verifyInclusion, verifyStatusAssertion, verifyIdToken,
+         verifySignedArtifact, verifyCosignature,
+         verifyAttestation, verifyCrossAuthority } from "../src/index.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const vec = (n: string) => JSON.parse(readFileSync(join(ROOT, "vectors", n), "utf8"));
@@ -215,4 +217,92 @@ test("a revocation must be an object, and name this grant", () => {
     assert.equal(revocationEndsGrant(bad, grant), false, `${label} must not end this grant`);
   }
   assert.equal(revocationEndsGrant(good, "grant" as any), false, "a non-object grant ends nothing");
+});
+
+// Every structural refusal, driven from a table. The mutation drill reached only
+// `return false` and `throw` until 2026-09-13; the refusals expressed as a returned
+// VERDICT OBJECT -- `return { authentic: false, note: "not a polaris-status-assertion/1" }`
+// -- were never inverted, and there are 29 of them. Flipped, each reports material the
+// verifier exists to reject as AUTHENTIC.
+const PLACEHOLDER = "DETERMINISTIC-PLACEHOLDER-SHA3-256";
+const KEY = "ab".repeat(1952);
+const SIG = "cd".repeat(3309);
+
+const STRUCTURAL_REFUSALS: Array<[string, (o: any) => any]> = [
+  ["status assertion in the wrong format", verifyStatusAssertion],
+  ["status assertion with the dev placeholder", verifyStatusAssertion],
+  ["id token in the wrong format", verifyIdToken],
+  ["artifact of an unknown type", verifySignedArtifact],
+  ["artifact with the dev placeholder", verifySignedArtifact],
+  ["artifact with an unaccepted algorithm", verifySignedArtifact],
+  ["cosignature in the wrong format", verifyCosignature],
+  ["cosignature with the dev placeholder", verifyCosignature],
+  ["cosignature with an unaccepted algorithm", verifyCosignature],
+  ["attestation with no signature at all", verifyAttestation],
+  ["attestation in the wrong format", verifyAttestation],
+  ["attestation with the dev placeholder", verifyAttestation],
+  ["attestation with an unaccepted algorithm", verifyAttestation],
+  ["status assertion with an unaccepted algorithm", verifyStatusAssertion],
+];
+
+const STRUCTURAL_INPUTS: Record<string, any> = {
+  "status assertion in the wrong format":
+    { format: "not-a-status-assertion", algorithm: "ML-DSA-65", public_key_hex: KEY, signature_hex: SIG },
+  "status assertion with the dev placeholder":
+    { format: "polaris-status-assertion/1", algorithm: PLACEHOLDER, public_key_hex: KEY, signature_hex: SIG },
+  "id token in the wrong format":
+    { format: "not-an-id-token", algorithm: "ML-DSA-65", public_key_hex: KEY, signature_hex: SIG },
+  "artifact of an unknown type":
+    { format: "polaris-nonesuch/1", algorithm: "ML-DSA-65", public_key_hex: KEY, signature_hex: SIG },
+  "artifact with the dev placeholder":
+    { format: "polaris-revocation-feed/1", algorithm: PLACEHOLDER, public_key_hex: KEY, signature_hex: SIG },
+  "artifact with an unaccepted algorithm":
+    { format: "polaris-revocation-feed/1", algorithm: "ML-DSA-44", public_key_hex: KEY, signature_hex: SIG },
+  "cosignature in the wrong format":
+    { format: "not-a-cosignature", algorithm: "ML-DSA-65", public_key_hex: KEY, signature_hex: SIG },
+  "cosignature with the dev placeholder":
+    { format: "polaris-transparency-cosignature/1", algorithm: PLACEHOLDER, public_key_hex: KEY, signature_hex: SIG },
+  "cosignature with an unaccepted algorithm":
+    { format: "polaris-transparency-cosignature/1", algorithm: "ML-DSA-44", public_key_hex: KEY, signature_hex: SIG },
+  "attestation with no signature at all":
+    { format: "polaris-trust-attestation/1", algorithm: "ML-DSA-65" },
+  "attestation in the wrong format":
+    { format: "not-an-attestation", algorithm: "ML-DSA-65", public_key_hex: KEY, signature_hex: SIG },
+  "attestation with the dev placeholder":
+    { format: "polaris-trust-attestation/1", algorithm: PLACEHOLDER, public_key_hex: KEY, signature_hex: SIG },
+  "attestation with an unaccepted algorithm":
+    { format: "polaris-trust-attestation/1", algorithm: "ML-DSA-44", public_key_hex: KEY, signature_hex: SIG },
+  "status assertion with an unaccepted algorithm":
+    { format: "polaris-status-assertion/1", algorithm: "ML-DSA-44", public_key_hex: KEY, signature_hex: SIG },
+};
+
+// The two DECISION paths that reject because the credential underneath is not authentic.
+// Inverted, a presentation or a cross-authority check ACCEPTS a credential whose own
+// signature never verified, which is the decision both functions exist to make.
+const NOT_AUTHENTIC_PACK = {
+  format: "polaris-authenticity-pack/1", token_value: "T", algorithm: "ML-DSA-65",
+  public_key_hex: KEY, signature_hex: SIG,
+};
+
+test("a cross-authority decision rejects a credential that is not authentic", () => {
+  const v = verifyCrossAuthority(NOT_AUTHENTIC_PACK, 1, []);
+  assert.strictEqual(v.decision, "reject",
+    "a pack whose signature does not verify must not cross an authority boundary");
+  assert.strictEqual(v.authentic, false);
+});
+
+test("a presentation is rejected when its credential is not authentic", async () => {
+  const verdict = await new PolarisVerifier().verifyPresentation({ credential: NOT_AUTHENTIC_PACK });
+  assert.strictEqual(verdict.decision, "reject",
+    "a presentation carrying an unverifiable credential must be rejected");
+  assert.strictEqual(verdict.authentic, false);
+});
+
+test("every structural refusal refuses (table-driven)", async () => {
+  for (const [label, fn] of STRUCTURAL_REFUSALS) {
+    const v = await fn(STRUCTURAL_INPUTS[label]);
+    assert.strictEqual(
+      v.authentic, false,
+      `${label} must not be reported authentic; the verifier returned ${v.authentic}`);
+  }
 });

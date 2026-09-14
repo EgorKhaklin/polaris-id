@@ -189,6 +189,17 @@ Separately, the link checker was wrong to demand a build-output path exist at al
 passed or failed on whether somebody had run a build. Paths through `dist`, `build`, `target`,
 `node_modules` and `__pycache__` are no longer treated as source references.
 
+**And the SDK drill was counting what its pattern found (2026-09-13).** The same question
+put to the other six mutation drills. The trigger and constraint drills enumerate from the LIVE
+CATALOG (`pg_trigger`, `pg_constraint`), so they know their true population and need no skipped
+line. The SDK drill enumerates by PATTERN: it matched `return False` / `return false` / `throw`,
+found 32 refusals across both SDKs, and reported catching all 32. Measured: the Python SDK also
+has 26 `SomethingVerdict(False, ...)` constructions and the TypeScript SDK 29
+`authentic: false` verdict objects, every one of them a refusal that ACCEPTS when flipped --
+"unknown or unaccepted signature algorithm", "signature_hex is not valid hex". So 32 was 32 of
+about 87. The inversion now covers verdict constructors in both languages: 44 Python sites and
+43 TypeScript.
+
 **The check layer audited against its own claims (2026-09-13).** Six checks were found to
 verify a PROXY for their invariant rather than the invariant: a cap constant's existence (C8), a
 class name (C9), a count of exclusion clauses (C6), an index's WHERE clause without its key
