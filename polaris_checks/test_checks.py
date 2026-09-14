@@ -15083,6 +15083,18 @@ def test_advisory_lock_contention_check_discriminates(tmp_path):
         tests=GOOD_TESTS.replace("assertContends", "assertNothing")))
     assert any(f.level == "FAIL" for f in bad), bad
 
+    # A SECOND procedure joins an existing domain and no test drives it. The two can
+    # reach the key by different routes -- one hashing a parameter, one hashing a
+    # column it looked up -- and nothing would notice the routes disagreeing.
+    bad = checks.check_advisory_locks_have_a_contention_test(write(
+        procs=GOOD_PROCS + (
+            "CREATE OR REPLACE PROCEDURE uc8_unrevoke_token(p_token_id INTEGER)\n"
+            "LANGUAGE plpgsql AS $$\nDECLARE v_agency INTEGER;\nBEGIN\n"
+            "    PERFORM pg_advisory_xact_lock(\n"
+            "        hashtext('polaris.revoke.' || v_agency::TEXT));\n"
+            "END$$;\n")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
 
 def test_oid4vp_verifier_boundary_check_discriminates(tmp_path):
     # The OpenID4VP verifier must stay installable without the rest of Polaris, must take

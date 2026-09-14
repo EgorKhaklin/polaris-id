@@ -17596,6 +17596,24 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
                          "apart from the row locks around it"
                          % (", ".join(sorted(undeclared)), domain))
 
+    # A domain can be held by more than one procedure, and they need not reach the
+    # key the same way: uc10_attest_trust hashes its parameter while
+    # uc10_revoke_attestation SELECTs attesting_agency_id out of the row and hashes
+    # that. Until v9.462 a comment asserted the two serialize and nothing measured
+    # it; a derivation reading the neighbouring column would have left the claim
+    # standing while the operations ran concurrently. So every procedure that takes
+    # a lock must be exercised by a contention test in one direction or the other.
+    exercised = driven | held
+    for domain in sorted(domains):
+        missing = domains[domain] - exercised - set(_UNOBSERVABLE_LOCKS)
+        if missing:
+            return _fail("advisory_lock_tests",
+                         "%s take(s) the advisory lock on %r and no contention test drives "
+                         "any of them. Two procedures on one domain can reach the key by "
+                         "different routes, and nothing here would notice the routes "
+                         "disagreeing"
+                         % (", ".join(sorted(missing)), domain))
+
     per_entity = [d for d in domains if d not in _GLOBAL_LOCK_DOMAINS]
     return _ok("advisory_lock_tests",
                "all %d advisory-lock domains are driven by contention tests that ask Postgres "

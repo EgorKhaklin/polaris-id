@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.462 — 2026-09-14 (a claim that lived in a comment)
+
+The last thing in this family, and the smallest. Above the federation lock tests sits a comment
+that has said since R11-3: "Same-attesting-agency attest + concurrent revoke serialize". No test
+drove `uc10_revoke_attestation` concurrently. The claim lived in a comment.
+
+It is not a trivial claim. The two procedures reach the same lock key by different routes.
+`uc10_attest_trust` hashes its `p_attesting_id` PARAMETER; `uc10_revoke_attestation` SELECTs
+`attesting_agency_id` out of the attestation row and hashes that. Nothing checked the routes
+agree, and `AgencyTrustAttestation` carries `attested_agency_id` right beside it.
+
+Now measured, and the rows are disjoint on purpose: the attest INSERTs a new attestation while the
+revoke UPDATEs an existing one, so the key is the only thing they share. The claim held. The
+mutation is the one a person would actually make, deriving the key from `attested_agency_id`
+instead, and the test goes red against it while the comment would have stayed true.
+
+`check_advisory_locks_have_a_contention_test` now requires every procedure that takes a lock to be
+exercised in one direction or the other, not just one procedure per domain. That is the rule that
+would have found this gap: `uc10_revoke_attestation` joined an existing lock domain and no test
+ever drove it.
+
+Four ships, one question. v9.459 found five tests measuring a sleep instead of a lock; v9.460 found
+two substituting their own lock for the procedure's, and two locks that cannot be watched at all;
+v9.461 found the local runner reading half its file; and this one found a claim nothing had ever
+checked. The question was the same each time, and it was never whether the suite passes.
+
 ## v9.461 — 2026-09-14 (the local runner was reading half the file)
 
 Found while verifying v9.459, and worth its own ship because it is about the instrument a person

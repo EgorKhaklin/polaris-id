@@ -6783,6 +6783,53 @@ class ConcurrencyTests(PolarisTestCase):
     # buys is that the second caller never READS the stale set in the first place,
     # and that difference is invisible from outside the procedure.
 
+    def test_uc10_attest_and_revoke_share_one_lock_key(self):
+        """An attest and a revoke under the same attesting agency serialize.
+
+        The comment above this block has claimed this since R11-3 and nothing
+        measured it. The two procedures reach the same key by different routes:
+        uc10_attest_trust hashes its p_attesting_id PARAMETER, while
+        uc10_revoke_attestation SELECTs attesting_agency_id out of the attestation
+        row and hashes that. Nothing checked that the two routes agree, and a
+        derivation reading the wrong column would leave the claim standing in a
+        comment while the operations ran concurrently.
+
+        The rows are disjoint -- the attest INSERTs a new attestation, the revoke
+        UPDATEs an existing one -- so the key is the only thing they share.
+        """
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE username='admin'")
+            admin = cur.fetchone()['user_id']
+            cur.execute("SELECT context_id FROM VerificationContext "
+                        "WHERE context_type='VOTING'")
+            ctx_voting = cur.fetchone()['context_id']
+            cur.execute("SELECT context_id FROM VerificationContext "
+                        "WHERE context_type='MOTOR_VEHICLE'")
+            ctx_mv = cur.fetchone()['context_id']
+            # An attestation BY agency 4 that the revoke can act on. Attesting
+            # agency 4 is what both operations will lock on.
+            cur.execute("""
+                INSERT INTO AgencyTrustAttestation
+                    (attesting_agency_id, attested_agency_id, context_id,
+                     attested_date, valid_until, signed_by)
+                VALUES (4, 3, %s, CURRENT_TIMESTAMP,
+                        (CURRENT_DATE + INTERVAL '180 days')::date, %s)
+                RETURNING attestation_id
+            """, (ctx_voting, admin))
+            attestation_id = cur.fetchone()['attestation_id']
+            conn.commit()
+
+        def attest(cur):
+            cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
+                        (4, 2, ctx_mv,
+                         (datetime.now().date() + timedelta(days=180)), admin))
+
+        def revoke(cur):
+            cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
+                        (attestation_id, 'C9_LOCK_KEY_TEST', admin))
+
+        self.assertContends(attest, revoke, 'Attest racing a revoke, same agency')
+
     def test_uc11_close_epoch_both_rows_committed(self):
         """Sanity check: after the two threads above finish, both epoch
         rows are committed (serialization, not loss-of-write)."""
