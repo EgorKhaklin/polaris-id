@@ -100,6 +100,22 @@ This matters because every other suite in this repository runs from INSIDE the r
 with the repository on `sys.path`. An import of `polaris_web`, or a read of a file that only
 exists in a checkout, would have stayed green here and failed on the first stranger's machine.
 
+
+**The verifier's deciding half exists (2026-09-14).** `packages/polaris-oid4vp` 0.1.0 verifies
+an SD-JWT VC presentation with holder key binding and refuses with a named reason, one per
+negative module in the conformance plan: `issuer_signature`, `sd_hash`, `kb_signature`,
+`nonce`, `audience`, `kb_freshness`. 23 tests, of which three are the positive control without
+which the other twenty are vacuous. Both directions were checked by patching the verifier: one
+that always accepts fails 19, one that always refuses fails 4.
+
+It is a separate package because `polaris-verify` promises it opens no socket and that promise
+is worth keeping. `check_oid4vp_verifier_boundary` holds the line: no Polaris imports, the
+nonce and audience keyword-only and supplied by the caller, and a positive control present in
+the tests.
+
+**The transport half is not built and nothing external has seen any of it.** No run, no score,
+no row above moves.
+
 **Known gaps against the product contract, same date:**
 
 - ~~There is no `polaris-verify` startup to refuse.~~ **CLOSED.**

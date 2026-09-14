@@ -2340,6 +2340,16 @@ jobs:
       - name: Install test — build both packages, install them clean, verify real material
         run: python scripts/polaris-product-boundary-drill.py
 
+      # The half of the OpenID4VP verifier that decides. Seven of its tests are the seven
+      # negative modules of oid4vp-1final-verifier-haip-test-plan, built and caught locally,
+      # and three are the positive control without which those seven mean nothing. It runs
+      # here rather than in the product job because it is a package, it needs no database,
+      # and it takes 0.03 seconds.
+      - name: Install cryptography (polaris-oid4vp checks ES256, which is HAIP's floor)
+        run: python -m pip install --quiet 'cryptography>=42'
+      - name: SD-JWT VC verification — the seven conformance refusals
+        run: cd packages/polaris-oid4vp && python -m unittest test_sdjwt
+
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance
     runs-on: ubuntu-latest

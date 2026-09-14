@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polaris-oid4vp"
+version = "0.1.0"
+description = "OpenID4VP 1.0 + HAIP verifier: verify an SD-JWT VC presentation from a wallet Polaris has never seen."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Egor Khaklin" }]
+keywords = ["openid4vp", "haip", "sd-jwt-vc", "verifier", "identity"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Security :: Cryptography",
+]
+
+# Unlike polaris-verify, which leaves the ML-DSA backend to the operator because there is a
+# real choice to make, there is no choice here: the profile's mandatory algorithm is ES256
+# and `cryptography` is how this checks one. A hard dependency, because an optional extra
+# would only produce a verifier that cannot verify.
+dependencies = ["cryptography>=42"]
+
+[project.urls]
+Homepage = "https://github.com/EgorKhaklin/polaris-id"
+Assessment = "https://github.com/EgorKhaklin/polaris-id/tree/main/lab/interop"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["polaris_oid4vp*"]

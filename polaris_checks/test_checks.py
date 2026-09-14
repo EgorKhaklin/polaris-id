@@ -14905,3 +14905,65 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
     write(tests="class SomethingElse(unittest.TestCase):\n    pass\n")
     assert level("no class exercising") == "FAIL", \
         "must FAIL when the SDK has no refusal tests for the drill to make go red"
+
+
+def test_oid4vp_verifier_boundary_check_discriminates(tmp_path):
+    # The OpenID4VP verifier must stay installable without the rest of Polaris, must take
+    # the nonce and audience from its CALLER rather than from the presentation it is
+    # checking, and its seven refusal tests must stand on a positive control. The good
+    # fixture has all three; each perturbation removes exactly one.
+    GOOD_SRC = (
+        "import base64, hashlib, json\n"
+        "from cryptography.hazmat.primitives.asymmetric import ec\n"
+        "def verify_presentation(presentation, *, expected_nonce, expected_audience,\n"
+        "                        issuer_jwks=None, trust_anchors=None):\n"
+        "    if not expected_nonce or not expected_audience:\n"
+        "        return _refuse('misconfigured', 'the caller supplied neither')\n"
+        "    return Verdict(True)\n"
+    )
+    GOOD_TESTS = (
+        "def test_positive_control(self):\n"
+        "    self.assertTrue(v.authentic, 'the control was refused')\n"
+        "def test_refusals(self):\n"
+        "    for code in ('issuer_signature', 'sd_hash', 'kb_signature', 'nonce',\n"
+        "                 'audience', 'kb_freshness'):\n"
+        "        pass\n"
+    )
+
+    def write(src=GOOD_SRC, tests=GOOD_TESTS):
+        root = tmp_path / ("case%d" % write.n)
+        write.n += 1
+        pkg = root / "packages" / "polaris-oid4vp" / "polaris_oid4vp"
+        pkg.mkdir(parents=True)
+        (pkg / "sdjwt.py").write_text(src)
+        (root / "packages" / "polaris-oid4vp" / "test_sdjwt.py").write_text(tests)
+        return root
+    write.n = 0
+
+    ok = checks.check_oid4vp_verifier_boundary(write())
+    assert all(f.level == "OK" for f in ok), ok
+
+    # A single import of the Flask app makes the package uninstallable on its own.
+    bad = checks.check_oid4vp_verifier_boundary(
+        write(src=GOOD_SRC + "import polaris_web\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # Positional arguments: transposing the nonce and the audience fails open on both.
+    bad = checks.check_oid4vp_verifier_boundary(write(
+        src=GOOD_SRC.replace("presentation, *, expected_nonce", "presentation, expected_nonce")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # Nothing refuses a caller that supplies no nonce: the check stops happening silently.
+    bad = checks.check_oid4vp_verifier_boundary(
+        write(src=GOOD_SRC.replace("misconfigured", "whatever")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # No positive control: a verifier that refuses everything passes every refusal test.
+    bad = checks.check_oid4vp_verifier_boundary(
+        write(tests=GOOD_TESTS.replace("self.assertTrue(v.authentic", "self.assertFalse(v.x")))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # One untested refusal is one the conformance suite will find first.
+    bad = checks.check_oid4vp_verifier_boundary(
+        write(tests=GOOD_TESTS.replace("'sd_hash', ", "")))
+    assert any(f.level == "FAIL" for f in bad), bad

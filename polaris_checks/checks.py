@@ -17237,6 +17237,79 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
                "canonicalise the same way")
 
 
+# The OpenID4VP verifier's boundary. `packages/polaris-oid4vp` exists because the FIRST named
+# external dependency, the OpenID Foundation conformance suite's HAIP verifier plan, requires
+# something that listens, and `polaris-verify` promises it opens no socket. That split is only
+# worth anything while this package stays installable on its own: the moment it imports the
+# Flask app or the check layer, a stranger has to install the whole system to verify one
+# presentation, which is exactly the failure the product boundary is written to prevent.
+_OID4VP_REL = "packages/polaris-oid4vp/polaris_oid4vp/sdjwt.py"
+_OID4VP_TESTS_REL = "packages/polaris-oid4vp/test_sdjwt.py"
+_OID4VP_FORBIDDEN = ("polaris_web", "polaris_checks", "polaris_cli", "polaris_sim",
+                     "psycopg2", "flask", "redis")
+
+
+def check_oid4vp_verifier_boundary(root: pathlib.Path) -> list[Finding]:
+    src = _read(root, _OID4VP_REL)
+    if not src:
+        return _fail("oid4vp_boundary", "%s is missing" % _OID4VP_REL)
+
+    for mod in _OID4VP_FORBIDDEN:
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", src, re.M):
+            return _fail("oid4vp_boundary",
+                         "the OpenID4VP verifier imports %r. It is a separate package so that "
+                         "verifying one presentation does not require installing the operator "
+                         "console or a database, and an import is how that stops being true"
+                         % mod)
+
+    # The vacuity guard, which is the one that matters. Two of the conformance plan's seven
+    # negative modules attack the nonce and the audience. A verifier that reads either out of
+    # the presentation it is checking passes both by not performing them, and makes every
+    # presentation replayable forever. So they are supplied by the CALLER, and an absent one
+    # is a refusal rather than a check that quietly does not happen.
+    m = re.search(r"def verify_presentation\(([^)]*)\)", src, re.S)
+    if not m:
+        return _fail("oid4vp_boundary", "%s has no verify_presentation()" % _OID4VP_REL)
+    signature = m.group(1)
+    if "*" not in signature:
+        return _fail("oid4vp_boundary",
+                     "verify_presentation() takes its arguments positionally. The nonce and "
+                     "the audience are the two that stop replay, and a positional call site "
+                     "that transposes them fails open on both")
+    for arg in ("expected_nonce", "expected_audience"):
+        if not re.search(rf"\*.*\b{arg}\b", signature, re.S):
+            return _fail("oid4vp_boundary",
+                         "verify_presentation() has no keyword-only %r. The caller must say "
+                         "what its request asked for; a verifier that takes it from the "
+                         "presentation is checking the presentation against itself" % arg)
+    if "misconfigured" not in src:
+        return _fail("oid4vp_boundary",
+                     "nothing refuses a caller that supplies no nonce or no audience. An "
+                     "empty expected value compares equal to nothing and the check silently "
+                     "stops happening, which is worse than not having it")
+
+    # Anti-vacuity, structurally. Seven refusal tests prove nothing unless the harness can
+    # also produce a presentation that is ACCEPTED.
+    tests = _read(root, _OID4VP_TESTS_REL)
+    if not tests:
+        return _fail("oid4vp_boundary", "%s is missing" % _OID4VP_TESTS_REL)
+    if "assertTrue(v.authentic" not in tests:
+        return _fail("oid4vp_boundary",
+                     "%s asserts no presentation is AUTHENTIC. Without a positive control, a "
+                     "verifier that refuses everything passes every refusal test in the file"
+                     % _OID4VP_TESTS_REL)
+    for code in ("issuer_signature", "sd_hash", "kb_signature", "nonce", "audience",
+                 "kb_freshness"):
+        if code not in tests:
+            return _fail("oid4vp_boundary",
+                         "no test names the %r refusal. The conformance plan has seven "
+                         "negative modules and each one is a way a presentation can be "
+                         "wrong; an untested refusal is one the suite will find" % code)
+    return _ok("oid4vp_boundary",
+               "the OpenID4VP verifier imports no Polaris code, takes its nonce and audience "
+               "from the caller, and its refusal tests stand on a positive control")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
@@ -17335,6 +17408,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_witness_fuzz,
     check_real_pqc_default_boot,
     check_detached_verifier,
+    check_oid4vp_verifier_boundary,
     check_dyno_published,
     check_attacks_run,
     check_federation_real,
