@@ -212,6 +212,33 @@ class TheRequestTests(VerifierTestCase):
         second = self.verifier.request_object(session.state)
         self.assertTrue(first and first == second)
 
+    def test_request_uri_method_post_is_advertised(self):
+        """Without it the request-uri-method-post module SKIPS itself, and a skipped module
+        reported as clean is the same lie as a vacuous pass."""
+        session, _ = self.verifier.new_request()
+        params = self.verifier.authorization_request_params(session)
+        self.assertEqual(params["request_uri_method"], "post")
+        self.assertIn(session.state, params["request_uri"])
+
+    def test_a_posted_wallet_nonce_comes_back_as_a_claim(self):
+        """OpenID4VP 1.0 section 5.10. It is the wallet's half of the replay protection."""
+        session, _ = self.verifier.new_request()
+        jar = self.verifier.request_object(session.state, wallet_nonce="w-123456")
+        _, claims = Wallet.read_request(jar)
+        self.assertEqual(claims["wallet_nonce"], "w-123456")
+
+    def test_a_cached_object_is_never_served_to_a_post(self):
+        """Serving the cached one would silently drop the wallet's nonce."""
+        session, _ = self.verifier.new_request()
+        cached = self.verifier.request_object(session.state)
+        posted = self.verifier.request_object(session.state, wallet_nonce="w-abc")
+        self.assertNotEqual(cached, posted)
+        self.assertNotIn("wallet_nonce", Wallet.read_request(cached)[1])
+
+    def test_a_wallet_nonce_for_an_unknown_state_gets_nothing(self):
+        self.assertIsNone(self.verifier.request_object("no-such-state",
+                                                       wallet_nonce="w-1"))
+
 
 class TheHappyPathTests(VerifierTestCase):
     """The positive control. Without it every 4xx below is a verifier that never says yes."""

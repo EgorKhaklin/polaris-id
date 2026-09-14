@@ -23,11 +23,14 @@ wants a screenshot of a verifier displaying a successful verification, and this 
 produce one and will not pretend to. A run here is not a certification and is not published:
 see `lab/EXTERNAL-NOUNS.md` for what would be.
 
-THE NEGATIVE CONTROL. A suite that is not really exercising anything, and a verifier that
-refuses everything, produce the same seven green modules. So the drill also runs the happy
-flow against a verifier whose `handle_direct_post` has been replaced with one that always
-answers 400, and REQUIRES the suite to notice: if the suite reports the happy flow as
-unaffected, the run is void and says so.
+TWO NEGATIVE CONTROLS, one per direction, because the two halves of this plan fail in
+opposite ways and a control for one says nothing about the other.
+
+A verifier that always answers **400** must break the four positive modules. A verifier that
+always answers **200** must break all seven negative ones, and that is the control that
+matters: the negative modules pass on a 4xx and nothing else, so seven green modules and a
+suite that had quietly stopped sending anything look exactly alike without it. The run is VOID
+if either control goes unnoticed, and says which.
 """
 import argparse
 import datetime
@@ -160,10 +163,11 @@ def run_module(suite, verifier, config, module):
     test_id = run["id"]
 
     session, _ = verifier.new_request()
-    params = urllib.parse.urlencode({
-        "client_id": verifier.client_id,
-        "request_uri": "%s?state=%s" % (verifier.request_uri, session.state),
-    })
+    # The product's own parameters, not a hand-rolled copy. The drill building its own set
+    # is how it drifts from what a caller would actually send, and it did: without
+    # request_uri_method=post the request-uri-method-post module SKIPS itself, and a skipped
+    # module reported as clean is the same lie as a vacuous pass.
+    params = urllib.parse.urlencode(verifier.authorization_request_params(session))
     opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=_CTX),
                                          _NoRedirect)
     try:
@@ -180,6 +184,37 @@ def run_module(suite, verifier, config, module):
         if result in ("FAILURE", "WARNING"):
             failures.append("%s %s" % (result, str(entry.get("msg", ""))[:100]))
     return test_id, tally, failures
+
+
+def outcome(tally, needs_screenshot):
+    """What the SUITE concluded, not what this drill infers from an absence.
+
+    The first version of this drill reported PASS whenever the log held no FAILURE entry.
+    That is a proxy, and on the seven negative modules it is the wrong one: a verifier that
+    ACCEPTS a forged presentation produces no FAILURE either. The suite marks the difference
+    in its terminal entry, measured against a verifier patched to answer 200 to everything:
+
+        negative module, verifier answered 4xx   FINISHED   the automatic pass
+        negative module, verifier answered 200   REVIEW     waiting for a human screenshot
+                                                            of the verifier's error, which
+                                                            is NOT a pass
+        positive module, verifier answered 200   REVIEW     waiting for a screenshot of the
+                                                            successful verification
+        positive module, verifier answered 4xx   FAILURE    conditions recorded against it
+
+    So the signal is FINISHED versus REVIEW, and counting failures cannot see it.
+    """
+    bad = tally.get("FAILURE", 0)
+    if bad:
+        return "FAILURE x%d" % bad, False
+    if needs_screenshot:
+        return ("REVIEW (screenshot)", True) if tally.get("REVIEW") else \
+            ("no REVIEW placeholder: the flow did not complete", False)
+    if tally.get("FINISHED"):
+        return "PASS (automatic)", True
+    if tally.get("REVIEW"):
+        return "REVIEW: the verifier did NOT refuse it", False
+    return "no terminal entry", False
 
 
 def main() -> int:
@@ -213,16 +248,15 @@ def main() -> int:
     }
 
     modules = [m for m in MODULES if args.only in (None, m[0])]
-    rows, hard_failures = [], 0
+    rows, not_clean = [], []
     for module, needs_screenshot in modules:
         _, tally, failures = run_module(args.suite, verifier, config, module)
-        bad = tally.get("FAILURE", 0)
-        hard_failures += bad
+        verdict, clean = outcome(tally, needs_screenshot)
+        if not clean:
+            not_clean.append(module)
         rows.append((module, needs_screenshot, tally, failures))
         short = module.replace("oid4vp-1final-verifier-", "")
-        verdict = "FAILURE x%d" % bad if bad else (
-            "REVIEW (screenshot)" if needs_screenshot else "PASS")
-        print("  %-32s %-22s %s" % (short, verdict,
+        print("  %-32s %-38s %s" % (short, verdict,
                                     "warn %d" % tally.get("WARNING", 0)
                                     if tally.get("WARNING") else ""))
         for line in failures[:3]:
@@ -230,29 +264,69 @@ def main() -> int:
 
     # The negative control. Without it, a suite that stopped sending anything and a verifier
     # that refuses everything both print seven green modules.
-    print("\n  negative control: a verifier that always answers 400")
+    # TWO controls, one per direction, because the two halves of this plan fail in opposite
+    # ways and a control for one says nothing about the other.
+    print("\n  negative controls")
     original = verifier.handle_direct_post
+    controls = []
+
+    # 1. Always 400. If the suite does not notice, the four POSITIVE modules above are
+    #    reporting on a harness rather than on a verifier.
     verifier.handle_direct_post = lambda form: (400, {"error": "invalid_request",
                                                       "error_description": "control"}, None)
     try:
-        _, tally, failures = run_module(args.suite, verifier, config, MODULES[0][0])
+        _, tally, _ = run_module(args.suite, verifier, config, "oid4vp-1final-verifier-happy-flow")
     finally:
         verifier.handle_direct_post = original
-    control_noticed = bool(tally.get("FAILURE"))
-    print("    happy flow under the control: %s"
-          % ("NOTICED (%d failures)" % tally["FAILURE"] if control_noticed
-             else "reported no failure"))
+    controls.append(("always 400, against happy-flow", tally.get("FAILURE", 0)))
+
+    # 2. Always 200, which is the control that matters. The seven negative modules PASS on a
+    #    4xx and nothing else, so a verifier that accepts every forgery must FAIL every one
+    #    of them. Without this leg, seven green modules and a suite that had stopped sending
+    #    anything look exactly alike, and the seven are the automatically scored half: they
+    #    are the claim. The first version of this drill controlled only direction 1, which
+    #    is to say it validated the half that needs a human anyway.
+    verifier.handle_direct_post = lambda form: (200, {"redirect_uri": verifier.redirect_uri},
+                                               None)
+    accepted_everything = []
+    try:
+        for module, needs_screenshot in MODULES:
+            if needs_screenshot:
+                continue
+            _, tally, _ = run_module(args.suite, verifier, config, module)
+            # Not "did it record a failure": it does not. "Did it withhold the automatic
+            # pass", which is the thing the seven negative modules actually grant.
+            accepted_everything.append((module, 0 if tally.get("FINISHED") else 1))
+    finally:
+        verifier.handle_direct_post = original
+    unnoticed = [m for m, noticed in accepted_everything if not noticed]
+    controls.append(("always 200, against all %d negative modules" % len(accepted_everything),
+                     len(accepted_everything) - len(unnoticed)))
+
+    for label, noticed in controls:
+        print("    %-46s %s" % (label, "NOTICED (%d)" % noticed if noticed
+                                else "reported nothing"))
+    for module in unnoticed:
+        print("      ! %s did not notice a verifier that accepts everything"
+              % module.replace("oid4vp-1final-verifier-", ""))
 
     print()
-    if not control_noticed:
+    if not controls[0][1]:
         print("== VOID: the suite did not notice a verifier that refuses everything, so the "
-              "passes above are a statement about this harness and not about the verifier ==",
-              file=sys.stderr)
+              "positive modules above are a statement about this harness and not about the "
+              "verifier ==", file=sys.stderr)
         httpd.shutdown()
         return 3
-    if hard_failures:
-        print("== %d condition(s) the suite refuses. Each one is a requirement, named. =="
-              % hard_failures, file=sys.stderr)
+    if unnoticed:
+        print("== VOID: %d negative module(s) passed a verifier that accepts every forgery, "
+              "so their PASS above says nothing about this verifier =="
+              % len(unnoticed), file=sys.stderr)
+        httpd.shutdown()
+        return 3
+    if not_clean:
+        print("== %d module(s) did not come out clean: %s =="
+              % (len(not_clean), ", ".join(m.replace("oid4vp-1final-verifier-", "")
+                                           for m in not_clean)), file=sys.stderr)
         httpd.shutdown()
         return 1
     automatic = sum(1 for m, needs, _, _ in rows if not needs)

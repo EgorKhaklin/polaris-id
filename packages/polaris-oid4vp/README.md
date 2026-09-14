@@ -114,10 +114,19 @@ The four REVIEW modules have zero failures and zero warnings; they end in REVIEW
 suite wants a screenshot of a verifier displaying a successful verification, which the drill
 cannot produce and will not fake.
 
-The drill carries a negative control and is VOID without it: it re-runs the happy flow against
-a verifier patched to answer 400 to everything, and the suite has to notice. Otherwise a suite
-that had stopped sending anything and a verifier that refuses everything print the same seven
-green modules.
+The drill carries TWO negative controls, one per direction, and is VOID without either. A
+verifier patched to answer **400** to everything must break the four positive modules. A
+verifier patched to answer **200** to everything must break all seven negative ones, and that
+is the control that matters: those seven are the automatically scored half, so they are the
+claim.
+
+The first version of the drill had only the 400 control and reported a module clean whenever
+its log held no FAILURE entry. Both were wrong in the same way. A verifier that accepts a
+forged presentation records no FAILURE either; the suite draws the line in its terminal entry,
+FINISHED for the automatic pass against REVIEW for "waiting for a human to explain this". Under
+the corrected criterion `request-uri-method-post` turned out to be SKIPPING itself, because it
+will not run unless the request carries `request_uri_method=post`. A skipped module has exactly
+as many failures as a passing one.
 
 ## Tests
 
@@ -126,7 +135,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_conformance_capture
 ```
 
-71 tests in four files, and they are not equal in weight.
+75 tests in four files, and they are not equal in weight.
 
 `test_sdjwt` (23) and `test_jwe` (14) are this package agreeing with itself: the material is
 built here and checked here. Each carries a positive control, because a verifier that refuses
@@ -146,7 +155,7 @@ The same fixture proves the refusals: a year later it is stale, under another no
 another audience it is not ours, with `given_name` rewritten from Jean to Jeanne the digest no
 longer matches what the issuer signed.
 
-`test_verifier` (25) drives the whole exchange in process, with a wallet that READS the
+`test_verifier` (29) drives the whole exchange in process, with a wallet that READS the
 request object rather than being told what is in it: if the request object were malformed, that
 wallet could not answer it. Seven of its tests assert each conformance refusal arrives as an
 HTTP 400 rather than merely being noticed, because a 400 is the whole of what those modules

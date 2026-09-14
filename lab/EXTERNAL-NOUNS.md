@@ -39,6 +39,26 @@ published.
     Published:                 no
     Certified:                 no
 
+**The first version of that score was measured with the wrong instrument, and one of the
+eleven was not what it said.** The drill reported a module clean when its log held no FAILURE
+entry. That is a proxy, and on the seven negative modules it is the wrong one: a verifier that
+ACCEPTS a forged presentation records no FAILURE either. The suite draws the line in its
+terminal log entry, which was found by running a verifier patched to answer 200 to everything:
+
+    negative module, verifier answered 4xx    FINISHED   the automatic pass
+    negative module, verifier answered 200    REVIEW     waiting for a human screenshot of
+                                                         the verifier's error. NOT a pass
+    positive module, verifier answered 200    REVIEW     waiting for a success screenshot
+    positive module, verifier answered 4xx    FAILURE    conditions recorded against it
+
+Under the corrected criterion `request-uri-method-post` was **SKIPPING ITSELF**: it refuses to
+run unless the authorization request carries `request_uri_method=post`, the drill was
+hand-rolling its parameters instead of using the verifier's own, and a skipped module has
+exactly as many FAILURE entries as a passing one. The verifier now advertises the parameter
+and implements the other half of it (OpenID4VP 5.10: a `wallet_nonce` posted to the
+`request_uri` MUST come back as a claim in the request object). The score above is the re-run,
+and the seven automatic passes held under both criteria.
+
 **Read the qualifications, they are not decoration.** The suite is the OpenID Foundation's own
 software and the plan is the one used for certification, so the seven automatic passes are
 machine-checked verdicts produced by code this project did not write. Everything else about
@@ -47,10 +67,14 @@ anywhere, and certification is a hosted run plus a fee plus a screenshot this dr
 fake. **No outside party has done anything.** The 90-day item *"an external OpenID conformance
 suite is running"* is met in the literal sense and in no stronger one.
 
-The run carries a negative control and is void without it: a verifier patched to answer 400 to
-everything is re-run against the happy flow, and the suite has to notice. It does, with two
-failures. Without that leg, a suite that had stopped sending anything and a verifier that
-refuses everything would both print seven green modules.
+The run carries TWO negative controls, one per direction, and is void without either. A
+verifier patched to answer 400 to everything must break the four positive modules: it does,
+with two failures on the happy flow. A verifier patched to answer 200 to everything must break
+all seven negative ones: it does, all seven.
+
+The second control is the one that matters and the first version of this drill did not have
+it. The negative modules are the automatically scored half, so they are the claim, and the
+only control present validated the half that needs a human anyway.
 
 Reproduce with `python3 scripts/polaris-oid4vp-conformance-drill.py` against a local suite.
 

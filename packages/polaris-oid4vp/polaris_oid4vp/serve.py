@@ -41,10 +41,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length).decode("utf-8", "replace")
         if path == REQUEST_PATH:
-            # request_uri_method=post. The wallet may send wallet_metadata and a
-            # wallet_nonce; neither changes what is served here, and ignoring them is
-            # correct rather than lazy: the request object is already signed and fixed.
-            return self._serve_request_object(urllib.parse.parse_qs(query))
+            # request_uri_method=post, OpenID4VP 1.0 section 5.10. A posted `wallet_nonce`
+            # MUST come back as a claim in the request object, so this is not a POST that can
+            # be served from cache. `wallet_metadata` may also be posted and is ignored: this
+            # verifier's capabilities do not vary by wallet.
+            posted = urllib.parse.parse_qs(raw)
+            return self._serve_request_object(urllib.parse.parse_qs(query),
+                                              wallet_nonce=(posted.get("wallet_nonce")
+                                                            or [None])[0])
         if path != RESPONSE_PATH:
             return self._send(404, {"error": "not_found"})
         form = urllib.parse.parse_qs(raw)
@@ -53,9 +57,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.on_verdict(status, body, verdict)
         return self._send(status, body)
 
-    def _serve_request_object(self, query):
+    def _serve_request_object(self, query, wallet_nonce=None):
         state = (query.get("state") or [""])[0]
-        jar = self.verifier.request_object(state)
+        jar = self.verifier.request_object(state, wallet_nonce=wallet_nonce)
         if not jar:
             return self._send(404, {"error": "not_found",
                                     "error_description": "no such outstanding request"})

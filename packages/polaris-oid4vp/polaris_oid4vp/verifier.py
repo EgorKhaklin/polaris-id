@@ -117,17 +117,29 @@ class Verifier:
             self._by_request[session.state] = jar
         return session, jar
 
-    def request_object(self, state):
+    def request_object(self, state, wallet_nonce=None):
         """The JAR for an outstanding request, served as many times as it is asked for.
 
         The plan has a module that fetches the `request_uri` TWICE. Making a request object
         single-use would look like prudence and would fail it, and would fail nothing real:
         the object is signed, public, and carries its own expiry.
+
+        `wallet_nonce` is the other half of `request_uri_method=post`. OpenID4VP 1.0 section
+        5.10: when a wallet POSTs one, the verifier MUST return a request object carrying it
+        as a top-level claim. It is the wallet's replay protection against a request object
+        minted before the wallet existed, and the mirror of the `nonce` we send it, so a
+        verifier that serves a cached object to a POST has taken that protection away.
         """
         with self._lock:
-            return self._by_request.get(state)
+            session = self._sessions.get(state)
+            cached = self._by_request.get(state)
+        if wallet_nonce is None:
+            return cached
+        if session is None:
+            return None
+        return self._request_object(session, wallet_nonce=wallet_nonce)
 
-    def _request_object(self, session):
+    def _request_object(self, session, wallet_nonce=None):
         numbers = session.enc_key.public_key().public_numbers()
         enc_jwk = {"kty": "EC", "crv": "P-256", "use": "enc", "alg": "ECDH-ES",
                    "kid": "enc-" + session.state,
@@ -160,11 +172,19 @@ class Verifier:
                 "claims": [{"path": [c]} for c in self.claims],
             }]},
         }
+        if wallet_nonce is not None:
+            claims["wallet_nonce"] = wallet_nonce
         header = {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.x5c}
         return _sign_es256(self.key, header, claims)
 
     def authorization_request_params(self, session):
-        """What goes in the query string the wallet is launched with."""
+        """What goes in the query string the wallet is launched with.
+
+        `request_uri_method=post` is advertised because it is strictly better for the wallet:
+        it lets the wallet contribute a nonce to the request object. It is also the parameter
+        a conformance module looks for before it will run at all, and a module that SKIPS is
+        not a module that passed, which is a distinction worth one line of query string.
+        """
         return {"client_id": self.client_id,
                 "request_uri": "%s?state=%s" % (self.request_uri, session.state),
                 "request_uri_method": "post"}
