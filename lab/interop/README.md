@@ -74,10 +74,33 @@ A HAIP verifier test plan instance was created against it over the API and answe
          &variant={"credential_format":"sd_jwt_vc","response_mode":"direct_post.jwt"}
     -> 201, plan 5qUv58nocNpfX, 11 modules
 
-That is as far as measurement goes without building something. **Nothing has been tested and no
-result exists**: a created plan is a configuration, and the tests sit waiting for a verifier to
-send them a request. What it establishes is that the external dependency is reachable, free,
-self-hostable, and that its demands can now be read off the instrument instead of a web page.
+Then the same thing with real keys, to find out whether the configuration it asks for can
+actually be produced. A P-256 key and a self-signed certificate for the request object, its DER
+SHA-256 as `client_id: x509_hash:JXAyhsWLsTPE6...`, a second P-256 JWK for the fake wallet's
+credential signing, and the certificate PEM as `request_object_trust_anchor_pem`. The suite
+took it, created a test instance, and exported the endpoint a verifier is supposed to talk to:
+
+    POST /api/runner?test=oid4vp-1final-verifier-happy-flow&plan=cueeNT3C0PqN3
+    -> test tdULCaAMb22BDdW
+       authorization_endpoint = https://localhost.emobix.co.uk:8443/test/a/polaris-lab/authorize
+
+**And it answers.** A bare `GET` at that endpoint, with no parameters, from the host:
+
+    SUCCESS      Request Object Trust Anchor is configured
+                 Incoming HTTP request to /test/a/polaris-lab/authorize
+                 Authorization endpoint
+    FAILURE      Authorization endpoint request does not contain a request_uri parameter
+    INTERRUPTED  Test was interrupted before it could complete
+
+That is the rig proven end to end on this machine: configuration accepted, endpoint exported,
+an outside HTTP request received, evaluated against the profile, and a named verdict returned
+with the condition class that produced it.
+
+**It is not a Polaris result and must not be recorded as one.** What sent that request was
+`curl`, Polaris sent nothing, and the failure is the correct answer to an empty request. The
+rows in `lab/EXTERNAL-NOUNS.md` stay at zero. What has been established is that the instrument
+works, that its first demand is a `request_uri`, and that the cost of the next step is now
+known rather than estimated.
 
 ### What it pins, and what it leaves open
 
@@ -263,8 +286,9 @@ because the bridge, the drill and the design doc exist and SD-JWT VC is zero fil
 Three of the four items this section carried have been answered by running the suite. What is
 left:
 
-- **No test has been run and no result exists.** Every module in the created plan is waiting
-  for a request that nothing sends. A plan id is not a score.
+- **No Polaris code has been tested and no result about Polaris exists.** One module was
+  driven to an INTERRUPTED verdict by an empty `curl`, which measures the suite. A plan id is
+  not a score and neither is that.
 - Whether a partial run is useful. The contract says to publish the result even if partially
   red, which suggests running early is the point, and it is still untried.
 - Whether the suite's fake wallet can reach a verifier on `localhost` in practice. The
