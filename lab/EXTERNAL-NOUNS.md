@@ -29,13 +29,18 @@ there is an OpenID4VP endpoint to point it at (`lab/interop/`).
     Score:                     __ / __
     Published:                 no
 
-**The suite itself is now running, which is not a score.** 2026-09-14: the OpenID Foundation
-conformance suite runs locally from its prebuilt images, and
-`oid4vp-1final-verifier-haip-test-plan` has been instantiated against it (HTTP 201, plan
-`5qUv58nocNpfX`, 11 modules under `credential_format=sd_jwt_vc`,
-`response_mode=direct_post.jwt`). **Every one of those modules is waiting for a request nothing
-sends.** A created plan is a configuration screen, the rows above stay blank, and they stay
-blank until a module returns a verdict.
+**The suite itself is now running, and it has scored something that is not Polaris.**
+2026-09-14: the OpenID Foundation conformance suite runs locally from its prebuilt images, and
+`oid4vp-1final-verifier-haip-test-plan` has been instantiated against it (11 modules under
+`credential_format=sd_jwt_vc`, `response_mode=direct_post.jwt`). `lab/interop/probe.py` drives
+`oid4vp-1final-verifier-happy-flow` to **59 SUCCESS, 0 FAILURE, 0 WARNING, 1 REVIEW**.
+
+**That is a measurement of the recipe, not of Polaris, and it does not fill in a row.** The
+probe is 250 lines that import nothing from this tree and verify nothing: the credential the
+suite's wallet returns is written to disk unopened. It establishes what a conforming request
+has to contain, which was previously guesswork, and nothing about whether Polaris can check
+one. The rows above stay at zero until a verifier in this repository returns a verdict to
+that suite.
 
 **One external test corpus IS run, on every push, and it is not that.** Recorded here because
 leaving the section blank implies nothing outside this repository ever touches the code, which

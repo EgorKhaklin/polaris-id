@@ -98,9 +98,44 @@ with the condition class that produced it.
 
 **It is not a Polaris result and must not be recorded as one.** What sent that request was
 `curl`, Polaris sent nothing, and the failure is the correct answer to an empty request. The
-rows in `lab/EXTERNAL-NOUNS.md` stay at zero. What has been established is that the instrument
-works, that its first demand is a `request_uri`, and that the cost of the next step is now
-known rather than estimated.
+rows in `lab/EXTERNAL-NOUNS.md` stay at zero.
+
+### Then the whole request, and the suite accepts it
+
+[`probe.py`](probe.py) builds a real OpenID4VP 1.0 authorization request, serves it, and
+prints the suite's verdicts. It is deliberately **not a verifier**: the credential the wallet
+POSTs back is written to disk unopened, and it imports nothing from the Polaris tree, because
+either of those would turn a measurement into a claim about Polaris.
+
+    verdicts: SUCCESS 59, INFO 8, REVIEW 1, (info) 17
+    == every automated condition green ==
+
+Sixty of the sixty-one scored conditions in `oid4vp-1final-verifier-happy-flow` pass, including
+`Request object x5c chain validated and signature verified`, the DCQL query, the encrypted
+`direct_post.jwt` response POSTed back to `response_uri`, its content type, and HAIP-5.1's
+requirement that the response body carry a `redirect_uri` and nothing else. The one item left
+is the REVIEW: a screenshot of a verifier verifying, which this probe cannot produce and must
+not fake.
+
+**Three requirements were discovered by failing them**, which is the part worth having and the
+part no amount of reading produced:
+
+1. `client_metadata` must carry **`encrypted_response_enc_values_supported`** containing
+   **both** `A128GCM` and `A256GCM`. The older `authorization_encrypted_response_alg` and
+   `_enc` names are a HAIP section 5 FAILURE plus an unknown-parameter WARNING, and the suite
+   knows exactly three keys: `jwks`, `vp_formats_supported`, and that one.
+2. The **x5c leaf must not be self-signed**. A CA is required, even a throwaway one.
+3. The **registered trust anchor must not appear in the x5c chain**. Leaf only. Sending the
+   anchor with the chain, which is the instinct, is its own FAILURE.
+
+And the largest unknown is gone: **the suite fetched the `request_uri` from a self-signed
+HTTPS server on `host.docker.internal` without complaint**, and POSTed the response back to it.
+Both directions work between the host and the containers, so no public endpoint and no
+certificate authority is needed to run this.
+
+What has been established is that the instrument works, that the complete recipe for a
+conforming request is known and verified rather than estimated, and that what remains between
+this repository and a real result is the verification itself.
 
 ### What it pins, and what it leaves open
 
@@ -283,27 +318,33 @@ because the bridge, the drill and the design doc exist and SD-JWT VC is zero fil
 
 ## What this does NOT establish
 
-Three of the four items this section carried have been answered by running the suite. What is
-left:
+Everything this section listed has been answered except the one thing that matters:
 
-- **No Polaris code has been tested and no result about Polaris exists.** One module was
-  driven to an INTERRUPTED verdict by an empty `curl`, which measures the suite. A plan id is
-  not a score and neither is that.
-- Whether a partial run is useful. The contract says to publish the result even if partially
-  red, which suggests running early is the point, and it is still untried.
-- Whether the suite's fake wallet can reach a verifier on `localhost` in practice. The
-  containers can be reached from the host, which is the easy direction. The POST back to
-  `response_uri` is the direction that matters and has not been exercised, and the `BASE_URL`
-  hostname not resolving is a live obstacle to it.
+- **No Polaris code has been tested and no result about Polaris exists.** `probe.py` built
+  that request, not Polaris, and `probe.py` is 250 lines that verify nothing. Sixty green
+  conditions measure the recipe, not the product.
+- **The credential has never been opened.** The encrypted `vp_token` the wallet POSTs back
+  sits on disk as 2723 bytes of JWE. Decrypting it, checking the SD-JWT VC issuer signature,
+  the disclosure digests and the key binding JWT is the entire remaining job, and it is the
+  half that the seven negative modules attack.
+- The seven negative modules have not been run, and cannot be until something answers 4xx.
+- Whether a partial run is worth publishing. The contract says to publish even if partially
+  red; still untried.
 - Anything about wallet certification, the other role, which Polaris is not.
 
-**The next thing is no longer a measurement.** Everything cheap has been measured. What stands
-between this repository and an external conformance result is an OpenID4VP verifier: a signed
-request object with an x5c chain, a DCQL query for one credential, a listening `response_uri`
-that decrypts a JWE and answers 200 or 4xx, and an SD-JWT VC verifier behind it. That is a
-product behavior change, it qualifies under the merge rule as EXT-INTEROP with the suite named,
-and it is scoped by the contract to exactly one format, which the evidence above says is
-SD-JWT VC. It is not lab work and this file does not get to start it.
+**The next thing is no longer a measurement.** Everything cheap has been measured, and the
+expensive thing turned out to be cheaper than the first version of this file estimated: the
+request side is a known recipe with a green run behind it. What stands between this repository
+and an external conformance result is the verifier itself, and only that: decrypt the JWE,
+check the SD-JWT VC issuer signature against the x5c the wallet presents, check the disclosure
+digests, check the key binding JWT's signature, `nonce`, `aud` and `iat`, and answer 200 or
+4xx accordingly.
+
+That is a product behavior change. It qualifies under the merge rule as EXT-INTEROP with the
+suite named and the plan named, it is scoped by the contract to exactly one credential format,
+and the evidence above says that format is SD-JWT VC by a factor of eleven to four. It is not
+lab work and this file does not get to start it. What this file has done is make sure that
+when it is started, nothing about the target is a guess.
 
 ---
 
