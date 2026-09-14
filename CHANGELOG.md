@@ -5,6 +5,41 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.461 — 2026-09-14 (the local runner was reading half the file)
+
+Found while verifying v9.459, and worth its own ship because it is about the instrument a person
+checks a change with rather than about any particular test.
+
+`scripts/polaris-test.sh app` runs `python test_app.py`. Python executes a file top to bottom, and
+`test_app.py` had its `if __name__ == '__main__':` block at line 10269 with **27 top-level
+definitions after it**. The block calls `loadTestsFromModule(sys.modules[__name__])` on the module
+as it stands at that moment and then `sys.exit()`s, so the last 2,497 lines were never executed,
+never defined, and never collected. The command reported 566 tests. With the runner moved to the
+end it reports 704, so 138 were never running locally.
+
+Two of the 566 it did run raised `NameError: name '_sql' is not defined`, because `_sql` is a
+module-level helper defined at line 10252, below the block. Run the same tests through the module
+path and they pass: the whole file loads because `__name__` is not `__main__`.
+
+**CI never saw any of it,** which is the worst shape this defect can take. CI loads the module
+rather than executing it, so the block never runs and all the classes are collected. The local
+command a person checks a change with was the broken one, and the remote that would have caught it
+is the one that works. A local suite that silently skips a fifth of a file and reports two
+failures that do not exist is worse than one that refuses to start.
+
+The runner is now the last thing in the file.
+
+`check_test_runners_are_last_in_their_file` (270) holds it there across four test files. It found a
+second instance on its first run, and the second instance turned out not to be a defect:
+`polaris_checks/test_checks.py` has 186 definitions below its guard, but that guard delegates with
+`pytest.main([__file__])`, which starts a fresh session and imports the file as a module. So the
+check had to tell a runner that collects from the half-built `__main__` apart from one that
+re-imports. That distinction was measured rather than reasoned: a two-test file of each shape, run
+both ways. The unittest form collected 1 of 2; the pytest form collected 2 of 2. The check now
+matches on `sys.modules[__name__]` and bare `unittest.main()`, and the detection test asserts the
+delegating form stays OK, because otherwise the check is a style rule about where a block sits
+rather than a statement about what runs.
+
 ## v9.460 — 2026-09-14 (the other direction, and two locks that cannot be watched)
 
 v9.459 fixed five tests that claimed two operations on DIFFERENT entities do not serialize. Two

@@ -10266,40 +10266,6 @@ class CrossSiteDefenceMatrixTests(PolarisTestCase):
             checked += 1
         self.assertEqual(checked, 2, f"only {checked} cross-site-guarded routes were exercised")
 
-if __name__ == '__main__':
-    # Pull in property-based invariant tests (C1, C2, C3) so they run as
-    # part of the main suite. The import is at the bottom so test_app.py
-    # remains importable as a module without side effects from hypothesis.
-    try:
-        from test_invariants_property import (  # noqa: F401  imported so unittest.main() discovers them
-            C1_AppendOnlyProperties,  # noqa: F401
-            C2_DisclosureTypingProperties,  # noqa: F401
-            C3_OneActivePerIndividualProperties,  # noqa: F401
-        )
-    except ImportError as e:
-        print(f"Property tests skipped: {e}")
-
-    # M2-12 / R11-7: redaction property tests instantiate the adversary
-    # model from meta/redaction-proof.md.
-    try:
-        from test_redaction_property import RedactionPropertyTests  # noqa: F401  imported for unittest discovery
-    except ImportError as e:
-        print(f"Redaction property tests skipped: {e}")
-
-    # Verify database connectivity before running anything
-    try:
-        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
-        conn.close()
-    except psycopg2.Error as e:
-        print(f"Cannot connect to database: {e}")
-        print(f"Config: {DB_CONFIG}")
-        sys.exit(1)
-
-    # Run tests with verbose output
-    runner = unittest.TextTestRunner(verbosity=2)
-    suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
-    result = runner.run(suite)
-    sys.exit(0 if result.wasSuccessful() else 1)
 
 
 # ============================================================================
@@ -12855,3 +12821,51 @@ class CoexistenceSunsetTests(PolarisTestCase):
         self.assertTrue(v["may_sunset"])
         self.assertIn("not from the people affected", v["note"])
         self.assertEqual(set(v["attested"]), set(cx.OPERATOR_ATTESTATIONS))
+
+
+# The runner goes LAST, and this is not cosmetic. `python test_app.py` executes
+# top to bottom, so a `__main__` block in the middle calls
+# loadTestsFromModule() on the classes defined SO FAR and then sys.exit()s. Until
+# v9.461 it sat at line 10269 with 27 top-level definitions after it, including the
+# module-level `_sql` helper, so `scripts/polaris-test.sh app` reported 566 tests
+# where this file holds 704, and two of the ones it did run raised NameError for a
+# helper that never got defined. CI was unaffected and gave no hint: it loads the
+# module rather than executing it, so the block never runs and every class is
+# collected.
+#
+# A local runner that silently skips a fifth of the file is worse than one that
+# fails, because it is the one a person checks a change against before pushing.
+if __name__ == '__main__':
+    # Pull in property-based invariant tests (C1, C2, C3) so they run as
+    # part of the main suite. The import is at the bottom so test_app.py
+    # remains importable as a module without side effects from hypothesis.
+    try:
+        from test_invariants_property import (  # noqa: F401  imported so unittest.main() discovers them
+            C1_AppendOnlyProperties,  # noqa: F401
+            C2_DisclosureTypingProperties,  # noqa: F401
+            C3_OneActivePerIndividualProperties,  # noqa: F401
+        )
+    except ImportError as e:
+        print(f"Property tests skipped: {e}")
+
+    # M2-12 / R11-7: redaction property tests instantiate the adversary
+    # model from meta/redaction-proof.md.
+    try:
+        from test_redaction_property import RedactionPropertyTests  # noqa: F401  imported for unittest discovery
+    except ImportError as e:
+        print(f"Redaction property tests skipped: {e}")
+
+    # Verify database connectivity before running anything
+    try:
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        conn.close()
+    except psycopg2.Error as e:
+        print(f"Cannot connect to database: {e}")
+        print(f"Config: {DB_CONFIG}")
+        sys.exit(1)
+
+    # Run tests with verbose output
+    runner = unittest.TextTestRunner(verbosity=2)
+    suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
+    result = runner.run(suite)
+    sys.exit(0 if result.wasSuccessful() else 1)

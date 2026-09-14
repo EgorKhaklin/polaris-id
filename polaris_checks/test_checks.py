@@ -14913,6 +14913,71 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
         "must FAIL when the SDK has no refusal tests for the drill to make go red"
 
 
+def test_runner_last_check_discriminates(tmp_path):
+    # `python file.py` runs top to bottom, so a __main__ block that collects from
+    # sys.modules[__name__] sees only the classes defined ABOVE it and then exits.
+    # test_app.py had 27 top-level definitions below its runner and the local command
+    # ran 566 of ~1028 tests. The discrimination that matters is the last case: a
+    # runner that DELEGATES re-imports the file and is fine wherever it sits, which
+    # was measured with a two-test file of each shape before this check was written.
+    GOOD = (
+        "import unittest\n"
+        "class Above(unittest.TestCase):\n"
+        "    def test_a(self): pass\n"
+        "if __name__ == '__main__':\n"
+        "    suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])\n"
+        "    unittest.TextTestRunner().run(suite)\n"
+    )
+
+    def write(body, rel="polaris_web/test_app.py"):
+        root = tmp_path / ("runner%d" % write.n)
+        write.n += 1
+        target = root / rel
+        target.parent.mkdir(parents=True)
+        target.write_text(body)
+        return root
+    write.n = 0
+
+    ok = checks.check_test_runners_are_last_in_their_file(write(GOOD))
+    assert all(f.level == "OK" for f in ok), ok
+
+    # A class below the runner never gets defined, and its tests never run.
+    bad = checks.check_test_runners_are_last_in_their_file(write(
+        GOOD + "class Below(unittest.TestCase):\n    def test_b(self): pass\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # Bare unittest.main() defaults to __main__ and has the same problem.
+    bad = checks.check_test_runners_are_last_in_their_file(write(
+        "import unittest\n"
+        "if __name__ == '__main__':\n    unittest.main()\n"
+        "class Below(unittest.TestCase):\n    def test_b(self): pass\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # Two guards: the first exits before the rest of the file is defined.
+    bad = checks.check_test_runners_are_last_in_their_file(write(
+        "import unittest\n"
+        "if __name__ == '__main__':\n    unittest.main()\n"
+        "if __name__ == '__main__':\n    unittest.main()\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # AND THE DISCRIMINATION. pytest.main([__file__]) starts a fresh session that
+    # imports the file as a module, so everything below it IS collected. Measured at
+    # 2 of 2 where the unittest shape collected 1 of 2. This must stay OK, or the
+    # check is just a style rule about where a block sits.
+    ok = checks.check_test_runners_are_last_in_their_file(write(
+        "import pytest\n"
+        "def test_above(): pass\n"
+        "if __name__ == '__main__':\n"
+        "    raise SystemExit(pytest.main([__file__, '-v']))\n"
+        "def test_below(): pass\n"))
+    assert all(f.level == "OK" for f in ok), ok
+
+    # An empty room is not a clean bill: if none of the files can be read, a runner
+    # in the wrong place would go unnoticed and the check must say so.
+    bad = checks.check_test_runners_are_last_in_their_file(tmp_path / "nothing-here")
+    assert any(f.level == "FAIL" for f in bad), bad
+
+
 def test_advisory_lock_contention_check_discriminates(tmp_path):
     # Five ConcurrencyTests claimed two operations on different entities do not
     # serialize, and all five passed against lock keys that ignored the entity. The

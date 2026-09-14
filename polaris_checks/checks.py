@@ -17607,6 +17607,79 @@ def check_advisory_locks_have_a_contention_test(root: pathlib.Path) -> list[Find
                   len(_GLOBAL_LOCK_DOMAINS)))
 
 
+# ---------------------------------------------------------------------------
+# A test file's runner must be the last thing in it.
+# ---------------------------------------------------------------------------
+# `python file.py` executes top to bottom, so an `if __name__ == "__main__":`
+# block in the MIDDLE calls loadTestsFromModule() on the classes defined so far
+# and then sys.exit()s. Everything below it never runs and never gets collected.
+# On 2026-09-14 `polaris_web/test_app.py` had its runner at line 10269 with 27
+# top-level definitions after it: `scripts/polaris-test.sh app` ran 566 tests
+# where the file holds 704, and two of the ones it did run raised NameError for a
+# module-level helper defined below the block.
+#
+# CI never saw it. CI loads the module (`python -m unittest test_app`), so the
+# block does not execute and every class is collected. That is the worst shape
+# for this defect: the local command a person checks a change with is the broken
+# one, and the remote that would have told them is the one that works.
+_RUNNER_LAST_RELS = (
+    "polaris_web/test_app.py",
+    "polaris_web/test_check_constraints.py",
+    "polaris_cli/test_cli.py",
+    "polaris_checks/test_checks.py",
+)
+
+
+def check_test_runners_are_last_in_their_file(root: pathlib.Path) -> list[Finding]:
+    checked = 0
+    for rel in _RUNNER_LAST_RELS:
+        src = _read(root, rel)
+        if not src:
+            continue
+        checked += 1
+        lines = src.splitlines()
+        guards = [i for i, line in enumerate(lines)
+                  if re.match(r"""^if __name__ == ['"]__main__['"]\s*:""", line)]
+        if not guards:
+            continue
+        if len(guards) > 1:
+            return _fail("runner_last",
+                         "%s has %d `if __name__` blocks. Only the last one can be the "
+                         "runner, and the earlier ones exit before the rest of the file "
+                         "is defined" % (rel, len(guards)))
+        guard = guards[0]
+        block = "\n".join(lines[guard:guard + 40])
+        # A guard that DELEGATES -- pytest.main([__file__]) -- starts a fresh session
+        # that imports the file as a module, so the rest of it is defined and collected
+        # normally. Measured on 2026-09-14 with a two-test file of each shape: the
+        # unittest form collected 1 of 2, the pytest form collected both. Only the form
+        # that loads the half-built __main__ module is a defect.
+        collects_itself = ("sys.modules[__name__]" in block
+                           or re.search(r"\bunittest\.main\(", block))
+        after = [i for i in range(guard + 1, len(lines))
+                 if re.match(r"^(class|def|async def) ", lines[i])]
+        if after and collects_itself:
+            names = [re.match(r"^(?:class|def|async def) (\w+)", lines[i]).group(1)
+                     for i in after[:3]]
+            return _fail("runner_last",
+                         "%s runs its tests at line %d and then defines %d more top-level "
+                         "name(s) below it, starting with %s at line %d. Run as a script "
+                         "the file exits inside that block, so those are never defined and "
+                         "their tests are never collected: the suite reports a pass over "
+                         "the part of the file that happens to come first. A runner that "
+                         "delegates with pytest.main([__file__]) re-imports the file and "
+                         "is fine anywhere; this one loads the half-built __main__ module"
+                         % (rel, guard + 1, len(after), ", ".join(names), after[0] + 1))
+    if not checked:
+        return _fail("runner_last",
+                     "none of the %d test files this checks could be read, so a runner in "
+                     "the wrong place would go unnoticed" % len(_RUNNER_LAST_RELS))
+    return _ok("runner_last",
+               "all %d test files either put their runner last or delegate to one that "
+               "re-imports the file, so running one as a script collects the whole file "
+               "rather than the part above the block" % checked)
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
@@ -17707,6 +17780,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_detached_verifier,
     check_oid4vp_verifier_boundary,
     check_advisory_locks_have_a_contention_test,
+    check_test_runners_are_last_in_their_file,
     check_published_readmes_have_no_relative_links,
     check_distributions_carry_their_licence,
     check_dyno_published,
