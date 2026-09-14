@@ -152,6 +152,27 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 | status-assertion-expired | authentic true, fresh false | genuine, but `now` is past `expires_at` |
 | status-assertion-tampered | authentic false | one signature byte flipped; MUST fail |
 
+## What this contract does NOT constrain
+
+A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
+rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
+records which of the reference SDK's public functions actually execute: **the 118 cases enter
+11 of the SDK's 17 public functions.** Six are never entered by any case, which means an
+implementation can get them wrong, or omit them, and still pass every case here.
+
+| never entered | why the contract does not ask |
+|---|---|
+| `nullifiers_link`, `pairwise_handle`, `handles_link` | linkability is a question about TWO presentations, and every case carries one artifact. There is no case shaped like "here are two, are they the same holder" |
+| `grant_covers`, `grant_within_limits`, `revocation_ends_grant` | the cases establish that an agent grant is GENUINE. Whether a genuine grant permits a particular action, stays inside its limits, or has been ended by a revocation is a separate question, and the suite does not ask it |
+
+Those six are covered by the SDK's own tests. That is a different guarantee: it binds this
+implementation, not the contract, and a third party certifying against these cases inherits
+none of it.
+
+The drill refuses to report at all if its measurement collected nothing, because a failed
+measurement and a contract that constrains nothing print the same list. `--prove-control`
+runs it with collection disabled and requires that refusal.
+
 ## Self-certifying
 
 ```bash

@@ -2183,6 +2183,16 @@ jobs:
       - name: SDK unit tests (polaris-verify)
         run: cd sdk/python && python -m unittest test_sdk
 
+      # What the published contract never touches. A function no case enters is one a third
+      # party can implement wrongly and still be told they conform, and it is invisible from
+      # inside the suite because every case passes either way. SPEC.md states the number;
+      # this fails the build if it changes without SPEC.md and the drill being updated.
+      - name: Contract reach — what the 118 published cases do not constrain
+        run: |
+          python -m pip install --quiet coverage
+          python scripts/polaris-contract-reach-drill.py
+          python scripts/polaris-contract-reach-drill.py --prove-control
+
       # v9.279 (roadmap PE.8) — real numbers from the runner: single-core ML-DSA-65
       # sign/verify throughput, printed with the box spec and version. Re-measured
       # every release so the published dyno (docs/reference/DYNO.md) cannot rot; the
