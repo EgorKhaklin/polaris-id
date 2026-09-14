@@ -256,6 +256,10 @@ def main() -> int:
                   file=sys.stderr)
             return 2
         if not moved:
+            # Measured on two consecutive CI runs, 2026-09-14: the pqc-real job took 28m01s
+            # on a ship that touched an SDK path (42c2dbe) and 8m03s on the next one that did
+            # not (bcbf0eb). The saving is 20 minutes, which is the whole reason this flag
+            # exists and is now a number rather than an expectation.
             print("  this ship did not touch an SDK, its suite or this drill: nothing to "
                   "mutate. Run without --changed for the full 87.")
             return 0
