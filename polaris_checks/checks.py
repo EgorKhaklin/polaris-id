@@ -14886,8 +14886,10 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
     return _ok(name,
                f"the packet carries a threat matrix, {len(witnesses)} witnessed limitations and "
                f"attack prompts; every one of its {len(cited)} cited checks exists, every "
-               "limitation is still true, and it says on its own first page that nobody outside "
-               "this repository has reviewed any of it")
+               "witness still resolves, and it says on its own first page that nobody outside "
+               "this repository has reviewed any of it. A resolving witness is evidence that a "
+               "limitation has not been quietly FIXED; it is not evidence that the sentence is "
+               "true, and L-11's second half drifted for months with its witness resolving")
 
 
 def check_capacity_model(root: pathlib.Path) -> list[Finding]:
