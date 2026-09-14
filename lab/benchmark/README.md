@@ -319,12 +319,28 @@ those a deployment picks decides this scenario for it, and this pass did not mea
 
     fresh, 365 days after issuance, with the verifier's default bound   True
 
-**The stale acceptance window is 365 days.** A revocation recorded one second after that
-assertion was issued is invisible to an offline verifier for the rest of the year. Not
-"eventually consistent", not "policy dependent": three hundred and sixty five days, on the
-vector this repository publishes as its example of a valid one.
+**CORRECTED, after this section was first written.** The headline read "the stale acceptance
+window is 365 days", which is true of that vector and invites the reader to take it as the
+product's exposure. It is not. The vector is a conformance fixture with a year-long window
+and a matching self-declared bound. **The issuer in `polaris_web` mints assertions with
+`_STATUS_ASSERTION_TTL = 3600`**, one hour, which is exactly what `README.md` says. A real
+deployment's revoked-but-still-accepted window is an hour, not a year, and the first version
+of this section overstated the finding by a factor of 8,760.
 
-What bounds it is the relying party, not the verifier:
+What survives the correction is narrower and still real, in two parts.
+
+**The verifier's default bound is `None`**, so it accepts whatever window the artifact
+carries. Feed it a year and it says fresh:
+
+    fresh, 365 days after issuance, default bound   True
+
+**And the artifact carries a bound the verifier never reads.** The issuer writes
+`max_window_seconds` into the assertion it signs. `verify_status_assertion` takes
+`max_window_seconds` only as a caller argument and never looks at the object, so a signed
+recommendation travels with every assertion and is ignored unless a relying party happens to
+pass the same number in out of band.
+
+What bounds it is the relying party, and only if it knows to:
 
     max_window_seconds=300        fresh=False
     max_window_seconds=86400      fresh=False
@@ -350,9 +366,10 @@ UNKNOWN. Not run.
 
 Not complexity this time. **A default.**
 
-`max_window_seconds` defaults to `None`, which accepts any staleness the issuer chose. A
-relying party that does not know to pass a bound inherits the issuer's number, and on the
-published vector that number is a year.
+`max_window_seconds` defaults to `None`, which accepts any staleness the artifact declares.
+A relying party that does not know to pass a bound inherits whatever the assertion carries.
+On a real issuer's output that is an hour; on the published conformance vector it is a year,
+and the verifier cannot tell the difference because it does not read the field either way.
 
 **And Polaris does the opposite thing, deliberately, one module away.** `grant_within_limits`
 REFUSES a limit key it does not understand, on the stated reasoning that a bounded grant must
