@@ -100,6 +100,25 @@ class ServeCommandTests(unittest.TestCase):
         self.assertIn("client_id", proc.stdout)
         self.assertIn("x509_hash:", proc.stdout)
 
+    def test_the_help_does_not_name_a_source_file(self):
+        """`--help` used to open with "cli.py -- ...", the module docstring's first line.
+
+        Every drill in this tree does that and it is harmless there. On an installed command
+        it puts a filename on the first screen a stranger sees, and it says nothing about
+        what the program is for.
+        """
+        proc = subprocess.run([sys.executable, "-m", "polaris_oid4vp.cli", "--help"],
+                              capture_output=True, text=True,
+                              cwd=os.path.dirname(os.path.abspath(__file__)))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn(".py", proc.stdout.split("positional arguments")[0],
+                         "the description names a source file")
+        # Normalised, because argparse wraps the epilog and the property is that the help
+        # SAYS these things, not that any particular eleven bytes stayed contiguous.
+        flat = " ".join(proc.stdout.split())
+        for phrase in ("OpenID4VP", "keygen", "serve", "THESE KEYS ARE FOR TESTING"):
+            self.assertIn(phrase, flat, "the help does not say %r" % phrase)
+
     def test_a_verifier_built_from_the_keys_completes_an_exchange(self):
         """The whole point: what keygen produces has to actually work."""
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-e2e-"))

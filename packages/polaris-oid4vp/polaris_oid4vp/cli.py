@@ -190,8 +190,28 @@ def _cmd_serve(args) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="polaris-oid4vp",
-                                 description=(__doc__ or "").splitlines()[0])
+    # NOT the module docstring's first line. That reads "cli.py -- ..." and put a source
+    # filename on the first screen a stranger sees after installing the command, which is
+    # the sort of thing every drill in this tree does harmlessly and a shipped binary
+    # must not.
+    ap = argparse.ArgumentParser(
+        prog="polaris-oid4vp",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="An OpenID4VP 1.0 verifier under the High Assurance Interoperability "
+                    "Profile: ask a wallet for a presentation and check what comes back.",
+        epilog="""two commands, in this order:
+
+  polaris-oid4vp keygen --out ./pki --host verifier.example
+      The certificates the profile requires. It pins client_id_prefix=x509_hash, and the
+      conformance suite refuses both a self-signed leaf and a chain carrying its own trust
+      anchor, so this makes a CA, a leaf it signs, and a certificate for the listener.
+      Prints the client_id and the anchor a counterparty registers. THESE KEYS ARE FOR
+      TESTING.
+
+  polaris-oid4vp serve --pki ./pki --port 9443 --issuer-jwks issuers.json
+      Serves the signed request object and the response endpoint. With no --issuer-jwks it
+      trusts no issuer and refuses every presentation, which is correct and is a trap, so
+      it says so on stderr.""")
     sub = ap.add_subparsers(dest="command", required=True)
 
     g = sub.add_parser("keygen", help="make the certificates the HAIP profile requires")
