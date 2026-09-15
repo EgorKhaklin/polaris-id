@@ -126,13 +126,12 @@ jobs:
       # prepack builds dist/, which is what `exports` points at. Publishing without it
       # would ship a package with nothing to import, which is the state this repository
       # was already in once and measured rather than assumed.
+      # NO TOKEN. npm trusted publishing, the same shape as the PyPI job above: the
+      # registry verifies this workflow's OIDC identity and mints a short-lived
+      # credential. 0.1.0 needed a bootstrap token because npm cannot do this for a
+      # package's FIRST publish -- the trusted publisher is configured on a package
+      # page that does not exist until something has been published (npm/cli#8544).
+      # That token covered one publish on 2026-09-15 and was revoked the same hour.
+      # No long-lived credential for any of the four packages now exists anywhere.
       - name: Publish
         run: cd sdk/typescript && npm publish --provenance --access public
-        env:
-          # BOOTSTRAP, not NPM_TOKEN: npm cannot use trusted publishing for a
-          # package's FIRST publish, because the trusted publisher is configured on a
-          # package page that does not exist until something has been published
-          # (npm/cli#8544). This secret exists to cover exactly one publish and is
-          # revoked immediately afterwards, at which point this line and the secret
-          # both go away and npm joins PyPI on OIDC.
-          NODE_AUTH_TOKEN: ${{ secrets.BOOTSTRAP }}
