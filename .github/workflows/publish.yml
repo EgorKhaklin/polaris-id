@@ -129,4 +129,10 @@ jobs:
       - name: Publish
         run: cd sdk/typescript && npm publish --provenance --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # BOOTSTRAP, not NPM_TOKEN: npm cannot use trusted publishing for a
+          # package's FIRST publish, because the trusted publisher is configured on a
+          # package page that does not exist until something has been published
+          # (npm/cli#8544). This secret exists to cover exactly one publish and is
+          # revoked immediately afterwards, at which point this line and the secret
+          # both go away and npm joins PyPI on OIDC.
+          NODE_AUTH_TOKEN: ${{ secrets.BOOTSTRAP }}
