@@ -161,6 +161,37 @@ Identifiers for the eleven, so the result is checkable by somebody without this 
 
     https://www.certification.openid.net/log-detail.html?log=<test id>
 
+**The Foundation's own signed exports corroborate all of this.** Downloaded 2026-09-15,
+each carrying a detached `.sig` over both the JSON and the HTML:
+
+    exportedFrom     https://www.certification.openid.net
+    exportedVersion  5.2.4 (the suite's own version)
+    exportedBy       GitLab identity of the account that ran the plan
+    variant          credential_format sd_jwt_vc, client_id_prefix x509_hash,
+                     request_method request_uri_signed, haip, direct_post.jwt
+
+    happy-flow                  testId lIYHXvm4lAmJiC4  status INTERRUPTED  result null
+    minimal-cnf-jwk             testId Ldv7CMwJNnPGjcn  status INTERRUPTED  result null
+    request-uri-method-post     testId Zelgn0b7H9AEEY6  status INTERRUPTED  result null
+    request-uri-fetched-twice   testId 4MiKFd58aEwEAvZ  status INTERRUPTED  result null
+
+`result: null` is the point. The service has not marked these passed, and neither does this
+file. INTERRUPTED is the suite pausing for the human attestation described below.
+
+SHA-256 (first 16 hex) of the exported archives, so a copy can be shown to be the same one:
+
+    582da5b17cf176b6  happy-flow ... lIYHXvm4lAmJiC4.zip
+    dae7cd30a9ec6b5a  minimal-cnf-jwk ... Ldv7CMwJNnPGjcn.zip
+    8b51628400ccf329  request-uri-method-post ... Zelgn0b7H9AEEY6.zip
+    75815e5c488a9a58  request-uri-fetched-twice ... 4MiKFd58aEwEAvZ.zip
+
+The archives themselves are NOT committed. They embed the ephemeral issuer signing key the
+drill mints per run (`kid: suite-issuer`) as a private JWK, and private key material does
+not belong in a public repository even when it is a dead throwaway. Scrubbing it would
+invalidate the Foundation's detached signatures, which is the only thing that makes the
+export worth more than a screenshot. The identifiers above let anyone signed in fetch the
+same logs from the service.
+
 Both negative controls held on the hosted service, as they did locally: a verifier patched
 to answer 400 to everything is NOTICED by the happy flow, and one patched to answer 200 to
 everything is NOTICED by all seven negative modules.
