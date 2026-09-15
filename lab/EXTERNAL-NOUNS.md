@@ -212,20 +212,39 @@ the live registry into a clean environment, never from a build that returned zer
 
     Registry:                  PyPI
     Package:                   polaris-verify
-    Version:                   (not yet published)
+    Version:                   0.1.0
+    Published:                 2026-09-15
+    Method:                    GitHub Actions Trusted Publishing (OIDC), no API token
+    External install verified: pip install polaris-verify into a fresh venv; the
+                               `polaris-verify` console script runs from it
 
     Registry:                  PyPI
     Package:                   polaris-oid4vp
-    Version:                   (not yet published)
+    Version:                   0.1.0
+    Published:                 2026-09-15
+    Method:                    GitHub Actions Trusted Publishing (OIDC), no API token
+    External install verified: pip install polaris-oid4vp into a fresh venv; the
+                               `polaris-oid4vp keygen` subcommand produced a working
+                               HAIP certificate set and printed its client_id, so the
+                               package does its job and not merely imports
 
     Registry:                  npm
     Package:                   polaris-sdk-ts
     Version:                   (not yet published)
 
+Two things cost a failed run each, recorded so the next person does not pay for them again.
+
 PyPI enforces uniqueness on `(owner, repo, workflow, environment)` for PENDING publishers,
 so a monorepo can hold only one pending publisher per tuple at a time
-(pypi/warehouse#16920). The remaining packages are therefore published one at a time: each
-publish converts its pending publisher into a normal one and frees the tuple for the next.
+(pypi/warehouse#16920). The three were therefore published one at a time: each publish
+converts its pending publisher into a normal one and frees the tuple for the next.
+
+A pending publisher registered with NO environment does not match a workflow that runs
+WITH one. `polaris-oid4vp` was registered showing `Environment name: (Any)` while the
+publish job runs under `environment: pypi`, and PyPI refused with `403 Invalid API Token:
+OIDC scoped token is not valid for project 'polaris-oid4vp'`. Nothing uploaded; the name
+stayed free. Re-registering with the environment set published it first try. The stricter
+configuration is also the one PyPI's own form recommends.
 
 ### External relying party / operator
 
