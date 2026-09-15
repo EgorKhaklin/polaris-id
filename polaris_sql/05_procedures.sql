@@ -767,6 +767,13 @@ BEGIN
             USING ERRCODE = 'insufficient_privilege';
     END IF;
 
+    -- SECOND of two sufficient mechanisms, and measured as such on 2026-09-14:
+    -- dropping this clause leaves all 866 tests green, dropping the advisory lock
+    -- above leaves all 866 green, dropping BOTH turns the suite red. The advisory
+    -- lock on claimed_individual_id already serializes every caller that could
+    -- collide here, because uq_one_pending_recovery_per_individual allows one
+    -- PENDING recovery per individual. Keep both: a green suite after removing
+    -- either one says the other covered it, not that the clause was dead.
     -- Load the recovery request with FOR UPDATE so we observe the
     -- post-lock state if another thread already mutated it.
     SELECT claimed_individual_id, requesting_agency_id, requesting_user_id,
@@ -1295,6 +1302,13 @@ BEGIN
     -- Re-read the revocation state under the lock (row-locked) and reject a
     -- double-revoke. A second caller that waited on the lock now sees the
     -- first's committed revocation_date and fails cleanly.
+    --
+    -- FOR UPDATE here is the SECOND of two sufficient mechanisms, measured on
+    -- 2026-09-14: dropping it leaves all 866 tests green, dropping the advisory
+    -- lock above leaves all 866 green, dropping BOTH turns the suite red. The
+    -- advisory lock on the attesting agency already serializes every caller that
+    -- could collide on this row. Keep both: a green suite after removing either
+    -- one says the other covered it, not that the clause was dead.
     SELECT revocation_date INTO v_already_rev
       FROM AgencyTrustAttestation
      WHERE attestation_id = p_attestation_id

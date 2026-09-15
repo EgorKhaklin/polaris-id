@@ -5,6 +5,41 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.463 — 2026-09-14 (a surviving mutation that was the right answer)
+
+Four ships today treated a surviving mutation as a defect. This one did not, and the difference is
+worth writing down because the reflex that found the first four would have produced a false finding
+here.
+
+The procedure mutation drill mutates `RAISE EXCEPTION` and nothing else, so the six `FOR UPDATE`
+clauses in `05_procedures.sql` had never been mutated. Dropping them one at a time:
+
+  * `uc4_activate_reserve` holds three, and removing them turns
+    `test_uc4_concurrent_same_tokens_one_winner_no_duplicate_crl` red. Load-bearing and watched.
+  * `uc9_complete_recovery` and `uc10_revoke_attestation` hold one each, and removing either leaves
+    **all 866 tests green**.
+
+By the pattern of the last four ships that reads as two unwatched clauses. It is not. Each sits
+after an advisory lock keyed on an entity that already covers the same row, so the experiment that
+settles it is the one that removes BOTH. Run for each procedure:
+
+    drop the FOR UPDATE      866 pass
+    drop the advisory lock   866 pass
+    drop both                the suite FAILS
+
+That is defense-in-depth seen from outside: two sufficient mechanisms, and a test asserting the
+PROPERTY rather than either implementation. Neither clause is dead and neither is untested. Adding
+a test to "close" either gap would have pinned an implementation detail and made the pair harder to
+change, for a defect that does not exist.
+
+Recorded where someone would be standing when they consider deleting a line: a comment beside each
+clause with the three measurements, and a note in `_UNOBSERVABLE_LOCKS` that an entry there means
+"no test can tell these apart", never "nothing tests this". The list already named two advisory
+locks as unobservable, and read as though the property behind them went unchecked. It does not.
+
+No behaviour changed in this ship. The tree is byte-identical apart from comments, a version and
+this entry.
+
 ## v9.462 — 2026-09-14 (a claim that lived in a comment)
 
 The last thing in this family, and the smallest. Above the federation lock tests sits a comment

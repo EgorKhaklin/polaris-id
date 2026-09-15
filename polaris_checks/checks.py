@@ -17469,6 +17469,15 @@ _GLOBAL_LOCK_DOMAINS = {
 #: written, run against the procedure with its pg_advisory_xact_lock line deleted, and
 #: passed. The lock is not redundant in either case; it is simply not distinguishable
 #: from outside, and saying so beats a green test that cannot tell.
+#:
+#: THE PROPERTY IS COVERED, WHICH IS NOT OBVIOUS FROM AN ENTRY IN THIS LIST. Measured
+#: on 2026-09-14, for each of the two, three ways: drop the FOR UPDATE and all 866
+#: tests pass; drop the advisory lock and all 866 pass; drop BOTH and the suite fails.
+#: That is what defense-in-depth looks like from the outside -- two sufficient
+#: mechanisms and a test asserting the PROPERTY rather than either implementation --
+#: and it is the one case this session found where a mutation surviving was the
+#: correct answer. An entry here means "no test can tell these apart", never "nothing
+#: tests this".
 _UNOBSERVABLE_LOCKS = {
     "uc9_complete_recovery":
         "keyed on claimed_individual_id, and uq_one_pending_recovery_per_individual "
