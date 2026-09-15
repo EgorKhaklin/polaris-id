@@ -34,6 +34,7 @@ if either control goes unnoticed, and says which.
 """
 import argparse
 import json
+import os
 import pathlib
 import ssl
 import sys
@@ -51,8 +52,13 @@ from polaris_oid4vp.jwe import b64u_encode  # noqa: E402
 from polaris_oid4vp.serve import serve  # noqa: E402
 from polaris_oid4vp.verifier import Verifier  # noqa: E402
 
+#: What the SUITE is told to fetch. Against the local suite in Docker that is
+#: host.docker.internal; against the hosted one it has to be a public HTTPS name, which
+#: is what POLARIS_PUBLIC_ORIGIN is for. The verifier still listens on PORT locally; the
+#: origin only changes the URLs it puts in the request object.
 HOST = "host.docker.internal"
 PORT = 9443
+PUBLIC_ORIGIN = os.environ.get("POLARIS_PUBLIC_ORIGIN", "")
 ALIAS = "polaris-verifier"
 PLAN = "oid4vp-1final-verifier-haip-test-plan"
 
@@ -82,11 +88,21 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+#: Bearer token for a HOSTED suite. The local suite runs in dev mode and authenticates
+#: nobody, which is why this drill needed no credential to reach eleven modules. The
+#: Foundation's hosted service at certification.openid.net does authenticate, and its
+#: token comes from a page you can only see after signing in with Google or GitLab. So
+#: the token is read from the environment and never from this repository.
+CONFORMANCE_TOKEN = os.environ.get("CONFORMANCE_TOKEN", "")
+
+
 def api(base, path, method="GET", body=None, timeout=90):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base + path, data=data, method=method)
     if data:
         req.add_header("Content-Type", "application/json")
+    if CONFORMANCE_TOKEN:
+        req.add_header("Authorization", "Bearer " + CONFORMANCE_TOKEN)
     try:
         with urllib.request.urlopen(req, context=_CTX, timeout=timeout) as r:
             raw = r.read()
@@ -205,8 +221,8 @@ def main() -> int:
 
     verifier = Verifier(
         client_cert_pem=pki["leaf_pem"], client_key_pem=pki["leaf_key_pem"],
-        request_uri="https://%s:%d/request.jwt" % (HOST, PORT),
-        response_uri="https://%s:%d/response" % (HOST, PORT),
+        request_uri=(PUBLIC_ORIGIN or "https://%s:%d" % (HOST, PORT)) + "/request.jwt",
+        response_uri=(PUBLIC_ORIGIN or "https://%s:%d" % (HOST, PORT)) + "/response",
         issuer_jwks=[{k: v for k, v in issuer_jwk.items() if k != "d"}])
     httpd = serve(verifier, port=PORT, certfile=str(workdir / FILES["tls_cert"]),
                   keyfile=str(workdir / FILES["tls_key"]))
