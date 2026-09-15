@@ -242,8 +242,25 @@ def main() -> int:
         request_uri=(PUBLIC_ORIGIN or "https://%s:%d" % (HOST, PORT)) + "/request.jwt",
         response_uri=(PUBLIC_ORIGIN or "https://%s:%d" % (HOST, PORT)) + "/response",
         issuer_jwks=[{k: v for k, v in issuer_jwk.items() if k != "d"}])
+    # The four positive modules end by asking a human to "upload a screenshot showing
+    # that the verifier successfully verified the presented credential (for example, a
+    # page displaying the credential contents)" -- OID4VP-1FINAL-8.2. A verifier that
+    # prints nothing gives the human nothing to photograph, so the verdict is displayed
+    # here exactly as the shipped `polaris-oid4vp serve` displays it.
+    def _show(status, body, verdict):
+        if verdict and verdict.authentic:
+            print("\n  ================ VERIFIER: PRESENTATION ACCEPTED ================")
+            print("  <- %d authentic" % status)
+            for name in sorted(verdict.claims):
+                print("       %-14s %s" % (name, verdict.claims[name]))
+            print("  ================================================================\n",
+                  flush=True)
+        elif verdict:
+            print("  <- %d refused: %s: %s" % (status, verdict.code, verdict.reason),
+                  flush=True)
+
     httpd = serve(verifier, port=PORT, certfile=str(workdir / FILES["tls_cert"]),
-                  keyfile=str(workdir / FILES["tls_key"]))
+                  keyfile=str(workdir / FILES["tls_key"]), on_verdict=_show)
     print("verifier listening on https://%s:%d, client_id %s...\n"
           % (HOST, PORT, verifier.client_id[:26]))
 

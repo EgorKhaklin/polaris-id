@@ -119,14 +119,13 @@ self-certification-submitted. Those are four different things and this is the fi
                                Foundation's service fetched request_uri and posted to
                                response_uri across the open internet
 
-    Result:                    7 of 11 modules PASSED on the service's own verdict.
-                               4 were INTERRUPTED by a defect in the drill and must be
-                               re-run. Zero FAILURE and zero WARNING throughout.
+    Result:                    ALL 11 MODULES FINISHED on the hosted service.
+                               Zero FAILURE, zero WARNING throughout.
 
                                7 negative modules   FINISHED / PASSED
-                               4 positive modules   INTERRUPTED / result null
+                               4 positive modules   FINISHED / REVIEW, screenshot attached
 
-Module by module, using the suite's own terminal states rather than a summary of them:
+Module by module, read back from the service after the screenshots were uploaded:
 
     invalid-kb-jwt-signature        FINISHED / PASSED    refused: kb_signature
     invalid-credential-signature    FINISHED / PASSED    refused: issuer_signature
@@ -135,51 +134,35 @@ Module by module, using the suite's own terminal states rather than a summary of
     invalid-kb-jwt-aud              FINISHED / PASSED    refused: audience
     kb-jwt-iat-in-past              FINISHED / PASSED    refused: kb_freshness
     kb-jwt-iat-in-future            FINISHED / PASSED    refused: kb_freshness
-    happy-flow                      INTERRUPTED          must be re-run
-    minimal-cnf-jwk                 INTERRUPTED          must be re-run
-    request-uri-method-post         INTERRUPTED          must be re-run
-    request-uri-fetched-twice       INTERRUPTED          must be re-run
+    happy-flow                      FINISHED / REVIEW    test x6g1PXQzKW3BJJ1
+    minimal-cnf-jwk                 FINISHED / REVIEW    test NvRLW0cKhGl1uGC
+    request-uri-method-post         FINISHED / REVIEW    test HdluP9G3zHoV4Mn
+    request-uri-fetched-twice       FINISHED / REVIEW    test v7LZGMnN8sJaZE1
 
-**THE FOUR WERE INTERRUPTED BY A DEFECT IN THE DRILL, NOT MERELY PAUSED.** The first
-write-up of this run said "11 of 11 modules clean ... the rest end in REVIEW because the
-suite wants a screenshot". That was wrong, and the suite had already said so inside the log
-that was downloaded to corroborate it:
+**REVIEW IS STILL NOT PASSED.** The four positive modules carry the evidence the suite asked
+for -- requirement OID4VP-1FINAL-8.2, "a screenshot showing that the verifier successfully
+verified the presented credential" -- and each screenshot shows polaris-oid4vp printing the
+claims it extracted: given_name, family_name, vct, and the holder binding key, with `iss`
+naming the conformance suite's own per-test issuer. A human took and vouched for each
+image; this agent only transported them. What those four await now is a Foundation reviewer,
+which happens at certification submission and has not been requested.
 
-    Stopping test due to alias conflict - before this test finished, you have started
-    another test using the same alias. You will need to rerun this test and ensure you
-    complete all steps in this test before you move onto the next test.
+**The first attempt at this run was wrong and the correction is the point.** One fixed alias
+was used for all eleven modules. The suite interrupts a test when another starts under the
+same alias, so each module killed its predecessor: the negatives survived because a 4xx
+finishes them instantly, while all four positives reached REVIEW and were then INTERRUPTED.
+The first write-up called that "11 of 11 clean ... awaiting a screenshot", which was false in
+a flattering direction. The suite had already said so inside the downloaded log. Fixed with a
+unique alias per test, which is the remedy its own message names, and the four were re-run
+one at a time with the screenshot uploaded before the next began.
 
-The drill used one fixed alias for every module. The suite treats a second test started
-under an alias as grounds to interrupt the first, so each module killed its predecessor.
-The seven negative ones survived only because a 4xx finishes them immediately; all four
-positive ones reached REVIEW, waited for a screenshot that was never going to arrive
-during an unattended batch, and were interrupted when the next module started. Fixed by
-giving every test a unique alias, which is the remedy the suite's own message names.
+Status, using the vocabulary that distinguishes these states rather than blurring them:
 
-So the honest count is 7, not 11. The seven are the service's own verdict -- `result:
-PASSED`, which is stronger than the "automatic pass" first recorded -- and the four are
-not a pass in any sense and are not recorded as one. They need re-running one at a time,
-each with its screenshot uploaded before the next begins.
-
-Verified against the service rather than against this drill's own summary. The first run
-printed a local hostname and reported REVIEW, which would have read as hosted evidence; the
-plan list showed no executed tests, which does not match a completed flow. The drill now
-emits the Foundation's own plan and test identifiers, and the log for test
-`6qQjlw3BzJaxWhN` contains the public hostname the verifier was exposed on, alongside
-`Registered client request object trust anchor certificate`. Spot-checked terminal states
-from the service: a negative module carries 51 SUCCESS and one FINISHED with no FAILURE; a
-positive module carries 59 SUCCESS, one REVIEW and one INTERRUPTED.
-
-Identifiers for the eleven, so the result is checkable by somebody without this terminal:
-
-    plan wKBzutxT8nDqT  test lIYHXvm4lAmJiC4      plan hJ4VcBkjZF2Ro  test mAqghKdcSOXJXSs
-    plan OHeecf9f3ELMV  test Ldv7CMwJNnPGjcn      plan RcyPUkKkvqzTx  test X3oYPoD9UNSXV2H
-    plan Wz1yQTVfrIxuh  test Zelgn0b7H9AEEY6      plan rzNzf18pO4QNc  test EMfPrFgWMb3fsA1
-    plan QKeec2svLwI4F  test 4MiKFd58aEwEAvZ      plan IMFF6lxw7gqVC  test JndCTUmeVTFKZiD
-    plan H3T2mu04ZC6fr  test 2TM9A0CFwRMLWy2      plan jLVA5oFjMpXry  test l00y4aJu7ydDg7h
-                                                  plan tq6CTqggPHpqG  test lUMt13l0ralfRgX
-
-    https://www.certification.openid.net/log-detail.html?log=<test id>
+    HOSTED TESTED               yes
+    HOSTED CLEAN                yes, zero FAILURE and zero WARNING across 11 modules
+    HUMAN REVIEW COMPLETE       no, four modules await a Foundation reviewer
+    SELF-CERTIFICATION SUBMITTED no
+    CERTIFIED                   no
 
 **The Foundation's own signed exports corroborate all of this.** Downloaded 2026-09-15,
 each carrying a detached `.sig` over both the JSON and the HTML:
