@@ -44,6 +44,7 @@ import os
 import pathlib
 import re
 import subprocess
+import tempfile
 import sys
 
 try:
@@ -224,7 +225,72 @@ def _left_mutated(conn) -> list:
         return [r[0] for r in cur.fetchall()]
 
 
+
+SELF = "scripts/" + pathlib.Path(__file__).name
+
+
+def _interpreter_can_run_the_suite(modules, cwd) -> str:
+    """"" if `sys.executable` can import the test modules, else why it cannot.
+
+    THE DRILL RUNS TESTS IN A SUBPROCESS UNDER sys.executable, AND A SUBPROCESS THAT
+    CANNOT IMPORT IS INDISTINGUISHABLE FROM ONE WHOSE TEST FAILED. Both exit non-zero.
+    `unittest` even reports it as `Ran 1 test in 0.000s / FAILED (errors=1)`, which the
+    drill reads as "the test went red".
+
+    Two consequences, and the second is why this check exists. The negative control goes
+    red and the drill blames a constraint/test relationship that is perfectly healthy,
+    sending a reader to the wrong place entirely. And if the control ever stopped
+    covering it, EVERY mutation would report as caught -- a wholly green run built on a
+    suite that never executed a line.
+
+    Seen on 2026-09-14: this machine's system python3 has psycopg2, so the drill itself
+    starts, but not flask, so every subprocess died on import. The drill's own usage line
+    says `python3 scripts/...`, which is the invocation that breaks it.
+    """
+    # IMPORT them, do not merely locate them. find_spec() answers "is there a file
+    # called test_check_constraints.py", which there is; the failure is one layer in,
+    # when that file imports flask. The first version of this check used find_spec and
+    # passed happily on the very interpreter it exists to reject.
+    #
+    # The answer comes back through a FILE, not through stdout. Importing test_app boots
+    # the application, which logs JSON to stdout, and the second version of this check
+    # read that as its own output and rejected the interpreter that works. A probe whose
+    # channel is the thing it is probing cannot report on it.
+    with tempfile.NamedTemporaryFile("w+", suffix=".probe", delete=False) as fh:
+        answer = fh.name
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c",
+             "import sys\n"
+             "bad = []\n"
+             "for m in %r:\n"
+             "    try:\n"
+             "        __import__(m)\n"
+             "    except Exception as exc:\n"
+             "        bad.append('%%s (%%s: %%s)' %% (m, type(exc).__name__, exc))\n"
+             "open(%r, 'w').write('; '.join(bad))\n" % (list(modules), answer)],
+            cwd=str(cwd), capture_output=True, text=True)
+        failures = pathlib.Path(answer).read_text().strip()
+    finally:
+        pathlib.Path(answer).unlink(missing_ok=True)
+
+    if proc.returncode != 0 and not failures:
+        return "%s could not be asked what it imports at all: %s" % (
+            sys.executable, " / ".join((proc.stderr or "").strip().splitlines()[-2:]))
+    if failures:
+        return ("%s cannot import %s from %s. Run this drill WITH the venv interpreter "
+                "rather than the system one:\n    <venv>/bin/python %s\n"
+                "A subprocess that dies on import exits non-zero exactly like a failing "
+                "test, so every result below would be a statement about the interpreter "
+                "rather than about the database."
+                % (sys.executable, failures, cwd, SELF))
+    return ""
+
 def main(argv=None) -> int:
+    _why = _interpreter_can_run_the_suite(['test_app', 'test_check_constraints'], ROOT / "polaris_web")
+    if _why:
+        print("polaris-procedure-mutation-drill: " + _why, file=sys.stderr)
+        return 1
     ap = argparse.ArgumentParser()
     ap.add_argument("--exhaustive", action="store_true",
                     help="also run the application suite for refusals the fast suites miss")
