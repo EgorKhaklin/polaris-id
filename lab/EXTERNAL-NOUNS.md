@@ -193,6 +193,40 @@ exchanged with anybody. It is evidence that Polaris's ML-DSA verification agrees
 outside authority on 58 cases. It is not a wallet, not an interoperability result, and it does
 not move any row above.
 
+### Public distribution
+
+A stranger can obtain this without cloning anything. Recorded only after installing from
+the live registry into a clean environment, never from a build that returned zero.
+
+    Registry:                  PyPI
+    Package:                   polaris-sdk-python
+    Version:                   0.1.0
+    Published:                 2026-09-15
+    Method:                    GitHub Actions Trusted Publishing (OIDC), no API token
+    Publisher tuple:           EgorKhaklin / polaris-id / publish.yml / environment pypi
+    Artifacts:                 bdist_wheel + sdist
+    External install verified: pip install polaris-sdk-python into a fresh venv,
+                               `from polaris_verify import PolarisVerifier` succeeds,
+                               module resolves inside site-packages with no path into
+                               this repository
+
+    Registry:                  PyPI
+    Package:                   polaris-verify
+    Version:                   (not yet published)
+
+    Registry:                  PyPI
+    Package:                   polaris-oid4vp
+    Version:                   (not yet published)
+
+    Registry:                  npm
+    Package:                   polaris-sdk-ts
+    Version:                   (not yet published)
+
+PyPI enforces uniqueness on `(owner, repo, workflow, environment)` for PENDING publishers,
+so a monorepo can hold only one pending publisher per tuple at a time
+(pypi/warehouse#16920). The remaining packages are therefore published one at a time: each
+publish converts its pending publisher into a normal one and frees the tuple for the next.
+
 ### External relying party / operator
 
     External RP/operator:      (none)
