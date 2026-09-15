@@ -14,19 +14,14 @@ it to fetch status.
 > as the reference verifier command, so the module name is part of a contract.
 
 ```bash
-# Not on PyPI yet. This works today, from a clean machine, and is measured:
-pip install "polaris-verify[cryptography] @ git+https://github.com/EgorKhaklin/polaris-id#subdirectory=packages/polaris-verify"
+pip install "polaris-verify[cryptography]"
 
 polaris-verify --pqc-provider auto --pack credential.json
 ```
 
-The `#subdirectory=` fragment is required and is easy to miss: this repository holds several
-packages, so its root has no `pyproject.toml`, and `pip install git+…` without the fragment
-fails with *"does not appear to be a Python project"*, which reads as "this is not
-installable" rather than "look one directory down".
-
-Once it is published the command becomes `pip install "polaris-verify[cryptography]"`. See
-[RELEASING.md](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/RELEASING.md) for why nothing is published yet.
+Published to PyPI on 2026-09-15 at 0.1.0, by GitHub Actions trusted publishing over OIDC.
+Verified by installing from the live registry into a clean virtualenv and running the command
+there, not by a build that exited zero.
 
 ## It refuses to start until you say what cryptography it is doing
 

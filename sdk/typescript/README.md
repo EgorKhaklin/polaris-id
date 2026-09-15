@@ -74,7 +74,14 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 
 ## Installing
 
-Not on npm yet ([why](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/RELEASING.md)). From a clone:
+```bash
+npm install polaris-sdk-ts
+```
+
+Published to npm on 2026-09-15 at 0.1.0. Verified by installing from the live registry into an
+empty directory and requiring it there.
+
+From a clone instead, if you are working on the SDK itself:
 
 ```bash
 cd sdk/typescript && npm ci     # the build needs its own devDependencies

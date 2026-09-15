@@ -21,6 +21,33 @@ CI builds and boots the production-profile container stack on every push, proves
 
 ---
 
+## The two things here that someone else can check
+
+Everything else in this repository is this project checking itself. These are not.
+
+**An unmodified wallet spoke to the verifier.** On 15 September 2026 a stock
+[walt.id](https://walt.id) Wallet API v2 (`waltid/wallet-api2:1.0.0`) presented an SD-JWT VC to
+`polaris-oid4vp` over OpenID4VP 1.0 and it was accepted, the key binding signed by a P-256 key
+that never left their wallet. It refused Polaris first, correctly: `keygen` was emitting a
+request-signing certificate with no `digitalSignature` key usage, which eleven conformance
+modules and 270 invariant checks had all passed over. You can repeat the exchange in about ten
+minutes from a clean machine, without cloning this repository: [STRANGER-PATH.md](docs/STRANGER-PATH.md).
+
+**The OpenID Foundation's hosted suite ran the profile.** Eleven modules of
+`oid4vp-1final-verifier-haip-test-plan` across the open internet, zero failures and zero
+warnings. Seven negative modules carry the service's own `result: PASSED`; four positive modules
+sit in REVIEW with screenshot evidence attached, awaiting a Foundation reviewer. **REVIEW is not
+PASSED, and Polaris is not certified.**
+
+And the counterweight, because the rest of this page is long and confident: this is one unpaid
+author's reference implementation on notional data. It has never held real identity data, no
+independent security review of it exists, no operator other than the author has run it, and
+there has been no pilot. A constraint lattice and a verifier a stranger's wallet already spoke
+to is the whole of what is demonstrated here. The scale the architecture is *designed* for is a
+design target, not a deployment.
+
+---
+
 ## What Polaris is
 
 Polaris is a **credential verification engine** on a schema backbone, and the cryptographic claim it makes is worth stating precisely: **algorithm agility under an audited migration path**, not settled security against a quantum adversary. Credentials are signed with ML-DSA-65, which rests on the hardness of Module-LWE against the best known classical and quantum algorithms -- whether that holds is mathematics, not a property of this repository. What IS a property of this repository: the algorithm is a row in `CryptographicAlgorithm` rather than a constant (C7), so replacing it is a path CI runs rather than a plan. [What a break would and would not cost, and what the default signing path actually writes, are stated plainly.](docs/PRODUCTION-READINESS.md) An authority issues a credential signed with ML-DSA-65 (FIPS 204; ML-DSA-87 is accepted beside it); a holder holds it and presents it; and anyone can check it two ways. **Authenticity** is offline: a standalone detached verifier confirms the signature against published keys, with no Polaris code, no database, and no network. **Authorization** ("is it authoritative right now?") is answered online by a versioned relying-party API a third party calls as itself, or offline by a short-lived signed status assertion the holder staples, so a relying party never has to contact the issuer to accept a credential. Python and TypeScript verify SDKs and a language-agnostic conformance suite make "correctly verifying a Polaris credential" a contract anyone can hold their own code to, and cross-agency trust is explicit and non-transitive. Around the credential sits an institutional protocol of signed statements, each verified offline by the same detached verifier and both SDKs: a signed registry of what an authority offers and trusts, a trust list carrying each key's lifecycle, exchange receipts that prove an exchange occurred without keeping the message, a timestamp authority, document signing with long-term validation, a credential-bound login token, and offline wallet presentations. Version 1 of that protocol is frozen, and a cross-version suite proves on every push that today's verifiers still accept what version 1 published and that a pinned older verifier never accepts what the suite rejects.
@@ -39,14 +66,16 @@ Two things here use zero knowledge, and a third deliberately does not exist. *Un
 
 ## See it run
 
-You do not need the stack, or even a clone, to see the engine. The verifier installs on its own from a public URL and runs with no database, no server and none of the rest of this repository:
+You do not need the stack, or even a clone, to see the engine. The verifier installs from PyPI and runs with no database, no server and none of the rest of this repository:
 
 ```bash
-pip install "polaris-verify[cryptography] @ git+https://github.com/EgorKhaklin/polaris-id#subdirectory=packages/polaris-verify"
+pip install "polaris-verify[cryptography]"
 polaris-verify --pqc-provider auto --pack your-credential.json
 ```
 
-The `#subdirectory=` fragment is required: this repository holds several packages, so its root is not itself one. Nothing is on PyPI yet ([why](docs/RELEASING.md)).
+All four standalone products are published at 0.1.0: `polaris-verify`, `polaris-oid4vp` and `polaris-sdk-python` on PyPI, `polaris-sdk-ts` on npm. The three PyPI packages were published by GitHub Actions trusted publishing over OIDC, with no API token created at any point. Each was verified by installing from the live registry into a clean environment and running it there, which is a different claim from "the build succeeded". Being installable is not being validated: see [what this is not](#scope-honestly).
+
+To go further than one credential, [STRANGER-PATH.md](docs/STRANGER-PATH.md) takes a clean machine to one accepted presentation from an external wallet in about ten minutes, without cloning this repository.
 
 `polaris-verify` refuses to start until the run says what cryptography it is doing. There is no default and no environment variable for that choice, because a verifier that quietly stopped verifying still answers every question.
 
@@ -196,8 +225,14 @@ was right to: `keygen` was emitting a request-signing certificate with no `digit
 usage, which eleven conformance modules, 143 package tests and 270 invariant checks had all
 passed over. One wallet, one credential format, one presentation path, ES256 throughout; the row,
 the two negative controls and what it does not establish are in
-[the scoreboard](lab/EXTERNAL-NOUNS.md). **No one outside this repository has reviewed its
-security, no conformance result is certified, and no package is published.**
+[the scoreboard](lab/EXTERNAL-NOUNS.md).
+
+The OpenID Foundation's HOSTED conformance suite has since run the HAIP verifier plan against
+`polaris-oid4vp` across the open internet: eleven modules, zero failures, zero warnings. Seven
+negative modules carry the service's own `result: PASSED`; four positive modules are in REVIEW
+with screenshot evidence attached, awaiting a Foundation reviewer. **REVIEW is not PASSED and
+Polaris is not certified.** All four packages are published, which is distribution rather than
+validation. **No one outside this repository has reviewed its security.**
 
 Every claim above is backed by a gate that fails if the claim stops being true. The table, check, route and CI-job counts are re-measured by `polaris_checks` on every run and are current; the two test counts are a point-in-time measurement (v9.332) and are restated when re-measured, never extrapolated. 15 product tests skip without optional backends; 5 crypto witnesses need a PKCS#11 token or a real KMS key.
 

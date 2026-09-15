@@ -16,14 +16,18 @@ Free ports: **7006** (the wallet), **9443** (the verifier). ~800 MB of disk for 
 
 ## 1. Install
 
-The packages are **not on PyPI yet**, so install from the clone. `pip install polaris-oid4vp`
-will not work today.
+From the registry. You do not need this repository.
 
-    git clone https://github.com/EgorKhaklin/polaris-id.git
-    cd polaris-id
     python3 -m venv .venv && . .venv/bin/activate
-    pip install ./packages/polaris-oid4vp
+    pip install polaris-oid4vp
     polaris-oid4vp --help
+
+One file from the repository is still needed, because it puts a credential in the wallet and
+that is issuer work rather than verifier work:
+
+    curl -O https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/waltid/setup.sh
+    curl -O https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/waltid/issue_sdjwt_vc.py
+    chmod +x setup.sh
 
 ## 2. Start the wallet
 
@@ -41,7 +45,7 @@ Note the `client_id` it prints. These keys are for testing.
 
 ## 4. Give the wallet a credential, and the trust to check yours
 
-    ~/polaris-id/lab/interop/waltid/setup.sh ./pki
+    ./setup.sh ./pki
 
 It creates a wallet, has walt.id generate its own P-256 key, mints one SD-JWT VC bound to
 that key, imports it, and registers your CA with walt.id. It prints a wallet id and a key id.

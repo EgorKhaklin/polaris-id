@@ -451,7 +451,8 @@ the suite. It is a local, unpublished, uncertified run, and that section says so
 **Installable from a public URL, measured against the public URL (2026-09-14).** The product
 boundary drill builds its wheels from the working tree, which answers whether the code in
 front of you installs. This answers whether what GitHub is serving does, which is the only
-install path that exists while nothing is published:
+install path that existed before publication (superseded 2026-09-15, when all four went
+to their registries; kept because it records what was measured on the date it names):
 
     pip install "polaris-verify[cryptography] @ git+https://github.com/...#subdirectory=packages/polaris-verify"
     pip install "polaris-oid4vp @ git+https://github.com/...#subdirectory=packages/polaris-oid4vp"
