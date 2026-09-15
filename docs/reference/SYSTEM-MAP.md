@@ -21,6 +21,7 @@ polaris/
 ├── MISSION.md                    ← the constitution (C1-C10 and the vocation)
 ├── ROADMAP.md                    ← the build plan, P0 to P8
 ├── CHANGELOG.md                  ← every ship, never edited retroactively
+├── EXTERNAL-NOUNS.md             ← what happened when Polaris met somebody else's code
 ├── CLAUDE.md                     ← the developer and agent runbook
 ├── CONTRIBUTING.md / SECURITY.md ← contributor guide; vulnerability disclosure
 ├── CODE_OF_CONDUCT.md            ← the community standard, Contributor Covenant 3.0
