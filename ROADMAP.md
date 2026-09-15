@@ -160,7 +160,7 @@ the actual blocker (the OpenSSL the row used to name arrived and changed nothing
 | P4 | Hardware token and enrollment | Field-ready issuance kit | Enroll, personalize, verify online+offline, revoke, recover: end to end on AoR |
 | P5 | Pilots | Real, consenting users | Two completed pilots with public reports, zero constitutional violations |
 | P6 | Certification and assurance | Authorization-ready | Validated crypto option, 800-63 mapping, audit and red team published |
-| P7 | National rollout | 350M persons | First state live; a national program office assumes ownership |
+| P7 | National-scale reference profile | 350M-person capability profile | SOFTWARE ONLY. A first state going live and a program office assuming ownership are institutional outcomes, not deliverables of this repository |
 | P8 | The exchange fabric, the Polaris way | Many independent organizations | A non-Polaris implementation interoperates from the spec alone; an institutional exchange is provable to a third party WITHOUT retaining the payload |
 | **P9** | **The holder: the key, the proof and the grant** (ACTIVE) | n/a | A holder proves on their own device, once per scope, unlinkable across scopes; an agent acts under a signed, expiring, separately revocable grant |
 
@@ -408,7 +408,7 @@ Exit gate: a sponsoring authority accepts the authorization package [EXT].
 
 ---
 
-## P7 - National rollout [EXTERNAL-DOMINATED]
+## P7 - National-scale reference profile [EXTERNAL-DOMINATED]
 
 Objective: the machinery of scale-out. Statute, funding, and program authority
 belong to government; every buildable artifact is ready before it is asked for.

@@ -206,7 +206,29 @@ not move any row above.
 ### Findings from outside
 
     Bugs/ambiguities filed by non-authors:   0
-    Fixed because of external findings:      0
+    Fixed because of external findings:      1
+
+The one: walt.id Wallet API v2 refused `polaris-oid4vp`'s request-signing certificate for
+carrying no `digitalSignature` key usage. Nobody filed anything -- an implementation simply
+declined to proceed -- and the fix shipped as v9.465. It is counted here because the cause
+was outside this repository, which is the only thing this row is asking.
+
+### Independent security review
+
+    Reviewer:                  (none)
+    Scope:                     (none)
+    Date / report:             (none)
+
+No pentest, red team, threat-model review or cryptographic review has been performed by
+anyone who did not build this. Self-attack and independent attack are not substitutes.
+
+### Pilot
+
+    Pilot status:              (none)
+    Issuer / relying party:    (none)
+    Consenting users:          0
+
+Nothing has run with real people, real operators or real consequences.
 
 ---
 
