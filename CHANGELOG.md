@@ -5,6 +5,47 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.466 — 2026-09-15 (you can install it now)
+
+A version because installation changed, which is externally observable and is the only kind of
+change that earns one. Nothing else here alters product behaviour.
+
+**All four standalone products are published.**
+
+    pip install polaris-verify
+    pip install polaris-oid4vp
+    pip install polaris-sdk-python
+    npm install polaris-sdk-ts
+
+All at 0.1.0. The three PyPI packages went out by GitHub Actions trusted publishing over OIDC and
+no API token was created for them at any point. npm needed one, because it cannot use trusted
+publishing for a package's first publish (npm/cli#8544); that token covered one publish and was
+revoked within the hour. The publish workflow now contains no `secrets.` reference at all.
+
+Each was checked by installing from the live registry into a clean environment and running it
+there. `polaris-oid4vp keygen` produces a working HAIP certificate set from a fresh venv, which
+is the one that matters, because it is the package an outside verifier operator reaches for.
+
+**The stranger's path no longer needs a clone.** [docs/STRANGER-PATH.md](docs/STRANGER-PATH.md)
+goes from a clean machine to one accepted presentation from an external wallet in about ten
+minutes: `pip install polaris-oid4vp`, two helper files by curl, then keygen, serve, present. It
+was executed from an empty directory before it was written down, and it ends:
+
+    <- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']
+
+**Hosted conformance: 7 PASSED, 4 REVIEW.** The OpenID Foundation's hosted suite ran
+`oid4vp-1final-verifier-haip-test-plan` against the verifier across the open internet. Eleven
+modules, zero FAILURE, zero WARNING. Seven negative modules carry the service's own
+`result: PASSED`. Four positive modules are FINISHED / REVIEW with screenshot evidence attached,
+awaiting a Foundation reviewer, which only a certification submission triggers.
+
+**REVIEW is not PASSED. Polaris is not certified. Publication is distribution, not validation.**
+
+What is still absent, unchanged by any of the above: no independent security review by anyone who
+did not build this, no operator other than the author has run it, no pilot, no real identity data.
+A constraint lattice and a verifier that an unmodified wallet already spoke to is the whole of
+what is demonstrated.
+
 ## v9.465 — 2026-09-15 (a wallet nobody here wrote said no, and it was right)
 
 First named independent implementation on the board. An unmodified walt.id Wallet API v2
