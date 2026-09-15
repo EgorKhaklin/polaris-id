@@ -256,8 +256,11 @@ Test: `ConcurrencyTests.test_uc6_per_token_lock_serializes_concurrent_migrations
 fires 3 threads each migrating the same token to 3 distinct
 algorithms; all succeed, final state has 4 active signatures
 (1 seed + 3 migrations). Plus
-`test_uc6_cross_token_migrations_run_in_parallel` confirms the
-wall-clock parallelism for different tokens.
+`test_uc6_cross_token_migrations_run_in_parallel` confirms that different
+tokens do not contend, and `test_uc6_migrate_takes_its_advisory_lock` that the
+lock is taken at all. Neither uses a stopwatch: one worker calls the procedure
+and holds its transaction open, the other probes under `lock_timeout`, so
+Postgres answers rather than a clock being interpreted (v9.459-v9.462).
 
 ### Verification-snapshot consistency model
 
@@ -296,8 +299,17 @@ asserts that two parallel close calls for algorithm 2 produce a
 single batch of size 2 (one thread wins the lock, the other finds no
 pending leaves and gets `no_data_found`).
 Test: `ConcurrencyTests.test_close_anchor_batch_cross_algorithm_parallel`
-asserts that closes for algorithms 2 and 3 complete in ~0.3s (the
-held lock duration), not ~0.6s (serialized).
+holds algorithm 2's lock open and requires a close under algorithm 3 to proceed
+anyway, under `lock_timeout`. Until v9.459 it timed the pair against a 0.55s
+constant and passed against a lock key that ignored the algorithm entirely.
+
+This lock is one of two the suite CANNOT observe on its own: the key is
+`algorithm_id` and the procedure batches every pending row under it, so two
+calls sharing the key touch the same rows and would serialize on the UPDATE
+regardless. The property is still covered. Drop the advisory lock and all 866
+tests pass; drop the `FOR UPDATE` in the sibling procedures and all 866 pass;
+drop both and the suite fails. `_UNOBSERVABLE_LOCKS` in `polaris_checks` records
+this with the measurements.
 
 See `docs/design/anchoring.md` for the broader write-up.
 
@@ -317,13 +329,26 @@ parallel decisions by *different* agencies have no overlapping state
 and can run concurrently.
 
 Test: `ConcurrencyTests.test_uc10_same_attesting_agency_serializes`
-asserts that two parallel attests on the same attesting_agency_id
-take ~0.6s (one sleeps 0.3s holding the lock; the other waits then
-sleeps 0.3s). The test manually holds the lock to make the
-serialization timing observable; the procedure's lock acquisition
-inside is a no-op reacquire on the same transaction.
+holds attesting agency 4's lock open THROUGH THE PROCEDURE and requires a second
+attest under the same agency to wait for it.
+
+The paragraph this replaces described the older approach as a technique: "the
+test manually holds the lock to make the serialization timing observable; the
+procedure's lock acquisition inside is a no-op reacquire on the same
+transaction." That is precisely why it proved nothing. Both threads serialized
+on the TEST's lock, so the procedure's own locking never entered the
+measurement, and reinstalling `uc10_attest_trust` with its
+`PERFORM pg_advisory_xact_lock(...)` line deleted outright left the test green
+(v9.460). A hold must go through the procedure or it measures the test.
+
 Test: `ConcurrencyTests.test_uc10_cross_attesting_agency_parallelizes`
-asserts cross-agency parallelism completes in ~0.3s.
+requires an attest by agency 5 to proceed while agency 4's is held.
+Test: `ConcurrencyTests.test_uc10_attest_and_revoke_share_one_lock_key`
+requires a revoke to wait on a held attest, which is the one thing the two
+procedures do not share code for: `uc10_attest_trust` hashes its
+`p_attesting_id` parameter while `uc10_revoke_attestation` SELECTs
+`attesting_agency_id` out of the row and hashes that. A comment claimed the two
+serialize from R11-3 until v9.462 and nothing measured it.
 
 See `docs/design/federation.md` for the broader write-up.
 
@@ -342,8 +367,10 @@ per-procedure scope here is the natural unit: the procedure is the
 "entity" being serialized.
 
 Test: `ConcurrencyTests.test_uc11_close_epoch_serializes_under_lock`
-asserts that two parallel calls take ~0.6s (the manually-held lock
-forces serialization).
+holds one closure open THROUGH THE PROCEDURE and requires a second to wait for
+it under `lock_timeout`. It too used to hold the lock by hand and time the pair,
+and it too stayed green against `uc11_close_epoch` with its
+`PERFORM pg_advisory_xact_lock(...)` line deleted (v9.460).
 Test: `ConcurrencyTests.test_uc11_close_epoch_both_rows_committed`
 asserts that both serialized closures commit (lock = ordering, not
 loss-of-write).
@@ -360,6 +387,22 @@ See `docs/design/zk-snark.md` for the broader write-up.
 | `close_anchor_batch` | per-algorithm | cross-algorithm parallel |
 | `uc10_attest_trust` / `uc10_revoke_attestation` | per-attesting-agency | cross-attesting-agency parallel |
 | `uc11_close_epoch` | per-procedure (global) | N/A: all closures serialize |
+
+**What the suite can and cannot see** (measured v9.459-v9.463, by reinstalling
+each procedure with its lock removed and running the whole suite). Four of the six
+are directly observable: delete the `pg_advisory_xact_lock` line from
+`uc6_migrate_algorithm`, `uc8_revoke_token`, `uc10_attest_trust` or
+`uc11_close_epoch` and a test goes red. Two are not. `uc9_complete_recovery` keys
+on `claimed_individual_id` while `uq_one_pending_recovery_per_individual` allows
+one PENDING recovery per individual, so any two callers that share the key target
+the same row and serialize on its `FOR UPDATE` anyway; `close_anchor_batch` keys
+on `algorithm_id` and batches every pending row under it, and under READ COMMITTED
+a prober cannot see the holder's uncommitted batching. For both, dropping either
+mechanism alone leaves all 866 tests green and dropping both turns the suite red,
+which is defense-in-depth rather than an untested lock. `_UNOBSERVABLE_LOCKS` in
+`polaris_checks/checks.py` carries the reasons, and
+`check_advisory_locks_have_a_contention_test` fails if a seventh lock arrives with
+no contention test and no declaration.
 
 The same mechanism applied at six different granularities, each
 chosen to match the *natural scope of contention* for that procedure.

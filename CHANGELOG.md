@@ -5,6 +5,32 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.464 — 2026-09-14 (the design doc described the defect as the technique)
+
+Closing sweep over `docs/design/concurrency.md`, which had not moved while five ships rewrote what
+it describes. Three passages were wrong and one of them was instructive.
+
+The instructive one, on `uc10_same_attesting_agency_serializes`: *"The test manually holds the lock
+to make the serialization timing observable; the procedure's lock acquisition inside is a no-op
+reacquire on the same transaction."* That is the defect written down as a technique, and it reads
+entirely reasonable. It is also exactly why the test proved nothing: both threads serialized on the
+TEST's lock, so the procedure's own locking never entered the measurement. The replacement quotes
+the old sentence rather than deleting it, because the sentence is the clearest statement of the
+trap anyone will find.
+
+The other two described mechanisms that no longer exist: `test_uc6_cross_token_migrations_run_in_parallel`
+"confirms the wall-clock parallelism", and the cross-algorithm close "completes in ~0.3s (the held
+lock duration), not ~0.6s (serialized)". Both now hold a lock through the procedure and probe under
+`lock_timeout`.
+
+The catalog summary gained the one fact it could not have carried before today: which of the six
+locks the suite can actually see. Four go red when their `pg_advisory_xact_lock` line is deleted.
+Two cannot be observed at all, and for those, dropping either mechanism leaves 866 tests green
+while dropping both turns the suite red.
+
+A design doc that describes a verification approach is making a claim about the code, and this one
+had been making three false ones since this morning.
+
 ## v9.463 — 2026-09-14 (a surviving mutation that was the right answer)
 
 Four ships today treated a surviving mutation as a defect. This one did not, and the difference is
