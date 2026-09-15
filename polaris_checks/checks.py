@@ -17707,6 +17707,80 @@ def check_test_runners_are_last_in_their_file(root: pathlib.Path) -> list[Findin
                "rather than the part above the block" % checked)
 
 
+# ---------------------------------------------------------------------------
+# The log-PII promise is kept by the code, not only by the document.
+# ---------------------------------------------------------------------------
+# docs/operator/PRIVACY.md tells an operator, in as many words, that the
+# application log does NOT record form bodies, cookie values or token values.
+# That is the kind of promise somebody reads before deciding what a deployment
+# may hold, and on 2026-09-15 it was true by discipline alone: no check enforced
+# it and no test asserted it. Nothing would have noticed a debugging line that
+# logged `request.form` and stayed.
+#
+# Behaviour, not prose: this reads the logging call sites and fails if any of
+# them interpolates a request body, a cookie, a credential or a holder
+# attribute. It cannot prove a log is clean at runtime -- only that no call site
+# in the tree asks for the things the document promises are absent.
+_LOG_PII_RELS = ("polaris_web/app.py", "polaris_web/observability.py",
+                 "polaris_web/security.py")
+
+#: Naming one of these inside a logging call contradicts PRIVACY.md.
+_LOG_FORBIDDEN = (
+    "request.form", "request.json", "request.data", "request.get_json",
+    "request.cookies", "password", "token_value", "legal_name",
+    "date_of_birth", "biometric", "secret_key", "private_key",
+)
+
+
+def check_logs_exclude_pii(root: pathlib.Path) -> list[Finding]:
+    privacy = _read(root, "docs/operator/PRIVACY.md")
+    if not privacy:
+        return _fail("log_pii", "docs/operator/PRIVACY.md is missing, so the promise this "
+                                "check enforces cannot be read")
+    if "Form bodies" not in privacy:
+        return _fail("log_pii",
+                     "PRIVACY.md no longer promises that form bodies stay out of the log. "
+                     "Either the promise moved, in which case this check should follow it, "
+                     "or it was dropped, which is a change an operator needs told about")
+
+    seen = 0
+    for rel in _LOG_PII_RELS:
+        src = _read(root, rel)
+        if not src:
+            continue
+        seen += 1
+        # A logging call, possibly wrapped over several lines.
+        for m in re.finditer(r"(?:logger|logging)\.(?:debug|info|warning|error|exception|critical)\s*\(",
+                             src):
+            depth, i, n = 0, m.end() - 1, len(src)
+            while i < n:
+                if src[i] == "(":
+                    depth += 1
+                elif src[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            call = src[m.start():i + 1]
+            for bad in _LOG_FORBIDDEN:
+                if bad in call:
+                    line = src[:m.start()].count("\n") + 1
+                    return _fail("log_pii",
+                                 "%s:%d logs %r. PRIVACY.md promises the application log "
+                                 "records no form bodies, cookie values or token values, and "
+                                 "an operator decides what a deployment may hold on the "
+                                 "strength of that sentence" % (rel, line, bad))
+    if not seen:
+        return _fail("log_pii",
+                     "none of the %d files this reads could be opened, so a logging call that "
+                     "leaked a form body would go unnoticed" % len(_LOG_PII_RELS))
+    return _ok("log_pii",
+               "no logging call in %d application file(s) names a form body, a cookie, a "
+               "credential or a holder attribute, so PRIVACY.md's promise that the log "
+               "carries none of them is kept by the code and not only by the document"
+               % seen)
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
@@ -17808,6 +17882,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_oid4vp_verifier_boundary,
     check_advisory_locks_have_a_contention_test,
     check_test_runners_are_last_in_their_file,
+    check_logs_exclude_pii,
     check_published_readmes_have_no_relative_links,
     check_distributions_carry_their_licence,
     check_dyno_published,

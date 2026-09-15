@@ -5,6 +5,39 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.467 — 2026-09-15 (a privacy promise kept by discipline alone)
+
+A data-protection audit of the repository. Most of it came back clean, and the one finding is
+the shape this project keeps finding in itself.
+
+**Clean, and checked rather than assumed.** No credentials or API keys are committed. The one
+`BEGIN PRIVATE KEY` in the tree is a fixture with `xyz` between the headers, used to assert file
+permissions. `.gitignore` carries 13 secret patterns. Retention, erasure, the secret store's
+lifecycle, redaction and the duress paths each already have a check with a detection test.
+`docs/operator/PRIVACY.md` runs to 488 lines and states its own boundary honestly: it disclaims
+GDPR and CCPA as deployment-specific, says Polaris has no special handling for minors, and says
+outright that it is an architectural posture and not a legal privacy notice drafted by counsel.
+That boundary is correct for a reference implementation on notional data and was left alone.
+
+**The finding.** PRIVACY.md tells an operator, in as many words, that the application log does
+NOT record form bodies, cookie values or token values. It is a sentence somebody reads before
+deciding what a deployment may hold. It was true: none of the 21 logging call sites in the
+application interpolates a request body, a credential or a holder attribute, and the structured
+logger names no such field. But nothing enforced it and nothing tested it. A debugging line that
+logged `request.form` could have landed and stayed, and the document would have gone on promising
+otherwise.
+
+`check_logs_exclude_pii` (271) reads the logging call sites and fails if one names a request
+body, a cookie, a credential or a holder attribute, including across a call wrapped over several
+lines. It also fails if PRIVACY.md stops making the promise, because a check that exists to keep
+a published sentence true must not read as compliance once the sentence is gone. Six failure
+modes are covered by its detection test, including the empty room.
+
+What this does not do: it reads call sites, so it cannot prove a log is clean at runtime, and it
+says nothing about what a deployment's own logging configuration adds. The document already tells
+an operator to revert debug logging immediately and record it; that instruction is still theirs
+to follow.
+
 ## v9.466 — 2026-09-15 (you can install it now)
 
 A version because installation changed, which is externally observable and is the only kind of

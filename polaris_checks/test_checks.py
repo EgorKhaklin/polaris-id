@@ -14913,6 +14913,68 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
         "must FAIL when the SDK has no refusal tests for the drill to make go red"
 
 
+def test_logs_exclude_pii_check_discriminates(tmp_path):
+    # PRIVACY.md tells an operator the application log records no form bodies, cookie
+    # values or token values. That was true by discipline alone until v9.467: no check
+    # and no test, so a debugging line that logged request.form could have landed and
+    # stayed. The good fixture logs a request id; each perturbation logs something the
+    # document promises is absent.
+    GOOD_APP = (
+        "import logging\n"
+        "logger = logging.getLogger(__name__)\n"
+        "def handler():\n"
+        "    logger.info('auth.failure request_id=%s', g.request_id)\n"
+    )
+    GOOD_PRIVACY = (
+        "## Logs and PII\n\nThe application log does NOT record:\n\n"
+        "- Form bodies (so passwords and PII don't end up in logs)\n"
+        "- Cookie values\n- Token values\n"
+    )
+
+    def write(app=GOOD_APP, privacy=GOOD_PRIVACY):
+        root = tmp_path / ("logpii%d" % write.n)
+        write.n += 1
+        (root / "polaris_web").mkdir(parents=True)
+        (root / "docs" / "operator").mkdir(parents=True)
+        (root / "polaris_web" / "app.py").write_text(app)
+        (root / "docs" / "operator" / "PRIVACY.md").write_text(privacy)
+        return root
+    write.n = 0
+
+    ok = checks.check_logs_exclude_pii(write())
+    assert all(f.level == "OK" for f in ok), ok
+
+    # The debugging line that gets left in.
+    bad = checks.check_logs_exclude_pii(write(
+        app=GOOD_APP + "def dbg():\n    logger.debug('body=%s', request.form)\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # A credential reaching the log.
+    bad = checks.check_logs_exclude_pii(write(
+        app=GOOD_APP + "def dbg():\n    logger.info('tried %s', password)\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # A holder attribute reaching the log.
+    bad = checks.check_logs_exclude_pii(write(
+        app=GOOD_APP + "def dbg():\n    logger.warning('subject %s', legal_name)\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # A call wrapped over several lines still counts.
+    bad = checks.check_logs_exclude_pii(write(
+        app=GOOD_APP + "def dbg():\n    logger.info(\n        'body %s',\n        request.json,\n    )\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # The promise being quietly dropped from the document is itself the finding: the
+    # check exists to keep a published sentence true, so the sentence going missing
+    # must not read as compliance.
+    bad = checks.check_logs_exclude_pii(write(privacy="## Logs\n\nWe log some things.\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # And an empty room is not a clean bill.
+    bad = checks.check_logs_exclude_pii(tmp_path / "nothing-here")
+    assert any(f.level == "FAIL" for f in bad), bad
+
+
 def test_runner_last_check_discriminates(tmp_path):
     # `python file.py` runs top to bottom, so a __main__ block that collects from
     # sys.modules[__name__] sees only the classes defined ABOVE it and then exits.
