@@ -87,6 +87,19 @@ def keygen(out: pathlib.Path, host: str) -> dict:
             .not_valid_after(now + datetime.timedelta(days=90))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+            .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+                                         key_encipherment=False, data_encipherment=False,
+                                         key_agreement=False, key_cert_sign=False,
+                                         crl_sign=False, encipher_only=False,
+                                         decipher_only=False), critical=True)
+            # digitalSignature, because this leaf's ONLY job is signing the request
+            # object. Omitted until v9.465 and nothing here noticed: the OpenID
+            # Foundation conformance suite ran eleven modules clean against a leaf
+            # carrying no KeyUsage at all. An unmodified walt.id Wallet API v2 refused
+            # it on sight -- "Certificate does not contain client Key Usage
+            # 'digitalSignature'" -- which is the first thing this package has been
+            # told by an implementation that did not come from this repository.
+
             .sign(ca_key, hashes.SHA256()))
 
     tls_key = ec.generate_private_key(ec.SECP256R1())

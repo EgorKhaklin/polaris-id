@@ -65,6 +65,22 @@ class KeygenTests(unittest.TestCase):
         digest = hashlib.sha256(base64.b64decode(verifier.x5c[0])).digest()
         self.assertEqual(verifier.client_id, "x509_hash:" + b64u_encode(digest))
 
+    def test_the_leaf_asserts_digital_signature(self):
+        """An unmodified walt.id Wallet API v2 refused the leaf this used to produce.
+
+        "Certificate does not contain client Key Usage 'digitalSignature'". The CA
+        carried keyCertSign/cRLSign and the leaf carried no KeyUsage at all, so the one
+        certificate whose entire job is signing request objects was not marked usable
+        for signing. Eleven of eleven HAIP modules in the OpenID Foundation conformance
+        suite passed against it, and the four tests above assert other properties of the
+        same certificate without asserting this one. It took an implementation from
+        outside this repository to say so. See EXTERNAL-NOUNS.md.
+        """
+        ku = self.leaf.extensions.get_extension_for_class(x509.KeyUsage).value
+        self.assertTrue(ku.digital_signature,
+                        "the request-signing leaf does not assert digitalSignature")
+        self.assertFalse(ku.key_cert_sign, "a leaf must not be able to sign certificates")
+
     def test_the_private_keys_are_not_world_readable(self):
         for name in ("client_key", "tls_key"):
             mode = (self.tmp / FILES[name]).stat().st_mode & 0o777

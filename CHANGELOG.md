@@ -5,6 +5,45 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v9.465 — 2026-09-15 (a wallet nobody here wrote said no, and it was right)
+
+First named independent implementation on the board. An unmodified walt.id Wallet API v2
+(`waltid/wallet-api2:1.0.0`) presented an SD-JWT VC to `polaris-oid4vp` over OpenID4VP 1.0 and
+Polaris accepted it.
+
+    <- 200 authentic, claims ['cnf', 'family_name', 'given_name', 'iat', 'iss', 'vct']
+
+walt.id fetched the signed request object over `request_uri_method=post`, verified it under
+`client_id_prefix=x509_hash` against the registered trust anchor, matched the credential with the
+`dcql_query`, signed a key binding JWT with a P-256 key **it generated and this repository has
+never held**, encrypted the response as `direct_post.jwt`, and Polaris verified the chain.
+
+**And it refused Polaris first, correctly.** `polaris-oid4vp keygen` produced a request-signing
+leaf certificate with no KeyUsage extension at all:
+
+    Certificate does not contain client Key Usage 'digitalSignature'
+
+The CA carried `keyCertSign`/`cRLSign`; the leaf carried nothing. Eleven of eleven HAIP verifier
+modules in the OpenID Foundation conformance suite had run clean against that certificate, and
+`test_cli.py` already asserted four separate properties of the same leaf without asserting this
+one. The certificate whose entire job is signing request objects was not marked as usable for
+signing, and it took an implementation from outside this repository to say so. Fixed here, with a
+test that is red on a leaf missing it.
+
+The exchange stands on two negative controls, because a verifier that accepts everything prints
+the same success line. Same wallet, same credential, same path, verifier trusting a different
+issuer key: `400 refused: issuer_signature`, and walt.id told only "the presentation was not
+accepted". Re-presenting against an answered `state`: refused at the request stage.
+
+Recorded in [EXTERNAL-NOUNS.md](EXTERNAL-NOUNS.md) with the image digest, the release tag, the
+Polaris commit, the transcript and every incompatibility found, including two that are not
+Polaris's: walt.id's `/credentials/present/resolve-request` is the only route in its handler file
+not passed `clientIdTrustConfiguration`, so it reports `MissingX509TrustAnchors` whatever is
+configured; and its `x509TrustAnchors` wants PEM though the type comment says base64 DER.
+
+One wallet, one credential format, one presentation path, ES256 throughout. No claim is made that
+`polaris-oid4vp` is interoperable in general.
+
 ## v9.464 — 2026-09-14 (the design doc described the defect as the technique)
 
 Closing sweep over `docs/design/concurrency.md`, which had not moved while five ships rewrote what
