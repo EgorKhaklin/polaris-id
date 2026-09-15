@@ -102,7 +102,70 @@ is what this board is for. Writing them down is not scheduling them.
 A limitation moves out of this list when an outside party trips over it, not when it becomes
 convenient to build.
 
-### External conformance profile
+### External conformance profile — HOSTED
+
+**HOSTED TESTING COMPLETE; HUMAN REVIEW PENDING.** Not certified, not published, not
+self-certification-submitted. Those are four different things and this is the first.
+
+    Service:                   OpenID Foundation HOSTED conformance suite,
+                               https://www.certification.openid.net
+    Profile:                   oid4vp-1final-verifier-haip-test-plan
+    Variants:                  credential_format sd_jwt_vc, response_mode direct_post.jwt
+    Run date:                  2026-09-15
+    Polaris commit:            b941317
+    polaris-oid4vp version:    0.1.0 (the published PyPI artifact's source)
+    Crypto profile:            ES256 / P-256 throughout
+    Reachability:              the verifier was exposed on a public HTTPS origin and the
+                               Foundation's service fetched request_uri and posted to
+                               response_uri across the open internet
+
+    Result:                    11 of 11 modules ran. Zero FAILURE, zero WARNING.
+                               7 negative modules   FINISHED   scored automatically on a 4xx
+                               4 positive modules   REVIEW     awaiting a human screenshot
+
+Module by module, using the suite's own terminal states rather than a summary of them:
+
+    invalid-kb-jwt-signature        FINISHED   refused: kb_signature
+    invalid-credential-signature    FINISHED   refused: issuer_signature
+    invalid-sd-hash                 FINISHED   refused: sd_hash
+    invalid-kb-jwt-nonce            FINISHED   refused: nonce
+    invalid-kb-jwt-aud              FINISHED   refused: audience
+    kb-jwt-iat-in-past              FINISHED   refused: kb_freshness
+    kb-jwt-iat-in-future            FINISHED   refused: kb_freshness
+    happy-flow                      REVIEW     screenshot required
+    minimal-cnf-jwk                 REVIEW     screenshot required
+    request-uri-method-post         REVIEW     screenshot required
+    request-uri-fetched-twice       REVIEW     screenshot required
+
+REVIEW IS NOT PASS and is not recorded as one. The four positive modules completed with no
+failure and then stopped, because the suite requires a person to look at a verifier
+displaying a successful verification and attest to it. Nothing here will manufacture that.
+
+Verified against the service rather than against this drill's own summary. The first run
+printed a local hostname and reported REVIEW, which would have read as hosted evidence; the
+plan list showed no executed tests, which does not match a completed flow. The drill now
+emits the Foundation's own plan and test identifiers, and the log for test
+`6qQjlw3BzJaxWhN` contains the public hostname the verifier was exposed on, alongside
+`Registered client request object trust anchor certificate`. Spot-checked terminal states
+from the service: a negative module carries 51 SUCCESS and one FINISHED with no FAILURE; a
+positive module carries 59 SUCCESS, one REVIEW and one INTERRUPTED.
+
+Identifiers for the eleven, so the result is checkable by somebody without this terminal:
+
+    plan wKBzutxT8nDqT  test lIYHXvm4lAmJiC4      plan hJ4VcBkjZF2Ro  test mAqghKdcSOXJXSs
+    plan OHeecf9f3ELMV  test Ldv7CMwJNnPGjcn      plan RcyPUkKkvqzTx  test X3oYPoD9UNSXV2H
+    plan Wz1yQTVfrIxuh  test Zelgn0b7H9AEEY6      plan rzNzf18pO4QNc  test EMfPrFgWMb3fsA1
+    plan QKeec2svLwI4F  test 4MiKFd58aEwEAvZ      plan IMFF6lxw7gqVC  test JndCTUmeVTFKZiD
+    plan H3T2mu04ZC6fr  test 2TM9A0CFwRMLWy2      plan jLVA5oFjMpXry  test l00y4aJu7ydDg7h
+                                                  plan tq6CTqggPHpqG  test lUMt13l0ralfRgX
+
+    https://www.certification.openid.net/log-detail.html?log=<test id>
+
+Both negative controls held on the hosted service, as they did locally: a verifier patched
+to answer 400 to everything is NOTICED by the happy flow, and one patched to answer 200 to
+everything is NOTICED by all seven negative modules.
+
+### External conformance profile — SELF-HOSTED (superseded by the above)
 
 The one the contract means has now been run, against a SELF-HOSTED instance, and is not
 published.

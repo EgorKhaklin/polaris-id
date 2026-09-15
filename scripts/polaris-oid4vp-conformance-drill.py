@@ -160,6 +160,12 @@ def run_module(suite, verifier, config, module):
     except urllib.error.HTTPError:
         pass
 
+    # B3 of the externalization contract: a hosted run has to be pointable at. Print
+    # the identifiers the Foundation's service generated, so the result can be checked
+    # by somebody who does not have this terminal.
+    print("      plan %s  test %s  %s/log-detail.html?log=%s"
+          % (plan_id, test_id, suite, test_id))
+
     entries = api(suite, "/api/log/" + test_id) or []
     entries = entries if isinstance(entries, list) else entries.get("data", [])
     tally, failures = {}, []
