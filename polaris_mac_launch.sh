@@ -952,9 +952,28 @@ watch_browser_presence() {
         local now
         now=$(date +%s)
 
-        # Explicit quit beacon from pagehide → near-instant shutdown
+        # Explicit quit beacon from pagehide → near-instant shutdown, BUT ONLY IF
+        # NOTHING IS STILL BEATING.
+        #
+        # The beacon says "a tab went away", not "the last tab went away". Every
+        # open tab writes to one shared $QUIT_FILE, so closing the second of two
+        # tabs, a reload, or a stale tab from a previous session firing pagehide
+        # as this stack comes up all used to tear down a session somebody was
+        # actively using. Observed 2026-09-15 with a quit beacon 46 seconds old
+        # sitting beside a heartbeat 6 seconds old: the browser was plainly alive
+        # and the launcher shut down anyway, within three seconds of starting.
+        #
+        # A fresh heartbeat is proof that a tab is still there. Consume the
+        # beacon and carry on; the heartbeat-staleness check below is what
+        # notices when the LAST one really is gone.
         if [[ -f "$QUIT_FILE" ]]; then
             rm -f "$QUIT_FILE"
+            local hb_now
+            hb_now=$(file_mtime "$HEARTBEAT_FILE")
+            if (( hb_now > 0 && now - hb_now < 15 )); then
+                log "Quit beacon ignored: a tab is still beating ($((now - hb_now))s ago)."
+                continue
+            fi
             echo
             log "Browser tab closed (quit beacon received)."
             _teardown_once
