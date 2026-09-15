@@ -15,9 +15,92 @@ belongs in the bottom section, not the top.
 
 ### Wallet
 
-    Wallet:                    (none)
-    URL/version:               (none)
-    Contact/run date:          (none)
+**Filled 2026-09-15. The first external noun on this board.**
+
+    Wallet:                    walt.id Wallet API v2
+    URL/version:               waltid/wallet-api2:1.0.0
+                               sha256:d2248288f41ceba029a7fd943fed623ef7f0f846edfee666ac6f7e621c4d739e
+                               walt-id/waltid-identity release v1.0.0, published 2026-08-24
+    Contact/run date:          no contact; the published image, run unmodified, 2026-09-15
+    Polaris commit:            edeecf7 (v9.465)
+    Result:                    IT PRESENTED AND POLARIS ACCEPTED.
+
+                                 <- 200 authentic, claims ['cnf', 'family_name',
+                                    'given_name', 'iat', 'iss', 'vct']
+
+                               walt.id fetched the signed request object over
+                               request_uri_method=post, verified it under
+                               client_id_prefix=x509_hash against the registered trust
+                               anchor, matched the credential with the dcql_query, signed
+                               a key binding JWT with a P-256 key IT generated and this
+                               repository has never held, encrypted the response as
+                               direct_post.jwt, and polaris-oid4vp verified the chain.
+    Modifications to walt.id:  none. Stock image; configuration only (its TLS truststore
+                               and the request-object trust anchor keygen already tells
+                               you to register).
+    Controls:                  Two, because a verifier that accepts everything prints the
+                               same success line.
+                               (a) Same wallet, same credential, same path, verifier
+                                   trusting a DIFFERENT issuer key under the same kid:
+                                   400 refused: issuer_signature. walt.id was told only
+                                   "the presentation was not accepted".
+                               (b) Re-presented against an answered state: refused at the
+                                   request stage, "no such outstanding request".
+    Transcript:                lab/interop/waltid/README.md reproduces it end to end.
+
+**It refused Polaris first, and it was right.** `polaris-oid4vp keygen` produced a
+request-signing leaf certificate with no KeyUsage extension at all:
+
+    Certificate does not contain client Key Usage 'digitalSignature'
+
+The CA carried keyCertSign/cRLSign; the leaf carried nothing. Eleven of eleven HAIP modules
+in the conformance run below had passed against that certificate, and `test_cli.py` already
+asserted four separate properties of the same leaf without asserting this one. The
+certificate whose entire job is signing request objects was not marked usable for signing.
+Classified EXT-INTEROP and fixed in v9.465, with a test that is red on a leaf missing it.
+
+That is the point of this board. The local conformance suite, 143 package tests, a mutation
+drill over every refusal and 270 invariant checks all passed over a defect that the first
+outside implementation refused on sight.
+
+**Two findings that were NOT Polaris's**, recorded because the contract says to classify
+rather than absorb, and neither produced a Polaris change:
+
+  * walt.id's `POST /wallet/{id}/credentials/present/resolve-request` reports
+    `MissingX509TrustAnchors` however the anchors are configured. It is the only route in
+    its handler file not passed `clientIdTrustConfiguration`; `/present` and `/isolated`
+    both receive it. Use `/present`.
+  * `x509TrustAnchors` wants PEM, though the type's own comment says "DERs in base64
+    format". Base64 DER crashes the service with `Invalid PEM` at startup.
+
+**What this does NOT establish.** One wallet, one credential format, one presentation path,
+ES256/P-256 throughout, which is what the HAIP profile pins and what walt.id implements. It
+says nothing about ISO 18013-5 mDL, nothing about any other wallet, nothing about the
+post-quantum path, and it is not a claim that polaris-oid4vp is interoperable in general.
+It is one named implementation, once.
+
+### Known limitations, held here and not in ROADMAP.md
+
+Recorded on 2026-09-15 as qualifications on the evidence above, deliberately NOT as a plan.
+None of these becomes product work until external usage demonstrates that one matters; that
+is what this board is for. Writing them down is not scheduling them.
+
+  * **The OpenID/SD-JWT path correlates more easily than the native privacy path.** The
+    walt.id exchange above is a plain SD-JWT VC presentation. Unlinkability is scoped to
+    issuer-side and ZK mode; a plain presentation is exposed, never unlinkable, and two
+    relying parties keeping raw material can correlate.
+  * **No native general `age_over_21` anonymous credential.** The benchmark's first scenario
+    is satisfied by a disclosed attribute, not by an anonymous predicate.
+  * **Offline status maximum lifetime rests partly on relying-party policy.** The issuer
+    mints a one-hour TTL; the verifier's own default bound is `None`, and the
+    `max_window_seconds` the artifact carries is never read by `verify_status_assertion`.
+  * **Algorithm deprecation is not conveyed as signed runtime policy.** It lives in
+    `CryptographicAlgorithm` rows, not in something a verifier is handed and can check.
+  * **The physical token is an emulator and a specification, not certified silicon.**
+    Enrollment proofing has not been field-tested.
+
+A limitation moves out of this list when an outside party trips over it, not when it becomes
+convenient to build.
 
 ### External conformance profile
 

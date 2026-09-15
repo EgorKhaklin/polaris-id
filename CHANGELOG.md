@@ -35,7 +35,7 @@ the same success line. Same wallet, same credential, same path, verifier trustin
 issuer key: `400 refused: issuer_signature`, and walt.id told only "the presentation was not
 accepted". Re-presenting against an answered `state`: refused at the request stage.
 
-Recorded in [EXTERNAL-NOUNS.md](EXTERNAL-NOUNS.md) with the image digest, the release tag, the
+Recorded in [lab/EXTERNAL-NOUNS.md](lab/EXTERNAL-NOUNS.md) with the image digest, the release tag, the
 Polaris commit, the transcript and every incompatibility found, including two that are not
 Polaris's: walt.id's `/credentials/present/resolve-request` is the only route in its handler file
 not passed `clientIdTrustConfiguration`, so it reports `MissingX509TrustAnchors` whatever is

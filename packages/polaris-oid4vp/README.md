@@ -222,5 +222,13 @@ measure.
 routing, form parsing, TLS. It exists because `serve.py` was at **0% coverage** and nothing in
 CI touched the file that turns a verdict into a status code.
 
-**None of that is a conformance result.** The suite ran locally, nothing was scored or
-published, and `lab/EXTERNAL-NOUNS.md` stays at zero.
+**None of that is a conformance result.** The suite ran locally and nothing was scored or
+published.
+
+What is not zero, as of 2026-09-15: an unmodified walt.id Wallet API v2
+(`waltid/wallet-api2:1.0.0`) presented an SD-JWT VC to this verifier over OpenID4VP 1.0 and
+it was accepted, against two negative controls. That exchange also produced the first defect
+here found from outside: `keygen` was emitting a request-signing leaf with no
+`digitalSignature` KeyUsage, which walt.id refused and the local conformance suite had not.
+The row, the controls and what it does not establish are in
+[the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).

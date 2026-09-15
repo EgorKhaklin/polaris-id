@@ -1,6 +1,6 @@
 # walt.id Wallet API v2 → polaris-oid4vp
 
-The sequence that produced the row in [`EXTERNAL-NOUNS.md`](../../../EXTERNAL-NOUNS.md).
+The sequence that produced the row in [`lab/EXTERNAL-NOUNS.md`](../../EXTERNAL-NOUNS.md).
 walt.id runs unmodified at a pinned digest; only its configuration is touched.
 
 ## 1. The wallet

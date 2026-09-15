@@ -97,8 +97,10 @@ an outside HTTP request received, evaluated against the profile, and a named ver
 with the condition class that produced it.
 
 **It is not a Polaris result and must not be recorded as one.** What sent that request was
-`curl`, Polaris sent nothing, and the failure is the correct answer to an empty request. The
-rows in `lab/EXTERNAL-NOUNS.md` stay at zero.
+`curl`, Polaris sent nothing, and the failure is the correct answer to an empty request.
+Nothing here earns a row in `lab/EXTERNAL-NOUNS.md`. (The wallet row was filled on
+2026-09-15 by walt.id Wallet API v2, which is a different encounter entirely: a named
+outside implementation, run unmodified, that presented and was accepted.)
 
 ### Then the whole request, and the suite accepts it
 
