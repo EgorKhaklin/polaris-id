@@ -230,7 +230,16 @@ the live registry into a clean environment, never from a build that returned zer
 
     Registry:                  npm
     Package:                   polaris-sdk-ts
-    Version:                   (not yet published)
+    Version:                   0.1.0
+    Published:                 2026-09-15
+    Method:                    one-time bootstrap token, revoked immediately after.
+                               npm cannot use trusted publishing for a package's FIRST
+                               publish: the trusted publisher is configured on a package
+                               page that does not exist until something is published
+                               (npm/cli#8544). PyPI avoids this with pending publishers.
+    External install verified: npm install polaris-sdk-ts in an empty directory;
+                               require('polaris-sdk-ts') resolves from node_modules and
+                               exposes PolarisVerifier, with no path into this repository
 
 Two things cost a failed run each, recorded so the next person does not pay for them again.
 
