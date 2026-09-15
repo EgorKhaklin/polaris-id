@@ -378,7 +378,7 @@ jobs:
       # job without checking what that job provides is how the mdoc drill (cbor2) and the
       # quantum-event drill (psycopg2) each went red after they were added.
       - name: Set up Java (for the TLA+ model checker)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
