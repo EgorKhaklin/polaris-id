@@ -119,27 +119,47 @@ self-certification-submitted. Those are four different things and this is the fi
                                Foundation's service fetched request_uri and posted to
                                response_uri across the open internet
 
-    Result:                    11 of 11 modules ran. Zero FAILURE, zero WARNING.
-                               7 negative modules   FINISHED   scored automatically on a 4xx
-                               4 positive modules   REVIEW     awaiting a human screenshot
+    Result:                    7 of 11 modules PASSED on the service's own verdict.
+                               4 were INTERRUPTED by a defect in the drill and must be
+                               re-run. Zero FAILURE and zero WARNING throughout.
+
+                               7 negative modules   FINISHED / PASSED
+                               4 positive modules   INTERRUPTED / result null
 
 Module by module, using the suite's own terminal states rather than a summary of them:
 
-    invalid-kb-jwt-signature        FINISHED   refused: kb_signature
-    invalid-credential-signature    FINISHED   refused: issuer_signature
-    invalid-sd-hash                 FINISHED   refused: sd_hash
-    invalid-kb-jwt-nonce            FINISHED   refused: nonce
-    invalid-kb-jwt-aud              FINISHED   refused: audience
-    kb-jwt-iat-in-past              FINISHED   refused: kb_freshness
-    kb-jwt-iat-in-future            FINISHED   refused: kb_freshness
-    happy-flow                      REVIEW     screenshot required
-    minimal-cnf-jwk                 REVIEW     screenshot required
-    request-uri-method-post         REVIEW     screenshot required
-    request-uri-fetched-twice       REVIEW     screenshot required
+    invalid-kb-jwt-signature        FINISHED / PASSED    refused: kb_signature
+    invalid-credential-signature    FINISHED / PASSED    refused: issuer_signature
+    invalid-sd-hash                 FINISHED / PASSED    refused: sd_hash
+    invalid-kb-jwt-nonce            FINISHED / PASSED    refused: nonce
+    invalid-kb-jwt-aud              FINISHED / PASSED    refused: audience
+    kb-jwt-iat-in-past              FINISHED / PASSED    refused: kb_freshness
+    kb-jwt-iat-in-future            FINISHED / PASSED    refused: kb_freshness
+    happy-flow                      INTERRUPTED          must be re-run
+    minimal-cnf-jwk                 INTERRUPTED          must be re-run
+    request-uri-method-post         INTERRUPTED          must be re-run
+    request-uri-fetched-twice       INTERRUPTED          must be re-run
 
-REVIEW IS NOT PASS and is not recorded as one. The four positive modules completed with no
-failure and then stopped, because the suite requires a person to look at a verifier
-displaying a successful verification and attest to it. Nothing here will manufacture that.
+**THE FOUR WERE INTERRUPTED BY A DEFECT IN THE DRILL, NOT MERELY PAUSED.** The first
+write-up of this run said "11 of 11 modules clean ... the rest end in REVIEW because the
+suite wants a screenshot". That was wrong, and the suite had already said so inside the log
+that was downloaded to corroborate it:
+
+    Stopping test due to alias conflict - before this test finished, you have started
+    another test using the same alias. You will need to rerun this test and ensure you
+    complete all steps in this test before you move onto the next test.
+
+The drill used one fixed alias for every module. The suite treats a second test started
+under an alias as grounds to interrupt the first, so each module killed its predecessor.
+The seven negative ones survived only because a 4xx finishes them immediately; all four
+positive ones reached REVIEW, waited for a screenshot that was never going to arrive
+during an unattended batch, and were interrupted when the next module started. Fixed by
+giving every test a unique alias, which is the remedy the suite's own message names.
+
+So the honest count is 7, not 11. The seven are the service's own verdict -- `result:
+PASSED`, which is stronger than the "automatic pass" first recorded -- and the four are
+not a pass in any sense and are not recorded as one. They need re-running one at a time,
+each with its screenshot uploaded before the next begins.
 
 Verified against the service rather than against this drill's own summary. The first run
 printed a local hostname and reported REVIEW, which would have read as hosted evidence; the

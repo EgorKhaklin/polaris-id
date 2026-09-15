@@ -34,6 +34,7 @@ if either control goes unnoticed, and says which.
 """
 import argparse
 import json
+import secrets
 import os
 import pathlib
 import ssl
@@ -59,7 +60,16 @@ from polaris_oid4vp.verifier import Verifier  # noqa: E402
 HOST = "host.docker.internal"
 PORT = 9443
 PUBLIC_ORIGIN = os.environ.get("POLARIS_PUBLIC_ORIGIN", "")
-ALIAS = "polaris-verifier"
+#: The alias is the path segment the wallet is launched at, and the suite treats a
+#: SECOND test started under an alias as a reason to interrupt the FIRST. One fixed
+#: alias across eleven modules therefore had each test kill its predecessor: the seven
+#: negative ones survived because a 4xx finishes them immediately, while all four
+#: positive ones reached REVIEW, waited for a screenshot that never came, and were
+#: INTERRUPTED the moment the next module started. The suite said so in as many words:
+#: "Stopping test due to alias conflict ... you will need to rerun this test and ensure
+#: you complete all steps in this test before you move onto the next test."
+#: A unique alias per test is the fix the suite itself recommends.
+ALIAS_BASE = "polaris-verifier"
 PLAN = "oid4vp-1final-verifier-haip-test-plan"
 
 #: The eleven modules that apply to sd_jwt_vc. The seven marked False are scored
@@ -142,6 +152,8 @@ def run_module(suite, verifier, config, module):
     """Create the test, drive it, and return (result, tally, failures)."""
     variant = urllib.parse.quote(json.dumps({"credential_format": "sd_jwt_vc",
                                              "response_mode": "direct_post.jwt"}))
+    alias = "%s-%s" % (ALIAS_BASE, secrets.token_hex(4))
+    config = dict(config, alias=alias)
     plan = api(suite, "/api/plan?planName=%s&variant=%s" % (PLAN, variant), "POST", config)
     plan_id = (plan or {}).get("_id") or (plan or {}).get("id")
     run = api(suite, "/api/runner?test=%s&plan=%s" % (module, plan_id), "POST") or {}
@@ -156,7 +168,7 @@ def run_module(suite, verifier, config, module):
     opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=_CTX),
                                          _NoRedirect)
     try:
-        opener.open("%s/test/a/%s/authorize?%s" % (suite, ALIAS, params), timeout=120).read()
+        opener.open("%s/test/a/%s/authorize?%s" % (suite, alias, params), timeout=120).read()
     except urllib.error.HTTPError:
         pass
 
@@ -236,7 +248,7 @@ def main() -> int:
           % (HOST, PORT, verifier.client_id[:26]))
 
     config = {
-        "alias": ALIAS,
+        "alias": ALIAS_BASE,   # replaced per test in run_module; see ALIAS_BASE
         "description": "polaris-oid4vp against the HAIP verifier plan",
         "client": {"client_id": verifier.client_id,
                    "request_object_trust_anchor_pem": pki["ca_pem"]},
