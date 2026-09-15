@@ -36,8 +36,8 @@ minutes from a clean machine, without cloning this repository: [STRANGER-PATH.md
 **The OpenID Foundation's hosted suite ran the profile.** Eleven modules of
 `oid4vp-1final-verifier-haip-test-plan` across the open internet, zero failures and zero
 warnings. Seven negative modules carry the service's own `result: PASSED`; four positive modules
-sit in REVIEW with screenshot evidence attached, awaiting a Foundation reviewer. **REVIEW is not
-PASSED, and Polaris is not certified.**
+sit in REVIEW, awaiting a Foundation reviewer. **REVIEW is not
+PASSED, and Polaris is not yet certified.**
 
 And the counterweight, because the rest of this page is long and confident: this is one unpaid
 author's reference implementation on notional data. It has never held real identity data, no
