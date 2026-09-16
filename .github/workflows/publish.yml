@@ -118,10 +118,15 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+      # No registry-url here on purpose: setup-node would write an _authToken placeholder
+      # into .npmrc, and a token in the config, even a placeholder, is what npm uses instead
+      # of the OIDC exchange. Trusted publishing wants no token anywhere. The CLI is upgraded
+      # because the exchange needs npm 11.5.1 or later, and the publish runs verbose so that
+      # the exchange's answer is in the log if the registry refuses.
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+      - run: npm install -g npm@latest && npm --version
       - run: cd sdk/typescript && npm ci
       # prepack builds dist/, which is what `exports` points at. Publishing without it
       # would ship a package with nothing to import, which is the state this repository
@@ -147,4 +152,4 @@ jobs:
             *)   TAG=latest ;;
           esac
           echo "publishing polaris-sdk-ts@$VERSION under dist-tag $TAG"
-          npm publish --provenance --access public --tag "$TAG"
+          npm publish --provenance --access public --tag "$TAG" --loglevel verbose
