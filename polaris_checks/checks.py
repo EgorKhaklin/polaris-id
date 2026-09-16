@@ -8329,7 +8329,7 @@ _RETIRED_APPARATUS = ("Sanctum", "BIG MISSION", "Anti-Architect")
 #: History. The CHANGELOG records what happened, the migrations are what ran, and
 #: DEVNOTES holds the working record; rewriting any of them to remove a name would be
 #: editing the past rather than the tree.
-_APPARATUS_HISTORY = ("CHANGELOG.md", "DEVNOTES/", "polaris_sql/migrations/",
+_APPARATUS_HISTORY = ("CHANGELOG.md", "docs/history/", "DEVNOTES/", "polaris_sql/migrations/",
                       "docs/paper/", "meta/")
 
 
@@ -8378,7 +8378,7 @@ def check_documented_verifier_commands_run(root: pathlib.Path) -> list[Finding]:
     checked = 0
     for path in docs:
         rel = path.relative_to(root).as_posix()
-        if rel == "CHANGELOG.md" or rel.startswith("DEVNOTES/"):
+        if rel == "CHANGELOG.md" or rel.startswith("docs/history/") or rel.startswith("DEVNOTES/"):
             continue
         # ONLY fenced code blocks. A fenced block is an instruction to run something; prose
         # that names a command while describing what shipped is a description, and ROADMAP.md

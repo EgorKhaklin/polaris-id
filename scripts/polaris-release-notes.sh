@@ -20,10 +20,20 @@ REPO="EgorKhaklin/polaris-id"
 python3 - "$CHANGELOG" "$VERSION" "$REPO" <<'PY'
 import re, sys
 path, version, repo = sys.argv[1:4]
+import os
+block = r"^## v" + re.escape(version) + r" — (\d{4}-\d{2}-\d{2}) \((.*?)\)\n(.*?)(?=^## v|\Z)"
+source = "CHANGELOG.md"
 text = open(path, encoding="utf-8").read()
-m = re.search(r"^## v" + re.escape(version) + r" — (\d{4}-\d{2}-\d{2}) \((.*?)\)\n(.*?)(?=^## v|\Z)", text, re.M | re.S)
+m = re.search(block, text, re.M | re.S)
 if not m:
-    sys.exit(f"no CHANGELOG entry for v{version}")
+    # Older entries move to the archive, split by major, unchanged; a release note for
+    # one renders from there.
+    archive = os.path.join(os.path.dirname(path), "docs", "history", "CHANGELOG-v%s.md" % version.split(".")[0])
+    if os.path.isfile(archive):
+        source = "docs/history/" + os.path.basename(archive)
+        m = re.search(block, open(archive, encoding="utf-8").read(), re.M | re.S)
+if not m:
+    sys.exit(f"no CHANGELOG entry for v{version} in CHANGELOG.md or docs/history/")
 date, title, body = m.group(1), m.group(2).strip(), m.group(3).strip()
 paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
 summary = next((p for p in paras if not p.startswith("- ")), "")
@@ -50,5 +60,5 @@ print("### Details\n")
 if items:
     print("\n\n".join(items) + "\n")
 anchor = "v" + version.replace(".", "") + "-" + date + "-" + re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-print(f"The full entry is in [CHANGELOG.md](https://github.com/{repo}/blob/main/CHANGELOG.md) under `v{version}`, dated {date}.")
+print(f"The full entry is in [{source}](https://github.com/{repo}/blob/main/{source}) under `v{version}`, dated {date}.")
 PY

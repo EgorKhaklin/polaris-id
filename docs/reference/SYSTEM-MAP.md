@@ -67,6 +67,7 @@ polaris/
 │   ├── operator/       ← the runbooks (nineteen documents and an index)
 │   ├── reference/      ← this directory
 │   ├── design/         ← why it is built this way: the threat model, the mechanisms, the substrate
+│   ├── history/        ← the changelog archive: entries older than the root CHANGELOG keeps, by major
 │   └── paper/          ← the academic report (TeX and PDF)
 ├── DEVNOTES/           ← the contributor's working notes: gotchas, house style, the project record
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
@@ -161,6 +162,7 @@ The authority layer's institutional protocol, built on the product and verified 
 | [`docs/reference/`](README.md) | API, DATA-MODEL, WIRE-SPEC (the normative protocol), PQC-POSTURE, PERFORMANCE-BASELINE, SCALING, GLOSSARY, this map |
 | [`docs/`](../README.md) | ARCHITECTURE-OVERVIEW, PRODUCTION-READINESS (the bound on every claim), RED-TEAM-SCOPE, THESIS, SEED_DATA, CONVENTIONS |
 | [`docs/paper/`](../paper/) | The academic report |
+| [`docs/history/`](../history/README.md) | The changelog archive, split by major version |
 | [`DEVNOTES/`](../../DEVNOTES/) | The contributor's working notes: the gotcha list, the house style, the project record, and the plan of the pass in progress. The design set moved to [`docs/design/`](../design/README.md) at v9.224. |
 
 ---

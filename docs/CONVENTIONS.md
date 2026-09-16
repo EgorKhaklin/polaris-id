@@ -155,7 +155,9 @@ invariants: `Test<ShipID><ShipFeatureName>`.
 
 ## 8. CHANGELOG entries
 
-`CHANGELOG.md` at repo root. New entries at TOP of file (newest first).
+`CHANGELOG.md` at repo root. New entries at TOP of file (newest first). The root file
+holds recent ships only; older entries live in `docs/history/CHANGELOG-v<major>.md`,
+moved unchanged and never edited.
 
 **Header format:**
 ```markdown

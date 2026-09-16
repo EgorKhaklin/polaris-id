@@ -33,6 +33,7 @@ root.
 | [operator/](operator/README.md) | The runbooks: install, deploy, operate, secure, back up, recover, and the drill ledgers. |
 | [reference/](reference/README.md) | The technical reference: the API, the data model, the post-quantum posture, the performance baseline, scaling, the glossary, the system map. |
 | [paper/](paper/README.md) | The academic report, TeX and PDF. |
+| [history/](history/README.md) | The changelog archive: every entry older than the root CHANGELOG keeps, split by major version, unchanged. |
 
 Design notes that explain why things are built the way they are live in
 [DEVNOTES/](../DEVNOTES/README.md); structural records (the redaction proof,
