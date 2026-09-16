@@ -487,18 +487,23 @@ than the one on this disk.
   It also found a misreported reason: `--verify-dir` blamed a missing ML-DSA library for every
   artifact that is not an authenticity pack, with a real backend installed and confirmed. The
   two causes are now distinguished.
-- `sdk/python/pyproject.toml` declares `name = "polaris-verify"`, `version = "1.0.0"`. Under
-  the contract 1.0.0 requires a clean-machine install, explicit real-crypto behavior, a named
-  external client completing a presentation, a named external conformance suite run, and a
-  published result. One of five holds. The version overstates.
-- **Neither SDK has ever been published.** `pypi.org/pypi/polaris-verify` and
-  `registry.npmjs.org/@polaris/verify` both answer 404, as do `polaris-sdk-python` and
-  `polaris-sdk-ts` (checked 2026-09-13). No outside party has ever been able to install
-  either one. The conformance contract certifies implementations of a protocol whose
-  reference SDKs cannot be fetched. This is the first thing standing between the tree and
-  the 90-day objective, and it is why every count in the top section is zero.
+- ~~`sdk/python/pyproject.toml` declares `name = "polaris-verify"`, `version = "1.0.0"`.~~
+  **CLOSED.** Under the contract 1.0.0 requires a clean-machine install, explicit real-crypto
+  behavior, a named external client completing a presentation, a named external conformance
+  suite run, and a published result. One of five held on 2026-09-14 and the version overstated,
+  so it was reset to 0.1.0 (next bullet). All five held by 2026-09-15, and the four packages
+  moved to 1.0.0-rc.1 on 2026-09-16: a candidate, because the external relying party / operator
+  row above is still blank, and that operator is what the candidate waits for.
+- ~~**Neither SDK has ever been published.**~~ **CLOSED 2026-09-15.** On 2026-09-13
+  `pypi.org/pypi/polaris-verify` and `registry.npmjs.org/@polaris/verify` both answered 404,
+  as did `polaris-sdk-python` and `polaris-sdk-ts`: no outside party had ever been able to
+  install either one, and the conformance contract certified implementations of a protocol
+  whose reference SDKs could not be fetched. All four are now on their registries; the Public
+  distribution rows above record each install from the live registry.
 - Both SDKs asserted `1.0.0` while unpublished. Reset to `0.1.0` on 2026-09-13 under
-  section 4: 1.0.0 has five named conditions and one of them holds.
+  section 4: 1.0.0 has five named conditions and one of them held. Moved to `1.0.0-rc.1` on
+  2026-09-16 with all five holding; the candidate holds until an operator who is not the
+  author reaches a verified result without help.
 - `core/` does not exist as a layout; `packages/` and `lab/` now do. The rest of the tree is
   unmoved, deliberately: the paths that would move are named 426 times across 86 files, the
   CHANGELOG and the paper among them, and those record what happened rather than a later
@@ -535,7 +540,8 @@ rather than assumed. The name is `polaris-sdk-ts` now, which is the contract's o
 the artifact, matches `polaris-sdk-python`, and is unclaimed. Being installable from a
 registry is item one of the 90-day objective, and under the old name it was unreachable.
 
-**Publishing is prepared, dry-run EXERCISED, and not done.** The dry run ran on 2026-09-13
+**Publishing is prepared, dry-run EXERCISED, and not done (2026-09-13; superseded 2026-09-15,
+when all four went out: see Public distribution above).** The dry run ran on 2026-09-13
 (run 34761304289): five artifacts built, all four Python distributions passed `twine check` on
 the runner, the npm tarball packed, both publish jobs correctly skipped. A workflow nobody has
 run is a plan, so this is the difference between the two. The only untested step left is the

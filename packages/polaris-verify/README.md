@@ -105,8 +105,10 @@ check gets read as a trust decision.
 
 ## Status
 
-`0.1.0`. Unreleased on any registry as of this writing, and not yet exercised by a named
-external implementation. See `lab/EXTERNAL-NOUNS.md` in the repository for what has and has
-not happened outside the project.
+1.0.0-rc.1, a release candidate. No named external implementation has exercised this
+command, and the scoreboard's row for an operator who is not the author is blank; that
+operator is what turns the candidate into 1.0.0. See
+[the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md)
+for what has and has not happened outside the project.
 
 Apache 2.0. Part of the Polaris reference implementation, which runs on notional data.
