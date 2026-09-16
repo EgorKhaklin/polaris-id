@@ -72,7 +72,12 @@ said "Not on PyPI yet" from a page that was, literally, on PyPI. The GitHub rele
 version is a full release, not a pre-release: GitHub will not put its Latest marker on a
 pre-release, and leaving that marker on v9.466 kept a retired numbering on the front door. The
 tag says what the release is. The badge includes pre-releases, so it reads the tag rather than
-the marker.
+the marker. The 295 v9 tags and their 294 GitHub releases were removed the same day: a series
+that numbered ships rather than observable change, cleared from the front door instead of left
+as 294 entries under the one that matters. Every one of those numbers still maps to its commit,
+date and subtitle in [docs/history/RELEASES-v9.md](docs/history/RELEASES-v9.md), and every entry
+is still in the changelog archive. The SBOM attachments went with the releases; the author holds
+an archive of them, and nothing published depends on one.
 
 **The README, rewritten.** The front door had grown by accretion: a three-hundred-word opening
 paragraph, the wallet and conformance results told twice, the cryptographic claim made four times,
