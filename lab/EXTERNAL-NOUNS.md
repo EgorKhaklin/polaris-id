@@ -1,6 +1,6 @@
 # EXTERNAL-NOUNS.md: the scoreboard that decides whether this project continues
 
-**Opened 2026-09-13** under the go-forward operating contract. The unit of progress is
+**Opened 2026-09-13** under the [operating contract](../docs/OPERATING-CONTRACT.md). The unit of progress is
 NEW EXTERNAL DEPENDENCY SURVIVED. Internal invariant count, LOC, version count and roadmap
 breadth are not product progress and are not recorded here.
 

@@ -61,7 +61,8 @@ with a higher item, the request is wrong or the higher item needs a recorded ame
 
 1. **MISSION.md**: the vocation and the constitutional constraints (C1, C2, C3, C6, C10).
    Amended only by the owner's recorded direction, logged in the CHANGELOG.
-2. **The operating contract** (Section 3): what work exists at all, and what a version means.
+2. **The operating contract** ([docs/OPERATING-CONTRACT.md](docs/OPERATING-CONTRACT.md),
+   summarised in Section 3): what work exists at all, and what a version means.
 3. **Published contracts**: [SECURITY.md](SECURITY.md), the wire specification
    ([docs/reference/WIRE-SPEC.md](docs/reference/WIRE-SPEC.md)), the API
    ([docs/reference/API.md](docs/reference/API.md)), the conformance contract
@@ -143,9 +144,9 @@ empty while internal counts keep growing, the core is frozen and the project is 
 reference implementation. The right response to that clause is not to fill the fields
 yourself.
 
-Where the contract is recorded in the tree: the paper (Version 3, Sections 16 and 18), the
-scoreboard, the five conditions in [docs/RELEASING.md](docs/RELEASING.md), and this section,
-which is the fullest in-tree statement of its rules.
+The contract in full is [docs/OPERATING-CONTRACT.md](docs/OPERATING-CONTRACT.md); this section
+is its summary. The paper (Version 3, Sections 16 and 18), the scoreboard and the five
+conditions in [docs/RELEASING.md](docs/RELEASING.md) carry it in parts.
 
 ---
 
