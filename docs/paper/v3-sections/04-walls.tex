@@ -1,0 +1,164 @@
+% 04-walls.tex: the schema as the security boundary.
+\section{The walls: the schema as the security boundary}
+\label{sec:walls}
+
+\subsection{Why the database is not plumbing}
+
+In most systems the database stores what the application decided. In Polaris the database decides,
+and the application is one client among several: the operator's web application, the command-line
+tool, a bulk loader, a database shell, a restore from backup. A rule that lives in application code
+binds only the clients that run that code. A rule enforced by a trigger, a check constraint or a
+unique index binds every client, survives every restore, and cannot be bypassed by the next caller,
+because the application role has no data-definition privilege with which to remove it. The
+governing sentence of the architecture is \emph{by construction}: the system cannot be operated in a
+way that violates the constraint, because the constraint is enforced before any application code
+runs. \sImpl
+
+The design principle behind it is older than Polaris: make invalid states impossible to represent
+rather than asking developers not to create them. A verification event that records a token
+identifier at the zero-knowledge disclosure level is not an application bug to be caught in review.
+It is a privacy violation that must never be storable, so it is a check constraint on the row.
+
+\subsection{The ten constraints and where each lives}
+
+The constitution names ten hard constraints in two tiers. Five are constitutional, rights
+guarantees that may not be relaxed without an amendment recorded in the changelog; five are
+engineering invariants, the disciplines that keep the first five true under load and attack. The
+hierarchy is one line deep, vocation, then constitutional constraints, then engineering invariants,
+and the constitution states that no deeper apparatus governs them.
+
+\begin{table}[H]
+\centering\footnotesize
+\caption{The ten constraints at \code{1.0.0-rc.1}, their tier, and the object that enforces each. The table is kept honest against the code by \code{check\_c1c10\_objects\_resolve}, which fails the build if a named object no longer exists.}
+\label{tab:constraints}
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.1}
+\rowcolors{2}{tabstripe}{white}
+\begin{tabularx}{\textwidth}{>{\bfseries}p{0.3in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{0.95in} >{\RaggedRight\arraybackslash}p{2.0in}}
+\toprule
+\rowcolor{tabheader}\thead{\#} & \thead{Constraint} & \thead{Tier} & \thead{Enforced by} \\
+\midrule
+C1 & The audit trail is append-only; history is never rewritten or deleted & Constitutional & Triggers reject UPDATE and DELETE on every audit table (\code{reject\_audit\_modification}) \\
+C2 & A zero-knowledge verification stores no token identifier & Constitutional & Bidirectional CHECK \code{chk\_disclosure\_token\_consistency} \\
+C3 & One person holds at most one ACTIVE token & Constitutional & Partial unique index \code{uq\_one\_active\_per\_person} \\
+C4 & Failed-login counting is atomic & Engineering & Single-statement \code{UPDATE \ldots RETURNING} \\
+C5 & No inline scripts; the content security policy is \code{script-src 'self'} & Engineering & Response header, verified per route \\
+C6 & Disclosure level is enforced server-side; a client cannot upgrade what it learns & Constitutional & Server code paired with redaction tests; the C2 CHECK behind it \\
+C7 & No hardcoded cryptography; algorithms are rows in a registry & Engineering & Foreign key to \entity{CryptographicAlgorithm} \\
+C8 & Every map and API aggregate is bounded & Engineering & Hard caps in the SQL functions and routes \\
+C9 & Concurrency claims are tested with real threads & Engineering & Threaded suites against a live database \\
+C10 & Identity is not money; the schema carries no monetary claim & Constitutional & Structural absence, pinned by a check \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The repository also records a structural claim about the ten: that the set is closed, so that an
+eleventh constraint requires either replacing one or extending the framework, and that the
+constraints depend on one another, so that removing any one ripples through the rest. The
+dependency walk (remove C10 and every other constraint protects a financial-surveillance system
+instead; remove C1 and every other constraint's enforcement becomes retroactively deniable) is the
+argument for treating them as a graph rather than a list. Athena, in Section~\ref{sec:cognition},
+holds the map from each constraint to the exact live mechanism that enforces it, and a check fails
+the build if a mechanism drifts. Three of the ten now also have a formal model checked on every push:
+C1's purge coverage, C2's unlinkability across two pooling relying parties, and C3 under concurrent
+issue and revoke, each with a counterpart configuration it must fail, so none of the three is vacuous.
+
+\figfile{districts}{The 45 canonical tables of \code{01\_schema.sql} at \code{1.0.0-rc.1}, as rings
+around the Version 1 nucleus. The faint lattice at the centre is the nucleus geometry of
+Figure~\ref{fig:nucleus} at the same proportions. Ring two is the credential machinery: signatures,
+permissions, epochs, recovery, duress, the holder's key, the card. Ring three is authority, trust and
+the people at the counter: who may sign under which algorithm, who trusts whom, revocation ceilings,
+quotas, relying parties, the replay registers, and what an enrolment rested on. Ring four is the
+archives, watchtowers and decisions kept as records: append-only logs, anchors, the retention decision
+as data, and the events that record every change to an authority, an operator account or a relying
+party. A migrated deployment holds seven more tables (the migration registry, operator sessions and
+credentials, the audit-access log, and Athena's three curated tables) and five partition
+children.}{fig:districts}
+
+\subsection{The audit of record}
+
+Fourteen tables follow one named pattern, the audit of record: the row and its history are the same
+object. There is no separate event log beside the table that could be edited while the table is
+locked. Mutation is either forbidden outright or bounded to one field that moves one way, such as a
+signature's deprecation date or an attestation's revocation date. Every one of the fourteen is
+enforced by a trigger that raises \code{insufficient\_privilege}, and a check fails the build if any
+trigger stops doing so. Beyond the fourteen the design record names, thirty-one tables in all carry
+an append-only trigger at \code{1.0.0-rc.1}, the new ones being the records that decisions about
+authorities, operators, relying parties and enrolments now leave behind, and since \code{v9.412} C1 is
+tested once per table that claims it: a table-driven suite reads the append-only triggers out of the
+catalogue rather than out of a list somebody wrote, so a new append-only table cannot simply go
+untested. \sImpl
+
+The corollary is that no foreign key anywhere in the schema cascades a delete. A cascade would let
+the lifecycle events of a deleted token vanish with it. Every reference defaults to \code{NO
+ACTION}, so a principal referenced by any audit row is effectively undeletable, and a check scans
+every SQL file for both cascade forms with no allowlist. The one record that deliberately carries no
+foreign key at all, so that ending a relying party's contract cannot erase its history, taught the
+repository something about its own test database at \code{1.0.0-rc.1}: the seed that reloads the
+sample world restarted the party's identifiers from one and reached that record with neither, so
+the first party of each reload inherited a dead party's events. The seed names the record now, and a
+check computes from the schema's own foreign keys which records a reload would leave behind.
+
+The application role, \code{polaris\_app}, is revoked UPDATE and DELETE on the append-only tables
+and holds no data-definition privilege. The only path that deletes audit rows is the archive-then-purge
+procedure, which verifies the archive against its manifest first, refuses any cutoff inside the
+retention window, and appends its own append-only checkpoint row. The retention window itself is
+data with a floor: no policy row can express a retention shorter than a year, because a check
+constraint refuses it, and shortening the floor is a schema change answered for in review. The
+vocation refuses unbounded retention; it equally refuses retention short enough to erase the record.
+\sImpl
+
+\subsection{The check layer, and the drills that attack it}
+
+Above the schema sits a flat layer of 272 plain functions, each of the form
+\code{check\_*(repo\_root)}, that read the repository and return a finding. They gate continuous
+integration: any failure fails the build. Each check is paired with a detection test that breaks a
+fixture in the specific way the check claims to catch and asserts that the check turns red, and,
+since \code{v9.405}, also asserts that the check passes on the same fixture unbroken, because a test
+that only ever asserts failure has not established that it detects anything. A check that cannot
+detect its own violation is treated as broken. This is the mechanism by which prose claims are turned
+into gates: a count stated in the README, a route that must return a header, a migration that must
+not cascade, a drill that CI must run. \sImpl
+
+Version 2 described the checks and stopped there. Between \code{v9.398} and \code{v9.437} the
+repository asked the layer the question it asks everything else, not \emph{does it pass} but
+\emph{would it notice}, and the answer was often no. Commenting out the lines carrying a check's
+search strings, which is exactly what a temporarily disabled line looks like, left 71 of 75 checks
+green, because the helper every check reads through handed it the comments along with the code.
+Dropping each of the 46 CHECK constraints found every one load-bearing, which was the good news;
+dropping each of the 37 triggers found 14 that nothing noticed, twelve of them the append-only guards
+that C1 \emph{is}; dropping each of the 17 unique indexes found twelve uncovered, and stopped on the
+second, because with \code{uq\_one\_active\_per\_person} absent the suite that exists to prove C3 had
+inserted and committed a second active token for one person and the index could not be rebuilt.
+Deleting each of the 59 refusals the sixteen stored procedures make found 27 that no test would miss,
+concentrated exactly where a trigger cannot see: the four-eyes rule, the cool-down, the three channels
+and the third-person witness of the recovery ceremony, the preconditions on an irreversible erasure.
+Every one of these is now covered, and every one of these measurements is now a drill that runs on
+every push with a negative control, so that a result of zero survivors is distinguishable from a
+harness that ran nothing. Eight such drills exist at \code{1.0.0-rc.1}: over the checks, the
+constraints, the triggers, the procedures, the zero-knowledge witnesses, the conformance contract, the
+two reference verifiers and the OpenID4VP verifier. Section~\ref{sec:senses} carries the record.
+\sImpl
+
+\begin{layercard}{Layer card: the walls}
+\qa{What it is}{PostgreSQL 16: 45 tables, 42 triggers, sixteen stored procedures that implement every state-changing use case, the append-only audit tables, the retention policy as data.}
+\qa{Why it exists}{A promise enforced only by the people who run the system is not a promise. The schema binds every client, every restore and every insider with a database connection short of the owner.}
+\qa{What it trusts}{The database engine and its owner; the correctness of the constraints as written, which is why each is now mutation-tested.}
+\qa{What it refuses}{Application code, review process and operator discipline as the last line: the application never enforces a constitutional guarantee on its own. A test that has never been shown to fail.}
+\qa{What it can see}{Everything the system stores. This is why the privacy layer bounds what is stored, not who may read it.}
+\qa{What it cannot see}{Biometric templates, holder-side keys, enrolment documents, the content of exchanged messages or timestamped documents: none enter the database.}
+\qa{If it fails}{A dropped trigger, a lowered retention floor or a cascade fails the build through the checks; a constraint whose loss the suite would not notice fails the mutation drill; a database owner with a shell has larger options than any trigger, which the threat model states rather than hides.}
+\qa{Checked by}{\code{check\_aor\_append\_only\_triggers}, \code{check\_aor\_privilege\_boundary}, \code{check\_no\_fk\_cascade}, \code{check\_retention\_engine}, \code{check\_append\_only\_tables\_are\_tested\_exhaustively}, \code{check\_constraint\_suite\_is\_mutation\_tested}, \code{check\_triggers\_are\_mutation\_tested}, \code{check\_unique\_rules\_are\_tested\_exhaustively}, \code{check\_procedure\_refusals\_are\_mutation\_tested}, \code{check\_seed\_restart\_resets\_dependent\_records}, the SQL self-tests.}
+\qa{Now or later}{Now.}
+\qa{Inside and outside}{Inside: the credential core. Outside: cryptographic evidence, because a constraint binds only the database that holds it.}
+\end{layercard}
+
+\figfile{town-map}{The walled town, with the real component beside every civic name. The register
+in the hall is the credential core; the wall is the schema; the four gates are the routes through
+which a claim enters or leaves; the watchtowers are the transparency logs and the witnesses outside
+the wall watch them; the road to the second town is a directional, per-context attestation; the laws
+above the town bind the town itself. The plan describes structure. Polaris is federated: every
+authority is its own town.}{fig:town-map}
+
+\nextlayer{A constraint binds the database, not a copy of the claim that has left it. The moment a
+credential is handed to a stranger, or an authority's history is read by an auditor, nothing in the
+schema travels with it. The next layer makes claims carry their own proof.}

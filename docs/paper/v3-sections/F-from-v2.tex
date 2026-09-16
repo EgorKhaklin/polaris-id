@@ -1,0 +1,74 @@
+% F-from-v2.tex: what Version 3 changed against Version 2, and which of its claims it withdrew.
+\section{From Version 2 to Version 3}
+\label{app:from-v2}
+
+Version 2 is preserved unchanged beside this file. This appendix records what changed between
+them, and, more usefully, which sentences of Version 2 this version can no longer write.
+
+\subsection*{What the system gained}
+
+Between \code{v9.355} and \code{1.0.0-rc.1}, in the order the rings meet them: what an enrolment
+rests on, the trusted referee and the enrolment code; the card as an encoding, an emulator, a
+personalization step and a verifier device, with duress measured in time; decisions about
+authorities, operators, quotas, ceilings and relying parties kept as append-only records; eight
+mutation drills over the verification layer and the corrections they forced; four formal models
+checked on every push; a population migration that runs and is measured; the cache rules that let an
+untrusted network carry a status; a depth-24 epoch pipeline; a measured statement of what two
+colluding verifiers can do; a standby region; a capacity model that found an integer column, and a
+cost model; the public transparency report; the pilot wind-down and the coexistence plan; the
+machine-checked assurance mapping and the automated third of accessibility; two format bridges; four
+packages on public registries; the OpenID4VP verifier; the operating contract and the scoreboard; and
+the first three external nouns on it.
+
+\subsection*{Claims of Version 2 that this version withdraws or narrows}
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash}p{2.0in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.6in}}
+\caption{Sentences of Version 2 that Version 3 does not repeat.}\label{tab:withdrawn}\\
+\toprule
+\rowcolor{tabheader}\thead{Version 2 said} & \thead{Version 3 says} & \thead{Why} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Version 2 said} & \thead{Version 3 says} & \thead{Why} \\
+\midrule
+\endhead
+\midrule\multicolumn{3}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+A post-quantum, issuer-unlinkable, compulsion-resistant identity-token system & An issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path & Two words weakened by the repository's own assessments; each is now refused by a check on outward surfaces \\
+The default signing algorithm is post-quantum from day one & The algorithm is ML-DSA-65 and the default development and CI path signs a labelled placeholder; production fails closed without real signing & Measured: 32 placeholder bytes where a signature is 3,309 \\
+The duress path is a tested property; no external party has measured its side channel & The mechanism resists the casual coercer, not the informed one beside the holder, and is net-negative against lawful access & The lab's assessment against the contract's three coercers \\
+An actual implementation by an external team has not happened & One unmodified outside wallet has presented over OpenID4VP and been accepted; no implementation of the native protocol by anyone else & The scoreboard's wallet row; the boundary between the two paths \\
+The specification and the conformance suite exist; the integration is unproven & The OpenID Foundation's hosted suite ran the profile: 7 passed, 4 in review, not certified & The Foundation's own signed exports; REVIEW is not PASSED \\
+Cross-verifier correlation is a permanent, documented property, then bounded & Bounded on the zero-knowledge path within the epoch's crowd, against an adversary that matches equality; exposed on plain and SD-JWT presentations; the crowd has no floor & The linkability lab's three findings \\
+The certificate the verifier signs requests with was correct & It carried no key usage, and every internal instrument had passed it & An outside wallet refused it \\
+The check layer catches its own violation & Seventy-one of seventy-five checks passed on a tree where their property was commented out, and the tests for constraints, triggers, indexes and procedures would often not have noticed their subject missing & The mutation drills; every finding closed and drilled \\
+Thirty-six tables, 26 triggers, 191 checks, 48 conformance cases, 18 CI jobs, 20 formats, 1,048 test functions, 755 and 84 of 89 tests & Forty-five tables, 42 triggers, 272 checks, 118 cases, 20 jobs, 27 formats, 1,755 test functions, 992 and 107 of 112 tests & Re-measured at \code{1.0.0-rc.1}; Appendix~\ref{app:counts} \\
+Thirteen audit-of-record instances & Fourteen named, thirty-one tables under an append-only trigger & The schema's own triggers, counted \\
+The physical token is modelled and not manufactured & Encoded, emulated, personalized and read by a reference device; not manufactured & \code{polaris\_card/} and its drills \\
+Multi-region recovery is not built & A standby region is built and its non-zero recovery point is measured & The evacuation drill \\
+The roadmap's targets are to be validated & Validated: every throughput target clears by an order of magnitude, and a 32-bit column would have ended the service in five days & The capacity model \\
+The version is v9.355, a count of ships & The version is \code{1.0.0-rc.1}, moved only by an externally observable change & The operating contract's versioning rule \\
+Future work is a list of things to build & Future work is a list of things outside parties would have to do, questions the lab owes answers to, and items held until somebody outside needs them & The operating contract's merge rule and kill line \\
+\end{xltabular}
+}
+
+\subsection*{What was deliberately not done}
+
+The dyno and the application baseline were not re-run, and their rows in Table~\ref{tab:perf}
+carry their original stamps. The Version 1 and Version 2 documents were not edited. The repository
+documents that disagree with the code at \code{1.0.0-rc.1} were not corrected for the paper; they
+are listed in the author's notes, as Version 2's were, so that the paper follows the code and the
+disagreement is not lost.
+
+\subsection*{Vocabulary introduced}
+
+A fifth status mark, \sWit, for a capability a named outside party has exercised, with the rule
+that it is given only where the scoreboard has a filled row and never means audited, certified or
+piloted. A thirteenth rung on the ladder, for the knowledge the tree cannot check about itself. And
+the operating contract's own words, external noun, scoreboard, release candidate, used the way the
+repository uses them.

@@ -1,0 +1,89 @@
+% 16-boundaries.tex: what Polaris deliberately refuses to become.
+\section{What Polaris refuses to become}
+\label{sec:boundaries}
+
+Powerful identity infrastructure carries risks that no amount of correctness removes, because they
+are risks of what a correct system can be used for. The repository names these as design and
+governance constraints rather than as politics, and this section states them the same way. Each is
+a way a working Polaris could be turned into something its constitution forbids, and two of them
+are stated more narrowly than Version 2 stated them, because the evidence required it.
+
+\begin{description}
+  \item[Identity must not become money.] A credential that carries spending authority inherits
+    programmability, and every constraint anyone wants placed on spending accretes onto the identity
+    token, until the system can be told whom to refuse at a fuel pump. C10 forbids a monetary claim
+    in the schema; if a value system is ever built, it lives in a separate database that consumes
+    verification proofs over a boundary, and the boundary is what is load-bearing. This is the single
+    most consequential architectural decision in the repository, and it is the one that never
+    expires with any phase.
+  \item[Privacy is not merely secrecy.] A system can know very little about a person and still be
+    coercive, if every doorway requires its authorization. The zero-knowledge default bounds what is
+    recorded; it does not bound what a society demands. The tiered-enrolment layer exists for this:
+    exemption is a first-class, one-row state, the not-enrolled cannot be enumerated by an accident
+    of schema, and a person with no documents can be enrolled through a referee whose vouching leaves
+    no mark on the credential. The coexistence plan names the sunset of the old credential as the
+    moment the new one becomes compulsory, and refuses to compute that verdict from what the issuer
+    can see. The repository's own threat model names the strongest attack on this layer as making
+    non-enrolment civically impossible from outside, no token, no healthcare, and says plainly that
+    the schema cannot stop it, only make it a named act.
+  \item[Anti-coercion is a vocation, not a claim.] The vocation above the ten constraints says no
+    person may be compelled to surrender their identity. The mechanism that serves it, the duress
+    code, resists the coercer it was built for and not the two others the operating contract named,
+    and against lawful or institutional access its indelible record is evidence against the holder
+    (Section~\ref{sec:core}). So the front door says \emph{duress-aware} and a check refuses
+    \emph{compulsion-resistant}. The boundary is the honest one: the system notices duress; it does
+    not resist compulsion, and a vocation that pointed at the adversary the mechanism is weakest
+    against would have been the opposite of what the word promised.
+  \item[Technical federation is not social decentralisation.] Polaris is federated in code: each
+    authority its own key, no central store, no transitive trust, and since \code{v9.364} an operator
+    bound to one authority even inside a shared instance. Two instances run by one author on one
+    machine demonstrate the protocol and nothing about who runs it. Whether authorities, witnesses
+    and relying parties are in fact independent is a property of a deployment, not of the repository,
+    and this paper marks every such claim as requiring external validation.
+  \item[Revocation must not become civil erasure.] A revoked token is a terminal state in an
+    append-only record, not a deletion; lost tokens stay lost, and their data is not erased.
+    Succession is by reference. Mass revocation is bounded by a ceiling and a co-signer, and the
+    ceiling itself can only be changed with a reason on record. Erasure, when a jurisdiction requires
+    it, is pseudonymisation with an append-only record of who, when and why, never of the prior name;
+    a pilot's wind-down is that erasure, executed rather than promised. An authority can end a
+    person's credential; the schema refuses to let it end the person's history.
+  \item[Relying-party correlation is different from issuer unlinkability.] The issuer's database
+    cannot rebuild the zero-knowledge verification graph. Two relying parties can join their logs by
+    whatever stable material a presentation showed them. Both sentences are true at once, and Version
+    3 can say how much of the second was measured: on the native zero-knowledge path a colluding
+    pair has no advantage beyond the anonymity set against an adversary that matches on equality,
+    and nothing floors that set above one; on the interoperable path a single presentation leaves
+    nine issuer-signed values identical at every verifier (Section~\ref{sec:privacy}). A reader who
+    hears \emph{unlinkable} and imagines either path is stronger than that has been misled, which is
+    why the repository states the boundary positively and the verifier reports which kind of
+    presentation it was shown.
+  \item[Interoperating imports the ecosystem's properties.] Speaking the format an outside wallet
+    speaks was the first thing anyone outside used, and it carried the format's linkability with it.
+    The repository records that as a cost of interoperating, not a reason to stop, and it does not
+    let the interoperable path borrow the native path's privacy claims.
+  \item[No population graph.] The Atlas is bounded and never locates a zero-knowledge event; Athena
+    is forbidden a person node, a stable subject surrogate and a subject traversal; the schema carries
+    no attribute to filter a population by; quotas and alerts are keyed by agency, never by person;
+    the transparency report carries no total a small count could be recovered from. The refusal is
+    structural because a population graph, once built, outlives the intentions of whoever built it.
+  \item[Machine learning must not turn identity infrastructure into scoring.] The proposed learning
+    layer may learn how the identity system behaves and must never learn how people behave. Fraud
+    or risk scores for individuals, behavioural profiles, relationship inference, eligibility or
+    likelihood-of-revocation scoring, person-level clustering or embeddings, and model-driven denial
+    of rights are presumptively prohibited, and a recommendation is evidence, never authority.
+\end{description}
+
+The repository also lists permanent non-goals that do not expire with any roadmap phase: no payment
+rails, no central biometric database, no population-scale attribute filtering or analytics, no social
+scoring, no commercial or advertising use of verification data, and no real personal data before a
+consent framework exists. Every one of them is a way the system could be made more useful to someone,
+and every one is refused on sight. Since the operating contract, one more refusal governs the
+repository itself: no new capability is built because it would be elegant, complete or desirable; a
+product change needs a named outside party that requires it, or an executable counterexample against
+something already promised.
+
+\analogy{The laws above the town bind the town. The hall may not mint coin. The register may not
+be turned into a list of who is absent. The gates may not be closed on a neighbour on the word of a
+neighbour's neighbour. A name struck from the register stays legible as struck. No clerk, however
+clever, may be set to guessing which townspeople are likely to cause trouble. And the town does not
+claim that its walls keep a person safe from a guard who is standing beside them.}

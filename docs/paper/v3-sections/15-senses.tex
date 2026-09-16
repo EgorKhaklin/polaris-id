@@ -1,0 +1,146 @@
+% 15-senses.tex: errors become new senses.
+\section{Errors become new senses: the history of self-correction}
+\label{sec:senses}
+
+\subsection{Formal truth is not intended truth}
+
+A check can be perfectly green while proving the wrong proposition. A signature can exist without
+ever being verified. A benchmark can report thousands of verifications per second while counting
+database writes. A two-witness guarantee can be certified on the strength of one witness that
+happened to be absent. Seventy-one of seventy-five checks can pass on a tree where the property
+each names has been commented out. The suite that proves one identity per person can be the thing
+violating it. Every one of those sentences describes a state Polaris was actually in, at a version
+the changelog names, and every one was found by running the system rather than reading it, or by an
+outside reader who did not share the author's assumptions. The project's method for this is a
+loop: an observation, a failure, a correction of the model of what the mechanism really proves, a
+new invariant with a detection test, and a permanent new sense that the failure class cannot recur
+unseen. Invariants accumulate and are never deleted. At \code{1.0.0-rc.1} there are 272 of them, and
+eight drills whose only job is to attack the layer they belong to.
+
+\figfile{senses-loop}{The loop by which an error becomes a permanent sense. Observation is
+running the system, not reading it; the failure is a green check that proved the wrong thing; the
+correction is a new statement of what the mechanism proves; the invariant is a check with a detection
+test; and continuous integration carries it on every push from then on.}{fig:senses-loop}
+
+\subsection{Selected corrections, from the record, up to Version 2}
+
+Each row is a mechanism that was technically valid and did not prove what was intended, the version
+that found it, and the sense it left behind. None of these is embarrassing; each is the method
+working. Version 2 carried this table, and it is kept.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\bfseries}p{0.62in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.6in}}
+\caption{Corrections recorded in the changelog before Version 2. The right-hand column names the check or test that now fails if the original condition returns.}\label{tab:corrections}\\
+\toprule
+\rowcolor{tabheader}\thead{Version} & \thead{What was believed} & \thead{What was true, and what changed} & \thead{The new sense} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Version} & \thead{What was believed} & \thead{What was true, and what changed} & \thead{The new sense} \\
+\midrule
+\endhead
+\midrule\multicolumn{4}{r}{\scriptsize\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+v9.58 & Tokens were post-quantum signed & The procedure wrote a placeholder string and the signing module was an unused island; signing was wired into issuance & \code{check\_pqc\_signing\_wired} \\
+v9.113 & Signatures were verified & Nothing on a live path ever called verify; issuance now self-verifies and a use-path primitive exists & \code{check\_verify\_enforced} \\
+v9.133 & A verdict from one library was a verdict & One library could silently accept a forgery; a second, independent implementation must agree & \code{check\_pqc\_second\_witness} \\
+v9.257 & The benchmark measured verifications per second; bulk-issued tokens were signed & It measured audit-row ingestion, about 35 times faster than cryptographic verification; bulk rows carried a placeholder literal. Three numbers are now reported separately and bulk issuance refuses an unsigned row & \code{signatures\_cryptographically\_verify}, \code{check\_national\_simulation} \\
+v9.264 & Every stored signature was two-witnessed; \code{usable} was current & A missing witness at issuance degraded silently to one; \code{usable} could be decided on a stale replica. Issuance now requires the witness and status is pinned to the primary & \code{check\_pqc\_signing\_wired} (extended) \\
+v9.272 & The single-witness fast path was sound & It was sound only while the fast witness stayed trustworthy, which nothing checked; sampling through the second witness is now mandatory and a disagreement pages & \code{check\_verify\_witness\_sampling} \\
+v9.302 & A transparency monitor caught a lying log & It caught a rewrite and not a split view; witnesses, gossip and the equivocation proof were added & \code{check\_transparency\_gossip} \\
+v9.309 & The detached verifier rejected hostile input & It crashed on several classes of it; a totality contract converts every crash into the intended reject & \code{check\_verifier\_fuzz} \\
+v9.313 & The canonical oracle pinned every signed field list & Its static key-list pin used a regex that silently matched nothing; the wire specification is now checked against the signer & \code{check\_wire\_spec\_matches\_code} \\
+v9.333 & The exchange gateway authorized by the trust graph & It accepted an attestation from any agency on the instance, transitive trust one layer up; the responder itself must attest & \code{check\_exchange\_trust\_directional} \\
+v9.334 & Long-term validation trusted a timestamp & It trusted any authentic timestamp, including the signer's own, which the signer can backdate; the verifier now names distinct trusted timestamp authorities & \code{check\_ltv\_timestamp\_trust} \\
+v9.335 & A receipt alone proved an exchange & A dishonest responder can sign any receipt; the requester's envelope beside it is the evidence. A QR decoder with no bound was also made resource-bounded & \code{check\_qr\_resource\_bounds} \\
+v9.336 & The broker enforced a relying party's step-up & The demand arrived only in the holder's request; it is now registered on the relying party's row, and the code is encrypted & \code{check\_broker\_policy\_bound} \\
+v9.341 & Anchored time evidence survived a stolen key & A thief could mint a backdated timestamp; anchoring into a witnessed log makes a forgery one absent from every witnessed head & \code{check\_timestamp\_transparency} \\
+v9.345 & The maintainer would remember which drills a change touches & A changed verdict shipped without its drills and CI was red for four versions; a tool now names the verification a change needs from the paths and route handlers that moved & \code{check\_ship\_tool} \\
+\end{xltabular}
+}
+
+\subsection{Since Version 2: the instruments were asked whether they would notice}
+
+Between \code{v9.357} and \code{1.0.0-rc.1} the loop was turned on the verification layer itself.
+The question changed from \emph{does it pass} to \emph{would it notice}, and the answers below are
+the record. Most of these rows are about the tests rather than the system, which is the point: a
+guarantee is believed because a check says so, and the checks are written by the same hand as the
+code.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\bfseries}p{0.62in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.6in}}
+\caption{Corrections recorded since Version 2. The right-hand column names the check, drill or record that now fails if the original condition returns.}\label{tab:corrections-v3}\\
+\toprule
+\rowcolor{tabheader}\thead{Version} & \thead{What was believed} & \thead{What was true, and what changed} & \thead{The new sense} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Version} & \thead{What was believed} & \thead{What was true, and what changed} & \thead{The new sense} \\
+\midrule
+\endhead
+\midrule\multicolumn{4}{r}{\scriptsize\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+v9.384 & The national throughput targets were the capacity question & They clear by an order of magnitude, and the system could not have run for a week at them: a 32-bit event identifier is five days at the sustained rate. Five identifiers widened & \code{check\_capacity\_model} \\
+v9.387 & Six cores would serve the peak & The per-core rate was measured; the multiplication had never been run. Core counts are extrapolated under a named assumption, and a percentile the sample cannot carry is withheld & \code{check\_capacity\_model} (extended) \\
+v9.389 to v9.393 & Thirty-five conformance cases passed; 24 of 44 frozen cases held & With no post-quantum library, every pass was a rejection answered by a verifier that rejects everything; a third tool closed with a guarantee it had skipped. All three refuse to report rather than name a cause & \code{check\_conformance\_suite} (executes the runner), the compat suite's void verdict \\
+v9.398, v9.399 & The checks read the code & 71 of 75 passed on a tree where their property was commented out, because the helper handed them the comments too. Stripped; the exposure is measured on every push & the check-mutation drill \\
+v9.403 & A drill that printed its guarantee had tested it & Twenty-two drills printed whole verdict paragraphs from zero recorded cases & \code{check\_drills\_count\_their\_cases} \\
+v9.404 & Both internal hops were classical & The posture had been read off base-image versions; one hop had been post-quantum for some time. Read off a real handshake now & \code{check\_internal\_kex\_measured} \\
+v9.405 & A detection test proved its check detects & Fifteen tests only ever asserted failure; a control on the unbroken fixture is now required & \code{check\_detection\_tests\_have\_a\_positive\_control} \\
+v9.407 to v9.415 & The database's guarantees were tested & All 46 CHECK constraints were load-bearing; 14 of 37 triggers and 12 of 17 unique indexes could be dropped with the suite green, and with the one-active-token index absent the suite committed a duplicate. All covered; the sweep is a drill & the three mutation drills, \code{check\_append\_only\_tables\_are\_tested\_exhaustively}, \code{check\_unique\_rules\_are\_tested\_exhaustively} \\
+v9.417, v9.418 & The access-control matrix described the routes & Two hand-written lists named 25 of 101 guarded routes; stripping every guard turned 15 of 654 tests red. The matrix is derived from the code, and a CSRF exemption is read rather than assumed & \code{check\_route\_guards\_are\_derived\_not\_listed}, \code{check\_csrf\_exemptions\_do\_not\_trust\_the\_session} \\
+v9.420 to v9.433 & The conformance contract asked what a verifier must check & It verified an identity token's signature and never its audience or nonce; three artifact types had no bad-signature case; five valid vectors had expired; the two SDKs disagreed about replay; the instrument counting all this was wrong three ways & \code{check\_conformance\_asks\_the\_relying\_party\_question}, the conformance mutation drill \\
+v9.422 to v9.426 & Decisions about operators, quotas, relying parties and ceilings were recorded & Six audit event types had no writer; a quota, a relying party's bar and the revocation ceiling could be changed with nothing recorded anywhere. Each is a trigger-written record now, and the first list of missing writers was wrong about three & \code{check\_every\_audit\_event\_has\_a\_writer}, the audit-of-record checks \\
+v9.434 to v9.437 & The stored procedures' refusals were tested & 27 of 59 could be deleted with the suite green, concentrated where a trigger cannot see; all covered & \code{check\_procedure\_refusals\_are\_mutation\_tested} \\
+v9.440, v9.443 & The root of the authority hierarchy and the table of who may sign in were recorded & Neither had a trigger; two operator scripts naming columns that never existed had never run in 410 versions. Found against the live catalogue, not by reading & the schema-drift drill, the audit-of-record checks \\
+v9.452 to v9.454 & Polaris was post-quantum & Accurate about the algorithm, a claim about Module-LWE as security, and the default path signed a placeholder. The headline is algorithm agility, and a rule rather than prose holds it there & \code{check\_post\_quantum\_claims\_are\_agility} \\
+v9.455, v9.456 & The reference verifiers refused what they exist to refuse & 18 of 18 refusals in the Python SDK and 9 of 14 in the TypeScript one could be inverted with every suite green; all 32 are inverted on every push & \code{check\_sdk\_refusals\_are\_mutation\_tested} \\
+v9.459 to v9.462 & Five concurrency tests proved serialization & None could fail, one claim lived in a comment, and the local runner read half the file; the tests now carry a contention control & \code{check\_advisory\_locks\_have\_a\_contention\_test} \\
+v9.465 & The verifier's certificates were right & Eleven hosted modules and every internal instrument had passed a request-signing certificate with no key usage; an outside wallet refused it & a test red on a leaf without \code{digitalSignature}; the scoreboard \\
+2026-09-15 & Eleven of eleven hosted modules were clean, awaiting a screenshot & One alias for all eleven made each module interrupt its predecessor; four positives were killed, and the suite had recorded it in the log downloaded to prove the claim. Re-run one at a time: 7 PASSED, 4 REVIEW & the drill's unique alias per test; the scoreboard's status vocabulary \\
+1.0.0-rc.1 & The sample database reloaded clean & Its reload restarted a relying party's identifiers and reached the party's append-only record with neither, so each reload's first party inherited a dead party's history; a version-stamp check had guarded its comparison so that an unparseable version passed & \code{check\_seed\_restart\_resets\_dependent\_records}, \code{check\_roadmap\_consistent} \\
+\end{xltabular}
+}
+
+Several corrections in the record are about the project's posture rather than a mechanism. At
+\code{v9.55} the repository deleted eighteen thousand lines of self-monitoring apparatus and some
+nine hundred invariants that asserted the apparatus's claims about itself; at \code{v9.453}, three
+hundred and ninety-seven versions later, forty-six references in twenty-four live files still cited
+the deleted documents as the authority for a rule, one of them in an error message an operator reads.
+At \code{v9.332} the phrase \emph{zero-knowledge identity system} was split into three claims. At
+\code{v9.452} \emph{post-quantum} on the front door became \emph{algorithm agility under an audited
+migration path}, and at the lab's assessment of 13 September 2026 \emph{compulsion-resistant} became
+\emph{duress-aware}, each with a check that refuses the stronger word. And at \code{1.0.0-rc.1} the
+version number stopped counting ships: 9.467 had been bumped by the change that added a check and
+the change that fixed a comment alike, and under the operating contract a version marks an
+externally observable change, which is rare.
+
+\subsection{Multiple observers of one claim, and the first from outside}
+
+The pattern behind the tables is that Polaris increasingly refuses to let one observer decide
+whether a claim holds. A cryptographic verdict has two implementations and one published corpus. A
+check has a detection test that proves it can see its own violation, with a control. A drill runs
+the path instead of reading it, and counts its cases. An attack tries to break the defence with the
+real code. A fuzzer explores the input space the drills hand-picked. Eight mutation drills ask
+whether the tests would notice their subject going missing. An outside review at \code{v9.331} found
+six things the author's own instruments had not, and five became invariants within eight versions.
+Continuous integration carries all of it on every push. None of these observers shares the others'
+assumptions, and that is the point: a green test is not proof that the test asked the right question,
+but many differently-built observers agreeing is much harder to fool than one.
+
+Version 2 proposed a seventh observer that would live outside the repository altogether, under the
+name Myrmex, and it remains a proposal (Section~\ref{sec:research}). What arrived instead was
+plainer: a wallet somebody else wrote, and a conformance service somebody else runs. The wallet
+refused a certificate that eleven conformance modules, 143 package tests, a mutation drill over every
+refusal and every check in the invariant layer had passed over. That is the whole argument for the
+operating contract in one event. Every observer inside the repository inherits the author's model of
+what a request-signing certificate has to contain; the first observer that did not inherit it found
+the gap in seconds.

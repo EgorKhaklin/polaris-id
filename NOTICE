@@ -65,9 +65,10 @@ none imposes a copyleft obligation on it.
 The macOS launcher (Polaris.command + polaris_mac_launch.sh) is original
 to this work.
 
-The academic project report polaris_project_report.pdf and its TeX source
-polaris_project_report.tex are part of the same release and inherit the
-same Apache 2.0 license. The report's bibliography credits external
+The academic project report, in its three versions (polaris_project_report.pdf,
+polaris_project_report_v2.pdf and polaris_project_report_v3.pdf) and their TeX
+sources under docs/paper/, are part of the same release and inherit the same
+Apache 2.0 license. The report's bibliography credits external
 sources under fair-use academic citation conventions.
 
 ================================================================================

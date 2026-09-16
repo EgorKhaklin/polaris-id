@@ -1,0 +1,94 @@
+% 00-about.tex: what this document is, and how to read its marks.
+\section*{About this version}
+\addcontentsline{toc}{section}{About this version}
+
+Version 1 of this report (\code{polaris\_project\_report.pdf}, preserved unchanged beside this
+file) described Polaris as a database-design project: twelve tables around one credential, an
+entity-relationship model, a lifecycle state machine, and the argument that identity data must be
+post-quantum from the first day. Version 2 (\code{polaris\_project\_report\_v2.pdf}, also preserved)
+described the system as it stood at tag \code{v9.345}, thirty-six tables, a federation protocol, a
+transparency layer and an institutional exchange fabric, and was revised at \code{v9.355} when the
+holder-side work it had recorded as missing was built. Version 3 describes the system at version
+\code{1.0.0-rc.1} (commit \code{7019bcf}, 16 September 2026), re-measured whole rather than patched,
+and it is written for a reader who has never opened the repository.
+
+\textbf{What changed, in one paragraph.} Between Version 2 and this one the repository stopped
+counting its own progress and started counting witnesses. The four standalone packages a relying
+party installs are on public registries. A wallet written by somebody else, run unmodified,
+presented a credential to the verifier and was accepted, after refusing it once for a defect every
+internal instrument had passed over. The OpenID Foundation's hosted conformance suite ran the
+verifier profile across the open internet. The verification layer itself was attacked from inside:
+the checks, the constraints, the triggers, the unique indexes, the stored procedures, the zero-knowledge
+witnesses, the conformance contract and both reference verifiers were each mutated and required to
+go red, and many did not, at first. The physical layer became an object somebody else can implement.
+And two words on the front door were weakened, \emph{post-quantum} to \emph{algorithm agility under an
+audited migration path} and \emph{compulsion-resistant} to \emph{duress-aware}, because the evidence
+did not support the stronger ones. Appendix~\ref{app:from-v2} lists every claim of Version 2 that this
+version withdraws or narrows.
+
+\textbf{Three dates, stated plainly.} Version 2's body was measured at \code{v9.345}; its
+holder-side sections at \code{v9.355}. Everything in this version, every count, every mark and every
+figure, was measured at \code{1.0.0-rc.1} by the methods in Appendix~\ref{app:counts}. Where a number
+is older than that, because the repository has not re-run the instrument that produced it, the paper
+says so beside the number. Nothing that ran at \code{v9.355} stopped running.
+
+The paper keeps what Version 1 got right, the token-centred geometry of the schema, used here as the
+centre of every map, and the lifecycle machine, and what Version 2 got right, the concentric reading
+of the system, one ring per section, each ring introduced by the failure of the ring inside it.
+
+\subsection*{Five marks}
+
+Every capability carries one of five marks, so that code that runs is never confused with an
+intention, and so that a thing the author has tested is never confused with a thing somebody else
+has.
+
+\begin{description}
+  \item[\sImpl] A path that runs at \code{1.0.0-rc.1}, exercised by a test or a drill in continuous
+    integration, and pinned by an invariant check that fails the build if it stops being true.
+  \item[\sExp] A path that runs but is limited in a way the repository itself names: not covered by
+    CI, notional in scale, or dependent on a backend that CI simulates.
+  \item[\sExt] A property the repository implements and tests internally but that no external
+    party has audited, attacked, deployed or independently re-implemented.
+  \item[\sWit] A path that a named party outside the repository has actually exercised, on a date,
+    with a result that can be pointed at: a wallet, a conformance service, a published test corpus.
+    The mark is deliberately rare, it is given only where the repository's scoreboard has a filled
+    row, and it never means audited, certified or piloted. Three things carry it in this paper.
+  \item[\sFut] A proposal: a roadmap row, a design note, or an idea that exists only in this paper.
+    It is not code.
+\end{description}
+
+A row carrying two marks runs today and still requires external validation for the stronger claim,
+or has been exercised from outside on one path and not on the others.
+
+Numbers were measured on the tree at \code{1.0.0-rc.1} by the methods in
+Appendix~\ref{app:counts}, not copied from earlier documents. Where the repository's own documents
+disagree with its code, the code wins and the disagreement is recorded in the author's notes that
+accompany this version.
+
+\subsection*{The analogy, and its limit}
+
+The paper explains Polaris through one sustained analogy: a walled town. The credential record is
+the town hall's register; the constraints are the wall; the endpoints are gates; the transparency
+logs are watchtowers; independent witnesses stand outside the wall watching the towers; other
+authorities are other towns, joined by roads that run one way; above the whole town stand laws that
+bind even the town itself; and, new in this version, travellers from elsewhere have now come to the
+gate, and what they found there is the only report the town did not write about itself. The analogy
+describes arrangement and sight lines, not political centralisation: Polaris is federated per
+authority, with no central database, root or verification service, and every recurrence of the
+analogy returns to the actual mechanism by its real name.
+
+\subsection*{One thesis, and one rule}
+
+The system is an attempt to build identity infrastructure in which important claims do not have to
+be trusted merely because a central application says they are true. Authority, state, history,
+privacy boundaries and the system's own behaviour are progressively exposed to independent
+verification and constrained by layers that do not share each other's assumptions. Each layer exists
+because the layer inside it could be entirely correct and still fail to prove what a society needs
+to know. That progression is the spine of the paper.
+
+The rule, adopted on 13 September 2026 and applied to everything since, is that the unit of progress
+is a new external dependency survived: a named wallet, a named conformance profile, a named relying
+party, a defect filed by somebody who is not the author. The count of invariants, versions and lines
+is not progress and the repository's scoreboard refuses to record it. This paper follows the rule.
+Where it reports internal evidence, it says so, and it keeps that evidence out of the sentences that
+report the other kind.

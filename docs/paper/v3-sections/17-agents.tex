@@ -1,0 +1,177 @@
+% 17-agents.tex: AI agents, proof of personhood, and the future internet.
+\section{AI agents, proof of personhood and the future internet}
+\label{sec:agents}
+
+Version 2 first wrote this section as a statement of what did not exist, then rewrote it when the
+holder-side work was built. Version 3 changes little in it, because little changed: the four
+mechanisms still run, their bounds are the same, and what this version adds is what the first
+outside path taught about the residue, and which of the refusals below were found, by mutation, to
+be refusals in name only until they were fixed.
+
+\subsection{The problem that is arriving}
+
+When software agents can generate unlimited accounts, content, transactions, messages and apparent
+participants, the cheap signal that a request came from a person stops being available for free.
+Many digital systems will need to distinguish, without learning more than they must, between one
+accountable human; one authorized agent acting for that human or for an institution; anonymous
+machine activity; duplicated or synthetic identities; and organisational agents acting under an
+institution's authority. Every naive way of obtaining that signal leaks identity: accounts, phone
+numbers, payment instruments, biometrics. The identity question changes shape. It is no longer only
+\emph{who are you}, but \emph{what kind of actor are you, whose authority are you exercising, what
+are you allowed to do, and how can I verify all of that without learning anything else}. That is
+the future-facing question this paper considers the most important one Polaris's core could be
+extended to answer.
+
+\subsection{What exists today that points this way}
+
+Six ingredients of a privacy-preserving proof of personhood run.
+
+\begin{itemize}
+  \item \textbf{Uniqueness at issuance.} C3, one active token per person, is a partial unique index
+    in the database, and since \code{v9.374} a model checked on every push. That is the root of Sybil
+    resistance: a human can hold one active credential, and no application code can bypass the
+    constraint. \sImpl
+  \item \textbf{Membership without identity.} The epoch membership proof proves that a valid token
+    exists in an authority's committed set with public inputs of only the root, the epoch, a context,
+    a nonce and a scoped nullifier; a zero-knowledge verification records no token at all; the
+    anonymity set is a full epoch, and, measured, nothing floors it above one. \sImpl
+  \item \textbf{Revocation without naming.} A revoked token drops out of the next epoch root, so a
+    membership proof expires with the epoch and no relying party learns who was revoked. \sImpl
+  \item \textbf{A key the holder controls.} A credential may carry a holder public key the issuer
+    binds to it, so possession of the file stops being possession of the credential and a verifier
+    can require a signature from the person rather than a copy of their credential. \sImpl
+  \item \textbf{Proving on the holder's device.} The epoch's leaf set is published, signed and
+    bounded; every requester receives identical bytes; the holder finds their own leaf and builds the
+    path locally. The issuer is never told which member is proving. \sImpl
+  \item \textbf{A per-verifier nullifier.} The proof carries
+    \code{Poseidon(secret\,||\,scope\,||\,epoch)}, constant for one person within one relying
+    party's scope and epoch and uncorrelated across scopes. \sImpl
+\end{itemize}
+
+\subsection{One human, once: what runs and what it costs}
+
+The membership proof stops replay of one proof, but on its own it does not stop the same person
+producing a thousand fresh proofs to one site and registering a thousand accounts. \emph{One human,
+once, here} needs a scoped nullifier: one more public input, a hash of the holder's secret, the
+relying party's scope and the epoch, so a site can refuse a second proof from the same person while
+two sites cannot link their nullifiers. That is a public input of the circuit, and the claim that two
+relying parties pooling everything they hold still cannot link a holder is a formal model checked
+with a configuration it must fail. \sImpl
+
+Adding it was not the small change Version 2 once predicted, and the reason is worth keeping
+because it is the kind of mistake a plan makes from outside the code. The epoch leaf was a
+\code{SHA3-256} digest computed \emph{outside} the circuit and handed in as an opaque private
+value. A nullifier beside an opaque leaf proves only that the prover knows some number: nothing ties
+the two to one secret, so a prover could pair any member's leaf with a nullifier of their own
+choosing, and every property above would have been a claim rather than a proof. Constraining both to
+one secret means opening the leaf inside the circuit, and verifying a \code{SHA3-256} preimage there
+costs thousands of constraints where Poseidon costs about a hundred. So the leaf became
+\code{Poseidon(secret\,||\,context)}, a commitment the circuit opens, and the old digest became the
+holder's secret. Epochs closed under the old derivation are re-closed rather than migrated.
+
+The two conditions the vocation imposes were carried into the implementation rather than left as
+intentions. The nullifier's scope is per relying party and per epoch, never global, because a global
+nullifier is a persistent identifier and therefore the surveillance outcome the constitution refuses;
+and it rotates each epoch, so membership never becomes a permanent pseudonym. A relying party's
+ledger is keyed by its own scope and that epoch, and should not outlive it.
+
+Two bounds remain and are stated rather than closed. The nullifier does not hide the holder from the
+\emph{issuer}, which derives every leaf in order to build the tree and could therefore compute any
+member's nullifier in any scope; the property holds between relying parties. And the presentation
+layer is still full-credential on every path but the zero-knowledge one: a verifier looking at a
+plain credential sees a stable token value, an issuer signature and a holder key, and a verifier on
+the interoperable path sees nine issuer-signed values that are the same everywhere. What the
+pairwise derivation bounds is what a verifier \emph{stores}, which is the material that gets pooled,
+sold, subpoenaed and breached; what the zero-knowledge path bounds is what it is \emph{shown}, and
+the lab measured that bound and its blind spots (Section~\ref{sec:privacy}). The verifier reports
+which of the two a given presentation gave, and since the lab's first finding it checks the premise
+before saying so. The blinded and one-time presentation technologies that would remove the residue
+are held, not scheduled, in Section~\ref{sec:research}; none is implemented. \sFut
+
+\subsection{Delegating authority to an agent}
+
+\figfile{delegation}{The delegation chain, as built. The human holds the foundational credential and
+a key the issuer bound to it. With that key they sign a grant naming actions, limits, an expiry and a
+revocation handle; the agent signs each action against the service's own nonce; the service verifies
+the chain offline. The one link drawn dashed is the residue: under a plain holder binding the service
+also sees the credential's token value, so the correlation it is left with is bounded rather than
+absent.}{fig:delegation}
+
+The relationship is a chain, and it runs. A human possesses a foundational credential and a key
+the issuer bound to it. With that key the human signs a grant giving an agent a narrowly scoped
+authority: named actions, stated limits, an expiry, and a revocation handle belonging to the grant
+alone. The agent signs each action it performs, naming the action and the service's own nonce. A
+service verifies, offline, that the grant is genuine and unexpired, that it covers this exact action,
+that it has not been revoked, and that it chains to a holder key an issuer bound to a real
+credential. \sImpl
+
+What the design is for is visible in what it refuses. Handing an agent the credential itself gives it
+everything the person can do, forever, revocable only by revoking the person. The grant is the
+opposite of each: \code{actions} and \code{limits} sit \emph{inside} the signed statement, so a
+grant widened in transit fails rather than passing invisibly; an empty action list authorises nothing
+and there is no way to write \emph{everything}; a limit key the service does not recognise is
+refused rather than ignored, since a grant that says \code{max\_transfers: 3} to a service that has
+never heard of it must not read as unlimited. And the agent must sign: without that link a grant is a
+bearer token, and whoever copies it in transit becomes the agent. Two of these refusals, an exhausted
+use count and an amount over its ceiling, are the bound that makes delegation something other than a
+bearer token, and at \code{v9.455} both were found to be invertible in the reference verifier with
+every suite green; they are covered now, and the conformance contract, which had published no case
+in which a grant's or a revocation's signature was bad, has those cases. \sImpl
+
+Revocation is the property worth naming twice. The revocation is signed by the same key that signed
+the grant, so anyone may publish bytes but only the holder may end it. The issuer is not contacted
+and never learns the grant existed, and the human's credential is untouched throughout. A person can
+end their agent's authority without asking permission from, or being observed by, the authority that
+issued their identity. The revocation carries the grant identifier and the instant, and nothing else.
+It will not carry a reason: a field recording \emph{why} a grant ended is a field a coercer can
+demand be filled in or left empty, and either way it turns a revocation into a signal about the
+person.
+
+What a service learns is bounded, and the bound is reported rather than assumed. Under a plain holder
+binding the service also sees the credential's token value, so the verdict names the correlation
+\code{exposed}; only a chain carried by the zero-knowledge path, whose handle is the scoped
+nullifier and whose transcript shows nothing identical across verifiers, is named \code{bounded}.
+The grant hides the human from the agent's \emph{actions}. It does not hide the credential from the
+service.
+
+\subsection{The future internet, concretely}
+
+The term Web3 is used here in one narrow sense, and it has nothing to do with currency: an internet
+in which people, autonomous agents, institutions, wallets, distributed services and independently
+operated networks need portable cryptographic trust that does not route through one company or one
+state. Against that environment the following table marks what Polaris could provide and what each
+item's status is today.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash}p{1.85in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.8in}}
+\caption{What a future environment would ask of Polaris, and the status of each.}\label{tab:web3}\\
+\toprule
+\rowcolor{tabheader}\thead{The environment asks for} & \thead{What Polaris has} & \thead{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{The environment asks for} & \thead{What Polaris has} & \thead{Status} \\
+\midrule
+\endhead
+\midrule\multicolumn{3}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+Portable credentials & A signed file any standard library verifies; four packages on public registries & \sImpl \\
+Independently verifiable proofs & The detached verifier, two SDKs, a conformance suite, and an OpenID4VP verifier an outside wallet has presented to & \sImpl\newline\sWit\newline\sExt \\
+Institutional federation & Per-authority roots, directional attestations, published feeds & \sImpl\newline\sExt \\
+Service discovery & The signed registry & \sImpl \\
+Document signatures with long-term validity & Signed containers with evidence fixed at the instant & \sImpl \\
+Transparent authority behaviour & Three logs, witnesses, equivocation proofs, a public report of warrant reads & \sImpl\newline\sExt \\
+Offline verification & Status assertions stapled to presentations; a card that signs a device's challenge & \sImpl \\
+Post-quantum trust & ML-DSA under an audited migration path, hash-based proofs, a hybrid edge; classical remainders named; what a break would cost written down & \sImpl \\
+Human, account and agent authorization relationships & A login token whose subject is per relying party, plus the agent grant & \sImpl \\
+Privacy-preserving uniqueness & Membership proofs carrying a per-verifier, per-epoch nullifier; measured against a colluding pair & \sImpl \\
+Delegation to agents with bounded scope & A holder-signed grant: actions, limits, expiry, revocation handle; its bounds mutation-tested & \sImpl \\
+Revoking an agent without destroying the human's identity & A holder-signed revocation; the issuer is not contacted and the credential is untouched & \sImpl \\
+Presentation that shows a verifier nothing stable & The zero-knowledge path only, within the anonymity set; a plain or interoperable presentation shows stable, issuer-signed values & \sImpl\newline\sFut \\
+Speaking the formats other wallets speak & OpenID4VP with SD-JWT VC verified; an ISO 18013-5 rendering whose issuer signature no standard reader can check; a Verifiable Credential of a verification result & \sImpl\newline\sWit \\
+\end{xltabular}
+}

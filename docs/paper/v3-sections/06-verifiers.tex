@@ -1,0 +1,178 @@
+% 06-verifiers.tex: independent verification, and the first outside witnesses.
+\section{Verification without the issuer: the packaged verifiers, the conformance contract and the first strangers}
+\label{sec:verifiers}
+
+\subsection{The detached verifier, as a thing a stranger installs}
+
+\code{polaris-verify} verifies a credential's authenticity pack with only a standard ML-DSA
+library: no Polaris code, no database, no network unless asked to fetch status. Version 2 described
+it as a script in the repository. It is now a package on a public registry, at \code{1.0.0-rc.1}, a
+release candidate, with \code{0.1.0} beneath it since 15 September 2026, published by the
+repository's own workflow under trusted publishing so that no long-lived credential exists anywhere,
+and the script that Version 2 named is a shim onto it. It refuses to start until the run says what
+cryptography it is doing: \code{--pqc-provider oqs}, \code{cryptography} or \code{auto}, or
+\code{--dev-placeholder}, with no default and no environment variable, because a verifier that
+quietly stopped verifying still answers every question. Every machine-readable verdict carries a
+\code{crypto} field, and under the development flag the real backends are turned off, so a
+development run cannot produce a true verdict at all; building that gate found that the first
+version of the flag declared the mode without entering it, which is a label, not a mode. \sImpl
+
+It is the one Polaris component whose input is chosen by an adversary, because a relying party runs
+it on whatever a stranger presented, and it is the component through which every later protocol
+artifact is checked: manifests, epoch checkpoints, revocation feeds, status bundles, status
+assertions, transparency heads, receipts, timestamps, signed documents, registries, trust lists,
+presentations, holder proofs, agent grants. Three independent ML-DSA implementations agree on the
+published vectors: a lattice library, OpenSSL, and a third in the TypeScript SDK. It is held
+\emph{total} against hostile input by a metamorphic fuzzer, and an attack suite of executable
+adversaries runs beside it; a grep proves a line exists, an attack proves a defence holds. \sImpl
+
+Whether a stranger can actually install it is measured, not assumed. On every push, and before every
+publish, a drill builds the wheel, installs it into a throwaway environment with none of Polaris
+present, and runs it from a directory that is not the repository with every \code{POLARIS\_*}
+variable stripped: the forbidden runtime surface (the web application, the database driver, the
+check layer) must be absent, the command must refuse to start without a declared crypto mode, a
+genuine ML-DSA-87 credential must verify and its tampered twin must not. It carries a negative
+control, a second wheel with a database import bolted onto the verifier, which the harness has to
+catch. This matters because every other suite in the repository runs from inside the repository with
+the repository on the path; an import that would have stayed green there fails on the first
+stranger's machine. \sImpl
+
+\subsection{The SDKs and the conformance contract}
+
+A relying party installs one of two verify SDKs, \code{polaris-sdk-python} and \code{polaris-sdk-ts},
+each answering one narrow question about a presented credential, is it authentic and is it
+authoritative right now, and never returning a person's data. Both are on their registries. The
+TypeScript one is a lesson in what a registry teaches: its first packaging pointed \code{exports} at
+TypeScript source, which Node refuses to strip inside \code{node\_modules}, so the package could not
+have been imported by a single consumer on any Node version; the repository's tests ran inside the
+package directory, where stripping is allowed, and never noticed. It compiles to a distribution now,
+and the drill installs the packed tarball into a bare project. \sImpl
+
+Both are held to a language-agnostic conformance suite: a runner drives any verifier over standard
+input and output through the published cases, 118 at \code{1.0.0-rc.1} across twenty-five artifact
+types, including the composite federation trust decision, the holder proof, the agent grant and its
+revocation. Passing the suite is what \emph{conformant} means, and the normative wire specification
+(RFC 2119 language, twenty-seven format strings, the exact signed-field list of every artifact) is
+what an implementation importing no Polaris code would build against. \sImpl
+
+The contract was then asked what it did not ask, by measurement, and the answer bounds what
+conformance means. Three artifact types had no case in which the signature was bad, so a verifier
+that never checked theirs conformed. Five of the published valid vectors had expired months earlier
+and no case noticed, because none asserted freshness. Asking about freshness surfaced two divergences
+between the shipped reference verifiers: neither bounded a holder proof's age, so an integrator
+following one got no replay protection on presentations, and neither could report whether an
+artifact's issuer was trusted at all, so a genuine signature by a stranger passed. All are fixed and
+the three verifiers agree on every case. What the contract still does not prove is stated where an
+integrator will read it: 43 verdict fields are unconstrained by any published case, and none can be
+closed by writing one, because each needs a conforming verifier to compute something it does not.
+The contract constrains what its weakest conforming implementation computes. Then the reference
+verifiers themselves were mutated: every refusal in each was inverted in turn, and eighteen of
+eighteen in the Python implementation and nine of fourteen in the TypeScript one accepted what they
+exist to reject with both that SDK's tests and the conformance runner green, including an agent
+grant's exhausted use count and, in the TypeScript SDK, a constant-time comparison whose length guard
+inverted made a five-byte value compare equal to a 32-byte root. All are closed in the SDKs' own
+tests, and the drill inverts all 32 refusals on every push with a per-SDK negative control. \sImpl
+
+\subsection{Versioning, and the frozen version 1}
+
+Protocol majors live in the format string (\code{polaris-registry/1}), minors are advertised by the
+registry and are never needed to verify, and the negotiation rule is normative: reject an unknown
+major, accept any minor, never emit an unadvertised version, answer an unsupported one with a
+specific error and the supported list. Version 1 of the protocol is frozen under checksums, with the
+detached verifier of \code{v9.317} vendored beside it, and a compatibility suite runs both directions
+on every push: today's verifiers must accept everything version 1 published (44 of 44 cases hold),
+and the pinned older verifier must never accept what today's suite rejects. \sImpl
+
+\subsection{The outside: a verifier for wallets Polaris has never met}
+
+Everything above is Polaris verifying Polaris, and Version 2's honest boundary was that no external
+implementation had interoperated. That sentence is different now, on one path, and the path was
+chosen because it is the one an outside wallet actually speaks. Under the operating contract the
+first interoperability target was an OpenID4VP 1.0 verifier under the High Assurance
+Interoperability Profile, and the OpenID Foundation's conformance suite has a test plan for exactly
+that role, \code{oid4vp-1final-verifier-haip-test-plan}, in which \emph{the suite signs the
+credential}, so Polaris's own ML-DSA issuance is not involved. \code{polaris-oid4vp} is that
+verifier: it checks an SD-JWT VC signed with ES256, with holder key binding, delivered as an
+encrypted \code{direct\_post.jwt} response, and it refuses with a named reason, one per negative
+module of the plan, \code{issuer\_signature}, \code{sd\_hash}, \code{kb\_signature}, \code{nonce},
+\code{audience}, \code{kb\_freshness}. It is a separate package because \code{polaris-verify}
+promises to open no socket and this one must listen. One of its fixtures is not self-referential: a
+complete response produced by the conformance suite's own wallet, built by a Java library this
+project does not use, is committed, decrypts, and verifies, and is refused a year later, under another
+nonce, under another audience, and with one disclosure rewritten. \sImpl
+
+\figfile{outside-witnesses}{The three things outside the repository that have exercised it, and
+the two controls without which the first would mean nothing. A wallet nobody here wrote presented a
+credential and was accepted; the same wallet, with the verifier trusting a different issuer key, was
+refused; and a re-presentation against an answered request was refused. The Foundation's hosted
+suite scored seven refusals itself and left four acceptances for a human reviewer. A published
+corpus agrees with both signature witnesses on the primitive. None of the three is an audit, a
+certification or a pilot.}{fig:outside-witnesses}
+
+Then two things happened that the repository did not do to itself. On 15 September 2026 the OpenID
+Foundation's hosted conformance service ran all eleven modules of the plan against the verifier
+across the open internet, fetching the request object and posting the response from outside: zero
+failures, zero warnings. The seven negative modules, where the suite's wallet sends a presentation
+broken in one specific way, carry the service's own \code{result: PASSED}, scored automatically on
+the verifier's refusal, which makes them the closest thing to an external adversary this project has
+been offered. The four positive modules finished in \code{REVIEW}, the state the suite reserves for a
+human to attest that the verifier displayed a successful verification; the screenshots are attached
+and a Foundation reviewer sees them only at certification submission, which has not been requested.
+REVIEW is not PASSED, and Polaris is not certified. The first write-up of the run said eleven of
+eleven clean, and it was false in a flattering direction: one fixed alias had been used for every
+module, the suite interrupts a test when another starts under the same alias, and the four positives
+had been killed by their successors, which the suite had already recorded inside the very log
+downloaded to corroborate the claim. It was re-run one module at a time. The run carries two negative
+controls, one per direction: a verifier patched to refuse everything is noticed by the positive
+modules, one patched to accept everything by all seven negatives. \sWit{} for the profile; \sExt{}
+for certification.
+
+And on the same day an unmodified walt.id Wallet API v2, the published image at a pinned digest,
+presented an SD-JWT VC to the verifier over OpenID4VP and was accepted: it fetched the signed request
+object, verified it against the registered trust anchor, matched the credential to the query, signed
+a key-binding token with a P-256 key it generated and this repository has never held, encrypted the
+response, and \code{polaris-oid4vp} verified the chain. It refused Polaris first, and it was right.
+The verifier's own key generator had produced a request-signing certificate with no key-usage
+extension at all, so the certificate whose entire job is signing request objects was not marked as
+usable for signing; eleven conformance modules, 143 package tests, a mutation drill over every
+refusal and every check in the invariant layer had passed over it, and the first implementation from
+outside declined to proceed. Fixed the same day, with a test that is red on a leaf missing it, and
+counted on the scoreboard as the one fix caused by an external finding. The exchange stands on the
+same two controls, because a verifier that accepts everything prints the same success line. What it
+does not establish is stated in the same place: one wallet, one credential format, one presentation
+path, ES256 throughout, which is what the profile pins; nothing about any other wallet, about
+ISO 18013-5, or about the post-quantum path, and no claim that the verifier is interoperable in
+general. Anyone can repeat the exchange from a clean machine in about ten minutes without cloning the
+repository; the page that says how was executed before it was written. \sWit{} for this path.
+
+The native protocol, the \code{polaris-*/1} formats that everything else in this paper is built on,
+remains where Version 2 left it: the specification, the cases and two SDKs exist, and no implementation
+by an external team from the documents alone has happened. \sExt
+
+Two format bridges make the boundary explicit. A Polaris credential renders in the ISO/IEC 18013-5
+mobile-document structure, and a reader that speaks the standard parses it, walks its namespaces and
+verifies every disclosed element's digest against the signed security object, with an independent
+CBOR implementation proving it rather than the one that wrote the bytes; the reader cannot verify the
+issuer signature, because it is ML-DSA-65 and the standard mandates classical algorithms, and the
+repository calls that the design rather than a limitation, since a post-quantum credential carrying
+a classical signature to earn a green tick would be a classical credential. A verification result also
+renders as a W3C Verifiable Credential, deliberately not an identity credential: its subject
+vocabulary is closed and refuses identity fields by name, and its subject identifier is the
+per-verifier handle or absent. Both are formats, not trust models. \sImpl
+
+\begin{layercard}{Layer card: independent verification}
+\qa{What it is}{Four packages on public registries: a standalone verifier, two SDKs and an OpenID4VP verifier; a conformance runner over 118 published cases; a normative wire specification; a frozen version-1 set with a cross-version suite; a fuzzer, an attack suite and three mutation drills; two format bridges.}
+\qa{Why it exists}{A verification the issuer performs asks the relying party to trust the issuer's server. Authenticity has to be decidable by anyone, anywhere, with the network off, and by software the author did not write.}
+\qa{What it trusts}{The published issuer keys the relying party chose to trust (its anchor set); a standard ML-DSA library, or for the OpenID4VP path, a registered X.509 trust anchor and ES256.}
+\qa{What it refuses}{Any Polaris code or database; any input it cannot parse; any object presented to the wrong type's verifier; any version it was not told about; to start without a declared crypto mode; a nonce or audience it did not itself ask for.}
+\qa{What it can see}{The artifact and the anchor set. For an SD-JWT VC, exactly the disclosed claims. Nothing else.}
+\qa{What it cannot see}{Whether the credential is still authorized, unless a status artifact is presented with it; the 43 verdict fields the published cases do not constrain.}
+\qa{If it fails}{A wrongly accepted mutation fails the fuzzer; a refusal that stops refusing fails the SDK mutation drill; a drift between specification and signer fails \code{check\_wire\_spec\_matches\_code}; a package that cannot be installed by a stranger fails the boundary drill; a defect every internal instrument missed is what the outside is for.}
+\qa{Checked by}{\code{check\_detached\_verifier}, \code{check\_conformance\_suite}, \code{check\_typescript\_sdk}, \code{check\_verifier\_fuzz}, \code{check\_attacks\_run}, \code{check\_protocol\_versioning}, \code{check\_sdk\_refusals\_are\_mutation\_tested}, \code{check\_conformance\_asks\_the\_relying\_party\_question}, \code{check\_oid4vp\_verifier\_boundary}, \code{check\_documented\_verifier\_commands\_run}.}
+\qa{Now or later}{Now, for the software and for one outside wallet on one path. Certification, a second wallet and an implementation of the native protocol by someone else are later and not ours to do.}
+\qa{Inside and outside}{Inside: the signatures. Outside: the status layer, which answers the question a signature cannot.}
+\end{layercard}
+
+\nextlayer{Signing a credential proves who signed it. It does not prove whether that credential is
+still authorized: the seal on a revoked passport is as genuine as the seal on a valid one. Polaris
+therefore needs status.}

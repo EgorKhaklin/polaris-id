@@ -1,0 +1,106 @@
+% 19-limitations.tex: current limitations and what external validation is required.
+\section{Current limitations and the external validation still required}
+\label{sec:limitations}
+
+The repository's readiness ledger opens with one line, and this paper repeats it as its own bound:
+at \code{1.0.0-rc.1} Polaris is not production-ready for real identity data. Every engineering gap
+the ledger enumerated is closed and pinned by a check; what remains is not buildable in the
+repository. The list below separates what has not been done from what cannot be done by the author,
+and it is longer than Version 2's in one direction, because the repository spent the interval
+finding limits rather than removing them.
+
+\subsection{Decisions only a deploying organisation can make}
+
+Nine decisions must be recorded for a named deployment before real data could be held: a legal
+basis, impact assessment and regulator approval; the signing-key custody driver and who holds the
+key; the high-availability topology and its hosts, and whether a second region is run; encryption at
+rest and its key custodian; the off-site backup target and schedule; the alerting backend, the
+on-call rotation and who receives the duress page; the right-to-erasure policy; the retention
+schedule per class, with the counsel who says the number satisfies the statute; and an independent
+penetration test with a threat-model sign-off. Polaris records each decision and its justification;
+it does not know the law. \sExt
+
+\subsection{What is not built}
+
+\begin{itemize}
+  \item The physical token is a specification, an emulator and published vectors; no card is
+    manufactured and no silicon is certified, and the profile states which of its properties an
+    emulator cannot establish.
+  \item No hardware security module has been used; the PKCS\#11 driver is proven against a software
+    token, the KMS driver against a stand-in, and the lattice library is not FIPS-validated.
+  \item A second region is a standby cluster with a non-zero recovery point; status distribution is
+    a set of cache rules, not a deployment; and the national workload has been simulated at a scale
+    factor, never run.
+  \item A hash-based signer is registered and not wired. The hop from the pooler to the database,
+    the certificate signatures and today's operator authenticators remain classical.
+  \item A verifier cannot learn that an algorithm has been deprecated, so retiring one is a software
+    release to every relying party; rollback and the mixed window of a partial migration are
+    unmeasured.
+  \item Blinded and one-time presentations are not built, so a plain credential shows a verifier a
+    stable token value, an issuer signature and a holder key, and an SD-JWT VC presentation shows nine
+    issuer-signed values that are the same everywhere. The per-relying-party handle bounds what a
+    verifier \emph{stores}; only the zero-knowledge path bounds what it is \emph{shown}, and that
+    bound is the size of the epoch, which nothing floors above one and no verdict reports.
+  \item Neither the scoped nullifier nor the pairwise handle hides a holder from the \emph{issuer},
+    which derives every epoch leaf to build the tree. Issuer-blind derivation is not claimed.
+  \item Polaris as an issuer has no attribute credential and no anonymous predicate; as a verifier
+    it accepts a disclosed boolean the issuer had to anticipate.
+  \item The duress mechanism resists the casual coercer and neither the informed coercer beside the
+    holder nor lawful or institutional access, against which its indelible record is net-negative.
+    No holder-side panic signal exists and none is proposed.
+  \item Document authenticity at enrolment is taken on the operator's word; the assurance level is
+    derived from what evidence was presented, not from whether it was genuine.
+  \item Two identifier columns remain 32-bit, with about twenty-nine years of headroom at the stated
+    enrolment rate; the interim credential during a recovery cool-down is not built; a sunset verdict
+    rests on operator attestations the system cannot verify.
+\end{itemize}
+
+\subsection{What has been done by someone else, and what has not}
+
+\begin{itemize}
+  \item One unmodified wallet written by someone else has presented a credential and been accepted,
+    on one path, in one format, with one signature algorithm, and it refused Polaris once first.
+    No second wallet, no wallet on the native protocol, and no outside relying party.
+  \item The OpenID Foundation's hosted suite ran the verifier profile: eleven modules, zero failures,
+    seven negative modules passed by the service's own scoring, four positive modules in review
+    awaiting a human the Foundation supplies at submission. Not submitted, not certified.
+  \item A published third-party corpus agrees with both signature witnesses on the ML-DSA-65
+    primitive. It tests the primitive, not the protocol.
+  \item Four packages are on public registries, each verified by installing from the registry into a
+    clean environment. Nobody outside the repository has reported installing one, and a registry
+    download count is not a person.
+  \item No external penetration test, cryptographic audit, red team, bug bounty or certification
+    has occurred. The scope document and the review packet exist; no engagement has been
+    commissioned. Almost every guarantee in this paper is checked by machinery written by the same
+    author as the guarantee.
+  \item No operator other than the author has run any of it, which is the one condition that
+    separates the release candidate from \code{1.0.0}. No pilot with consenting users has run; the
+    data has always been notional.
+  \item No external team has implemented the native protocol from the specification and conformance
+    suite alone; the suite is the contract and the integration has not happened.
+  \item No institutionally independent witness watches any log; the witnesses in the record are
+    processes in a drill. Two federated instances are two instances of one code base run by one
+    author.
+  \item The circuit over the proof library has had no external review, and the concrete bit
+    security of the shipped proof configuration has not been independently derived.
+  \item The repository's thesis, that a stranger can read it cold and correctly infer what it
+    needs, was never tested by a stranger before its deadline and is recorded as inconclusive, with
+    the strong claim permanently retired; the stranger's path of Section~\ref{sec:use} is the
+    narrower test that replaced it, and nobody outside has yet reported walking it.
+\end{itemize}
+
+\subsection{What the numbers are}
+
+Every performance number in this paper is single-node on one laptop, or a simulation at a stated
+scale factor, or a projection that the repository labels as one under a named assumption. No
+production cluster has been measured, and the one measurement on a real failover topology is a
+median at two requests per second with the tail withheld because the sample cannot carry it. The
+national planning targets are targets; the arithmetic that clears them is the easy half of the
+question, and the half that nearly failed was an integer column.
+
+\subsection{Documentation that lags the code}
+
+Researching this version found places where the repository's own prose is behind its code or its
+history; they are recorded in the author's notes that accompany this version rather than fixed
+silently, as Version 2's were. Where this paper and any repository document disagree, the paper
+followed the code at \code{1.0.0-rc.1} and says so in the note.

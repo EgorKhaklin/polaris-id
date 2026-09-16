@@ -1,0 +1,126 @@
+% 18-research.tex: what is held, what is asked, and what is not the repository's to do.
+\section{Future research and engineering, under a rule that forbids most of it}
+\label{sec:research}
+
+Version 2's version of this section was a list of things to build. This one cannot be, because on
+13 September 2026 the repository adopted an operating contract that changes what \emph{future work}
+means. A product change now needs exactly one qualifying reason: a named external implementation
+requires it, a named non-author operator or holder requires it, a finding originating outside the
+repository requires it, or an executable counterexample shows behaviour the repository already
+promises to be false. Cleanliness, completeness, elegance and a desirable new guarantee do not
+qualify, and the contract says not to invent a fifth reason. Everything else goes to the lab, whose
+job is to falsify the differentiating claims, not to expand the architecture. So the items below are
+sorted by who would have to act, and everything is marked \sFut{} unless stated otherwise.
+
+\subsection{Gates that are not the repository's to pass}
+
+The contract's ninety-day objective names them, and the scoreboard records each as filled or blank:
+an operator who is not the author reaching a verified result without help, which is the one thing
+that separates the release candidate from \code{1.0.0}; a relying party that is not the author; a
+second wallet, and a wallet on the native rather than the OpenID4VP path; a certification submission
+that would put the four modules in \code{REVIEW} in front of a Foundation reviewer; an independent
+security review, penetration test or cryptographic audit; a pilot with consenting users; and
+institutionally independent witnesses. The contract also names the other end. If, at 180 days, the
+external rows remain effectively empty while internal versions, invariants and architecture keep
+growing, the core is to be frozen, the national-scale architecture stops expanding, the verifier is
+kept only if external use exists, and the project is archived as a reference implementation. This
+paper's subject may be archived by its author's own rule, and the paper records the rule rather than
+arguing with it. \sExt
+
+\subsection{Questions the lab still owes an answer}
+
+Each of these is a measurement, not a feature, and the lab's discipline is to publish the threat
+model, the adversary, the harness, the result and the limitations together, with a positive control
+before any null result counts.
+
+\begin{description}
+  \item[The rest of the linkability threat model.] The measured result covers stable fields
+    only. Presentation size, timing, issuer metadata narrowing the anonymity set, status artifacts
+    stapled to a presentation, and transcript structure are unmeasured, and the one channel the
+    adversary can read, transcript length, is known to be live in any deployment where a
+    presentation's size varies per holder.
+  \item[The interoperable path's nine handles.] Batch issuance, many credentials with one holder key
+    each, is the ecosystem's mitigation and is not implemented; whether it would be adopted is an
+    outside party's question, and the cost of not having it is now a number.
+  \item[The migration path's other half.] Rollback, and the mixed window during a partial
+    migration, are unmeasured. A verifier-readable algorithm status, in the registry or the trust
+    list, would be a new product guarantee, so the lab recorded the gap and did not build it.
+  \item[Duress against the informed coercer.] A holder-side panic signal, a deniable enrolment that
+    makes the absence of a duress code unprovable, and a purge path for the duress record are each a
+    mechanism change, and the assessment proposes none of them. What it asks for first is a
+    measurement the repository cannot make: what a coercer standing beside a holder actually
+    observes.
+  \item[The anonymity-set floor.] Reporting the crowd size beside a \code{bounded} verdict, or
+    refusing to close an epoch below a floor, would change what the system promises; both are
+    recorded for a deploying organisation to decide.
+\end{description}
+
+\subsection{Presentation technologies that would remove the correlator, held}
+
+Version 2 listed five families. One, the pairwise identifier, is built, with the bound
+Section~\ref{sec:privacy} states. The other four are held rather than scheduled, and the reason each
+is not built is the contract's, not a technical one.
+
+\begin{description}
+  \item[Blinded or derived presentations.] The holder proves possession of a signature over
+    attributes without revealing the signature itself. The classical constructions rely on
+    pairing-based assumptions that a quantum computer breaks; post-quantum equivalents are an open
+    research area, and the repository's posture would have to be preserved.
+  \item[One-time presentation tokens.] Single-use artifacts minted per presentation, at the cost of
+    issuer contact or a pre-fetched batch, which trades against offline availability and issuer
+    non-observation exactly as the status assertion does.
+  \item[Anonymous credentials with selective disclosure.] Revealing that an attribute satisfies a
+    predicate without revealing the attribute. The benchmark against a mature system measured the
+    gap precisely: Polaris as an issuer has no attribute credential to apply a predicate to, and as a
+    verifier it accepts a pre-computed boolean the issuer had to anticipate.
+  \item[A native anonymous predicate.] The benchmark's first scenario is satisfied by a disclosed
+    attribute, not by an anonymous predicate; that is on the scoreboard as a known limitation, which
+    moves only when an outside party trips over it.
+\end{description}
+
+\subsection{Metis: learning the system, never the people}
+
+The assessment the roadmap requires before any code would have to falsify the central hypothesis
+(that a model can infer properties of the system without inferring the rights of people) against a
+synthetic-nation ground truth, compare every model to a deterministic rule, and design the
+constitutional invariant that would forbid the prohibited uses structurally, in the manner of
+Athena's five checks. Under the contract the assessment itself waits on an outside party needing
+what it would produce; nothing about Metis is scheduled, and this paper keeps the brief because the
+prohibition in it binds any future cognitive layer whether or not Metis is ever built.
+
+\subsection{Myrmex: stigmergic debugging as an outside observer}
+
+Version 2 proposed, under the provisional name Myrmex, a debugging system that would live outside
+Polaris and attack it independently, inspired by how an ant colony coordinates without a central
+plan: specialised agents leaving machine-readable evidence on a shared landscape, confidence drawn
+only from reproductions and never from agreement between models, and every reproducible failure
+entering the loop of Section~\ref{sec:senses} as a test and an invariant. The proposal stands, and
+the caution with it: an earlier apparatus that lived inside the tree and asserted claims about itself
+was deleted as scaffolding, so Myrmex would be held to the opposite discipline, outside and
+adversarial, or not built.
+
+\figfile{stigmergy}{The proposed colony. Small specialised agents traverse the code and the
+architecture and leave machine-readable pheromones on a persistent evidence landscape: suspicion, a
+trust-boundary anomaly, an unusual state transition, a cryptographic assumption, a missing edge, an
+inconsistent claim, an area repeatedly associated with failure. Pheromones strengthen under
+independent evidence and decay unsupported; agents follow reinforced trails. An orchestrator allocates
+work and aggregates evidence and decides nothing. Confidence comes only from external evidence, never
+from agreement between models. What survives reproduction enters Polaris's own loop as a test and an
+invariant.}{fig:stigmergy}
+
+What Version 3 can add is that the thing Myrmex was for has been demonstrated without it. The
+mutation drills are the colony's cheapest members, built inside the tree: they do not reason, they
+delete and invert and watch for red, and they found more than any review had. And the observer that
+found what no drill could, a certificate every internal instrument accepted, was not a colony of
+agents but one wallet written by strangers. The proposal is kept because a stranger's wallet
+exercises one path, and the rings inside it are still watched only by their author's instruments.
+
+\subsection{Engineering items held under the contract}
+
+A hash-based signer behind the same custody interface; the chain-backed ledger drivers whose
+interfaces are declared; native wallet clients and a browser bridge; status distribution as a
+deployment rather than a specification; a manufactured card; and the external-implementation path
+for the native protocol. Each is a roadmap row that the contract has moved from \emph{next} to
+\emph{when somebody outside needs it}, and the repository's own history is the argument for the
+move: three hundred and ninety-seven versions were spent building rings that no one outside had
+asked for, and the first outside party to arrive found a defect in an afternoon.

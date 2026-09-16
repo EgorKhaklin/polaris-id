@@ -1,0 +1,57 @@
+% C-counts.tex: the numbers, and how each was measured.
+\section{Counts at 1.0.0-rc.1, and how they were measured}
+\label{app:counts}
+
+Every count in this paper was taken from the tree at version \code{1.0.0-rc.1} (commit
+\code{7019bcf}, 16 September 2026) by the command beside it, not copied from an earlier document.
+Where the repository's own stamped number was measured at an earlier version, the version is
+stated. Where a number is external, the row says whose it is.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash}p{2.1in} >{\raggedleft\arraybackslash}p{0.6in} >{\RaggedRight\arraybackslash}X}
+\caption{Counts at HEAD and their method.}\label{tab:counts}\\
+\toprule
+\rowcolor{tabheader}\thead{Quantity} & \thead{Count} & \thead{Method} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Quantity} & \thead{Count} & \thead{Method} \\
+\midrule
+\endhead
+\midrule\multicolumn{3}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+Canonical tables in \code{01\_schema.sql} & 45 & The file declares 50 \code{CREATE TABLE} statements, of which five are the default partition children of the partitioned event tables. A migrated deployment holds 52 tables. \\
+Triggers in \code{06\_triggers.sql} & 42 & \code{grep -c 'CREATE TRIGGER'} \\
+Tables under an append-only trigger & 31 & The \code{BEFORE UPDATE OR DELETE} triggers of \code{06\_triggers.sql} and the migrations, by table; the design record names fourteen audit-of-record instances among them \\
+Invariant checks & 272 & \code{grep -c '\^{}def check\_' polaris\_checks/checks.py}, equal to the registered list; each has a detection test with a positive control in \code{test\_checks.py} \\
+Mutation drills & 8 & Files matching \code{scripts/polaris-*mutation-drill*}: checks, constraints, triggers, procedures, the zero-knowledge witnesses, the conformance contract, the two SDKs, the OpenID4VP verifier \\
+Application routes & 124 & \code{grep -c '\^{}@app.route(' polaris\_web/app.py} \\
+CI jobs in \code{ci.yml} & 20 & The job keys of the workflow; two more workflows run monthly and weekly, and a manual one publishes \\
+Signed wire formats in the specification & 27 & Distinct \code{polaris-*/1} strings in \code{docs/reference/WIRE-SPEC.md} \\
+Conformance cases & 118 & The cases of \code{conformance/cases.json}, across twenty-five artifact types; the frozen version-1 set holds 44 \\
+Formal models checked in CI & 4 & \code{meta/tla/*.tla}; three carry a counterpart configuration they must fail \\
+Drill scripts & 76 & Files matching \code{scripts/polaris-*drill.*}, the eight mutation drills among them \\
+Migrations & 43 & Files matching \code{polaris\_sql/migrations/*.up.sql}, each with a revert \\
+Operator runbooks and ledgers & 21 & Markdown files in \code{docs/operator/}, the index included \\
+Tagged versions & 295 & \code{git tag}, from \code{v9.30} (16 May 2026) to \code{v9.466} (15 September 2026); the tree version then stopped counting ships, and \code{v1.0.0-rc.1} is the first tag under the new rule \\
+Test functions defined & 1,755 & \code{grep -c 'def test\_'} across the product, CLI, check-layer, script, card, simulation, SDK and package suites; a definition count, not a run count \\
+Product tests passing, as stamped by the README & 992 & Measured at \code{1.0.0-rc.1} on the reference machine, \code{pytest -q} per suite; three skip without real ML-DSA \\
+Crypto witness tests, as stamped & 107 of 112 & Measured at \code{1.0.0-rc.1}; five need a PKCS\#11 module or a real KMS key, and CI runs all but the KMS one \\
+OpenID4VP verifier package tests & 143 & \code{pytest} in \code{packages/polaris-oid4vp}; three are the positive control without which the refusals are vacuous \\
+Packages on public registries & 4 & \code{polaris-verify}, \code{polaris-oid4vp}, \code{polaris-sdk-python} on PyPI; \code{polaris-sdk-ts} on npm; each verified by installing from the live registry \\
+Hosted conformance modules & 11 & The OpenID Foundation's service, 15 September 2026: 7 \code{PASSED}, 4 \code{REVIEW}, 0 failures, 0 warnings; the service's own signed exports \\
+External test vectors for ML-DSA-65 & 58 of 58 & Project Wycheproof, pinned to a commit, under both witnesses on every push \\
+Named outside implementations that have presented & 1 & walt.id Wallet API v2 at a pinned image digest, 15 September 2026; one path, one format \\
+Fixes caused by an external finding & 1 & The scoreboard's row; the certificate the wallet refused \\
+Independent security reviews, pilots, non-author operators & 0 & The scoreboard's rows, blank \\
+\end{xltabular}
+}
+
+The paper's performance numbers are those of Table~\ref{tab:perf}, each with the version that
+measured it; the dyno and the application baseline have not been re-run since \code{v9.278} and
+\code{v9.191} and are cited with those stamps. The reference machine throughout the repository is an
+Apple Silicon laptop with eight cores and sixteen gigabytes of memory.

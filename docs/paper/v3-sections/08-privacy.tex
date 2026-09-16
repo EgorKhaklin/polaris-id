@@ -1,0 +1,162 @@
+% 08-privacy.tex: the privacy boundary, stated exactly, and measured where it was measured.
+\section{The privacy boundary: what a verifier is allowed to learn}
+\label{sec:privacy}
+
+Two things in Polaris use zero knowledge, one thing deliberately does not exist, and the distinction
+between them is the most important sentence in this section. Version 3 adds a fourth thing: an
+adversary, written to falsify the claim, and what it found.
+
+\subsection{Three disclosure levels}
+
+Every verification event is recorded at one of three levels. \code{ZERO\_KNOWLEDGE} proves that a
+valid token exists without recording which: the event's token identifier is null, and a check
+constraint refuses any row that says otherwise (C2). \code{SELECTIVE} records named attributes only.
+\code{FULL} records the identity and is logged and rate-limited. The level is decided by the server
+and cannot be upgraded by the client (C6): a relying party cannot turn a zero-knowledge check into a
+full one by asking differently, and the Atlas redacts a zero-knowledge event's location server-side.
+The default level is zero-knowledge. \sImpl
+
+\subsection{Issuer-side unlinkable verification records}
+
+The first use of zero knowledge is a property of the issuer's database. A default-mode verification
+stores no token identifier, so the verification graph, who was verified where and when, cannot be
+reconstructed from the database even by someone holding all of it. This is a structural claim, not a
+promise: the repository carries a redaction proof that the redacted field is non-derivable under a
+stated adversary model, property tests exercise every read path, and the claim that two relying
+parties pooling everything they hold still cannot link a holder is a formal model checked on every
+push. The property test that measures reconstruction risk runs an adversary against isolated
+zero-knowledge events and asserts its success rate is no better than chance, and since \code{v9.408}
+the assertion is shaped so that a weak adversary cannot flatter the result: two weaknesses in the
+adversary had been invisible to the old shape. The claim is scoped precisely. It covers
+zero-knowledge-mode events. Selective and full events do carry a token identifier, because that is
+what those levels mean. \sImpl
+
+\subsection{The membership proof}
+
+The second use of zero knowledge is a proof object. A Merkle tree behaves like a cryptographic
+fingerprint of an entire set: instead of handing a verifier the whole set, one can hand it a short
+proof that a particular item belongs to the set with the committed fingerprint. Polaris commits, per
+epoch, a Merkle root over the active-token set, and a holder can produce a Plonky2 proof on their own
+device, against a published anonymity set, that their token is a leaf under that root, bound to the
+epoch, a context and a nonce, without revealing which leaf. The verifier sees the proof bytes and the
+public inputs and cannot recover the leaf; that is the proof system's property, not an API rule. The
+setup is transparent, with no ceremony, and the commitments are hash-based. The default tree depth
+of fourteen covers the schema's ten-thousand-leaf epoch cap, so the anonymity set is a full epoch.
+On the reference machine a proof takes about 35~ms to make and about 13~ms to check, and the verdict
+is two-witnessed at the statement level. The proof carries a per-verifier nullifier,
+\code{Poseidon(secret\,||\,scope\,||\,epoch)}, so a relying party can enforce \emph{one human, once}
+within its own scope while another cannot correlate its nullifiers. \sImpl
+
+What the proof does not do is stated with the same care. It proves membership and binding, nothing
+else: whether a token is active, permitted for the context and unrevoked is decided when the epoch is
+composed, not inside the circuit. The nonce prevents substituting a captured proof into another
+context; online, a single-use nonce store refuses a replayed bundle, and offline the verifier keeps no
+state, so a relying party that needs single use issues a challenge. The nullifier does not hide the
+holder from the \emph{issuer}, which derives every leaf in order to build the tree and could compute
+any member's nullifier in any scope; the property is between relying parties. And the circuit over
+the proof library has had no external cryptographic audit; the repository's soundness ledger says
+not to protect real identities with it as shipped. The proof library itself was re-evaluated against
+its successor at \code{v9.361} and kept, with the triggers that would reopen the question recorded.
+\sExt{} for the audit.
+
+\figfile{holder-flow}{Holder, relying party and issuer, with what each sees and what each is
+prevented from seeing. The holder presents a file; the relying party decides offline with the
+detached verifier or an SDK and learns that a valid credential exists and its value; the issuer
+records, in zero-knowledge mode, an event with no token identifier, and keeps no who-verified-whom
+row for the online status check. The red edge is the stated limitation: on a plain presentation the
+credential value is a stable handle across the verifiers it is shown to.}{fig:holder-flow}
+
+\subsection{Bounded, not permanent, and what bounded was found to mean}
+
+Polaris is a full-credential presentation system, and until \code{v9.353} the consequence was flat:
+the login token's subject was the credential's hash, the same value at every relying party, so two
+of them could join their user tables exactly and forever. The subject and the presentation handle
+are now derived under the relying party's own scope, stable where an account needs it and
+unrecognisable at the next verifier; since the subject is the value a relying party \emph{writes
+down}, and written-down values are the ones pooled, sold, subpoenaed and breached, this is the half
+that matters most in practice. The other half did not change: a plain presentation still shows the
+verifier a stable \code{token\_value}, the issuer's signature and the holder's public key, so the
+guarantee is about what a verifier should \emph{store}, not about what it is \emph{shown}, and the
+verifier reports which it is giving: \code{exposed} for a plain presentation, \code{bounded} for the
+zero-knowledge path. \sImpl
+
+Version 3 can say what \code{bounded} was measured to mean, because under the operating contract the
+repository's lab asked the question directly: given complete transcripts from two presentations,
+what advantage does a colluding pair of verifiers have at deciding \emph{same holder}? Three findings,
+in the order they were made.
+
+\begin{description}
+  \item[The verdict did not mean what it said.] \code{bounded} was reported whenever a scoped
+    nullifier was present. It never checked the premise its own documentation stated. A presentation
+    carrying the nullifier \emph{and} the credential's stable token value, issuer key and signature
+    was reported bounded while two verifiers could link it with a single string comparison. Fixed the
+    same day: \code{bounded} now requires the nullifier and the absence of every field that is
+    identical across verifiers, including the holder's public key, which is stable by construction and
+    is exactly why the pairwise handle is derived from it rather than shown. The fix corrected a
+    verdict; it made no presentation more private than it was.
+  \item[No advantage beyond the anonymity set, and nothing floors it.] An adversary that flattens
+    every scalar in a transcript, drops what is constant across the population and matches on the
+    rest, with a positive control that links the exposed population at an accuracy of one, achieves
+    on the bounded population an accuracy that tracks $1/N$ at every size from two holders to two
+    hundred. Within an epoch, scoping does what the word implies against this adversary. And
+    $N$ is the epoch's membership. The schema constrains an epoch's committed count to between one
+    and ten thousand and nothing floors it above one, so an epoch that closes with three members
+    gives a colluding pair a one-in-three guess, and one that closes with a single member identifies
+    the holder outright, while the verifier still, correctly, reports the transcript as bounded. The
+    count is readable off the signed checkpoint; nothing requires a relying party to look, and no
+    verdict mentions it. Reporting it would be a new product guarantee, which lab work does not get
+    to create, so it is recorded as a limitation for a deploying organisation.
+  \item[What the adversary cannot see.] It matches on exact equality and nothing else. Shown a
+    population that is perfectly linkable with no equal field in it, it stays at chance. So the null
+    result means no field is \emph{identical} across verifiers, not that none is \emph{correlated}.
+    The one channel it can read is transcript length, which carried the entire above-chance residue
+    in that control; nothing in a bounded Polaris presentation varies in size per holder today, and a
+    deployment where disclosed attribute sets or optional elements made it vary would open it.
+    Presentation size, timing, issuer metadata, status artifacts and transcript structure are
+    unmeasured, and the lab says so rather than extrapolating.
+\end{description}
+
+The path a stranger's wallet actually used cuts the other way. An SD-JWT VC presentation over
+OpenID4VP, measured the same way, leaves nine values identical across two verifiers, the holder's
+key, the issuer's signature, the disclosure digests, the hash of the presentation and its length,
+all issuer-signed so the holder cannot vary them. That is a known property of presenting one such
+credential repeatedly; the ecosystem's mitigation is batch issuance, many credentials with one holder
+key each, which the repository does not implement. Adopting the ecosystem's format imported the
+ecosystem's linkability; it was not visible before it was measured, and it is not a reason to stop
+interoperating. So cross-verifier correlation is bounded on the native zero-knowledge path,
+measured within the limits above, and exposed on the interoperable one. \emph{Unlinkable by
+default} still means the issuer's zero-knowledge-mode records. \sImpl{} for the derivations and the
+measurement, with the residue stated rather than closed.
+
+\subsection{Bounded surfaces}
+
+The remaining privacy mechanisms bound what a surface can return rather than what is stored. Every
+map and API aggregate is hard-capped (C8), so the whole population cannot be extracted through the
+operator's atlas, and a request for six and a half million cluster bins returns at most five
+thousand. The single-entity investigation pages are built to refuse cross-individual link analysis
+and are audited: a meta-audit table records who read which audit surface, with what filter, and how
+many rows came back, and it is append-only. The authority's most invasive power, pulling one named
+person's whole verification history under a warrant, left no record of its own use for as long as it
+existed, because the read sat behind a stored procedure and nothing looking for a \code{SELECT}
+found it; since \code{v9.382} it writes the same row, and a structural rule extends that to any read
+hidden behind a procedure or a view. The authority-structure layer, Athena, is forbidden by five
+checks from referencing any natural-person table or column (Section~\ref{sec:cognition}). And
+timestamps, the timestamp authority and the exchange gateway are built to learn nothing about what
+they touch, which Section~\ref{sec:institutions} describes. \sImpl
+
+\begin{layercard}{Layer card: the privacy boundary}
+\qa{What it is}{Three disclosure levels with a CHECK behind the default; server-side enforcement; the redaction proof and its adversary; the epoch membership proof, its nullifier and its second witness; the per-verifier handle; bounded aggregates; an audited single-entity investigation surface.}
+\qa{Why it exists}{A verification log is a surveillance backbone unless it is structurally unable to be one.}
+\qa{What it trusts}{The C2 constraint; the proof library's soundness; the redaction proof's adversary model, and the linkability adversary's stated blind spots.}
+\qa{What it refuses}{A client's claim about its own disclosure level; a token identifier on a zero-knowledge row; an unbounded read; a person node in the authority layer; a verdict of \code{bounded} over a transcript with any field identical across verifiers.}
+\qa{What it can see}{At zero knowledge: that a valid token was verified at a time in a context. At full: the identity, logged.}
+\qa{What it cannot see}{Which token, in zero-knowledge mode, even from the whole database; and the size of the crowd a given proof hides in, which no verdict reports.}
+\qa{If it fails}{An identifier on a zero-knowledge row is unstorable; a cap removed fails the build; a person reference in Athena fails five checks; an adversary weakened to flatter the result fails the property suite's own control. Cross-verifier correlation on a plain presentation is not a failure; it is the documented boundary.}
+\qa{Checked by}{The C2 CHECK and the C2 model, \code{check\_c6\_atlas\_redacts\_zk\_location}, the redaction property suite, \code{check\_redaction\_adversary\_is\_not\_flattered}, \code{check\_pairwise\_presentation}, \code{check\_scoped\_nullifier}, \code{check\_audited\_reads\_are\_logged}, the ZK second-witness differential, \code{check\_athena\_no\_person}.}
+\qa{Now or later}{Now. Linkability-resistant presentation for the interoperable path, and a crowd-size floor, are a different system and later.}
+\qa{Inside and outside}{Inside: status. Outside: the holders and relying parties who use the credential.}
+\end{layercard}
+
+\nextlayer{A credential bounded in what it reveals still has to be used: held, presented, accepted
+and logged in with. The next layer is where the credential meets software that is not the issuer's,
+and where, for the first time, that software was not the author's either.}

@@ -1,0 +1,35 @@
+% v3-figures/outside-witnesses.tex: the three things outside the repository that
+% have exercised it, and the two controls that make the first one mean anything.
+% Three columns of equal width, nothing beside an arrow, notes below the chains,
+% so the adjustbox scaling keeps every label readable.
+\begin{tikzpicture}[
+  col/.style={minimum width=5.4cm, text width=5.0cm, minimum height=0.95cm},
+]
+  % --- column 1: the wallet
+  \node[kicker, anchor=west] at (-2.7,3.95) {a wallet nobody here wrote};
+  \node[extbox, col] (wal) at (0,2.9) {walt.id Wallet API v2\\[-1pt]{\scriptsize unmodified, at a pinned image digest}};
+  \node[corebox, col] (oid) at (0,1.1) {polaris-oid4vp\\[-1pt]{\mdseries\scriptsize OpenID4VP 1.0 + HAIP verifier}};
+  \node[softbox, col] (acc) at (0,-0.7) {\code{200 authentic}, six claims\\[-1pt]{\scriptsize SD-JWT VC, key binding signed by a key the wallet generated}};
+  \node[softbox, col, draw=classmark] (c1) at (0,-2.5) {control: a different issuer key\\[-1pt]{\scriptsize \code{400 refused: issuer\_signature}}};
+  \node[softbox, col, draw=classmark] (c2) at (0,-4.3) {control: presented twice\\[-1pt]{\scriptsize refused at the request stage}};
+  \draw[flow] (wal) -- (oid); \draw[flow] (oid) -- (acc); \draw[refuse] (acc) -- (c1); \draw[refuse] (c1) -- (c2);
+  \node[faint, text width=5.2cm, anchor=north] at (0,-5.1) {it refused Polaris first: a request-signing certificate with no \code{digitalSignature} key usage};
+  % --- column 2: the hosted suite
+  \node[kicker, anchor=west] at (3.6,3.95) {a service somebody else runs};
+  \node[extbox, col] (oidf) at (6.3,2.9) {OpenID Foundation hosted conformance suite\\[-1pt]{\scriptsize across the open internet, 15 September 2026}};
+  \node[corebox, col] (oid2) at (6.3,1.1) {polaris-oid4vp\\[-1pt]{\mdseries\scriptsize eleven modules of the HAIP verifier plan}};
+  \node[softbox, col] (pass) at (6.3,-0.7) {seven negative modules \code{PASSED}\\[-1pt]{\scriptsize scored by the service on each refusal}};
+  \node[softbox, col, draw=gold] (rev) at (6.3,-2.5) {four positive modules \code{REVIEW}\\[-1pt]{\scriptsize screenshots attached; awaiting a Foundation reviewer}};
+  \node[futbox, col] (cert) at (6.3,-4.3) {certification\\[-1pt]{\scriptsize not requested; REVIEW is not PASSED}};
+  \draw[flow] (oidf) -- (oid2); \draw[flow] (oid2) -- (pass); \draw[flow] (pass) -- (rev); \draw[flowfut] (rev) -- (cert);
+  \node[faint, text width=5.2cm, anchor=north] at (6.3,-5.1) {zero failures, zero warnings; two controls, one per direction};
+  % --- column 3: the corpus
+  \node[kicker, anchor=west] at (9.9,3.95) {a corpus somebody else wrote};
+  \node[extbox, col] (wy) at (12.6,2.9) {Project Wycheproof\\[-1pt]{\scriptsize ML-DSA-65 verification vectors, pinned commit}};
+  \node[layerbox, col] (wit) at (12.6,1.1) {both signature witnesses\\[-1pt]{\mdseries\scriptsize liboqs and OpenSSL, on every push}};
+  \node[softbox, col] (agree) at (12.6,-0.7) {58 of 58 agree\\[-1pt]{\scriptsize accepting an invalid vector is a failure}};
+  \draw[flow] (wy) -- (wit); \draw[flow] (wit) -- (agree);
+  \node[faint, text width=5.2cm, anchor=north] at (12.6,-1.5) {the primitive, not the protocol: no presentation was exchanged with anybody};
+  % --- the line under all three
+  \node[faint, text width=17.5cm, anchor=north] at (6.3,-6.3) {none of the three is an audit, a certification, a pilot or an operator; the scoreboard holds each row with its date and with what it does not establish};
+\end{tikzpicture}

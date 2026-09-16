@@ -1,0 +1,110 @@
+% 09-use.tex: holders, relying parties, the broker, and the stranger's path.
+\section{Using the credential: holders, relying parties and the login that keeps no record}
+\label{sec:use}
+
+\subsection{The wallet is a protocol, not a product}
+
+The reference holder agent, \code{scripts/polaris-wallet.py}, holds a credential as a file, shows
+it, verifies it offline through the detached verifier, presents it, proves membership in zero
+knowledge against a published epoch, signs a document on the holder's behalf, delegates a bounded
+authority to an agent (Section~\ref{sec:agents}) and logs in to a relying party. Every message it
+emits is specified so that any client can emit the same. Native mobile and desktop clients and a
+browser bridge are product engineering that a reference implementation on notional data does not
+attempt; they would follow the protocol, and never lead it. The physical presentation path, a card
+that signs a device's challenge, is the emulator and verifier device of Section~\ref{sec:core}.
+\sImpl{} for the protocol and the reference script; \sFut{} for native clients.
+
+A presentation is an unsigned wrapper around signed things: the issuer-signed credential, an
+optional stapled status assertion so that authorization is decidable with no connectivity, an
+optional membership proof, an optional holder signature over the verifier's nonce, the context and
+disclosure level presented under, and an opaque presentation code. The verifier decides it offline
+and reports the code as present or absent without ever interpreting it, because a duress code is
+matched only by the issuer, out of sight; a duress presentation is byte-for-byte the same shape as a
+normal one. For transfer by QR or NFC the presentation is compressed and split into frames that each
+name the digest of the whole; a receiver takes them in any order and refuses, before parsing
+anything, frames naming different digests, a missing index, a conflicting duplicate, or a
+reassembled payload whose digest does not match. The decoder is resource-bounded: at most 9,999
+frames, 512~KiB compressed and 2~MiB inflated, so a decompression bomb is refused at the limit rather
+than decompressed. The bounds were added after an outside review named the gap. \sImpl
+
+\subsection{The relying party}
+
+The reference relying party (\code{scripts/polaris-relying-party.py}) decides accept or reject for a
+presentation by combining offline authenticity with online status, refusing a revoked, tampered or
+foreign-issuer credential and staying blind to duress, and an end-to-end drill runs the whole
+wallet-to-relying-party matrix under real signatures every release. A relying party registers with
+an issuer as an organisation with a scope that a schema constraint bounds to exactly \code{verify},
+\code{authenticate}, or both, so that a fourth kind of access is a constitutional change rather than
+a configuration one. Identity never becomes a login product by accident. Since \code{v9.425} a
+relying party is also an object about which decisions are recorded: registering one, turning off the
+zero-knowledge step-up its holders had to satisfy, disabling or re-enabling it, each writes an
+append-only event, a change that weakens what the party must satisfy is flagged as such and refused
+without a stated reason, and a change made from a database shell is recorded on the same terms as
+one made through the tool, because the writer is a trigger and not the tool. The first version of
+the rule that decides what counts as a weakening ranked a capability by the length of its name, so
+granting a capability the party did not hold read as harmless; it was found by running it against a
+loaded database, not by reading it. \sImpl
+
+\subsection{Logging in without a login record}
+
+The auth broker lets a relying party offer \emph{log in with a Polaris credential} through an
+authorization code with PKCE. The holder presents the credential at its issuing authority's
+instance by possession, and the relying party exchanges the resulting code for an identity token
+signed by the issuing agency, which it verifies offline. Four guards keep this from becoming a login
+record. The token's subject is the per-relying-party handle of Section~\ref{sec:privacy}, never a
+person identifier and, since \code{v9.353}, not the same value at every relying party. The token
+carries no claim beyond the vocabulary: context, disclosure level, the assurance reached, enrolment
+status, instants. The authorize route writes nothing, and the token endpoint's only write is the
+code's hash into a register that holds no subject and no relying party. And duress is served
+identically. \sImpl
+
+An outside review at \code{v9.331} found that the relying party's demands, a required
+zero-knowledge step-up or a required enrolment status, arrived only in the holder-side request, so
+nothing bound the authority to what the relying party actually required. Since \code{v9.336} the
+policy is registered on the relying party's row and applied first: a request may add a requirement
+and never remove one, and a context other than the registered one is refused. The same review noted
+that the authorization code was signed but readable; it is now encrypted. And the conformance
+contract was later found to verify an identity token's signature and never its audience or nonce, so
+a verifier that ignored both, and therefore accepted a token minted for one relying party at another,
+passed every case; four cases fixed it. \sImpl
+
+\subsection{The stranger's path}
+
+Version 2 could tell a reader how to run Polaris from a clone. Version 3 can tell a reader how to
+reach one accepted presentation from software nobody here wrote, on a clean machine, in about ten
+minutes, without cloning the repository: install \code{polaris-oid4vp} from the registry, start the
+published wallet image at its pinned digest, generate the verifier's keys, give the wallet a
+credential bound to a key it generated itself, run the verifier, present. The page that says how was
+executed from an empty directory before it was written down, which caught its own defect on the way
+(a buffered pipe that left the verifier's log empty), and it ends with the line that matters:
+\code{<- 200 authentic, claims ['cnf', 'family\_name', 'given\_name', 'iat', 'iss', 'vct']}. If it
+fails for a reader, the page says, that is the most useful bug the project can receive. Nobody
+outside the repository has yet reported walking it. \sImpl{} for the path; \sExt{} for a walker
+who is not the author.
+
+\subsection{What is deliberately not built}
+
+There is no session at the authority, no consent screen, no discovery document, and no browser
+redirect choreography: a relying party integrates from the wire specification and the registry. A
+WebAuthn browser bridge is not built; the holder-side key it would rest on now exists. No relying
+party outside the repository has integrated against the native protocol. One outside wallet has
+presented over OpenID4VP, and no outside relying party has yet run the verifier that accepted it.
+\sExt
+
+\begin{layercard}{Layer card: use}
+\qa{What it is}{The wallet protocol and reference script, presentations and QR framing, the reference relying party, relying-party registration with a bounded scope and a recorded history, the auth broker, and the stranger's path to an accepted presentation from an outside wallet.}
+\qa{Why it exists}{A credential nobody can hold, present or accept is a database row. This layer is where the credential meets software the issuer does not run.}
+\qa{What it trusts}{The signed objects inside a presentation; the issuer's key for the identity token; the relying party's registered policy.}
+\qa{What it refuses}{To interpret the presentation code; to write a login record; to accept a scope outside the CHECK; to let a holder's request weaken the relying party's registered demand; to lower a relying party's bar without a reason on record; to decompress an unbounded payload.}
+\qa{What it can see}{A relying party sees the credential value and the verdicts, or on the zero-knowledge path a proof and a scoped handle. The authority sees a possession proof and consumes a code hash.}
+\qa{What it cannot see}{The authority cannot see who logged in where; the relying party cannot see the person's record.}
+\qa{If it fails}{A replayed code hits the consumed register; a wrong presentation, an unmet step-up, a verify-only bearer at the broker, a stale or tampered frame are each refused in the drills; a weakened relying-party bar with no reason is refused by the database.}
+\qa{Checked by}{\code{check\_holder\_wallet}, \code{check\_wallet\_presentation}, \code{check\_holder\_verifier\_flow}, \code{check\_auth\_broker}, \code{check\_broker\_policy\_bound}, \code{check\_relying\_party\_api}, \code{check\_qr\_resource\_bounds}, \code{check\_documented\_verifier\_commands\_run}.}
+\qa{Now or later}{Now, as a protocol, and now for one outside wallet on one path. Native clients and an outside relying party are later.}
+\qa{Inside and outside}{Inside: the privacy boundary. Outside: federation, because a relying party rarely trusts only one authority.}
+\end{layercard}
+
+\nextlayer{A relying party that trusts one authority is easy. A society has many authorities, none
+of which should be able to speak for the others, and none of which should hold every person's
+record. The next layer is how independent authorities recognise one another without collapsing into
+one.}

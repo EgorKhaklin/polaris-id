@@ -1,0 +1,128 @@
+% 07-authorization.tex: verification is not authorization.
+\section{Verification is not authorization: status, revocation and the offline trade}
+\label{sec:authorization}
+
+\subsection{Two results, never one}
+
+The whole product is visible in one object. A relying party asks the issuer about a credential and
+receives, for a revoked token:
+
+\Needspace{9\baselineskip}
+\begin{lstlisting}
+POST /api/v1/verify  ->  {
+  "authentic": true,                 // the ML-DSA signature is genuine
+  "currently_authoritative": false,  // but this token has been revoked
+  "status": "REVOKED",
+  "usable": false,                   // authentic AND authoritative -> false
+  "decision": "reject"
+}
+\end{lstlisting}
+
+Authenticity is permanent and cacheable. Authorization is fresh and revocable. A relying party needs
+both, and the API refuses to collapse them into one flag, because a signature stays genuine forever
+while the authority under it can be withdrawn at any moment. \sImpl
+
+The relying-party endpoint authenticates the caller as an organisation, not a person, by an OAuth2
+client-credentials grant; it accepts a possession proof rather than a sequential identifier, so it
+cannot be used to enumerate tokens; it returns a uniform verdict on a mismatch, so it is not an
+existence oracle; and it keeps no record of who verified whom. \sImpl
+
+\subsection{Fresh state, not a stale replica}
+
+The verify endpoint is routed to a read replica for throughput, and the repository's history
+records the mistake that split the two results permanently. Authenticity is a property of immutable
+material, the signed value, the signature bytes and the stored key, so a lagging replica can neither
+forge it nor deny it. Whether the token is usable \emph{now} is a current-authorization question, and
+a revocation lands on the primary; a replica inside its staleness window could still show a
+just-revoked token as active. Since \code{v9.264} the status that decides \code{usable} is pinned to
+the primary, the response names its source and carries \code{as\_of} and a zero staleness bound, and
+a caller may cache authenticity and must re-read authorization. \sImpl
+
+\subsection{Revocation}
+
+Revocation is a status transition through one sanctioned procedure that also writes to
+\entity{RevocationList} in the same transaction, so the verifier-facing list can never diverge from
+the token's state, and a trigger refuses any other path into \code{REVOKED}. The list carries a
+canonical reason vocabulary; the audit trail carries the procedural detail and the co-signer when
+the issuer-discretion ceiling required one. Revocation looks forward: events recorded while a
+credential was valid are not invalidated, because history is not rewritten. \sImpl
+
+\subsection{Authorization with the network off}
+
+An offline verifier cannot ask the issuer. Polaris answers with a short-lived signed status
+assertion: the issuer's signature, under the same key that signed the credential, over the token's
+current status and a window. The holder fetches it by presenting the genuine credential, with no
+bearer and no personal data, and staples it to a presentation. A verifier accepts offline only if
+the credential is authentic, the assertion is authentic, bound to this credential, fresh on the
+verifier's own clock, no wider than the window the verifier will accept, and \code{ACTIVE}. The rule
+that a verifier never accepts a credential more than one window after its revocation, and that the
+window is the one the verifier set rather than the one the issuer minted, is now a formal model
+checked on every push with a configuration it must fail. \sImpl
+
+The cost is stated as plainly as the benefit. Because verification touches no issuer, the issuer
+never learns it happened: offline is more private than online. And because it touches no issuer, a
+revoked credential's last assertion stays valid until it expires. Issuer non-observation, offline
+availability and revocation freshness cannot all be maximised at once; a deployment picks two, and
+the window is a policy number, not a law. One consequence is recorded on the scoreboard as a known
+limitation rather than fixed: the issuer mints a one-hour window, the reference verifier's own
+default bound is unset, and the ceiling the artifact itself carries is not read by the assertion
+check, so the maximum offline lifetime of a status rests partly on the relying party's configuration.
+A relying party that needs seconds sets seconds or goes online.
+
+\figfile{offline-status}{The offline trade, drawn as a timeline. The issuer signs a status
+assertion with a window; the holder staples it; a relying party verifying offline inside the window
+accepts. If the issuer revokes the credential inside the window, the last \code{ACTIVE} assertion
+stays valid until it expires, and an offline verifier cannot know. The window is bounded by the
+issuer's time-to-live (an hour by default) and by the \code{max\_window} the verifier imposes; a
+high-risk relying party demands seconds or goes online.}{fig:offline-status}
+
+\subsection{Status across authorities, and through networks that are not trusted}
+
+Two more signed objects carry status between authorities without a callback the issuer could log.
+An epoch checkpoint is an authority's commitment to the latest point on its epoch chain, the epoch
+number, its Merkle root and the prior epoch it extends; two checkpoints prove monotonicity, and two
+different roots signed at one epoch number are cryptographic proof that the authority equivocated
+about its own history. A revocation feed is the sorted set of revoked-credential leaves, each the
+SHA3-256 of a token value, derivable only by the holder; a newer feed that drops a published
+revocation is a caught rollback, because the underlying table is append-only. At federation scale an
+aggregator mirrors many authorities' feeds and checkpoints, verbatim and still under each member's
+own signature, into one short-lived bundle. The aggregator is untrusted for correctness: in full
+control of the bundle, recomputing the commitment and re-signing the envelope, it still cannot forge
+a member's status, because it cannot sign as the member. The bundle adds availability, not trust.
+\sImpl
+
+Signing a status artifact is also what lets an untrusted cache carry it, and a cache introduces the
+one failure signing does not prevent, which is time. Since \code{v9.358} a cache directive is never a
+constant: every windowed artifact's \code{max-age} is its own remaining life, computed from the
+\code{expires\_at} the issuer signed, so a cache cannot outlive the window the issuer committed to;
+every artifact that names one credential is \code{no-store}, because a shared cache holding one
+would serve one holder's credential to another; and an expired or unparseable window is not cached at
+all. Distribution at content-delivery scale is thereby specified and drilled; no deployment has it.
+\sImpl{} for the artifacts, drills and cache rules; \sFut{} for a distribution deployment.
+
+The epoch cadence is the single number that sets three unrelated properties, and a design record now
+says which: revocation freshness, since a revoked credential drops out of the \emph{next} epoch; the
+size of the crowd, since the anonymity set is the epoch; and how often a relying party's
+one-human-once ledger resets. Closing an epoch was once the expensive part, and it was expensive for
+a bad reason: a fixed-depth tree padded to the national depth of 24 materialised sixteen million
+leaves whatever the population was, so a root over a thousand members took 10.8 seconds and
+2.9~GB. Since \code{v9.357} the padding is one repeated value hashed once per level, and a root over a
+million members takes 2.1 seconds in tens of megabytes; the binding constraint on cadence is the
+anonymity floor per context, not the compute. \sImpl
+
+\begin{layercard}{Layer card: verification and status}
+\qa{What it is}{The relying-party verify endpoint, the revocation list, the signed status assertion, epoch checkpoints, revocation feeds, the aggregate status bundle, and the cache rules that let an untrusted network carry them.}
+\qa{Why it exists}{Authenticity is not authorization. A verifier needs to know not only that a claim was made but that it still stands, and sometimes needs to know it with the network off.}
+\qa{What it trusts}{The issuer's signing key, for the assertion; its own clock, for freshness; the primary database, for the online verdict.}
+\qa{What it refuses}{A replica's opinion of current status; an assertion wider than the verifier's ceiling; an aggregator's word for a member's status; a feed not bound to the issuer's key; a cache entry that would outlive the window the issuer signed.}
+\qa{What it can see}{The status of one credential at one instant; the set of revoked leaves.}
+\qa{What it cannot see}{A revocation that happened after the assertion it holds was signed; the active population, which no feed publishes.}
+\qa{If it fails}{A stale verdict is bounded by the window, and the bound is the verifier's; a forked epoch chain or a rolled-back feed is non-repudiable evidence against the authority; a lying aggregator is caught at the member's signature.}
+\qa{Checked by}{\code{check\_relying\_party\_api}, \code{check\_offline\_verification}, \code{check\_epoch\_revocation\_propagation}, \code{check\_federation\_status\_bundle}, \code{check\_status\_distribution}, the status-freshness model, the verify-load drills under failover.}
+\qa{Now or later}{Now, for the artifacts and the rules. Distribution at national scale is later.}
+\qa{Inside and outside}{Inside: the verifiers. Outside: the privacy boundary, which decides what a verifier may learn while it checks.}
+\end{layercard}
+
+\nextlayer{Status proves current authority, but proving it can reveal far more than the verifier
+needed, and every verification is a fact about a person's day. The next layer bounds what anyone
+learns, and this version reports what was measured about that bound rather than what was intended.}

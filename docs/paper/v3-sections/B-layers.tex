@@ -1,0 +1,52 @@
+% B-layers.tex: the metacognitive map.
+\section{The metacognitive map}
+\label{app:layers}
+
+The ladder below is the paper's answer to the request for an explicit map of Polaris as layers of
+knowledge and scepticism. Each rung states what the layer knows and what it refuses to take on faith
+from the rung below. The layers are not exactly the rings of Figure~\ref{fig:core-to-shell}, because
+some rings hold two kinds of knowledge; the rungs follow the implementation. Version 3 adds a rung at
+the top, for the knowledge the tree cannot check about itself.
+
+% Placed exactly here rather than floated: as a float it drifted past Appendix C's long table
+% and landed in the glossary.
+\begin{figure}[H]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.72\textheight,center}{\input{v3-figures/layer-ladder}}%
+  \caption{The ladder. From the person, who exists outside the software, to the
+software of strangers, who exist outside it too. The right-hand column is the refusal each layer
+makes of the layer below it; the last rung's refusal is the operating contract's, and nothing in
+the tree can discharge it.}\label{fig:layer-ladder}\end{figure}
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\bfseries}p{0.5in} >{\RaggedRight\arraybackslash}p{1.55in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{1.15in}}
+\caption{The layers, what checks each, and whether each is needed now or is preparation.}\label{tab:layers}\\
+\toprule
+\rowcolor{tabheader}\thead{Layer} & \thead{Name} & \thead{Checked by} & \thead{Now or later} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{Layer} & \thead{Name} & \thead{Checked by} & \thead{Now or later} \\
+\midrule
+\endhead
+\midrule\multicolumn{4}{r}{\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+L0 & Human subject & Nothing in the software; the enrolment tiers keep non-enrolment a named state and the referee keeps the undocumented enrollable & Now \\
+L1 & Credential core & C3, the signature triggers, the lifecycle trigger, the C3 model & Now \\
+L2 & Structural constraints & The audit-of-record and cascade checks, the CHECK-constraint suite, and the drills that mutate all three mechanisms & Now \\
+L3 & Cryptographic evidence & The two-witness checks, the canonical oracle, the attack suite, the migration drill, one outside corpus & Now \\
+L4 & Verification and status & The detached-verifier, conformance, offline-verification and status checks; the boundary drill; the SDK mutation drill & Now \\
+L5 & Privacy and disclosure & The C2 CHECK and model, the redaction suite and its adversary, the linkability adversary, the Athena person checks & Now \\
+L6 & Federation & The topology, manifest, feed, isolation and two-instance checks & Now as protocol; later as institutions \\
+L7 & Transparency & The log, gossip, publication and report checks & Now as protocol; later as independent witnesses \\
+L8 & Institutional services & The registry, gateway, receipt, timestamp and signing checks & Now between instances \\
+L9 & Operations & The HA, region, replica, partition, DR, chaos, capacity and hardening checks; the wind-down drill & Now on drills; later on production hardware \\
+L10 & System cognition & The Atlas caps and growth grading, the five Athena checks & Atlas and Athena now; Metis, Myrmex later \\
+L11 & Societal boundary & C10's structural absence, the non-goals, the vocation, the claim-discipline checks & Now, and permanent \\
+L12 & Agent and web environment & The grant, nullifier and holder-key checks; the residue is a stable handle on any presentation that is not zero-knowledge & Now, with the residue named \\
+L13 & Other people's software & Nothing in the tree. The scoreboard records what a named outside party did, on a date, and refuses anything the author ran against the author's own code & One wallet, one hosted suite, one corpus now; everything else later, and not ours to supply \\
+\end{xltabular}
+}
