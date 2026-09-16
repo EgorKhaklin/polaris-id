@@ -68,9 +68,12 @@ this is correct because the browser places the tag in the DOM (readable
 via `getElementById`) but never executes it (`type` is `application/json`,
 not JavaScript). No CSP violation.
 
-**`polaris_checks` scans templates** for inline event-handler
-attributes + executable `<script>` blocks (the C5 check). It allowlists
-`application/json`, `text/template`, and similar data-island MIME types.
+**What the check actually pins:** `check_csp_forbids_unsafe_inline` reads
+`polaris_web/security.py` and fails if `script-src 'self'` is absent or if any
+directive carries `'unsafe-inline'` for scripts. It does NOT scan the templates,
+so a stray inline handler in a template is caught at runtime by the browser's CSP
+and by the app's response tests, not by the check layer. Keep inline JavaScript
+out of templates on that basis, not on the belief that a check will catch it.
 
 **If you need inline JS for any reason: don't.** Add a new
 `static/*.js` file and load it via `<script src="..." defer></script>`.

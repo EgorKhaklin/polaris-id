@@ -16,7 +16,7 @@ deployment has the native library installed.
 
     1. Install native liboqs (apt-get install liboqs-dev or build from
        https://github.com/open-quantum-safe/liboqs)
-    2. pip install oqs (or pip install liboqs-python)
+    2. pip install liboqs-python
     3. Verify: python3 -c "import polaris_web.pqc_signing as p; print(p.availability_report())"
     4. Set POLARIS_USE_REAL_PQC=1 in production env
     5. This makes the `uc1_issue` route store real ML-DSA-65 signatures in
