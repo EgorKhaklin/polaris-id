@@ -19,7 +19,7 @@ polaris/
 │
 ├── README.md                     ← the front page
 ├── MISSION.md                    ← the constitution (C1-C10 and the vocation)
-├── ROADMAP.md                    ← the build plan, P0 to P8
+├── ROADMAP.md                    ← the inventory of what is built and the map of what would have to happen, P0 to P9, under docs/OPERATING-CONTRACT.md
 ├── CHANGELOG.md                  ← every ship, never edited retroactively
 ├── CLAUDE.md                     ← the developer and agent runbook
 ├── CONTRIBUTING.md / SECURITY.md ← contributor guide; vulnerability disclosure
@@ -47,24 +47,26 @@ polaris/
 ├── polaris_checks/     ← the flat invariant layer that gates CI (README.md indexes it)
 ├── polaris_sim/        ← the national simulation and benchmark harness (a synthetic USA through the real pipeline)
 ├── polaris_card/       ← the physical token: the card profile as a normative encoding, its dependency-free reference codec, the software token emulator (ISO 7816-4 APDUs), and the published vectors an applet and a reader are written against
-├── packages/           ← the PRODUCT artifacts, versioned independently of the tree
-│   └── polaris-verify/ ← the primary external door: `pip install polaris-verify`, a console command that
-│                         refuses to start until the run declares --pqc-provider or --dev-placeholder.
-│                         Canonical home of the detached verifier; scripts/polaris-verify.py is a shim onto it
+├── packages/           ← the PRODUCT artifacts, versioned independently of the tree (1.0.0-rc.1 on the registries)
+│   ├── polaris-verify/ ← the primary external door: `pip install polaris-verify`, a console command that
+│   │                     refuses to start until the run declares --pqc-provider or --dev-placeholder.
+│   │                     Canonical home of the detached verifier; scripts/polaris-verify.py is a shim onto it
+│   └── polaris-oid4vp/ ← the OpenID4VP 1.0 verifier under HAIP for wallets Polaris has never met: the package
+│                         the walt.id wallet presented to and the hosted conformance suite ran against
 ├── lab/                ← research that falsifies Polaris's own claims, and EXTERNAL-NOUNS.md, the scoreboard
 │                         of what has happened OUTSIDE this repository (zeros are valid entries)
-├── sdk/                ← the verify SDKs a relying party installs: python/ (the reference) and typescript/
-├── conformance/        ← the verification conformance suite: cases.json, vectors/, the frozen version-1 set (frozen/v1/)
-├── vectors/            ← the published authenticity vectors (real ML-DSA-65 packs, made by an independent implementation)
-├── attacks/            ← the attack suite: every attack must fail to break its defense
+├── sdk/                ← the verify SDKs a relying party installs: python/ (polaris-sdk-python, the reference) and typescript/ (polaris-sdk-ts); offline authenticity plus the OAuth2 /api/v1 online check, both held to conformance/
+├── conformance/        ← the verification conformance suite: SPEC.md, cases.json, a language-agnostic runner, vectors/, the frozen version-1 set (frozen/v1/); passing it is the integration contract
+├── vectors/            ← the published authenticity vectors: real ML-DSA-65 packs, made by an independent implementation, that a relying party re-verifies offline with polaris-verify (README.md explains the format)
+├── attacks/            ← adversaries that MUST fail (forge, tamper, revoked-token); run_attacks.py runs every release and goes red if any SUCCEEDS
 │
 ├── deploy/             ← the three substrates, with README.md naming each one's limit
 │   ├── helm/polaris/   ← the Kubernetes reference profile (plus kind-config.yaml for CI)
 │   ├── linux/          ← install.sh and the systemd units and timers
 │   └── observability/  ← Prometheus, Alertmanager, alert rules and their tests, Grafana dashboards, Tempo
 ├── docs/
-│   ├── ARCHITECTURE-OVERVIEW.md, PRODUCTION-READINESS.md, RED-TEAM-SCOPE.md, THESIS.md, SEED_DATA.md, CONVENTIONS.md
-│   ├── operator/       ← the runbooks (nineteen documents and an index)
+│   ├── OPERATING-CONTRACT.md, PRODUCTION-READINESS.md, ARCHITECTURE-OVERVIEW.md, REVIEW-PACKET.md, RED-TEAM-SCOPE.md, THESIS.md, SEED_DATA.md, STRANGER-PATH.md, RELEASING.md, CONVENTIONS.md
+│   ├── operator/       ← the runbooks and ledgers (twenty documents and an index)
 │   ├── reference/      ← this directory
 │   ├── design/         ← why it is built this way: the threat model, the mechanisms, the substrate
 │   ├── history/        ← the changelog archive: entries older than the root CHANGELOG keeps, by major
@@ -72,13 +74,9 @@ polaris/
 ├── DEVNOTES/           ← the contributor's working notes: gotchas, house style, the project record
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
-├── vectors/            ← published authenticity packs a relying party re-verifies offline with scripts/polaris-verify.py (README.md explains the format)
-├── attacks/            ← adversaries that MUST fail (forge, tamper, revoked-token); run_attacks.py runs every release and goes red if any SUCCEEDS
-├── sdk/                ← server-side verify SDKs a relying party installs; sdk/python and sdk/typescript are the reference verify SDKs (offline authenticity + the OAuth2 /api/v1 online check), both held to conformance/ (P3.5)
-├── conformance/        ← the verification conformance suite: the published cases + a language-agnostic runner (SPEC.md); passing it is the integration contract
 ├── site/               ← the published project page (GitHub Pages), its logo and the Atlas captures
 │
-├── .github/workflows/  ← ci.yml (20 jobs), dr-drill.yml (monthly), chaos.yml (weekly), sbom.yml (per release), pages.yml (the site)
+├── .github/workflows/  ← ci.yml (20 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ```
 
@@ -106,7 +104,7 @@ polaris/
 - `cve-scan`: dependency CVE audit (pip-audit) plus SAST (bandit).
 - `image-cve-scan`: Trivy scan of the self-built prod images; gates on fixable CRITICALs.
 - `prod-stack-boot`: boots the full prod compose end to end and asserts `/api/health` serves through the TLS edge.
-- `ui-drill`: drives the Atlas live-simulation mode in a headless Chromium (Playwright) and asserts the console actually streams — the sim counter climbs and the Overview aggregate grows — uploading the screenshots.
+- `ui-drill`: drives the Atlas live-simulation mode in a headless Chromium (Playwright) and asserts the console actually streams: the sim counter climbs and the Overview aggregate grows: uploading the screenshots.
 
 `dr-drill.yml` runs the same drill monthly and commits the measured row to
 [`docs/operator/DR-DRILLS.md`](../operator/DR-DRILLS.md). `chaos.yml` boots the
@@ -124,7 +122,7 @@ publishes `site/`.
 
 | Directory | What |
 |---|---|
-| [`polaris_sql/`](../../polaris_sql/) | The schema (45 tables, 51 in a migrated deployment), procedures, triggers, atlas functions, migrations. The security boundary. |
+| [`polaris_sql/`](../../polaris_sql/) | The schema (45 tables, 52 in a migrated deployment), procedures, triggers, atlas functions, migrations. The security boundary. |
 | [`polaris_web/`](../../polaris_web/) | The Flask application: every route, the security layer, WebAuthn, custody and signing, tracing, the Atlas. |
 | [`polaris_zk/`](../../polaris_zk/) | The Plonky2 Merkle-inclusion prover and verifier in Rust, and `witness2/`, the independent Python re-derivation. |
 | [`polaris_cli/`](../../polaris_cli/) | The operator CLI: the same operations without a browser. |
@@ -158,9 +156,9 @@ The authority layer's institutional protocol, built on the product and verified 
 
 | Directory | What |
 |---|---|
-| [`docs/operator/`](../operator/README.md) | INSTALL, DEPLOYMENT, LINUX-SERVER, KUBERNETES, HARDENING, OPERATIONS, SECRETS, KEY-CEREMONY, SECURITY, PRIVACY, DR, DR-DRILLS (ledger), CHAOS-DRILLS (ledger), FAILOVER, ENCRYPTION-AT-REST, SLOS, RUNBOOKS, WEBAUTHN-ROLLOUT |
+| [`docs/operator/`](../operator/README.md) | INSTALL, DEPLOYMENT, LINUX-SERVER, KUBERNETES, HARDENING, OPERATIONS, SECRETS, KEY-CEREMONY, SECURITY-CONTROLS, PRIVACY, DR, DR-DRILLS (ledger), CHAOS-DRILLS (ledger), FAILOVER, ENCRYPTION-AT-REST, SLOS, RUNBOOKS, PILOT, QUANTUM-EVENT, WEBAUTHN-ROLLOUT |
 | [`docs/reference/`](README.md) | API, DATA-MODEL, WIRE-SPEC (the normative protocol), PQC-POSTURE, PERFORMANCE-BASELINE, SCALING, GLOSSARY, this map |
-| [`docs/`](../README.md) | ARCHITECTURE-OVERVIEW, PRODUCTION-READINESS (the bound on every claim), RED-TEAM-SCOPE, THESIS, SEED_DATA, CONVENTIONS |
+| [`docs/`](../README.md) | OPERATING-CONTRACT (what work may exist), PRODUCTION-READINESS (the bound on every claim), ARCHITECTURE-OVERVIEW, REVIEW-PACKET, RED-TEAM-SCOPE, THESIS, SEED_DATA, STRANGER-PATH, RELEASING, CONVENTIONS |
 | [`docs/paper/`](../paper/) | The academic report |
 | [`docs/history/`](../history/README.md) | The changelog archive, split by major version |
 | [`DEVNOTES/`](../../DEVNOTES/) | The contributor's working notes: the gotcha list, the house style, the project record, and the plan of the pass in progress. The design set moved to [`docs/design/`](../design/README.md) at v9.224. |
@@ -207,4 +205,4 @@ CHANGELOG.md                       every ship, never edited retroactively
 | A contributor, human or agent | [CLAUDE.md](../../CLAUDE.md), [MISSION.md](../../MISSION.md), then `python3 -m polaris_checks.run` |
 | An academic reviewer | [the report](../paper/README.md), then [THESIS.md](../THESIS.md) |
 
-Last regenerated: 2026-09-09 (v9.331).
+Last regenerated: 2026-09-16 (1.0.0-rc.1).
