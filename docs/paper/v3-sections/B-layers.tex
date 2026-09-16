@@ -6,16 +6,8 @@ The ladder below is the paper's answer to the request for an explicit map of Pol
 knowledge and scepticism. Each rung states what the layer knows and what it refuses to take on faith
 from the rung below. The layers are not exactly the rings of Figure~\ref{fig:core-to-shell}, because
 some rings hold two kinds of knowledge; the rungs follow the implementation. Version 3 adds a rung at
-the top, for the knowledge the tree cannot check about itself.
-
-% Placed exactly here rather than floated: as a float it drifted past Appendix C's long table
-% and landed in the glossary.
-\begin{figure}[H]\centering
-  \adjustbox{max width=\textwidth,max totalheight=0.72\textheight,center}{\input{v3-figures/layer-ladder}}%
-  \caption{The ladder. From the person, who exists outside the software, to the
-software of strangers, who exist outside it too. The right-hand column is the refusal each layer
-makes of the layer below it; the last rung's refusal is the operating contract's, and nothing in
-the tree can discharge it.}\label{fig:layer-ladder}\end{figure}
+the top, for the knowledge the tree cannot check about itself; Figure~\ref{fig:layer-ladder} draws the
+ladder after the table.
 
 {\footnotesize
 \setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
@@ -50,3 +42,12 @@ L12 & Agent and web environment & The grant, nullifier and holder-key checks; th
 L13 & Other people's software & Nothing in the tree. The scoreboard records what a named outside party did, on a date, and refuses anything the author ran against the author's own code & One wallet, one hosted suite, one corpus now; everything else later, and not ours to supply \\
 \end{xltabular}
 }
+
+% Placed after the table, not floated: as a bottom float it split the table after its first row,
+% and as a float before the table it drifted into the glossary.
+\begin{figure}[H]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.62\textheight,center}{\input{v3-figures/layer-ladder}}%
+  \caption{The ladder. From the person, who exists outside the software, to the
+software of strangers, who exist outside it too. The right-hand column is the refusal each layer
+makes of the layer below it; the last rung's refusal is the operating contract's, and nothing in
+the tree can discharge it.}\label{fig:layer-ladder}\end{figure}

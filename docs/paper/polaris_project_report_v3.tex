@@ -80,7 +80,7 @@
 \usepackage{colortbl}
 \usepackage{float}
 % Floats go to the top or bottom of a text page, never to a float page of their own.
-\renewcommand{\topfraction}{0.9}\renewcommand{\bottomfraction}{0.7}
+\renewcommand{\topfraction}{0.9}\renewcommand{\bottomfraction}{0.85}
 \renewcommand{\textfraction}{0.07}\renewcommand{\floatpagefraction}{0.85}
 \usepackage{ragged2e}
 \usepackage{enumitem}
@@ -91,9 +91,9 @@
 \usepackage{needspace}
 % A heading never sits alone at the foot of a page: require room for it and a few lines.
 \let\polarisSectionRaw\section
-\renewcommand{\section}{\Needspace{8\baselineskip}\polarisSectionRaw}
+\renewcommand{\section}{\Needspace{14\baselineskip}\polarisSectionRaw}
 \let\polarisSubsectionRaw\subsection
-\renewcommand{\subsection}{\Needspace{5\baselineskip}\polarisSubsectionRaw}
+\renewcommand{\subsection}{\Needspace{7\baselineskip}\polarisSubsectionRaw}
 \usepackage{adjustbox}
 
 % === LINE- AND PAGE-BREAKING QUALITY ===
@@ -109,6 +109,7 @@
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,calc,backgrounds,fit,shapes.geometric,shapes.misc,decorations.pathreplacing}
 \input{v3-figures/styles}
+\usepackage[most]{tcolorbox}
 
 % === HYPERLINKS ===
 \usepackage[colorlinks=true, linkcolor=navymid, urlcolor=navylight, linktoc=all, hypertexnames=false,
@@ -157,8 +158,9 @@
 % Code names may break after an underscore, so a long check name never overflows a narrow column.
 \DeclareRobustCommand{\code}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
 \DeclareRobustCommand{\entity}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
-% The town analogy, always returned from.
-\newcommand{\analogy}[1]{\par\vspace{4pt}\noindent{\fboxsep=6pt\colorbox{tabstripe}{\parbox{\dimexpr\textwidth-12pt}{\small{\scshape\color{gold}in the town}\enspace #1}}}\par\vspace{4pt}}
+% The town analogy, always returned from. A breakable box: Version 2's parbox
+% could not split across a page and left the foot of a page empty before a long one.
+\newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[breakable, enhanced jigsaw, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt, pad at break=6pt]\small{\scshape\color{gold}in the town}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
 % Why the next layer exists: the causal step.
 \newcommand{\nextlayer}[1]{\par\vspace{4pt}\noindent{\color{accent}\rule[-3pt]{2.5pt}{13pt}}\hspace{7pt}\parbox[t]{\dimexpr\textwidth-12pt}{\small\itshape #1}\par\vspace{4pt}}
 % A layer card: the same questions asked of every component.
@@ -182,8 +184,12 @@
 % A figure from the v3-figures directory, never wider than the text.
 % A figure sits at the top or the bottom of a text page, never inside a run of
 % paragraphs and never on a float page of its own; the height cap keeps every
-% figure small enough that text shares its page.
-\newcommand{\figfile}[3]{\begin{figure}[!htb]\centering
+% figure small enough that text shares its page. Version 2 allowed [h] and [t]
+% here: a figure could then land between two paragraphs of one discussion, or at
+% the top of a page above a paragraph or a table continuing from the page
+% before, and read as cutting it. Bottom only, since Version 3: the text before
+% a figure ends a page and the text after it starts the next.
+\newcommand{\figfile}[3]{\begin{figure}[!b]\centering
   \adjustbox{max width=\textwidth,max totalheight=0.72\textheight,center}{\input{v3-figures/#1}}%
   \caption{#2}\label{#3}\end{figure}}
 \newcommand{\thead}[1]{\textbf{\color{white}\small #1}}

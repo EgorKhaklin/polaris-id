@@ -88,6 +88,13 @@ tested once per table that claims it: a table-driven suite reads the append-only
 catalogue rather than out of a list somebody wrote, so a new append-only table cannot simply go
 untested. \sImpl
 
+\figfile{town-map}{The walled town, with the real component beside every civic name. The register
+in the hall is the credential core; the wall is the schema; the four gates are the routes through
+which a claim enters or leaves; the watchtowers are the transparency logs and the witnesses outside
+the wall watch them; the road to the second town is a directional, per-context attestation; the laws
+above the town bind the town itself. The plan describes structure. Polaris is federated: every
+authority is its own town.}{fig:town-map}
+
 The corollary is that no foreign key anywhere in the schema cascades a delete. A cascade would let
 the lifecycle events of a deleted token vanish with it. Every reference defaults to \code{NO
 ACTION}, so a principal referenced by any audit row is effectively undeletable, and a check scans
@@ -152,12 +159,6 @@ two reference verifiers and the OpenID4VP verifier. Section~\ref{sec:senses} car
 \qa{Inside and outside}{Inside: the credential core. Outside: cryptographic evidence, because a constraint binds only the database that holds it.}
 \end{layercard}
 
-\figfile{town-map}{The walled town, with the real component beside every civic name. The register
-in the hall is the credential core; the wall is the schema; the four gates are the routes through
-which a claim enters or leaves; the watchtowers are the transparency logs and the witnesses outside
-the wall watch them; the road to the second town is a directional, per-context attestation; the laws
-above the town bind the town itself. The plan describes structure. Polaris is federated: every
-authority is its own town.}{fig:town-map}
 
 \nextlayer{A constraint binds the database, not a copy of the claim that has left it. The moment a
 credential is handed to a stranger, or an authority's history is read by an auditor, nothing in the

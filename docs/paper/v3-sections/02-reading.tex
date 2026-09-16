@@ -13,12 +13,6 @@ keep it alive, to the society it sits inside, to the environment of software age
 and finally to the outside: the software written by strangers whose acceptance or refusal is the only
 evidence the repository did not produce about itself.
 
-\figfile{core-to-shell}{The concentric map of Polaris. The core is one credential record and its
-signature. Each ring names the actual components on it, and the reading order of the paper follows
-the rings outward. The outermost ring is dashed because most of it is not code: it is what parties
-outside the repository have done with the rings inside it, and at \code{1.0.0-rc.1} that is one
-wallet, one hosted conformance run and one published test corpus.}{fig:core-to-shell}
-
 \subsection{The questions asked of every layer}
 
 For each major component the paper answers the same questions, in a card of the form used
@@ -47,6 +41,12 @@ in Section~\ref{sec:walls}. The analogy will recur in a shaded box like the one 
 recurrence is followed by the mechanism it stands for. The traveller is walt.id's wallet, the gate is
 the OpenID4VP verifier, and the flaw in the seal was a request-signing certificate with no
 \code{digitalSignature} key usage; Section~\ref{sec:verifiers} gives all three by name.
+
+\figfile{core-to-shell}{The concentric map of Polaris. The core is one credential record and its
+signature. Each ring names the actual components on it, and the reading order of the paper follows
+the rings outward. The outermost ring is dashed because most of it is not code: it is what parties
+outside the repository have done with the rings inside it, and at \code{1.0.0-rc.1} that is one
+wallet, one hosted conformance run and one published test corpus.}{fig:core-to-shell}
 
 \subsection{Trust and refusal}
 
