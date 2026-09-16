@@ -88,6 +88,20 @@ the cryptography with its limits, what is verified and how, how to run it, where
 read next. Every pinned claim, count and vocabulary rule the checks hold the README to survived
 unchanged; the checks and the link checker gate the result as before.
 
+**The runbook, rewritten.** `CLAUDE.md` was a v9-era onboarding note that still called the system
+national on its first line, described all ten constraints as database objects, named a Python
+3.9 venv that does not exist, wrote the CHANGELOG header with a comma, counted five flake
+signatures where the tool knows six, and never mentioned the operating contract, the
+scoreboard, the four standalone products or the release candidate. Rewritten for 1.0.0-rc.1
+in the order a fresh agent needs: what Polaris is and is not, what governs when instructions
+conflict, the operating contract as a first-class section, the five evidence marks and the rules
+that keep one from being upgraded into the next, C1-C10 at the level each is actually enforced,
+how to work, how a change earns admission, how to test and falsify it, shipping and versioning,
+where things live, the operational gotchas as symptom, cause, distinction and action, the style
+rules, and engine over wrapper subordinated to the contract. Every command and path in it was
+verified against the tree; the documentation disagreements found on the way are recorded in the
+commit rather than reconciled silently.
+
 The two test-count stamps in the README, last measured at v9.332, are re-measured at this
 version and restated: 992 product tests passing (was 755) and 107 of 112 crypto witnesses (was
 84 of 89), on the reference machine, `pytest -q` per suite. The growth is the suites' ordinary
