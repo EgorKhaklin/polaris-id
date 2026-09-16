@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -123,7 +123,7 @@ jobs:
       # of the OIDC exchange. Trusted publishing wants no token anywhere. The CLI is upgraded
       # because the exchange needs npm 11.5.1 or later, and the publish runs verbose so that
       # the exchange's answer is in the log if the registry refuses.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - run: npm install -g npm@latest && npm --version
