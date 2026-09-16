@@ -83,8 +83,10 @@ that needs to know the assurance level already has it.
 
 The authority keeps the entire record, because a referee found to have vouched falsely makes
 every credential they touched a question that has to be answerable. `vouchings_by()` is an index
-scan, and `RefereeVouching` is the eighteenth audit-of-record instance, append-only: the list
-cannot be shortened after the fact by the authority that would most want to shorten it.
+scan, and `RefereeVouching` is append-only by the same trigger guard as the audit of record
+(`reject_audit_modification`), one of the tables that carry an append-only trigger though not
+among the fourteen canonical instances the design record names: the list cannot be shortened
+after the fact by the authority that would most want to shorten it.
 
 **Accountability sits with the authority; the holder carries something that looks like everybody
 else's.** Those are separable, and separating them is the whole design.

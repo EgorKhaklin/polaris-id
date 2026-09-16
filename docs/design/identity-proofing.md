@@ -18,7 +18,9 @@ rested on. No assurance level could be asserted honestly, and the NIST 800-63-4 
 (roadmap P6.2) was blocked on exactly that.
 
 `EnrollmentProofing` is one proofing event; `EnrollmentEvidence` is what it rested on. They are
-the 16th and 17th audit-of-record instances and are append-only by trigger, because an
+append-only by the same trigger guard as the audit of record (`reject_audit_modification`),
+though they are not among the fourteen canonical instances the design record names and
+`check_aor_append_only_triggers` pins; the guarantee holds because an
 assurance level rests on the evidence recorded beside it and a record of that evidence which
 can be edited afterwards is not evidence.
 
