@@ -43,10 +43,11 @@ L13 & Other people's software & Nothing in the tree. The scoreboard records what
 \end{xltabular}
 }
 
-% Placed after the table, not floated: as a bottom float it split the table after its first row,
-% and as a float before the table it drifted into the glossary.
-\begin{figure}[H]\centering
-  \adjustbox{max width=\textwidth,max totalheight=0.62\textheight,center}{\input{v3-figures/layer-ladder}}%
+% A page of its own, after the table: as a bottom float it split the table after its first row,
+% and as a float before the table it drifted into the glossary. The barrier at the next
+% appendix keeps it here.
+\begin{figure}[p]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.84\textheight,center}{\input{v3-figures/layer-ladder}}%
   \caption{The ladder. From the person, who exists outside the software, to the
 software of strangers, who exist outside it too. The right-hand column is the refusal each layer
 makes of the layer below it; the last rung's refusal is the operating contract's, and nothing in

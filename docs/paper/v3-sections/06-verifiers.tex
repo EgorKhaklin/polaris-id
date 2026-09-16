@@ -83,7 +83,19 @@ detached verifier of \code{v9.317} vendored beside it, and a compatibility suite
 on every push: today's verifiers must accept everything version 1 published (44 of 44 cases hold),
 and the pinned older verifier must never accept what today's suite rejects. \sImpl
 
+% The figure opens the subsection, under its heading, and the heading and the figure stay on
+% one page: the space they need together is reserved before the heading, so a page that
+% cannot hold both breaks before the heading rather than between them.
+\Needspace{36\baselineskip}
 \subsection{The outside: a verifier for wallets Polaris has never met}
+
+\figfile{outside-witnesses}{The three things outside the repository that have exercised it, and
+the two controls without which the first would mean nothing. A wallet nobody here wrote presented a
+credential and was accepted; the same wallet, with the verifier trusting a different issuer key, was
+refused; and a re-presentation against an answered request was refused. The Foundation's hosted
+suite scored seven refusals itself and left four acceptances for a human reviewer. A published
+corpus agrees with both signature witnesses on the primitive. None of the three is an audit, a
+certification or a pilot.}{fig:outside-witnesses}
 
 Everything above is Polaris verifying Polaris, and Version 2's honest boundary was that no external
 implementation had interoperated. That sentence is different now, on one path, and the path was
@@ -100,14 +112,6 @@ promises to open no socket and this one must listen. One of its fixtures is not 
 complete response produced by the conformance suite's own wallet, built by a Java library this
 project does not use, is committed, decrypts, and verifies, and is refused a year later, under another
 nonce, under another audience, and with one disclosure rewritten. \sImpl
-
-\figfile{outside-witnesses}{The three things outside the repository that have exercised it, and
-the two controls without which the first would mean nothing. A wallet nobody here wrote presented a
-credential and was accepted; the same wallet, with the verifier trusting a different issuer key, was
-refused; and a re-presentation against an answered request was refused. The Foundation's hosted
-suite scored seven refusals itself and left four acceptances for a human reviewer. A published
-corpus agrees with both signature witnesses on the primitive. None of the three is an audit, a
-certification or a pilot.}{fig:outside-witnesses}
 
 Then two things happened that the repository did not do to itself. On 15 September 2026 the OpenID
 Foundation's hosted conformance service ran all eleven modules of the plan against the verifier

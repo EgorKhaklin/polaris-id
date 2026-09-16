@@ -31,14 +31,6 @@ one has been deprecated. \sImpl
 
 \subsection{The gateway and the receipt}
 
-\figfile{gateway}{An institutional exchange through the gateway. The requester signs an envelope
-under its registered key; the responder's own instance authenticates it by a key it already knows,
-authorizes it through its own attestation in the envelope's context before anything leaves the
-process, consumes the nonce in an append-only replay register, forwards the body only to an upstream
-the operator configured, and returns the response with a signed receipt. Nothing but the receipt's
-hash and the consumed nonce is written. The evidence of the exchange is the pair of envelope and
-receipt, verifiable offline by a third party with no body.}{fig:gateway}
-
 The receipt commits to the requester's key, the responder, the context, the two body hashes, which
 attestation authorized the requester, and the instant. The mint endpoint accepts only hashes, so the
 application cannot retain what it is never given. A third party verifies offline that the receipt is
@@ -51,19 +43,19 @@ evidence. The set of receipts is itself a transparency log, so an institution ca
 receipt existed and anyone can see how many it minted, while each receipt stays in the hands of its
 parties. \sImpl
 
+\figfile{gateway}{An institutional exchange through the gateway. The requester signs an envelope
+under its registered key; the responder's own instance authenticates it by a key it already knows,
+authorizes it through its own attestation in the envelope's context before anything leaves the
+process, consumes the nonce in an append-only replay register, forwards the body only to an upstream
+the operator configured, and returns the response with a signed receipt. Nothing but the receipt's
+hash and the consumed nonce is written. The evidence of the exchange is the pair of envelope and
+receipt, verifiable offline by a third party with no body.}{fig:gateway}
+
 Authorization at the gateway is directional. Since \code{v9.333} the responding agency itself must
 attest the requester's key in the envelope's context; an attestation by any other agency on the
 instance authorizes nothing there. Before that fix the gateway accepted an attestation from anyone
 on the instance, which was the transitive trust the federation layer refuses, reappearing one layer
 up. \sImpl
-
-\figfile{signing-chain}{A signed document and its long-term evidence. The document never leaves its
-holder; its digest is signed by an institution, or by the holder's issuing authority on the
-holder's behalf after a possession proof, recorded by credential hash. Evidence fixed at the instant
-of signing, a timestamp from a distinct key, the signer's manifest, checkpoint and feed, together
-with the verifier's own trust list, lets a verifier decide validity at that instant long after the
-signing key has been retired. A signature whose instant falls after a compromise is refused even
-though its embedded manifest says the key was active.}{fig:signing-chain}
 
 \subsection{Time that learns nothing}
 
@@ -93,6 +85,14 @@ list, and, if the verifier asks, anchored in a witnessed log or corroborated by 
 independent authorities. A verifier given no timestamp anchors reports the facts and claims nothing.
 Anchor verification is in the detached verifier and both SDKs, so an implementation that imports no
 Polaris code can decide long-term validity. \sImpl
+
+\figfile{signing-chain}{A signed document and its long-term evidence. The document never leaves its
+holder; its digest is signed by an institution, or by the holder's issuing authority on the
+holder's behalf after a possession proof, recorded by credential hash. Evidence fixed at the instant
+of signing, a timestamp from a distinct key, the signer's manifest, checkpoint and feed, together
+with the verifier's own trust list, lets a verifier decide validity at that instant long after the
+signing key has been retired. A signature whose instant falls after a compromise is refused even
+though its embedded manifest says the key was active.}{fig:signing-chain}
 
 \begin{layercard}{Layer card: institutions}
 \qa{What it is}{The signed registry, the exchange gateway, the exchange receipt and its log, the timestamp authority with optional anchoring, document signing with long-term validation, the trust list.}

@@ -81,7 +81,8 @@
 \usepackage{float}
 % Floats go to the top or bottom of a text page, never to a float page of their own.
 \renewcommand{\topfraction}{0.9}\renewcommand{\bottomfraction}{0.85}
-\renewcommand{\textfraction}{0.07}\renewcommand{\floatpagefraction}{0.85}
+\usepackage{placeins}  % \FloatBarrier at every section: a float page never leaves its section
+\renewcommand{\textfraction}{0.07}\renewcommand{\floatpagefraction}{0.4}
 \usepackage{ragged2e}
 \usepackage{enumitem}
 \setlist[itemize]{leftmargin=1.6em, itemsep=2pt, parsep=1pt, topsep=4pt}
@@ -91,9 +92,9 @@
 \usepackage{needspace}
 % A heading never sits alone at the foot of a page: require room for it and a few lines.
 \let\polarisSectionRaw\section
-\renewcommand{\section}{\Needspace{14\baselineskip}\polarisSectionRaw}
+\renewcommand{\section}{\FloatBarrier\Needspace{14\baselineskip}\polarisSectionRaw}
 \let\polarisSubsectionRaw\subsection
-\renewcommand{\subsection}{\Needspace{7\baselineskip}\polarisSubsectionRaw}
+\renewcommand{\subsection}{\FloatBarrier\Needspace{7\baselineskip}\polarisSubsectionRaw}
 \usepackage{adjustbox}
 
 % === LINE- AND PAGE-BREAKING QUALITY ===
@@ -125,6 +126,7 @@
 % === CODE LISTINGS ===
 \usepackage{listings}
 \usepackage{graphicx}
+\usepackage{rotating}  % a figure wider than the page is tall gets a page turned on its side, at full size
 \lstset{basicstyle=\ttfamily\footnotesize, columns=fullflexible, keepspaces=true, upquote=true, breaklines=true,
   breakatwhitespace=true, postbreak=\mbox{{\color{steelgray}\scriptsize$\hookrightarrow$}\enspace}, frame=single,
   rulecolor=\color{navylight}, framesep=4pt, backgroundcolor=\color{tabstripe}, keywordstyle=\color{navymid}\bfseries,
@@ -158,40 +160,56 @@
 % Code names may break after an underscore, so a long check name never overflows a narrow column.
 \DeclareRobustCommand{\code}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
 \DeclareRobustCommand{\entity}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
-% The town analogy, always returned from. A breakable box: Version 2's parbox
-% could not split across a page and left the foot of a page empty before a long one.
-\newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[breakable, enhanced jigsaw, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt, pad at break=6pt]\small{\scshape\color{gold}in the town}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
+% The town analogy, always returned from. An unbreakable box: it is a few lines long, and a
+% few lines split across a page break read worse than the space a whole box leaves behind
+% when it moves to the next page. Readability over page count.
+\newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[enhanced, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt]\small{\scshape\color{gold}in the town}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
 % Why the next layer exists: the causal step.
 \newcommand{\nextlayer}[1]{\par\vspace{4pt}\noindent{\color{accent}\rule[-3pt]{2.5pt}{13pt}}\hspace{7pt}\parbox[t]{\dimexpr\textwidth-12pt}{\small\itshape #1}\par\vspace{4pt}}
-% A layer card: the same questions asked of every component.
-% The title and the first three rows always stay together, the last four rows always
-% stay together, so a card never leaves one orphaned row on the next page.
+% A layer card: the same questions asked of every component. A card is one object: it
+% never splits across a page, so a card that does not fit moves whole to the next page
+% and the space it leaves stays empty. Any figure the section still has pending is
+% flushed before the card, so a figure never lands after the card that closes its section.
+% The card steps the table counter without a caption, as the longtable it used to be did,
+% so that every captioned table keeps the number it has carried since Version 3 was published.
 \newcounter{qarow}
 \newenvironment{layercard}[1]{%
-  \par\Needspace{9\baselineskip}\vspace{3pt}%
-  \noindent{\color{navydark}\bfseries\small #1}\par\vspace{2pt}\nopagebreak%
+  \par\FloatBarrier\refstepcounter{table}\vspace{3pt}%
+  \noindent\begin{minipage}{\textwidth}%
+  \noindent{\color{navydark}\bfseries\small #1}\par\vspace{2pt}%
   \setcounter{qarow}{0}%
   \footnotesize\rowcolors{1}{tabstripe}{white}%
-  \setlength{\LTleft}{0pt}\setlength{\LTright}{0pt}\setlength{\LTpre}{0pt}\setlength{\LTpost}{5pt}%
-  \begin{longtable}{>{\bfseries\RaggedRight\arraybackslash}p{1.35in} >{\RaggedRight\arraybackslash}p{\dimexpr\textwidth-1.35in-4\tabcolsep-2pt}}
-  \toprule\endfirsthead
-  \toprule\endhead
-  \bottomrule\endfoot
-  \bottomrule\endlastfoot}{\end{longtable}\normalsize}
+  \noindent\begin{tabular}{>{\bfseries\RaggedRight\arraybackslash}p{1.35in} >{\RaggedRight\arraybackslash}p{\dimexpr\textwidth-1.35in-4\tabcolsep-2pt}}
+  \toprule}{\bottomrule\end{tabular}\end{minipage}\par\vspace{5pt}\normalsize}
 \newcommand{\qaStar}{\\*}
 \newcommand{\qaPlain}{\\}
 \newcommand{\qa}[2]{\stepcounter{qarow}\textcolor{navymid}{#1} & #2 \ifnum\numexpr(\value{qarow}-3)*(\value{qarow}-6)\relax>0 \expandafter\qaStar\else\expandafter\qaPlain\fi}
-% A figure from the v3-figures directory, never wider than the text.
-% A figure sits at the top or the bottom of a text page, never inside a run of
-% paragraphs and never on a float page of its own; the height cap keeps every
-% figure small enough that text shares its page. Version 2 allowed [h] and [t]
-% here: a figure could then land between two paragraphs of one discussion, or at
-% the top of a page above a paragraph or a table continuing from the page
-% before, and read as cutting it. Bottom only, since Version 3: the text before
-% a figure ends a page and the text after it starts the next.
-\newcommand{\figfile}[3]{\begin{figure}[!b]\centering
-  \adjustbox{max width=\textwidth,max totalheight=0.72\textheight,center}{\input{v3-figures/#1}}%
+% A figure from the v3-figures directory, never wider than the text and never scaled
+% smaller than the width demands. Two placements, and only two. \figfile puts the figure
+% exactly where the text introduces it, after the paragraph that names it; when it does
+% not fit the rest of the page it moves whole to the next, and the space it leaves is the
+% price of never sitting between the lines of a paragraph. \figpage gives a tall figure a
+% page of its own, the page after the paragraph that introduces it; the text fills its
+% page, the figure has the next, and the discussion continues after. Version 3 first
+% placed figures at the foot of text pages, which kept the page count down and cut every
+% paragraph that ran on to the next page. Readability over page count: neither placement
+% shares a page break with a paragraph.
+\newcommand{\figfile}[3]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.88\textheight,center}{\input{v3-figures/#1}}%
   \caption{#2}\label{#3}\end{figure}}
+% \figfit: the same, with a height cap for the one figure that missed the page of its paragraph
+% by fifteen points; the cap is a three per cent reduction, within reading comfort.
+\newcommand{\figfit}[4]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
+  \adjustbox{max width=\textwidth,max totalheight=#1\textheight,center}{\input{v3-figures/#2}}%
+  \caption{#3}\label{#4}\end{figure}}
+\newcommand{\figpage}[3]{\begin{figure}[p]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.84\textheight,center}{\input{v3-figures/#1}}%
+  \caption{#2}\label{#3}\end{figure}}
+% \figside: a page turned on its side for a figure much wider than it is tall, so that it
+% is read at its natural size rather than at the three quarters the upright page allows.
+\newcommand{\figside}[3]{\begin{sidewaysfigure}\centering
+  \adjustbox{max width=\textheight,max totalheight=0.8\textwidth,center}{\input{v3-figures/#1}}%
+  \caption{#2}\label{#3}\end{sidewaysfigure}}
 \newcommand{\thead}[1]{\textbf{\color{white}\small #1}}
 
 % ============================================================================

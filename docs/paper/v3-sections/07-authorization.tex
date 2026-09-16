@@ -47,7 +47,18 @@ canonical reason vocabulary; the audit trail carries the procedural detail and t
 the issuer-discretion ceiling required one. Revocation looks forward: events recorded while a
 credential was valid are not invalidated, because history is not rewritten. \sImpl
 
+% The figure opens the subsection, under its heading, and the heading and the figure stay on
+% one page: the space they need together is reserved before the heading, so a page that
+% cannot hold both breaks before the heading rather than between them.
+\Needspace{27\baselineskip}
 \subsection{Authorization with the network off}
+
+\figfile{offline-status}{The offline trade, drawn as a timeline. The issuer signs a status
+assertion with a window; the holder staples it; a relying party verifying offline inside the window
+accepts. If the issuer revokes the credential inside the window, the last \code{ACTIVE} assertion
+stays valid until it expires, and an offline verifier cannot know. The window is bounded by the
+issuer's time-to-live (an hour by default) and by the \code{max\_window} the verifier imposes; a
+high-risk relying party demands seconds or goes online.}{fig:offline-status}
 
 An offline verifier cannot ask the issuer. Polaris answers with a short-lived signed status
 assertion: the issuer's signature, under the same key that signed the credential, over the token's
@@ -68,13 +79,6 @@ limitation rather than fixed: the issuer mints a one-hour window, the reference 
 default bound is unset, and the ceiling the artifact itself carries is not read by the assertion
 check, so the maximum offline lifetime of a status rests partly on the relying party's configuration.
 A relying party that needs seconds sets seconds or goes online.
-
-\figfile{offline-status}{The offline trade, drawn as a timeline. The issuer signs a status
-assertion with a window; the holder staples it; a relying party verifying offline inside the window
-accepts. If the issuer revokes the credential inside the window, the last \code{ACTIVE} assertion
-stays valid until it expires, and an offline verifier cannot know. The window is bounded by the
-issuer's time-to-live (an hour by default) and by the \code{max\_window} the verifier imposes; a
-high-risk relying party demands seconds or goes online.}{fig:offline-status}
 
 \subsection{Status across authorities, and through networks that are not trusted}
 

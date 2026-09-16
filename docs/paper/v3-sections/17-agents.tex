@@ -90,13 +90,6 @@ are held, not scheduled, in Section~\ref{sec:research}; none is implemented. \sF
 
 \subsection{Delegating authority to an agent}
 
-\figfile{delegation}{The delegation chain, as built. The human holds the foundational credential and
-a key the issuer bound to it. With that key they sign a grant naming actions, limits, an expiry and a
-revocation handle; the agent signs each action against the service's own nonce; the service verifies
-the chain offline. The one link drawn dashed is the residue: under a plain holder binding the service
-also sees the credential's token value, so the correlation it is left with is bounded rather than
-absent.}{fig:delegation}
-
 The relationship is a chain, and it runs. A human possesses a foundational credential and a key
 the issuer bound to it. With that key the human signs a grant giving an agent a narrowly scoped
 authority: named actions, stated limits, an expiry, and a revocation handle belonging to the grant
@@ -104,6 +97,13 @@ alone. The agent signs each action it performs, naming the action and the servic
 service verifies, offline, that the grant is genuine and unexpired, that it covers this exact action,
 that it has not been revoked, and that it chains to a holder key an issuer bound to a real
 credential. \sImpl
+
+\figfile{delegation}{The delegation chain, as built. The human holds the foundational credential and
+a key the issuer bound to it. With that key they sign a grant naming actions, limits, an expiry and a
+revocation handle; the agent signs each action against the service's own nonce; the service verifies
+the chain offline. The one link drawn dashed is the residue: under a plain holder binding the service
+also sees the credential's token value, so the correlation it is left with is bounded rather than
+absent.}{fig:delegation}
 
 What the design is for is visible in what it refuses. Handing an agent the credential itself gives it
 everything the person can do, forever, revocable only by revoking the person. The grant is the

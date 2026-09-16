@@ -97,4 +97,33 @@ docker run --rm -v "$(pwd)/../..:/polaris" -w /polaris/docs/paper texlive/texliv
 shasum -a 256 *.tex v2-sections/*.tex v2-figures/*.tex v3-sections/*.tex v3-figures/*.tex > rendered-from.txt
 ```
 
-79 pages, zero overfull boxes, zero undefined references at the stamp above.
+85 pages, zero overfull boxes, zero undefined references at the stamp above.
+
+## Layout, 16 September 2026: readability over page count
+
+The paper is dense, and the first Version 3 build kept the page count down by floating every
+figure to the foot of a text page, which cut every paragraph and table that ran on to the next page.
+The rule is now the opposite, and the build grew from 79 pages to 85 for it.
+
+- A figure is placed exactly where the text introduces it (`\figfile`, `[H]`): after the paragraph
+  that names it, or under the heading of the subsection it opens. When it does not fit the rest of
+  the page it moves whole to the next, and the space it leaves stays empty. No figure sits between
+  the lines of a paragraph, at the top of a page above a continuing table, or on the far side of a
+  page break from its caption.
+- The two figures too tall to share a page, the layer ladder and the walled town, have a page each:
+  the ladder a float page (`[p]`) after its table, the town a page turned on its side
+  (`\figside`, `rotating`) so that it is read at its natural size rather than at the three quarters
+  the upright page allowed. The districts figure carries a three per cent height cap, the one
+  reduction in the document, so that it lands on the page of the paragraph that introduces it.
+- A layer card is one object: a `tabular` in a `minipage` rather than a `longtable`, so it never
+  splits across a page. The card steps the table counter as the longtable did, so every captioned
+  table keeps the number it carried when Version 3 was published.
+- The town analogy box is unbreakable again: a few lines split across a page read worse than the
+  space a whole box leaves behind.
+- `\FloatBarrier` at every section, every subsection and every layer card: a figure never leaves
+  the subsection that introduces it. Four figures moved from the end of their subsection to its
+  head (the outside witnesses, the offline trade, the holder flow, the transparency machinery) and
+  two from before to after the paragraph that explains them (the gateway, the delegation chain);
+  the space a heading and its figure need together is reserved before the heading, so a page that
+  cannot hold both breaks before the heading rather than between them.
+- Figure and table numbering, cross-references, section order and every sentence are unchanged.
