@@ -83,13 +83,13 @@ That is the whole product in one object: authenticity is permanent and cacheable
 From a clone, with a standard ML-DSA-65 library (`pip install liboqs-python cryptography`), the parts a relying party actually runs:
 
 ```bash
-python3 scripts/polaris-verify.py --pqc-provider oqs --selftest            # a live ML-DSA-65 sign/verify round trip
-python3 scripts/polaris-verify.py --pqc-provider oqs --verify-dir vectors  # the published authenticity packs: the genuine one passes, every tampered one fails
-python3 conformance/run_conformance.py --self                              # the reference verify SDK against the 118 published cases
-python3 scripts/polaris-compat-suite.py                                    # the frozen version-1 protocol under today's verifiers, and today's cases under a pinned older verifier
+python3 scripts/polaris-verify.py --pqc-provider oqs --selftest
+python3 scripts/polaris-verify.py --pqc-provider oqs --verify-dir vectors
+python3 conformance/run_conformance.py --self
+python3 scripts/polaris-compat-suite.py
 ```
 
-These are the detached verifier and the conformance suite: the same code a third party integrates, and the same code CI runs on every push. The full stack, with issuance, the operator flows and the Atlas, is under [Run it](#run-it).
+In order: a live ML-DSA-65 sign/verify round trip; the published authenticity packs, where the genuine one passes and every tampered one fails; the reference verify SDK against the 118 published cases; and the frozen version-1 protocol under today's verifiers, with today's cases under a pinned older verifier. These are the detached verifier and the conformance suite: the same code a third party integrates, and the same code CI runs on every push. The full stack, with issuance, the operator flows and the Atlas, is under [Run it](#run-it).
 
 ---
 
@@ -183,15 +183,13 @@ The production topology is five services: a self-built Caddy TLS edge, gunicorn,
 
 The claim is **algorithm agility under an audited migration path**, not settled security against a quantum adversary. ML-DSA-65 rests on the hardness of Module-LWE against the best known classical and quantum algorithms, and whether that holds is mathematics, not a property of this repository. What is a property of this repository: the algorithm is a row in `CryptographicAlgorithm` rather than a constant (C7), so registering a replacement, authorizing it per authority and migrating credentials through `uc6_migrate` is a path CI exercises on every push. There is no "migrate when quantum arrives" deferral; the registered default is already ML-DSA-65.
 
-```
-algorithm        family     PQ    NIST         sec    public key    signature
-─────────────────────────────────────────────────────────────────────────────
-ML-DSA-65        ML-DSA      ✓    FIPS 204     192      1,952 B      3,309 B   default
-ML-DSA-87        ML-DSA      ✓    FIPS 204     256      2,592 B      4,627 B   accepted; migration is a key event
-SLH-DSA-128s     SLH-DSA     ✓    FIPS 205     128         32 B      7,856 B   registered, no signer
-SLH-DSA-256s     SLH-DSA     ✓    FIPS 205     256         64 B     29,792 B   registered, no signer
-ECDSA-P256       ECDSA            FIPS 186-4   128         64 B         72 B   legacy, sunset 2027
-```
+| Algorithm | Family | PQ | Standard | Security (bits) | Public key | Signature | Role |
+|---|---|:---:|---|:---:|---:|---:|---|
+| ML-DSA-65 | ML-DSA | ✓ | FIPS 204 | 192 | 1,952 B | 3,309 B | default |
+| ML-DSA-87 | ML-DSA | ✓ | FIPS 204 | 256 | 2,592 B | 4,627 B | accepted; migration is a key event |
+| SLH-DSA-128s | SLH-DSA | ✓ | FIPS 205 | 128 | 32 B | 7,856 B | registered, no signer |
+| SLH-DSA-256s | SLH-DSA | ✓ | FIPS 205 | 256 | 64 B | 29,792 B | registered, no signer |
+| ECDSA-P256 | ECDSA | | FIPS 186-4 | 128 | 64 B | 72 B | legacy, sunset 2027 |
 
 - **Two ML-DSA implementations at issuance, sampled at use.** Issuance requires liboqs and OpenSSL (via `cryptography`) to agree and fails closed if they do not, so no stored production signature is trusted from a single library. Verify-at-use is single-witness with continuous second-witness sampling, and a disagreement pages a SEV. The Rust prover's ZK epoch root is recomputed bit-for-bit by a Python second witness.
 - **SLH-DSA is a registered hedge, not a shipped signer.** ML-DSA rests on lattice assumptions and SLH-DSA on hash functions alone, so both SLH-DSA parameter sets sit in the registry and a rotation toward them is a row update; the signers wired today are ML-DSA-65 and ML-DSA-87. The gap is on the ledger in [PQC-POSTURE.md](docs/reference/PQC-POSTURE.md).
