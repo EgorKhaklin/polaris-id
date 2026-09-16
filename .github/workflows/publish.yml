@@ -133,5 +133,18 @@ jobs:
       # page that does not exist until something has been published (npm/cli#8544).
       # That token covered one publish on 2026-09-15 and was revoked the same hour.
       # No long-lived credential for any of the four packages now exists anywhere.
+      # npm refuses to publish a prerelease without an explicit dist-tag, so that `latest`
+      # is never moved onto a candidate by accident (1.0.0-rc.1 was refused on 2026-09-16,
+      # run 35148098228, nothing uploaded). A prerelease version goes out under `next`:
+      # `npm install polaris-sdk-ts` keeps resolving the last full release, and the
+      # candidate is `npm install polaris-sdk-ts@next`, the same shape as pip's --pre.
       - name: Publish
-        run: cd sdk/typescript && npm publish --provenance --access public
+        run: |
+          cd sdk/typescript
+          VERSION="$(node -p "require('./package.json').version")"
+          case "$VERSION" in
+            *-*) TAG=next ;;
+            *)   TAG=latest ;;
+          esac
+          echo "publishing polaris-sdk-ts@$VERSION under dist-tag $TAG"
+          npm publish --provenance --access public --tag "$TAG"

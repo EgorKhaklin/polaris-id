@@ -31,12 +31,13 @@ From the registries. Nothing here needs this repository:
 pip install --pre "polaris-verify[cryptography]"
 pip install --pre polaris-oid4vp
 pip install --pre polaris-sdk-python
-npm install polaris-sdk-ts
+npm install polaris-sdk-ts@next
 ```
 
 `--pre` because the current version is a release candidate and pip skips pre-releases unless
-told; without it pip installs 0.1.0, the previous release, which also works. npm resolves the
-candidate directly.
+told; without it pip installs 0.1.0, the previous release, which also works. npm refuses to
+publish a prerelease without a dist-tag, so a candidate goes out under `next`: `latest` stays
+on the last full release, and the candidate is `polaris-sdk-ts@next`.
 
 Every publish is verified the same way, and recorded only after that: install from the live
 registry into an environment with none of Polaris present, then run the thing. For

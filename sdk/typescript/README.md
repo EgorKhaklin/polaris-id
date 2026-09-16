@@ -75,12 +75,12 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 ## Installing
 
 ```bash
-npm install polaris-sdk-ts
+npm install polaris-sdk-ts@next
 ```
 
-This is 1.0.0-rc.1, published to npm, a release candidate that `npm install` resolves
-directly; 0.1.0 remains as the prior release. Verified by installing from the live registry
-into an empty directory and requiring it there.
+This is 1.0.0-rc.1, published to npm under the `next` dist-tag. It is a release candidate, so
+plain `npm install polaris-sdk-ts` keeps resolving 0.1.0, the prior release, until 1.0.0.
+Verified by installing from the live registry into an empty directory and requiring it there.
 
 From a clone instead, if you are working on the SDK itself:
 
