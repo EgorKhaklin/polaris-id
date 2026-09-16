@@ -152,13 +152,13 @@ registry rather than in code, bounded aggregation, and concurrency proven
 with real threads. They are load-bearing and machine-checked, but they are
 best-practice controls, not rights guarantees. The hierarchy is one line
 deep: **vocation, then constitutional constraints, then engineering
-invariants** — no deeper apparatus governs them (see v9.55).
+invariants**; no deeper apparatus governs them (see v9.55).
 
 | # | Constraint | Tier | Where enforced |
 |---|------------|------|----------------|
 | C1 | `VerificationEvent` and `TokenLifecycleEvent` are append-only; UPDATE and DELETE are rejected by trigger | Constitutional | `06_triggers.sql::reject_audit_modification()` |
 | C2 | `ZERO_KNOWLEDGE` events have `token_id IS NULL` | Constitutional | `01_schema.sql::chk_disclosure_token_consistency` CHECK constraint + form-layer coercion |
-| C3 | At most one `ACTIVE` token per `Individual` | Constitutional | `01_schema.sql::uq_one_active_per_person` partial unique index |
+| C3 | At most one `ACTIVE` token per `Individual` | Constitutional | `02_indexes.sql::uq_one_active_per_person` partial unique index |
 | C4 | Failed login increments are atomic (no TOCTOU) | Engineering | `security.py::authenticate()` uses `UPDATE … SET col = col + 1 RETURNING …` |
 | C5 | CSP is `script-src 'self'`, with no `'unsafe-inline'` for production scripts | Engineering | `security.py::apply_security_headers()` |
 | C6 | Disclosure level is enforced server-side; client cannot upgrade | Constitutional | `app.py::verifications_new()` coerces `token_id` to NULL for ZERO_KNOWLEDGE; the C2 CHECK constraint rejects anything else; the Atlas redacts ZK locations server-side (`polaris_checks::check_c6_atlas_redacts_zk_location`) |
@@ -174,8 +174,13 @@ invariants** — no deeper apparatus governs them (see v9.55).
 
 ### How the constraints are checked
 
-C1-C10 are enforced at the schema level (triggers, partial unique
-indexes, CHECK constraints) and exercised by the DB-backed product
+The constraints that can live in the schema do: C1 by trigger and
+privilege boundary, C2 by CHECK constraint, C3 by partial unique index,
+C7 by the algorithm registry, C10 by the absence of any monetary table.
+The rest are enforced where the table above says: C4 as one atomic
+statement in the application, C5 as a response header, C6 by the
+application and the Atlas functions together with the C2 CHECK, C9 by
+the threaded tests. All ten are exercised by the DB-backed product
 suites (`test_check_constraints` and the Hypothesis property tests).
 Above the schema, the flat invariant layer
 [`polaris_checks/`](polaris_checks/) maps plain

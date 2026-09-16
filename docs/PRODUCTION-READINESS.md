@@ -10,8 +10,9 @@ engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
 document signing, the auth broker, wallet presentations, algorithm agility and
-versioning) is complete, certified in two SDKs and frozen at version 1; it
-changes nothing about this status. One retention fact to know (v9.341): the
+versioning) is complete, conformant in both SDKs under the repository's own suite (no
+certification has taken place; REVIEW at the hosted conformance service is not PASSED)
+and frozen at version 1; it changes nothing about this status. One retention fact to know (v9.341): the
 timestamp authority keeps no per-request record, except one digest and one
 instant per anchored timestamp, and only when the caller asked for the anchor.
 Two holder-side facts to know (v9.349 to v9.352): a credential may carry a
@@ -199,7 +200,7 @@ has taken place, and a deployment does not inherit any of it. **Accessibility is
 enforced for the third that automation covers**, which is why accessibility
 conformance is still in the list below rather than out of it. What remains is
 not buildable here: nine decisions that
-belong to the deploying organization, two engineering limits carried openly,
+belong to the deploying organization, one engineering limit carried openly,
 and the deployment-scale work that [ROADMAP.md](../ROADMAP.md) tracks phase by
 phase. [MISSION.md](../MISSION.md) still governs every change, and
 [THESIS.md](THESIS.md) records why this project refuses to overclaim.
@@ -270,10 +271,14 @@ national rollout (P7). Do not read a closed ledger here as readiness for those.
   a server-side session registry with per-role caps and revocation, per-role
   network allow-lists, a WebAuthn attestation policy with ML-DSA-65 offered
   first, and opt-in per-agency quotas enforced by trigger.
-- **The C1-C10 invariants are enforced at the database**, not in policy: the
+- **The constraints that can live in the database do**, not in policy: C1's
   grant boundary revokes UPDATE and DELETE on append-only audit tables from
   `polaris_app`, the only DELETE path is SECURITY DEFINER, and `polaris_app`
-  has no DDL.
+  has no DDL; C2 is a CHECK constraint, C3 a partial unique index, C7 a
+  registry table, C10 an absence. C4, C5, C6 and C9 are enforced in the
+  application, the response policy and the threaded tests, as the table in
+  [MISSION.md](../MISSION.md) records, and every one of the ten is pinned by a
+  check with a detection test.
 - **Secrets** are file-mounted under `/run/secrets/`, the app refuses to boot
   in production on the default secret key, and the database role password is
   rotated off its development default at first boot.
