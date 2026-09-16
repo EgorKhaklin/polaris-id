@@ -36,6 +36,20 @@ ALPINE_PIP = (
     'exit code: 1')
 
 
+#: Run 35110741726's rolling drill, verbatim: the preflight refused because
+#: `docker compose config --services` listed no app-green, seconds after the boot step had
+#: printed both colours healthy. The rerun passed unchanged.
+COMPOSE_CONFIG_EMPTY = (
+    'Rolling deploy under traffic drops zero requests (blue-green profile + control)\t'
+    'Rolling deploy under traffic, then the negative control\t'
+    '2026-09-16T14:55:06.6743947Z == preflight: both colours up and the edge answers ==\n'
+    'Rolling deploy under traffic drops zero requests (blue-green profile + control)\t'
+    'Rolling deploy under traffic, then the negative control\t'
+    '2026-09-16T14:55:06.8123496Z ##[error]the blue-green overlay is not active (set POLARIS_COMPOSE_EXTRA)\n'
+    'Rolling deploy under traffic drops zero requests (blue-green profile + control)\t'
+    'Rolling deploy under traffic, then the negative control\t'
+    '2026-09-16T14:55:06.8139171Z ##[error]Process completed with exit code 1.')
+
 #: v9.446's DR drill, verbatim. The build died resolving the dockerfile FRONTEND from
 #: Docker Hub, so it never read the Dockerfile and the tree had nothing to do with it.
 BUILDKIT_FRONTEND = (
@@ -69,6 +83,22 @@ class FlakeClassifierTests(unittest.TestCase):
         verdict, name, advice = ship.classify_failure_log(BUILDKIT_FRONTEND)
         self.assertEqual((verdict, name), ("flake", "buildkit-frontend"))
         self.assertIn("rerun", advice)
+
+    def test_an_empty_compose_config_in_the_rolling_preflight_is_a_known_flake(self):
+        verdict, name, advice = ship.classify_failure_log(COMPOSE_CONFIG_EMPTY)
+        self.assertEqual((verdict, name), ("flake", "compose-config-empty"))
+        self.assertIn("boot step", advice,
+                      "the advice must say what to CONFIRM before calling it a flake")
+        self.assertIn("rerun", advice)
+
+    def test_the_drill_refusing_an_unhealthy_edge_is_still_investigated(self):
+        """The preflight has two refusals. Only the compose-config one has been chased; the
+        other is the edge not answering, which nobody has shown to be transient."""
+        verdict, name, _ = ship.classify_failure_log(
+            "Rolling deploy under traffic drops zero requests (blue-green profile + control)\t"
+            "Rolling deploy under traffic, then the negative control\t"
+            "2026-09-16T14:55:06.8123496Z ##[error]edge not healthy before the drill")
+        self.assertEqual((verdict, name), ("investigate", None))
 
     def test_a_registry_REMOVAL_is_not_read_as_a_frontend_timeout(self):
         """The two look alike and the advice is opposite: rerunning clears a registry that

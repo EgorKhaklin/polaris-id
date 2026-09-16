@@ -501,6 +501,21 @@ FLAKE_SIGNATURES = [
      "buildx could not resolve the dockerfile frontend from Docker Hub (DeadlineExceeded). "
      "The build failed before reading the Dockerfile, so this is the registry not answering "
      "rather than anything in the tree; rerun the failed jobs"),
+    # 2026-09-16: the rolling drill's preflight asks `docker compose config --services` for
+    # `app-green` and refuses when it is absent. On run 35110741726 it was absent seconds
+    # after the boot step of the same job had started both colours and printed them healthy,
+    # the commit touched only docs/paper, README and NOTICE, the same command lists
+    # `app-green` locally, and the rerun passed unchanged. So `docker compose config` returned
+    # nothing once on the runner. The message is the drill's own, which is why it is safe to
+    # match: a genuinely missing overlay would fail every run with it, and the advice says
+    # what to confirm before calling it a flake.
+    ("compose-config-empty",
+     r"the blue-green overlay is not active \(set POLARIS_COMPOSE_EXTRA\)",
+     "the rolling drill's preflight found no app-green service in `docker compose config "
+     "--services`; confirm the same job's boot step listed app and app-green as healthy "
+     "(then `docker compose config` returned nothing transiently on the runner) and rerun "
+     "the failed jobs. If the boot step did not list app-green, the overlay really is "
+     "missing and POLARIS_COMPOSE_EXTRA is the thing to check"),
 ]
 
 #: Failures that are NOT flakes and that rerunning will never clear: something
