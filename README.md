@@ -44,7 +44,7 @@ The backbone is a 45-table PostgreSQL schema whose constraints are the security 
 
 ## Status
 
-**1.0.0-rc.1, a release candidate.** The four standalone products are `polaris-verify`, `polaris-oid4vp` and `polaris-sdk-python` on PyPI and `polaris-sdk-ts` on npm. The registries hold 0.1.0 as this is written; this tree is 1.0.0-rc.1, and it goes out through the same workflow, with every run recorded in [docs/RELEASING.md](docs/RELEASING.md). The PyPI packages are published by GitHub Actions trusted publishing over OIDC, with no API token created at any point, and each is verified by installing from the live registry into a clean environment and running it there. Being installable is not being validated: see [scope](#scope-honestly).
+**1.0.0-rc.1, a release candidate.** The four standalone products are `polaris-verify`, `polaris-oid4vp` and `polaris-sdk-python` on PyPI and `polaris-sdk-ts` on npm. All four are on their registries at 1.0.0-rc.1, every run recorded in [docs/RELEASING.md](docs/RELEASING.md); `--pre` because pip skips a candidate unless told, and on npm the candidate is `polaris-sdk-ts@next`, so 0.1.0 remains what a plain install resolves. The PyPI packages are published by GitHub Actions trusted publishing over OIDC, with no API token created at any point, and each is verified by installing from the live registry into a clean environment and running it there. Being installable is not being validated: see [scope](#scope-honestly).
 
 Two things here were checked by someone other than the author:
 

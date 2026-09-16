@@ -8,12 +8,12 @@ This covers the four artifacts a stranger installs. It does not cover the tree v
 `polaris_web/__version__.py`, which is published nowhere and moves only when something
 externally observable changes.
 
-| Artifact | Registry | Name | On the registry | In the tree |
+| Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 0.1.0, 2026-09-15 | 1.0.0rc1 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 0.1.0, 2026-09-15 | 1.0.0rc1 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 0.1.0, 2026-09-15 | 1.0.0rc1 |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 0.1.0, 2026-09-15 | 1.0.0-rc.1 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc1, 2026-09-16 | 0.1.0, 2026-09-15 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc1, 2026-09-16 | 0.1.0, 2026-09-15 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc1, 2026-09-16 | 0.1.0, 2026-09-15 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.1, 2026-09-16 | 0.1.0, 2026-09-15 |
 
 All four names were unclaimed when checked (the first three on 2026-09-13, `polaris-oid4vp`
 on 2026-09-14, each against a calibration that tells an absent name from a present one) and
@@ -124,12 +124,26 @@ four values. Two things cost time on 2026-09-15 and are worth knowing:
 
 ### npm (Trusted Publishing)
 
-`polaris-sdk-ts` has a trusted publisher for `publish.yml` in this repository, and the `npm`
-environment exists. npm cannot do this for a package's *first* publish: the publisher is
-configured on a package page that does not exist until something has been published
-(npm/cli#8544). 0.1.0 therefore went out under a granular token scoped to the one package,
-held as a repository secret for that one run and revoked within the hour. The secret is gone
-and the workflow no longer reads one.
+`polaris-sdk-ts` has a trusted publisher, created on the package's access page on 2026-09-16
+(this file had claimed one existed since 0.1.0; the registry's identity exchange answered
+`package not found` until it was actually created, two refused runs later). Its fields, which
+npm does not let you edit afterwards: publisher GitHub Actions, organization or user
+`EgorKhaklin`, repository `polaris-id`, workflow filename `publish.yml`, environment name
+`npm`, direct `npm publish` allowed. npm's stronger option is staged publishing only, where a
+run uploads to a staging area and a person promotes it on the website; it would need the
+publish step changed to the staged command, and is worth taking when the next person who is
+not the author publishes. npm cannot do any of this for a package's *first* publish: the
+publisher is configured on a package page that does not exist until something has been
+published (npm/cli#8544). 0.1.0 therefore went out under a granular token scoped to the one
+package, held as a repository secret for that one run and revoked within the hour. The secret
+is gone and the workflow no longer reads one; 1.0.0-rc.1 went out through the trusted
+publisher on 2026-09-16, the first token-free npm publish, under the `next` dist-tag.
+
+The npm job also learned three things the hard way that day, each recorded below: a
+prerelease is refused without a dist-tag; `setup-node` with a `registry-url` writes a
+placeholder token into the npm config, which the CLI then uses instead of the identity
+exchange; and the exchange needs npm 11.5.1 or later, so the job upgrades the CLI first and
+publishes verbose so the exchange's answer is in the log.
 
 ---
 
@@ -158,6 +172,15 @@ worse state to be in than three runs.
 | 34938539770 | 2026-09-15 | `polaris-oid4vp` 0.1.0 | refused by PyPI, publisher environment mismatch |
 | 34939353013 | 2026-09-15 | `polaris-oid4vp` 0.1.0 | published to PyPI |
 | 34940499289 | 2026-09-15 | `polaris-sdk-ts` 0.1.0 | published to npm, under the bootstrap token |
+| 35052310852 | 2026-09-16 | dry run | built and gated all seven rc.1 files; nothing published |
+| 35147578684 | 2026-09-16 | `polaris-sdk-python` 1.0.0rc1 | published to PyPI |
+| 35147739226 | 2026-09-16 | `polaris-verify` 1.0.0rc1 | published to PyPI |
+| 35147945583 | 2026-09-16 | `polaris-oid4vp` 1.0.0rc1 | published to PyPI |
+| 35148098228 | 2026-09-16 | `polaris-sdk-ts` 1.0.0-rc.1 | refused by npm: a prerelease needs a dist-tag; nothing uploaded |
+| 35148829860 | 2026-09-16 | `polaris-sdk-ts` 1.0.0-rc.1 | refused by npm on the upload (404): the CLI used a placeholder token instead of the identity exchange; nothing uploaded |
+| 35149358665 | 2026-09-16 | `polaris-sdk-ts` 1.0.0-rc.1 | refused by npm at the identity exchange (`package not found`): no trusted publisher matched the workflow; nothing uploaded |
+| 35150720818 | 2026-09-16 | `polaris-sdk-ts` 1.0.0-rc.1 | refused again at the identity exchange, same answer; nothing uploaded |
+| 35151803855 | 2026-09-16 | `polaris-sdk-ts` 1.0.0-rc.1 | published to npm under `next` by trusted publishing, no token |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different

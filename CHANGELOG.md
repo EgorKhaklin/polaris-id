@@ -69,7 +69,7 @@ cascades to on the loaded database; they agree on every table.
 the prior release, so the pip lines read `pip install --pre`. npm refuses to publish a
 prerelease without a dist-tag (the first rc.1 run was refused on exactly that, and uploaded
 nothing), so the candidate goes out under `next`: `npm install polaris-sdk-ts@next`, while plain
-`npm install` keeps 0.1.0. The republish also replaces the frozen 0.1.0 descriptions on PyPI,
+`npm install` keeps 0.1.0. The republish replaced the frozen 0.1.0 descriptions on PyPI,
 one of which still said "Not on PyPI yet" from a page that was, literally, on PyPI. The GitHub release for this
 version is a full release, not a pre-release: GitHub will not put its Latest marker on a
 pre-release, and leaving that marker on v9.466 kept a retired numbering on the front door. The

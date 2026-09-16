@@ -338,6 +338,51 @@ the live registry into a clean environment, never from a build that returned zer
                                require('polaris-sdk-ts') resolves from node_modules and
                                exposes PolarisVerifier, with no path into this repository
 
+**The release candidate, 2026-09-16.** All four moved to 1.0.0-rc.1 the same day the five
+conditions held (Section 4 of the contract); the rows below were recorded after installing
+each from the live registry into an environment with none of Polaris present, as above.
+
+    Registry:                  PyPI
+    Package:                   polaris-sdk-python
+    Version:                   1.0.0rc1
+    Published:                 2026-09-16 (run 35147578684)
+    Method:                    GitHub Actions Trusted Publishing (OIDC), no API token
+    External install verified: pip install --pre polaris-sdk-python into a fresh venv;
+                               the module resolves inside site-packages, the classifier
+                               reads Beta and the frozen description is the rc.1 README
+
+    Registry:                  PyPI
+    Package:                   polaris-verify
+    Version:                   1.0.0rc1
+    Published:                 2026-09-16 (run 35147739226)
+    Method:                    GitHub Actions Trusted Publishing (OIDC), no API token
+    External install verified: pip install --pre "polaris-verify[cryptography]" into a
+                               fresh venv; the console script runs from it and exits 4
+                               until the run declares its cryptography, as promised;
+                               the description no longer says the package is unreleased
+
+    Registry:                  PyPI
+    Package:                   polaris-oid4vp
+    Version:                   1.0.0rc1
+    Published:                 2026-09-16 (run 35147945583)
+    Method:                    GitHub Actions Trusted Publishing (OIDC), no API token
+    External install verified: pip install --pre polaris-oid4vp into a fresh venv; the
+                               `polaris-oid4vp keygen` subcommand runs from it
+
+    Registry:                  npm
+    Package:                   polaris-sdk-ts
+    Version:                   1.0.0-rc.1, dist-tag next (latest stays 0.1.0)
+    Published:                 2026-09-16 (run 35151803855, after four refused runs:
+                               35148098228 no dist-tag; 35148829860 and 35149358665
+                               and 35150720818 no trusted publisher on the registry)
+    Method:                    npm Trusted Publishing (OIDC), no token: the first
+                               token-free publish of this package, under a publisher
+                               created on the package's access page the same day
+    External install verified: npm install polaris-sdk-ts@next in an empty directory;
+                               require('polaris-sdk-ts') resolves from node_modules,
+                               exposes PolarisVerifier and the verify functions, with
+                               dist/ present and no path into this repository
+
 Two things cost a failed run each, recorded so the next person does not pay for them again.
 
 PyPI enforces uniqueness on `(owner, repo, workflow, environment)` for PENDING publishers,
