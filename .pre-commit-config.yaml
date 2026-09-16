@@ -47,21 +47,21 @@ repos:
         pass_filenames: false
         files: '^polaris_web/docker-compose\.prod\.yml$'
 
-      # Project standard (docs/CONVENTIONS.md section 11): no em-dashes in
+      # Project standard (docs/CONVENTIONS.md section 10): no em-dashes in
       # prose on any human-facing surface. Blocks only NEW em-dashes (via the
       # staged diff). Exempt: CHANGELOG.md and the two verbatim records,
       # DEVNOTES/record.md and docs/operator/DR-DRILLS.md. The design records
       # were exempt while they sat under DEVNOTES/ships/; they are published
       # documentation now, and the exemption went with the directory.
       - id: em-dash-block-new
-        name: em-dash block on new lines (docs/CONVENTIONS.md section 11)
+        name: em-dash block on new lines (docs/CONVENTIONS.md section 10)
         entry: |
           bash -c '
             DIFF=$(git diff --cached --unified=0 -- "*.md" "docs/**" "DEVNOTES/**" "meta/**" "site/**" "deploy/**" "polaris_web/templates/**" NOTICE ":(exclude)CHANGELOG.md" ":(exclude)DEVNOTES/record.md" ":(exclude)docs/operator/DR-DRILLS.md" 2>/dev/null);
             if [ -z "$DIFF" ]; then exit 0; fi;
             VIOL=$(echo "$DIFF" | grep -E "^\+" | grep -v "^\+\+\+" | grep "—" || true);
             if [ -n "$VIOL" ]; then
-              echo "Adding an em-dash to a human-facing document (docs/CONVENTIONS.md section 11 forbids):";
+              echo "Adding an em-dash to a human-facing document (docs/CONVENTIONS.md section 10 forbids):";
               echo "$VIOL" | head -5 | sed "s/^/  /";
               echo "Substitute with a colon, comma, parentheses, or a sentence break.";
               exit 1;

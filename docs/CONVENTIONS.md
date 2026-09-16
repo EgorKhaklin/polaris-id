@@ -16,9 +16,10 @@ unprefixed nouns for everything else.
 
 | Pattern | Example | Why |
 |---|---|---|
-| `polaris_<domain>/` | `polaris_web/`, `polaris_sql/`, `polaris_checks/`, `polaris_zk/`, `polaris_cli/` | Python package convention; namespaced; unambiguous when `pip install`'d |
+| `polaris_<domain>/` | `polaris_web/`, `polaris_sql/`, `polaris_checks/`, `polaris_zk/`, `polaris_cli/`, `polaris_card/`, `polaris_sim/` | Python package convention; namespaced; unambiguous when `pip install`'d |
 | Unprefixed singular | `site/` | One thing: the published project page and the images it shares with the README |
-| Unprefixed plural | `docs/`, `scripts/`, `meta/`, `deploy/` | Container of similar items |
+| Unprefixed plural | `docs/`, `scripts/`, `meta/`, `deploy/`, `packages/`, `vectors/`, `attacks/` | Container of similar items |
+| Unprefixed singular, one arm | `lab/`, `sdk/`, `conformance/` | One arm of the project that holds its own sub-directories: the lab and its scoreboard, the two verify SDKs, the conformance contract |
 | ALL_CAPS | `DEVNOTES/` | The one exception, kept because renaming it moves hundreds of references for no reader's benefit |
 
 **Rule:** a top-level rename moves every cross-reference to it, so it needs a
@@ -153,42 +154,57 @@ invariants: `Test<ShipID><ShipFeatureName>`.
 
 ---
 
-## 8. CHANGELOG entries
+## 7. CHANGELOG entries
 
 `CHANGELOG.md` at repo root. New entries at TOP of file (newest first). The root file
 holds recent ships only; older entries live in `docs/history/CHANGELOG-v<major>.md`,
 moved unchanged and never edited.
 
-**Header format:**
+**Header format**, the shape `scripts/polaris-release-notes.sh` and
+`check_changelog_matches_version` parse:
 ```markdown
-## v<N.NN>: <YYYY-MM-DD> (<one-line title with sections separated by ·>)
+## v<version> <em dash> <YYYY-MM-DD> (<one-line subtitle>)
 ```
+where `<em dash>` is the character U+2014 with a space on each side. This header is the one
+place the tree allows that character (section 10); the pre-commit hook exempts the whole of
+`CHANGELOG.md` for it. `<version>` is the tree version (`1.0.0-rc.1`, or `9.466` in the
+archive).
 
 **Body sections** (when applicable):
 - **Why this ship:** the directive that triggered it
 - Per-item subsections describing the change
 - **Constitutional preservation** verified
 - **Live drill** verified
-- `POLARIS_VERSION` bump line
+- A version line, only in the ship that moved the version
 
 Old CHANGELOG entries are never edited retroactively. Corrections land
 as new entries cross-referencing the prior.
 
 ---
 
-## 9. Versioning
+## 8. Versioning
 
 `POLARIS_VERSION` lives in [`polaris_web/__version__.py`](../polaris_web/__version__.py)
-(canonical source as of v9.06 / C5). Format: `MAJOR.MINOR` (e.g., `9.08`).
+(canonical source as of v9.06 / C5). Format: a semantic version with an optional pre-release
+tag (`1.0.0-rc.1`). The v9 series counted ships (`9.466`); since 1.0.0-rc.1 the version moves
+only for an externally observable change, under the
+[operating contract](OPERATING-CONTRACT.md). The four standalone packages carry their own
+semantic versions in their manifests and go out through `publish.yml`
+([RELEASING.md](RELEASING.md)).
 
-**Bump procedure** (the ship discipline in [`../CLAUDE.md`](../CLAUDE.md)):
-1. Edit the `__version__` literal and `appVersion` in `deploy/helm/polaris/Chart.yaml`
-2. Prepend the CHANGELOG entry
-3. Run `python3 -m polaris_checks.run`, then `scripts/polaris-preflight.sh` (must report READY)
+**Bump procedure** (the ship discipline in [`../CLAUDE.md`](../CLAUDE.md)), all in one ship:
+1. Edit the `__version__` literal, `appVersion` in `deploy/helm/polaris/Chart.yaml`, and
+   `version` in `CITATION.cff`
+2. Restamp the four documents the checks hold to the exact version: `SECURITY.md` and
+   `CONTRIBUTING.md` (`Last updated: <date> (v<version>)`), `docs/PRODUCTION-READINESS.md`
+   (`**Status (v<version>):`), `ROADMAP.md` (`<N> invariant checks (v<version>)`, with the
+   measured count)
+3. Prepend the CHANGELOG entry
+4. Run `python3 -m polaris_checks.run`, then `scripts/polaris-preflight.sh --strict` (must report READY)
 
 ---
 
-## 10. Documentation cross-references
+## 9. Documentation cross-references
 
 **Markdown links must resolve.** `bash scripts/polaris-link-check.sh`
 walks every Markdown link of shape `[text]` followed by `(path)` and
@@ -206,7 +222,7 @@ confirms target exists. CI runs this on every push.
 
 ---
 
-## 11. Em-dashes
+## 10. Em-dashes
 
 **Forbidden in prose** across every human-facing surface: the root
 documents, `docs/`, `DEVNOTES/`, `meta/`, the package READMEs, `site/`,
@@ -226,7 +242,7 @@ sentence break.
 
 ---
 
-## 12. Comments + docstrings
+## 11. Comments + docstrings
 
 **Code comments default to none.** Only add a comment when the WHY
 is non-obvious: a hidden constraint, a subtle invariant, a
@@ -245,7 +261,7 @@ reader.
 
 ---
 
-## 13. Backwards-compat removals
+## 12. Backwards-compat removals
 
 **When deleting code that may have callers:**
 
@@ -256,7 +272,7 @@ reader.
 
 ---
 
-## 14. Where these conventions live
+## 13. Where these conventions live
 
 This file (`docs/CONVENTIONS.md`) is the single source of truth.
 Changes happen here, then propagate by reference. Other docs that

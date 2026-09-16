@@ -142,7 +142,7 @@ pre-commit install
 | `polaris-checks` | Runs the invariant layer; non-zero on any FAIL |
 | `polaris-link-check` | Every Markdown link and code path must resolve |
 | `no-secret-in-prod-compose` | Refuses a literal secret value in the production compose file |
-| `em-dash-block-new` | Refuses a new em-dash on any human-facing surface ([docs/CONVENTIONS.md](docs/CONVENTIONS.md), section 11) |
+| `em-dash-block-new` | Refuses a new em-dash on any human-facing surface ([docs/CONVENTIONS.md](docs/CONVENTIONS.md), section 10) |
 
 Every hook is local (no network) and runnable by hand with
 `pre-commit run --all-files`.
