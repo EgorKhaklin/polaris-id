@@ -68,8 +68,20 @@ cascades to on the loaded database; they agree on every table.
 **Installing a candidate.** pip skips pre-releases unless told, and 0.1.0 remains available as
 the prior release, so the pip lines read `pip install --pre`. npm resolves the candidate
 directly. The republish also replaces the frozen 0.1.0 descriptions on PyPI, one of which still
-said "Not on PyPI yet" from a page that was, literally, on PyPI. The release badge now includes
-pre-releases; without that it would have kept showing v9.466 indefinitely.
+said "Not on PyPI yet" from a page that was, literally, on PyPI. The GitHub release for this
+version is a full release, not a pre-release: GitHub will not put its Latest marker on a
+pre-release, and leaving that marker on v9.466 kept a retired numbering on the front door. The
+tag says what the release is. The badge includes pre-releases, so it reads the tag rather than
+the marker.
+
+**The README, rewritten.** The front door had grown by accretion: a three-hundred-word opening
+paragraph, the wallet and conformance results told twice, the cryptographic claim made four times,
+and the honest counterweight scattered across three sections. Rewritten from a blank page on
+2026-09-16 in the order a stranger needs: what it is, its status with the two outside results and
+the counterweight in one place, a two-minute try, the ten guarantees, the threats, the architecture,
+the cryptography with its limits, what is verified and how, how to run it, where it sits, and where to
+read next. Every pinned claim, count and vocabulary rule the checks hold the README to survived
+unchanged; the checks and the link checker gate the result as before.
 
 The two test-count stamps in the README, last measured at v9.332, are re-measured at this
 version and restated: 992 product tests passing (was 755) and 107 of 112 crypto witnesses (was
