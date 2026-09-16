@@ -78,8 +78,9 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts
 ```
 
-Published to npm on 2026-09-15 at 0.1.0. Verified by installing from the live registry into an
-empty directory and requiring it there.
+This is 1.0.0-rc.1, published to npm, a release candidate that `npm install` resolves
+directly; 0.1.0 remains as the prior release. Verified by installing from the live registry
+into an empty directory and requiring it there.
 
 From a clone instead, if you are working on the SDK itself:
 

@@ -258,7 +258,11 @@ Reasoning:
 `04_data.sql` begins with `TRUNCATE ... RESTART IDENTITY CASCADE`,
 so re-running it gives a clean state. After running tests (which
 mutate state), re-running `04_data.sql` then `06_triggers.sql`
-returns the database to the original 77-row state.
+returns the database to the original 77-row state. The statement names
+`AgencyEvent` and `RelyingPartyEvent` although nothing cascades to them:
+both are keyed on ids the reload restarts, and a record left behind would
+describe the next life's rows. `check_seed_restart_resets_dependent_records`
+fails on the next such omission.
 
 ### Stress testing at scale
 

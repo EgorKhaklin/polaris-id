@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polaris-sdk-python"
-version = "0.1.0"
+version = "1.0.0rc1"
 description = "Reference Python SDK for verifying Polaris identity credentials: offline authenticity and online status. A library; the command-line verifier is the separate polaris-verify package."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -14,7 +14,7 @@ license = { text = "Apache-2.0" }
 # nothing on the page saying so. The front-door rule is that an outward surface must not read
 # as more settled than the thing is.
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",

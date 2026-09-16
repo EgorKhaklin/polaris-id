@@ -26,7 +26,17 @@
 
 -- Wipe before insert. Order matters: junctions first, then records, then the
 -- central artifact, then principals (FK-dependency order in reverse).
-TRUNCATE TABLE AgencyEvent,
+--
+-- RelyingPartyEvent is named although nothing here references it, and that is the
+-- reason it must be. The record deliberately carries no foreign key, so that ending a
+-- party's contract cannot delete its history; the cost is that CASCADE never reaches
+-- it either. RESTART IDENTITY hands out rp_id 1 again on every reload, and until
+-- 2026-09-15 the first party registered after a reload inherited every event of the
+-- party that had held rp_id 1 in the previous life. AppUserEvent has the same shape
+-- and the same fix in 10_auth.sql; check_seed_restart_resets_dependent_records is the
+-- rule both follow. RelyingParty is named for the reader: CASCADE reaches it anyway
+-- through required_context_id.
+TRUNCATE TABLE AgencyEvent, RelyingPartyEvent,
                ZkVerificationNonce,
                TokenStateEpochLeaf, TokenStateEpoch,
                AgencyTrustAttestation,
@@ -34,7 +44,7 @@ TRUNCATE TABLE AgencyEvent,
                RevocationList,
                BlockchainAnchor, AnchorBatch, DeviceBinding,
                VerificationEvent, TokenLifecycleEvent,
-               IdentityToken,
+               IdentityToken, RelyingParty,
                VerificationContext, CryptographicAlgorithm, Agency, Individual
        RESTART IDENTITY CASCADE;
 

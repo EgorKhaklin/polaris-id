@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polaris-verify"
-version = "0.1.0"
+version = "1.0.0rc1"
 description = "Detached verifier for Polaris identity credentials and signed artifacts: offline authenticity, no server, no database."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -12,7 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Egor Khaklin" }]
 keywords = ["identity", "credential", "verifier", "ml-dsa", "post-quantum"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",

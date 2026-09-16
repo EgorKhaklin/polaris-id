@@ -67,6 +67,9 @@ pass "retention engine present; admin user_id=${ADMIN}"
 # 1. Adopt MINIMIZED so the classes actually disagree, then seed one row on
 #    each side of the two horizons.
 # ---------------------------------------------------------------------------
+# Rows an earlier run seeded and the engine rightly held are still here, and this
+# run must be judged on its own row: count them first, then expect exactly one more.
+HELD_BEFORE=$(psql_q "SELECT count(*) FROM TokenLifecycleEvent WHERE reason_code = 'RETDRILL_HELD'")
 psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB}" -X -q <<SQL
 CALL uc_apply_retention_template('MINIMIZED', NULL, ${ADMIN});
 DO \$\$
@@ -153,7 +156,7 @@ pass "purge complete; coverage pre-check passed"
 HELD=$(psql_q "SELECT count(*) FROM TokenLifecycleEvent WHERE reason_code = 'RETDRILL_HELD'")
 GONE=$(psql_q "SELECT count(*) FROM TokenLifecycleEvent WHERE reason_code = 'RETDRILL_PURGED'")
 VER=$(psql_q "SELECT count(*) FROM VerificationEvent WHERE event_timestamp < now() - interval '1000 days'")
-[[ "${HELD}" == "1" ]] || fail "the 1100-day lifecycle row was purged; the civic record's 1825-day retention did not hold it"
+[[ "${HELD}" == "$((HELD_BEFORE + 1))" ]] || fail "expected $((HELD_BEFORE + 1)) held lifecycle row(s) (${HELD_BEFORE} from earlier runs plus this one) and found ${HELD}; the civic record's 1825-day retention did not hold the 1100-day row"
 [[ "${GONE}" == "0" ]] || fail "the 2200-day lifecycle row survived a purge that covered it"
 [[ "${VER}"  == "0" ]] || fail "verification rows older than the 730-day horizon survived (${VER} left)"
 pass "per-class horizons honored: lifecycle held at 3y, purged at 6y; verification purged at 3y"

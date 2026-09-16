@@ -14,14 +14,17 @@ it to fetch status.
 > as the reference verifier command, so the module name is part of a contract.
 
 ```bash
-pip install "polaris-verify[cryptography]"
+pip install --pre "polaris-verify[cryptography]"
 
 polaris-verify --pqc-provider auto --pack credential.json
 ```
 
-Published to PyPI on 2026-09-15 at 0.1.0, by GitHub Actions trusted publishing over OIDC.
-Verified by installing from the live registry into a clean virtualenv and running the command
-there, not by a build that exited zero.
+This is 1.0.0-rc.1, published to PyPI by GitHub Actions trusted publishing over OIDC.
+It is a release candidate: `--pre` tells pip to consider it, and 0.1.0 remains as the prior
+release. What separates a candidate from 1.0.0 is one thing, an operator who is not the
+author reaching a verified result without help. Verified by installing from the live
+registry into a clean virtualenv and running the command there, not by a build that exited
+zero.
 
 ## It refuses to start until you say what cryptography it is doing
 

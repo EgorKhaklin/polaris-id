@@ -4,84 +4,87 @@
 outside this repository. **Job:** say exactly what has to be true first, what the one-time
 setup is, and what the command is.
 
-This covers the three artifacts a stranger installs. It does not cover the `v9.x` tree
-version, which is not a product version and is not published anywhere.
+This covers the four artifacts a stranger installs. It does not cover the tree version in
+`polaris_web/__version__.py`, which is published nowhere and moves only when something
+externally observable changes.
 
-| Artifact | Registry | Name | Current |
-|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 0.1.0, unpublished |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 0.1.0, unpublished |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 0.1.0, unpublished |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 0.1.0, unpublished |
+| Artifact | Registry | Name | On the registry | In the tree |
+|---|---|---|---|---|
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 0.1.0, 2026-09-15 | 1.0.0rc1 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 0.1.0, 2026-09-15 | 1.0.0rc1 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 0.1.0, 2026-09-15 | 1.0.0rc1 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 0.1.0, 2026-09-15 | 1.0.0-rc.1 |
 
-All four names were confirmed unclaimed: the first three on 2026-09-13, `polaris-oid4vp` on
-2026-09-14, each against a calibration that tells an absent name from a present one
-(`cryptography` and `requests` answer 200; the candidate and a nonsense name answer 404). The npm package was `@polaris/verify`
-until that date and had to change: `@polaris` resolves to an existing npm organisation, so
-that scope could never have been published to. Checked, not assumed, against a calibration
-that distinguishes a real org from an absent one.
+All four names were unclaimed when checked (the first three on 2026-09-13, `polaris-oid4vp`
+on 2026-09-14, each against a calibration that tells an absent name from a present one) and
+are held by this project now. The npm package was `@polaris/verify` until then and had to
+change: `@polaris` resolves to an existing npm organisation that this project could never
+have published under.
 
 ---
 
-## Installing before any of that
+## Installing
 
-Nothing is blocked on publishing. An external party can install and run the verifier today,
-from a public URL, and this is measured on a clean machine rather than assumed:
+From the registries. Nothing here needs this repository:
+
+```bash
+pip install --pre "polaris-verify[cryptography]"
+pip install --pre polaris-oid4vp
+pip install --pre polaris-sdk-python
+npm install polaris-sdk-ts
+```
+
+`--pre` because the current version is a release candidate and pip skips pre-releases unless
+told; without it pip installs 0.1.0, the previous release, which also works. npm resolves the
+candidate directly.
+
+Every publish is verified the same way, and recorded only after that: install from the live
+registry into an environment with none of Polaris present, then run the thing. For
+`polaris-oid4vp` that is `keygen` producing a working HAIP certificate set, which is the
+package an outside verifier operator reaches for. The rows are in
+[`lab/EXTERNAL-NOUNS.md`](../lab/EXTERNAL-NOUNS.md).
+
+A branch install exists for someone evaluating a change before it is released. Both forms
+were run from the public URL on 2026-09-14 in an empty environment:
 
 ```bash
 pip install "polaris-verify[cryptography] @ git+https://github.com/EgorKhaklin/polaris-id#subdirectory=packages/polaris-verify"
-polaris-verify --pqc-provider auto --pack credential.json
-```
-
-```bash
 pip install "polaris-oid4vp @ git+https://github.com/EgorKhaklin/polaris-id#subdirectory=packages/polaris-oid4vp"
 ```
 
-**Both were run from the public URL on 2026-09-14, in an empty environment, and are what
-the output below actually was.** The product boundary drill builds its wheels from the
-working tree, which answers a different question: whether the code in front of you installs.
-This answers whether what GitHub is serving does.
-
-    polaris-verify --pqc-provider auto --pack pack-mldsa87-valid.json
-        crypto: cryptography · algorithm: ML-DSA-87 · signature_valid: True     exit 0
-    polaris-verify --pack pack-mldsa87-valid.json        (no declared crypto mode)
-        "There is no default and no environment variable for this."            exit 4
-
-    polaris-oid4vp, on the conformance suite's own captured response
-        authentic: True, claims given_name / family_name / vct                 exit 0
-        the same response under a nonce we did not send                      refused, code `nonce`
-
-    polaris_web, polaris_checks, flask, psycopg2                    all absent from the venv
-
-The `#subdirectory=` fragment is not optional. The repository root has no `pyproject.toml`,
-so the form a newcomer tries first, `pip install git+https://github.com/EgorKhaklin/polaris-id`,
-fails with *"does not appear to be a Python project"*.
-
-This installs whatever is on the default branch, not a fixed version, so it is the right tool
-for someone evaluating and the wrong one for anyone depending on it.
-
-**The TypeScript SDK has no equivalent.** npm has no `#subdirectory=`, so
-`npm install github:EgorKhaklin/polaris-id` fails (`Could not read package.json`, exit 254) and
-there is no one-line form that works. A clone is the path:
-
-```bash
-cd sdk/typescript && npm ci
-cd /your/project && npm install /path/to/polaris-id/sdk/typescript
-```
-
-So publishing means two different things for the two packages: for `polaris-verify` it buys a
-fixed version over a moving branch, and for `polaris-sdk-ts` it buys the first one-command
-install there has ever been. That is the argument for
-publishing, and it is a different argument from "otherwise nobody can use it".
+The `#subdirectory=` fragment is not optional: the repository root has no `pyproject.toml`,
+so `pip install git+https://github.com/EgorKhaklin/polaris-id` fails with *"does not appear
+to be a Python project"*. This installs whatever is on the default branch, not a fixed
+version. npm has no `#subdirectory=` and no one-line form, so for the TypeScript SDK a branch
+install is a clone: `cd sdk/typescript && npm ci`, then `npm install
+/path/to/polaris-id/sdk/typescript` from your project.
 
 ---
 
-## Before anything is published
+## What the version number says
 
-`0.1.0` is deliberate. The go-forward contract gives `1.0.0` five conditions, and a version
-number that claims more than has happened is the thing the front-door rule exists to stop.
-Publishing `0.x` is fine and says what it is: a thing that works and that nobody outside has
-used yet.
+The four packages are at 1.0.0-rc.1 (`1.0.0rc1` in the Python metadata, which is how PEP 440
+spells the same thing). The go-forward contract names five conditions for calling anything
+1.0.0, and all five hold:
+
+1. A clean-machine install works: the product boundary drill, on every push and before every
+   publish, and the registry installs above.
+2. The cryptographic mode is explicit and safe: `polaris-verify` refuses to start without
+   `--pqc-provider`; there is no default and no environment variable for it.
+3. A named external client completed a presentation: walt.id `wallet-api2:1.0.0`, unmodified,
+   on 2026-09-15.
+4. A named external conformance suite has been run: the OpenID Foundation's hosted suite,
+   `oid4vp-1final-verifier-haip-test-plan`, across the open internet.
+5. That result is published where it is not green: 7 PASSED, 4 REVIEW, in the README, on the
+   site and in the scoreboard. REVIEW is not PASSED.
+
+Why a candidate and not 1.0.0: the contract's 90-day objective also asks for an operator who
+is not the author to have used the verifier, and that row of the scoreboard is blank. A release
+candidate is the number that says both things at once. That operator makes 1.0.0; a defect
+found in the candidate makes rc.2. Nothing else does.
+
+The PyPI maturity classifier is `4 - Beta`. There is no classifier for a candidate, and
+`5 - Production/Stable` would say more than has happened.
 
 What must hold for any publish:
 
@@ -98,60 +101,38 @@ What must hold for any publish:
 
 ## One-time setup, per registry
 
-Neither of these puts a long-lived token in the repository.
+Done for all four, and written down so that a fifth artifact gets the same shape. No
+long-lived token exists for any of them, and the workflow contains no `secrets.` reference.
 
 ### PyPI (Trusted Publishing)
 
-Do this once per project name, before the first publish. Because neither project exists yet,
-use the *pending* publisher form.
+Each of the three projects has a trusted publisher: owner `EgorKhaklin`, repository
+`polaris-id`, workflow `publish.yml`, environment `pypi`. The `pypi` environment exists in
+this repository's settings; a required reviewer there makes the irreversible step a second,
+deliberate click.
 
-1. Go to <https://pypi.org/manage/account/publishing/>.
-2. Add a pending publisher:
-   - PyPI project name: `polaris-verify` (then repeat for `polaris-sdk-python` and
-     `polaris-oid4vp`)
-   - Owner: `EgorKhaklin`
-   - Repository name: `polaris-id`
-   - Workflow name: `publish.yml`
-   - Environment name: `pypi`
-3. In this repository's settings, create an environment named `pypi`. Adding a required
-   reviewer there is worth it: it makes the irreversible step a second, deliberate click.
+For a new project name, add a *pending* publisher at
+<https://pypi.org/manage/account/publishing/> before the first publish, with exactly those
+four values. Two things cost time on 2026-09-15 and are worth knowing:
+
+- The environment must match the workflow's `environment: pypi` exactly. `polaris-oid4vp` was
+  first registered with environment *(Any)*, and PyPI refused the publish as an invalid
+  publisher (run 34938539770) until it was re-registered with `pypi`.
+- PyPI holds one pending publisher per (owner, repository, workflow, environment) at a time
+  (pypi/warehouse#16920), so register a name, publish it, then register the next.
 
 ### npm (Trusted Publishing)
 
-1. Create the package's first version through the workflow, or reserve the name by
-   publishing `0.1.0` from it.
-2. In this repository's settings, create an environment named `npm`.
-3. If npm Trusted Publishing is configured for the package, no token is needed. Otherwise
-   add an `NPM_TOKEN` secret with a granular access token scoped to `polaris-sdk-ts` only.
+`polaris-sdk-ts` has a trusted publisher for `publish.yml` in this repository, and the `npm`
+environment exists. npm cannot do this for a package's *first* publish: the publisher is
+configured on a package page that does not exist until something has been published
+(npm/cli#8544). 0.1.0 therefore went out under a granular token scoped to the one package,
+held as a repository secret for that one run and revoked within the hour. The secret is gone
+and the workflow no longer reads one.
 
 ---
 
 ## Publishing
-
-**The dry run has been executed, and re-executed since a fourth artifact appeared.**
-2026-09-14, run 34859291906: `build-and-gate` green, both publish jobs correctly skipped,
-`target: dry-run-everything`, `confirm: (not PUBLISH) -- DRY RUN, nothing leaves this
-runner`, and it produced
-
-```
-dist/polaris-verify/polaris_verify-0.1.0-py3-none-any.whl            twine check PASSED
-dist/polaris-verify/polaris_verify-0.1.0.tar.gz                      twine check PASSED
-dist/polaris-sdk-python/polaris_sdk_python-0.1.0-py3-none-any.whl    twine check PASSED
-dist/polaris-sdk-python/polaris_sdk_python-0.1.0.tar.gz              twine check PASSED
-dist/polaris-oid4vp/polaris_oid4vp-0.1.0-py3-none-any.whl            twine check PASSED
-dist/polaris-oid4vp/polaris_oid4vp-0.1.0.tar.gz                      twine check PASSED
-dist/polaris-sdk-ts-0.1.0.tgz
-```
-
-**The earlier record was stale and would have been trusted.** Run 34761304289 on 2026-09-13
-is the one this section used to name, and it predates `polaris-oid4vp` entirely: it built
-five files, not seven, and never exercised the artifact that now carries a conformance
-result. A dry run that did not build one of the things being published is a rehearsal of a
-different performance, and reading it as cover for all four would have been exactly the
-failure this section exists to prevent.
-
-So the mechanism is exercised, not merely written: a workflow nobody has ever run is a plan.
-The remaining untested step is the authenticated publish itself, which cannot be rehearsed.
 
 Actions → **Publish product artifacts** → Run workflow.
 
@@ -163,6 +144,23 @@ Actions → **Publish product artifacts** → Run workflow.
 
 One artifact per run, on purpose. A publish that half-succeeded across three registries is a
 worse state to be in than three runs.
+
+**The record** (all from this workflow):
+
+| Run | Date | Target | Result |
+|---|---|---|---|
+| 34761304289 | 2026-09-13 | dry run | built five files; predates `polaris-oid4vp` |
+| 34859291906 | 2026-09-14 | dry run | built all seven; every wheel `twine check PASSED` |
+| 34936298068 | 2026-09-15 | dry run | built and gated; nothing published |
+| 34938127694 | 2026-09-15 | `polaris-sdk-python` 0.1.0 | published to PyPI |
+| 34938379181 | 2026-09-15 | `polaris-verify` 0.1.0 | published to PyPI |
+| 34938539770 | 2026-09-15 | `polaris-oid4vp` 0.1.0 | refused by PyPI, publisher environment mismatch |
+| 34939353013 | 2026-09-15 | `polaris-oid4vp` 0.1.0 | published to PyPI |
+| 34940499289 | 2026-09-15 | `polaris-sdk-ts` 0.1.0 | published to npm, under the bootstrap token |
+
+The first dry run was once cited as cover for all four artifacts, and it had not built one of
+them. A dry run that did not build the thing being published is a rehearsal of a different
+performance; the table names what each run built so that cannot happen by reading.
 
 ---
 

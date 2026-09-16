@@ -16,10 +16,10 @@ Free ports: **7006** (the wallet), **9443** (the verifier). ~800 MB of disk for 
 
 ## 1. Install
 
-From the registry. You do not need this repository.
+From the registry. You do not need this repository. `--pre` because 1.0.0-rc.1 is a release candidate and pip skips those unless told; 0.1.0 is the previous release and also works.
 
     python3 -m venv .venv && . .venv/bin/activate
-    pip install polaris-oid4vp
+    pip install --pre polaris-oid4vp
     polaris-oid4vp --help
 
 One file from the repository is still needed, because it puts a credential in the wallet and

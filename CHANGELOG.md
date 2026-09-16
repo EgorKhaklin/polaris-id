@@ -5,6 +5,72 @@ ship-by-ship history is preserved in the git log.
 
 ---
 
+## v1.0.0-rc.1 — 2026-09-15 (a version a stranger can read)
+
+The tree version moves from 9.467 to 1.0.0-rc.1, and the four standalone packages from 0.1.0 to
+1.0.0-rc.1. What changed is what the number means; the two defects found on the way are below.
+
+**Why 1.0, and why a candidate.** The go-forward contract names five conditions for calling
+anything 1.0.0, and all five hold: a clean-machine install works, the cryptographic mode is
+explicit and safe, a named external client (walt.id's wallet, unmodified) completed a
+presentation, a named external conformance suite (the OpenID Foundation's hosted suite) has
+been run, and its result is published where it is not green (7 PASSED, 4 REVIEW). What is
+still missing is not one of the five. The contract's 90-day objective also asks for an operator
+who is not the author to have used the verifier, and that row of the scoreboard is blank. A
+release candidate says both things at once. That operator makes 1.0.0; a defect found in the
+candidate makes rc.2. Nothing else does.
+
+**The maturity classifier moves from Alpha to Beta.** PyPI has no classifier for a candidate,
+and Production/Stable would say more than has happened.
+
+**Why the tree version stops moving.** 9.467 was a count of ships, bumped by the one that added a
+check and the one that fixed a comment alike. Under the contract a version marks an externally
+observable change, which is rare, so the tree number stops tracking internal activity. Standalone
+packages keep their own semver, independently.
+
+**What had to move with it.** Four invariant checks parsed the version as MAJOR.MINOR and judged
+a document stamp stale when more than twenty minors behind the tree. That proxy dies the moment
+the version stops bumping per ship: everything is forever within twenty minors of a number that
+does not move. The stamps in SECURITY.md, CONTRIBUTING.md, PRODUCTION-READINESS.md and ROADMAP.md
+must now equal the tree version exactly, so a version bump forces every outward document to be
+re-read, which is when a document is most likely to have drifted. The thesis-terminus check
+compared against (9, 40); it now treats that terminus as the permanent fact it is, since a reset
+to 1.0 would otherwise have read as "before v9.40" and reopened a claim retired by recorded
+decision.
+
+**One latent defect surfaced by the move.** `check_roadmap_consistent` guarded its version
+comparison with `if vm and ...`, so a version its regex could not parse skipped the comparison
+and passed. On the first run against 1.0.0-rc.1 it would have gone green over a stamp it never read.
+It now fails when the version cannot be read.
+
+**A second, found by re-measuring.** Restating the README's test counts meant running the
+product suites the way the README says they were measured, `pytest -q` per suite, and
+`test_check_constraints` failed once: a relying party registered with no actor declared came
+back recorded `by vanta`. The seed that reloads the sample database restarts every reached
+table's ids from 1 (`TRUNCATE ... RESTART IDENTITY CASCADE`), and CASCADE reaches
+`RelyingParty` through its key to `VerificationContext`. `RelyingPartyEvent` deliberately
+carries no foreign key, so that ending a party's contract cannot erase its history, which also
+means the reload never reaches it: its rows survived every reload, and the first party
+registered after each one inherited every event of whichever party had held `rp_id` 1 in the
+previous life. The test that caught it was reading the oldest event under its new id and finding
+a dead party's. `04_data.sql` now names the record in the same statement, as `10_auth.sql` has
+done for `AppUserEvent` since it was written, and `check_seed_restart_resets_dependent_records`
+computes what the reload restarts from the schema's own foreign keys, migrations included, and
+fails on the next record left behind. Its closure was compared with what Postgres actually
+cascades to on the loaded database; they agree on every table.
+
+**Installing a candidate.** pip skips pre-releases unless told, and 0.1.0 remains available as
+the prior release, so the pip lines read `pip install --pre`. npm resolves the candidate
+directly. The republish also replaces the frozen 0.1.0 descriptions on PyPI, one of which still
+said "Not on PyPI yet" from a page that was, literally, on PyPI. The release badge now includes
+pre-releases; without that it would have kept showing v9.466 indefinitely.
+
+The two test-count stamps in the README, last measured at v9.332, are re-measured at this
+version and restated: 992 product tests passing (was 755) and 107 of 112 crypto witnesses (was
+84 of 89), on the reference machine, `pytest -q` per suite. The growth is the suites' ordinary
+accretion since v9.332, not anything this ship did; the three product tests and five crypto
+witnesses skipped need real ML-DSA, a PKCS#11 module or a real KMS key.
+
 ## v9.467 — 2026-09-15 (a privacy promise kept by discipline alone)
 
 A data-protection audit of the repository. Most of it came back clean, and the one finding is

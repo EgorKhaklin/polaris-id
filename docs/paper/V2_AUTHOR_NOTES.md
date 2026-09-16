@@ -17,10 +17,11 @@ the code. Each is small and each is recorded so it is not lost.
 
 Two observations that are not contradictions but are worth a maintainer's eye:
 
-- The README's stamped test counts (755 product tests, 84 of 89 crypto witnesses) date from
-  v9.332 and are, per the README's own rule, restated when re-measured. The paper reports them
-  with that stamp and separately reports the 1,048 test functions defined at HEAD as a
-  definition count.
+- The paper reports the README's test counts as stamped at v9.332 (755 product tests, 84 of
+  89 crypto witnesses). The README has since restated them at v1.0.0-rc.1 (992 and 107 of 112,
+  measured the same way on the same machine), per its own rule that they are restated when
+  re-measured and never extrapolated. The paper separately reports the 1,048 test functions
+  defined at HEAD as a definition count.
 - The performance baseline table has not been re-run since v9.191 on the reference machine;
   the CI smoke run is a procedure check by design. The paper cites the v9.191 numbers with their
   version.

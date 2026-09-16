@@ -400,10 +400,10 @@ def check_version_is_canonical(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 def check_changelog_matches_version(root: pathlib.Path) -> list[Finding]:
     ver = ""
-    m = re.search(r'__version__[^"\'\n]*["\'](\d+\.\d+)["\']', _read(root, "polaris_web/__version__.py"))
+    m = re.search(r'__version__[^"\'\n]*["\']([^"\']+)["\']', _read(root, "polaris_web/__version__.py"))
     if m:
         ver = m.group(1)
-    top = re.search(r"^##\s+v(\d+\.\d+)\b", _read(root, "CHANGELOG.md"), re.M)
+    top = re.search(r"^##\s+v(\S+?)\s+—", _read(root, "CHANGELOG.md"), re.M)
     if not ver or not top:
         return _fail("changelog_version", "could not read __version__ or CHANGELOG top entry")
     if top.group(1) != ver:
@@ -424,18 +424,15 @@ def check_changelog_matches_version(root: pathlib.Path) -> list[Finding]:
 # (The v9.27 MISSION.md freeze line that once narrated this was retired at v9.297.)
 # ---------------------------------------------------------------------------
 def check_thesis_terminus_honest(root: pathlib.Path) -> list[Finding]:
-    ver = _read(root, "polaris_web/__version__.py")
-    m = re.search(r'__version__[^"\'\n]*["\'](\d+)\.(\d+)["\']', ver)
-    if not m:
-        return _fail("thesis_terminus", "could not read __version__ for the v9.40 terminus check")
-    major, minor = int(m.group(1)), int(m.group(2))
+    # The v9.40 terminus fired under the old version scheme and is PERMANENT. It is
+    # not re-derived from the current version: the tree moved from 9.467 to
+    # 1.0.0-rc.1 on 2026-09-15, and a comparison against (9, 40) would have read that
+    # as "before the terminus" and quietly reopened a claim retired by recorded
+    # decision. THESIS.md must state the terminus and the retirement, whatever the
+    # version string says.
     thesis = _read(root, "docs/THESIS.md")
     if not thesis:
         return _fail("thesis_terminus", "docs/THESIS.md is missing")
-    if (major, minor) < (9, 40):
-        return _ok("thesis_terminus",
-                   f"v{major}.{minor} is before the v9.40 thesis terminus; THESIS.md may remain open")
-    # Past v9.40: THESIS.md must state the terminus and the permanent retirement.
     low = thesis.lower()
     missing = [s for s in ("v9.40", "retired") if s.lower() not in low]
     if missing:
@@ -3225,27 +3222,30 @@ def check_presentation_surface(root: pathlib.Path) -> list[Finding]:
     ver = re.search(r'^__version__(?:\s*:\s*str)?\s*=\s*["\']([^"\']+)["\']', _read(root, "polaris_web/__version__.py"), re.M)
     if not ver:
         return _fail("presentation_surface", "cannot read __version__")
-    major, minor = (int(x) for x in ver.group(1).split(".")[:2])
+    tree = ver.group(1)
+    # Stamps must equal the tree version EXACTLY. Until 2026-09-15 the rule was "within
+    # twenty minors", a staleness proxy for a tree that bumped its minor twenty times a
+    # day. Under the go-forward contract a version bump is a declared, externally
+    # observable change and happens rarely, so the honest rule is both stricter and
+    # simpler: every outward-facing document is re-read and restamped on each one.
     for rel in ("SECURITY.md", "CONTRIBUTING.md"):
-        m = re.search(r"Last updated: \d{4}-\d{2}-\d{2} \(v(\d+)\.(\d+)\)", _read(root, rel))
+        m = re.search(r"Last updated: \d{4}-\d{2}-\d{2} \(v([^)]+)\)", _read(root, rel))
         if not m:
-            return _fail("presentation_surface", f"{rel} carries no 'Last updated: DATE (vX.Y)' stamp")
-        smajor, sminor = int(m.group(1)), int(m.group(2))
-        if smajor != major or minor - sminor > 20:
+            return _fail("presentation_surface", f"{rel} carries no 'Last updated: DATE (vVERSION)' stamp")
+        if m.group(1) != tree:
             return _fail("presentation_surface",
-                         f"{rel} is stamped v{smajor}.{sminor} but the tree is v{major}.{minor}; "
-                         "re-read and restamp it within twenty minors")
+                         f"{rel} is stamped v{m.group(1)} but the tree is v{tree}; "
+                         "re-read it and restamp it to the current version")
     # The readiness ledger's own cover must not drift from the code (its status line
     # read v9.237 while the tree was v9.291, so its version undersold the record).
-    rm = re.search(r"\*\*Status \(v(\d+)\.(\d+)\):", _read(root, "docs/PRODUCTION-READINESS.md"))
+    rm = re.search(r"\*\*Status \(v([^)]+)\):", _read(root, "docs/PRODUCTION-READINESS.md"))
     if not rm:
         return _fail("presentation_surface",
-                     "docs/PRODUCTION-READINESS.md carries no '**Status (vX.Y):' stamp on its cover")
-    rmajor, rminor = int(rm.group(1)), int(rm.group(2))
-    if rmajor != major or minor - rminor > 20:
+                     "docs/PRODUCTION-READINESS.md carries no '**Status (vVERSION):' stamp on its cover")
+    if rm.group(1) != tree:
         return _fail("presentation_surface",
-                     f"docs/PRODUCTION-READINESS.md is stamped v{rmajor}.{rminor} but the tree is v{major}.{minor}; "
-                     "restamp the readiness ledger's cover within twenty minors")
+                     f"docs/PRODUCTION-READINESS.md is stamped v{rm.group(1)} but the tree is v{tree}; "
+                     "re-read the readiness ledger and restamp its cover to the current version")
     return _ok("presentation_surface",
                "community files present, security routing set, policies and the readiness ledger stamped current")
 
@@ -10735,14 +10735,20 @@ def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
     stale = re.search(r"^\| \[x\] (\S+) \|(?:[^|\n]*\|){4}\s*(IN PROGRESS|NEXT|TODO|PLANNED)\b", rm, re.M)
     if stale:
         return _fail("roadmap_consistent", "ROADMAP.md row %s is marked done but its notes open with %s" % (stale.group(1), stale.group(2)))
-    sm = re.search(r"(\d+) invariant\s+checks \(v(\d+)\.(\d+)\)", rm)
+    sm = re.search(r"(\d+) invariant\s+checks \(v([^)]+)\)", rm)
     if not sm:
-        return _fail("roadmap_consistent", "ROADMAP.md must stamp 'N invariant checks (vX.Y)'")
+        return _fail("roadmap_consistent", "ROADMAP.md must stamp 'N invariant checks (vVERSION)'")
     if int(sm.group(1)) != len(CHECKS):
         return _fail("roadmap_consistent", "ROADMAP.md stamps %s invariant checks; the layer has %d" % (sm.group(1), len(CHECKS)))
-    vm = re.search(r'__version__: str = "(\d+)\.(\d+)"', _read(root, "polaris_web/__version__.py"))
-    if vm and (int(sm.group(2)) != int(vm.group(1)) or int(vm.group(2)) - int(sm.group(3)) > 20):
-        return _fail("roadmap_consistent", "ROADMAP.md's check stamp reads v%s.%s but the tree is v%s.%s; restamp within twenty minors" % (sm.group(2), sm.group(3), vm.group(1), vm.group(2)))
+    # Exact match against the tree version. The previous form guarded the comparison
+    # with `if vm and ...`, so a version its regex could not parse silently SKIPPED the
+    # comparison and passed. A version-scheme change would have turned this into a
+    # check that cannot fail. Found on 2026-09-15 while moving 9.467 to 1.0.0-rc.1.
+    vm = re.search(r'__version__(?:\s*:\s*str)?\s*=\s*"([^"]+)"', _read(root, "polaris_web/__version__.py"))
+    if not vm:
+        return _fail("roadmap_consistent", "cannot read polaris_web/__version__.py, so the roadmap's check stamp can be compared to nothing")
+    if sm.group(2) != vm.group(1):
+        return _fail("roadmap_consistent", "ROADMAP.md's check stamp reads v%s but the tree is v%s; re-read the roadmap and restamp it to the current version" % (sm.group(2), vm.group(1)))
     if "P8.8" in done and "protocol layer" not in rm.split("**Do not have:**")[0].lower():
         return _fail("roadmap_consistent", "ROADMAP.md's 'Have' paragraph must name the protocol layer once P8 is done")
     return _ok("roadmap_consistent",
@@ -17781,6 +17787,115 @@ def check_logs_exclude_pii(root: pathlib.Path) -> list[Finding]:
                % seen)
 
 
+# ---------------------------------------------------------------------------
+# The seed's RESTART IDENTITY and the records that outlive it (2026-09-15).
+# 04_data.sql reloads the sample world with TRUNCATE ... RESTART IDENTITY CASCADE.
+# CASCADE reaches every table that references one in the list; RESTART IDENTITY hands
+# every reached table's ids out again from 1. A record table that deliberately carries
+# NO foreign key, so that deleting the thing it describes cannot delete its history, is
+# reached by neither: its rows survive the reload and its ids keep pointing into the
+# old world. RelyingPartyEvent had exactly that shape. After a reload the first party
+# registered got rp_id 1 and, with it, every event of the party that had held rp_id 1
+# in the previous life; test_check_constraints saw a registration "by vanta" that it
+# had made with no actor declared. AppUserEvent was given the same fix in 10_auth.sql
+# when it was written. This is the rule both follow, so the next such table cannot be
+# missed by memory.
+# ---------------------------------------------------------------------------
+
+def check_seed_restart_resets_dependent_records(root: pathlib.Path) -> list[Finding]:
+    name = "seed_restart_resets_records"
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    if "CREATE TABLE" not in schema:
+        return _fail(name, "polaris_sql/01_schema.sql declares no table, so which records survive a "
+                           "reload cannot be read")
+    if "BEFORE UPDATE OR DELETE ON" not in triggers:
+        return _fail(name, "polaris_sql/06_triggers.sql declares no append-only trigger, so there is "
+                           "no record table to reason about")
+    # Tables and append-only triggers declared by a migration are part of the same
+    # schema, and a foreign key added after both tables exist is part of the same graph.
+    for p in sorted((root / "polaris_sql" / "migrations").glob("*.up.sql")):
+        migration = _read_path(p)
+        schema += "\n" + migration
+        triggers += "\n" + migration
+    seeds = [_read(root, "polaris_sql/04_data.sql"), _read(root, "polaris_sql/10_auth.sql")]
+    statements: list[set[str]] = []
+    for sql in seeds:
+        if "RESTART IDENTITY" not in sql:
+            continue
+        for m in re.finditer(r"TRUNCATE\s+(?:TABLE\s+)?(.*?)\s+RESTART\s+IDENTITY", sql, re.S | re.I):
+            statements.append({w.lower() for w in re.findall(r"\w+", m.group(1))})
+    if not statements:
+        return _fail(name, "no seed file carries a TRUNCATE ... RESTART IDENTITY statement, so the "
+                           "reload this check reasons about has moved or gone")
+    tables: dict[str, str] = {}
+    for m in re.finditer(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)\s*\((.*?)\n\)[^;]*;", schema, re.S):
+        tables[m.group(1).lower()] = m.group(2)
+    refs = {t: {r.lower() for r in re.findall(r"REFERENCES\s+(\w+)", body, re.I)}
+            for t, body in tables.items()}
+    for m in re.finditer(r"ALTER TABLE\s+(?:ONLY\s+)?(\w+)\s+ADD\s+(?:CONSTRAINT\s+\w+\s+)?"
+                         r"FOREIGN KEY\s*\([^)]*\)\s*REFERENCES\s+(\w+)", schema, re.I | re.S):
+        refs.setdefault(m.group(1).lower(), set()).add(m.group(2).lower())
+    serial_pk: dict[str, str] = {}
+    for t, body in tables.items():
+        pm = re.search(r"^\s*(\w+)\s+(?:BIG)?SERIAL\s+PRIMARY KEY", body, re.M | re.I)
+        if pm:
+            serial_pk[t] = pm.group(1).lower()
+    if not serial_pk:
+        return _fail(name, "no table keys itself on a SERIAL, so RESTART IDENTITY restarts nothing "
+                           "this check can name")
+    if not any(refs.values()):
+        return _fail(name, "no table references another, so CASCADE reaches nothing; that is not the "
+                           "schema this check was written against, and a reload it cannot follow is "
+                           "not a reload it can clear")
+    # A column name identifies a parent only when exactly one table uses it as its
+    # serial key. `event_id` names half the schema and attributes nothing.
+    owners: dict[str, list[str]] = {}
+    for t, col in serial_pk.items():
+        owners.setdefault(col, []).append(t)
+    parent_of = {col: ts[0] for col, ts in owners.items() if len(ts) == 1}
+    # What the reload truncates, and so restarts: the tables a statement names and
+    # everything CASCADE reaches through a foreign key, transitively.
+    restarted: set[str] = set()
+    for listed in statements:
+        reached = set(listed)
+        grew = True
+        while grew:
+            grew = False
+            for t, targets in refs.items():
+                if t not in reached and targets & reached:
+                    reached.add(t)
+                    grew = True
+        restarted |= reached
+    append_only = {m.lower() for m in re.findall(
+        r"BEFORE\s+(?:UPDATE\s+OR\s+DELETE|DELETE\s+OR\s+UPDATE|DELETE|UPDATE)\s+ON\s+(\w+)",
+        triggers, re.I)}
+    problems: list[str] = []
+    reset = 0
+    for t in sorted(append_only):
+        body = tables.get(t)
+        if body is None:
+            continue
+        cols = {c.lower() for c in re.findall(r"^\s*(\w+)\s+\w", body, re.M)}
+        parents = sorted({(col, parent_of[col]) for col in cols
+                          if col in parent_of and parent_of[col] != t
+                          and parent_of[col] in restarted and col != serial_pk.get(t)})
+        if not parents:
+            continue
+        if t in restarted:
+            reset += 1
+            continue
+        for col, parent in parents:
+            problems.append("%s keeps its rows across the reload while %s.%s restarts at 1, so the "
+                            "first %s of the next life inherits the record of whichever one held "
+                            "that id before; name %s in the same TRUNCATE"
+                            % (t, parent, col, parent, t))
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name, "%d append-only record table(s) keyed on an id the reload restarts are reset by "
+                     "the same reload, so no record survives to describe the next life's ids" % reset)
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drills_count_their_cases,
     check_internal_kex_measured,
@@ -17883,6 +17998,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_advisory_locks_have_a_contention_test,
     check_test_runners_are_last_in_their_file,
     check_logs_exclude_pii,
+    check_seed_restart_resets_dependent_records,
     check_published_readmes_have_no_relative_links,
     check_distributions_carry_their_licence,
     check_dyno_published,

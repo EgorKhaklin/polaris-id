@@ -197,7 +197,7 @@ footer a{color:var(--ink-dim)}
     </div>
     <p class="strip">
         <strong>45</strong> schema tables · <strong>124</strong> routes ·
-        <strong>271</strong> machine-checked invariants ·
+        <strong>272</strong> machine-checked invariants ·
         <strong>ML-DSA-65</strong> signing default ·
         <strong>X25519MLKEM768</strong> TLS edge ·
         <strong>Plonky2</strong> ZK + second witness
@@ -286,19 +286,19 @@ footer a{color:var(--ink-dim)}
         counts are measured per release on the reference machine. CI does not just run tests;
         it exercises the artifacts.</p>
     <div class="numbers">
-        <div class="num"><b>755</b><span>product tests, live DB</span></div>
-        <div class="num"><b>84</b><span>crypto-witness tests</span></div>
-        <div class="num"><b>271</b><span>invariant checks</span></div>
+        <div class="num"><b>992</b><span>product tests, live DB</span></div>
+        <div class="num"><b>107</b><span>crypto-witness tests</span></div>
+        <div class="num"><b>272</b><span>invariant checks</span></div>
         <div class="num"><b>20</b><span>CI jobs</span></div>
         <div class="num"><b>5</b><span>services booted in CI</span></div>
     </div>
-    <p class="asof">test counts measured at v9.332; the rest recomputed on every push</p>
+    <p class="asof">test counts measured at v1.0.0-rc.1; the rest recomputed on every push</p>
     <ul class="prodlist">
         <li><strong>The production-profile stack boots in CI.</strong> Five services behind a self-built TLS edge come up end to end on every push, and health is asserted through the edge. Building that job surfaced four prod-down bugs the day it landed.</li>
         <li><strong>Backups restore, provably.</strong> An encrypted backup and restore round-trip runs in CI with a fail-closed negative check, and the HA profile's automated failover is drilled on every push.</li>
         <li><strong>The post-quantum handshake is proven, not claimed.</strong> CI negotiates X25519MLKEM768 against a real certificate on every push, and signs with real ML-DSA-65 inside the production image.</li>
         <li><strong>CVEs gate the build.</strong> Both the dependency surface and all five self-built container images are scanned on every push; a fixable CRITICAL fails CI.</li>
-        <li><strong>Every check can prove it works.</strong> Each of the 271 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
+        <li><strong>Every check can prove it works.</strong> Each of the 272 invariant checks is paired with a detection test showing it fails on a broken fixture. A check that cannot detect its own violation is treated as broken.</li>
     </ul>
 </section>
 
@@ -316,21 +316,20 @@ footer a{color:var(--ink-dim)}
             key binding was signed by a P-256 key walt.id generated and this project has never
             held. It also refused Polaris first, and was right to: <code>keygen</code> was
             emitting a request-signing certificate with no <code>digitalSignature</code> key
-            usage, which eleven conformance modules and 271 invariant checks had all passed
-            over.</p></div>
+            usage, which eleven conformance modules and every check in the invariant layer had
+            passed over.</p></div>
         <div class="cell"><h3>Hosted conformance</h3>
             <p>The OpenID Foundation's hosted suite at certification.openid.net ran the
             <code>oid4vp-1final-verifier-haip-test-plan</code> against the verifier across the
             open internet. Eleven of eleven modules finished with zero failures and zero
             warnings: seven negative modules PASSED automatically, four positive modules are in
-            REVIEW with the screenshot evidence attached. <b>REVIEW is not PASSED.</b> Those
-            four await a Foundation reviewer. This is not a certification and Polaris is not
-            certified.</p></div>
+            REVIEW. <b>REVIEW is not PASSED.</b> Those four await a Foundation reviewer. This
+            is not a certification and Polaris is not yet certified.</p></div>
         <div class="cell"><h3>Installable without cloning anything</h3>
-            <p>The standalone products are on their normal registries at 0.1.0:
-            <code>pip install polaris-verify</code>,
-            <code>pip install polaris-oid4vp</code>,
-            <code>pip install polaris-sdk-python</code>,
+            <p>The standalone products are on their normal registries, at 0.1.0 as this is written; this tree is 1.0.0-rc.1, a release candidate that goes out through the same workflow:
+            <code>pip install --pre polaris-verify</code>,
+            <code>pip install --pre polaris-oid4vp</code>,
+            <code>pip install --pre polaris-sdk-python</code>,
             <code>npm install polaris-sdk-ts</code>. Each was verified by installing from the
             live registry into a clean environment and running it there, not by a build that
             exited zero.</p></div>

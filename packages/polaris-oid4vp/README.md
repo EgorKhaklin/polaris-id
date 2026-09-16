@@ -4,9 +4,14 @@
 presentation produced by a wallet that has never heard of Polaris: an SD-JWT VC signed with
 ES256, with holder key binding, delivered over `direct_post.jwt`.
 
-**Status: 0.1.0. It passes all eleven modules of the conformance plan against a locally
-hosted OpenID Foundation suite**, seven of them scored automatically. Nothing has been
-certified, nothing published, and no external party has used it. See
+**Status: 1.0.0-rc.1, a release candidate.** The OpenID Foundation's HOSTED conformance suite
+ran all eleven modules of `oid4vp-1final-verifier-haip-test-plan` against it across the open
+internet: zero failures, zero warnings, seven negative modules carrying the service's own
+`result: PASSED`, four positive modules in REVIEW, awaiting a Foundation reviewer. REVIEW is
+not PASSED, and nothing is yet certified. One unmodified external
+wallet, walt.id Wallet API v2, has presented to it and been accepted. No operator other than the
+author has run it and no independent security review exists, which is what separates a
+candidate from 1.0.0. See
 [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md) for exactly how much that is and is not.
 
 ---

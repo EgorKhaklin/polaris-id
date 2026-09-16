@@ -93,6 +93,14 @@ def test_changelog_version_mismatch_fails(tmp_path):
     changelog.write_text("## v1.00 — old\n")
     out = checks.check_changelog_matches_version(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when CHANGELOG top != __version__"
+    # A semver pre-release is a version like any other, and the header carries it whole.
+    (tmp_path / "polaris_web" / "__version__.py").write_text('__version__ = "1.0.0-rc.1"\n')
+    changelog.write_text("## v1.0.0-rc.1 — today\n")
+    assert checks.check_changelog_matches_version(tmp_path)[0].level == "OK", \
+        "a pre-release version must match its own CHANGELOG header"
+    changelog.write_text("## v1.0.0 — today\n")
+    assert checks.check_changelog_matches_version(tmp_path)[0].level == "FAIL", \
+        "1.0.0 is not 1.0.0-rc.1; the whole string is the version"
 
 
 def test_debug_artifact_check_fails(tmp_path):
@@ -1379,10 +1387,12 @@ def test_thesis_terminus_check_discriminates(tmp_path):
         (web / "__version__.py").write_text(f'__version__: str = "{version}"\n')
         (docs / "THESIS.md").write_text(thesis)
 
-    # 1. Before the v9.40 terminus: an open THESIS is fine -> OK.
-    write("9.39", OPEN)
-    assert checks.check_thesis_terminus_honest(tmp_path)[0].level == "OK", \
-        "before v9.40 the thesis may remain open"
+    # 1. The v9.40 terminus fired under the old version scheme and is permanent: a
+    #    version reset (9.467 became 1.0.0-rc.1) must not quietly reopen it. An open
+    #    THESIS fails whatever the version string says.
+    write("1.0.0-rc.1", OPEN)
+    assert checks.check_thesis_terminus_honest(tmp_path)[0].level == "FAIL", \
+        "the terminus is permanent; a version-scheme reset must not reopen the thesis"
 
     # 2. Past v9.40 but status still the open 'HYPOTHESIS-NOT-VERIFIED' -> FAIL.
     write("9.90", OPEN)
@@ -3536,6 +3546,78 @@ def test_correlation_id_check_discriminates(tmp_path):
     (web / "observability.py").unlink()
     assert checks.check_correlation_id(tmp_path)[0].level == "FAIL", \
         "must FAIL when a wiring file is absent"
+
+
+def test_seed_restart_resets_dependent_records_check_discriminates(tmp_path):
+    # The reload restarts every reached table's ids from 1. A record that carries no
+    # foreign key survives it, and its rows then describe whoever gets those ids next.
+    # The good fixture names the record in the same TRUNCATE; each perturbation is a
+    # way for it to be left behind.
+    GOOD_SCHEMA = (
+        "CREATE TABLE Parent (\n    p_id SERIAL PRIMARY KEY,\n    name TEXT NOT NULL\n);\n"
+        "CREATE TABLE Child (\n    c_id SERIAL PRIMARY KEY,\n"
+        "    p_id INTEGER REFERENCES Parent(p_id)\n);\n"
+        "CREATE TABLE ChildRecord (\n    event_id SERIAL PRIMARY KEY,\n"
+        "    c_id INTEGER NOT NULL,\n    note TEXT\n);\n"
+    )
+    GOOD_TRIGGERS = (
+        "CREATE TRIGGER trg_childrecord_append_only BEFORE UPDATE OR DELETE ON ChildRecord\n"
+        "    FOR EACH ROW EXECUTE FUNCTION refuse();\n"
+    )
+    GOOD_SEED = "TRUNCATE TABLE ChildRecord, Parent RESTART IDENTITY CASCADE;\n"
+    GOOD_AUTH = "INSERT INTO Parent (name) VALUES ('seed');\n"
+
+    def write(schema=GOOD_SCHEMA, triggers=GOOD_TRIGGERS, seed=GOOD_SEED, auth=GOOD_AUTH):
+        root = tmp_path / ("seed%d" % write.n)
+        write.n += 1
+        (root / "polaris_sql").mkdir(parents=True)
+        (root / "polaris_sql" / "01_schema.sql").write_text(schema)
+        (root / "polaris_sql" / "06_triggers.sql").write_text(triggers)
+        (root / "polaris_sql" / "04_data.sql").write_text(seed)
+        (root / "polaris_sql" / "10_auth.sql").write_text(auth)
+        return root
+    write.n = 0
+
+    ok = checks.check_seed_restart_resets_dependent_records(write())
+    assert all(f.level == "OK" for f in ok), ok
+
+    # The defect as found: the record is not named, Child is reached by CASCADE through
+    # its key to Parent, and c_id 1 is handed out again over the old record's rows.
+    bad = checks.check_seed_restart_resets_dependent_records(write(
+        seed="TRUNCATE TABLE Parent RESTART IDENTITY CASCADE;\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+    assert "childrecord" in bad[0].message and "child.c_id" in bad[0].message, bad
+
+    # Reset by the other seed file counts: the reload is every file it runs.
+    ok = checks.check_seed_restart_resets_dependent_records(write(
+        seed="TRUNCATE TABLE Parent RESTART IDENTITY CASCADE;\n",
+        auth="TRUNCATE TABLE ChildRecord RESTART IDENTITY;\n"))
+    assert all(f.level == "OK" for f in ok), ok
+
+    # A record that carries the foreign key is reached by CASCADE and needs no naming.
+    ok = checks.check_seed_restart_resets_dependent_records(write(
+        schema=GOOD_SCHEMA.replace("    c_id INTEGER NOT NULL,\n",
+                                   "    c_id INTEGER NOT NULL REFERENCES Child(c_id),\n"),
+        seed="TRUNCATE TABLE Parent RESTART IDENTITY CASCADE;\n"))
+    assert all(f.level == "OK" for f in ok), ok
+
+    # A parent that no statement reaches restarts nothing, so a record keyed on it is
+    # not a finding.
+    ok = checks.check_seed_restart_resets_dependent_records(write(
+        seed="TRUNCATE TABLE ChildRecord RESTART IDENTITY;\n"))
+    assert all(f.level == "OK" for f in ok), ok
+
+    # The reload itself going missing is not a clean bill.
+    bad = checks.check_seed_restart_resets_dependent_records(write(seed="SELECT 1;\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # Nor is a schema with no append-only record to protect.
+    bad = checks.check_seed_restart_resets_dependent_records(write(triggers="SELECT 1;\n"))
+    assert any(f.level == "FAIL" for f in bad), bad
+
+    # And an empty room is not one either.
+    bad = checks.check_seed_restart_resets_dependent_records(tmp_path / "nothing-here")
+    assert any(f.level == "FAIL" for f in bad), bad
 
 
 if __name__ == "__main__":
