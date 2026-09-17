@@ -285,13 +285,31 @@ already `exposed` on its token value, so size tells a colluding pair nothing the
 already have in a single string comparison. It is recorded because the two facts come apart
 the moment a pack rides alongside a withheld credential.
 
+**And the wallet path is a different answer, measured 2026-09-17.** The OpenID4VP door is
+the one strangers actually use, and it was named here as unmeasured on the grounds that an
+SD-JWT VC presentation "discloses the holder's own attribute values, so its disclosures vary
+in length by construction". By construction is a claim, so it was measured with the shipped
+package's own wallet, over the same 200 people:
+
+| | distinct lengths | spread | anonymity set left |
+|---|---|---|---|
+| bounded Polaris presentation | 3 (all of it noise) | 2 bytes | 200 of 200 |
+| the wallet's SD-JWT VC presentation | 16 | 15 bytes | about 23 of 200 |
+
+Holder-stable, unlike the bounded case: a person's name is the same length at every verifier,
+so the buckets are the same buckets everywhere. **One observation, requiring no field to be
+read, narrows 200 holders to about 23.**
+
+Nothing here is broken. Selective disclosure means disclosing, and what is disclosed has a
+length; a name is not a fixed-width field in any country. It is recorded because a deploying
+organisation choosing that door is choosing this with it, and because the sentence it
+replaces asserted the property instead of measuring it.
+
 **What this does not say.** It is a measurement of these shapes at this population size, not
 a proof. It holds while a bounded presentation carries no per-holder variable-length field.
 Disclosed attribute values, optional elements or a variable-length status assertion would
-each open the channel, and the control above shows exactly what happens when one does. The
-OpenID4VP path is a separate question and is not measured here: an SD-JWT VC presentation
-discloses the holder's own attribute values, so its disclosures vary in length by
-construction. Timing, repeat visits and network metadata remain unmodelled.
+each open the channel, and the wallet path above is exactly what that looks like when it
+happens. Timing, repeat visits and network metadata remain unmodelled.
 
 ---
 

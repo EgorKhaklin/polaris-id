@@ -135,6 +135,57 @@ def _exposed(person, scope, rng):
     return p
 
 
+def _sdjwt_wallet_path(people, out):
+    """The OTHER door, and the one this study named as uncovered.
+
+    `transcript_size.py` measures the native Polaris presentation. An SD-JWT VC presentation
+    is a different shape with a different answer, and README.md said so rather than measuring
+    it: "an SD-JWT VC presentation discloses the holder's own attribute values, so its
+    disclosures vary in length by construction."
+
+    By construction is a claim, so it is measured. The presentation is built with the shipped
+    package's own wallet, and the length is the length of the `~`-joined string a wallet
+    actually sends.
+    """
+    pkg = ROOT / "packages" / "polaris-oid4vp"
+    if not (pkg / "test_sdjwt.py").is_file():
+        return None
+    sys.path.insert(0, str(pkg))
+    try:
+        from test_sdjwt import Wallet, _disclosure, _jws, _public_jwk   # noqa: F401
+        from polaris_oid4vp.sdjwt import b64u_encode as _b64u
+    except Exception as exc:                      # noqa: BLE001
+        print("  (the wallet path could not be measured here: %s)" % exc, file=out)
+        return None
+
+    import hashlib as _h
+    import time as _t
+    w = Wallet()
+    sizes, per_holder = [], {}
+    for p in people:
+        # The disclosures a real PID carries: the holder's own name and date of birth. These
+        # are the attribute VALUES, which is the whole point of selective disclosure and the
+        # whole reason the length varies.
+        claims = (("given_name", p["name"].split()[0]),
+                  ("family_name", p["name"].split()[1]),
+                  ("birthdate", p["dob"]))
+        ds = [_disclosure("s%d" % i, n, v) for i, (n, v) in enumerate(claims)]
+        digests = [_b64u(_h.sha256(d.encode("ascii")).digest()) for d in ds]
+        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                   "iat": 1789362107, "_sd": digests, "_sd_alg": "sha-256",
+                   "cnf": {"jwk": _public_jwk(w.holder_key)}}
+        jwt = _jws(w.issuer_key, {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"}, payload)
+        body = jwt + "~" + "".join(d + "~" for d in ds)
+        kb = _jws(w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": 1789362107, "aud": "verifier", "nonce": "n",
+                   "sd_hash": _b64u(_h.sha256(body.encode("ascii")).digest())})
+        n = len(body + kb)
+        sizes.append(n)
+        per_holder[p["i"]] = n
+    del _t
+    return sizes, per_holder
+
+
 def _fingerprinted(person, scope, rng):
     """THE POSITIVE CONTROL. A bounded-shaped transcript padded to a length that is a
     function of the holder and of nothing else. Size is a fingerprint here by construction,
@@ -269,6 +320,22 @@ def main():
               % (acc, chance), file=sys.stderr)
         return 2
 
+    sd = _sdjwt_wallet_path(people, out)
+    if sd:
+        sizes_sd, per_holder = sd
+        distinct = len(set(sizes_sd))
+        # Holder-stable by construction here: the disclosures carry the holder's own
+        # attribute values, so the same person is the same length at every verifier. That is
+        # what makes the distinct count meaningful on this path and not on the other.
+        effective = sum(v * v for v in
+                        __import__("collections").Counter(sizes_sd).values()) / len(sizes_sd)
+        print("  THE WALLET PATH (an SD-JWT VC presentation, the OpenID4VP door)", file=out)
+        print("     distinct byte lengths   %d over %d holders   min %d  max %d  spread %d"
+              % (distinct, len(sizes_sd), min(sizes_sd), max(sizes_sd),
+                 max(sizes_sd) - min(sizes_sd)), file=out)
+        print("     holder-stable, so this leaves %.0f of %d as the anonymity set\n"
+              % (effective, len(sizes_sd)), file=out)
+
     print("== MEASURED. A bounded presentation's SIZE carries nothing about the holder: the "
           "matcher sits at chance (%.4f against %.4f) while solving the fingerprinted control "
           "at %.4f. The few distinct lengths in that population are the proof nonce's decimal "
@@ -280,6 +347,16 @@ def main():
           "value, so size tells a colluding pair nothing they did not have; it would matter "
           "the moment a pack rode alongside a withheld credential."
           % (exp_acc, exp_acc / chance))
+    if sd:
+        print("   THE WALLET PATH IS A DIFFERENT ANSWER, and it is the door strangers use. An "
+              "SD-JWT VC presentation discloses the holder's OWN attribute values, so its "
+              "length varies with their name and is the same at every verifier: %d distinct "
+              "lengths over %d holders, which leaves about %.0f of them as the anonymity set "
+              "from one observation nobody has to read a field to make. Nothing here is "
+              "broken. Selective disclosure means disclosing, and what is disclosed has a "
+              "length. It is recorded because a deploying organisation choosing that door is "
+              "choosing this too."
+              % (len(set(sizes_sd)), len(sizes_sd), effective))
     print("   WHAT THIS DOES NOT SAY. It is a measurement of the shapes above at this "
           "population size, not a proof. It holds while a bounded presentation carries no "
           "per-holder variable-length field: disclosed attribute values, optional elements or "

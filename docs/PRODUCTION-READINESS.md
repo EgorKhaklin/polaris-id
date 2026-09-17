@@ -135,9 +135,14 @@ transcript is already `exposed` on its token value, so size gives a colluding pa
 further there; the two facts come apart the moment a pack rides alongside a withheld
 credential. The bounded result holds only while a bounded presentation carries no per-holder
 variable-length field: disclosed attribute values, optional elements or a variable-length
-status assertion would each open the channel. The OpenID4VP path is not covered by that
-measurement, and an SD-JWT VC presentation discloses the holder's own attribute values, so
-its disclosures vary in length by construction. `lab/linkability/`.
+status assertion would each open the channel. **The OpenID4VP path is a different answer and
+is now measured too**: an SD-JWT VC presentation discloses the holder's own attribute values,
+so over the same 200 people it falls into 16 distinct lengths rather than 3, those lengths are
+holder-STABLE because a person's name is the same length at every verifier, and one
+observation requiring no field to be read narrows 200 holders to about 23. Nothing there is
+broken: selective disclosure means disclosing, and a name is not a fixed-width field in any
+country. It is recorded because a deploying organisation choosing that door is choosing this
+with it. `lab/linkability/`.
 
 **A credential past its own expiry stayed usable, and the dashboard was counting them
 (2026-09-17).** `IdentityToken.expiration_date` is written at issuance, `ACTIVE -> EXPIRED` is
