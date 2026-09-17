@@ -171,6 +171,50 @@ def check_csp_forbids_unsafe_inline(root: pathlib.Path) -> list[Finding]:
     return _ok("csp", "CSP pins script-src 'self'; no unsafe-inline on scripts (C5)")
 
 
+def check_json_door_refuses_non_finite(root: pathlib.Path) -> list[Finding]:
+    """A number that is not a number does not get past the JSON door (2026-09-17).
+
+    JSON as Python implements it admits `NaN`, `Infinity` and `-Infinity` as bare literals,
+    and an out-of-range exponent such as `1e400` reaches the same place by ordinary grammar
+    without ever being a literal. Once one is inside, every comparison made against it is
+    False, so a one-sided threshold test passes; and `int(float('inf'))` raises
+    OverflowError, which the `except (TypeError, ValueError)` nearly every route writes does
+    not catch, turning a refusal into an unhandled 500. Both shapes were found in this tree
+    on 2026-09-17, in the packaged verifier and on the authorization endpoint.
+
+    Twenty-one route handlers read JSON. Fixing them one at a time leaves the twenty-second
+    to be written, so the refusal lives at the door instead, where there is one of it. This
+    check is what stops the door being removed: a provider that covers only `parse_constant`
+    is the version of this fix that LOOKS complete and lets `1e400` straight through, which
+    is why both hooks are named here rather than one.
+    """
+    name = "json_door"
+    src = _read(root, "polaris_web/app.py")
+    if not src:
+        return _fail(name, "polaris_web/app.py could not be read")
+    m = re.search(r"class\s+(\w+)\(DefaultJSONProvider\):(.*?)(?=\napp\.json\s*=)", src, re.S)
+    if not m:
+        return _fail(name, "no DefaultJSONProvider subclass precedes the app.json assignment in "
+                           "polaris_web/app.py; a JSON body carrying NaN or Infinity would be "
+                           "parsed and reach the route handlers")
+    cls, body = m.group(1), m.group(2)
+    if not re.search(r"app\.json\s*=\s*%s\(app\)" % re.escape(cls), src):
+        return _fail(name, "%s is defined but never installed: `app.json = %s(app)` is missing, "
+                           "so the door is decoration" % (cls, cls))
+    missing = [hook for hook in ("parse_constant", "parse_float") if hook not in body]
+    if missing:
+        return _fail(name, "%s does not set %s. parse_constant alone catches the bare literals "
+                           "and lets `1e400` through, because an out-of-range exponent is "
+                           "ordinary JSON grammar that overflows inside float()."
+                           % (cls, " or ".join(missing)))
+    if "isfinite" not in body:
+        return _fail(name, "%s sets parse_float but never tests the result for finiteness, so "
+                           "the hook is installed and refuses nothing" % cls)
+    return _ok(name, "the JSON door (%s) refuses NaN, Infinity and overflowing exponents before "
+                     "any route handler sees them, by both parse_constant and a finiteness test "
+                     "in parse_float, and is installed on the app" % cls)
+
+
 # ---------------------------------------------------------------------------
 # C3 — one active identity per person, enforced by a partial unique index.
 # ---------------------------------------------------------------------------
@@ -1148,12 +1192,24 @@ def check_local_gate_covers_ci(root: pathlib.Path) -> list[Finding]:
     The rule is not that the ship tool must RUN them all. It is that a suite CI runs
     cannot be one the ship tool has never heard of: either it shards it, or it names it
     in UNSHARDED_SUITES so preflight can tell you to run it.
+
+    2026-09-17: this check read `polaris-coverage.sh` and called it CI. It is not. The
+    workflow that gates the push is `.github/workflows/ci.yml`, and it ran NINE suites
+    coverage.sh does not mention, among them `sdk/python/test_sdk.py` and all six
+    polaris-oid4vp suites. The check reported OK, with a sentence saying the local gate
+    "cannot be quietly narrower than the one that gates the push", while the local gate
+    was quietly narrower in nine places. The defect it was written to prevent then
+    happened: a refusal note was reworded, test_sdk held the old phrase, the gate said
+    READY, CI went red. A check that reads a proxy for the thing it is checking is
+    measuring the proxy. It now reads ci.yml, and coverage.sh in addition.
     """
     name = "local_gate_covers_ci"
     cov = _read(root, "scripts/polaris-coverage.sh")
     ship = _read(root, "scripts/polaris-ship.py")
-    if not cov or not ship:
-        return _fail(name, "scripts/polaris-coverage.sh or polaris-ship.py could not be read")
+    ci_yml = _read(root, ".github/workflows/ci.yml")
+    if not cov or not ship or not ci_yml:
+        return _fail(name, "scripts/polaris-coverage.sh, polaris-ship.py or "
+                           ".github/workflows/ci.yml could not be read")
 
     ci: set[str] = set()
     for line in cov.splitlines():
@@ -1161,11 +1217,26 @@ def check_local_gate_covers_ci(root: pathlib.Path) -> list[Finding]:
             continue
         for tok in re.findall(r"\b((?:[\w.]+\.)?test_\w+)\b", line):
             ci.add(tok.split("/")[-1].removesuffix(".py"))
-    if not ci:
-        return _fail(name, "no suites could be read out of polaris-coverage.sh; the parser and "
-                           "the script have drifted, so this check is measuring nothing")
+    from_coverage = len(ci)
+    # The workflow itself. `-m unittest NAME...`, `-m pytest path/test_x.py` and
+    # `unittest discover -s DIR` are the three shapes it uses; a discover run is credited
+    # to its directory, because the suite names are not written down anywhere to compare.
+    for line in ci_yml.splitlines():
+        if "-m unittest" not in line and "-m pytest" not in line:
+            continue
+        if "discover" in line:
+            m = re.search(r"-s\s+(\S+)", line)
+            if m:
+                ci.add("discover:" + m.group(1))
+            continue
+        for tok in re.findall(r"\b((?:[\w.]+\.)?test_\w+)\b", line):
+            ci.add(tok.split("/")[-1].removesuffix(".py"))
+    if from_coverage == 0 or len(ci) == from_coverage:
+        return _fail(name, "suites could not be read out of polaris-coverage.sh (%d) or out of "
+                           "ci.yml (%d more); a parser that finds nothing is a check that "
+                           "measures nothing" % (from_coverage, len(ci) - from_coverage))
 
-    unknown = sorted(t for t in ci if t not in ship)
+    unknown = sorted(t for t in ci if t.removeprefix("discover:") not in ship)
     if unknown:
         return _fail(name, "%d suite(s) run in CI that scripts/polaris-ship.py has never heard "
                            "of, so a ship can pass the local gate and break them: %s. Shard them "
@@ -1173,7 +1244,9 @@ def check_local_gate_covers_ci(root: pathlib.Path) -> list[Finding]:
                            % (len(unknown), ", ".join(unknown)))
     return _ok(name, "all %d suites CI runs are known to the ship tool: it shards the DB-heavy "
                      "ones and names the rest, so the local gate cannot be quietly narrower than "
-                     "the one that gates the push" % len(ci))
+                     "the one that gates the push. Read out of BOTH polaris-coverage.sh and "
+                     ".github/workflows/ci.yml, because the workflow is what gates the push and "
+                     "for a year this check only read the script" % len(ci))
 
 
 def check_schema_drift_drill(root: pathlib.Path) -> list[Finding]:
@@ -18422,6 +18495,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_athena_non_sovereign,
     check_athena_rule_enforcement_resolves,
     check_csp_forbids_unsafe_inline,
+    check_json_door_refuses_non_finite,
     check_one_active_token_index,
     check_aor_append_only_triggers,
     check_aor_privilege_boundary,

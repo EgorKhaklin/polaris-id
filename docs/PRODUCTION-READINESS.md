@@ -239,6 +239,53 @@ the shared one failed closed. All eleven are fixed with tests, each shown to fai
 mechanism is removed, and the totality battery that missed five of them now carries
 wrong-typed and non-finite values.
 
+**The same defect, found a fourth time, and moved to the door (2026-09-17).** Non-finite
+numbers had by then been repaired at four call sites in three products, each repair correct and
+each local. A mechanical sweep of every `int()` and `float()` in the tree found four more in the
+detached verifier, all of them inclusion-proof or public-input reads whose docstrings promise a
+verdict on hostile input: a proof carrying `"index": Infinity` raised `OverflowError` out of
+`verify_timestamp_anchor`, `verify_receipt_inclusion`, `verify_zk_against_root` and
+`verify_publication`, because `int(float('inf'))` raises an exception that
+`except (TypeError, ValueError)` does not catch. The Python SDK had a fifth of its own, and a
+worse shape: it believed whatever `expires_in` the issuer sent, so `1e308` converted cleanly and
+pinned a cached bearer token past the life of the process, which is a client that keeps
+presenting a token after its credentials are revoked. The lifetime is now finite, positive and
+capped at 24 hours.
+
+The Flask application had the same hole on every handler that reads a JSON body, and
+fixing them one call site at a time leaves
+the 22nd to be written, so the refusal moved to the one place there is: a JSON provider that
+refuses `NaN`, `Infinity`, `-Infinity` **and** overflowing exponents before any handler sees the
+body. The exponent leg is the half that looks unnecessary and is not: `1e400` is ordinary JSON
+grammar that never reaches `parse_constant` and overflows to infinity inside `float()`, so a
+door built only on `parse_constant` reads as complete and admits it. `check_json_door_refuses_non_finite`
+fails the build for either half missing, and its detection test asserts exactly that shape.
+
+**A second field the holder signs and the verifier ignored (2026-09-17).** `valid_until` was
+found by hand. Asking the same question mechanically, of every canonicaliser in the detached
+verifier, found `agent_algorithm`: an agent grant names the algorithm the agent's key is for,
+inside the statement the HOLDER signs, and `verify_agent_grant` verified the agent's proof under
+the algorithm the PROOF declared, which is the agent's own unsigned word about itself. The wire
+specification's sentence about grants is that a scope editable in transit "would be the unbounded
+credential hand-over that grants exist to replace"; an algorithm the agent chooses is that, one
+field over. A proof that names an algorithm the grant did not authorize is now refused rather
+than verified. `scripts/polaris-unread-signed-fields.py` is the sweep, kept so the question can be
+asked again: it reports eleven more fields, and the output says how to tell a defect from a field
+bound by a stronger sibling (`attested_agency_id` is unread because the edge is bound by the key
+itself, `iss` because issuer trust is decided against the anchor keys).
+
+**The local gate was narrower than CI in nine places, and the check that existed to prevent
+that reported OK (2026-09-17).** `check_local_gate_covers_ci` was written so that a suite CI
+runs cannot be one the ship tool has never heard of. It compared the ship tool against
+`scripts/polaris-coverage.sh` and called that CI. The workflow that gates the push is
+`.github/workflows/ci.yml`, and it ran nine suites coverage.sh does not mention, among them
+`sdk/python/test_sdk.py` and all six polaris-oid4vp suites. The consequence arrived the same
+day: a refusal note in `grant_within_limits` was reworded, `test_sdk` held the old phrase, the
+local gate reported READY, and CI went red on a commit that had passed it. The check now reads
+the workflow, the nine suites are named in `UNSHARDED_SUITES`, and `polaris-preflight.sh` RUNS
+the eight that need no database, network or ML-DSA rather than only naming them. A check that
+reads a proxy for the thing it checks is measuring the proxy.
+
 **Fifteen defects in the OpenID4VP verifier, found by adversarial review (2026-09-17).**
 `polaris-oid4vp` is the newest external door: unmodified third-party wallets present to it
 over the network. An adversarial review ran code against the shipped module rather than

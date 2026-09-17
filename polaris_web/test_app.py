@@ -3495,6 +3495,41 @@ class IssuerFederationTests(PolarisTestCase):
         # both acceptable. 403 would be a CSRF / role failure.
         self.assertIn(r.status_code, (200, 400))
 
+    def test_a_non_finite_number_in_a_json_body_is_refused_not_crashed(self):
+        """A JSON body carrying a non-finite number is refused at the door.
+
+        Python's `json.loads` accepts the bare literals `NaN`, `Infinity` and `-Infinity`,
+        and an out-of-range exponent like `1e400` overflows to infinity inside `float()`
+        without ever being a literal. Downstream, `int(float('inf'))` raises OverflowError,
+        which the `except (TypeError, ValueError)` these routes write does not catch: the
+        refusal became an unhandled 500. The provider installed on the app refuses all four
+        shapes before any route sees them, so the route's ordinary missing-field branch
+        answers instead.
+        """
+        csrf = self._csrf_token_from('/verifications/new')
+        for literal in ('Infinity', '-Infinity', 'NaN', '1e400'):
+            body = ('{"attesting_agency_id": %s, "attested_agency_id": 1, '
+                    '"context_id": 4, "valid_until": "2027-01-15"}' % literal)
+            r = self.client.post('/api/federation/attest', data=body,
+                                 content_type='application/json',
+                                 headers={'X-CSRFToken': csrf})
+            self.assertNotEqual(r.status_code, 500,
+                'A body carrying %s must be refused, not crash the route' % literal)
+            self.assertEqual(r.status_code, 400,
+                'A body carrying %s should reach the route as a missing field (400), '
+                'got %s' % (literal, r.status_code))
+
+    def test_the_json_door_still_admits_ordinary_numbers(self):
+        """The refusal is narrow: finite numbers, including floats and exponents that do
+        not overflow, still parse. A door that refused real documents would be a worse
+        defect than the one it fixes, and nothing else in this file would notice."""
+        self.assertEqual(flask_app.app.json.loads('{"a": 1.5, "b": 2, "c": 1e308, "d": -0.0}'),
+                         {'a': 1.5, 'b': 2, 'c': 1e308, 'd': -0.0})
+        for bad in ('{"a": Infinity}', '{"a": -Infinity}', '{"a": NaN}', '{"a": 1e400}',
+                    '{"a": [1, 2, NaN]}', '{"a": {"b": Infinity}}'):
+            with self.assertRaises(ValueError, msg='%s must not parse' % bad):
+                flask_app.app.json.loads(bad)
+
 
 # ============================================================================
 # v8.23 / R10-1 / M2-1 — ZK-SNARK (Plonky2 + Hybrid-Merkle, C3+A4+B3)

@@ -676,3 +676,150 @@ class TheWindowCapFailsClosedOnANonFiniteValueTests(unittest.TestCase):
         v = {"fresh": None, "note": None}
         V._verify_window(self.OBJ, v, "2026-06-01T00:00:00Z", None)
         self.assertTrue(v["fresh"], "None is 'the caller set no cap', not 'the cap is zero'")
+
+
+class TheInclusionProofSitesRefuseANonFiniteIndexTests(unittest.TestCase):
+    """`int(float('inf'))` raises OverflowError, and `(TypeError, ValueError)` does not
+    catch it.
+
+    2026-09-17. The grant-limit path was repaired for exactly this on the morning of the
+    same day; four sibling sites were not, and each is a function whose docstring promises a
+    verdict on hostile input. `json.loads` accepts the bare literal `Infinity`, so the value
+    arrives without anyone having to construct it, and every one of these takes its document
+    from a stranger.
+
+    Each test below builds the SMALLEST document that reaches the conversion. A document
+    that is refused earlier, for a shape reason, proves nothing about this defect: it would
+    pass with the fix reverted.
+    """
+
+    def test_a_timestamp_anchor_with_an_infinite_index_returns_a_verdict(self):
+        ts = json.loads('{"format": "polaris-timestamp/1", "timestamp_hash_hex": "aa",'
+                        ' "anchor": {"proof": {"index": Infinity, "tree_size": 4,'
+                        '                      "proof_hex": []},'
+                        '            "sth": {"log_id": "polaris-timestamp-log",'
+                        '                    "tree_size": 4, "root_hash_hex": "00"}}}')
+        self.assertEqual(ts["anchor"]["proof"]["index"], float("inf"),
+                         "the literal must survive json.loads, or this tests nothing")
+        ts["anchor"]["proof"]["entry_hex"] = V.timestamp_hash(ts)
+        out = V.verify_timestamp_anchor(ts)
+        self.assertIsInstance(out, dict)
+        self.assertFalse(out["anchored"])
+        self.assertEqual(out["note"], "malformed proof")
+
+    def test_a_receipt_inclusion_proof_with_an_infinite_index_returns_a_verdict(self):
+        receipt = {"format": "polaris-exchange-receipt/1", "receipt_id": "r1"}
+        proof = json.loads('{"index": Infinity, "tree_size": 4, "proof_hex": []}')
+        proof["entry_hex"] = V.receipt_hash(receipt)
+        sth = {"log_id": "polaris-exchange-receipt-log", "tree_size": 4,
+               "root_hash_hex": "00"}
+        out = V.verify_receipt_inclusion(receipt, proof, sth)
+        self.assertIsInstance(out, dict)
+        self.assertEqual(out["note"], "malformed proof")
+
+    def test_a_zk_proof_bundle_with_an_infinite_epoch_id_returns_a_verdict(self):
+        bundle = json.loads('{"public_inputs": {"epoch_root_hex": "ab",'
+                            ' "epoch_id": Infinity, "context_id": 1}}')
+        out = V.verify_zk_against_root(bundle, "ab", 7, 1)
+        self.assertIsInstance(out, dict)
+        self.assertFalse(out["bound"])
+        self.assertEqual(out["note"], "proof public inputs are malformed")
+
+    def test_a_publication_receipt_with_an_infinite_leaf_index_returns_a_verdict(self):
+        """This one is behind an authentic ledger head, so the head check is stubbed. The
+        shim executes the verifier's source into its own namespace precisely so that a
+        patched global is seen by the module's own calls; the conformance mutation drill
+        relies on the same property."""
+        log_sth = {"log_id": "L", "tree_size": 4, "root_hash_hex": "00"}
+        receipt = json.loads('{"format": "%s", "log_id": "L", "tree_size": 4,'
+                             ' "root_hash_hex": "00", "leaf_index": Infinity,'
+                             ' "inclusion_proof_hex": [],'
+                             ' "ledger_sth": {"tree_size": 9, "root_hash_hex": "00"}}'
+                             % V._PUBLICATION_FORMAT)
+        real = V.verify_sth
+        V.verify_sth = lambda sth, issuer_key=None: {
+            "sth_authentic": True, "issuer_matches": True, "tree_size": sth.get("tree_size"),
+            "note": None}
+        try:
+            out = V.verify_publication(log_sth, receipt, None)
+        finally:
+            V.verify_sth = real
+        self.assertIsInstance(out, dict)
+        self.assertFalse(out["published"])
+        self.assertIn("malformed", out["note"])
+
+    def test_an_ordinary_index_still_verifies_the_same_way(self):
+        """The refusal must be narrow. A finite index reaches the proof arithmetic, which is
+        what a document from an honest log does, and the note is not 'malformed'."""
+        ts = {"format": "polaris-timestamp/1", "timestamp_hash_hex": "aa",
+              "anchor": {"proof": {"index": 0, "tree_size": 1, "proof_hex": []},
+                         "sth": {"log_id": "polaris-timestamp-log", "tree_size": 1,
+                                 "root_hash_hex": "00"}}}
+        ts["anchor"]["proof"]["entry_hex"] = V.timestamp_hash(ts)
+        out = V.verify_timestamp_anchor(ts)
+        self.assertIsInstance(out, dict)
+        self.assertNotEqual(out["note"], "malformed proof")
+        self.assertEqual(out["index"], 0)
+
+
+class TheGrantPinsTheAgentsAlgorithmTests(unittest.TestCase):
+    """`agent_algorithm` is inside the statement the HOLDER signs, and was read by nothing.
+
+    2026-09-17, found by sweeping every canonicaliser for fields the verifier signs over and
+    never reads: the same sweep shape that found `valid_until` that morning. The grant says
+    which algorithm the agent's key is for; `verify_agent_grant` verified the agent's proof
+    under the algorithm the PROOF declared, which is the agent's own unsigned word about
+    itself. The holder signed a constraint and the verifier did not enforce it.
+
+    `_signed_by` is stubbed to succeed, which isolates the mechanism under test. The
+    algorithm comparison happens BEFORE any signature is checked, so a real signature would
+    only mean these tests needed ML-DSA to run; what is measured is whether the algorithm the
+    proof declares can differ from the one the grant authorizes and still be accepted. The
+    shim executes the verifier's source into its own namespace precisely so a patched global
+    is seen by the module's own calls.
+    """
+
+    GRANT = {"format": "polaris-agent-grant/1", "grant_id": "g-1",
+             "public_key_hex": "cd" * 32, "algorithm": "ML-DSA-65",
+             "agent_public_key_hex": "ab" * 32, "agent_algorithm": "ML-DSA-65",
+             "actions": ["read"], "limits": {}}
+
+    def setUp(self):
+        self._real = V._signed_by
+        V._signed_by = lambda obj, msg, pk, alg: (True, ["stub"], None)
+
+    def tearDown(self):
+        V._signed_by = self._real
+
+    def _proof(self, **over):
+        p = {"format": "polaris-agent-proof/1", "grant_id": "g-1",
+             "public_key_hex": "ab" * 32, "action": "read", "algorithm": "ML-DSA-65",
+             "signature_hex": "00" * 8}
+        p.update(over)
+        return p
+
+    def test_a_proof_naming_another_algorithm_than_the_grant_is_refused(self):
+        v = V.verify_agent_grant(self.GRANT, agent_proof=self._proof(algorithm="ML-DSA-87"))
+        self.assertIs(v["agent_proved"], False)
+        self.assertIn("not the one the holder authorized", v["note"])
+        self.assertFalse(v["usable"], "an unproved agent cannot make the grant usable")
+
+    def test_a_proof_with_no_algorithm_at_all_is_refused(self):
+        v = V.verify_agent_grant(self.GRANT, agent_proof=self._proof(algorithm=None))
+        self.assertIs(v["agent_proved"], False)
+        self.assertIn("not the one the holder authorized", v["note"])
+
+    def test_the_authorized_algorithm_is_accepted(self):
+        """The control. Without it a function that refused every proof would pass the two
+        tests above and look correct."""
+        v = V.verify_agent_grant(self.GRANT, agent_proof=self._proof())
+        self.assertIs(v["agent_proved"], True)
+
+    def test_a_grant_that_names_no_algorithm_still_verifies_the_proof(self):
+        """Backwards compatibility is a refusal decision too. A grant carrying no
+        `agent_algorithm` must not become unverifiable: the proof's own algorithm is all
+        there is, and the gate does not fire."""
+        grant = dict(self.GRANT)
+        del grant["agent_algorithm"]
+        v = V.verify_agent_grant(grant, agent_proof=self._proof(algorithm="ML-DSA-87"))
+        self.assertIs(v["agent_proved"], True)

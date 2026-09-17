@@ -267,6 +267,30 @@ const REPLAY_WINDOW_SECONDS: Record<string, number> = { "polaris-holder-proof/1"
  * skew allowance they did not share would be the same bug again, smaller. */
 const CLOCK_SKEW_SECONDS = 60;
 
+/** The longest an access token is cached before the client asks for a new one, whatever the
+ * issuer says, and the conservative fallback when it says something unusable.
+ *
+ * 2026-09-17. `(body.expires_in ?? 300) * 1000` believed the issuer. `JSON.parse` in
+ * JavaScript refuses the bare literals `NaN` and `Infinity`, which is stricter than Python,
+ * but `1e400` is ordinary JSON grammar and becomes `Infinity` here exactly as it does there:
+ * the cached token was then pinned past the life of the process, so a client whose
+ * credentials had been revoked kept presenting a token it should have stopped using. A
+ * string or an object gave `NaN`, and `Date.now() < NaN` is false, so the opposite happened
+ * and the client fetched a new token on every single call.
+ *
+ * The numbers match `_expires_in` in the Python kit deliberately. An integrator who picks
+ * one kit is not making a security decision, and a lifetime the two disagreed about would be
+ * one more line in the corrections table. */
+const MAX_TOKEN_CACHE_SECONDS = 24 * 3600;
+const DEFAULT_TOKEN_CACHE_SECONDS = 300;
+
+export function expiresIn(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_TOKEN_CACHE_SECONDS;
+  }
+  return Math.min(Math.trunc(value), MAX_TOKEN_CACHE_SECONDS);
+}
+
 function withinReplayWindow(obj: any, now?: string | null): boolean | null {
   const seconds = REPLAY_WINDOW_SECONDS[obj?.format];
   if (seconds === undefined) return null;
@@ -891,7 +915,7 @@ export class PolarisVerifier {
     if (!r.ok) throw new Error(`token endpoint returned ${r.status}`);
     const body = await r.json();
     this.bearer = body.access_token;
-    this.bearerExp = Date.now() + (body.expires_in ?? 300) * 1000;
+    this.bearerExp = Date.now() + expiresIn(body.expires_in) * 1000;
     return this.bearer as string;
   }
 

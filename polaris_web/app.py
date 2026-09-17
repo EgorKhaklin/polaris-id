@@ -61,6 +61,7 @@ import sys
 import time
 import shutil
 import json
+import math
 import re
 import pathlib
 import subprocess
@@ -70,6 +71,7 @@ from flask import (
     Flask, render_template, request, redirect, url_for,
     flash, abort, session, g, jsonify, Response, make_response
 )
+from flask.json.provider import DefaultJSONProvider
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from werkzeug.security import check_password_hash
@@ -236,6 +238,57 @@ def _read_secret_file(env_name, fallback_env_name=None, default=None):
 
 
 app = Flask(__name__)
+
+
+# ----------------------------------------------------------------------------
+# The JSON door: a number that is not a number does not get in
+# ----------------------------------------------------------------------------
+# 2026-09-17. JSON's grammar, as Python implements it, admits three values that are not
+# numbers in any sense a comparison can use: the bare literals `NaN`, `Infinity` and
+# `-Infinity`, which `json.loads` accepts by default. An exponent out of range is a fourth
+# door to the same place, and it is NOT the same door: `1e400` is ordinary JSON grammar and
+# never reaches `parse_constant`, it simply overflows to `inf` inside `float()`.
+#
+# Two things go wrong once one is inside. Every comparison against NaN is False, so a
+# one-sided threshold test (`if value > limit: refuse`) silently passes; and
+# `int(float('inf'))` raises OverflowError, which the `except (TypeError, ValueError)` that
+# nearly every route writes does not catch, turning a refusal into an unhandled 500. Both
+# were found in this tree on 2026-09-17, in the packaged verifier and on the authorization
+# endpoint, and were fixed one call site at a time. Twenty-one routes read JSON; fixing them
+# individually leaves the twenty-second to be written.
+#
+# So the refusal moves to the door, where there is one of it. A body carrying a non-finite
+# number is not parsed at all: `get_json(silent=True)` returns None, every route's existing
+# `or {}` and missing-field branch answers 400, and no route has to know. Nothing legitimate
+# is refused: the wire specification's canonical form is `json.dumps(sort_keys=True,
+# separators=(",", ":"))` over finite values, and no Polaris document has ever contained a
+# non-finite number.
+class _FiniteNumbersOnly(DefaultJSONProvider):
+    """Flask's JSON provider with the non-finite literals and overflowing exponents refused.
+
+    `parse_constant` covers the three bare literals. `parse_float` covers the rest, because
+    `1e400` is valid JSON grammar that overflows to infinity without ever being a constant.
+    Both raise ValueError, which is what Flask already treats as a malformed body.
+    """
+
+    @staticmethod
+    def _refuse_constant(name):
+        raise ValueError("JSON contained the non-finite literal %s" % name)
+
+    @staticmethod
+    def _finite_float(raw):
+        value = float(raw)
+        if not math.isfinite(value):
+            raise ValueError("JSON number %s is not finite" % raw)
+        return value
+
+    def loads(self, s, **kwargs):
+        kwargs.setdefault("parse_constant", self._refuse_constant)
+        kwargs.setdefault("parse_float", self._finite_float)
+        return super().loads(s, **kwargs)
+
+
+app.json = _FiniteNumbersOnly(app)
 
 
 # ----------------------------------------------------------------------------

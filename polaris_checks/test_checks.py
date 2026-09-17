@@ -47,6 +47,59 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when CSP enables 'unsafe-inline' for scripts"
 
 
+def test_json_door_check_discriminates(tmp_path):
+    """The door has four ways to be broken, and one of them looks like the fix.
+
+    Removing the class or the installation is obvious. Setting `parse_constant` and not
+    `parse_float` is not: it refuses the three bare literals, reads as complete, and lets
+    `1e400` through, because an out-of-range exponent never reaches parse_constant at all.
+    A hook installed with no finiteness test in it is the same shape one step further on.
+    """
+    (tmp_path / "polaris_web").mkdir()
+    app = tmp_path / "polaris_web" / "app.py"
+    GOOD = ("class _FiniteNumbersOnly(DefaultJSONProvider):\n"
+            "    def loads(self, s, **kwargs):\n"
+            "        kwargs.setdefault('parse_constant', self._refuse_constant)\n"
+            "        kwargs.setdefault('parse_float', self._finite_float)\n"
+            "        return super().loads(s, **kwargs)\n"
+            "\n"
+            "    @staticmethod\n"
+            "    def _finite_float(raw):\n"
+            "        value = float(raw)\n"
+            "        if not math.isfinite(value):\n"
+            "            raise ValueError('not finite')\n"
+            "        return value\n"
+            "\n\napp.json = _FiniteNumbersOnly(app)\n")
+    app.write_text(GOOD)
+    assert checks.check_json_door_refuses_non_finite(tmp_path)[0].level == "OK", \
+        "must PASS on the good fixture"
+
+    def level(text, expect_in=None):
+        app.write_text(text)
+        out = checks.check_json_door_refuses_non_finite(tmp_path)
+        if expect_in is not None:
+            assert any(expect_in in f.message for f in out), \
+                "expected %r in %r" % (expect_in, [f.message for f in out])
+        return out[0].level
+
+    assert level("app = Flask(__name__)\n", "no DefaultJSONProvider subclass") == "FAIL", \
+        "must FAIL when there is no door at all"
+    assert level(GOOD.replace("\napp.json = _FiniteNumbersOnly(app)\n", "\n"),
+                 "no DefaultJSONProvider subclass") == "FAIL", \
+        "must FAIL when the class is defined and never installed"
+    assert level(GOOD.replace("        kwargs.setdefault('parse_float', self._finite_float)\n", ""),
+                 "parse_float") == "FAIL", \
+        "must FAIL on the version that looks complete: parse_constant only, 1e400 straight through"
+    assert level(GOOD.replace("        if not math.isfinite(value):\n"
+                              "            raise ValueError('not finite')\n", ""),
+                 "refuses nothing") == "FAIL", \
+        "must FAIL when parse_float is installed but tests nothing"
+
+    # Vacuity: the check must not report OK against a tree whose files are all empty.
+    assert level("", "could not be read") == "FAIL", \
+        "an empty app.py is not a passing door"
+
+
 def test_fk_cascade_check_scans_migrations(tmp_path):
     # A cascade smuggled into a migration (not just 01_schema.sql) must be caught.
     (tmp_path / "polaris_sql").mkdir()
@@ -14356,21 +14409,36 @@ def test_migrations_reversible_check_discriminates(tmp_path):
 
 
 def test_local_gate_covers_ci_check_discriminates(tmp_path):
-    """v9.440 passed every suite the ship tool knows and broke one it does not."""
+    """v9.440 passed every suite the ship tool knows and broke one it does not.
+
+    2026-09-17: the workflow leg is the second half. For a year this check read only
+    `polaris-coverage.sh` and reported that the local gate could not be narrower than the
+    one gating the push, while nine suites in ci.yml were unknown to the ship tool. A
+    fixture whose ci.yml is clean would not have caught that, so the fixture below carries
+    a suite that appears ONLY in the workflow.
+    """
     sc = tmp_path / "scripts"
     sc.mkdir(parents=True)
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
 
     COV = ('run "$ROOT/polaris_web" unittest test_app test_capacity\n'
            'run "$ROOT/polaris_cli" unittest test_cli\n'
            'run "$ROOT" unittest polaris_sim.test_sim\n')
+    CI = ('jobs:\n'
+          '  sdk-python:\n'
+          '    steps:\n'
+          '      - run: cd sdk/python && python -m unittest test_sdk\n')
     SHIP = ('DEFAULT_MODULES = ["test_app"]\n'
             'UNSHARDED_SUITES = {"polaris_cli": ["test_cli"],\n'
             '                    "polaris_web": ["test_capacity"],\n'
+            '                    "sdk/python": ["test_sdk"],\n'
             '                    ".": ["polaris_sim.test_sim"]}\n')
 
-    def write(cov=None, ship=None):
+    def write(cov=None, ship=None, ci=None):
         (sc / "polaris-coverage.sh").write_text(COV if cov is None else cov)
         (sc / "polaris-ship.py").write_text(SHIP if ship is None else ship)
+        (wf / "ci.yml").write_text(CI if ci is None else ci)
 
     def level(msg_contains=None):
         out = checks.check_local_gate_covers_ci(tmp_path)
@@ -14389,19 +14457,37 @@ def test_local_gate_covers_ci_check_discriminates(tmp_path):
     assert level("polaris_sim.test_sim") == "FAIL", \
         "must FAIL, and name it, when a CI suite is unknown to the ship tool"
 
+    # The 2026-09-17 shape, and the one the old check could not see: the suite runs in the
+    # WORKFLOW and appears nowhere in coverage.sh. Reading coverage.sh alone reports OK.
+    write(ship='DEFAULT_MODULES = ["test_app"]\n'
+               'UNSHARDED_SUITES = {"polaris_cli": ["test_cli"],\n'
+               '                    "polaris_web": ["test_capacity"],\n'
+               '                    ".": ["polaris_sim.test_sim"]}\n')
+    assert level("test_sdk") == "FAIL", \
+        "must FAIL, and name it, when a suite the WORKFLOW runs is unknown to the ship tool"
+
     write(ship='DEFAULT_MODULES = ["test_app"]\n')
     out = checks.check_local_gate_covers_ci(tmp_path)[0]
-    assert out.level == "FAIL" and "3 suite(s)" in out.message, \
+    assert out.level == "FAIL" and "4 suite(s)" in out.message, \
         "must count every unknown suite, not stop at the first"
 
     # A parser that has drifted from the script measures nothing, and must say so rather
-    # than reporting a clean result off an empty set.
+    # than reporting a clean result off an empty set. Both legs count: a coverage.sh that
+    # yields nothing, and a ci.yml that yields nothing beyond it.
     write(cov='echo "no suites here"\n')
-    assert level("measuring nothing") == "FAIL", \
+    assert level("measures nothing") == "FAIL", \
         "must FAIL rather than pass vacuously when it can read no suites at all"
+    write(ci='jobs:\n  build:\n    steps:\n      - run: echo hi\n')
+    assert level("measures nothing") == "FAIL", \
+        ("must FAIL when the workflow parser finds nothing, which is how this check went "
+         "blind to nine suites")
 
+    write()
     (sc / "polaris-ship.py").unlink()
     assert level("could not be read") == "FAIL", "must FAIL when the ship tool is missing"
+    write()
+    (wf / "ci.yml").unlink()
+    assert level("could not be read") == "FAIL", "must FAIL when the workflow is missing"
 
 
 def test_operator_accounts_recorded_check_discriminates(tmp_path):

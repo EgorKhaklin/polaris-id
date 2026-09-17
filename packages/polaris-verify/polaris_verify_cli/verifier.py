@@ -1440,7 +1440,11 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
         if expected_scope is not None and int(pi.get("scope", -1)) != int(expected_scope):
             v["note"] = "proof scope is not this verifier's; a proof made elsewhere is not valid here"
             return v
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError, 2026-09-17: `json.loads` accepts the bare literal `Infinity`, and
+        # `int(float('inf'))` raises OverflowError, which `(TypeError, ValueError)` does not
+        # catch. A proof bundle with `"epoch_id": Infinity` crashed a function whose
+        # docstring promises a verdict on hostile input.
         v["note"] = "proof public inputs are malformed"
         return v
     v["bound"] = True
@@ -1712,7 +1716,9 @@ def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=
         idx, size = int(proof.get("index")), int(proof.get("tree_size"))
         root = bytes.fromhex(str(sth.get("root_hash_hex")))
         path = [bytes.fromhex(str(p)) for p in (proof.get("proof_hex") or [])]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: `"index": Infinity` survives `json.loads` and `int(float('inf'))`
+        # raises it. See the note on the public-inputs handler above.
         v["note"] = "malformed proof"
         return v
     v["index"], v["tree_size"] = idx, size
@@ -1769,7 +1775,9 @@ def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
         idx, size = int(proof.get("index")), int(proof.get("tree_size"))
         root = bytes.fromhex(str(sth.get("root_hash_hex")))
         path = [bytes.fromhex(str(p)) for p in (proof.get("proof_hex") or [])]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: `"index": Infinity` survives `json.loads` and `int(float('inf'))`
+        # raises it. See the note on the public-inputs handler above.
         v["note"] = "malformed proof"
         return v
     v["index"], v["tree_size"] = idx, size
@@ -3063,7 +3071,8 @@ def verify_publication(log_sth, receipt, ledger_key):
         idx = int(receipt["leaf_index"])
         root = bytes.fromhex(ledger_sth["root_hash_hex"])
         proof = [bytes.fromhex(h) for h in (receipt.get("inclusion_proof_hex") or [])]
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError, OverflowError):
+        # OverflowError: a receipt whose `leaf_index` is the bare literal `Infinity`.
         v["note"] = "the receipt's leaf_index, proof, or ledger root is malformed"
         return v
     # `tree_size` came out of an attacker-signed ledger STH and went straight into a
@@ -4129,9 +4138,25 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
             v["note"] = "the agent proof does not name this service's nonce (a replay)"
         elif requested_action is not None and str(agent_proof.get("action") or "") != str(requested_action):
             v["note"] = "the agent proof is for a different action than the one requested"
+        elif (grant.get("agent_algorithm") is not None
+                and agent_proof.get("algorithm") != grant.get("agent_algorithm")):
+            # 2026-09-17. `agent_algorithm` is inside the statement the HOLDER signed, and the
+            # verifier read the algorithm off the PROOF instead, which is the agent's own
+            # unsigned word about itself. Found by sweeping the canonicalisers for fields the
+            # verifier signs over and never reads, the same way `valid_until` was found that
+            # morning. The wire specification's own sentence about grants is that a scope
+            # editable in transit "would be the unbounded credential hand-over that grants
+            # exist to replace"; an algorithm the agent chooses is exactly that, one field
+            # over. A mismatch is refused rather than quietly verified under the grant's
+            # algorithm, because a proof that names a different algorithm from the one it was
+            # authorized under is an attempt, not a formatting difference.
+            v["note"] = ("the agent proof declares algorithm %r, which is not the one the "
+                         "holder authorized in the grant (%r)"
+                         % (agent_proof.get("algorithm"), grant.get("agent_algorithm")))
         else:
             aok, aran, anote = _signed_by(agent_proof, _agent_proof_canonical(agent_proof),
-                                          agent_proof.get("public_key_hex"), agent_proof.get("algorithm"))
+                                          agent_proof.get("public_key_hex"),
+                                          grant.get("agent_algorithm") or agent_proof.get("algorithm"))
             if aok is None:
                 v["note"] = anote
             elif not aok:

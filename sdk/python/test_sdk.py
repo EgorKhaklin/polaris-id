@@ -220,10 +220,23 @@ class RefusalsAreTestedTests(unittest.TestCase):
         self.assertTrue(ok, "an amount at the ceiling is within it")
 
     def test_a_limit_that_is_not_a_number_is_refused(self):
-        """Never treated as absent: a grant whose ceiling cannot be compared is refused."""
-        ok, note = pv.grant_within_limits({"limits": {"max_amount": "lots"}}, amount=5)
-        self.assertFalse(ok)
-        self.assertIn("not a number", note)
+        """Never treated as absent: a grant whose ceiling cannot be compared is refused.
+
+        The assertion reads the FIELD out of the note, not a phrase. 2026-09-17: the note
+        was widened from "not a number" to "not a finite number" when NaN and infinity were
+        added to the same refusal, and this test held the old phrase, so a correct mechanism
+        failed its own test. A note is written for an operator and is allowed to be reworded;
+        what must not change is that the refusal names the limit it could not evaluate.
+        """
+        # `null` is deliberately NOT in this list. Both implementations read an explicit
+        # null as "this limit is not set", which is the absent case, not the uncomparable
+        # one; `scripts/polaris-verifier-differential.py` is what holds them to the same
+        # reading of it.
+        for bad in ("lots", [], {}, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(limit=repr(bad)):
+                ok, note = pv.grant_within_limits({"limits": {"max_amount": bad}}, amount=5)
+                self.assertFalse(ok, "a ceiling of %r must not authorize" % bad)
+                self.assertIn("max_amount", note)
 
     # -- delegation: revocation binding ----------------------------------
 
@@ -398,3 +411,42 @@ class TamperedMaterialIsRefusedTests(unittest.TestCase):
                     authentic,
                     "%s carries an altered signature and must not be reported authentic; "
                     "the verifier returned %r" % (name, authentic))
+
+
+class TheTokenCacheLifetimeIsBoundedTests(unittest.TestCase):
+    """The issuer says how long its access token lives. The client believed it without
+    reading it.
+
+    2026-09-17. `int(body.get("expires_in", 300))` sat outside any try. Two shapes broke it,
+    and both arrive from an ordinary `json.loads` of a server response:
+
+      `Infinity`  raised OverflowError out of `_access_token`, a method that only ever
+                  promised to return a bearer token.
+      `1e308`     converted cleanly and pinned the cached token for longer than the process
+                  will ever run, so a client whose credentials were revoked kept presenting
+                  a token it should have stopped using at the next refresh.
+
+    The issuer is trusted to issue. It is not trusted to set an unbounded lifetime inside
+    someone else's client.
+    """
+
+    def test_a_non_finite_lifetime_falls_back_to_the_conservative_default(self):
+        for bad in (float("inf"), float("-inf"), float("nan")):
+            with self.subTest(value=repr(bad)):
+                self.assertEqual(pv._expires_in(bad), pv._DEFAULT_TOKEN_CACHE_SECONDS)
+
+    def test_a_wrong_typed_or_absent_lifetime_falls_back(self):
+        for bad in (None, "300", [], {}, True, False, 0, -1):
+            with self.subTest(value=repr(bad)):
+                self.assertEqual(pv._expires_in(bad), pv._DEFAULT_TOKEN_CACHE_SECONDS)
+
+    def test_an_enormous_lifetime_is_capped_rather_than_believed(self):
+        for huge in (1e308, 10 ** 30, 99999999):
+            with self.subTest(value=repr(huge)):
+                self.assertEqual(pv._expires_in(huge), pv._MAX_TOKEN_CACHE_SECONDS)
+
+    def test_an_ordinary_lifetime_is_used_as_given(self):
+        self.assertEqual(pv._expires_in(300), 300)
+        self.assertEqual(pv._expires_in(3599.9), 3599)
+        self.assertEqual(pv._expires_in(pv._MAX_TOKEN_CACHE_SECONDS),
+                         pv._MAX_TOKEN_CACHE_SECONDS)

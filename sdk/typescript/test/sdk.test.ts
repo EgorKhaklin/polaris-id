@@ -8,7 +8,7 @@ import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          verifyInclusion, verifyStatusAssertion, verifyIdToken,
          verifySignedArtifact, verifyCosignature,
          verifyAttestation, verifyCrossAuthority,
-         __canonicalJsonForTest, __isoToEpochForTest } from "../src/index.ts";
+         __canonicalJsonForTest, __isoToEpochForTest, expiresIn } from "../src/index.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const vec = (n: string) => JSON.parse(readFileSync(join(ROOT, "vectors", n), "utf8"));
@@ -421,4 +421,23 @@ test("a grant limit is refused when either side is not a whole finite number", (
   assert.equal(grantWithinLimits({ limits: { max_uses: 3 } }, 3)[0], false);
   assert.equal(grantWithinLimits({ limits: { max_amount: 100 } }, 0, 50)[0], true);
   assert.equal(grantWithinLimits({ limits: { max_amount: 100 } }, 0, 1000)[0], false);
+});
+
+test("the cached token lifetime is bounded, and matches the Python kit", () => {
+  // `JSON.parse` here refuses the bare literals NaN and Infinity, which is stricter than
+  // Python. It does NOT refuse `1e400`: that is ordinary JSON grammar and arrives as
+  // Infinity in both languages, which is the half of this defect a reader assumes cannot
+  // reach JavaScript.
+  assert.equal(JSON.parse('{"a": 1e400}').a, Infinity,
+    "if this ever throws, the exponent leg of this defect is gone and this test is stale");
+
+  for (const bad of [Infinity, -Infinity, NaN, 0, -1, "300", null, undefined, {}, [], true]) {
+    assert.equal(expiresIn(bad as unknown), 300,
+      `an unusable expires_in (${String(bad)}) must fall back, not be believed`);
+  }
+  assert.equal(expiresIn(1e308), 24 * 3600, "an enormous lifetime is capped, not believed");
+  assert.equal(expiresIn(99999999), 24 * 3600);
+  assert.equal(expiresIn(300), 300, "an ordinary lifetime is used as given");
+  assert.equal(expiresIn(3599.9), 3599, "a fractional lifetime truncates, never rounds up");
+  assert.equal(expiresIn(24 * 3600), 24 * 3600, "the cap itself is admissible");
 });

@@ -247,6 +247,13 @@ python3 scripts/polaris-ship.py run            # --shards N, --module M (repeata
 #                test_verify_p9 test_ship_tool
 #   polaris_sim.test_sim
 # and separately under pytest: polaris_web/test_zk_second_witness.py, test_e2e_atlas.py.
+#
+# The standalone packages. preflight RUNS these (they need no database, network or ML-DSA);
+# before 2026-09-17 nothing local ran them and CI was the first to know:
+#   sdk/python:               test_sdk
+#   packages/polaris-oid4vp:  test_sdjwt test_jwe test_verifier test_serve test_cli
+#                             test_conformance_capture
+#   polaris_zk/witness2:      test_witness2 (pytest)      polaris_card: unittest discover
 cd polaris_cli && python3 -m unittest test_cli
 
 # Cross-reference integrity: every relative link and quoted path in the tree resolves.

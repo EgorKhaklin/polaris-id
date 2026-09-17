@@ -139,6 +139,33 @@ else
   echo "  · sdk-typescript: SKIP (node or sdk/typescript/node_modules absent)"
 fi
 
+# 3b. The standalone packages' own suites. None of these needs a database, a network,
+#     Redis or ML-DSA: they run in under two seconds on the plain interpreter, so there
+#     is no reason for a break in one to be discovered in CI rather than here.
+#
+#     2026-09-17 is why this stage exists. A refusal note in `grant_within_limits` was
+#     widened from "not a number" to "not a finite number"; `sdk/python/test_sdk.py`
+#     held the old phrase; the gate reported READY because nothing local ran that file,
+#     and CI went red on a commit the gate had passed. `check_local_gate_covers_ci` was
+#     supposed to prevent exactly this and did not, because it compared the ship tool
+#     against `polaris-coverage.sh` rather than against the workflow that gates the push.
+#     That check now reads ci.yml; this stage is the other half, because a suite the ship
+#     tool merely NAMES is not a suite anything runs.
+pkg_fail=0
+: > /tmp/_polaris_pkg.out
+( cd "${ROOT}/sdk/python" && python3 -m unittest test_sdk ) >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
+( cd "${ROOT}/scripts" && python3 -m unittest test_verify_p9 ) >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
+( cd "${ROOT}/packages/polaris-oid4vp" && python3 -m unittest \
+    test_sdjwt test_jwe test_verifier test_serve test_cli test_conformance_capture ) \
+    >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
+if [ "${pkg_fail}" -eq 0 ]; then
+  echo "  ✓ packages: sdk-python, detached verifier (p9) and all six polaris-oid4vp suites pass"
+else
+  echo "  ✗ packages: failures —"
+  tail -12 /tmp/_polaris_pkg.out | sed 's/^/    /'
+  fails=$((fails+1))
+fi
+
 # 4. The plan (v9.345): the verification this change needs, from the paths that
 #    moved since the last tag and the drills that mention a changed route handler.
 #    Informational; it skips itself where no tag is reachable (shallow clones).

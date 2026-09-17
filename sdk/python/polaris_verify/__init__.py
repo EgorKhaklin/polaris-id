@@ -254,6 +254,27 @@ _REPLAY_WINDOW_SECONDS = {"polaris-holder-proof/1": 300}
 _CLOCK_SKEW_SECONDS = 60
 
 
+#: The longest an access token is cached before the client asks for a new one, whatever the
+#: issuer says. 2026-09-17: `int(body.get("expires_in", 300))` took the issuer's word without
+#: reading it. `Infinity` survives `json.loads` and raised OverflowError out of a method that
+#: only ever promised to return a bearer token; `1e308` was worse, because it converted
+#: cleanly and pinned the cached token past the heat death of the process, so a revoked
+#: client kept presenting a token it should have stopped using. The issuer is trusted to
+#: issue, not trusted to set an unbounded lifetime in the client.
+_MAX_TOKEN_CACHE_SECONDS = 24 * 3600
+_DEFAULT_TOKEN_CACHE_SECONDS = 300
+
+
+def _expires_in(value):
+    """Seconds to cache an access token: the issuer's number when it is a finite, positive,
+    real number within the cache bound, and the conservative default otherwise."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return _DEFAULT_TOKEN_CACHE_SECONDS
+    if not math.isfinite(value) or value <= 0:
+        return _DEFAULT_TOKEN_CACHE_SECONDS
+    return min(int(value), _MAX_TOKEN_CACHE_SECONDS)
+
+
 def _within_replay_window(obj: dict, now=None):
     """True iff obj was issued no more than its format's window ago, and not implausibly
     far in the future. None if the format has no replay window or the instant is
@@ -826,7 +847,7 @@ class PolarisVerifier:
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             body = json.loads(r.read())
         self._bearer = body["access_token"]
-        self._bearer_exp = time.time() + int(body.get("expires_in", 300))
+        self._bearer_exp = time.time() + _expires_in(body.get("expires_in"))
         return self._bearer
 
     def _online_status(self, cred):

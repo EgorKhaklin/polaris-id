@@ -223,7 +223,21 @@ UNSHARDED_SUITES = {
     "polaris_cli": ["test_cli"],
     "scripts": ["test_verify_load", "test_wallet", "test_relying_party",
                 "test_verify_conformance", "test_verify_p9", "test_ship_tool"],
-    ".": ["polaris_sim.test_sim"],
+    # The standalone packages. 2026-09-17: none of these was named here, and
+    # `check_local_gate_covers_ci` did not notice because it compared this list against
+    # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
+    # suites ran in CI that nothing local knew about, and one of them (test_sdk) went red
+    # on a commit whose local gate had reported READY. `polaris-preflight.sh` RUNS the
+    # first two groups now rather than only naming them: they need no database, no
+    # network and no ML-DSA, so there is no reason to learn about a break from CI.
+    "sdk/python": ["test_sdk"],
+    "packages/polaris-oid4vp": ["test_sdjwt", "test_jwe", "test_verifier", "test_serve",
+                                "test_cli", "test_conformance_capture"],
+    # pytest, not unittest, and the card suite is a directory discovery. Named so the
+    # coverage check can see them; run them with the commands CI uses.
+    "polaris_zk/witness2": ["test_witness2"],
+    ".": ["polaris_sim.test_sim", "polaris_web/test_e2e_atlas.py",
+          "discover:polaris_card"],
 }
 # A class that spawns processes, binds a port or runs gunicorn cannot share a machine slot with
 # another such class; they run one after another in the serial shard.
