@@ -33,8 +33,15 @@ on:
 # can still read the run for the commit that broke something. Cancelling superseded runs on
 # main would save more queue and cost exactly that, which is the wrong trade for a branch
 # where the commits are the record.
+# The key is the REF for a pull request and the SHA for a push, and that difference is the
+# whole of it. `cancel-in-progress: false` does NOT mean "never cancel": GitHub allows one
+# pending run per group, so a newer run queuing behind a running one cancels the older
+# PENDING one. Keying main on the ref therefore did exactly what the paragraph above says it
+# must not, and two main commits lost their results within the hour (0a15c2b, e8c649f) before
+# this was corrected. Keying a push on its own SHA puts every commit in a group of one, where
+# there is nothing to queue behind and nothing to cancel.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
