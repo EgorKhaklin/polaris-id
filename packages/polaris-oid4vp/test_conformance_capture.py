@@ -108,10 +108,39 @@ class TheSameFixtureRefusedTests(unittest.TestCase):
         return verify_presentation(self.presentation, **args)
 
     def test_a_real_presentation_still_expires(self):
-        """Replayed a year later it is refused, and that is the point of iat."""
+        """Replayed a year later it is refused, and both windows say so.
+
+        The two are separated below rather than left to whichever check runs first. This
+        test used to assert `kb_freshness` and passed because the CREDENTIAL's own `exp`
+        was not being read at all: the suite's credential carries one, fourteen days out,
+        and this verifier ignored it until 2026-09-17. A test that pins the refusal CODE
+        while a second, earlier reason goes unnoticed is how that stayed invisible.
+        """
         verdict = self._verify(now=self.kb_iat + 365 * 24 * 3600)
         self.assertFalse(verdict.authentic)
+        self.assertEqual(verdict.code, "credential_validity",
+                         "a year on, the suite's own credential has expired, and that is "
+                         "the more fundamental fact than a stale key binding")
+
+    def test_the_key_binding_window_closes_on_its_own(self):
+        """The iat window, isolated: still inside the credential's fourteen-day life, well
+        outside the five-minute key binding window. Without this, the freshness check is
+        only ever exercised at a point where the credential has expired too."""
+        verdict = self._verify(now=self.kb_iat + 3600)
+        self.assertFalse(verdict.authentic)
         self.assertEqual(verdict.code, "kb_freshness")
+
+    def test_the_suites_credential_carries_an_expiry_this_verifier_now_reads(self):
+        """The fact behind the two tests above, asserted rather than assumed. A real
+        credential from a real external issuer sets `exp`; for an offline SD-JWT VC it is
+        the only expiry mechanism there is, and it was being ignored."""
+        payload = json.loads(b64u_decode(self.presentation.split("~")[0].split(".")[1]))
+        self.assertIn("exp", payload, "the fixture no longer carries an expiry to check")
+        self.assertGreater(payload["exp"], self.kb_iat,
+                           "the credential was already expired when it was captured")
+        verdict = self._verify(now=payload["exp"] + 24 * 3600)
+        self.assertFalse(verdict.authentic)
+        self.assertEqual(verdict.code, "credential_validity")
 
     def test_it_is_refused_for_a_nonce_we_did_not_send(self):
         verdict = self._verify(expected_nonce="a-nonce-from-another-request")

@@ -31,6 +31,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import time
 
 try:
@@ -57,6 +58,20 @@ KB_TYP = "kb+jwt"
 #: algorithm in a list rather than reading it out of the header is deliberate: `alg` is
 #: attacker-controlled, and a verifier that follows it can be walked down to `none`.
 ACCEPTED_ALGS = ("ES256",)
+
+#: Claim names a disclosure may never carry. draft-ietf-oauth-sd-jwt-vc: "iss, nbf, exp,
+#: cnf, vct, status ... MUST be included in the SD-JWT and MUST NOT be included in the
+#: Disclosures"; draft-ietf-oauth-selective-disclosure-jwt reserves `_sd`, `_sd_alg` and
+#: `...` structurally.
+#:
+#: Refusing the NAME rather than only a collision is the stronger rule and the necessary
+#: one. A collision check alone catches a disclosure that overwrites `iss`, and misses one
+#: that INTRODUCES `exp` where the issuer set none, which puts a holder-chosen expiry into
+#: the claims a relying party reads. `cnf` is the sharpest: a disclosed `cnf` returns a key
+#: that is not the key the key binding was checked against, whether or not the issuer set
+#: one. Measured 2026-09-17; every one of these verified as authentic before.
+_DISCLOSURE_FORBIDDEN_NAMES = frozenset(
+    ("iss", "nbf", "exp", "cnf", "vct", "status", "iat", "_sd", "_sd_alg", "..."))
 
 
 class Verdict:
@@ -231,30 +246,42 @@ def _collect_digests(node, out):
                 _collect_digests(item, out)
 
 
-def _resolve(node, by_digest, used):
-    """Rebuild the claims by substituting disclosed values for the digests standing in."""
+def _resolve(node, by_digest, used, collisions=None):
+    """Rebuild the claims by substituting disclosed values for the digests standing in.
+
+    `collisions` collects any disclosure whose name is already present at the same level.
+    draft-ietf-oauth-selective-disclosure-jwt section 9.3 requires the verifier to REJECT
+    that, and until 2026-09-17 this function silently overwrote instead. Measured: a
+    disclosure named `iss` replaced the real issuer in the returned claims while the verdict
+    stayed authentic, and one named `cnf` returned a key that was NOT the key the key
+    binding had been checked against. The clear-text claims are written first and the
+    disclosed ones second, so the disclosure always won.
+    """
     if isinstance(node, dict):
         out = {}
         for key, value in node.items():
             if key in ("_sd", "_sd_alg"):
                 continue
-            out[key] = _resolve(value, by_digest, used)
+            out[key] = _resolve(value, by_digest, used, collisions)
         for digest in node.get("_sd", []) or []:
             disclosure = by_digest.get(digest)
             if disclosure and len(disclosure) == 3:
                 used.add(digest)
-                out[disclosure[1]] = _resolve(disclosure[2], by_digest, used)
+                name = disclosure[1]
+                if name in out and collisions is not None:
+                    collisions.append(name)
+                out[name] = _resolve(disclosure[2], by_digest, used, collisions)
         return out
     if isinstance(node, list):
         out = []
         for item in node:
             if isinstance(item, dict) and set(item) == {"..."}:
-                disclosure = by_digest.get(item["..."])
+                disclosure = by_digest.get(item["..."]) if isinstance(item["..."], str) else None
                 if disclosure and len(disclosure) == 2:
                     used.add(item["..."])
-                    out.append(_resolve(disclosure[1], by_digest, used))
+                    out.append(_resolve(disclosure[1], by_digest, used, collisions))
                 continue
-            out.append(_resolve(item, by_digest, used))
+            out.append(_resolve(item, by_digest, used, collisions))
         return out
     return node
 
@@ -313,6 +340,34 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                                  "sha-256 and will not pretend to have checked another"
                                  % payload.get("_sd_alg"))
 
+    # 1b. WHETHER THE CREDENTIAL IS STILL VALID AT ALL. Neither `exp` nor `nbf` appeared
+    # anywhere in this file until 2026-09-17: a credential its own issuer stamped as expired
+    # ten years ago verified as authentic, and so did one not valid until 2527. For an
+    # offline SD-JWT VC these two claims are the ONLY expiry mechanism there is; the status
+    # list is a separate, online question. Refusing a malformed value rather than ignoring it
+    # is deliberate: a credential that declares `exp: "soon"` or `exp: NaN` has said
+    # something about its own lifetime that this verifier cannot evaluate, and treating that
+    # as "no expiry" is how NaN defeated the key-binding window one field over.
+    for claim, human in (("exp", "expired"), ("nbf", "not yet valid")):
+        if claim not in payload:
+            continue
+        value = payload[claim]
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(value)):
+            return _refuse("credential_validity",
+                           "the credential's %s is %r, which is not a finite number: its "
+                           "lifetime cannot be evaluated and will not be assumed" % (claim, value))
+        # The same skew the key binding gets, and for the same reason: clocks differ, and a
+        # verifier with none refuses a credential that expired one second ago on a fast clock.
+        if claim == "exp" and now > value + max_skew_seconds:
+            return _refuse("credential_validity",
+                           "the credential %s %.0f seconds ago (exp), outside the %d second "
+                           "allowance" % (human, now - value, max_skew_seconds))
+        if claim == "nbf" and now < value - max_skew_seconds:
+            return _refuse("credential_validity",
+                           "the credential is %s for another %.0f seconds (nbf), outside the "
+                           "%d second allowance" % (human, value - now, max_skew_seconds))
+
     # 2. the disclosures, each of which must be one the issuer committed to
     committed = set()
     _collect_digests(payload, committed)
@@ -332,10 +387,29 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                                          "signed payload")
         if digest in by_digest:
             return _refuse("disclosure", "the same disclosure was presented twice")
+        # A 3-element disclosure names a claim. An object-property disclosure may not name
+        # one of the registered claims the credential's own integrity rests on, whether or
+        # not the payload already carries it.
+        if len(parsed) == 3 and parsed[1] in _DISCLOSURE_FORBIDDEN_NAMES:
+            return _refuse("disclosure",
+                           "a disclosure is named %r, which the specification requires to be "
+                           "in the signed credential and never selectively disclosed. A "
+                           "holder-supplied %r is not one this verifier will hand on"
+                           % (parsed[1], parsed[1]))
         by_digest[digest] = parsed
 
     used = set()
-    claims = _resolve(payload, by_digest, used)
+    collisions = []
+    claims = _resolve(payload, by_digest, used, collisions)
+    if collisions:
+        # SD-JWT section 9.3. The clear-text claims go in first and the disclosed ones
+        # second, so before this check a disclosure named `iss` simply replaced the issuer in
+        # the returned claims and the verdict stayed authentic. `cnf` was the sharpest: the
+        # claims named a key that was not the key the key binding was checked against.
+        return _refuse("disclosure",
+                       "a disclosure is named %r, which the credential already carries in "
+                       "clear text. A disclosure that overwrites an existing claim is "
+                       "refused rather than applied" % collisions[0])
 
     # 3. key binding, which is what makes this a presentation rather than a copy
     if not kb_jwt:
@@ -377,12 +451,23 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                                    "a presentation addressed elsewhere is not ours to accept"
                                    % (kb_payload.get("aud"), expected_audience))
     iat = kb_payload.get("iat")
-    if not isinstance(iat, (int, float)) or isinstance(iat, bool):
-        return _refuse("kb_freshness", "the key binding JWT has no numeric iat, so its age "
-                                       "cannot be established")
+    # `math.isfinite` is the load-bearing part, and it was missing. Python's json parses the
+    # bare literals NaN, Infinity and -Infinity by default, and all three are floats, so they
+    # walked past the isinstance test. NaN then defeated the window outright, because every
+    # comparison against NaN is False: `abs(now - nan) > 300` is False, so a presentation
+    # with `iat: NaN` verified as authentic with the clock set a YEAR ahead. Infinity did the
+    # opposite and crashed the refusal itself, on `"%d" % inf`. Both measured 2026-09-17.
+    # These are exactly the two conformance modules this file is built around,
+    # kb-jwt-iat-in-past and kb-jwt-iat-in-future, defeated by a wallet writing three
+    # characters.
+    if (not isinstance(iat, (int, float)) or isinstance(iat, bool)
+            or not math.isfinite(iat)):
+        return _refuse("kb_freshness", "the key binding JWT's iat is %r, which is not a "
+                                       "finite number, so its age cannot be established"
+                                       % (iat,))
     if abs(now - iat) > max_skew_seconds:
-        return _refuse("kb_freshness", "the key binding JWT was minted %d seconds from now, "
-                                       "outside the %d second window"
+        return _refuse("kb_freshness", "the key binding JWT was minted %.0f seconds from "
+                                       "now, outside the %d second window"
                                        % (now - iat, max_skew_seconds))
 
     # sd_hash covers the issuer JWT AND every disclosure presented with it, up to and

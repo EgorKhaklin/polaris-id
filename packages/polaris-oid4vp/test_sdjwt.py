@@ -66,7 +66,7 @@ class Wallet:
                 claims=(("given_name", "Jean"), ("family_name", "Dupont")),
                 corrupt_issuer_sig=False, corrupt_kb_sig=False, drop_key_binding=False,
                 extra_disclosure=None, issuer_typ="dc+sd-jwt", kb_typ="kb+jwt",
-                issuer_alg="ES256", include_cnf=True):
+                issuer_alg="ES256", include_cnf=True, payload_extra=None):
         disclosures = [_disclosure("salt%d" % i, name, value)
                        for i, (name, value) in enumerate(claims)]
         digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest()) for d in disclosures]
@@ -75,6 +75,11 @@ class Wallet:
                    "iat": int(time.time()), "_sd": digests, "_sd_alg": "sha-256"}
         if include_cnf:
             payload["cnf"] = {"jwk": _public_jwk(self.holder_key)}
+        # Claims the issuer signs that this wallet does not normally mint: `exp`, `nbf`, a
+        # different `vct`. The issuer signs whatever it is given, which is the point: these
+        # are things a REAL issuer sets and this verifier has to read.
+        if payload_extra:
+            payload.update(payload_extra)
         issuer_jwt = _jws(self.issuer_key,
                           {"alg": issuer_alg, "typ": issuer_typ, "kid": "issuer-1"}, payload)
         if corrupt_issuer_sig:
@@ -568,3 +573,139 @@ def b64u_decode_for_test(value):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class CredentialValidityTests(unittest.TestCase):
+    """`exp` and `nbf`: neither string appeared anywhere in sdjwt.py until 2026-09-17.
+
+    A credential its own issuer stamped as expired ten years ago verified as authentic. For
+    an offline SD-JWT VC these two claims are the only expiry mechanism there is: the status
+    list is a separate, online question, and a verifier that reads neither has no way to
+    stop a revoked-by-expiry credential at all. The capture from the OpenID Foundation's
+    hosted suite carries an `exp` fourteen days out, so this is a claim real issuers set.
+    """
+
+    def setUp(self):
+        self.w = Wallet()
+        self.now = time.time()
+
+    def test_a_credential_that_expired_ten_years_ago_is_refused(self):
+        v = self.w.verify(self.w.present(payload_extra={"exp": self.now - 10 * 365 * 86400}))
+        self.assertFalse(v.authentic, "an expired credential must not verify")
+        self.assertEqual(v.code, "credential_validity")
+
+    def test_exp_zero_is_refused_rather_than_read_as_absent(self):
+        """0 is falsy. A check written as `if payload.get('exp')` would skip it, which makes
+        the one timestamp an attacker most wants also the one that turns the check off."""
+        v = self.w.verify(self.w.present(payload_extra={"exp": 0}))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "credential_validity")
+
+    def test_a_credential_not_valid_until_next_century_is_refused(self):
+        v = self.w.verify(self.w.present(payload_extra={"nbf": self.now + 500 * 365 * 86400}))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "credential_validity")
+
+    def test_a_non_finite_or_non_numeric_lifetime_is_refused_not_ignored(self):
+        """A credential that says `exp: NaN` has made a statement about its own lifetime
+        that cannot be evaluated. Treating that as "no expiry" is precisely how NaN defeated
+        the key binding window one field over."""
+        for bad in (float("nan"), float("inf"), float("-inf"), "soon", None, True, [1]):
+            with self.subTest(exp=repr(bad)):
+                v = self.w.verify(self.w.present(payload_extra={"exp": bad}))
+                self.assertFalse(v.authentic, "exp=%r must not be ignored" % (bad,))
+                self.assertEqual(v.code, "credential_validity")
+
+    def test_a_credential_inside_its_window_still_verifies(self):
+        """The direction that keeps the others honest: if every credential were refused,
+        every test above would pass while the verifier accepted nothing."""
+        v = self.w.verify(self.w.present(payload_extra={"exp": self.now + 86400,
+                                                        "nbf": self.now - 86400}))
+        self.assertTrue(v.authentic, v.reason)
+
+    def test_a_credential_with_no_exp_is_not_refused_for_that(self):
+        """Absent is not expired. `exp` is optional in SD-JWT VC."""
+        self.assertTrue(self.w.verify(self.w.present()).authentic)
+
+    def test_expiry_is_allowed_the_same_clock_skew_as_the_key_binding(self):
+        """A credential that expired one second ago on a fast clock is not a forgery."""
+        v = self.w.verify(self.w.present(payload_extra={"exp": self.now - 5}))
+        self.assertTrue(v.authentic, v.reason)
+
+
+class NonFiniteTimestampTests(unittest.TestCase):
+    """Python's json parses the bare literals NaN, Infinity and -Infinity, and all three are
+    floats. They walked straight past `isinstance(iat, (int, float))`."""
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def test_a_nan_iat_does_not_defeat_the_freshness_window(self):
+        """Every comparison against NaN is False, so `abs(now - nan) > 300` was False and the
+        presentation verified. Checked a YEAR out of date, which is the exact condition the
+        two conformance modules this file is built around test for."""
+        pres = self.w.present(iat=float("nan"))
+        for label, now in (("at mint time", time.time()),
+                           ("a year later", time.time() + 365 * 86400)):
+            with self.subTest(label):
+                v = self.w.verify(pres, now=now)
+                self.assertFalse(v.authentic, "a NaN iat must not pass the window")
+                self.assertEqual(v.code, "kb_freshness")
+
+    def test_an_infinite_iat_is_refused_rather_than_crashing_the_refusal(self):
+        """`abs(now - inf) > 300` is True, so this reached the refusal, and the refusal
+        formatted `now - iat` with %d: OverflowError out of a function documented to never
+        raise. The refusal path was the crash."""
+        for bad in (float("inf"), float("-inf")):
+            with self.subTest(iat=repr(bad)):
+                v = self.w.verify(self.w.present(iat=bad))
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "kb_freshness")
+
+    def test_a_finite_iat_inside_the_window_still_verifies(self):
+        self.assertTrue(self.w.verify(self.w.present()).authentic)
+
+
+class DisclosureCollisionTests(unittest.TestCase):
+    """SD-JWT section 9.3: a disclosure whose name is already a claim must be REJECTED.
+
+    Clear-text claims are written first and disclosed ones second, so before 2026-09-17 the
+    disclosure silently won. `cnf` is the sharpest case: the returned claims named a key
+    that was not the key the key binding had actually been checked against.
+    """
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def test_a_disclosure_cannot_overwrite_a_protected_claim(self):
+        for name, value in (("iss", "https://attacker.example"),
+                            ("cnf", {"jwk": {"kty": "EC", "crv": "P-256", "x": "a", "y": "b"}}),
+                            ("exp", 4102444800),
+                            ("vct", "https://attacker.example/loyalty-card"),
+                            ("_sd_alg", "none")):
+            with self.subTest(claim=name):
+                v = self.w.verify(self.w.present(
+                    claims=(("given_name", "Jean"), (name, value))))
+                self.assertFalse(v.authentic,
+                                 "a disclosure named %r overwrote a signed claim" % name)
+                self.assertEqual(v.code, "disclosure")
+
+    def test_the_issuer_in_the_returned_claims_is_the_one_that_signed(self):
+        """The consequence, stated as a property rather than a code. A relying party reads
+        `claims['iss']` to decide whose credential this is."""
+        v = self.w.verify(self.w.present(
+            claims=(("given_name", "Jean"), ("iss", "https://attacker.example"))))
+        self.assertFalse(v.authentic)
+        self.assertNotEqual(v.claims.get("iss"), "https://attacker.example")
+
+    def test_two_disclosures_with_the_same_name_collide_with_each_other(self):
+        v = self.w.verify(self.w.present(
+            claims=(("given_name", "Jean"), ("given_name", "Someone Else"))))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+
+    def test_distinct_disclosure_names_still_verify(self):
+        v = self.w.verify(self.w.present(
+            claims=(("given_name", "Jean"), ("family_name", "Dupont"), ("birthdate", "1990-04-17"))))
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.claims["birthdate"], "1990-04-17")
