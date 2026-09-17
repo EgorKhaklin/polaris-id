@@ -182,6 +182,8 @@ is how "every credential issued under the broken algorithm is lost" is actually 
 `key-compromise` at a time with no algorithm-level lever. Rollback and the mixed window during a
 partial migration are unmeasured. `lab/crypto-migration/`.
 
+**And a third, measured 2026-09-17** (`lab/crypto-migration/algorithm_status.py`). `CryptographicAlgorithm` carries a `deprecation_date` and it reaches NO signed artifact: across the twenty signed formats the wire specification defines, none carries an algorithm's standing. An issuer can record that an algorithm is deprecated and no verifier will ever find out. The only lever a relying party has is its accepted-algorithm set, which is a hardcoded dict in the shipped verifier, so retiring an algorithm is a software release to every integrator rather than a migration. What that costs mid-migration is now measured against the verifier's own predicate: at 90 per cent re-signed, a relying party that drops the old algorithm turns away one holder in ten, and **no artifact tells it which fraction it is at**, so it cannot choose the moment. Rollback and the cost of re-signing at scale remain unmeasured.
+
 **And the measurement instruments were wrong three times in ways that flattered them.** The
 conformance drill counted 22 fields that were not fields and misclassified what fixing the rest
 would take, twice. Of a 45-point fall in its headline number, 18 was work and 27 was correcting

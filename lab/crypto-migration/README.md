@@ -8,6 +8,13 @@ claim, so it gets the same treatment as the other two.
 proposed here. A verifier-readable algorithm status would be a new product guarantee, and
 lab work does not get to create one.
 
+**Measured 2026-09-17, `algorithm_status.py`.** This assessment was written by reading the
+code. It now has an instrument, so the day somebody publishes an algorithm status the claim
+can widen on evidence rather than on somebody noticing, and the day the gap is quietly
+reopened it fails rather than going silent. It confirms the reading: across the twenty signed
+formats `docs/reference/WIRE-SPEC.md` specifies, **none carries an algorithm's standing**, and
+it measures what the mixed window below actually costs.
+
 ---
 
 ## What is real
@@ -92,12 +99,36 @@ artifact, or an algorithm-level compromise lever beside `key-compromise`. Each w
 new product guarantee. Recorded in `docs/PRODUCTION-READINESS.md` for the deploying
 organisation to decide about.
 
+## The mixed window, measured
+
+**2026-09-17. `algorithm_status.py`.** The lever a relying party has is its accepted set, and
+the shipped verifier's is a hardcoded dict of two names. So the only way to refuse credentials
+a broken algorithm would forge is to drop the old name, and the run measures what that costs
+against the verifier's own predicate rather than reasoning about it. Over a population of
+10,000:
+
+| re-signed | still on the old algorithm | verifies | locked out |
+|---|---|---|---|
+| 0% | 10,000 | 0 | 10,000 |
+| 50% | 5,000 | 5,000 | 5,000 |
+| 90% | 1,000 | 9,000 | 1,000 |
+| 99% | 100 | 9,900 | 100 |
+| 100% | 0 | 10,000 | 0 |
+
+The shape is not surprising. What makes it a finding is the sentence under it: **no signed
+artifact tells a relying party which row it is on.** A migration's progress is issuer-side
+knowledge, and the verifier that has to choose between accepting forgeable credentials and
+locking people out cannot see the number it would need to choose well. At 90 per cent it is
+turning away one holder in ten without being able to tell that is what it is doing.
+
+The curve is the SHAPE of the trade, not a prediction. A real population's migration rate is
+a deployment fact nobody here has.
+
+---
+
 ## What is still unmeasured
 
 - **Rollback.** `uc6_migrate_algorithm` moves a token forward. Nothing here measures what
   happens if a migration must be reversed mid-population.
-- **The mixed window.** During a migration a population is partly re-signed. The federation
-  drill runs two authorities on different algorithms; nobody has measured what a verifier
-  concludes about a population in the middle of one.
 - **Cost at scale.** CI measures re-signing a population. The number is not stated here and
   a deploying organisation would need it.
