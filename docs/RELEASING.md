@@ -15,6 +15,17 @@ externally observable changes.
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc1, 2026-09-16 | 0.1.0, 2026-09-15 |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.1, 2026-09-16 | 0.1.0, 2026-09-15 |
 
+> **rc.2 IS CUT IN THE TREE, and what is waiting now is the publish.** The version moved to
+> 1.0.0-rc.2 on 2026-09-17 on the owner's instruction: `__version__`, the Helm appVersion,
+> CITATION.cff, the four stamps, the CHANGELOG entry and all four package versions, together,
+> gated locally before the commit. **Nothing has been published.** A version number on a
+> registry can never be reused, the contract puts that call with the owner, and the npm
+> trusted publisher still allows direct publish, which is a separate thing to untick. The
+> "What must hold for any publish" list below is the gate; the workflow runs the product
+> boundary drill and will not publish past a failure.
+>
+> The rest of this note is the record of why rc.2 was owed, kept as written.
+>
 > **rc.2 is owed on `polaris-oid4vp`, and this is the decision waiting to be taken.**
 > On 2026-09-17 an adversarial review found fifteen defects in the published 1.0.0rc1 and
 > all fifteen are fixed in the tree: expired credentials accepted because `exp` and `nbf`

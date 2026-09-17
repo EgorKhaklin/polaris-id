@@ -11,6 +11,75 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.2 — 2026-09-17 (a defect found in the candidate)
+
+The contract says a defect found in the candidate makes rc.2 and nothing else moves the
+number. The trigger fired twenty-two times in two days, across all four external doors and
+the application, so this is that release and not a larger one.
+
+**What a stranger installing rc.1 has.** Measured inside the downloaded wheels rather than
+inferred from a changelog, on 2026-09-17: `polaris-oid4vp` 1.0.0rc1 never reads `exp` (the
+string appears zero times in its `sdjwt.py`, against three here), so it accepts a credential
+whose validity has ended. `polaris-verify` 1.0.0rc1 reads a trust attestation's `valid_until`
+exactly once, inside its canonicaliser, so a time-boxed trust edge never expires; it has no
+finite-number guards, so an agent grant signed with a non-finite `max_amount` is a signed
+unlimited grant wearing a limit field. `polaris-sdk-python` has neither guard either. The npm
+`polaris-sdk-ts` is still 0.1.0 and predates rc.1 entirely.
+
+And the reason that matters rather than merely being true: `docs/STRANGER-PATH.md` was walked
+end to end from PyPI the same day, and a stock walt.id wallet presented to the published
+verifier and was ACCEPTED. The happy path works. Somebody evaluating Polaris against their
+own wallet watches it succeed and has no way to learn their copy does not check expiry.
+SECURITY.md now carries that, at the top, where a person who installed from a registry will
+reach it instead of only a maintainer.
+
+**The four external doors.** Fifteen defects in the OpenID4VP verifier, among them expired
+credentials accepted, a key-binding `iat` of NaN defeating the replay window, a disclosure
+able to overwrite the issuer or the key-binding key in the returned claims, and four
+denial-of-service paths needing no credential. Sixteen in the detached verifier, including
+the trust edge above, an agent grant whose algorithm the verifier ignored while the holder
+had signed it, and four totality escapes where an inclusion proof carrying `Infinity` raised
+instead of returning a verdict. Thirteen across the two reference SDKs, including a cached
+bearer token that outlived the client's standing to use it.
+
+**The application.** A credential past its own expiry stayed usable and the dashboard counted
+it. An operator bound to one authority could make another authority sign. An operator account
+could be locked exactly once, ever. Eleven refusals on the authentication surface were not
+being made, among them an authenticator model refused by policy that could still complete a
+login. A timestamp authority signed whatever it was handed: its docstring promises the content
+itself is never sent, and the `digest_hex` shape check is the whole of that promise.
+
+**Non-finite numbers, moved to the door.** `NaN` and `Infinity` survive `json.loads`, every
+comparison against NaN is false, and `int(float('inf'))` raises an exception the usual
+`except (TypeError, ValueError)` does not catch. After repairing five call sites individually
+the refusal moved to one JSON provider, because fixing the twenty-first call site leaves the
+twenty-second to be written. The same shape produced `_json_object()`: `get_json(silent=True)
+or {}` is truthy for a JSON string, so an anonymous caller could make an unauthenticated
+endpoint raise by sending `"a string"`.
+
+**How the tests were found wanting, which is most of what changed.** The Flask application
+was the one member of the mutation-drill family nobody had measured, and three of the ten
+constraints are enforced there and nowhere else. Of 37 refusals answering 401, 403, 409, 413
+or 429, **31 survived being switched off with the whole suite green**. Of fourteen rate
+limiters, the login one was the only one any test drove. `check_local_gate_covers_ci` existed
+to stop the local gate being narrower than CI and compared the ship tool against the wrong
+file, so nine suites ran in CI that nothing local knew about.
+
+**The lab.** Linkability went from five findings to eight. Two of the four fields its
+issuer-metadata question named are not in a presentation at all; the anonymity set is the
+(epoch, context) cell and the metadata gives an adversary nothing beyond it. A wallet whose
+`holder-keygen` was interrupted by a network failure presents `holder_proof` with no
+`holder_binding` beside it, identically at every verifier, which is a stable one-bit
+fingerprint, and the cause was an uncaught `URLError`. A status assertion trimmed to its
+timestamps reported `bounded` while handing over an instant to the second.
+
+**What has not changed.** Polaris remains a reference implementation on notional data, not
+production-ready, not audited, not certified, not deployed. The five conditions for 1.0.0 still
+hold and the sixth still does not: an operator who is not the author has not reached a verified
+result, and that row of the scoreboard is what makes 1.0.0 rather than another candidate.
+
+---
+
 ## v1.0.0-rc.1 — 2026-09-15 (a version a stranger can read)
 
 The tree version moves from 9.467 to 1.0.0-rc.1, and the four standalone packages from 0.1.0 to
