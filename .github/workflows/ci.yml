@@ -22,6 +22,21 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# 2026-09-16: a pull request's older run is superseded by its newer push, and this workflow
+# is about twenty jobs of container work, so leaving them to finish costs the queue rather
+# than telling anyone anything. Measured on the day this was added: six dependabot pull
+# requests opened at once sat queued behind four main-branch runs, and the feedback on a red
+# main took over an hour to arrive.
+#
+# PULL REQUESTS ONLY, deliberately. The group keys on the ref, so a push to main never
+# cancels a push to main: every commit that lands keeps its own result, and `triage RUN_ID`
+# can still read the run for the commit that broke something. Cancelling superseded runs on
+# main would save more queue and cost exactly that, which is the wrong trade for a branch
+# where the commits are the record.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Polaris product test suite
