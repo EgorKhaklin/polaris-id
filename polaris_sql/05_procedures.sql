@@ -1076,7 +1076,7 @@ COMMENT ON PROCEDURE uc6_migrate_algorithm(INTEGER, INTEGER, BYTEA, BOOLEAN, TEX
 -- parallelize. Per-algorithm scope is natural: different algorithms have
 -- disjoint leaf sets.
 --
--- AnchorBatch is the 5th audit-of-record instance in Polaris — append-only,
+-- AnchorBatch is an audit-of-record instance in Polaris — append-only,
 -- once created the merkle_root cannot be rewritten (every inclusion proof
 -- issued against it depends on its immutability). See
 -- docs/design/audit-of-record.md.

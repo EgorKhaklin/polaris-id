@@ -73,8 +73,8 @@ The `schema_version` table is append-only. A revert does NOT delete
 the original apply-row; it appends a new row with `event_type='reverted'`.
 This is the same audit-of-record discipline as `TokenLifecycleEvent`,
 `VerificationEvent`, `EnrollmentStatusEvent`, and the other
-audit-of-record instances in Polaris (thirteen at v9.194; the list is in
-`docs/design/audit-of-record.md`).
+audit-of-record instances in Polaris (the list is in
+`docs/design/audit-of-record.md`, derived from the schema since 2026-09-17).
 
 "Currently applied" is computed dynamically as "the last event for this
 `name` is `applied`, not `reverted`." Re-applying a previously-reverted

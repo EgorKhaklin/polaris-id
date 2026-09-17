@@ -78,7 +78,7 @@
         <li><strong>Same-agency verification:</strong> when the verifying agency is the same as the issuing agency, no attestation lookup is needed. Trust is implicit at issuance.</li>
         <li><strong>Cross-agency verification:</strong> the <code>verifications_new</code> handler calls <code>_federation_trust_holds(verifier_agency_id, token_id, context_id)</code> before flipping the outcome to SUCCESS. The check joins <code>AgencyTrustAttestation</code> filtered to the context and to today's date, with <code>revocation_date IS NULL</code>.</li>
         <li><strong>Explicit-only:</strong> there is no recursive walk. A → B and B → C does NOT imply A → C. If you want A → C, write that attestation.</li>
-        <li><strong>Audit-of-record:</strong> <code>AgencyTrustAttestation</code> is the 6th audit-of-record instance. Rows are append-only at the data-content level (an immutability trigger blocks mutation of any field except <code>revocation_date</code> and <code>revocation_reason</code>); revocation is recorded as a state transition, not a delete.</li>
+        <li><strong>Audit-of-record:</strong> <code>AgencyTrustAttestation</code> is an audit-of-record instance. Rows are append-only at the data-content level (an immutability trigger blocks mutation of any field except <code>revocation_date</code> and <code>revocation_reason</code>); revocation is recorded as a state transition, not a delete.</li>
     </ol>
     <p class="footnote">
         Mechanism design: <code>docs/design/federation.md</code>.

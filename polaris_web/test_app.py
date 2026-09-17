@@ -3763,7 +3763,7 @@ class ZKSnarkTests(PolarisTestCase):
       R5 — substrate manifest update (Plonky2 + Rust toolchain)
       R6 — performance budget (~130 ms / verification)
       R7 — operator-driven epoch closure (anti-auto-derivation)
-      R8 — TokenStateEpoch is the 7th audit-of-record instance
+      R8 — TokenStateEpoch is an audit-of-record instance
       R9 — coexistence with R11-3 federation check (complementary by disclosure)
     """
 

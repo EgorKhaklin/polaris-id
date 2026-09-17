@@ -1475,10 +1475,12 @@ def test_aor_append_only_triggers_check_discriminates(tmp_path):
     # triggers, because a count nobody reads can fall by one silently. RecoveryRequest was
     # the last table whose history rested on procedure discipline; removing any table's
     # trigger, or the exception it raises, must turn the check red.
-    tables = ["TokenLifecycleEvent", "VerificationEvent", "EnrollmentStatusEvent", "TokenSignature",
-              "AgencyTrustAttestation", "TokenStateEpoch", "TokenStateEpochLeaf", "AnchorBatch",
-              "DuressEvent", "AuthAuditLog", "IndividualErasureEvent", "LifecycleArchiveCheckpoint",
-              "AuditAccessLog", "RecoveryRequest"]
+    # Read the tuple the check reads. This test kept its own copy of the fourteen names
+    # until 2026-09-17, so when _AOR_TABLES grew to the thirty-one the schema actually
+    # guards, the fixture was still building the old fourteen and the test failed because
+    # the LIST had been wrong, not because the check had. A detection test holding a
+    # private copy of the data under test has the same defect it is checking for.
+    tables = list(checks._AOR_TABLES)
     body = "RAISE EXCEPTION 'no' USING ERRCODE = 'insufficient_privilege';\n" + "".join(
         "CREATE TRIGGER trg_%s BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION f();\n" % (t.lower(), t)
         for t in tables)
@@ -16111,3 +16113,110 @@ def test_zk_two_witness_check_discriminates(tmp_path):
 
     write()
     assert checks.check_zk_two_witness_present(tmp_path)[0].level == "OK"
+
+
+def test_aor_surface_derived_check_discriminates(tmp_path):
+    """C1's surface must come from the schema, so every way the two can drift must fail.
+
+    The defect this check exists for (2026-09-17): the design record said "the fourteen
+    instances" while the schema guarded thirty-four tables with the same mechanism, and
+    check_aor_append_only_triggers could not see the difference because it only ever asks
+    about the names it is handed.
+    """
+    def guard(fn):
+        return ("CREATE OR REPLACE FUNCTION %s() RETURNS TRIGGER LANGUAGE plpgsql AS $$\n"
+                "BEGIN\n"
+                "    RAISE EXCEPTION 'this table is append-only'\n"
+                "        USING ERRCODE = 'insufficient_privilege';\n"
+                "    RETURN NEW;\n"
+                "END;\n$$;\n" % fn)
+
+    def trigger(table, fn):
+        return ("CREATE TRIGGER trg_%s\n    BEFORE UPDATE OR DELETE ON %s\n"
+                "    FOR EACH ROW EXECUTE FUNCTION %s();\n" % (table, table, fn))
+
+    # 22 instances plus one entity: enough to clear the check's anti-vacuity floor of 20.
+    INSTANCES = ["t%02d" % i for i in range(22)] + ["widgetevent"]
+    SQL = guard("reject_audit_modification") + "".join(
+        trigger(t, "reject_audit_modification") for t in INSTANCES + ["widget"])
+
+    def record(instances=INSTANCES, heading="twenty-three", entities=True):
+        rows = "".join("| `%s` | what it records | None | `trg_%s` |\n" % (t, t)
+                       for t in instances)
+        tail = ("\n## Guarded, and not an instance\n\n"
+                "| Entity | Its history lives in | The guard |\n|---|---|---|\n"
+                "| `widget` | `widgetevent` | `trg_widget` |\n") if entities else ""
+        return ("# audit of record\n\n## The %s instances\n\n"
+                "| Element | What it records | Bounded mutation | Enforcement |\n"
+                "|---|---|---|---|\n%s%s" % (heading, rows, tail))
+
+    def write(sql=SQL, doc=None):
+        (tmp_path / "polaris_sql" / "migrations").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "docs" / "design").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "06_triggers.sql").write_text(sql)
+        (tmp_path / "docs" / "design" / "audit-of-record.md").write_text(
+            record() if doc is None else doc)
+
+    original = dict(checks._GUARDED_NOT_AN_INSTANCE)
+    original_tables = checks._AOR_TABLES
+    try:
+        checks._GUARDED_NOT_AN_INSTANCE.clear()
+        checks._GUARDED_NOT_AN_INSTANCE["widget"] = "widgetevent"
+        checks._AOR_TABLES = tuple(INSTANCES)
+
+        write()
+        assert checks.check_aor_surface_is_derived_from_the_schema(tmp_path)[0].level == "OK", \
+            "must PASS when every guarded table is an instance or a declared entity"
+
+        # 1. A table the schema guards that nobody classified. THE defect.
+        write(sql=SQL + trigger("newevent", "reject_audit_modification"))
+        out = checks.check_aor_surface_is_derived_from_the_schema(tmp_path)
+        assert out[0].level == "FAIL" and "newevent" in out[0].message, \
+            "must FAIL on a guarded table in neither the record nor the entity list"
+
+        # 2. An instance the record names that nothing guards: a promise with nothing behind it.
+        write(doc=record(instances=INSTANCES + ["ghost"], heading="twenty-four"))
+        out = checks.check_aor_surface_is_derived_from_the_schema(tmp_path)
+        assert any(f.level == "FAIL" and "ghost" in f.message for f in out), \
+            "must FAIL on an instance the schema does not guard"
+
+        # 3. An entity excused into a paired table that is not itself an instance.
+        write(doc=record(instances=[t for t in INSTANCES if t != "widgetevent"],
+                         heading="twenty-two"))
+        out = checks.check_aor_surface_is_derived_from_the_schema(tmp_path)
+        assert any(f.level == "FAIL" and "widgetevent" in f.message for f in out), \
+            "must FAIL when the history an entity is excused into is not append-only"
+
+        # 4. _AOR_TABLES drifting from the record, which is what c1_aor then enforces.
+        write()
+        checks._AOR_TABLES = tuple(INSTANCES[:-1])
+        out = checks.check_aor_surface_is_derived_from_the_schema(tmp_path)
+        assert any(f.level == "FAIL" and "_AOR_TABLES" in f.message for f in out), \
+            "must FAIL when _AOR_TABLES and the design record name different sets"
+        checks._AOR_TABLES = tuple(INSTANCES)
+
+        # 5. The stated count drifting from the rows under it, which is how "fourteen"
+        #    survived: a heading nobody recomputed.
+        write(doc=record(heading="fourteen"))
+        out = checks.check_aor_surface_is_derived_from_the_schema(tmp_path)
+        assert any(f.level == "FAIL" and "heading" in f.message for f in out), \
+            "must FAIL when the heading's count disagrees with the table it introduces"
+
+        # 6. Anti-vacuity: a parser that stops matching must not report a clean surface.
+        write(sql=guard("reject_audit_modification") + trigger("t00", "reject_audit_modification"))
+        out = checks.check_aor_surface_is_derived_from_the_schema(tmp_path)
+        assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
+            "must FAIL rather than pass when the derivation finds almost nothing"
+
+        # 7. The entity section must not be readable as instances: an entity that excused
+        #    itself by appearing in the same markdown shape would defeat the whole split.
+        write(doc=record(instances=[t for t in INSTANCES if t != "widgetevent"],
+                         heading="twenty-two").replace("| `widget` | `widgetevent` |",
+                                                       "| `widgetevent` | `widget` |"))
+        out = checks.check_aor_surface_is_derived_from_the_schema(tmp_path)
+        assert any(f.level == "FAIL" for f in out), \
+            "the second table must not be read as instances"
+    finally:
+        checks._GUARDED_NOT_AN_INSTANCE.clear()
+        checks._GUARDED_NOT_AN_INSTANCE.update(original)
+        checks._AOR_TABLES = original_tables

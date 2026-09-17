@@ -303,8 +303,8 @@ CREATE TRIGGER trg_authority_key_event_append_only
 COMMENT ON FUNCTION reject_audit_modification IS
   'Blocks UPDATE and DELETE on append-only audit tables (TokenLifecycleEvent, '
   'VerificationEvent, EnrollmentStatusEvent, AnchorBatch). Realizes NFR-4 at '
-  'the tooling layer. AnchorBatch joined the set in v8.21 / R10-2 as the '
-  'fifth audit-of-record instance — see docs/design/audit-of-record.md.';
+  'the tooling layer. AnchorBatch joined the set in v8.21 / R10-2; the '
+  'instances are enumerated in docs/design/audit-of-record.md.';
 
 -- ----------------------------------------------------------------------------
 -- AUTOMATIC LIFECYCLE AUDIT on IdentityToken status changes.
@@ -710,7 +710,7 @@ CREATE TRIGGER trg_epoch_leaf_append_only
 
 -- ----------------------------------------------------------------------------
 -- DuressEvent append-only trigger (R11-5 / M2-10 / v8.24).
--- DuressEvent is the 8th audit-of-record instance. The compulsion-resistance
+-- DuressEvent is an audit-of-record instance. The compulsion-resistance
 -- signal is meaningful only if its history is immutable — an attacker who
 -- could modify or delete duress events would defeat the whole mechanism.
 -- Reuses reject_audit_modification.
@@ -1514,7 +1514,7 @@ CREATE TRIGGER trg_holder_key_append_only
     FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();
 
 -- ----------------------------------------------------------------------------
--- CardPersonalization is the 15th audit-of-record instance (P4.3). Personalization
+-- CardPersonalization is an audit-of-record instance (P4.3). Personalization
 -- is the moment a database record becomes an object in somebody's pocket, and the
 -- only step where the authority's signature is applied to something that then
 -- leaves its control. That is exactly the record that must not be editable after
@@ -1538,7 +1538,7 @@ CREATE TRIGGER trg_enrollment_evidence_append_only
     EXECUTE FUNCTION reject_audit_modification();
 
 -- ----------------------------------------------------------------------------
--- RefereeVouching is the 18th audit-of-record instance (P4.4, v9.394). A vouching
+-- RefereeVouching is an audit-of-record instance (P4.4, v9.394). A vouching
 -- is the record that an assurance level rests on a named person's word. An
 -- authority that could delete one could unmake the accountability for every
 -- credential that referee touched, and the credentials would outlive the record.

@@ -49,7 +49,7 @@ inconsistently the fourteenth.
    when. If that needs a join to a separate event log, it is not an audit of
    record.
 
-## The fourteen instances
+## The thirty-one instances
 
 | Element | What it records | Bounded mutation | Enforcement |
 |---|---|---|---|
@@ -67,11 +67,68 @@ inconsistently the fourteenth.
 | `LifecycleArchiveCheckpoint` | The watermarks that bound every purge | None; fully append-only | `trg_checkpoint_append_only` |
 | `AuditAccessLog` | Who read which audit surface, and when | None; fully append-only | `trg_audit_access_append_only`, added by migration |
 | `RecoveryRequest` | Catastrophic-loss recovery ceremonies | The out-of-band channels while PENDING, then the decision, once | `trg_recovery_request_immutable`, added by migration 008 |
+| `schema_version` | Every migration applied or reverted, with the SHA-256 of the file that ran | None; fully append-only | `trg_schema_version_append_only` |
+| `CardPersonalization` | The moment a record becomes an object in somebody's pocket | None; fully append-only | `trg_card_personalization_append_only` |
+| `EnrollmentProofing` | One identity-proofing event, and the assurance level its evidence supports | None; fully append-only | `trg_enrollment_proofing_append_only` |
+| `EnrollmentEvidence` | The evidence one proofing event rested on, classified | None; fully append-only | `trg_enrollment_evidence_append_only` |
+| `RefereeVouching` | That an assurance level rests on a named person's word | None; fully append-only | `trg_referee_vouching_append_only` |
+| `AgencyEvent` | Every decision about an authority: creation, rename, level, jurisdiction, signing key | None; fully append-only | `trg_agency_event_append_only` |
+| `AppUserEvent` | Every decision about an operator account, written from the row diff | None; fully append-only | `trg_app_user_event_append_only` |
+| `RelyingPartyEvent` | Every decision about an outside relying party | None; fully append-only | `trg_rp_event_append_only` |
+| `AuthorityKeyEvent` | Authority keys registered, retired or compromised, effective from an instant | None; fully append-only | `trg_authority_key_event_append_only` |
+| `HolderKeyEvent` | Holder public keys bound, rotated or revoked, effective from an instant | None; fully append-only | `trg_holder_key_append_only` |
+| `ExchangeReceiptLog` | One row per minted exchange receipt, holding only its SHA3-256 | None; fully append-only | `trg_receipt_log_append_only` |
+| `TimestampLog` | One row per anchored timestamp, holding only its SHA3-256 | None; fully append-only | `trg_timestamp_log_append_only` |
+| `AuthCodeConsumed` | Authorization codes spent, so a code is single-use across workers | None; fully append-only | `trg_auth_code_append_only` |
+| `ExchangeNonce` | Exchange nonces consumed, so a replay is refused | None; fully append-only | `trg_exchange_nonce_append_only` |
+| `AgencyQuota` | Per-authority caps, and who set each one, from what, when, and why | Supersession only: a new cap appends a row and retires the live one | `trg_agency_quota_immutable` |
+| `IssuerDiscretionPolicy` | Per-authority revocation-share bounds, so a LOOSENING is auditable in fact | Supersession only, as above | `trg_discretion_policy_immutable` |
+| `RetentionPolicy` | Retention decisions per table class and jurisdiction | Supersession only, as above | `trg_retention_policy_immutable` |
 
 Every trigger above raises `insufficient_privilege`, and
-`check_aor_append_only_triggers` fails the build if any of the fourteen stops
+`check_aor_append_only_triggers` fails the build if any of the thirty-one stops
 being guarded. The check names each table rather than counting triggers,
 because a count nobody reads can fall by one silently.
+
+## Where this list came from, and why it is no longer typed
+
+For fourteen versions this section said "the fourteen instances" and listed
+fourteen tables, while the schema guarded thirty-four with the same mechanism.
+The tree said so in its own words and nothing read them: `schema_version`'s
+`COMMENT ON TABLE` calls itself "13th audit-of-record instance",
+`CardPersonalization` "the 15th", `EnrollmentProofing` "the 16th",
+`EnrollmentEvidence` "the 17th", each pointing at a document that stopped at
+fourteen. Two independent hand-kept counts, disagreeing in writing.
+
+`check_aor_append_only_triggers` could not have caught it. It requires a
+trigger for each of the names it is given and asks nothing about a table it was
+not given, so it reported full coverage of exactly the set someone had typed.
+That is the same shape as the guard list before v9.424: an anchor keyed on the
+list it exists to validate.
+
+`check_aor_surface_is_derived_from_the_schema` now reads the schema and
+requires every table under an append-only guard to be accounted for here, in
+one of the two sections below. A table in neither fails the build, because
+nobody has classified it, and an instance named here that the schema does not
+guard fails too, because that is a promise with nothing behind it.
+
+## Guarded, and not an instance
+
+Three tables carry a guard and are not audits of record. Each is an entity
+whose row is *supposed* to change; what may not be lost is the history of
+those changes, and that history is a separate instance in the table above.
+This is the fifth criterion doing its work: an instance answers what happened
+by being read alone, and an entity table needs its event log to answer it.
+
+| Entity | Its history lives in | The guard, and what it does |
+|---|---|---|
+| `Agency` | `AgencyEvent` | `trg_agency_audited` writes the event from the row diff and refuses a `DELETE` |
+| `AppUser` | `AppUserEvent` | `trg_app_user_audited` does the same, and holds no secret |
+| `RelyingParty` | `RelyingPartyEvent` | `trg_relying_party_audited` does the same, and refuses a weakening with no stated reason |
+
+The check requires each paired table to be an instance itself, so an entry
+here cannot be an excuse: declaring that a history lives somewhere is only
+accepted if that somewhere is append-only.
 
 ## The exception, and how it was closed
 

@@ -1225,8 +1225,7 @@ COMMENT ON TABLE TokenSignature IS
 -- transaction reference once the batch has been pushed to a PQ-capable
 -- distributed ledger.
 --
--- AnchorBatch is the FOURTH audit-of-record instance in Polaris (after
--- TokenLifecycleEvent, RecoveryRequest and TokenSignature);
+-- AnchorBatch is an audit-of-record instance in Polaris;
 -- see docs/design/audit-of-record.md. The append-only invariant is enforced by
 -- extending the reject_audit_modification trigger to this table (in
 -- 06_triggers.sql).
@@ -1280,8 +1279,8 @@ ALTER TABLE BlockchainAnchor
 -- (V == I) OR an active attestation V→I→C exists. NO TRANSITIVE TRUST:
 -- the verification query looks for exactly one row; it never recurses.
 --
--- AgencyTrustAttestation is the FIFTH audit-of-record instance in
--- Polaris (after TokenLifecycleEvent, RecoveryRequest, TokenSignature
+-- AgencyTrustAttestation is an audit-of-record instance in
+-- Polaris (alongside TokenLifecycleEvent, RecoveryRequest, TokenSignature
 -- and AnchorBatch). Bounded
 -- mutation: (revocation_date, revocation_reason) move together once,
 -- one-way. Enforced by enforce_attestation_immutability trigger.
@@ -1401,7 +1400,7 @@ CREATE TABLE AgencyTrustAttestation (
 
 COMMENT ON TABLE AgencyTrustAttestation IS
   'Federation trust graph: directional cross-agency attestations '
-  '(R11-3 / M2-8 / v8.22). The 6th audit-of-record instance in Polaris. '
+  '(R11-3 / M2-8 / v8.22). An audit-of-record instance in Polaris. '
   'Append-only via enforce_attestation_immutability trigger; bounded '
   'mutation is the one-way revocation pair (revocation_date, reason). '
   'NO transitive trust — verification reads exactly one row per check. '
@@ -1414,7 +1413,7 @@ COMMENT ON TABLE AgencyTrustAttestation IS
 -- valid-token set per epoch to a Merkle root; the SNARK proves
 -- membership in this root.
 --
--- TokenStateEpoch is the SEVENTH audit-of-record instance in Polaris.
+-- TokenStateEpoch is an audit-of-record instance in Polaris.
 -- Append-only via enforce_epoch_immutability trigger. Once an epoch is
 -- closed, its merkle_root and committed_count cannot change — every
 -- proof issued against the root depends on its immutability.
@@ -1452,7 +1451,7 @@ CREATE TABLE TokenStateEpoch (
 
 COMMENT ON TABLE TokenStateEpoch IS
   'Per-epoch Merkle commitment over the active-token set (R10-1 / M2-1 / v8.23). '
-  'The 7th audit-of-record instance in Polaris. Append-only via '
+  'An audit-of-record instance in Polaris. Append-only via '
   'enforce_epoch_immutability trigger. The SNARK proves membership in '
   'merkle_root; verifiers consult this row to check epoch boundary '
   '(valid_until). See docs/design/zk-snark.md.';
@@ -1555,7 +1554,7 @@ CREATE INDEX idx_duress_event_unacknowledged ON DuressEvent (event_id)
 
 COMMENT ON TABLE DuressEvent IS
   'Compulsion-resistance audit-of-record (R11-5 / M2-10 / v8.24). '
-  'The 8th audit-of-record instance — append-only via '
+  'An audit-of-record instance — append-only via '
   'reject_audit_modification trigger. The OOB alert channel for '
   'detected duress signals. NOT joined into the operator-visible '
   '/verifications list (R6 audit refinement — anti-revealing posture). '
@@ -1563,12 +1562,11 @@ COMMENT ON TABLE DuressEvent IS
 
 
 -- ----------------------------------------------------------------------------
--- EnrollmentProofing and EnrollmentEvidence are the SIXTEENTH and SEVENTEENTH
--- audit-of-record instances in Polaris (P4.4).
+-- EnrollmentProofing and EnrollmentEvidence are audit-of-record instances (P4.4).
 --
 -- Polaris could issue a credential and had no way to say how the person was proven to be who
 -- they claimed. EnrollmentStatusEvent recorded THAT enrollment happened; nothing recorded what
--- it rested on. These are the 16th and 17th audit-of-record instances, append-only by trigger.
+-- it rested on. Both are audit-of-record instances, append-only by trigger.
 --
 -- THE LEVEL IS DERIVED, NEVER ASSERTED. derived_ial is written by the application from the
 -- evidence rows beside it (polaris_web/proofing.py), and recording a level the evidence does
@@ -1647,7 +1645,7 @@ CREATE INDEX IF NOT EXISTS idx_enrollment_evidence_proofing
     ON EnrollmentEvidence (proofing_id);
 
 -- ----------------------------------------------------------------------------
--- RefereeVouching is the EIGHTEENTH audit-of-record instance (P4.4, v9.394): how
+-- RefereeVouching is an audit-of-record instance (P4.4, v9.394): how
 -- somebody who CANNOT present the usual evidence still gets a credential.
 --
 -- This is the anti-exclusion mechanism in the enrollment path and the most obvious
@@ -1761,7 +1759,7 @@ CREATE INDEX IF NOT EXISTS idx_enrollment_code_individual
 
 COMMENT ON TABLE EnrollmentProofing IS
   'P4.4: one identity-proofing event per row, and the assurance level its evidence supports. '
-  'The 16th audit-of-record instance, append-only via reject_audit_modification. derived_ial '
+  'An audit-of-record instance, append-only via reject_audit_modification. derived_ial '
   'is DERIVED by polaris_web/proofing.py from the EnrollmentEvidence rows beside it, never '
   'typed: an assurance level an operator can enter is a label, and relying parties downstream '
   'would be trusting the label. See docs/design/identity-proofing.md.';
@@ -1782,12 +1780,12 @@ COMMENT ON COLUMN EnrollmentEvidence.strength IS
 
 
 -- ----------------------------------------------------------------------------
--- CardPersonalization is the FIFTEENTH audit-of-record instance in Polaris (P4.3).
+-- CardPersonalization is an audit-of-record instance in Polaris (P4.3).
 --
 -- Personalization is the moment a database record becomes an object in somebody's pocket. It
 -- is the only step where the authority's signature is applied to something that then leaves
 -- its control, so it is the step that most needs to be un-editable afterwards. This table is
--- the 15th audit-of-record instance and is append-only by trigger, like the others.
+-- an audit-of-record instance and is append-only by trigger, like the others.
 --
 -- WHAT IS RECORDED AND WHY. The two slot public keys, in full rather than as fingerprints:
 -- the authority has to VERIFY a presentation later, and a fingerprint cannot do that. The
@@ -1837,7 +1835,7 @@ CREATE INDEX IF NOT EXISTS idx_card_personalization_at
 
 COMMENT ON TABLE CardPersonalization IS
   'P4.3: the audit-of-record for personalization, the moment a record becomes an object in '
-  'somebody''s pocket. The 15th audit-of-record instance, append-only via '
+  'somebody''s pocket. An audit-of-record instance, append-only via '
   'reject_audit_modification. Holds both slot PUBLIC keys in full because the authority must '
   'verify a later presentation and a fingerprint cannot; every card carries both slots so the '
   'duress key''s presence says nothing about the holder. No private key is recorded in any '

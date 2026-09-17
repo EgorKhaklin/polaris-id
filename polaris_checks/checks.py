@@ -400,16 +400,32 @@ def check_one_active_token_index(root: pathlib.Path) -> list[Finding]:
 # exception, RecoveryRequest, which until then rested on procedure discipline: the check
 # now names every table instead of counting triggers, so removing one is a failure rather
 # than a smaller number nobody reads.
+# 2026-09-17: this list was fourteen names while the schema guarded thirty-two tables with
+# the same mechanism, and this check could not see the difference: it requires a trigger for
+# each name it is given and asks nothing about a table it was not given.
+# check_aor_surface_is_derived_from_the_schema now derives the surface and fails if this
+# tuple and the design record's instance table disagree, so the two can no longer drift.
 _AOR_TABLES = (
     "TokenLifecycleEvent", "VerificationEvent", "EnrollmentStatusEvent", "TokenSignature",
     "AgencyTrustAttestation", "TokenStateEpoch", "TokenStateEpochLeaf", "AnchorBatch",
     "DuressEvent", "AuthAuditLog", "IndividualErasureEvent", "LifecycleArchiveCheckpoint",
     "AuditAccessLog", "RecoveryRequest",
+    "schema_version", "CardPersonalization", "EnrollmentProofing", "EnrollmentEvidence",
+    "RefereeVouching", "AgencyEvent", "AppUserEvent", "RelyingPartyEvent",
+    "AuthorityKeyEvent", "HolderKeyEvent", "ExchangeReceiptLog", "TimestampLog",
+    "AuthCodeConsumed", "ExchangeNonce", "AgencyQuota", "IssuerDiscretionPolicy",
+    "RetentionPolicy",
 )
 
 
 def check_aor_append_only_triggers(root: pathlib.Path) -> list[Finding]:
-    sql = _read(root, "polaris_sql/06_triggers.sql")
+    # Every SQL source, not 06_triggers.sql alone. schema_version's append-only guard is
+    # defined in 00_migrations_table.sql, so reading one file made a real, live trigger
+    # invisible and the table would have looked unguarded the moment it was listed here
+    # (2026-09-17). A check whose SOURCE SET is narrower than the surface it claims is the
+    # same defect as a list narrower than the surface, one layer down.
+    sql = "\n".join(f.read_text(errors="replace")
+                    for f in sorted((root / "polaris_sql").glob("*.sql")))
     for f in sorted((root / "polaris_sql" / "migrations").glob("*.up.sql")):
         sql += "\n" + _read_path(f)
     if "insufficient_privilege" not in sql:
@@ -7184,6 +7200,175 @@ def check_immutability_guards_are_derived_from_the_schema(root: pathlib.Path) ->
                       "operation they refuse"
                       % (len(guards), len(guards) - len(BESPOKE_IMMUTABILITY_GUARDS),
                          len(BESPOKE_IMMUTABILITY_GUARDS)))
+
+
+# ----------------------------------------------------------------------------
+# 2026-09-17: the SURFACE of C1, derived, after the guards already were.
+#
+# check_immutability_guards_are_derived_from_the_schema (v9.424) fixed the list of
+# GUARDS. The list of TABLES the guards protect stayed hand-typed in two places that
+# could not see each other: `_AOR_TABLES` above, fourteen names, and the instance table
+# in docs/design/audit-of-record.md, whose heading read "The fourteen instances".
+#
+# WHAT THAT COST. Deriving the surface from the schema finds THIRTY-TWO base tables under
+# an append-only or bounded-mutation guard. Sixteen of the eighteen the design record did
+# not name are audit-of-record instances by the record's own five criteria, and the tree
+# already said so in the schema: CardPersonalization's COMMENT calls itself "the 15th
+# audit-of-record instance", EnrollmentProofing "the 16th", EnrollmentEvidence "the 17th",
+# while the design record they point at still said fourteen. AgencyQuota,
+# IssuerDiscretionPolicy and RetentionPolicy each describe one-way supersession in their
+# own COMMENT, which is criterion 4, and say the reason and the actor survive in the row,
+# which is criterion 5.
+#
+# So C1's own description of its surface was stale by sixteen tables, and `c1_aor` could
+# not have noticed: it requires a trigger for each of the fourteen it was given and asks
+# nothing about a fifteenth. A new event table added with no guard at all was invisible to
+# every check in the tree.
+#
+# This check reads the schema instead. Every table under an append-only guard must be
+# accounted for in exactly one of two ways, and a table in neither fails, because nobody
+# has classified it:
+#
+#   - named in the design record's instance table, and in `_AOR_TABLES`, so `c1_aor`
+#     requires its trigger; or
+#   - declared in _GUARDED_NOT_AN_INSTANCE, an ENTITY whose row is meant to change and
+#     whose history lives in a paired event table. The entry names that table, and the
+#     check requires it to be an instance itself, so the declaration cannot be an excuse.
+#
+# It also refuses a phantom: an instance named in the design record that the schema does
+# not guard is a promise with nothing behind it.
+# ----------------------------------------------------------------------------
+
+#: Tables under an append-only guard that are NOT audit-of-record instances. Each is an
+#: entity whose row is SUPPOSED to change; what may not be lost is the history of those
+#: changes, which lives in the paired table named here. The distinction is the design
+#: record's fifth criterion: an instance answers what happened to an entity by being read
+#: alone, and an entity table needs its event log to answer that.
+_GUARDED_NOT_AN_INSTANCE = {
+    "agency": "AgencyEvent",
+    "appuser": "AppUserEvent",
+    "relyingparty": "RelyingPartyEvent",
+}
+
+
+def _aor_guarded_tables(sql: str) -> set:
+    """Base tables under an append-only or bounded-mutation guard, from the schema.
+
+    Partitions are excluded: `verificationevent_2026_09` inherits its parent's trigger and
+    is not a separate instance. The same derivation as the v9.424 guard check, turned
+    around to ask which TABLES are guarded rather than which FUNCTIONS guard.
+    """
+    functions = _trigger_functions(sql)
+    out = set()
+    for fn, table, _ops in _trigger_bindings(sql):
+        body = functions.get(fn, "")
+        low = body.lower()
+        if "raise exception" not in low or "insufficient_privilege" not in low:
+            continue
+        if not any(phrase in low for phrase in _IMMUTABILITY_PHRASES):
+            continue
+        if re.search(r"_(20\d\d_\d\d|default)$", table):
+            continue
+        out.add(table)
+    return out
+
+
+def check_aor_surface_is_derived_from_the_schema(root: pathlib.Path) -> list:
+    """C1's surface is every table the schema guards, not the list somebody typed."""
+    name = "aor_surface_derived"
+    doc_rel = "docs/design/audit-of-record.md"
+    findings = []
+
+    sql_files = sorted((root / "polaris_sql").glob("*.sql"))
+    sql_files += sorted((root / "polaris_sql" / "migrations").glob("*.up.sql"))
+    if not sql_files:
+        return _fail(name, "no SQL sources found; the check cannot see the schema")
+    sql = "\n".join(f.read_text(errors="replace") for f in sql_files)
+
+    guarded = _aor_guarded_tables(sql)
+    # Vacuity guard. A regex that stops matching reports a surface of zero and every
+    # table below is then trivially accounted for, which is the shape this whole check
+    # exists to refuse.
+    if len(guarded) < 20:
+        return _fail(name, "only %d guarded tables were derived from %d SQL files; the parser "
+                           "has broken and this check would pass by finding nothing"
+                           % (len(guarded), len(sql_files)))
+
+    doc = root / doc_rel
+    if not doc.exists():
+        return _fail(name, "%s is missing; C1's surface has no written description" % doc_rel)
+    text = doc.read_text(errors="replace")
+    # Only the instance table. The record carries a SECOND table, the entities excused
+    # below, in the same markdown shape; reading both would let an entity excuse itself by
+    # appearing to be an instance, which is the one thing the two sections exist to keep
+    # apart.
+    head = text.split("## Guarded, and not an instance", 1)[0]
+    instances = {m.group(1).lower() for m in re.finditer(r"^\| `(\w+)` \|", head, re.M)}
+    if not instances:
+        return _fail(name, "no instance rows could be read out of %s; its table format changed "
+                           "and this check is comparing against an empty set" % doc_rel)
+
+    declared = {t.lower() for t in _GUARDED_NOT_AN_INSTANCE}
+    unclassified = sorted(guarded - instances - declared)
+    if unclassified:
+        findings.extend(_fail(
+            name, "these tables are guarded append-only by the schema and appear neither in "
+                  "%s nor in _GUARDED_NOT_AN_INSTANCE, so nobody has said whether C1 covers "
+                  "them: %s" % (doc_rel, ", ".join(unclassified))))
+
+    phantom = sorted(instances - guarded)
+    if phantom:
+        findings.extend(_fail(
+            name, "%s names these audit-of-record instances, which the schema does not guard "
+                  "with an append-only trigger; the record promises what nothing enforces: %s"
+                  % (doc_rel, ", ".join(phantom))))
+
+    for entity, paired in sorted(_GUARDED_NOT_AN_INSTANCE.items()):
+        if entity not in guarded:
+            findings.extend(_fail(
+                name, "_GUARDED_NOT_AN_INSTANCE declares %s, which the schema no longer guards; "
+                      "the entry excuses a table from a classification it no longer needs"
+                      % entity))
+        if paired.lower() not in instances:
+            findings.extend(_fail(
+                name, "%s is excused as an entity whose history lives in %s, but %s is not an "
+                      "audit-of-record instance, so that history is not protected and the "
+                      "excuse is empty" % (entity, paired, paired)))
+
+    listed = {t.lower() for t in _AOR_TABLES}
+    if listed != instances:
+        missing = sorted(instances - listed)
+        extra = sorted(listed - instances)
+        findings.extend(_fail(
+            name, "_AOR_TABLES and %s disagree about which tables are instances, so c1_aor "
+                  "requires a trigger for a different set than the record describes%s%s"
+                  % (doc_rel,
+                     "; in the record, not in _AOR_TABLES: " + ", ".join(missing) if missing else "",
+                     "; in _AOR_TABLES, not in the record: " + ", ".join(extra) if extra else "")))
+
+    stated = re.search(r"^## The (\w+) instances", text, re.M)
+    if stated:
+        words = {"twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+                 "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+                 "twenty-five": 25, "twenty-eight": 28, "twenty-nine": 29, "thirty": 30,
+                 "thirty-one": 31, "thirty-two": 32, "thirty-three": 33, "thirty-four": 34}
+        got = words.get(stated.group(1).lower())
+        if got is None:
+            findings.extend(_fail(name, "%s's instance heading says %r, which this check cannot "
+                                        "read as a number" % (doc_rel, stated.group(1))))
+        elif got != len(instances):
+            findings.extend(_fail(
+                name, "%s's heading says %s instances and its table has %d rows"
+                      % (doc_rel, stated.group(1), len(instances))))
+
+    if findings:
+        return findings
+    return _ok(name, "C1's surface is derived from the schema, not listed: all %d tables under "
+                     "an append-only guard are accounted for, %d as audit-of-record instances "
+                     "named in the design record and in _AOR_TABLES, %d as entities whose "
+                     "history lives in a paired instance; no instance is named that the schema "
+                     "does not guard"
+                     % (len(guarded), len(instances), len(_GUARDED_NOT_AN_INSTANCE)))
 
 
 
@@ -18870,6 +19055,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_paper_pdf_is_current,
     check_retention_engine,
     check_immutability_guards_are_derived_from_the_schema,
+    check_aor_surface_is_derived_from_the_schema,
     check_relying_party_decisions_cannot_be_silent,
     check_recorded_decisions_keep_their_history,
     check_no_upsert_without_an_arbiter,

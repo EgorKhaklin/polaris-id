@@ -69,7 +69,7 @@ CREATE INDEX idx_schema_version_recent
 COMMENT ON TABLE schema_version IS
     'Schema migration registry (v8.95 / Position C). Append-only per '
     'Append-only. Each row records a single event (applied or reverted) '
-    'with SHA-256 of the file that ran. 13th audit-of-record instance.';
+    'with SHA-256 of the file that ran. An audit-of-record instance.';
 
 -- Append-only trigger.
 -- Uses the same `reject_audit_modification()` function declared in
