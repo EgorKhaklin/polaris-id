@@ -65,6 +65,15 @@ VERIFICATION = [
     (r"^polaris_checks/checks\.py$", ["python3 -m pytest polaris_checks/test_checks.py"], "a check moved: its detection test must still discriminate"),
     (r"^polaris_cli/", ["cd polaris_cli && python3 -m unittest test_cli"], "the CLI moved"),
     (r"^polaris_web/(templates|static)/", ["python3 scripts/polaris-ship.py run", "bash scripts/polaris-ui-drill.sh"], "templates or static assets moved (CSP, inline scripts)"),
+    # The ten constraints. Keyed on every file that CARRIES an enforcement C1-C10 names, and
+    # on checks.py itself, because the way C8 came to be unenforced on 2026-09-17 was not a
+    # change to the clamp: it was a check whose regex accepted a lower bound as a cap, and
+    # which therefore would not have noticed the clamp leaving either.
+    (r"^polaris_sql/(01_schema|02_indexes|06_triggers|11_atlas)\.sql$"
+     r"|^polaris_web/(app|security|pqc_signing|test_app)\.py$"
+     r"|^polaris_checks/checks\.py$",
+     ["python3 scripts/polaris-constitution-mutation-drill.py"],
+     "a surface where C1-C10 is enforced, or a check that pins one, moved"),
     (r"^scripts/polaris-.*drill\.(py|sh)$", ["the changed drill itself"], "a drill moved"),
     (r"^deploy/|^polaris_web/Dockerfile|^\.github/workflows/", ["the deploy jobs in CI (helm, rolling, failover drills); nothing runs locally"], "deployment moved"),
 ]
