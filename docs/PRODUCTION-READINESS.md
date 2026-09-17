@@ -199,7 +199,7 @@ claim**: every row cites an artifact that CI resolves and runs, no assessment
 has taken place, and a deployment does not inherit any of it. **Accessibility is
 enforced for the third that automation covers**, which is why accessibility
 conformance is still in the list below rather than out of it. What remains is
-not buildable here: nine decisions that
+not buildable here: ten decisions that
 belong to the deploying organization, one engineering limit carried openly,
 and the deployment-scale work that [ROADMAP.md](../ROADMAP.md) tracks phase by
 phase. [MISSION.md](../MISSION.md) still governs every change, and
@@ -222,6 +222,7 @@ recorded as made for a named deployment.
 | **Alerting backend and on-call** | Alert rules, Alertmanager routing with the duress page at no delay, a pager webhook read from a secret file, a CI drill that proves a duress event reaches the webhook (v9.175), and a weekly chaos drill that stops both app colours until the outage page reaches it (v9.242, [CHAOS-DRILLS.md](operator/CHAOS-DRILLS.md)). | The pager product and its URL, and the named rotation, including who receives the duress page. |
 | **Right-to-erasure policy** | The pseudonymization mechanism: `uc_pseudonymize_individual` and the append-only `IndividualErasureEvent` (v9.125). | Which erasures to honor and crypto-shred versus pseudonymize against the append-only audit. |
 | **Retention schedule** | The engine: `RetentionPolicy` holds the decision per table class and jurisdiction with a 365-day CHECK floor, append-only with one-way supersession, and `uc_archive_purge` refuses a cutoff inside the window (v9.234, [retention.md](design/retention.md)). Ships at five years for every class. | The days each class is kept in this jurisdiction, and the counsel who says the number satisfies the statute. Polaris records the decision and its justification; it does not know the law. |
+| **Operator MFA enforcement** | The whole WebAuthn mechanism: registration, assertion bound to the partially-authenticated user, a per-account enrollment deadline, second-admin recovery pairing and a printed recovery code. Once an admin enrolls a credential, MFA is mandatory on every login and cannot be skipped. | Whether admin MFA is *required*. No provisioning path sets `AppUser.webauthn_required_after`, so an admin account created today logs in with a password alone until somebody enrolls it or sets a deadline. A deployment that wants mandatory admin MFA sets that column at account creation and decides which recovery path it will honour. |
 | **Independent penetration test and threat-model sign-off** | The readiness pack in [RED-TEAM-SCOPE.md](RED-TEAM-SCOPE.md); roadmap row P1.12. | The firm, the funding, and an accountable human signature. |
 
 One engineering limit is carried openly, and since v9.243 only its edge half
@@ -244,6 +245,21 @@ carried, a Caddy edge that ran as root with `NET_BIND_SERVICE`, closed at
 v9.239: the edge runs as uid 1000 with no capability on every substrate, and
 `check_container_hardening` fails the build if a capability or a root user
 comes back.
+
+**One role-reach limit is carried openly**, recorded by a security review of the authorization
+surface on 2026-09-16 rather than decided by it. The Atlas subject view is gated to `admin` and
+`auditor`, with the reason stated in its own comment: an operator must not be able to pull a
+holder's movement map. A neighbouring surface is reachable from a lower gate.
+`investigate_individual` and `investigate_token` require a session but no role, so an `operator`
+can retrieve a holder's tokens and their non-zero-knowledge verification history, including the
+textual `requestor_location` recorded against each verification. This is not a C6 break: a
+zero-knowledge verification carries no token identifier and cannot be attributed, no coordinates
+are returned on this path, and every access writes an `AuditAccessLog` row. It is an asymmetry,
+two doors onto a holder's activity with different locks, and the narrower one was chosen
+deliberately. Closing it means deciding that investigating a credential is an oversight function
+rather than an operational one, which removes a capability an operator may legitimately need
+during an incident. That is a decision for the deploying organization, so it is stated here
+rather than taken.
 
 ---
 
@@ -360,7 +376,7 @@ CHANGELOG entry for the version carries the detail.
 
 ## The rule
 
-The status line at the top changes only when the nine decisions above are
+The status line at the top changes only when the ten decisions above are
 recorded as made for a named deployment and the roadmap's P1 exit gate is met.
 No document in this repository claims a protection the code does not
 implement, and every row above names the check that fails if it stops being

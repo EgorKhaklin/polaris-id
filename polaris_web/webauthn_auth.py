@@ -41,12 +41,21 @@ Defense-in-depth:
     credential, every other one falls through to ES256/EdDSA/RS256.
 
 Defaults applied:
-  1. MFA required for admin, optional for operator, not for auditor
+  1. MFA is MANDATORY for an admin who has ENROLLED a credential, optional for
+     operator, not for auditor. It is not mandatory for an admin who has not:
+     with no credential and no deadline set, webauthn_status_for_user() returns
+     'not_required' and a password alone logs in. Whether admin MFA is required
+     at all is therefore an operator decision, recorded as one in
+     docs/PRODUCTION-READINESS.md.
   2. Both platform + hardware authenticators allowed (knob to restrict)
   3. Recovery: second-admin pairing (polaris-recover-admin.sh) AND
      printed mnemonic (polaris-generate-recovery-code.sh)
-  4. 30-day enrollment deadline for existing admins; new admins enrolled
-     at account-creation time
+  4. The 30-day enrollment deadline is the MECHANISM, not a default that is
+     applied: it runs from whenever somebody sets AppUser.webauthn_required_after.
+     No provisioning path sets it (not the CLI's account creation, not the seed),
+     so an admin created today has no deadline and never becomes overdue. This
+     line previously read as though enrollment were automatic at account creation;
+     it is not, and saying so was the only thing making the policy look enforced.
   5. End-to-end + adversarial + recovery drills all green before close
 
 This module returns dicts ready for JSON encoding by the caller; it
