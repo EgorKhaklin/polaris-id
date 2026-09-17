@@ -123,17 +123,19 @@ CONTROL = ("/api/v1/auth/authorize", "not ok")
 #: here is the finding; an entry whose refusal is now covered is reported as stale, because a
 #: declared-survivor list that is never re-read becomes a list of excuses.
 #:
-#: Keyed by (view function, line of the `if`). The line number is deliberate: it goes stale
-#: when the function is edited, and a stale key reports as an uncovered survivor rather than
-#: silently excusing whatever refusal has moved into that position.
-DECLARED: dict[tuple[str, int], str] = {
+#: Keyed by (view function, a distinctive substring of the CONDITION). Not the line number:
+#: the first version used one and every unrelated edit to app.py shifted every key below it,
+#: so the whole list went stale at once and the drill failed a ship for no reason. The
+#: condition text is stable against edits elsewhere and still specific to one refusal, and it
+#: goes stale exactly when it should: when the refusal it names is rewritten.
+DECLARED: dict[tuple[str, str], str] = {
     # `session['user_id']` is set by `login_required`, which every one of these routes is
     # behind. The refusal is a defence-in-depth assertion against a session shape that the
     # decorator makes impossible, so no test can construct the state that fires it. Covering
     # it would mean building a session the application cannot produce.
-    ("api_federation_attest", 4004): "unreachable behind login_required: session['user_id']",
-    ("api_federation_revoke", 4058): "unreachable behind login_required: session['user_id']",
-    ("api_zk_epoch_close", 4106): "unreachable behind login_required: session['user_id']",
+    ("api_federation_attest", "signed_by is None"): "unreachable behind login_required: session['user_id']",
+    ("api_federation_revoke", "signed_by is None"): "unreachable behind login_required: session['user_id']",
+    ("api_zk_epoch_close", "signed_by is None"): "unreachable behind login_required: session['user_id']",
 
     # The exchange gateway and the signed-receipt mint. Every one of these IS tested, by
     # `scripts/polaris-federation-instances-drill.py`, which stands up two instances and
@@ -141,19 +143,19 @@ DECLARED: dict[tuple[str, int], str] = {
     # and an upstream. `ExchangeGatewayTests` says so in its own docstring. What the survivor
     # means here is narrower and still worth knowing: a developer running the SUITE gets no
     # signal from these, so the drill has to actually run.
-    ("api_v1_exchange", 7225): "stale envelope: federation-instances drill, 'a stale envelope "
+    ("api_v1_exchange", "_EXCHANGE_WINDOW"): "stale envelope: federation-instances drill, 'a stale envelope "
                                "is refused (401): the freshness window'",
-    ("api_v1_exchange", 7234): "unknown requester: federation-instances drill, 'a requester "
+    ("api_v1_exchange", "not known"): "unknown requester: federation-instances drill, 'a requester "
                                "whose key B does not know is refused (401)'",
-    ("api_v1_exchange", 7241): "bad envelope signature: federation-instances drill, 'a tampered "
+    ("api_v1_exchange", "not ok"): "bad envelope signature: federation-instances drill, 'a tampered "
                                "envelope signature is refused (401)'",
-    ("api_v1_exchange", 7246): "not attested in context: federation-instances drill, 'a THIRD "
+    ("api_v1_exchange", "_exchange_attestation"): "not attested in context: federation-instances drill, 'a THIRD "
                                "authority's attestation of X does not authorize X at B (403)'",
-    ("api_v1_exchange", 7248): "nonce replay: federation-instances drill, 'the SAME envelope "
+    ("api_v1_exchange", "_consume_exchange_nonce"): "nonce replay: federation-instances drill, 'the SAME envelope "
                                "replayed is refused (409): the nonce was consumed'",
-    ("api_v1_exchange_receipt_signed", 6820): "stale mint time: federation-instances drill, "
+    ("api_v1_exchange_receipt_signed", "_EXCHANGE_MINT_WINDOW"): "stale mint time: federation-instances drill, "
                                               "'a STALE signed time (30 min) rejects (401)'",
-    ("api_v1_exchange_receipt_signed", 6831): "bad mint signature: federation-instances drill, "
+    ("api_v1_exchange_receipt_signed", "not ok"): "bad mint signature: federation-instances drill, "
                                               "'an UNATTESTED requester is not authorized: 403 "
                                               "even under a valid responder signature'",
 
@@ -168,15 +170,15 @@ DECLARED: dict[tuple[str, int], str] = {
     # structural pin, and it proves the guard is written rather than that it fires. The five
     # holder-facing limiters, whose bounds are 5 and 10, ARE driven past them by
     # `F03_RateLimitingTests`; these six are not, and the difference is the point.
-    ("api_v1_verify", 5420): "rpverify: bound is the relying party's own rate_limit_per_min; "
+    ("api_v1_verify", "rpverify:"): "rpverify: bound is the relying party's own rate_limit_per_min; "
                              "pinned by check_rate_limits_are_enforced",
-    ("api_v1_exchange_receipt_signed", 6823): "exmint: 120/min; pinned by "
+    ("api_v1_exchange_receipt_signed", "exmint:"): "exmint: 120/min; pinned by "
                                               "check_rate_limits_are_enforced",
-    ("api_v1_timestamp", 6906): "tsa: 600/min; pinned by check_rate_limits_are_enforced",
-    ("api_v1_exchange", 7243): "exch: 120/min; pinned by check_rate_limits_are_enforced",
-    ("api_v1_sign_holder", 7409): "sign: 10/min, but reaching it needs a federated agency and "
+    ("api_v1_timestamp", "tsa:"): "tsa: 600/min; pinned by check_rate_limits_are_enforced",
+    ("api_v1_exchange", "exch:"): "exch: 120/min; pinned by check_rate_limits_are_enforced",
+    ("api_v1_sign_holder", "sign:"): "sign: 10/min, but reaching it needs a federated agency and "
                                   "a real presentation; pinned by check_rate_limits_are_enforced",
-    ("api_v1_auth_authorize", 7530): "auth: 10/min, but reaching it needs a registered relying "
+    ("api_v1_auth_authorize", "auth:"): "auth: 10/min, but reaching it needs a registered relying "
                                      "party and a credential; pinned by "
                                      "check_rate_limits_are_enforced",
 
@@ -187,7 +189,7 @@ DECLARED: dict[tuple[str, int], str] = {
     # _application` pins the two numbers to each other, which is the condition that keeps
     # this entry true: raise the schema's cap alone and the 413 becomes reachable, untested,
     # and the only thing between a caller and an unbounded body.
-    ("api_v1_epoch_leaves", 5692): "unreachable: the schema's epoch_committed_count_cap "
+    ("api_v1_epoch_leaves", "_EPOCH_LEAVES_MAX"): "unreachable: the schema's epoch_committed_count_cap "
                                    "refuses the row first, and a test pins the two caps equal",
 }
 
@@ -398,7 +400,11 @@ def main() -> int:
     print("survived the mutation          %d" % len(survivors))
     print("elapsed                        %d s" % (time.time() - started))
 
-    undeclared = [c for c in survivors + blind if (c["view"], c["line"]) not in DECLARED]
+    def _declared(case):
+        return any(view == case["view"] and cond in case["source"]
+                   for (view, cond) in DECLARED)
+
+    undeclared = [c for c in survivors + blind if not _declared(c)]
     if undeclared:
         print("\n== %d REFUSAL(S) NOTHING NOTICES ==" % len(undeclared))
         for c in undeclared:
@@ -408,10 +414,13 @@ def main() -> int:
               "add it to DECLARED with the reason it does not need covering.")
         return 1
 
-    stale = sorted(set(DECLARED) - {(c["view"], c["line"]) for c in survivors + blind})
+    stale = sorted(k for k in DECLARED
+                   if not any(k[0] == c["view"] and k[1] in c["source"]
+                              for c in survivors + blind))
     if stale:
-        print("\nSTALE DECLARATIONS (%d): covered now, so the excuse is obsolete: %s"
-              % (len(stale), ", ".join("%s:%d" % s for s in stale)))
+        print("\nSTALE DECLARATIONS (%d): covered now, or the refusal was rewritten, so the "
+              "reason is obsolete: %s"
+              % (len(stale), ", ".join("%s(%s)" % s for s in stale)))
         return 1
 
     print("\n== Every refusal examined turns a test red when it is switched off. That is a "
