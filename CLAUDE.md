@@ -445,11 +445,19 @@ Each entry: symptom, likely cause, how to tell it from a real failure, action.
    failing to resolve the dockerfile frontend before reading the Dockerfile
    (`DeadlineExceeded`); and the rolling drill's preflight seeing an empty
    `docker compose config` seconds after both colours booted healthy (`the blue-green overlay
-   is not active`; confirm the boot step listed app and app-green healthy, then rerun). One
-   signature is the opposite: `pull access denied ... repository does not exist` means an
-   image moved registries, and rerunning cannot clear it; re-point the reference, keeping the
-   digest. `UNKNOWN` means the run has not finished and the log cannot be read yet; triage
+   is not active`; confirm the boot step listed app and app-green healthy, then rerun). Two
+   signatures are the opposite, tested first so a definite answer beats a transient one in the
+   same log: `pull access denied ... repository does not exist` means an image moved
+   registries, so re-point the reference and keep the digest; `ERROR: ResolutionImpossible` or
+   `Cannot install X and Y because these package versions have conflicting dependencies` means
+   pip has answered that a requirement set in the tree is unsatisfiable, so pin the version the
+   other side forbids, record the constraint beside the pin, and bound it in
+   `.github/dependabot.yml` or a bot proposes it again. Neither clears on a rerun.
+   `UNKNOWN` means the run has not finished and the log cannot be read yet; triage
    again when it completes. Anything unmatched is real: run the verification the plan names.
+   A signature matches what a failure PRINTS, never a word that also appears in the command
+   that would print it: BuildKit echoes a `RUN` step's text when the step starts, so the Caddy
+   retry loop's own message made every container log look like a Caddy flake until 2026-09-16.
 9. **Preflight withholds READY over an unrun drill.** The change altered a schema object a
    drill exercises. `python3 scripts/polaris-ship.py drills --run` records the pass;
    `POLARIS_DRILLS_WAIVED=1` waives it and the output says so, which is a fact the commit

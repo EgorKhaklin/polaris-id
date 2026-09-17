@@ -59,6 +59,34 @@ BUILDKIT_FRONTEND = (
     'docker.io/docker/dockerfile:1: failed to do request\n'
     'DR drill\t\t2026-09-12T19:01:13.6923120Z ##[error]Process completed with exit code 1.')
 
+#: Run 35174791045, verbatim. Dependabot proposed ydiff==1.5 into requirements-patroni.txt;
+#: patroni 4.1.5 forbids it; the postgres image stopped building and nine container jobs went
+#: down. pip has answered here, so no rerun can help.
+PIP_RESOLUTION_IMPOSSIBLE = (
+    'Docker image build + boot smoke test\tpgBackRest archive + backup + restore round-trip\t'
+    '2026-09-17T02:35:03.9593736Z #10 4.566 ERROR: Cannot install patroni and ydiff==1.5 '
+    'because these package versions have conflicting dependencies.\n'
+    'Docker image build + boot smoke test\tpgBackRest archive + backup + restore round-trip\t'
+    '2026-09-17T02:35:03.9595255Z #10 4.566     patroni 4.1.5 depends on ydiff!=1.4.0, '
+    '!=1.4.1, <1.5 and >=1.2.0')
+
+#: The line BuildKit prints when it STARTS the caddy builder step, verbatim from the same run.
+#: It is the RUN command's own text, and the retry loop inside it echoes the words
+#: "checksum-database stream error". Nothing has failed at this point. The old
+#: caddy-module-proxy pattern matched the bare words `stream error`, so this line alone made
+#: every container log in the tree look like a known Caddy flake.
+CADDY_RETRY_LOOP_ECHO = (
+    'Linux server install (systemd on this host; Debian 12 + Rocky 9 package stages)\t'
+    'full install on this host (real systemd) to a healthy stack through the TLS edge\t'
+    '2026-09-17T02:35:19.0342028Z Sep 17 02:35:18 runnervmlun5p docker[10721]: '
+    '#26 [caddy builder 2/2] RUN for attempt in 1 2 3 4; do         xcaddy build '
+    '            --with github.com/mholt/caddy-ratelimit             --replace '
+    'golang.org/x/crypto=golang.org/x/crypto@v0.55.0         && break;         '
+    'if [ "$attempt" = 4 ]; then echo "xcaddy build failed 4 times; giving up" >&2; exit 1; '
+    'fi;         echo "xcaddy build attempt $attempt failed (a module fetch or a '
+    'checksum-database stream error); retrying in $((attempt * 20))s" >&2;         '
+    'sleep $((attempt * 20));     done')
+
 
 class FlakeClassifierTests(unittest.TestCase):
     def test_the_alpine_pip_layer_is_a_known_flake(self):
@@ -121,6 +149,47 @@ class FlakeClassifierTests(unittest.TestCase):
 
     def test_an_empty_log_is_not_a_flake(self):
         self.assertEqual(ship.classify_failure_log("")[0], "investigate")
+
+    def test_a_pip_requirement_set_with_no_solution_is_upstream_not_a_flake(self):
+        """pip has ANSWERED: these versions cannot be installed together. Rerunning cannot
+        change that, so the verdict must not be the one that says to rerun."""
+        verdict, name, advice = ship.classify_failure_log(PIP_RESOLUTION_IMPOSSIBLE)
+        self.assertEqual((verdict, name), ("upstream", "pip-resolution-impossible"))
+        self.assertIn("dependabot", advice.lower(),
+                      "a bot-proposed bump comes back unless the bound is recorded; say so")
+
+    def test_the_caddy_retry_loop_being_PRINTED_is_not_the_caddy_flake(self):
+        """BuildKit echoes a RUN step's command text when the step starts, and this one
+        contains the retry loop's own words "checksum-database stream error". Reading that as
+        the flake made every container log in the tree look transient, which is how a hard
+        dependency conflict was answered "rerun the failed jobs"."""
+        verdict, name, _ = ship.classify_failure_log(CADDY_RETRY_LOOP_ECHO)
+        self.assertEqual((verdict, name), ("investigate", None))
+
+    def test_a_definite_failure_beats_a_flake_signature_in_the_same_log(self):
+        """The failure that made this matter. A CI run is many jobs in one log: one job can
+        hit a real network flake while another hits something no rerun will fix. The definite
+        answer has to win whichever order they appear in, or the verdict is decided by which
+        job happened to run first."""
+        for label, log in (
+                ("flake first", CADDY_RETRY_LOOP_ECHO + "\nsum.golang.org: stream error\n"
+                                + PIP_RESOLUTION_IMPOSSIBLE),
+                ("flake last", PIP_RESOLUTION_IMPOSSIBLE
+                               + "\nsum.golang.org: stream error\n" + CADDY_RETRY_LOOP_ECHO)):
+            with self.subTest(label):
+                verdict, name, _ = ship.classify_failure_log(log)
+                self.assertEqual((verdict, name), ("upstream", "pip-resolution-impossible"))
+
+    def test_every_upstream_signature_says_not_to_rerun(self):
+        """The whole point of the second table: its advice is the opposite of a flake's. A
+        signature that landed here without saying so would read as a flake to the reader."""
+        for name, pattern, advice in ship.UPSTREAM_SIGNATURES:
+            with self.subTest(name=name):
+                self.assertTrue(pattern, "%s has no pattern" % name)
+                self.assertGreater(len(advice), 30, "%s: advice must say what to DO" % name)
+                self.assertRegex(
+                    advice, r"(?i)NOT a flake|will not clear|do not rerun",
+                    "%s: say plainly that rerunning cannot help" % name)
 
     def test_every_signature_carries_advice(self):
         for name, pattern, advice in ship.FLAKE_SIGNATURES:

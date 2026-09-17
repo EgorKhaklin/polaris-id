@@ -462,7 +462,30 @@ def _opts(argv, name):
 FLAKE_SIGNATURES = [
     ("apt-index", r"Hash Sum mismatch|Some index files failed to download|E: Failed to fetch",
      "the runner's apt index failed to download (mirror hash mismatch); rerun the failed jobs"),
-    ("caddy-module-proxy", r"sum\.golang\.org|stream error|xcaddy build.*(?:unexpected EOF|i/o timeout|connection reset)",
+    # 2026-09-16: this signature used to read `sum\.golang\.org|stream error|...`, and the bare
+    # `stream error` matched EVERY container log in the tree. Not because the flake was common:
+    # because `polaris_web/Dockerfile.caddy`'s retry loop echoes the words "a module fetch or a
+    # checksum-database stream error" in the message it prints when an attempt fails, BuildKit
+    # prints a RUN step's command text when the step starts, and the command text contains the
+    # echo. So the string appeared whether or not xcaddy ever failed, and any genuinely broken
+    # container job was answered "known flake, rerun the failed jobs". Run 35174791045 was a
+    # hard pip dependency conflict and got exactly that verdict.
+    #
+    # The rule this cost: match what a failure PRINTS, never a word that also appears in the
+    # command that would print it. The retry loop's two real outputs are matched here, plus the
+    # proxy hosts when they appear on a line that also carries a transport error.
+    #
+    # Both real outputs need care for the same reason, and they need DIFFERENT care. The echo
+    # carries `attempt $attempt failed`, so requiring a digit separates the printed line from
+    # the command that prints it. The giving-up line has nothing to interpolate and reads
+    # identically in both, so the only thing separating them is the `echo "` in front of it;
+    # that is six fixed characters, which Python's lookbehind accepts.
+    ("caddy-module-proxy",
+     r"xcaddy build attempt \d+ failed|"
+     r"(?<!echo \")xcaddy build failed 4 times; giving up|"
+     r"(?:sum|proxy)\.golang\.org[^\n]*(?:stream error|unexpected EOF|i/o timeout|"
+     r"connection reset|TLS handshake|no such host|50[023])|"
+     r"xcaddy build.*(?:unexpected EOF|i/o timeout|connection reset)",
      "known network flake in the Caddy build (Go module proxy); rerun the failed jobs"),
     # v9.377: the Alpine analogue of the apt-index flake. The postgres image installs Patroni
     # over apk + pip, and that layer fails on the runner while building clean locally with
@@ -532,6 +555,24 @@ UPSTREAM_SIGNATURES = [
      "DIGEST if the new registry serves the same manifest, which makes it a registry move "
      "rather than a version bump. Precedent: bitnami/pgbouncer at v9.110, minio/minio at "
      "v9.416"),
+    # 2026-09-16: a dependency bump that no solution satisfies. Dependabot proposed
+    # ydiff==1.5 into requirements-patroni.txt while patroni 4.1.5 requires
+    # ydiff!=1.4.0,!=1.4.1,<1.5,>=1.2.0, so the postgres image stopped building and nine
+    # container jobs went down with it. It belongs here rather than beside the flakes for
+    # two reasons. First, pip has ANSWERED: the requirement set is unsatisfiable, and no
+    # number of reruns makes it satisfiable. Second, it surfaces inside the same Docker step
+    # the alpine-pip-layer flake describes, so without this rule the run matched a flake and
+    # was told to rerun. UPSTREAM is tested before FLAKE, which is what makes the definite
+    # answer win over the transient one.
+    ("pip-resolution-impossible",
+     r"ERROR: ResolutionImpossible|"
+     r"ERROR: Cannot install .* because these package versions have conflicting dependencies",
+     "a pip requirement set in the tree has no solution: the versions pinned cannot be "
+     "installed together. This is NOT a flake and rerunning will not clear it. The log names "
+     "both sides; pin the one the other forbids, and record the constraint beside the pin so "
+     "the next bump does not repeat it. If a bot proposed the bump, add the bound to "
+     "`.github/dependabot.yml` as well, or it will be proposed again. Precedent: ydiff 1.5 "
+     "against patroni 4.1.5, 2026-09-16"),
 ]
 
 
