@@ -4716,6 +4716,53 @@ class DuressCodeTests(PolarisTestCase):
             self.assertEqual(cur.fetchone()['n'], duress_before,
                 'Duress against unenrolled token must NOT write a DuressEvent')
 
+    def test_the_word_duress_is_absent_from_every_operator_surface(self):
+        """docs/design/duress-codes.md states it as a property, not a preference:
+
+            "The operator is the surface a coercer can observe, so it is the surface that
+             must be blind" ... "The word duress does not appear on the operator's screen"
+
+        2026-09-17: it appeared on four of them. `/tokens/<id>` rendered a card headed
+        "Duress Code" reading ENROLLED or NOT ENROLLED, `/api/tokens/<id>/export` carried
+        `duress_enrolled`, and both investigate views showed `has_duress_code`, every one of
+        them reachable by any logged-in operator.
+
+        The test above this one asserted the property for ONE surface, the verifications
+        list, and its name says so. This asserts it for the rest, because the property was
+        never about a list: it is about what a coercer standing behind an operator can read.
+        And it is not enough to hide only ENROLLED. A card headed "Duress Code" reading NOT
+        ENROLLED tells that coercer this holder has nothing to fall back on, so the label
+        goes with the value.
+        """
+        tok = flask_app.query("SELECT token_id, individual_id FROM IdentityToken "
+                              "ORDER BY token_id LIMIT 1", fetch='one', primary=True)
+        self.assertIsNotNone(tok, 'this test needs a token in the sample data')
+        surfaces = ['/tokens/%d' % tok['token_id'],
+                    '/api/tokens/%d/export' % tok['token_id'],
+                    '/investigate/token/%d' % tok['token_id'],
+                    '/investigate/individual/%d' % tok['individual_id']]
+
+        self._logout()
+        self._login('operator')
+        for path in surfaces:
+            with self.subTest(path=path):
+                r = self.client.get(path)
+                self.assertEqual(r.status_code, 200,
+                                 '%s must be reachable, or this proves nothing' % path)
+                self.assertNotIn('duress', r.get_data(as_text=True).lower(),
+                                 '%s shows an operator the word duress' % path)
+
+        # The control: admin and auditor DO see it, so the fix is a role gate and not a
+        # deletion. Without this leg, removing the field entirely would pass the above.
+        for role in ('admin', 'auditor'):
+            self._logout()
+            self._login(role)
+            seen = [p for p in surfaces
+                    if 'duress' in self.client.get(p).get_data(as_text=True).lower()]
+            self.assertEqual(sorted(seen), sorted(surfaces),
+                             '%s must still see enrolment on every surface; saw %r'
+                             % (role, seen))
+
     def test_anti_revealing_verifications_list_excludes_duress(self):
         """R6 audit refinement: the OPERATOR view of /verifications does
         not surface duress signals — not in the data table, and not in

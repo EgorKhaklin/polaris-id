@@ -4991,7 +4991,8 @@ def tokens_detail(tok_id):
          WHERE l.token_id = %s
          ORDER BY e.closed_at DESC
     """, (tok_id,))
-    duress_enrolled = bool(token.get('duress_code_hash'))
+    duress_enrolled = (bool(token.get('duress_code_hash'))
+                       if _duress_visible_to_viewer() else None)
 
     return render_template('tokens_detail.html',
                            token=token,
@@ -5005,6 +5006,25 @@ def tokens_detail(tok_id):
                            v2_anchor_batches=v2_anchor_batches,
                            v2_epoch_leaves=v2_epoch_leaves,
                            duress_enrolled=duress_enrolled)
+
+
+
+#: Who may learn that a holder enrolled a duress code. docs/design/duress-codes.md is
+#: unambiguous about this and states it as a property rather than a preference: "The operator
+#: is the surface a coercer can observe, so it is the surface that must be blind", and "the
+#: word duress does not appear on the operator's screen".
+#:
+#: 2026-09-17: it appeared on three of them. `/tokens/<id>` rendered a "Duress Code" card
+#: reading ENROLLED or NOT ENROLLED, `/api/tokens/<id>/export` carried `duress_enrolled`, and
+#: `/investigate/individual/<id>` selected `has_duress_code`, all reachable by any logged-in
+#: operator. The same week, lab/duress closed a 287 ms timing channel whose whole reason for
+#: mattering was that an operator-coercer could learn enrolment; that fix was defeated by a
+#: label, because measuring a third of a second is harder than reading a page.
+#:
+#: Admin and auditor keep it: the duress queue is already theirs, and the design says so.
+def _duress_visible_to_viewer():
+    """True iff the signed-in role may be shown that a holder enrolled a duress code."""
+    return (security.current_user() or {}).get('role') in ('admin', 'auditor')
 
 
 def _jsonable(value):
@@ -5053,7 +5073,8 @@ def tokens_export(tok_id):
         abort(404)
 
     token = dict(token)
-    token['duress_enrolled'] = token.get('duress_code_hash') is not None
+    if _duress_visible_to_viewer():
+        token['duress_enrolled'] = token.get('duress_code_hash') is not None
     token.pop('duress_code_hash', None)   # never export the secret
 
     lifecycle = query("""
@@ -8043,6 +8064,7 @@ def investigate_token(tok_id):
         'investigate_token.html',
         token=token, timeline=timeline,
         predecessor=predecessor, successor=successor,
+        duress_visible=_duress_visible_to_viewer(),
     )
 
 
@@ -8121,6 +8143,7 @@ def investigate_individual(ind_id):
         'investigate_individual.html',
         individual=individual, tokens=tokens,
         verifications=verifications,
+        duress_visible=_duress_visible_to_viewer(),
     )
 
 

@@ -188,6 +188,50 @@ nothing about the three items below.
 
 ---
 
+## Finding: the timing channel was closed while a label said the same thing
+
+**2026-09-17. Found on unmutated code, the same day as the timing fix above.**
+
+`docs/design/duress-codes.md` has a section called "Keeping it off the operator's screen",
+and it states a property rather than a preference:
+
+> The operator is the surface a coercer can observe, so it is the surface that must be
+> blind ... The word duress does not appear on the operator's screen.
+
+It appeared on four of them. Logged in as an OPERATOR, with no escalation:
+
+    /tokens/<id>                     a card headed "Duress Code", reading ENROLLED
+                                     or NOT ENROLLED
+    /api/tokens/<id>/export          `duress_enrolled` in the JSON
+    /investigate/token/<id>          a DURESS-ENROLLED badge, and a "Has Duress Code" row
+    /investigate/individual/<id>     a "Duress" column, one cell per token
+
+The finding above this one closed a **287 millisecond** timing channel whose entire reason
+for mattering was that an operator-coercer could learn enrolment: "against the
+operator-as-coercer named below, it is cleaner still, because they type the field and read
+the latency off their own screen". **That fix was defeated by a label.** Measuring a third of
+a second is harder than reading a page, and the page was already open.
+
+This is worth stating plainly because it is the recurring shape in this repository, not a
+one-off: a subtle channel gets careful, instrumented work while the obvious one beside it
+stays open, because the subtle one is the interesting problem. The audit below is what found
+it, and only because it went surface by surface instead of reasoning about the mechanism.
+
+**Both halves of the gate are tested, and the second half is the one that is easy to skip.**
+Admin and auditor still see enrolment: the duress queue is already theirs and the design says
+so, and a fix that deleted the field would also have passed a test that only checked the
+operator. The label goes with the value, too. A card headed "Duress Code" reading NOT
+ENROLLED tells a coercer this holder has nothing to fall back on, so hiding only the ENROLLED
+case would have left the channel open for exactly the people with no protection. The view
+passes `None` rather than `False` to a role that may not be told, so an absent card is
+absence of permission and never absence of enrolment.
+
+`test_the_word_duress_is_absent_from_every_operator_surface` asserts all four surfaces for
+the operator and all four for admin and auditor. Opening the gate to everyone turns four
+assertions red; closing it to nobody turns the control red.
+
+---
+
 ## Finding: the operator as coercer, audited surface by surface
 
 **2026-09-17. Audited against the code, not argued.** This was on the unmeasured list as

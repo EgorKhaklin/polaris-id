@@ -4,7 +4,7 @@
 <h1>
     Investigate · Token #{{ token.token_id }}
     <span class="pill pill-{{ token.status|lower }}" style="font-size: 13px; vertical-align: middle;">{{ token.status }}</span>
-    {% if token.has_duress_code %}
+    {% if duress_visible and token.has_duress_code %}
         <span class="pill pill-revoked" style="font-size: 13px; vertical-align: middle;" title="Token has a duress code enrolled (the holder can signal coercion silently)">DURESS-ENROLLED</span>
     {% endif %}
 </h1>
@@ -36,7 +36,8 @@
     <div><dt>Expires</dt><dd>{{ token.expiration_date.strftime('%Y-%m-%d') if token.expiration_date else no_expiry }}</dd></div>
     <div><dt>Age</dt><dd>{{ '%.1f'|format(token.age_days) }} days</dd></div>
     <div><dt>Activation Sequence</dt><dd>{{ token.activation_sequence }}</dd></div>
-    <div><dt>Has Duress Code</dt><dd>{% if token.has_duress_code %}<span class="pill pill-active">YES</span>{% else %}<span class="pill">no</span>{% endif %}</dd></div>
+    {# Label included: "Has Duress Code: no" tells a coercer this holder has no fallback. #}
+    {% if duress_visible %}<div><dt>Has Duress Code</dt><dd>{% if token.has_duress_code %}<span class="pill pill-active">YES</span>{% else %}<span class="pill">no</span>{% endif %}</dd></div>{% endif %}
     <div><dt>Lifetime Events</dt><dd>{{ token.lifecycle_event_count }} lifecycle · {{ token.verification_event_count }} verification · {{ token.signature_count }} signature</dd></div>
 </dl>
 
