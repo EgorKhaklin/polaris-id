@@ -60,6 +60,22 @@ under. Each of the seven conformance refusals has its own reason code:
 | `kb-jwt-iat-in-past` | `kb_freshness` |
 | `kb-jwt-iat-in-future` | `kb_freshness` |
 
+The conformance suite's seven are not all of them, and the rest matter as much to an
+integrator. These were added on 2026-09-17 after an adversarial review found fifteen defects
+in 1.0.0rc1, every one of which this verifier had accepted:
+
+| Refusal code | What it catches |
+|---|---|
+| `credential_validity` | The credential's own `exp` has passed or its `nbf` has not arrived, or either is a value whose meaning cannot be evaluated. Neither claim was read at all before: a credential its issuer stamped as expired ten years ago verified. For an offline SD-JWT VC these are the only expiry there is. |
+| `vct` | The credential is not the type the query asked for. Pass `expected_vct`; `Verifier` passes its own `vct_values` automatically. Without it a verifier asking for a personal identification credential accepts any credential the same issuer signs. |
+| `disclosure` | Also now: a disclosure named `iss`, `nbf`, `exp`, `cnf`, `vct`, `status` or `iat`, which the specification requires to be in the signed credential and never disclosed; a disclosure colliding with a claim already present; and a credential nesting disclosures past the resolver's depth cap. |
+| `issuer_key` | Also now: an x5c leaf outside its validity window, or one whose KeyUsage or ExtendedKeyUsage says it is not for signing. A trust anchor used for anything else no longer makes every certificate it ever issued an identity issuer. |
+| `malformed` | Also now: a presentation over 256 KiB, a JSON document over 64 KiB or nesting past 64 levels, and the non-JSON literals `NaN` and `Infinity`, which Python's parser accepts and which defeated the `kb_freshness` window entirely. |
+
+Recursive disclosures (SD-JWT 4.2.4.1), which the European digital identity wallet's personal
+identification credential uses for `address`, are accepted as of the same date. They were
+refused before as never committed to.
+
 ```python
 from polaris_oid4vp.sdjwt import verify_presentation
 
@@ -68,6 +84,7 @@ verdict = verify_presentation(
     expected_nonce=request_nonce,     # what YOUR request asked for, not what it claims
     expected_audience=client_id,
     trust_anchors=[anchor],           # or issuer_jwks=[...]
+    expected_vct="urn:eudi:pid:1",    # the type you asked for; omit to not check
 )
 verdict.authentic, verdict.code, verdict.reason, verdict.claims
 ```
