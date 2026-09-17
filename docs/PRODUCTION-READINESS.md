@@ -139,6 +139,36 @@ status assertion would each open the channel. The OpenID4VP path is not covered 
 measurement, and an SD-JWT VC presentation discloses the holder's own attribute values, so
 its disclosures vary in length by construction. `lab/linkability/`.
 
+**Fifteen defects in the OpenID4VP verifier, found by adversarial review (2026-09-17).**
+`polaris-oid4vp` is the newest external door: unmodified third-party wallets present to it
+over the network. An adversarial review ran code against the shipped module rather than
+reading it, and every finding below was reproduced before anything was changed. Five let a
+presentation through that should have been refused: neither `exp` nor `nbf` appeared anywhere
+in the file, so a credential its own issuer stamped as expired ten years ago verified as
+authentic, and the capture from the hosted conformance suite carries a fourteen-day expiry
+this verifier was ignoring; a key binding `iat` of `NaN` defeated the freshness window
+completely, because every comparison against NaN is false, and the presentation verified with
+the clock a year ahead; a disclosure could overwrite a signed claim, so one named `cnf`
+returned a key that was not the key the binding had been checked against; the credential type
+the DCQL query asked for was built into the request and never compared, so a loyalty card's
+`given_name` came back as though it were a personal identification credential's; and the
+issuer certificate check was a signature plus an issuer/subject match, which promoted every
+end-entity certificate the trust anchor had ever issued, TLS server certificates included.
+Four were denial of service with no credential: a single packet declaring a negative
+Content-Length took the listener off the air for every wallet; 2.7 KB of nested JSON raised
+`RecursionError` out of a verifier documented never to raise; a 6 KB credential cost the
+disclosure resolver 2^30 node visits; and there was no input-size bound anywhere, so a 117 MiB
+presentation verified as authentic. Five more raised instead of returning a verdict. One was
+interoperability in the other direction: recursive disclosures, which the specification
+requires and the European digital identity wallet's personal identification credential uses
+for `address`, were rejected as uncommitted. All fifteen are fixed with tests, each shown to
+fail when its mechanism is removed. Two things to carry from it. **The certificate finding is
+the mirror of the walt.id result**: that wallet refused Polaris for emitting a certificate
+with no `digitalSignature` key usage, and this verifier was not reading that field on the way
+in. **And nothing in this repository had caught any of them**: eleven conformance modules, the
+package's own tests and every invariant check passed over all fifteen, because a conformance
+suite constrains what it exercises and none of these was on its list.
+
 **Two facts about the migration path, for the same reader (2026-09-13).** The agility is real
 issuer-side: the algorithm is a row with a `deprecation_date`, `uc6_migrate_algorithm` re-signs a
 token under a new one, and CI re-signs a whole population under real ML-DSA-87 on every push.

@@ -24,7 +24,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from polaris_oid4vp.serve import serve  # noqa: E402
+from polaris_oid4vp.serve import (  # noqa: E402
+    MAX_BODY_BYTES, _content_length, serve)
 from polaris_oid4vp.verifier import Verifier  # noqa: E402
 from test_verifier import Wallet, _client_chain  # noqa: E402
 
@@ -331,3 +332,159 @@ class TransportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class BodyFramingTests(ServeTestCase):
+    """Content-Length, which `int()` was parsing and HTTP does not define that way.
+
+    Three defects lived in one unguarded `int()`, all measured 2026-09-17 against a raw
+    socket rather than through urllib, because urllib will not send a malformed header.
+    """
+
+    def _raw(self, headers, body=b"", read_timeout=4.0, hold=False):
+        """One request on a bare socket. Returns the status line, or None for no answer."""
+        import socket
+        host, port = self.httpd.server_address[0], self.httpd.server_address[1]
+        s = socket.create_connection((host, port), timeout=read_timeout)
+        s.settimeout(read_timeout)
+        s.sendall(("POST /response HTTP/1.1\r\nHost: x\r\n%s\r\n" % headers).encode() + body)
+        if hold:
+            return s
+        try:
+            data = s.recv(128)
+            return data.split(b"\r\n")[0].decode() if data else None
+        except (OSError, socket.timeout):
+            return None
+        finally:
+            s.close()
+
+    def _still_serving(self, timeout=4.0):
+        """Can anybody else get an answer right now?"""
+        import socket
+        host, port = self.httpd.server_address[0], self.httpd.server_address[1]
+        try:
+            s = socket.create_connection((host, port), timeout=timeout)
+            s.settimeout(timeout)
+            s.sendall(b"GET /nope HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            data = s.recv(64)
+            s.close()
+            return bool(data)
+        except (OSError, socket.timeout):
+            return False
+
+    def test_a_negative_content_length_does_not_take_the_listener_off_the_air(self):
+        """THE ONE THAT MATTERED. `int()` accepts -1 and `rfile.read(-1)` reads to EOF, so
+        one socket that never closed held the single accept loop forever: every wallet got
+        nothing, for one TCP connection and no credential."""
+        self.assertTrue(self._still_serving(), "control: the listener answers before this")
+        held = self._raw("Content-Length: -1\r\n", b"response=x", hold=True)
+        try:
+            self.assertTrue(self._still_serving(),
+                            "a held connection with Content-Length: -1 stopped every other "
+                            "client from being answered")
+            self.assertTrue(self._still_serving(), "and the second one after it")
+        finally:
+            held.close()
+
+    def test_a_huge_declared_body_is_refused_before_it_is_read(self):
+        """The ATTACKER's own answer is the assertion, not whether anybody else is served.
+
+        Checking only that other clients are still answered is satisfied by the threading
+        alone, so removing this bound passed. The bound's own contribution is that the
+        gigabyte is refused BEFORE a byte of it is read: the sender gets 413 immediately
+        rather than the connection sitting open while the server waits for a body that will
+        never arrive.
+        """
+        line = self._raw("Content-Length: %d\r\n" % (MAX_BODY_BYTES + 1), b"hello")
+        self.assertIsNotNone(line, "an oversized body must be answered, not left hanging")
+        self.assertIn("413", line,
+                      "a body over the bound must be refused on the DECLARED length; "
+                      "reading it first and judging afterwards is the same denial of "
+                      "service with an extra step")
+        self.assertTrue(self._still_serving())
+
+    def test_a_body_at_the_bound_is_still_accepted(self):
+        """The other direction. A bound that refused everything would pass the test above
+        while making the verifier useless."""
+        body = b"response=" + b"x" * (MAX_BODY_BYTES - 100)
+        line = self._raw("Content-Length: %d\r\n" % len(body), body, read_timeout=10)
+        self.assertIsNotNone(line)
+        self.assertIn("400", line, "a body under the bound reaches the verifier and is "
+                                   "refused on its CONTENT, not its size")
+
+    def test_a_non_numeric_content_length_is_answered_rather_than_dropped(self):
+        """`int('abc')` raised out of do_POST and the connection closed with no response at
+        all, which a wallet reads as a network fault rather than as a refusal."""
+        for value in ("abc", "0x10", "", "  "):
+            with self.subTest(value=repr(value)):
+                line = self._raw("Content-Length: %s\r\n" % value)
+                self.assertIsNotNone(line, "no answer at all for Content-Length: %r" % value)
+                self.assertIn("400", line)
+
+    def test_a_sign_or_underscore_is_not_read_as_a_number(self):
+        """HTTP allows DIGIT+ only. `int()` also takes `+9` and `1_0`, so this server's idea
+        of where a body ended differed from any conforming proxy in front of it, which is
+        the shape of a request smuggling bug."""
+        for value in ("+9", "1_0", "-0"):
+            with self.subTest(value=repr(value)):
+                line = self._raw("Content-Length: %s\r\n" % value, b"response=x")
+                self.assertIsNotNone(line)
+                self.assertIn("400", line)
+
+    def test_a_slow_client_that_never_finishes_does_not_block_anyone_else(self):
+        """The THREADING mechanism on its own, with nothing else standing in for it.
+
+        Every other test here is satisfied by the Content-Length guard alone, so removing
+        `ThreadingHTTPServer` passed all of them: two mechanisms, each masking the other's
+        absence. This client sends a well-formed header and then simply stops, which the
+        guard cannot refuse because there is nothing wrong with it. On a single accept loop
+        it takes the listener off the air for everybody.
+        """
+        import socket
+        host, port = self.httpd.server_address[0], self.httpd.server_address[1]
+        slow = socket.create_connection((host, port), timeout=5)
+        try:
+            slow.sendall(b"POST /response HTTP/1.1\r\nHost: x\r\nContent-Length: 4000\r\n\r\n")
+            slow.sendall(b"resp")   # four of the four thousand bytes, then silence
+            self.assertTrue(self._still_serving(),
+                            "one client that stops mid-body stopped every other client "
+                            "from being served")
+        finally:
+            slow.close()
+
+
+    def test_an_honest_request_still_works(self):
+        """The direction that keeps the rest honest: a listener refusing everything would
+        pass every test above."""
+        status, _, _ = _post(self.base + "/response", {"response": "not-a-jwe"})
+        self.assertEqual(status, 400)
+        self.assertTrue(self._still_serving())
+
+
+class ContentLengthParsingTests(unittest.TestCase):
+    """`_content_length` on its own.
+
+    Through the socket, every malformed value ends in the same 400 whether the digit check
+    is there or not, because the `int()` below it raises ValueError and that is caught too.
+    So the socket tests could not see this guard go. Here the return value is the assertion.
+    """
+
+    def test_only_a_run_of_digits_is_a_length(self):
+        self.assertEqual(_content_length({"Content-Length": "9"}), 9)
+        self.assertEqual(_content_length({"Content-Length": " 9 "}), 9)
+        self.assertEqual(_content_length({"Content-Length": "0"}), 0)
+
+    def test_an_absent_header_means_no_body(self):
+        self.assertEqual(_content_length({}), 0)
+
+    def test_everything_HTTP_does_not_allow_is_refused(self):
+        for value in ("-1", "+9", "1_0", "-0", "abc", "0x10", "", "  ", "9.0", "9 9", "١٢"):
+            with self.subTest(value=repr(value)):
+                self.assertIsNone(_content_length({"Content-Length": value}),
+                                  "%r must not be read as a length" % value)
+
+    def test_the_bound_is_a_real_number_of_bytes(self):
+        self.assertGreater(MAX_BODY_BYTES, 64 * 1024,
+                           "the bound must leave room for a real presentation")
+        self.assertLess(MAX_BODY_BYTES, 64 * 1024 * 1024,
+                        "a bound this high is not a bound")

@@ -160,7 +160,48 @@ class StructuralRefusalsCoverageFoundTests(unittest.TestCase):
         header = json.loads(_decode(parts[0]))
         header["epk"].pop("y")
         parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
-        self._expect(".".join(parts), "does not decode")
+        # The message says the coordinate is absent rather than that it "does not decode",
+        # which is what it used to say because a KeyError was being caught by the decode
+        # handler. An absent field and an undecodable one are different defects and the
+        # operator reading the log is the one who needs them apart.
+        self._expect(".".join(parts), "no string 'y' coordinate")
+
+    def test_an_epk_coordinate_of_the_wrong_json_type_is_refused_as_a_JweError(self):
+        """A number or a list where a string belongs reached b64u_decode and came back as
+        TypeError, not JweError. `verifier.py` catches only JweError, so the whole response
+        path aborted instead of refusing this response and moving on."""
+        for bad in (1, [1, 2], {"a": 1}, None, True):
+            with self.subTest(value=repr(bad)):
+                parts = self.token.split(".")
+                header = json.loads(_decode(parts[0]))
+                header["epk"]["x"] = bad
+                parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+                self._expect(".".join(parts), "coordinate")
+
+    def test_an_epk_that_is_not_on_the_curve_is_refused_as_a_JweError(self):
+        """The first probe of an invalid-curve attack. cryptography raises ValueError for a
+        point off the curve and for the point at infinity; both escaped as themselves."""
+        for label, (x, y) in (("off the curve", (b"\x02" * 32, b"\x03" * 32)),
+                              ("point at infinity", (b"\x00" * 32, b"\x00" * 32))):
+            with self.subTest(label):
+                parts = self.token.split(".")
+                header = json.loads(_decode(parts[0]))
+                header["epk"]["x"] = b64u_encode(x)
+                header["epk"]["y"] = b64u_encode(y)
+                parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+                self._expect(".".join(parts), "P-256")
+
+    def test_apu_and_apv_of_the_wrong_json_type_are_refused_as_a_JweError(self):
+        """Both are attacker-supplied and go straight into the KDF. An object, a list or a
+        number produced TypeError; non-ASCII text produced UnicodeEncodeError."""
+        for field in ("apu", "apv"):
+            for bad in ({"a": 1}, [1], 7, "\u00e9\u00e9\u00e9\u00e9"):
+                with self.subTest(field=field, value=repr(bad)):
+                    parts = self.token.split(".")
+                    header = json.loads(_decode(parts[0]))
+                    header[field] = bad
+                    parts[0] = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+                    self._expect(".".join(parts), field)
 
     def test_an_epk_with_short_coordinates_is_refused(self):
         parts = self.token.split(".")

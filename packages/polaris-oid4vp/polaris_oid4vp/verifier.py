@@ -249,7 +249,14 @@ class Verifier:
                                       expected_nonce=session.nonce,
                                       expected_audience=self.client_id,
                                       issuer_jwks=self.issuer_jwks,
-                                      trust_anchors=self.issuer_trust_anchors)
+                                      trust_anchors=self.issuer_trust_anchors,
+                                      # The type the DCQL query above actually asked for.
+                                      # It was built into `meta.vct_values` and then never
+                                      # passed here, so this verifier asked for one kind of
+                                      # credential and accepted any kind the same issuer
+                                      # signed. Measured 2026-09-17: a loyalty card's
+                                      # `given_name` came back as though it were a PID's.
+                                      expected_vct=self.vct_values)
         if not verdict.authentic:
             # The reason goes to the operator through the returned verdict, and the wallet
             # gets the same constant refusal every other cause gets.

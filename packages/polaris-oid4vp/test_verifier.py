@@ -87,7 +87,7 @@ class Wallet:
 
     def respond(self, jar, *, nonce=None, audience=None, iat=None, sd_hash=None,
                 corrupt_issuer_sig=False, corrupt_kb_sig=False, extra_disclosure=None,
-                state=None, enc="A128GCM", vp_token=None):
+                state=None, enc="A128GCM", vp_token=None, vct=None):
         _, claims = self.read_request(jar)
         enc_jwk = claims["client_metadata"]["jwks"]["keys"][0]
         enc_public = ec.EllipticCurvePublicNumbers(
@@ -98,20 +98,21 @@ class Wallet:
             nonce=claims["nonce"] if nonce is None else nonce,
             audience=claims["client_id"] if audience is None else audience,
             iat=iat, sd_hash=sd_hash, corrupt_issuer_sig=corrupt_issuer_sig,
-            corrupt_kb_sig=corrupt_kb_sig, extra_disclosure=extra_disclosure)
+            corrupt_kb_sig=corrupt_kb_sig, extra_disclosure=extra_disclosure, vct=vct)
         body = {"state": claims["state"] if state is None else state,
                 "vp_token": {"pid": [presentation]} if vp_token is None else vp_token}
         token = encrypt_compact(json.dumps(body).encode(), enc_public, enc)
         return {"response": [token]}
 
     def _presentation(self, *, nonce, audience, iat, sd_hash, corrupt_issuer_sig,
-                      corrupt_kb_sig, extra_disclosure):
+                      corrupt_kb_sig, extra_disclosure, vct=None):
         disclosures = [
             b64u_encode(json.dumps([s, n, v], separators=(",", ":")).encode())
             for s, n, v in (("s0", "given_name", "Jean"), ("s1", "family_name", "Dupont"))]
         digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest())
                    for d in disclosures]
-        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+        payload = {"iss": "https://issuer.example",
+                   "vct": "urn:eudi:pid:1" if vct is None else vct,
                    "iat": int(time.time()), "_sd": digests,
                    "cnf": {"jwk": _public_jwk(self.holder_key)}}
         issuer_jwt = _jws(self.issuer_key,
@@ -494,3 +495,33 @@ class TheWireTellsAnAttackerNothingTests(VerifierTestCase):
         _, good_body, _ = self.verifier.handle_direct_post(
             self.wallet.respond(jar, nonce="wrong"))
         self.assertEqual(good_body, self.verifier.REFUSAL_BODY)
+
+
+class CredentialTypeOnTheWireTests(VerifierTestCase):
+    """The DCQL query carries `vct_values` and `handle_direct_post` has to pass it on.
+
+    `test_sdjwt.py` proves `verify_presentation` compares the type when it is given one.
+    That is not the same as proving this class gives it one, and until 2026-09-17 it did
+    not: the query asked for a personal identification credential and any credential the
+    same issuer signed was accepted. Removing the argument from `verifier.py` passed every
+    test in the package, because nothing exercised the wiring.
+    """
+
+    def test_a_credential_of_another_type_is_refused_through_the_network_path(self):
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar, vct="https://attacker.example/loyalty-card")
+        status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 400,
+                         "the query asked for %r and this is a loyalty card"
+                         % self.verifier.vct_values)
+        self.assertEqual(body, self.verifier.REFUSAL_BODY)
+        self.assertIsNotNone(verdict)
+        self.assertEqual(verdict.code, "vct")
+
+    def test_the_type_the_query_asked_for_is_still_accepted(self):
+        """The positive control: a verifier refusing every type would pass the test above
+        while accepting nothing at all."""
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        status, _, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 200, verdict.reason if verdict else "")

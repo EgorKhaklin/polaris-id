@@ -29,6 +29,7 @@ base64url SHA-256 of the US-ASCII bytes of everything up to and including the fi
 """
 import base64
 import binascii
+import datetime
 import hashlib
 import json
 import math
@@ -38,6 +39,7 @@ try:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
+    from cryptography import x509
     from cryptography.x509 import load_der_x509_certificate
     _HAVE_CRYPTO = True
 except ImportError:  # pragma: no cover - exercised by the import-failure path only
@@ -72,6 +74,39 @@ ACCEPTED_ALGS = ("ES256",)
 #: one. Measured 2026-09-17; every one of these verified as authentic before.
 _DISCLOSURE_FORBIDDEN_NAMES = frozenset(
     ("iss", "nbf", "exp", "cnf", "vct", "status", "iat", "_sd", "_sd_alg", "..."))
+
+#: Bounds on hostile input. There were none anywhere in this package until 2026-09-17: a
+#: 117 MiB presentation with a two-million-entry `_sd` array verified as authentic in 1.46 s,
+#: having built a two-million-element set on the way there.
+#:
+#: The sizes are generous next to anything real. The capture from the hosted conformance
+#: suite is under 8 KB with eleven committed claims; 256 KiB of presentation and 64 KiB of
+#: any single JSON document leave several orders of margin.
+MAX_PRESENTATION_BYTES = 256 * 1024
+MAX_JSON_BYTES = 64 * 1024
+MAX_DISCLOSURES = 512
+
+#: How deep a JSON document may nest, and how deep the disclosure resolver may recurse.
+#: `json.loads` is recursive with no limit of its own, and CPython's default recursion limit
+#: is around 1000 frames, so 994 levels of `[` raised RecursionError out of a function
+#: documented never to raise. 64 is deeper than any credential shape in the specification.
+MAX_JSON_DEPTH = 64
+MAX_RESOLVE_DEPTH = 64
+
+#: Extended key usages an issuer certificate may carry. A certificate that states EKUs and
+#: names none of these is saying what it is for, and it is not this.
+if _HAVE_CRYPTO:
+    _ISSUER_EKUS = frozenset((
+        x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH,
+        x509.oid.ExtendedKeyUsageOID.CODE_SIGNING,
+        x509.oid.ExtendedKeyUsageOID.EMAIL_PROTECTION,
+    ))
+else:  # pragma: no cover
+    _ISSUER_EKUS = frozenset()
+
+
+def _utcnow():
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
 class Verdict:
@@ -128,13 +163,71 @@ def _digest(disclosure_b64):
 
 # ------------------------------------------------------------------------------- JOSE
 
+def _nesting_depth(raw):
+    """The deepest bracket nesting in a JSON document, ignoring brackets inside strings.
+
+    A linear scan, so it costs nothing next to the parse it guards. It exists because
+    `json.loads` is recursive with no depth limit of its own: 2,780 bytes of `[[[[...]]]]`
+    raised RecursionError straight out of this verifier, and RecursionError is not a
+    ValueError, so every `except (ValueError, json.JSONDecodeError)` in this file missed it.
+    Measured 2026-09-17; the minimum depth that did it was 994.
+
+    Catching RecursionError would be the wrong repair. It fires at an arbitrary point that
+    depends on how much stack the caller had already used, so the same input accepted in one
+    call site raises in another, and an interpreter that has just unwound a stack overflow is
+    not a good place to be making security decisions. Refusing the shape before parsing is
+    deterministic.
+    """
+    depth = maximum = 0
+    in_string = escaped = False
+    for ch in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+            if depth > maximum:
+                maximum = depth
+        elif ch in "]}":
+            depth -= 1
+    return maximum
+
+
+def _json_bounded(raw, what):
+    """`json.loads` with the two bounds it has none of: size and nesting depth."""
+    if len(raw) > MAX_JSON_BYTES:
+        raise ValueError("the %s is %d bytes, over the %d byte limit"
+                         % (what, len(raw), MAX_JSON_BYTES))
+    text = raw.decode("utf-8", "strict") if isinstance(raw, bytes) else raw
+    if _nesting_depth(text) > MAX_JSON_DEPTH:
+        raise ValueError("the %s nests deeper than %d levels" % (what, MAX_JSON_DEPTH))
+    # `parse_constant` is the other half. Python's json accepts the bare literals NaN,
+    # Infinity and -Infinity by default, and they are floats, so they walk past every
+    # `isinstance(x, (int, float))` guard downstream. A NaN `iat` defeated the key binding
+    # freshness window outright before this. Nothing in JSON proper produces them and no
+    # honest wallet emits them, so they are refused at the door rather than guarded against
+    # one field at a time.
+    def _no_constants(name):
+        raise ValueError("the %s contains the non-JSON literal %s" % (what, name))
+    return json.loads(text, parse_constant=_no_constants)
+
+
 def _parse_jws(token):
     """Split a compact JWS into (header, payload, signing_input_bytes, signature_bytes)."""
+    if not isinstance(token, str):
+        raise ValueError("a compact JWS is a string")
     parts = token.split(".")
     if len(parts) != 3:
         raise ValueError("a compact JWS has three dot-separated parts, this has %d" % len(parts))
-    header = json.loads(b64u_decode(parts[0]))
-    payload = json.loads(b64u_decode(parts[1]))
+    header = _json_bounded(b64u_decode(parts[0]), "JWS header")
+    payload = _json_bounded(b64u_decode(parts[1]), "JWS payload")
     if not isinstance(header, dict) or not isinstance(payload, dict):
         raise ValueError("JWS header and payload must both be JSON objects")
     return header, payload, (parts[0] + "." + parts[1]).encode("ascii"), b64u_decode(parts[2])
@@ -147,6 +240,13 @@ def _es256_public_key(jwk):
     if jwk.get("kty") != "EC" or jwk.get("crv") != "P-256":
         raise ValueError("expected an EC P-256 JWK, got kty=%r crv=%r"
                          % (jwk.get("kty"), jwk.get("crv")))
+    # `jwk["x"]` raised KeyError and `b64u_decode(1)` raised TypeError, both straight out of
+    # a verifier documented never to raise. Two ways in: an operator's own --issuer-jwks
+    # file with a typo in it, and the issuer-signed `cnf.jwk`, which an attacker controls if
+    # they control an issuer. Measured 2026-09-17.
+    for field in ("x", "y"):
+        if not isinstance(jwk.get(field), str):
+            raise ValueError("the JWK has no string %r coordinate" % field)
     x = b64u_decode(jwk["x"])
     y = b64u_decode(jwk["y"])
     if len(x) != 32 or len(y) != 32:
@@ -157,7 +257,17 @@ def _es256_public_key(jwk):
 
 
 def _verify_es256(public_key, signing_input, signature):
-    """True if the raw r||s signature is valid. Never raises on a bad signature."""
+    """True if the raw r||s signature is valid. Never raises on a bad signature.
+
+    The key type is checked first, and that was missing. `_chains_to` accepted any leaf the
+    anchor had signed, so an RSA certificate from the configured anchor reached here and
+    `RSAPublicKey.verify()` was called with ECDSA arguments: TypeError out of the verifier
+    rather than a refusal. Anyone holding an RSA certificate from that CA could do it.
+    """
+    if not isinstance(public_key, ec.EllipticCurvePublicKey):
+        return False
+    if not isinstance(public_key.curve, ec.SECP256R1):
+        return False
     if len(signature) != 64:
         return False
     r = int.from_bytes(signature[:32], "big")
@@ -225,13 +335,95 @@ def _chains_to(leaf, anchor):
                                    ec.ECDSA(leaf.signature_hash_algorithm))
     except Exception:  # noqa: BLE001  wrong key, wrong algorithm, malformed: all one answer
         return False
-    return leaf.issuer == anchor.subject
+    if leaf.issuer != anchor.subject:
+        return False
+
+    # 2026-09-17: the signature and the issuer/subject match were the WHOLE check, and that
+    # is not a trust decision, it is a "did this CA ever sign this" decision. Three things
+    # were measured passing that should not have:
+    #
+    #   a leaf whose not_valid_after was yesterday
+    #   a leaf whose not_valid_before is next year
+    #   a TLS SERVER certificate from the same CA: ca=False, EKU=serverAuth, KeyUsage with
+    #     no digitalSignature
+    #
+    # The third is the one that matters. Registering a general-purpose CA as an issuer trust
+    # anchor silently promoted EVERY end-entity certificate that CA had ever issued to
+    # identity-credential issuer. This package's own cli.py already documents walt.id
+    # refusing a leaf for a missing digitalSignature KeyUsage, so the field was known about
+    # and simply not read here.
+    now = _utcnow()
+    try:
+        not_before = leaf.not_valid_before_utc
+        not_after = leaf.not_valid_after_utc
+    except AttributeError:  # pragma: no cover - cryptography < 42
+        not_before = leaf.not_valid_before.replace(tzinfo=datetime.timezone.utc)
+        not_after = leaf.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+    if not (not_before <= now <= not_after):
+        return False
+
+    # digitalSignature, when the certificate states a KeyUsage at all. A certificate that
+    # says what it may be used for and does not say "sign" is not a signing certificate.
+    try:
+        usage = leaf.extensions.get_extension_for_class(x509.KeyUsage).value
+        if not usage.digital_signature:
+            return False
+    except x509.ExtensionNotFound:
+        pass
+    except Exception:  # noqa: BLE001  a malformed extension is not a usable permission
+        return False
+
+    # And an extended key usage that names purposes without naming this one. serverAuth
+    # alone is the TLS certificate case above.
+    try:
+        ekus = leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+        oids = set(ekus)
+        if (x509.oid.ExtendedKeyUsageOID.ANY_EXTENDED_KEY_USAGE not in oids
+                and not oids & _ISSUER_EKUS):
+            return False
+    except x509.ExtensionNotFound:
+        pass
+    except Exception:  # noqa: BLE001
+        return False
+    return True
 
 
 # ------------------------------------------------------------------------- disclosures
 
+def _committed_digests(payload, by_digest):
+    """Every digest the issuer committed to, following recursive disclosures to a fixpoint.
+
+    draft-ietf-oauth-selective-disclosure-jwt section 4.2.4.1: a disclosure's VALUE may
+    itself carry `_sd`, so the issuer commits to the outer digest only and the inner one is
+    reachable solely through the outer disclosure. Walking the signed payload alone missed
+    those, and a conformant credential was refused with "a disclosure was presented that the
+    issuer never committed to". The EUDI PID uses exactly this shape for `address`.
+
+    The workaround people reach for is to also list the inner digest at top level, and it
+    leaks: the nested claim then resolves as a TOP-LEVEL claim as well, which is the opposite
+    of selective disclosure. Measured both ways 2026-09-17.
+
+    A fixpoint, not recursion into unverified data: a digest is only followed once it is
+    already committed, so a disclosure the issuer never vouched for can never widen the set.
+    """
+    out = set()
+    _collect_digests(payload, out)
+    for _ in range(MAX_RESOLVE_DEPTH):
+        grown = set(out)
+        for digest in out:
+            disclosure = by_digest.get(digest)
+            if not disclosure:
+                continue
+            # [salt, name, value] commits through its value; [salt, value] likewise.
+            _collect_digests(disclosure[-1], grown)
+        if grown == out:
+            break
+        out = grown
+    return out
+
+
 def _collect_digests(node, out):
-    """Every digest the issuer-signed payload commits to, wherever it appears."""
+    """Every digest this node commits to directly, wherever it appears."""
     if isinstance(node, dict):
         for key, value in node.items():
             if key == "_sd" and isinstance(value, list):
@@ -246,7 +438,11 @@ def _collect_digests(node, out):
                 _collect_digests(item, out)
 
 
-def _resolve(node, by_digest, used, collisions=None):
+class _TooDeep(ValueError):
+    """The resolver hit its depth cap. A ValueError so existing handlers see it."""
+
+
+def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None):
     """Rebuild the claims by substituting disclosed values for the digests standing in.
 
     `collisions` collects any disclosure whose name is already present at the same level.
@@ -257,20 +453,39 @@ def _resolve(node, by_digest, used, collisions=None):
     binding had been checked against. The clear-text claims are written first and the
     disclosed ones second, so the disclosure always won.
     """
+    if depth > MAX_RESOLVE_DEPTH:
+        raise _TooDeep("the credential nests disclosures deeper than %d levels"
+                       % MAX_RESOLVE_DEPTH)
+    # The memo is what makes this linear. A depth cap alone does not help: the blowup is
+    # WIDTH, not depth. A disclosure whose value lists the same digest twice doubles the work
+    # at every level, so thirty nested disclosures in about 6 KB cost 2**30 node visits and
+    # depth 24 was measured not finishing in twenty seconds. Resolving each digest once and
+    # reusing the result makes the same credential cost thirty.
+    if memo is None:
+        memo = {}
     if isinstance(node, dict):
         out = {}
         for key, value in node.items():
             if key in ("_sd", "_sd_alg"):
                 continue
-            out[key] = _resolve(value, by_digest, used, collisions)
-        for digest in node.get("_sd", []) or []:
+            out[key] = _resolve(value, by_digest, used, collisions, depth + 1, memo)
+        sd = node.get("_sd")
+        # `node.get("_sd", []) or []` let a non-list through: `_sd: 5` reached the for-loop
+        # and raised TypeError out of the verifier. The digests themselves must be strings
+        # for the same reason one level down.
+        for digest in (sd if isinstance(sd, list) else []):
+            if not isinstance(digest, str):
+                continue
             disclosure = by_digest.get(digest)
             if disclosure and len(disclosure) == 3:
                 used.add(digest)
                 name = disclosure[1]
                 if name in out and collisions is not None:
                     collisions.append(name)
-                out[name] = _resolve(disclosure[2], by_digest, used, collisions)
+                if digest not in memo:
+                    memo[digest] = _resolve(disclosure[2], by_digest, used, collisions,
+                                            depth + 1, memo)
+                out[name] = memo[digest]
         return out
     if isinstance(node, list):
         out = []
@@ -278,10 +493,14 @@ def _resolve(node, by_digest, used, collisions=None):
             if isinstance(item, dict) and set(item) == {"..."}:
                 disclosure = by_digest.get(item["..."]) if isinstance(item["..."], str) else None
                 if disclosure and len(disclosure) == 2:
-                    used.add(item["..."])
-                    out.append(_resolve(disclosure[1], by_digest, used, collisions))
+                    key = item["..."]
+                    used.add(key)
+                    if key not in memo:
+                        memo[key] = _resolve(disclosure[1], by_digest, used, collisions,
+                                             depth + 1, memo)
+                    out.append(memo[key])
                 continue
-            out.append(_resolve(item, by_digest, used, collisions))
+            out.append(_resolve(item, by_digest, used, collisions, depth + 1, memo))
         return out
     return node
 
@@ -291,13 +510,20 @@ def _resolve(node, by_digest, used, collisions=None):
 def verify_presentation(presentation, *, expected_nonce, expected_audience,
                         issuer_jwks=None, trust_anchors=None, now=None,
                         max_skew_seconds=DEFAULT_MAX_SKEW_SECONDS,
-                        require_key_binding=True):
+                        require_key_binding=True, expected_vct=None):
     """Verify one SD-JWT VC presentation. Returns a Verdict and never raises on bad input.
 
     `presentation` is the `~`-separated string a wallet sent. `expected_nonce` and
     `expected_audience` are what the authorization request asked for: passing anything else,
     or passing what the presentation itself claims, turns two of the conformance suite's
     negative tests into passes and makes every presentation replayable.
+
+    `expected_vct` is the credential TYPE the query asked for, as a string or a collection of
+    them. `Verifier` builds a DCQL query carrying `vct_values` and, until 2026-09-17, never
+    passed it here and this function never read `vct`: a verifier that asked for a personal
+    identification credential accepted any credential the same issuer signed, and returned
+    `given_name` off a loyalty card as though it came from a PID. Left None it is not
+    checked, which is what a caller doing its own type selection wants.
     """
     if not _HAVE_CRYPTO:
         return _refuse("no_backend", "the cryptography package is not installed, so no "
@@ -306,6 +532,12 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                                      "of the credential")
     if not isinstance(presentation, str) or not presentation.strip():
         return _refuse("malformed", "the presentation is empty")
+    if len(presentation) > MAX_PRESENTATION_BYTES:
+        # Before any parsing. There was no bound at all until 2026-09-17, and a 117 MiB
+        # presentation was measured verifying as authentic in 1.46 s having built a
+        # two-million-element set on the way.
+        return _refuse("malformed", "the presentation is %d bytes, over the %d byte limit"
+                                    % (len(presentation), MAX_PRESENTATION_BYTES))
     if not expected_nonce or not expected_audience:
         return _refuse("misconfigured", "a nonce and an audience must be supplied by the "
                                         "caller: without them the two checks that stop "
@@ -334,6 +566,15 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     if not _verify_es256(key, signing_input, signature):
         return _refuse("issuer_signature", "the issuer signature over the credential does "
                                            "not verify under the trusted issuer key")
+
+    if expected_vct is not None:
+        wanted = ({expected_vct} if isinstance(expected_vct, str)
+                  else {v for v in expected_vct if isinstance(v, str)})
+        if payload.get("vct") not in wanted:
+            return _refuse("vct", "the credential is of type %r and this request asked for "
+                                  "%s: a credential of the wrong type is not an answer to "
+                                  "the question that was put"
+                                  % (payload.get("vct"), sorted(wanted)))
 
     if payload.get("_sd_alg", "sha-256") != "sha-256":
         return _refuse("sd_alg", "the credential declares _sd_alg=%r; this verifier computes "
@@ -369,22 +610,19 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                            "%d second allowance" % (human, value - now, max_skew_seconds))
 
     # 2. the disclosures, each of which must be one the issuer committed to
-    committed = set()
-    _collect_digests(payload, committed)
+    if len(disclosures_b64) > MAX_DISCLOSURES:
+        return _refuse("disclosure", "%d disclosures were presented, over the %d limit"
+                                     % (len(disclosures_b64), MAX_DISCLOSURES))
     by_digest = {}
     for encoded in disclosures_b64:
         try:
-            parsed = json.loads(b64u_decode(encoded))
+            parsed = _json_bounded(b64u_decode(encoded), "disclosure")
         except (ValueError, json.JSONDecodeError) as exc:
             return _refuse("disclosure", "a disclosure does not decode: %s" % exc)
         if not isinstance(parsed, list) or len(parsed) not in (2, 3):
             return _refuse("disclosure", "a disclosure must be a 2- or 3-element array, got %r"
                                          % (parsed if not isinstance(parsed, list) else len(parsed)))
         digest = _digest(encoded)
-        if digest not in committed:
-            return _refuse("disclosure", "a disclosure was presented that the issuer never "
-                                         "committed to: its digest appears nowhere in the "
-                                         "signed payload")
         if digest in by_digest:
             return _refuse("disclosure", "the same disclosure was presented twice")
         # A 3-element disclosure names a claim. An object-property disclosure may not name
@@ -398,9 +636,23 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                            % (parsed[1], parsed[1]))
         by_digest[digest] = parsed
 
+    # AFTER parsing, not before: a recursive disclosure's inner digest is reachable only
+    # through the outer disclosure's decoded value, so the committed set cannot be computed
+    # until the disclosures are in hand. The fixpoint only ever follows digests that are
+    # ALREADY committed, so a disclosure the issuer never vouched for cannot widen it.
+    committed = _committed_digests(payload, by_digest)
+    for digest in by_digest:
+        if digest not in committed:
+            return _refuse("disclosure", "a disclosure was presented that the issuer never "
+                                         "committed to: its digest appears nowhere in the "
+                                         "signed payload")
+
     used = set()
     collisions = []
-    claims = _resolve(payload, by_digest, used, collisions)
+    try:
+        claims = _resolve(payload, by_digest, used, collisions)
+    except _TooDeep as exc:
+        return _refuse("disclosure", str(exc))
     if collisions:
         # SD-JWT section 9.3. The clear-text claims go in first and the disclosed ones
         # second, so before this check a disclosure named `iss` simply replaced the issuer in

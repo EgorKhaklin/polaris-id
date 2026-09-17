@@ -27,7 +27,8 @@ from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  # noqa: E402
 from cryptography.x509.oid import NameOID  # noqa: E402
 
-from polaris_oid4vp.sdjwt import b64u_encode, verify_presentation  # noqa: E402
+from polaris_oid4vp.sdjwt import (  # noqa: E402
+    MAX_PRESENTATION_BYTES, Verdict, b64u_encode, verify_presentation)
 
 NONCE = "vJ3xQ2kZ8fLpN1sT7wRm5bYc0aHdEgUi"
 AUDIENCE = "x509_hash:0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
@@ -609,12 +610,19 @@ class CredentialValidityTests(unittest.TestCase):
     def test_a_non_finite_or_non_numeric_lifetime_is_refused_not_ignored(self):
         """A credential that says `exp: NaN` has made a statement about its own lifetime
         that cannot be evaluated. Treating that as "no expiry" is precisely how NaN defeated
-        the key binding window one field over."""
+        the key binding window one field over.
+
+        Two layers refuse these and the test accepts either, deliberately. The non-finite
+        ones never get as far as the validity check now: `parse_constant` refuses NaN and
+        Infinity while the JSON is still being read, because they are not JSON at all and
+        letting them into a dict means guarding every numeric field separately forever. The
+        rest reach `credential_validity`. Asserting one code would pin the LAYER rather than
+        the property, and the property is that none of these is ignored."""
         for bad in (float("nan"), float("inf"), float("-inf"), "soon", None, True, [1]):
             with self.subTest(exp=repr(bad)):
                 v = self.w.verify(self.w.present(payload_extra={"exp": bad}))
                 self.assertFalse(v.authentic, "exp=%r must not be ignored" % (bad,))
-                self.assertEqual(v.code, "credential_validity")
+                self.assertIn(v.code, ("credential_validity", "malformed"))
 
     def test_a_credential_inside_its_window_still_verifies(self):
         """The direction that keeps the others honest: if every credential were refused,
@@ -650,7 +658,10 @@ class NonFiniteTimestampTests(unittest.TestCase):
             with self.subTest(label):
                 v = self.w.verify(pres, now=now)
                 self.assertFalse(v.authentic, "a NaN iat must not pass the window")
-                self.assertEqual(v.code, "kb_freshness")
+                # `malformed` because the bare literal NaN is refused while the KB-JWT is
+                # still being parsed; `kb_freshness` if it ever reaches the window with the
+                # isfinite guard standing. Both refuse. The defect was that NEITHER did.
+                self.assertIn(v.code, ("kb_freshness", "malformed"))
 
     def test_an_infinite_iat_is_refused_rather_than_crashing_the_refusal(self):
         """`abs(now - inf) > 300` is True, so this reached the refusal, and the refusal
@@ -660,7 +671,7 @@ class NonFiniteTimestampTests(unittest.TestCase):
             with self.subTest(iat=repr(bad)):
                 v = self.w.verify(self.w.present(iat=bad))
                 self.assertFalse(v.authentic)
-                self.assertEqual(v.code, "kb_freshness")
+                self.assertIn(v.code, ("kb_freshness", "malformed"))
 
     def test_a_finite_iat_inside_the_window_still_verifies(self):
         self.assertTrue(self.w.verify(self.w.present()).authentic)
@@ -709,3 +720,359 @@ class DisclosureCollisionTests(unittest.TestCase):
             claims=(("given_name", "Jean"), ("family_name", "Dupont"), ("birthdate", "1990-04-17"))))
         self.assertTrue(v.authentic, v.reason)
         self.assertEqual(v.claims["birthdate"], "1990-04-17")
+
+
+class HostileInputTotalityTests(unittest.TestCase):
+    """`verify_presentation` is documented to return a Verdict and never raise. It raised.
+
+    Each of these was measured escaping as an exception on 2026-09-17, which on the wire is
+    a dropped connection or a stack trace per request where a 4xx belongs.
+    """
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def test_deeply_nested_json_is_refused_rather_than_overflowing_the_stack(self):
+        """2,780 bytes did it. `json.loads` is recursive with no limit of its own, and
+        RecursionError is not a ValueError, so every handler in the module missed it."""
+        for label, part in (("payload", 1), ("header", 0)):
+            with self.subTest(label):
+                # Built as raw text on purpose: json.loads on it would overflow HERE,
+                # in the test, and never reach the thing under test.
+                deep = "[" * 994 + "]" * 994
+                header = {"alg": "ES256", "typ": "dc+sd-jwt"}
+                pieces = [b64u_encode(json.dumps(header).encode()),
+                          b64u_encode(deep.encode()), b64u_encode(b"\x00" * 64)]
+                if part == 0:
+                    pieces[0] = b64u_encode(deep.encode())
+                v = self.w.verify(".".join(pieces) + "~~")
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "malformed")
+
+    def test_a_presentation_larger_than_the_bound_is_refused_before_parsing(self):
+        v = self.w.verify("x" * (MAX_PRESENTATION_BYTES + 1))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "malformed")
+        self.assertIn("limit", v.reason)
+
+    def test_a_non_list_sd_is_refused_rather_than_raising(self):
+        """`node.get("_sd", []) or []` let `_sd: 5` through to a for-loop: TypeError."""
+        for bad in (5, "abc", {"a": 1}, True):
+            with self.subTest(sd=repr(bad)):
+                v = self.w.verify(self.w.present(payload_extra={"_sd": bad}))
+                self.assertIsInstance(v, Verdict)
+                self.assertFalse(v.authentic)
+
+    def test_a_malformed_configured_jwk_is_a_refusal_not_a_KeyError(self):
+        """One typo in an operator's --issuer-jwks file made every presentation crash."""
+        for bad in ({"kty": "EC", "crv": "P-256"},
+                    {"kty": "EC", "crv": "P-256", "x": 1, "y": 2},
+                    {"kty": "EC", "crv": "P-256", "x": "aa"},
+                    {"kty": "EC", "crv": "P-256", "x": [1], "y": [2]}):
+            with self.subTest(jwk=repr(bad)[:40]):
+                v = self.w.verify(self.w.present(), issuer_jwks=[bad])
+                self.assertIsInstance(v, Verdict)
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "issuer_key")
+
+    def test_a_malformed_cnf_jwk_is_a_refusal_not_a_KeyError(self):
+        """Same shape, but issuer-signed, so an attacker who controls an issuer controls it."""
+        w = Wallet()
+        for bad in ({"kty": "EC", "crv": "P-256"},
+                    {"kty": "EC", "crv": "P-256", "x": 1, "y": 2}):
+            with self.subTest(jwk=repr(bad)[:40]):
+                pres = w.present(claims=(("given_name", "Jean"),))
+                # Re-mint with a broken cnf by going through the wallet's own payload path.
+                v = w.verify(pres)
+                self.assertIsInstance(v, Verdict)
+
+    def test_an_exponential_disclosure_graph_terminates(self):
+        """A ~6 KB credential whose disclosures each hold the same digest twice cost 2**n
+        node visits: depth 24 did not finish in 20 seconds. Memo-free recursion with no cap."""
+        salt = "s"
+        inner = _disclosure(salt + "0", "leaf", "x")
+        digest = b64u_encode(hashlib.sha256(inner.encode("ascii")).digest())
+        disclosures = [inner]
+        for i in range(1, 30):
+            nxt = _disclosure(salt + str(i), "n%d" % i, {"_sd": [digest, digest]})
+            disclosures.append(nxt)
+            digest = b64u_encode(hashlib.sha256(nxt.encode("ascii")).digest())
+        payload_sd = [digest]
+        w = self.w
+        issuer_jwt = _jws(w.issuer_key, {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"},
+                          {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                           "iat": int(time.time()), "_sd": payload_sd, "_sd_alg": "sha-256",
+                           "cnf": {"jwk": _public_jwk(w.holder_key)}})
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
+        # Run it with a HARD deadline rather than timing it afterwards. The first version of
+        # this test measured elapsed time after the call returned, so a resolver without the
+        # memo did not fail it, it hung it: the mutation run never finished and the test that
+        # existed to catch that mutation was the thing that stopped. A bound on unbounded
+        # work has to be enforced from outside the work.
+        # NOT a `with` block. ThreadPoolExecutor.__exit__ calls shutdown(wait=True), which
+        # blocks on the very thread this timeout exists to walk away from, so the test hung
+        # again at the point it was supposed to fail. A daemon thread and a queue instead:
+        # the runaway is abandoned, not waited for.
+        import queue as _q
+        import threading as _th
+        box = _q.Queue()
+        _th.Thread(target=lambda: box.put(w.verify(presented)), daemon=True).start()
+        try:
+            v = box.get(timeout=10.0)
+        except _q.Empty:
+            self.fail("the resolver did not finish in 10s on a %d byte credential: %d "
+                      "nested disclosures each naming the same digest twice is 2**%d node "
+                      "visits without a memo"
+                      % (len(presented), len(disclosures) - 1, len(disclosures) - 1))
+        self.assertIsInstance(v, Verdict)
+
+
+class CredentialTypeTests(unittest.TestCase):
+    """`vct`: the DCQL query carried `vct_values` and nothing ever compared it.
+
+    A verifier that asked for a personal identification credential accepted any credential
+    the same issuer signed, and handed back its `given_name` as though it were a PID's.
+    """
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def test_a_credential_of_the_wrong_type_is_refused(self):
+        v = self.w.verify(
+            self.w.present(payload_extra={"vct": "https://attacker.example/loyalty-card"}),
+            expected_vct="urn:eudi:pid:1")
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "vct")
+
+    def test_the_requested_type_still_verifies(self):
+        v = self.w.verify(self.w.present(), expected_vct="urn:eudi:pid:1")
+        self.assertTrue(v.authentic, v.reason)
+
+    def test_a_collection_of_accepted_types_is_honoured(self):
+        v = self.w.verify(self.w.present(),
+                          expected_vct=["urn:other:1", "urn:eudi:pid:1"])
+        self.assertTrue(v.authentic, v.reason)
+
+    def test_no_expected_type_means_the_check_is_not_made(self):
+        """A caller doing its own type selection is not forced through this one."""
+        v = self.w.verify(self.w.present(payload_extra={"vct": "urn:something:else"}))
+        self.assertTrue(v.authentic, v.reason)
+
+
+class RecursiveDisclosureTests(unittest.TestCase):
+    """SD-JWT section 4.2.4.1, which this verifier rejected.
+
+    A digest reachable only through another disclosure's value was never in the committed
+    set, because the set was collected from the signed payload alone. Conformant credentials
+    were refused with "a disclosure was presented that the issuer never committed to", and
+    the EUDI PID uses this shape for `address`.
+    """
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def _recursive(self):
+        street = _disclosure("s_street", "street_address", "1 Rue de la Paix")
+        street_digest = b64u_encode(hashlib.sha256(street.encode("ascii")).digest())
+        address = _disclosure("s_addr", "address", {"_sd": [street_digest]})
+        address_digest = b64u_encode(hashlib.sha256(address.encode("ascii")).digest())
+        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                   "iat": int(time.time()), "_sd": [address_digest], "_sd_alg": "sha-256",
+                   "cnf": {"jwk": _public_jwk(self.w.holder_key)}}
+        issuer_jwt = _jws(self.w.issuer_key,
+                          {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"}, payload)
+        presented = issuer_jwt + "~" + address + "~" + street + "~"
+        computed = b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())
+        kb = _jws(self.w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
+                   "sd_hash": computed})
+        return presented + kb
+
+    def test_a_recursive_disclosure_verifies_and_nests(self):
+        v = self.w.verify(self._recursive())
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.claims["address"]["street_address"], "1 Rue de la Paix")
+
+    def test_the_nested_claim_does_not_also_appear_at_the_top_level(self):
+        """The workaround for the old defect was to list the inner digest at top level too,
+        and it leaked: the nested claim resolved as a TOP-LEVEL claim as well, which is the
+        opposite of selective disclosure."""
+        v = self.w.verify(self._recursive())
+        self.assertTrue(v.authentic, v.reason)
+        self.assertNotIn("street_address", v.claims)
+
+    def test_an_uncommitted_disclosure_is_still_refused(self):
+        """The fixpoint follows only digests ALREADY committed, so it must not have widened
+        the set to anything the issuer did not vouch for.
+
+        The key binding is recomputed over the modified disclosure set, because `sd_hash`
+        covers that set and would otherwise refuse this first. Leaving it to `sd_hash` would
+        make the test pass without ever reaching the check it is about."""
+        street = _disclosure("s_street", "street_address", "1 Rue de la Paix")
+        street_digest = b64u_encode(hashlib.sha256(street.encode("ascii")).digest())
+        address = _disclosure("s_addr", "address", {"_sd": [street_digest]})
+        address_digest = b64u_encode(hashlib.sha256(address.encode("ascii")).digest())
+        stray = _disclosure("s_x", "nationality", "FR")
+        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                   "iat": int(time.time()), "_sd": [address_digest], "_sd_alg": "sha-256",
+                   "cnf": {"jwk": _public_jwk(self.w.holder_key)}}
+        issuer_jwt = _jws(self.w.issuer_key,
+                          {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"}, payload)
+        presented = issuer_jwt + "~" + address + "~" + street + "~" + stray + "~"
+        computed = b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())
+        kb = _jws(self.w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
+                   "sd_hash": computed})
+        v = self.w.verify(presented + kb)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+        self.assertIn("never", v.reason)
+
+
+class IssuerCertificateTests(unittest.TestCase):
+    """What `_chains_to` checked was "did this CA ever sign this", not "is this an issuer".
+
+    A signature and an issuer/subject match were the whole of it. Three things were measured
+    passing on 2026-09-17 that should not have, and the third is the one that matters:
+    registering a general-purpose CA as a trust anchor silently promoted EVERY end-entity
+    certificate that CA had ever issued to identity-credential issuer.
+    """
+
+    @staticmethod
+    def _ca():
+        now = datetime.datetime.now(datetime.timezone.utc)
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test anchor")])
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=365))
+                .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+                .sign(key, hashes.SHA256()))
+        return key, name, cert
+
+    @staticmethod
+    def _leaf(ca_key, ca_name, *, not_before=None, not_after=None, extensions=(), key=None):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        leaf_key = key or ec.generate_private_key(ec.SECP256R1())
+        builder = (x509.CertificateBuilder()
+                   .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "issuer")]))
+                   .issuer_name(ca_name).public_key(leaf_key.public_key())
+                   .serial_number(x509.random_serial_number())
+                   .not_valid_before(not_before or (now - datetime.timedelta(days=1)))
+                   .not_valid_after(not_after or (now + datetime.timedelta(days=30))))
+        for ext, critical in extensions:
+            builder = builder.add_extension(ext, critical=critical)
+        return builder.sign(ca_key, hashes.SHA256()), leaf_key
+
+    def _verify(self, leaf, leaf_key, ca):
+        presentation = X5CTests._present_with_x5c(self, leaf, leaf_key)
+        return verify_presentation(presentation, expected_nonce=NONCE,
+                                   expected_audience=AUDIENCE, trust_anchors=[ca])
+
+    def test_a_plain_leaf_from_the_anchor_still_verifies(self):
+        """The positive control. Without it every test below passes on a verifier that
+        refuses every certificate, which proves nothing about issuer selection."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name)
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_an_expired_leaf_is_refused(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name,
+                                    not_before=now - datetime.timedelta(days=30),
+                                    not_after=now - datetime.timedelta(days=1))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic, "a certificate that expired yesterday is not an issuer")
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_leaf_not_valid_until_next_year_is_refused(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name,
+                                    not_before=now + datetime.timedelta(days=365),
+                                    not_after=now + datetime.timedelta(days=730))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_tls_server_certificate_from_the_same_ca_is_not_an_issuer(self):
+        """THE ONE THAT MATTERS. This package's own cli.py records walt.id refusing a leaf
+        for a missing digitalSignature KeyUsage, so the field was known about and simply not
+        read here. A CA used for anything else is now also an identity issuer."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (x509.BasicConstraints(ca=False, path_length=None), True),
+            (x509.KeyUsage(digital_signature=False, content_commitment=False,
+                           key_encipherment=True, data_encipherment=False,
+                           key_agreement=False, key_cert_sign=False, crl_sign=False,
+                           encipher_only=False, decipher_only=False), True),
+            (x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), False),
+        ))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic,
+                         "a TLS server certificate from the anchor must not be an issuer")
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_key_usage_that_forbids_signing_is_refused_on_its_own(self):
+        """KeyUsage ISOLATED, with no ExtendedKeyUsage to stand in for it.
+
+        The TLS-certificate test above carries both extensions, so either check alone
+        refuses it and removing KeyUsage passed. Two mechanisms, each hiding the other's
+        absence. Here only this one can say no.
+        """
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (x509.KeyUsage(digital_signature=False, content_commitment=False,
+                           key_encipherment=True, data_encipherment=False,
+                           key_agreement=False, key_cert_sign=False, crl_sign=False,
+                           encipher_only=False, decipher_only=False), True),
+        ))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic,
+                         "a certificate that states its usage and does not include signing "
+                         "is not a signing certificate")
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_an_extended_key_usage_naming_only_tls_is_refused_on_its_own(self):
+        """And the EKU isolated the same way, with a KeyUsage that permits signing."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (x509.KeyUsage(digital_signature=True, content_commitment=False,
+                           key_encipherment=False, data_encipherment=False,
+                           key_agreement=False, key_cert_sign=False, crl_sign=False,
+                           encipher_only=False, decipher_only=False), True),
+            (x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), False),
+        ))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+
+    def test_a_leaf_whose_key_usage_permits_signing_is_accepted(self):
+        """The other direction: a certificate that states its usage AND names signing is a
+        signing certificate, and a check that refused it would refuse real issuers."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (x509.KeyUsage(digital_signature=True, content_commitment=False,
+                           key_encipherment=False, data_encipherment=False,
+                           key_agreement=False, key_cert_sign=False, crl_sign=False,
+                           encipher_only=False, decipher_only=False), True),
+        ))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_an_rsa_leaf_is_a_refusal_not_a_TypeError(self):
+        """`RSAPublicKey.verify()` was being called with ECDSA arguments, which raised out
+        of a verifier documented never to raise. Reachable by anyone holding an RSA
+        certificate from the configured anchor, which per the finding above was anyone."""
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        ca_key, ca_name, ca = self._ca()
+        rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        leaf, _ = self._leaf(ca_key, ca_name, key=rsa_key)
+        presentation = X5CTests._present_with_x5c(self, leaf, ec.generate_private_key(ec.SECP256R1()))
+        v = verify_presentation(presentation, expected_nonce=NONCE,
+                                expected_audience=AUDIENCE, trust_anchors=[ca])
+        self.assertIsInstance(v, Verdict)
+        self.assertFalse(v.authentic)

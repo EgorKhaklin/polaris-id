@@ -75,6 +75,12 @@ def _concat_kdf(shared_secret, enc, key_len, apu=b"", apv=b""):
 def _public_key_from_jwk(jwk):
     if not isinstance(jwk, dict) or jwk.get("kty") != "EC" or jwk.get("crv") != "P-256":
         raise JweError("the ephemeral public key is not an EC P-256 JWK")
+    # A coordinate that is a number or a list reached b64u_decode and came back as
+    # TypeError, not JweError, and this function's contract is JweError for anything
+    # malformed. Checked before decoding rather than caught after.
+    for field in ("x", "y"):
+        if not isinstance(jwk.get(field), str):
+            raise JweError("the ephemeral public key has no string %r coordinate" % field)
     try:
         x = b64u_decode(jwk["x"])
         y = b64u_decode(jwk["y"])
@@ -82,8 +88,17 @@ def _public_key_from_jwk(jwk):
         raise JweError("the ephemeral public key does not decode: %s" % exc) from exc
     if len(x) != 32 or len(y) != 32:
         raise JweError("P-256 coordinates must be 32 bytes each")
-    return ec.EllipticCurvePublicNumbers(int.from_bytes(x, "big"), int.from_bytes(y, "big"),
-                                         ec.SECP256R1()).public_key()
+    try:
+        return ec.EllipticCurvePublicNumbers(int.from_bytes(x, "big"),
+                                             int.from_bytes(y, "big"),
+                                             ec.SECP256R1()).public_key()
+    except ValueError as exc:
+        # A point that is not on the curve, and the point at infinity. cryptography raises
+        # ValueError here, which escaped as itself; `verifier.py` catches only JweError, so
+        # the whole response path aborted instead of moving to the next outstanding session.
+        # This is the first probe of an invalid-curve attack, so answering it with the same
+        # refusal as everything else is the point.
+        raise JweError("the ephemeral public key is not a valid P-256 point: %s" % exc) from exc
 
 
 def decrypt_compact(token, private_key):
@@ -124,10 +139,22 @@ def decrypt_compact(token, private_key):
     if epk is None:
         raise JweError("ECDH-ES requires an epk in the protected header")
 
+    # `apu` and `apv` are attacker-supplied header fields fed straight into the KDF. An
+    # object, a list or a bare number reached b64u_decode and produced TypeError; non-ASCII
+    # text produced UnicodeEncodeError. All three escaped this function as something other
+    # than JweError. Measured 2026-09-17.
+    for field in ("apu", "apv"):
+        value = header.get(field)
+        if value is not None and not isinstance(value, str):
+            raise JweError("the protected header's %r is not a string" % field)
+
     shared = private_key.exchange(ec.ECDH(), _public_key_from_jwk(epk))
-    key = _concat_kdf(shared, enc, ACCEPTED_ENC[enc],
-                      b64u_decode(header["apu"]) if header.get("apu") else b"",
-                      b64u_decode(header["apv"]) if header.get("apv") else b"")
+    try:
+        apu = b64u_decode(header["apu"]) if header.get("apu") else b""
+        apv = b64u_decode(header["apv"]) if header.get("apv") else b""
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise JweError("the protected header's apu/apv do not decode: %s" % exc) from exc
+    key = _concat_kdf(shared, enc, ACCEPTED_ENC[enc], apu, apv)
 
     try:
         iv = b64u_decode(iv_b64)

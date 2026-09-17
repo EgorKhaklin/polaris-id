@@ -21,6 +21,49 @@ from .verifier import Verifier  # noqa: F401  re-exported for callers of serve()
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
 
+#: The largest request body this listener will read. An SD-JWT VC presentation inside a JWE,
+#: even with a dozen disclosures and an x5c chain, is a few tens of kilobytes; the capture
+#: from the hosted conformance suite is under 8 KB. One megabyte is far above anything
+#: legitimate and far below what it costs to hold.
+#:
+#: There was no bound at all until 2026-09-17, and no bound is not a detail here: a body of
+#: 117 MiB was measured verifying as authentic in 1.46 s, having built a two-million-element
+#: set on the way.
+MAX_BODY_BYTES = 1 << 20
+
+
+def _content_length(headers):
+    """The declared body length, or None if the header is not one this server will honour.
+
+    HTTP allows only DIGIT+. `int()` allows a leading sign, underscores and surrounding
+    whitespace, and that difference was three separate defects, all measured 2026-09-17:
+
+      Content-Length: -1     int() -> -1, and `rfile.read(-1)` reads to EOF. On a
+                             single-threaded server that is one socket, one packet, never
+                             closed, and the listener answers nobody else until the attacker
+                             goes away. No credential and no key required.
+      Content-Length: abc    int() raised ValueError out of do_POST, the connection closed
+                             with no response at all.
+      Content-Length: +9     accepted as 9, and `1_0` as 10, so this server's framing
+                             disagreed with any conforming proxy in front of it. Two parties
+                             disagreeing about where a body ends is request smuggling.
+    """
+    raw = headers.get("Content-Length")
+    if raw is None:
+        return 0
+    raw = raw.strip()
+    # `isascii()` as well as `isdigit()`, and that is not belt and braces. `str.isdigit()` is
+    # Unicode-aware: "\u0661\u0662" (Arabic-Indic one-two) passes it, and `int()` then
+    # parses it as 12. A proxy in front of this server would reject that header outright,
+    # which is two parties disagreeing about where the body ends. Found by the test written
+    # for this function rather than by reading the code.
+    if not (raw.isascii() and raw.isdigit()):
+        return None
+    try:
+        return int(raw)
+    except ValueError:  # pragma: no cover - isdigit() already guarantees this parses
+        return None
+
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     verifier = None
@@ -28,6 +71,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     verbose = False
     server_version = "polaris-oid4vp"
     sys_version = ""
+    #: Seconds a connection may stall mid-request before the handler gives up on it.
+    #: BaseHTTPRequestHandler honours this through `socket.settimeout`, so a client that
+    #: sends half a request and waits is closed rather than held.
+    timeout = 20
 
     # ------------------------------------------------------------------ request_uri
 
@@ -39,8 +86,27 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         path, _, query = self.path.partition("?")
-        length = int(self.headers.get("Content-Length") or 0)
+        length = _content_length(self.headers)
+        if length is None:
+            self.close_connection = True
+            return self._send(400, {"error": "invalid_request",
+                                    "error_description": "Content-Length is not a decimal "
+                                                         "number of octets"})
+        if length > MAX_BODY_BYTES:
+            # Refuse on the DECLARED length, before reading a byte of it. Reading first and
+            # judging afterwards is the same denial of service with an extra step.
+            self.close_connection = True
+            return self._send(413, {"error": "invalid_request",
+                                    "error_description": "the request body exceeds %d bytes"
+                                                         % MAX_BODY_BYTES})
         raw = self.rfile.read(length).decode("utf-8", "replace")
+        if len(raw.encode("utf-8", "replace")) < length:
+            # The client declared more than it sent and then stopped. Without this the
+            # handler would carry on and parse a truncated body as though it were whole.
+            self.close_connection = True
+            return self._send(400, {"error": "invalid_request",
+                                    "error_description": "the body is shorter than "
+                                                         "Content-Length declared"})
         if path == REQUEST_PATH:
             # request_uri_method=post, OpenID4VP 1.0 section 5.10. A posted `wallet_nonce`
             # MUST come back as a claim in the request object, so this is not a POST that can
@@ -124,7 +190,14 @@ def serve(verifier, *, host="0.0.0.0", port=9443, certfile=None, keyfile=None,
     handler = type("_BoundHandler", (_Handler,),
                    {"verifier": verifier, "verbose": verbose,
                     "on_verdict": staticmethod(on_verdict) if on_verdict else None})
-    httpd = http.server.HTTPServer((host, port), handler)
+    # ThreadingHTTPServer, not HTTPServer, and a read timeout on every connection. Both are
+    # about one thing: a client that opens a socket and then goes quiet must not take the
+    # listener off the air for every wallet. With a single accept loop it did, and it cost
+    # the attacker one TCP connection. The timeout closes the slow client; the thread pool
+    # means even a client that keeps its timeout alive occupies one thread rather than all
+    # of the service.
+    httpd = http.server.ThreadingHTTPServer((host, port), handler)
+    httpd.daemon_threads = True
     if certfile:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(certfile, keyfile)
