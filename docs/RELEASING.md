@@ -30,6 +30,23 @@ externally observable changes.
 > it has them. Nothing here bumps a version or publishes: both are the owner's call, and
 > this note exists so the call is in front of whoever next opens this file rather than lost
 > in a commit message.
+>
+> **Updated 2026-09-17, and it is no longer one package.** The same week's adversarial work
+> found and fixed defects on four surfaces: fifteen in `polaris-oid4vp`, sixteen in the
+> detached verifier `polaris-verify` (a trust edge that never expired, a spending limit
+> defeated by a non-finite number, four totality escapes on inclusion proofs, an agent grant
+> whose algorithm the verifier ignored), thirteen across the two reference SDKs, and, in the
+> application, a credential past its own expiry that stayed usable and a timestamp authority
+> that signed whatever it was handed. `docs/PRODUCTION-READINESS.md` carries them all.
+>
+> **The published artifact was measured, not assumed.** On 2026-09-17 `docs/STRANGER-PATH.md`
+> was walked end to end from PyPI rather than from this repository: `pip install --pre
+> polaris-oid4vp` gives 1.0.0rc1, and walt.id's stock wallet presented to it and was
+> ACCEPTED. The same hour, in that installed module, `"exp"` appears ZERO times against three
+> in the tree: **the verifier a stranger installs today never checks whether a credential has
+> expired.** The interoperability success and the security gap are both true, and the first
+> is what makes the second worth acting on, because the path looks fine while you walk it.
+> `lab/EXTERNAL-NOUNS.md` records the walk with its controls.
 
 All four names were unclaimed when checked (the first three on 2026-09-13, `polaris-oid4vp`
 on 2026-09-14, each against a calibration that tells an absent name from a present one) and

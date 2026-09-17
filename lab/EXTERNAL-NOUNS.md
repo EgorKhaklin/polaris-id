@@ -48,6 +48,32 @@ belongs in the bottom section, not the top.
                                    request stage, "no such outstanding request".
     Transcript:                lab/interop/waltid/README.md reproduces it end to end.
 
+**Re-walked 2026-09-17, against the PUBLISHED package rather than the working copy.** The
+2026-09-15 result above was obtained from this repository. What a stranger installs is a
+different artifact, and only the second one tells you whether the product boundary holds.
+
+    Installed:                 pip install --pre polaris-oid4vp  ->  1.0.0rc1 from PyPI
+                               (`pip index versions` without --pre hides prereleases and
+                               reports 0.1.0; that is a property of pip, not of the index)
+    Wallet:                    waltid/wallet-api2:1.0.0, stock image, unmodified
+    Path:                      docs/STRANGER-PATH.md, every step as written
+    Result:                    IT PRESENTED AND THE PUBLISHED VERIFIER ACCEPTED.
+
+                                 {"transmission_success":true, ...}
+                                 <- 200 authentic, claims ['cnf', 'family_name',
+                                    'given_name', 'iat', 'iss', 'vct']
+
+    What that does NOT mean:   the published verifier is the PRE-HARDENING one. Measured
+                               the same hour, in the installed module: `"exp"` appears
+                               ZERO times in `polaris_oid4vp/sdjwt.py`, against three in
+                               the tree. It never reads an expiry, so it accepts a
+                               credential whose validity ended, and `math.isfinite`,
+                               `_DISCLOSURE_FORBIDDEN_NAMES`, `MAX_PRESENTATION_BYTES`,
+                               `_committed_digests` and `expected_vct` are all absent too.
+                               The happy path working end to end is what makes that worth
+                               writing down: an interoperability success is not a security
+                               result, and here they point in opposite directions.
+
 **It refused Polaris first, and it was right.** `polaris-oid4vp keygen` produced a
 request-signing leaf certificate with no KeyUsage extension at all:
 
