@@ -89,7 +89,7 @@ jobs:
       # https://pypi.org/manage/account/publishing/ — see docs/RELEASING.md.
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: distributions
           path: dist
