@@ -161,16 +161,88 @@ _NEW_ALERT = '''
 '''
 
 
-def _new_migration() -> tuple:
-    return ("polaris_sql/migrations/2099-01-01-999-coverage-drill.up.sql",
-            "-- MUTATION: an up migration with no down beside it.\n"
-            "CREATE TABLE IF NOT EXISTS CoverageDrillOnly (drill_id SERIAL PRIMARY KEY);\n")
+#: A new Athena function that does not cap its output. Athena inherits the Atlas C8
+#: discipline, and an unbounded aggregation surface beside the Atlas is the thing that
+#: discipline exists to prevent.
+_NEW_ATHENA_UNBOUNDED = '''
+
+CREATE OR REPLACE FUNCTION athena_coverage_drill_unbounded()
+RETURNS TABLE (agency_id INTEGER) LANGUAGE sql STABLE AS $fn$
+    -- MUTATION: no LIMIT.
+    SELECT agency_id FROM Agency;
+$fn$;
+'''
+
+#: A new Athena function that writes. Athena contributes explanation, never permission;
+#: "the graph says revoke, therefore revoked" is the thing invariant 5 forbids.
+_NEW_ATHENA_WRITES = '''
+
+CREATE OR REPLACE FUNCTION athena_coverage_drill_writes()
+RETURNS TABLE (agency_id INTEGER) LANGUAGE sql STABLE AS $fn$
+    -- MUTATION: Athena acting rather than explaining.
+    INSERT INTO AuditAccessLog (surface) VALUES ('drill');
+    SELECT agency_id FROM Agency LIMIT 10;
+$fn$;
+'''
+
+#: A new prod-compose service with no resource limits and no log rotation. One unbounded
+#: container can OOM the host; unrotated logs fill the disk.
+_NEW_COMPOSE_SERVICE = '''
+  coverage-drill:
+    image: alpine:3.20
+    command: ["sleep", "3600"]
+'''
+
+#: A new stylesheet rule naming an animation that no @keyframes defines.
+_NEW_CSS_ANIMATION = '''
+.coverage-drill-mutation {
+    animation: coverage-drill-phantom 2s linear infinite;
+}
+'''
 
 
-def _new_doc() -> tuple:
-    return ("docs/design/coverage-drill-unlinked.md",
-            "# MUTATION: a design record no README links to\n\nIt should not be reachable "
-            "only by knowing it is there.\n")
+def _new_template() -> tuple:
+    return ("polaris_web/templates/coverage_drill_phantom.html",
+            "{% extends 'base.html' %}\n{% block content %}\n"
+            "<a href=\"{{ url_for('coverage_drill_route_that_does_not_exist') }}\">"
+            "MUTATION: a url_for to a route nobody defines</a>\n{% endblock %}\n")
+
+
+def _new_migration_column() -> tuple:
+    return ("polaris_sql/migrations/2099-01-01-998-coverage-drift.up.sql",
+            "-- MUTATION: a column added by a migration and never declared in 01_schema.sql.\n"
+            "ALTER TABLE Agency ADD COLUMN IF NOT EXISTS coverage_drill_drift TEXT;\n")
+
+
+def _new_migration_down() -> tuple:
+    return ("polaris_sql/migrations/2099-01-01-998-coverage-drift.down.sql",
+            "-- The down half, so this mutation tests column drift and not reversibility.\n"
+            "ALTER TABLE Agency DROP COLUMN IF EXISTS coverage_drill_drift;\n")
+
+
+def _new_migration() -> list:
+    return [("polaris_sql/migrations/2099-01-01-999-coverage-drill.up.sql",
+             "-- MUTATION: an up migration with no down beside it.\n"
+             "CREATE TABLE IF NOT EXISTS CoverageDrillOnly (drill_id SERIAL PRIMARY KEY);\n")]
+
+
+def _new_doc() -> list:
+    return [("docs/design/coverage-drill-unlinked.md",
+             "# MUTATION: a design record no README links to\n\nIt should not be reachable "
+             "only by knowing it is there.\n")]
+
+
+def _new_drifting_migration() -> list:
+    """Both halves, so this measures column drift rather than reversibility.
+
+    Creating only the .up.sql would fail `migrations_reversible` instead, and the drill
+    would credit a neighbouring check for a surface it was not testing.
+    """
+    return [_new_migration_column(), _new_migration_down()]
+
+
+def _new_phantom_template() -> list:
+    return [_new_template()]
 
 
 #: (id, what is added, target -> mutation, the check whose name must appear in a FAIL).
@@ -200,6 +272,26 @@ MUTATIONS = [
 
     ("docs_index_coverage", "a design record ships that no README links to",
      None, _new_doc),
+
+    # Second wave, 2026-09-17. Surfaces where growth is security-relevant: an unbounded
+    # aggregate, a reasoning layer that acts, a container with no ceiling.
+    ("athena_bounded", "an Athena function ships without a LIMIT on its output",
+     "polaris_sql/16_athena.sql", lambda t: t + _NEW_ATHENA_UNBOUNDED),
+
+    ("athena_read_only", "an Athena function ships that WRITES rather than explains",
+     "polaris_sql/16_athena.sql", lambda t: t + _NEW_ATHENA_WRITES),
+
+    ("compose_limits", "a prod-compose service ships with no memory ceiling or log rotation",
+     "polaris_web/docker-compose.prod.yml", lambda t: t + _NEW_COMPOSE_SERVICE),
+
+    ("css_animations", "a stylesheet names an animation no @keyframes defines",
+     "polaris_web/static/polaris.css", lambda t: t + _NEW_CSS_ANIMATION),
+
+    ("template_endpoints", "a template links to a route nobody defines",
+     None, _new_phantom_template),
+
+    ("migration_drift", "a migration adds a column 01_schema.sql never declares",
+     None, _new_drifting_migration),
 ]
 
 
@@ -237,7 +329,8 @@ def main() -> int:
     modified = sorted({rel for _c, _w, rel, _m in MUTATIONS if rel})
     print("REPAIR, if this run is killed:")
     print("  git checkout -- " + " ".join(modified))
-    print("  rm -f %s %s" % (_new_migration()[0], _new_doc()[0]))
+    created = [rel_ for _c, _w, r, m in MUTATIONS if r is None for rel_, _b in m()]
+    print("  rm -f " + " ".join(created))
     print()
 
     dirty = subprocess.run(["git", "status", "--porcelain", "--"] + modified,
@@ -275,17 +368,21 @@ def main() -> int:
             finally:
                 path.write_text(original)
         else:
-            new_rel, body = mutate()
-            path = ROOT / new_rel
-            if path.exists():
-                print("%s already exists; refusing to overwrite it" % new_rel, file=sys.stderr)
+            created = mutate()
+            paths = [ROOT / rel_ for rel_, _b in created]
+            existing = [p for p in paths if p.exists()]
+            if existing:
+                print("%s already exists; refusing to overwrite it"
+                      % ", ".join(str(p) for p in existing), file=sys.stderr)
                 return 2
             try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(body)
+                for (rel_, body), p in zip(created, paths):
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(body)
                 failing = _failing_checks()
             finally:
-                path.unlink(missing_ok=True)
+                for p in paths:
+                    p.unlink(missing_ok=True)
 
         caught = expected in failing
         # Which OTHER checks noticed. Recorded rather than credited: a neighbour going red
