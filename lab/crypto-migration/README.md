@@ -126,9 +126,74 @@ a deployment fact nobody here has.
 
 ---
 
-## What is still unmeasured
+## Rollback: there is none, and it is the unique constraint that says so
 
-- **Rollback.** `uc6_migrate_algorithm` moves a token forward. Nothing here measures what
-  happens if a migration must be reversed mid-population.
-- **Cost at scale.** CI measures re-signing a population. The number is not stated here and
-  a deploying organisation would need it.
+**2026-09-17. `rollback.py`, five cases and a positive control against a live schema.**
+
+The reason to reverse a migration is that the algorithm you moved *to* turned out to be the
+problem, which is the same event the agility claim exists for. So the question is not academic.
+Three schema objects decide the answer and the third is the one that settles it.
+
+| an operator reaching for a reversal tries | and gets |
+|---|---|
+| un-setting the old signature's `deprecation_date` | refused: *deprecation_date cannot be un-set once recorded* |
+| moving that deprecation earlier, to end the window | refused: *deprecation_date cannot be moved earlier once recorded* |
+| migrating back to the algorithm it came from | refused: *duplicate key value violates unique constraint `one_signature_per_algorithm_per_token`* |
+| the same, on a token whose old signature is still ACTIVE | refused the same way, so it is the unique constraint and not the deprecation |
+
+The first two are `trg_token_signature_immutable`, and they are right: a deprecation that can
+be withdrawn is not a deprecation. The third is the finding.
+`one_signature_per_algorithm_per_token UNIQUE (token_id, algorithm_id)` means **a token can
+never hold a second signature under an algorithm it has already used**, so the append-only
+route back, which is the one the design would otherwise leave open, is closed too. Deprecated
+or not, first or last, in any order: a token that has been on ML-DSA-65 can never be on
+ML-DSA-65 again.
+
+**Migration is one-way per token, and the only reversal is sideways.** An authority that moved
+a population A to B and then learns B is broken cannot put it back on A. Its one move is to
+migrate to C, and C has to already exist, be keyed, and not be deprecated at the moment of the
+emergency. `CryptographicAlgorithm` is seeded with five here; whether a spare exists in a
+deployment is an operational question this lab can raise and cannot answer.
+
+This is not a CORE-BUG. No published promise says a migration can be reversed, and an
+audit-of-record you can walk back is not one. What it is: a prerequisite for migration
+planning that nobody had written down.
+[docs/design/multi-sig-migration.md](../../docs/design/multi-sig-migration.md) stated the
+unique constraint as a mechanism and did not draw the consequence; it now does.
+
+The fifth case is why the table above has four rows and not three. Refusals look alike, and
+"migrating back is refused" would have been credited to the deprecation if the run had not
+also tried it on a token that never deprecated anything. The positive control is the same
+discipline from the other side: a migration to an algorithm the token has never used still
+succeeds at that point in the transaction, so the four refusals are refusals and not a
+transaction that had stopped accepting anything.
+
+## Cost at scale: 910 credentials a second, 4.5 days for 350 million
+
+**2026-09-17, the `pqc-real` CI job, run 35269852977.** `polaris-quantum-event-drill.py`
+re-signs a population under **real ML-DSA-87** with liboqs, and this is the row to quote:
+
+| | one runner, real ML-DSA-87 |
+|---|---|
+| re-signed per second | **910** |
+| of which signing | 0.9s of 1.4s (**64%**) |
+| of which database | 0.5s |
+| 350,000,000 at this rate | **4.5 days** |
+| the same at 64 runners | 0.1 days |
+
+**The number an operator is most likely to read is the wrong one.** The default CI job runs
+the same drill under the development placeholder, in the same build, and reports 6348 a second
+and 0.6 days: seven times faster, because a SHA3-256 placeholder is not a lattice signature.
+Signing's share moves from 2 per cent to 64 per cent between the two rows, which is the tell.
+Quote the `pqc-real` row.
+
+What the extrapolation assumes, stated because 2000 measured credentials to 350 million is
+five orders of magnitude: it is linear in the population and assumes runners do not contend,
+which holds while they divide the work by `SKIP LOCKED` and write disjoint rows. It does not
+model the write amplification of a larger signature, replication lag under sustained bulk
+insert, or an issuance load running alongside. The 64-runner row inherits all of that and
+should be read as a shape, not a schedule.
+
+The useful shape for planning is the split: at 64 per cent, this is a **signing-bound**
+operation, so the thing to buy more of is signing capacity, not database. That flips under the
+placeholder, which is the other reason not to plan off the wrong row.

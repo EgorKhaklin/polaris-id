@@ -76,6 +76,29 @@ signature it sets the date a second in the future, because
 `deprecation_after_signed` requires the deprecation to follow the signing and
 a row can be milliseconds old. Both triggers then fire on the way out.
 
+## Migration is one-way per token
+
+The consequence of that unique constraint is worth stating rather than leaving
+to be inferred, because it is the first thing an operator will look for and
+not find. **A token can never hold a second signature under an algorithm it
+has already used**, so there is no route back to a previous algorithm: not by
+un-setting a `deprecation_date`, which `enforce_token_signature_immutability`
+refuses, and not by calling the procedure again, which
+`one_signature_per_algorithm_per_token` refuses whether or not anything was
+deprecated.
+
+So an authority that migrates a population from A to B and then learns B is
+the problem cannot return it to A. The move available is sideways, to a third
+algorithm that must already exist in `CryptographicAlgorithm`, have keys, and
+not itself be deprecated at the moment it is needed. Provisioning that spare
+before it is needed is a migration-planning prerequisite, not something the
+schema can supply on the day.
+
+This is intended rather than a limitation to be fixed. TokenSignature is the
+audit of record for migrations, and a record you can walk back is not one.
+Measured in [lab/crypto-migration/rollback.py](../../lab/crypto-migration/rollback.py),
+which runs the four refusals and a positive control against a live schema.
+
 ## What a verifier sees during a migration
 
 Verification reads the signatures where `deprecation_date IS NULL`. A verifier
