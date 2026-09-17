@@ -293,6 +293,37 @@ neither: no contract promises them and no test can be written that shows one bro
 live in the script's own declared list, so the next person to read this does not have to derive
 them again.
 
+**Thirty-one of thirty-seven refusals the application makes were untested, and the login rate
+limiter was the only one of fourteen that anything exercised (2026-09-17).** CHECK constraints
+have been mutation-tested since v9.407, triggers since v9.413, the ZK witnesses since v9.419,
+the conformance contract since v9.429, the stored procedures since v9.437 and both SDKs since
+v9.458. The Flask application was the member of that family nobody had measured, and three of
+the ten constraints are enforced there and nowhere else.
+`scripts/polaris-app-mutation-drill.py` replaces one refusal's condition with `False` at a time
+and asks whether any test turns red. Of the 37 refusals answering 401, 403, 409, 413 or 429,
+**31 survived**: the suite stayed green without them.
+
+They are not all equal, and the drill's declared list says which is which. Seven are covered by
+`scripts/polaris-federation-instances-drill.py`, which stands up two instances and speaks HTTP
+because a mediated exchange needs real ML-DSA; what the survivor means there is that a developer
+running the SUITE gets no signal, so the drill has to actually run. Three are defence-in-depth
+assertions behind `login_required` that no test can reach. The rest were genuinely untested, and
+five of them are authentication decisions: an authenticator model refused by policy could still
+complete a login (the assertion path never consulted the policy that registration did, and the
+commit that added that policy claimed the existing tests covered it, which this drill disproved);
+any enrolled credential could finish any admin's second factor; an admin past the enrolment
+deadline with no credential was refused by code no test exercised; one authority could sign for
+another authority's credential; and a credential that was no longer ACTIVE could still authorize
+a signature. All five now have tests, each shown to fail when its refusal is switched off.
+
+Separately, of the fourteen rate limiters the application installs, **the login one was the only
+one any test drove**. `F03_RateLimitingTests` now drives the five holder-facing limiters past
+their bounds; the rest are coarse velocity bounds of 120 to 600 per minute, which a unit test
+cannot drive for less than it would cost, so `check_rate_limits_are_enforced` pins them
+structurally: each must sit inside a negated guard that answers 429, so a limiter whose answer
+stops being acted on fails the build. A structural pin proves the guard is written, not that it
+fires, and the check's message says so.
+
 **The local gate was narrower than CI in nine places, and the check that existed to prevent
 that reported OK (2026-09-17).** `check_local_gate_covers_ci` was written so that a suite CI
 runs cannot be one the ship tool has never heard of. It compared the ship tool against

@@ -47,6 +47,60 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when CSP enables 'unsafe-inline' for scripts"
 
 
+def test_rate_limits_check_discriminates(tmp_path):
+    """The mutation this check exists for is the subtle one.
+
+    Deleting `rate_limiter.allow` is obvious and something would notice. What nothing
+    noticed, until the application mutation drill measured it on 2026-09-17, is the guard
+    around it ceasing to refuse: the call still happens, its answer is discarded, and the
+    limiter costs a round trip and stops nothing. So the fixture below mutates the GUARD,
+    not the call.
+    """
+    (tmp_path / "polaris_web").mkdir()
+    app = tmp_path / "polaris_web" / "app.py"
+
+    def source(**broken):
+        out = []
+        for prefix, _what in checks._RATE_LIMITED_ROUTES:
+            style = broken.get(prefix)
+            if style == "gone":
+                continue
+            if style == "unguarded":
+                out.append("    security.rate_limiter.allow('%s%%s' %% key, 10, 60)\n"
+                           "    return jsonify(ok=True), 200\n" % prefix)
+            else:
+                out.append("    if not security.rate_limiter.allow('%s%%s' %% key, 10, 60):\n"
+                           "        return jsonify(error='rate_limited'), 429\n" % prefix)
+        return "".join(out)
+
+    def level(text, expect_in=None):
+        app.write_text(text)
+        out = checks.check_rate_limits_are_enforced(tmp_path)
+        if expect_in is not None:
+            assert any(expect_in in f.message for f in out), \
+                "expected %r in %r" % (expect_in, [f.message for f in out])
+        return out[0].level
+
+    app.write_text(source())
+    assert checks.check_rate_limits_are_enforced(tmp_path)[0].level == "OK", \
+        "must PASS when every limiter is written as a refusal"
+
+    # The drill's own mutation: the answer is computed and thrown away.
+    assert level(source(**{"tsa:": "unguarded"}), "does not refuse") == "FAIL", \
+        "must FAIL when a limiter is called but its answer is not acted on"
+    # And the blunter one, where the route loses its limiter entirely.
+    assert level(source(**{"auth:": "gone"}), "not installed") == "FAIL", \
+        "must FAIL when a route named here has no limiter at all"
+    # A 429 that belongs to some other route must not satisfy a missing guard. The window
+    # is bounded for exactly this reason: without it, one 429 anywhere would cover them all.
+    far = source(**{"mdoc:": "gone"}) + ("    # filler\n" * 200) + "    return '', 429\n"
+    assert level(far, "not installed") == "FAIL", \
+        "a distant 429 must not be read as this limiter's refusal"
+
+    assert level("", "could not be read") == "FAIL", \
+        "an empty app.py is not a passing set of rate limits"
+
+
 def test_json_door_check_discriminates(tmp_path):
     """The door has four ways to be broken, and one of them looks like the fix.
 

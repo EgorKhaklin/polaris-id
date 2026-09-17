@@ -491,6 +491,60 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         self.assertEqual(bad.status_code, 400)
         self.assertEqual(bad.get_json()['error'], 'not_verifiable')
 
+    # -- two refusals on this route that the application mutation drill found nothing
+    # -- noticing (2026-09-17). Both are about WHOSE credential this is and whether it is
+    # -- still good, which is the whole of what holder-authorized signing rests on.
+
+    def _federate(self, *agency_ids):
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = ANY(%s)",
+                        ('ab' * 16, list(agency_ids)), fetch='none')
+
+    def test_one_authority_cannot_sign_for_another_authoritys_credential(self):
+        """Agency 2 must refuse a credential agency 1 issued.
+
+        The presentation is genuine and the possession check passes: what is wrong is that
+        this is not agency 2's credential to act on. Switching the refusal off let any
+        federated authority sign on behalf of any other authority's holder, and the suite
+        stayed green. This is the same shape as the operator-authority-scope defect found
+        earlier the same day: authority to act, checked against the wrong subject.
+        """
+        tv, sig = self._credential()          # issued by agency 1
+        self._federate(1, 2)
+        body = {'token_value': tv, 'signature_hex': sig, 'digest_hex': 'cd' * 32}
+
+        r = self.client.post('/api/v1/sign/2/holder', json=body)
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True))
+        self.assertIn('did not issue', r.get_json()['error_description'])
+
+        # The control: the SAME presentation at the authority that did issue it is signed.
+        # Without this leg a route that refused everything would pass the assertion above.
+        self.assertEqual(self.client.post('/api/v1/sign/1/holder', json=body).status_code, 200)
+
+    def test_a_credential_that_is_no_longer_active_cannot_authorize_a_signature(self):
+        """Possession is not authorization. A credential reported lost is still presentable.
+
+        `_possession_authenticated` answers "this is the genuine credential", which stays
+        true after the authority marks it lost. The status gate is what turns that into "and
+        it is still authoritative", and nothing noticed when it stopped.
+        """
+        tv, sig = self._credential()
+        self._federate(1)
+        body = {'token_value': tv, 'signature_hex': sig, 'digest_hex': 'cd' * 32}
+        self.assertEqual(self.client.post('/api/v1/sign/1/holder', json=body).status_code, 200,
+                         'control: it signs while the credential is ACTIVE')
+
+        # LOST, not REVOKED: `ACTIVE -> LOST` is a legal transition the state machine
+        # lists, while a direct UPDATE to REVOKED is refused outright (revocation belongs to
+        # `uc8_revoke_token`, which on this small fixture also crosses the agency's velocity
+        # bound and demands a co-signer). The gate under test reads `status != 'ACTIVE'`, so
+        # any non-ACTIVE terminal state measures it, and this one needs no workaround.
+        flask_app.query("SELECT set_config('polaris.reason_code', 'TEST_LOST', true); "
+                        "UPDATE IdentityToken SET status = 'LOST' WHERE token_value = %s",
+                        (tv,), fetch='none')
+        r = self.client.post('/api/v1/sign/1/holder', json=body)
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True))
+        self.assertIn('not ACTIVE', r.get_json()['error_description'])
+
     def test_timestamp_can_come_from_another_federated_agency(self):
         # v9.334: a signer's own timestamp is convenience evidence; an operator may name another
         # federated agency to issue the container's timestamp, never the signer itself.
@@ -5408,6 +5462,47 @@ class F03_RateLimitingTests(UnauthenticatedTestCase):
             'username': 'oneMore', 'password': 'whatever'
         })
         self.assertEqual(r.status_code, 429)
+
+    # -- Every OTHER rate limiter in the application. 2026-09-17: the login limiter above
+    # -- was the only one any test exercised. The application mutation drill switched each
+    # -- of the others off in turn and the whole suite stayed green, so eleven controls
+    # -- against an unauthenticated caller burning an authority's capacity were, as far as
+    # -- the suite could tell, decoration.
+    #
+    # Each row: the path, a body that reaches the limiter, and the limit the route sets.
+    # The limiter sits AFTER shape validation and BEFORE authentication on all of these, so
+    # a well-formed body with a credential that does not exist is enough to reach it: the
+    # requests under the limit answer 400, and the one over it answers 429. That ordering is
+    # the point of the control, and a test that had to present a real credential first would
+    # not be testing it.
+    HOLDER_ROUTES = [
+        ('/api/v1/holder-binding', 10, {}),
+        ('/api/v1/status-assertion', 10, {}),
+        ('/api/v1/mdoc', 10, {}),
+        ('/api/v1/verifiable-credential', 10, {}),
+        ('/api/v1/holder-key', 5, {'event': 'bound', 'holder_algorithm': 'ML-DSA-65',
+                                   'holder_public_key_hex': 'ab' * 32}),
+    ]
+
+    def test_every_holder_facing_route_stops_an_unauthenticated_caller_at_its_limit(self):
+        for path, limit, extra in self.HOLDER_ROUTES:
+            with self.subTest(route=path):
+                # A key of its own per route: the limiter is keyed on SHA3(token_value), so
+                # sharing one token between routes would let the first route's traffic
+                # exhaust the next one's budget and every assertion after the first would
+                # pass for the wrong reason.
+                body = dict(extra, token_value='RL-%s' % path.rsplit('/', 1)[-1],
+                            signature_hex='00' * 32)
+                seen = []
+                for _ in range(limit):
+                    seen.append(self.client.post(path, json=body).status_code)
+                self.assertNotIn(429, seen,
+                    '%s refused before its own limit of %d: %r' % (path, limit, seen))
+                over = self.client.post(path, json=body)
+                self.assertEqual(over.status_code, 429,
+                    '%s admitted request %d, one past its limit of %d'
+                    % (path, limit + 1, limit))
+                self.assertEqual(over.get_json()['error'], 'rate_limited')
 
 
 class F04b_AtlasBasemapCspTests(PolarisTestCase):
@@ -10910,6 +11005,104 @@ class WebAuthnCeremonyTests(PolarisTestCase):
         listed = _SyntheticAuthenticator('es256', aaguid=allowed)
         self._enroll(listed)
         self.assertEqual(self._credential_row(listed)['aaguid'], allowed)
+
+    # -- three refusals on this path that no test noticed until the application
+    # -- mutation drill switched each of them off (2026-09-17). Every one of them is an
+    # -- authentication decision, and the suite stayed green without it.
+
+    def test_an_authenticator_model_refused_by_policy_cannot_complete_a_LOGIN(self):
+        """The model policy binds on the ASSERTION path, not only at enrolment.
+
+        `test_allowed_aaguids_policy` covers registration and reads as if it covered this.
+        It does not: switching off the assertion-side refusal left the whole suite green,
+        which is how a deployment that stopped trusting a model would have kept accepting
+        every credential of that model already enrolled.
+        """
+        allowed = 'f8a011f3-8c0a-4d15-8006-17111f9edc7d'
+        os.environ['POLARIS_WEBAUTHN_ALLOWED_AAGUIDS'] = allowed
+        auth = _SyntheticAuthenticator('es256', aaguid=allowed)
+        self._enroll(auth)
+        self._second_factor(auth)                      # control: it works while allowed
+
+        # The deployment stops trusting the model. The credential stays on file, by design.
+        os.environ['POLARIS_WEBAUTHN_ALLOWED_AAGUIDS'] = 'c1d2e3f4-0000-4000-8000-000000000000'
+        _client, r = self._second_factor(auth, expect=401)
+        self.assertIn('POLARIS_WEBAUTHN_ALLOWED_AAGUIDS', r.get_json()['error'])
+        self.assertIn('WEBAUTHN_ASSERTION_FAILED', _audit_events('admin'))
+
+    def test_a_credential_belonging_to_another_user_cannot_finish_this_login(self):
+        """The assertion must be by a credential of the PARTIALLY-AUTHENTICATED user.
+
+        Without this refusal any enrolled credential completes any admin's second factor,
+        which makes the second factor a possession check on the estate rather than on the
+        account. Nothing noticed when it was switched off.
+        """
+        auth = _SyntheticAuthenticator('es256')
+        self._enroll(auth)
+        cred_id = self.wa._canonical_credential_id(auth.credential_id_b64u)
+        other = _sql("SELECT user_id FROM AppUser WHERE username = 'operator'", fetch='one')
+        self.assertIsNotNone(other, 'this test needs a second account to reassign to')
+
+        # The credential must still be ADMIN's when the password succeeds, or the login
+        # completes without a second factor at all and this measures nothing. So the owner
+        # is changed between `begin` and `finish`, which is precisely the state the refusal
+        # names: the stored credential's user is not the partially-authenticated user.
+        client = flask_app.app.test_client()
+        r = client.post('/login', data={'username': 'admin',
+                                        'password': TEST_PASSWORDS['admin']})
+        self.assertEqual(r.status_code, 302)
+        self.assertIn('/auth/webauthn/assert', r.headers['Location'],
+                      'an admin with a credential must be sent to the second factor')
+        options = client.post('/auth/webauthn/assert/begin').get_data(as_text=True)
+
+        _sql("UPDATE OperatorWebauthnCredential SET user_id = %s WHERE credential_id = %s",
+             (other['user_id'], cred_id), fetch='none')
+        self.addCleanup(lambda: _sql(
+            "UPDATE OperatorWebauthnCredential SET user_id = (SELECT user_id FROM AppUser "
+            "WHERE username = 'admin') WHERE credential_id = %s", (cred_id,), fetch='none'))
+
+        payload = auth.assertion(options, self.origin, self.rp_id, True)
+        r = client.post('/auth/webauthn/assert/finish', json=payload)
+        self.assertEqual(r.status_code, 401, r.get_data(as_text=True))
+        self.assertEqual(client.get('/dashboard').status_code, 302,
+                         'a refused second factor must not leave a usable session')
+        self.assertIn('WEBAUTHN_ASSERTION_FAILED', _audit_events('admin'))
+
+    def test_an_admin_past_the_enrolment_deadline_with_no_credential_cannot_log_in(self):
+        """`mfa_overdue` refuses the password login outright.
+
+        It is the whole point of setting a deadline: after it passes, a password alone is
+        not enough. Switching the refusal off logs the admin straight in, and every test
+        stayed green, so the deadline was a date nothing enforced at the moment it mattered.
+        """
+        _sql("UPDATE AppUser SET webauthn_required_after = CURRENT_TIMESTAMP - INTERVAL '1 day' "
+             "WHERE username = 'admin'", fetch='none')
+        # Moving a deadline FURTHER AWAY needs a recorded justification; the trigger that
+        # says so is a control, and a test tearing down after itself is not exempt from it.
+        self.addCleanup(lambda: _sql(
+            "SELECT set_config('polaris.justification', "
+            "'test teardown: restores the deadline this test moved into the past', true); "
+            "UPDATE AppUser SET webauthn_required_after = NULL WHERE username = 'admin'",
+            fetch='none'))
+        self.assertIsNone(
+            _sql("SELECT 1 AS x FROM OperatorWebauthnCredential c JOIN AppUser u USING (user_id) "
+                 "WHERE u.username = 'admin'", fetch='one'),
+            'this test measures the no-credential case; a credential on file makes it vacuous')
+
+        # A FRESH client: the fixture's own client is already signed in from setUp, so
+        # asking it for a page would report that earlier session, not this refusal.
+        client = flask_app.app.test_client()
+        r = client.post('/login', data={'username': 'admin',
+                                        'password': TEST_PASSWORDS['admin']})
+        self.assertEqual(r.status_code, 401,
+                         'a correct password past the deadline, with no credential, is refused')
+        self.assertEqual(client.get('/dashboard').status_code, 302,
+                         'a refused login must not leave a usable session')
+        # The fixture signed in during setUp, so the audit trail already carries a
+        # LOGIN_SUCCESS. What this refusal must produce is the LAST word being a failure.
+        events = _audit_events('admin')
+        self.assertEqual(events[-1], 'LOGIN_FAILED',
+                         'the refused attempt must be recorded as a failure: %r' % (events[-3:],))
 
     def test_hardware_only_requests_cross_platform_attachment(self):
         os.environ['POLARIS_WEBAUTHN_HARDWARE_ONLY'] = '1'

@@ -171,6 +171,93 @@ def check_csp_forbids_unsafe_inline(root: pathlib.Path) -> list[Finding]:
     return _ok("csp", "CSP pins script-src 'self'; no unsafe-inline on scripts (C5)")
 
 
+#: Every rate limiter the application installs, as (the key prefix it uses, the route it
+#: guards). The prefix is what makes each row checkable: it is the literal the route passes
+#: to `rate_limiter.allow`, so this list cannot be satisfied by a limiter somewhere else.
+#:
+#: Measured 2026-09-17 by `scripts/polaris-app-mutation-drill.py`: switching off any one of
+#: these left the entire application suite green, because the only rate limiter any test
+#: exercised was the login one. `F03_RateLimitingTests` now drives the five holder-facing
+#: limiters past their bounds behaviourally. The rest are coarse velocity bounds of 120 to
+#: 600 per minute, and a unit test that issued 600 real timestamps to prove a limiter exists
+#: would cost more than it measures, so they are pinned structurally here instead. Saying
+#: which is which is the point: a structural pin proves the guard is written, not that it
+#: fires.
+_RATE_LIMITED_ROUTES = (
+    ("login:", "the login form"),
+    ("write:", "every state-changing request, per client address"),
+    ("rptoken:", "the relying-party token endpoint"),
+    ("rpverify:", "the relying-party verify endpoint"),
+    ("holderkey:", "holder key binding"),
+    ("holderbind:", "holder binding"),
+    ("statusassert:", "stapled status assertions"),
+    ("mdoc:", "mdoc issuance"),
+    ("vc:", "verifiable-credential issuance"),
+    ("exmint:", "signed exchange-receipt minting"),
+    ("tsa:", "the timestamp authority"),
+    ("exch:", "the exchange gateway"),
+    ("sign:", "holder-authorized document signing"),
+    ("auth:", "the authorization endpoint"),
+)
+
+
+def check_rate_limits_are_enforced(root: pathlib.Path) -> list[Finding]:
+    """Every rate limiter is written as a refusal, not merely called (2026-09-17).
+
+    The hazard is not that `rate_limiter.allow` disappears. It is that the guard around it
+    stops refusing: `if not security.rate_limiter.allow(...)` becomes something that never
+    fires, the call still happens, its answer is discarded, and an unauthenticated caller can
+    burn an authority's capacity for as long as it likes. That is exactly the mutation the
+    application drill applies, and before this check nothing in the tree would have failed.
+
+    So this reads the GUARD and the answer together: each limiter must appear inside a
+    negated condition whose branch returns 429. A limiter whose result is computed and
+    ignored fails here, which is the shape a refactor produces.
+    """
+    name = "rate_limits"
+    app = _read(root, "polaris_web/app.py")
+    if not app:
+        return _fail(name, "polaris_web/app.py could not be read")
+
+    missing, unguarded = [], []
+    for prefix, what in _RATE_LIMITED_ROUTES:
+        # The call itself, anywhere.
+        if "'%s" % prefix not in app and '"%s' % prefix not in app:
+            missing.append("%s (%s)" % (prefix, what))
+            continue
+        # The call inside a negated guard whose branch answers 429. The window between the
+        # guard and the 429 is short by construction; 400 characters covers every one of
+        # them and does not reach the next route.
+        # The prefix may sit on a later line than the `if not`: the login and write limiters
+        # pass their arguments one per line. Matching only the same line reported the login
+        # limiter, the one limiter the suite has always tested, as unguarded.
+        #
+        # The window may NOT run past the next limiter. Without that clause an unguarded
+        # limiter borrows the 429 belonging to the route below it and reports as guarded,
+        # which is precisely the mutation this check exists to catch; the detection test
+        # caught the check making that mistake.
+        pat = re.compile(r"if not [\w.]*rate_limiter\.allow\([\s\S]{0,120}?['\"]%s"
+                         r"(?:(?!rate_limiter\.allow)[\s\S]){0,400}?\b429\b"
+                         % re.escape(prefix), re.S)
+        if not pat.search(app):
+            unguarded.append("%s (%s)" % (prefix, what))
+
+    if missing:
+        return _fail(name, "%d rate limiter(s) named here are not installed in app.py: %s. "
+                           "Either the route lost its limiter or this list is stale; both are "
+                           "findings." % (len(missing), ", ".join(missing)))
+    if unguarded:
+        return _fail(name, "%d rate limiter(s) are CALLED but their answer does not refuse: %s. "
+                           "A limiter whose result is computed and discarded costs a round trip "
+                           "and stops nothing." % (len(unguarded), ", ".join(unguarded)))
+    return _ok(name, "all %d rate limiters are written as refusals: each is inside a negated "
+                     "guard answering 429, so a limiter whose answer stopped being acted on "
+                     "fails the build. Five of them are additionally driven past their bounds "
+                     "by F03_RateLimitingTests; the rest are velocity bounds of 120 to 600 per "
+                     "minute, pinned here structurally and not exercised"
+                     % len(_RATE_LIMITED_ROUTES))
+
+
 def check_json_door_refuses_non_finite(root: pathlib.Path) -> list[Finding]:
     """A number that is not a number does not get past the JSON door (2026-09-17).
 
@@ -18496,6 +18583,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_athena_rule_enforcement_resolves,
     check_csp_forbids_unsafe_inline,
     check_json_door_refuses_non_finite,
+    check_rate_limits_are_enforced,
     check_one_active_token_index,
     check_aor_append_only_triggers,
     check_aor_privilege_boundary,
