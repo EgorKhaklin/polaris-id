@@ -2945,8 +2945,44 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
         body = "\n".join(lines[i:end])
         for param in sorted(set(countish.findall(body))):
             checked += 1
-            clamped = re.search(r"%s\s*(?:<=|<|>)\s*0|%s\s*>\s*\d+|min\(\s*%s|_ATLAS_MAX"
-                                % (param, param, param), body)
+            # An UPPER bound, in the STATEMENT that reads this parameter. Every part of
+            # that sentence was wrong here until 2026-09-17, and the check reported "all 10
+            # caller-controlled counts across 17 atlas routes are clamped" while at least one
+            # was not:
+            #
+            #   `%s <= 0`   is a LOWER bound. /api/atlas/points raises on a non-positive
+            #               limit, and that alternative alone made the route pass. Deleting
+            #               its real `min(..., _ATLAS_MAX_POINTS)` changed nothing here, in
+            #               the application suite, or in this check's own detection tests.
+            #               C8 bounds a result set from ABOVE; rejecting zero is not a cap.
+            #   `_ATLAS_MAX` bare, unbound to the parameter, so a cap constant mentioned
+            #               anywhere in a route vouched for every count in it.
+            #
+            # That is "mechanism present, property assumed", which the comment above says
+            # this check exists to stop. Two things it must keep straight now: the clamp is
+            # often written across TWO lines (`breakdown` and `crosstab` open `min(` on one
+            # and close it on the next), so this reads the whole statement; and a cap used as
+            # a DEFAULT is not a clamp (`args.get('limit', str(_ATLAS_MAX_CATEGORIES))`
+            # mentions the constant while bounding nothing), so `min(` must be there too.
+            cap = r"(?:_ATLAS_MAX\w*|\d+)"
+            at = body.find("request.args.get")
+            stmt, depth, j = "", 0, body.rfind("\n", 0, body.find(param, at)) + 1
+            for j in range(j, len(body)):
+                ch = body[j]
+                depth += (ch in "([{") - (ch in ")]}")
+                if ch == "\n" and depth <= 0:
+                    break
+                stmt += ch
+            var = re.match(r"\s*(\w+)\s*=", stmt)
+            clamped = bool(re.search(r"min\(", stmt) and re.search(cap, stmt))
+            if not clamped and var:
+                # The clamp is often a SEPARATE statement: `x = args.get(...)` then
+                # `x = min(x, CAP)`. Both halves are required, so this stays specific: the
+                # variable AND a cap inside one min(), or the variable compared to a cap.
+                v = var.group(1)
+                clamped = bool(re.search(
+                    r"min\(\s*%s\s*,\s*%s\s*\)|min\(\s*%s\s*,\s*%s\s*\)|%s\s*>=?\s*%s"
+                    % (v, cap, cap, v, v, cap), body))
             if not clamped:
                 unclamped.append("%s?%s=" % (route, param))
     if unclamped:

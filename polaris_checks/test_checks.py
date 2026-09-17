@@ -1051,6 +1051,38 @@ def test_c8_atlas_caps_checks_routes_not_only_constants(tmp_path):
     assert out.level == "FAIL" and "newthing" in out.message, \
         "must FAIL on a newly added unbounded route even when the others are fine"
 
+    # 2026-09-17, the three shapes the clamp detection got wrong. Each of these passed
+    # while /api/atlas/points had its real `min(..., _ATLAS_MAX_POINTS)` deleted, and so did
+    # the application suite and this test as it stood.
+
+    # A LOWER bound is not a cap. This is the exact defect: the route rejects a
+    # non-positive limit and bounds nothing above it.
+    write("@app.route('/api/atlas/points')\n"
+          "def atlas_points():\n"
+          "    limit = int(request.args.get('limit', '500'))\n"
+          "    if limit <= 0:\n"
+          "        raise ValueError('limit must be positive')\n")
+    out = checks.check_c8_atlas_caps(tmp_path)[0]
+    assert out.level == "FAIL" and "never clamp it" in out.message, \
+        "rejecting zero is a lower bound; C8 bounds the result set from ABOVE"
+
+    # A cap used as a DEFAULT bounds nothing: the constant is named, the count is not capped.
+    write("@app.route('/api/atlas/points')\n"
+          "def atlas_points():\n"
+          "    limit = int(request.args.get('limit', str(_ATLAS_MAX_POINTS)))\n")
+    out = checks.check_c8_atlas_caps(tmp_path)[0]
+    assert out.level == "FAIL" and "never clamp it" in out.message, \
+        "a cap in the default argument is not a clamp"
+
+    # And the real clamp written across TWO lines, which /api/atlas/breakdown and
+    # /api/atlas/crosstab both use. A line-scoped reading would call this unclamped.
+    write("@app.route('/api/atlas/breakdown')\n"
+          "def atlas_breakdown():\n"
+          "    limit = min(int(request.args.get('limit', str(_ATLAS_MAX_CATEGORIES))),\n"
+          "                _ATLAS_MAX_CATEGORIES)\n")
+    assert checks.check_c8_atlas_caps(tmp_path)[0].level == "OK", \
+        "a min() clamp spanning two lines is still a clamp"
+
     # And a tree where nothing reads a count measured nothing about C8.
     write("@app.route('/api/atlas/stats')\ndef atlas_stats():\n    return {}\n")
     out = checks.check_c8_atlas_caps(tmp_path)[0]
