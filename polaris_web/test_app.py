@@ -648,6 +648,69 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         vcid, _ = self._rp('verify')
         self.assertEqual(self._authorize(vcid, tv, sig, challenge).status_code, 401)
 
+    # -- two refusals here that the application mutation drill found nothing noticing
+    # -- (2026-09-17). The scope test above covers the AUTHORIZE endpoint's scope; these two
+    # -- are the token endpoint's own scope check and the credential-status gate.
+
+    def test_a_credential_that_is_no_longer_active_cannot_authenticate(self):
+        """Possession is not authorization, on the login path too.
+
+        A credential the authority has withdrawn is still presentable: the signature over it
+        does not stop verifying. If the status gate goes, that holder keeps logging in to
+        every relying party in the federation, which is the single thing the online
+        authorization answer exists to prevent. Nothing noticed when it was switched off.
+        """
+        cid, _secret = self._rp('authenticate')
+        _tid, tv, sig = self._credential()
+        _verifier, challenge = self._pkce()
+        self.assertEqual(self._authorize(cid, tv, sig, challenge).status_code, 200,
+                         'control: it authenticates while the credential is ACTIVE')
+
+        # ACTIVE -> LOST is a transition the state machine lists; a direct UPDATE to REVOKED
+        # is refused, because revocation belongs to uc8_revoke_token.
+        flask_app.query("SELECT set_config('polaris.reason_code', 'TEST_LOST', true); "
+                        "UPDATE IdentityToken SET status = 'LOST' WHERE token_value = %s",
+                        (tv,), fetch='none')
+        r = self._authorize(cid, tv, sig, challenge)
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True))
+
+    def test_the_token_endpoint_checks_the_scope_again_for_itself(self):
+        """The code is opaque and the token endpoint re-reads the scope.
+
+        A relying party can hold a valid code and have lost the authenticate scope between
+        issuing it and redeeming it, and a code is deliberately stateless, so the endpoint
+        cannot learn that from the code. Checking the scope AGAIN at redemption is the whole
+        mechanism, and nothing noticed when it stopped.
+        """
+        cid, secret = self._rp('authenticate')
+        _tid, tv, sig = self._credential()
+        verifier, challenge = self._pkce()
+        code = self._authorize(cid, tv, sig, challenge).get_json()['code']
+
+        # The relying party loses the scope after the code was issued.
+        flask_app.query("SELECT set_config('polaris.justification', "
+                        "'test fixture: withdraws the authenticate scope under test', true); "
+                        "UPDATE RelyingParty SET scope = %s WHERE client_id = %s",
+                        ('verify', cid), fetch='none')
+        r = self.client.post('/api/v1/auth/token',
+                             data={'grant_type': 'authorization_code', 'code': code,
+                                   'code_verifier': verifier},
+                             headers=self._basic(cid, secret))
+        self.assertEqual(r.status_code, 401, r.get_data(as_text=True))
+        self.assertEqual(r.get_json()['error'], 'invalid_client')
+
+        # The control: restore the scope and the same code redeems. Without this leg an
+        # endpoint that refused every redemption would pass the assertion above.
+        flask_app.query("SELECT set_config('polaris.justification', "
+                        "'test fixture: restores the scope this test withdrew', true); "
+                        "UPDATE RelyingParty SET scope = %s WHERE client_id = %s",
+                        ('authenticate', cid), fetch='none')
+        ok = self.client.post('/api/v1/auth/token',
+                              data={'grant_type': 'authorization_code', 'code': code,
+                                    'code_verifier': verifier},
+                              headers=self._basic(cid, secret))
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True))
+
     def test_two_relying_parties_get_different_subjects_for_one_person(self):
         # P9.4, the property in full: the same human authenticating at two relying parties
         # must not hand them a value they can join their user tables on. Stable at each, so
@@ -12189,6 +12252,36 @@ class RelyingPartyApiTests(PolarisTestCase):
             tid = cur.fetchone()['token_id']
         return self.client.get('/api/tokens/%d/authenticity-pack' % tid).get_json()
 
+    # -- a refusal here that the application mutation drill found nothing noticing
+    # -- (2026-09-17): the bearer token outlives the relying party's standing to use it.
+
+    def test_disabling_a_relying_party_stops_its_EXISTING_bearer_immediately(self):
+        """Withdrawing a relying party must not wait for its token to expire.
+
+        The bearer is stateless and carries the relying party's id; it keeps verifying on its
+        own terms until it expires. The lookup on every verification is what makes withdrawal
+        take effect NOW, which is the only thing an authority can do about a relying party it
+        has stopped trusting. Switching it off left a withdrawn party verifying for the rest
+        of the token's life, and no test noticed.
+        """
+        cid = self._register_rp('disable-me-secret-1', suffix='0099')
+        auth = self._bearer(cid, 'disable-me-secret-1')
+        pack = self._issue_and_pack('RP-DISABLED-BEARER-1')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+
+        ok = self.client.post('/api/v1/verify', json=body, headers=auth)
+        self.assertEqual(ok.status_code, 200, 'control: it verifies while the party is enabled')
+
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.justification', %s, true)",
+                        ("test fixture: withdraws the relying party under test",))
+            cur.execute("UPDATE RelyingParty SET enabled = FALSE WHERE client_id = %s", (cid,))
+            conn.commit()
+
+        r = self.client.post('/api/v1/verify', json=body, headers=auth)
+        self.assertEqual(r.status_code, 401, r.get_data(as_text=True))
+        self.assertEqual(r.get_json()['error'], 'invalid_token')
+
     # --- OAuth2 client-credentials ------------------------------------------
     def test_token_endpoint_issues_a_verify_scoped_bearer(self):
         cid = self._register_rp('right-secret-aaa')
@@ -12367,6 +12460,56 @@ class HolderKeyBindingTests(PolarisTestCase):
         self.assertEqual(forbidden & {k.lower() for k in b}, set(),
                          "a holder binding carries no personal data and never a private key")
 
+    # -- two refusals here that the application mutation drill found nothing noticing
+    # -- (2026-09-17). Possession is what these tests already cover; these two are the
+    # -- questions possession does not answer.
+
+    def test_a_credential_that_is_no_longer_active_cannot_bind_a_holder_key(self):
+        """Possession stays true after the authority withdraws the credential.
+
+        `_possession_authenticated` answers "this is the genuine credential", and that does
+        not stop being true when the credential is reported lost. Binding a holder key to it
+        would hand a fresh, currently-valid holder key to whoever presents a credential the
+        authority has already withdrawn. Nothing noticed when the gate was switched off.
+        """
+        _tid, pack = self._issue_pack('HOLDER-KEY-NOT-ACTIVE-1')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex'],
+                'holder_public_key_hex': self.KEY}
+        self.assertEqual(self.client.post('/api/v1/holder-key', json=body).status_code, 200,
+                         'control: it binds while the credential is ACTIVE')
+
+        # ACTIVE -> LOST is a transition the state machine lists; a direct UPDATE to REVOKED
+        # is refused outright, because revocation belongs to uc8_revoke_token.
+        flask_app.query("SELECT set_config('polaris.reason_code', 'TEST_LOST', true); "
+                        "UPDATE IdentityToken SET status = 'LOST' WHERE token_value = %s",
+                        (pack['token_value'],), fetch='none')
+
+        r = self.client.post('/api/v1/holder-key',
+                             json=dict(body, holder_public_key_hex='ef' * 40, event='rotated'))
+        self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
+        self.assertEqual(r.get_json()['error'], 'not_active')
+
+    def test_revoking_a_holder_key_that_was_never_bound_is_refused(self):
+        """`event: revoked` with no current key is a refusal, not a no-op.
+
+        The route reads the key it is revoking out of HolderKeyCurrent. With no row there
+        the refusal is what stops an empty revocation event being appended to an append-only
+        register, which would be a record of something that never happened.
+        """
+        _tid, pack = self._issue_pack('HOLDER-KEY-NO-CURRENT-1')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex'],
+                'event': 'revoked'}
+        r = self.client.post('/api/v1/holder-key', json=body)
+        self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
+        self.assertEqual(r.get_json()['error'], 'no_holder_key')
+
+        # The control: bind one, and the same revocation now succeeds. Without this leg a
+        # route that refused every revocation would pass the assertion above.
+        self.assertEqual(self.client.post(
+            '/api/v1/holder-key',
+            json=dict(body, event='bound', holder_public_key_hex=self.KEY)).status_code, 200)
+        self.assertEqual(self.client.post('/api/v1/holder-key', json=body).status_code, 200)
+
     def test_rotation_replaces_the_current_key_without_rewriting_history(self):
         tid, pack = self._issue_pack('HOLDER-KEY-ROTATE-1')
         body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
@@ -12538,6 +12681,44 @@ class EpochRevocationTests(PolarisTestCase):
         self.assertEqual(self.client.get('/api/v1/revocation-feed/1').status_code, 404)
         self.assertEqual(self.client.get('/api/v1/epoch-checkpoint/999999').status_code, 404)
         self.assertEqual(self.client.get('/api/v1/revocation-feed/999999').status_code, 404)
+
+    def test_the_leaves_route_is_bounded_by_the_schema_before_the_application(self):
+        """The application's 413 is unreachable, and that is the finding.
+
+        2026-09-17: the application mutation drill reported the `committed_count >
+        _EPOCH_LEAVES_MAX` refusal with NO TEST CLASS NAMING THE ROUTE AT ALL, a step past
+        "nothing noticed". Writing that test found why it could not be written: the schema
+        carries `epoch_committed_count_cap`, a CHECK that the database will not store an
+        epoch above the same bound, so the route's 413 is dead code behind a stronger layer.
+
+        The two numbers must stay equal, and this test is what says so. Raise the schema's
+        cap alone and the 413 becomes reachable, untested and the only thing standing between
+        a caller and an unbounded body; raise the application's alone and the route stops
+        bounding anything it was not already bounded on.
+        """
+        cap = flask_app.query(
+            "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint "
+            "WHERE conname = 'epoch_committed_count_cap'", fetch='one', primary=True)
+        self.assertIsNotNone(cap, 'the schema cap this route relies on is gone')
+        self.assertIn(str(flask_app._EPOCH_LEAVES_MAX), cap['def'],
+                      'the schema cap (%s) and the application cap (%d) must be the same '
+                      'number: the route bounds nothing the database does not already bound'
+                      % (cap['def'], flask_app._EPOCH_LEAVES_MAX))
+
+        self._register_key(1, 'a1' * 32)
+        row = flask_app.query("SELECT epoch_id FROM TokenStateEpoch ORDER BY epoch_id LIMIT 1",
+                              fetch='one', primary=True)
+        self.assertIsNotNone(row, 'this test needs a closed epoch in the sample data')
+        self.assertEqual(self.client.get('/api/v1/epoch/%d/leaves' % row['epoch_id']).status_code,
+                         200, 'a normal epoch is served')
+
+        # And the database is what refuses the oversized one, which is the claim above.
+        with self.assertRaises(psycopg2.errors.CheckViolation):
+            flask_app.query(
+                "INSERT INTO TokenStateEpoch (merkle_root, valid_until, committed_count, "
+                "closed_by_user_id) VALUES (%s, CURRENT_TIMESTAMP + INTERVAL '1 day', %s, "
+                "(SELECT user_id FROM AppUser ORDER BY user_id LIMIT 1))",
+                ('ee' * 32, flask_app._EPOCH_LEAVES_MAX + 1), fetch='none')
 
     def test_epoch_checkpoint_shape_and_canonical_match(self):
         self._register_key(1, 'a1' * 32)

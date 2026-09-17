@@ -316,6 +316,17 @@ deadline with no credential was refused by code no test exercised; one authority
 another authority's credential; and a credential that was no longer ACTIVE could still authorize
 a signature. All five now have tests, each shown to fail when its refusal is switched off.
 
+The drill now exits clean on those 37: every survivor carries a stated reason, and the six that
+remain uncovered by a test are the coarse velocity bounds, pinned structurally instead. Two of
+the reasons are worth reading. One refusal is **dead code behind a stronger layer**: the epoch
+leaves route answers 413 above ten thousand leaves, and the schema's `epoch_committed_count_cap`
+refuses to store such an epoch at all, so the application's branch cannot fire. Writing the test
+found that rather than the other way round, and the test that stands there now pins the two caps
+to each other, because raising the schema's alone would make the 413 reachable, untested, and
+the only thing between a caller and an unbounded body. The other is that a **bearer token
+outlived the relying party's standing to use it**: the lookup on every verification is what makes
+withdrawing a relying party take effect immediately rather than when its token happens to expire.
+
 Separately, of the fourteen rate limiters the application installs, **the login one was the only
 one any test drove**. `F03_RateLimitingTests` now drives the five holder-facing limiters past
 their bounds; the rest are coarse velocity bounds of 120 to 600 per minute, which a unit test

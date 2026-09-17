@@ -134,6 +134,39 @@ DECLARED: dict[tuple[str, int], str] = {
     ("api_v1_exchange_receipt_signed", 6831): "bad mint signature: federation-instances drill, "
                                               "'an UNATTESTED requester is not authorized: 403 "
                                               "even under a valid responder signature'",
+
+    # The coarse velocity bounds: 120 to 600 requests per minute, per authority or per
+    # requester key. Driving one in a unit test means issuing hundreds of real timestamps or
+    # receipts to prove a limiter exists, which costs more than it measures.
+    #
+    # They are pinned instead by `check_rate_limits_are_enforced`, and it catches THIS
+    # mutation specifically: the check requires each limiter to sit inside a negated guard
+    # that answers 429, and switching the condition to `False` removes the
+    # `rate_limiter.allow` call from the source, so the check fails the build. That is a
+    # structural pin, and it proves the guard is written rather than that it fires. The five
+    # holder-facing limiters, whose bounds are 5 and 10, ARE driven past them by
+    # `F03_RateLimitingTests`; these six are not, and the difference is the point.
+    ("api_v1_verify", 5420): "rpverify: bound is the relying party's own rate_limit_per_min; "
+                             "pinned by check_rate_limits_are_enforced",
+    ("api_v1_exchange_receipt_signed", 6823): "exmint: 120/min; pinned by "
+                                              "check_rate_limits_are_enforced",
+    ("api_v1_timestamp", 6906): "tsa: 600/min; pinned by check_rate_limits_are_enforced",
+    ("api_v1_exchange", 7243): "exch: 120/min; pinned by check_rate_limits_are_enforced",
+    ("api_v1_sign_holder", 7409): "sign: 10/min, but reaching it needs a federated agency and "
+                                  "a real presentation; pinned by check_rate_limits_are_enforced",
+    ("api_v1_auth_authorize", 7530): "auth: 10/min, but reaching it needs a registered relying "
+                                     "party and a credential; pinned by "
+                                     "check_rate_limits_are_enforced",
+
+    # Dead code behind a stronger layer. The schema carries `epoch_committed_count_cap`, a
+    # CHECK refusing `committed_count > 10000`, so the database will not store an epoch this
+    # route could answer 413 for. Writing the test found this rather than the other way
+    # round. `EpochRevocationTests.test_the_leaves_route_is_bounded_by_the_schema_before_the
+    # _application` pins the two numbers to each other, which is the condition that keeps
+    # this entry true: raise the schema's cap alone and the 413 becomes reachable, untested,
+    # and the only thing between a caller and an unbounded body.
+    ("api_v1_epoch_leaves", 5692): "unreachable: the schema's epoch_committed_count_cap "
+                                   "refuses the row first, and a test pins the two caps equal",
 }
 
 
