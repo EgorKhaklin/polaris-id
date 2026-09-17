@@ -192,6 +192,15 @@ only for an externally observable change, under the
 semantic versions in their manifests and go out through `publish.yml`
 ([RELEASING.md](RELEASING.md)).
 
+**A git tag marks a RELEASE, never a ship.** There are two tags in this repository,
+`v1.0.0-rc.1` and `v1.0.0-rc.2`, and that is the intended density: the v9 series counted more
+than four hundred ships and tagged none of them, because a tag per ship makes the tag list
+useless for the one thing it is for, which is finding the versions a stranger can install. A
+release also gets a GitHub Release object, which is a separate thing from the tag and does not
+appear by pushing one: render its body with `scripts/polaris-release-notes.sh <version>` and
+create it with `gh release create`. A tag with no Release leaves the Releases page showing the
+previous version as Latest, which is how rc.2 sat unannounced for an hour on 2026-09-17.
+
 **Bump procedure** (the ship discipline in [`../CLAUDE.md`](../CLAUDE.md)), all in one ship:
 1. Edit the `__version__` literal, `appVersion` in `deploy/helm/polaris/Chart.yaml`, and
    `version` in `CITATION.cff`
