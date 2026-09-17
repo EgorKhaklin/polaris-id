@@ -15636,3 +15636,132 @@ def test_distribution_licence_check_discriminates(tmp_path):
                   % ", ".join('"%s"' % f for f in allow)))
         assert any(f.level == "FAIL" for f in listed), missing
         assert "allowlist" in listed[0].message, listed[0].message
+
+
+def test_no_vacuous_checks_catches_a_check_that_passes_on_nothing(tmp_path, monkeypatch):
+    """The meta-check turned on itself.
+
+    The hazard it exists for: most checks find their subject by reading a source file at a
+    fixed path, so moving the code out of that file makes them pass while proving nothing.
+    This asserts the meta-check notices a check that reports OK over an empty tree, and that
+    it does NOT complain about one whose property is genuinely an absence.
+    """
+    # A tree with enough files for the check to consider itself able to conclude.
+    for i in range(150):
+        (tmp_path / ("f%03d.txt" % i)).write_text("content\n", encoding="utf-8")
+
+    def always_ok(root):
+        return checks._ok("always_ok", "reports OK whatever it is shown")
+
+    def notices_nothing(root):
+        return (checks._ok("notices", "fine") if (root / "f000.txt").read_text().strip()
+                else checks._fail("notices", "the file is empty"))
+
+    real = list(checks.CHECKS)
+    real_allow = dict(checks.VACUOUS_IS_CORRECT)
+    try:
+        # The allowlist names the REAL checks, and this fixture replaces them, so the
+        # meta-check's stale-entry guard would fire on every one. Emptied for the fixture and
+        # restored afterwards; the guard itself is covered by its own test below.
+        checks.VACUOUS_IS_CORRECT.clear()
+        # The good case first, so a FAIL below is attributable to the vacuous check rather
+        # than to the fixture being incomplete.
+        checks.CHECKS[:] = [checks.check_no_vacuous_checks, notices_nothing]
+        assert checks.check_no_vacuous_checks(tmp_path)[0].level == "OK", \
+            "must PASS when every other check fails closed on an empty tree"
+
+        checks.CHECKS[:] = [checks.check_no_vacuous_checks, always_ok]
+        out = checks.check_no_vacuous_checks(tmp_path)[0]
+        assert out.level == "FAIL", "must FAIL on a check that reports OK over nothing"
+        assert "always_ok" in out.message, "must NAME the check, or nobody can find it"
+
+        # A vacuous check that has been declared as an absence check is not a finding, and
+        # the declaration must carry a reason rather than being a bare name.
+        monkeypatch.setitem(checks.VACUOUS_IS_CORRECT, "always_ok",
+                            "asserts an absence; passing on nothing is correct")
+        assert checks.check_no_vacuous_checks(tmp_path)[0].level == "OK", \
+            "a declared absence check must be allowed to pass on nothing"
+    finally:
+        checks.CHECKS[:] = real
+        checks.VACUOUS_IS_CORRECT.clear()
+        checks.VACUOUS_IS_CORRECT.update(real_allow)
+
+
+def test_no_vacuous_checks_names_a_stale_allowlist_entry(tmp_path, monkeypatch):
+    """The guard the fixture above has to work around, tested on its own. A name left in the
+    allowlist after its check is renamed is how the excuse outlives the reason, and the next
+    genuinely vacuous check inherits it."""
+    for i in range(150):
+        (tmp_path / ("f%03d.txt" % i)).write_text("content\n", encoding="utf-8")
+    assert checks.check_no_vacuous_checks(tmp_path)[0].level == "OK", \
+        "the unmutated fixture must PASS first, or the FAIL below is not attributable"
+    monkeypatch.setitem(checks.VACUOUS_IS_CORRECT, "check_that_was_renamed_away", "a reason")
+    out = checks.check_no_vacuous_checks(tmp_path)[0]
+    assert out.level == "FAIL"
+    assert "check_that_was_renamed_away" in out.message
+
+
+def test_no_vacuous_checks_refuses_to_conclude_from_a_tiny_tree(tmp_path):
+    """A hollow copy of almost nothing would report every check vacuous or none, and either
+    way it would be a fact about the fixture. It says so instead."""
+    big = tmp_path / "big"
+    big.mkdir()
+    for i in range(150):
+        (big / ("f%03d.txt" % i)).write_text("content\n", encoding="utf-8")
+    assert checks.check_no_vacuous_checks(big)[0].level == "OK", \
+        "a tree with enough files to hollow must PASS first"
+    small = tmp_path / "small"
+    small.mkdir()
+    (small / "one.txt").write_text("x", encoding="utf-8")
+    out = checks.check_no_vacuous_checks(small)[0]
+    assert out.level == "FAIL"
+    assert "cannot conclude" in out.message
+
+
+def test_the_absence_allowlist_names_only_real_checks(tmp_path):
+    """A stale entry is how an allowlist stops meaning anything: the check it excused gets
+    renamed, the name stays, and a genuinely vacuous check inherits the excuse later."""
+    registered = {c.__name__ for c in checks.CHECKS}
+    stale = sorted(set(checks.VACUOUS_IS_CORRECT) - registered)
+    assert not stale, "VACUOUS_IS_CORRECT names checks that no longer exist: %s" % stale
+    for name, reason in checks.VACUOUS_IS_CORRECT.items():
+        assert len(reason) > 20, "%s: say WHY its property is an absence, not just that it is" % name
+
+
+def test_zk_two_witness_check_discriminates(tmp_path):
+    """It asserted a PATH EXISTED and nothing else, so an empty file passed it, while the
+    readiness ledger calls the two-witness result the strongest thing that layer offers."""
+    w = tmp_path / "polaris_zk" / "witness2"
+    w.mkdir(parents=True)
+    verifier, commitment = w / "verifier.py", w / "commitment.py"
+
+    def write(v="def recompute_root(x): pass\ndef check_claim(a, b, c): pass\n",
+              c="def nullifier(s, scope, epoch): pass\n"):
+        verifier.write_text(v, encoding="utf-8")
+        commitment.write_text(c, encoding="utf-8")
+
+    write()
+    assert checks.check_zk_two_witness_present(tmp_path)[0].level == "OK"
+
+    write(v="")
+    out = checks.check_zk_two_witness_present(tmp_path)[0]
+    assert out.level == "FAIL", "an EMPTY verifier.py must not pass: that was the defect"
+    assert "filename" in out.message
+
+    write(v="def recompute_root(x): pass\n")
+    assert checks.check_zk_two_witness_present(tmp_path)[0].level == "FAIL", \
+        "a witness that does not decide the claim is not deciding anything"
+
+    write(v="def check_claim(a, b, c): pass\n")
+    assert checks.check_zk_two_witness_present(tmp_path)[0].level == "FAIL", \
+        "a witness that does not recompute the root is agreeing with the prover"
+
+    write(c="")
+    assert checks.check_zk_two_witness_present(tmp_path)[0].level == "FAIL", \
+        "without its own nullifier derivation it agrees by construction"
+
+    verifier.unlink()
+    assert checks.check_zk_two_witness_present(tmp_path)[0].level == "FAIL"
+
+    write()
+    assert checks.check_zk_two_witness_present(tmp_path)[0].level == "OK"

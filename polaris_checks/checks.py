@@ -485,9 +485,32 @@ def check_gitignore_no_trailing_comments(root: pathlib.Path) -> list[Finding]:
 # The ZK verdict is two-witnessed (the v9.44 independent verifier exists).
 # ---------------------------------------------------------------------------
 def check_zk_two_witness_present(root: pathlib.Path) -> list[Finding]:
-    if (root / "polaris_zk" / "witness2" / "verifier.py").is_file():
-        return _ok("zk_two_witness", "independent second witness present (polaris_zk/witness2)")
-    return _fail("zk_two_witness", "the ZK two-witness verifier is missing (polaris_zk/witness2)")
+    # 2026-09-17: this asserted that a PATH EXISTED and nothing else, so an empty file passed
+    # it. The readiness ledger calls the two-witness result the strongest thing this layer
+    # offers, and the check standing behind it proved the existence of a filename. Found by
+    # running every check against a copy of the tree with every file present and empty, which
+    # is what a check that greps one pathname sees after the code moves out of it.
+    path = root / "polaris_zk" / "witness2" / "verifier.py"
+    if not path.is_file():
+        return _fail("zk_two_witness", "the ZK two-witness verifier is missing (polaris_zk/witness2)")
+    src = _read_path(path)
+    # What makes it a witness: it recomputes the root itself and it decides a claim. A file
+    # that does neither is not a second opinion, whatever it is called.
+    missing = [n for n in ("def recompute_root", "def check_claim") if n not in src]
+    if missing:
+        return _fail("zk_two_witness",
+                     "polaris_zk/witness2/verifier.py exists but defines no %s: a second "
+                     "witness that does not recompute the root and decide the claim is a "
+                     "filename, not a witness" % " or ".join(x[4:] for x in missing))
+    commitment = root / "polaris_zk" / "witness2" / "commitment.py"
+    if not commitment.is_file() or "def nullifier" not in _read_path(commitment):
+        return _fail("zk_two_witness",
+                     "the second witness has no independent nullifier derivation "
+                     "(polaris_zk/witness2/commitment.py); it would be agreeing with the "
+                     "prover by construction")
+    return _ok("zk_two_witness",
+               "the independent second witness is present and recomputes the root, derives "
+               "the nullifier and decides the claim itself (polaris_zk/witness2)")
 
 
 # ---------------------------------------------------------------------------
@@ -18084,7 +18107,107 @@ def check_seed_restart_resets_dependent_records(root: pathlib.Path) -> list[Find
                      "the same reload, so no record survives to describe the next life's ids" % reset)
 
 
+#: Checks that CORRECTLY pass when there is nothing to look at, each with the reason.
+#:
+#: Every other check must FAIL against a copy of the tree in which every file is present and
+#: EMPTY. That tree is what a check which greps one pathname sees after the code it was
+#: written about moves somewhere else: the file is still there, the targets are not. A check
+#: that reports OK in that state has stopped proving anything and nobody would know.
+#:
+#: The entries below assert that a pattern is ABSENT. "No money tables", "no debugger calls",
+#: "no named reference system": on an empty tree those are trivially true, and trivially true
+#: is the right answer, because the property is the absence itself. Adding a check here is a
+#: claim that it is one of those, and the reason has to say why.
+VACUOUS_IS_CORRECT = {
+    "check_no_named_reference_systems": "asserts a name is absent; absent from nothing is absent",
+    "check_no_citations_to_deleted_apparatus": "asserts a citation is absent",
+    "check_no_fk_cascade": "asserts no ON DELETE CASCADE exists",
+    "check_no_debug_artifacts": "asserts no pdb/breakpoint call exists",
+    "check_no_grep_q_transaction_scrape": "asserts a fragile shell idiom is absent",
+    "check_no_migration_column_drift": "asserts no migration drifts from the schema",
+    "check_psql_status_capture_set_e_safe": "asserts an unsafe psql capture idiom is absent",
+    "check_ci_ssl_probe_aggregated": "asserts a per-host SSL probe idiom is absent",
+    "check_css_animations_resolve": "asserts no animation NAME goes undefined; none used, none undefined",
+    "check_template_endpoints_resolve": "asserts no url_for names a missing endpoint; none named, none missing",
+    "check_migrations_are_reversible": "asserts each .up.sql is PAIRED with a .down.sql; pairing is about names, not content",
+    "check_paper_pdf_is_current": "asserts the PDF is not older than its sources; no sources, nothing stale",
+}
+
+
+def _hollow_tree(root: pathlib.Path, dest: pathlib.Path) -> int:
+    """Copy the tree's SHAPE and none of its content: every path present, every file empty."""
+    n = 0
+    for p in root.rglob("*"):
+        rel = p.relative_to(root)
+        if any(x in (".git", "node_modules", "__pycache__", ".venv", "target", "dist")
+               for x in rel.parts):
+            continue
+        if p.is_file():
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            try:
+                (dest / rel).write_bytes(b"")
+                n += 1
+            except OSError:
+                pass
+    return n
+
+
+def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
+    """No check may report OK over a tree that contains nothing.
+
+    This is the invariant layer turned on itself, and it exists because of a real hazard
+    somebody raised: most of these checks find their subject by reading a source file at a
+    fixed path. `check_c8_atlas_caps` parses `polaris_web/app.py` line by line to confirm
+    every caller-controlled count on every Atlas route is clamped. Move those routes into a
+    service module and the check does not fail. It passes, having looked where the routes no
+    longer are, and a quarter of the enforcement layer becomes decoration without one test
+    going red.
+
+    Measured when this was written: 263 of 275 checks already fail closed on a tree whose
+    files are all empty, which is better than the hazard assumed. Twelve pass, and all twelve
+    are on the list above because their property IS an absence. This check holds that line.
+    """
+    import io as _io
+    import contextlib as _ctx
+    import tempfile as _tmp
+    name = "no_vacuous_checks"
+    unknown = sorted(set(VACUOUS_IS_CORRECT) - {c.__name__ for c in CHECKS})
+    if unknown:
+        return _fail(name, "VACUOUS_IS_CORRECT names %d check(s) that no longer exist: %s"
+                           % (len(unknown), ", ".join(unknown)))
+    with _tmp.TemporaryDirectory(prefix="polaris-hollow-") as tmp:
+        hollow = pathlib.Path(tmp)
+        copied = _hollow_tree(root, hollow)
+        if copied < 100:
+            return _fail(name, "only %d files were hollowed; this check cannot conclude "
+                               "anything from a tree that small" % copied)
+        vacuous = []
+        for fn in CHECKS:
+            if fn.__name__ in ("check_no_vacuous_checks",) or fn.__name__ in VACUOUS_IS_CORRECT:
+                continue
+            try:
+                with _ctx.redirect_stdout(_io.StringIO()), _ctx.redirect_stderr(_io.StringIO()):
+                    out = fn(hollow)
+            except Exception:
+                continue   # a raise is not a pass; the runner reports it separately
+            if out and out[0].level == "OK":
+                vacuous.append(fn.__name__)
+    if vacuous:
+        return _fail(name,
+                     "%d check(s) report OK over a tree with every file present and EMPTY, so "
+                     "they would keep passing after the code they inspect moved away: %s. "
+                     "Either make the check assert it found what it went looking for, or add "
+                     "it to VACUOUS_IS_CORRECT with the reason its property is an absence."
+                     % (len(vacuous), ", ".join(sorted(vacuous))))
+    return _ok(name,
+               "%d of %d checks fail closed over a tree whose files are all empty; the other "
+               "%d assert an ABSENCE, where passing on nothing is the right answer and each "
+               "says why" % (len(CHECKS) - len(VACUOUS_IS_CORRECT) - 1, len(CHECKS),
+                             len(VACUOUS_IS_CORRECT)))
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_no_vacuous_checks,
     check_drills_count_their_cases,
     check_internal_kex_measured,
     check_detection_tests_have_a_positive_control,
