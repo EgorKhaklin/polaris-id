@@ -6615,6 +6615,7 @@ def _mint_exchange_receipt(responder, agency_id, fields, occurred_at=None):
 
 @app.route('/api/v1/exchange-receipt/<int:agency_id>', methods=['POST'])
 @security.login_required
+@security.require_role('admin', 'operator')
 @security.csrf_protect
 def api_v1_exchange_receipt(agency_id):
     """P8.2: mint an EXCHANGE RECEIPT -- signed evidence that this authority (the responder,
@@ -7235,6 +7236,7 @@ def _sign_document(agency, agency_id, fields, on_behalf_of):
 
 @app.route('/api/v1/sign/<int:agency_id>', methods=['POST'])
 @security.login_required
+@security.require_role('admin', 'operator')
 @security.csrf_protect
 def api_v1_sign(agency_id):
     """P8.5: the institution signs a document under its registered key (operator path). Body:

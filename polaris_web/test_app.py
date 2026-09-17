@@ -10052,7 +10052,7 @@ class RouteGuardMatrixTests(PolarisTestCase):
     #: by hand, which is what the two lists they replace were. Changing a guard is
     #: meant to fail here: updating the line is the moment somebody confirms the
     #: new exposure is intended.
-    EXPECTED_LOGIN_ONLY = 47
+    EXPECTED_LOGIN_ONLY = 45
     ROLE_GATES = {
         '/agencies/<int:ag_id>/delete': ('admin',),
         '/agencies/<int:ag_id>/edit': ('admin',),
@@ -10064,6 +10064,8 @@ class RouteGuardMatrixTests(PolarisTestCase):
         '/api/duress/record': ('admin', 'operator'),
         '/api/federation/attest': ('admin',),
         '/api/federation/revoke': ('admin',),
+        '/api/v1/exchange-receipt/<int:agency_id>': ('admin', 'operator'),
+        '/api/v1/sign/<int:agency_id>': ('admin', 'operator'),
         '/api/zk/epoch/close': ('admin',),
         '/duress': ('admin', 'auditor'),
         '/individuals/<int:ind_id>/delete': ('admin',),
