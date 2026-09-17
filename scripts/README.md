@@ -40,6 +40,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-image-build.sh` | Builds one image, or the four-image set, retried and version-stamped | Every image build in both workflows |
 | `polaris-coverage.sh` | Runs the database-backed suites under coverage and gates on the floor | `ci.yml` |
 | `polaris-link-check.sh` | Every cross-reference, HTML attribute and repository link resolves | `ci.yml`, `pages.yml`, `polaris-preflight.sh`, pre-commit |
+| `polaris-check-inventory.py` | Which invariant checks read which source path, and whether each can conclude from zero targets. Run `--path <file>` before moving anything: a check bound to a path that loses its targets does not fail, it passes over an empty set | by hand, before a refactor |
 | `polaris-dr-drill.sh` | Kills a primary, restores from the WAL archive, measures RPO and RTO | `ci.yml`, `dr-drill.yml`, the monthly timer |
 | `polaris-offsite-drill.sh` | The S3 backup and restore path, end to end | `ci.yml` |
 | `polaris-rolling-drill.sh` | A rolling deploy drops zero requests | `ci.yml` |

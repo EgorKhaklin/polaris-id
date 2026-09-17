@@ -7,13 +7,19 @@ split across layers, and name the invariant check that pins each.
 
 This exists because `polaris_web/app.py` is large, and an outside review reasonably asked
 whether a reviewer could locate anything in it. Decomposing it is not the immediate answer:
-71 of the 276 invariant checks read that file's source text by path, so moving code would
+70 of the 276 invariant checks read that file's source text by path, so moving code would
 leave them passing over a file the code had left. `check_no_vacuous_checks` now holds the
 line that no check may report OK over a tree that contains nothing, and this document is the
 other half: the map, so that finding a decision does not require finding the code first.
 
 Line numbers drift. The **symbols** are the durable part, and every one of them is named here
 so a `grep` finds it after any move.
+
+**Before moving any of this code**, run `python3 scripts/polaris-check-inventory.py --path
+<file>`. It lists every invariant check bound to that path and says which of them DISCOVER a
+set of targets rather than asserting a substring. Measured on 2026-09-17: 70 checks read
+`polaris_web/app.py`, 81 read the continuous-integration workflow, 44 read the schema. A check
+that keeps reading a path the code has left does not fail; it passes over an empty set.
 
 ---
 
