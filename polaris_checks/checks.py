@@ -4324,6 +4324,90 @@ def check_admin_mfa_deadline(root: pathlib.Path) -> list[Finding]:
                "record states the policy they implement" % m_sh.group(1))
 
 
+# 2026-09-17 — measured in lab/duress/enrolment_timing.py. `_check_and_record_duress` used
+# to return before `check_password_hash` when the token had no enrolled duress code, so a
+# token WITHOUT a code answered ~287 ms sooner than one WITH a code (the enrolled hashes are
+# scrypt:32768:8:1). Typing anything into the duress field and timing the response therefore
+# read out enrolment, from the verification surface, with no privilege at all. That
+# contradicts docs/design/duress-codes.md: "The front of house cannot distinguish, so the
+# attacker must attack the back ... Both need a privilege escalation the verification
+# surface does not provide."
+#
+# Enrolment is not the code and not a signal, but it is what makes a signal usable, and the
+# lab already records that an opt-in defence makes its absence interrogable. A coercer who
+# can MEASURE it does not have to interrogate anybody.
+#
+# Two ways this reopens, so the check holds both: the ballast disappearing, and the ballast
+# drifting to parameters that no longer cost what a real hash costs.
+def check_duress_timing_ballast(root: pathlib.Path) -> list[Finding]:
+    import ast as _ast
+    src = _read(root, "polaris_web/app.py")
+    auth = _read(root, "polaris_sql/10_auth.sql")
+    if not src or not auth:
+        return _fail("duress_timing", "polaris_web/app.py or polaris_sql/10_auth.sql is missing")
+
+    m_enrolled = re.search(r"duress_code_hash = '(scrypt:(\d+):(\d+):(\d+)\$[^']+)'", auth)
+    if not m_enrolled:
+        return _fail("duress_timing",
+                     "no enrolled duress hash found in 10_auth.sql, so there is nothing to "
+                     "hold the standin's cost against")
+    enrolled_params = m_enrolled.group(2, 3, 4)
+
+    m_ball = re.search(r'_DURESS_TIMING_BALLAST = \(\s*((?:\s*"[^"]*"\s*)+)\)', src)
+    if not m_ball:
+        return _fail("duress_timing",
+                     "no _DURESS_TIMING_BALLAST in polaris_web/app.py; without a standin "
+                     "hash the not-enrolled path pays nothing and the response time says "
+                     "whether a holder enrolled a duress code")
+    ballast = "".join(re.findall(r'"([^"]*)"', m_ball.group(1)))
+    m_bp = re.match(r"scrypt:(\d+):(\d+):(\d+)\$([^$]*)\$([0-9a-f]{128})$", ballast)
+    if not m_bp:
+        return _fail("duress_timing",
+                     "_DURESS_TIMING_BALLAST is not a well-formed werkzeug scrypt hash with "
+                     "a 64-byte digest; check_password_hash may reject it cheaply, which "
+                     "costs nothing and leaves the channel open")
+    if m_bp.group(1, 2, 3) != enrolled_params:
+        return _fail("duress_timing",
+                     "the standin is scrypt:%s:%s:%s and the enrolled hashes are "
+                     "scrypt:%s:%s:%s. It no longer costs what it stands in for, and the "
+                     "difference IS the channel"
+                     % (m_bp.group(1, 2, 3) + enrolled_params))
+
+    # And the structure: parsed, never grepped. The comment above the comparison names
+    # `check_password_hash`, so a text search for what precedes it reads the comment and
+    # concludes the opposite. The lab harness made exactly that mistake first.
+    try:
+        tree = _ast.parse(src)
+    except SyntaxError:
+        return _fail("duress_timing", "polaris_web/app.py does not parse")
+    fn = next((n for n in _ast.walk(tree)
+               if isinstance(n, _ast.FunctionDef) and n.name == "_check_and_record_duress"),
+              None)
+    if fn is None:
+        return _fail("duress_timing", "_check_and_record_duress is gone from polaris_web/app.py")
+    compares = [n.lineno for n in _ast.walk(fn)
+                if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
+                and n.func.id == "check_password_hash"]
+    if not compares:
+        return _fail("duress_timing",
+                     "_check_and_record_duress no longer calls check_password_hash at all")
+    for node in _ast.walk(fn):
+        if not isinstance(node, _ast.If) or node.lineno >= min(compares):
+            continue
+        if "duress_code_hash" not in _ast.dump(node.test):
+            continue
+        if any(isinstance(s, _ast.Return) and s.value is None for s in node.body):
+            return _fail("duress_timing",
+                         "_check_and_record_duress returns on the absence of an enrolled "
+                         "hash BEFORE the comparison (line %d, comparison at line %d); that "
+                         "path pays nothing and the response time reads out enrolment"
+                         % (node.lineno, min(compares)))
+    return _ok("duress_timing",
+               "a token with no enrolled duress code pays the same scrypt:%s:%s:%s "
+               "comparison as one that has one, against a standin hash at matching "
+               "parameters, so the response does not say who enrolled" % enrolled_params)
+
+
 # P0.7 — the Rust prover and the Python second witness must build the SAME
 # circuit shape, which means the SAME tree depth. Depth is now runtime-
 # parameterized (POLARIS_ZK_TREE_DEPTH); both sides read that env var and must
@@ -18215,6 +18299,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_release_provenance,
     check_npm_publish_is_staged,
     check_admin_mfa_deadline,
+    check_duress_timing_ballast,
     check_zk_tree_depth_synced,
     check_coverage_gated,
     check_offsite_backup_env_driven,

@@ -1899,6 +1899,80 @@ def test_admin_mfa_deadline_check_discriminates(tmp_path):
         "must PASS again once every leg is restored"
 
 
+def test_duress_timing_ballast_check_discriminates(tmp_path):
+    # The defect: `_check_and_record_duress` returned before check_password_hash when no
+    # duress code was enrolled, so a token without one answered ~287 ms sooner than one with
+    # one. Typing anything into the duress field and timing the response read out enrolment,
+    # from the verification surface, with no privilege at all.
+    (tmp_path / "polaris_web").mkdir(parents=True)
+    (tmp_path / "polaris_sql").mkdir(parents=True)
+    app = tmp_path / "polaris_web" / "app.py"
+    auth = tmp_path / "polaris_sql" / "10_auth.sql"
+
+    BALLAST = ('_DURESS_TIMING_BALLAST = (\n'
+               '    "scrypt:32768:8:1$polaris-duress-timing-ballast$"\n'
+               '    "%s"\n)\n' % ("ab" * 64))
+    FIXED = (BALLAST +
+             "def _check_and_record_duress(token_id, context_id, agency_id, duress_input):\n"
+             "    if not duress_input:\n"
+             "        return\n"
+             "    row = query('SELECT duress_code_hash ...')\n"
+             "    # the comment names check_password_hash on purpose: a text search for what\n"
+             "    # precedes the comparison reads THIS line and concludes the opposite.\n"
+             "    enrolled = row['duress_code_hash'] if row else None\n"
+             "    matched = check_password_hash(enrolled or _DURESS_TIMING_BALLAST, duress_input)\n"
+             "    if not enrolled or not matched:\n"
+             "        return\n")
+    AUTH = ("   SET duress_code_hash = 'scrypt:32768:8:1$Fo0c5pSq6RSNmuh6$%s'\n" % ("cd" * 64))
+
+    def write(app_text=FIXED, auth_text=AUTH):
+        app.write_text(app_text, encoding="utf-8")
+        auth.write_text(auth_text, encoding="utf-8")
+
+    write()
+    assert checks.check_duress_timing_ballast(tmp_path)[0].level == "OK", \
+        "must PASS when both paths pay one comparison at matching parameters"
+
+    # THE DEFECT ITSELF, restored.
+    write(app_text=BALLAST +
+          "def _check_and_record_duress(token_id, context_id, agency_id, duress_input):\n"
+          "    row = query('SELECT duress_code_hash ...')\n"
+          "    if not row or not row['duress_code_hash']:\n"
+          "        return\n"
+          "    if not check_password_hash(row['duress_code_hash'], duress_input):\n"
+          "        return\n")
+    out = checks.check_duress_timing_ballast(tmp_path)[0]
+    assert out.level == "FAIL", \
+        "must FAIL when the not-enrolled path returns before the comparison"
+    assert "before the comparison" in out.message.lower()
+
+    write(app_text=FIXED.replace(BALLAST, ""))
+    assert checks.check_duress_timing_ballast(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the standin hash is gone entirely"
+
+    # The subtle reopening: a standin that no longer costs what it stands in for. Both paths
+    # still 'compare', so nothing structural looks wrong, and the timing gap comes back.
+    write(app_text=FIXED.replace("scrypt:32768:8:1$polaris", "scrypt:16384:8:1$polaris"))
+    out = checks.check_duress_timing_ballast(tmp_path)[0]
+    assert out.level == "FAIL", \
+        "must FAIL when the standin's cost parameters drift from the enrolled ones"
+    assert "16384" in out.message and "32768" in out.message, \
+        "name both sets of parameters, or the reader has to go and find the other"
+
+    # A standin that check_password_hash would reject cheaply pays nothing.
+    write(app_text=FIXED.replace('"%s"' % ("ab" * 64), '"not-a-hash"'))
+    assert checks.check_duress_timing_ballast(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the standin is not a well-formed hash: a cheap rejection is no cost"
+
+    write(app_text=FIXED.replace("check_password_hash(", "some_other_call("))
+    assert checks.check_duress_timing_ballast(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the comparison is gone"
+
+    write()
+    assert checks.check_duress_timing_ballast(tmp_path)[0].level == "OK", \
+        "must PASS again once every leg is restored"
+
+
 def test_zk_tree_depth_synced_check_discriminates(tmp_path):
     zk = tmp_path / "polaris_zk"
     src = zk / "src"

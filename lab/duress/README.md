@@ -8,6 +8,11 @@ three coercers it names, and its conclusion is that the word had to change.
 against the coercer it was designed for. It does not resist compulsion, and against one
 adversary it is worse than nothing.
 
+**And one measured finding, 2026-09-17.** Until this directory had an instrument, the claim
+that the front of house cannot distinguish had never been tested. It was false on one axis:
+the response time said whether a holder had enrolled a duress code at all. Fixed the same
+day; see the finding below.
+
 ---
 
 ## The mechanism
@@ -126,6 +131,62 @@ No mechanism changes. A holder-side panic signal, a deniable enrolment that make
 uninterrogable, or a duress record that degrades rather than persists are each a different
 system, and lab work does not get to create a product guarantee. What changed is the claim,
 which was wrong, and claims are free to fix.
+
+## Finding: the front of house could read out who had enrolled, by timing
+
+**2026-09-17. Measured and fixed the same day. `enrolment_timing.py`.**
+
+Everything above is analysis. This directory had no instrument until now, and the first
+thing one found was that the design record's own conclusion was false as written:
+
+> *"Where it settles. The front of house cannot distinguish, so the attacker must attack the
+> back: an admin or auditor session, or the database directly. Both need a privilege
+> escalation the verification surface does not provide."*
+
+`_check_and_record_duress` read:
+
+```python
+row = query("SELECT duress_code_hash FROM IdentityToken WHERE token_id = %s", ...)
+if not row or not row['duress_code_hash']:
+    return                                            # no hash, no work
+if not check_password_hash(row['duress_code_hash'], duress_input):
+    return                                            # a hash, and the full scrypt cost
+```
+
+The enrolled hashes are `scrypt:32768:8:1`, measured at **287 ms** on the machine this was
+run on. So typing anything at all into the duress field and timing the response separated
+*this holder enrolled a duress code* from *this holder did not*. No privilege, no escalation,
+nothing but the verification surface. A third of a second is not a laboratory side channel.
+
+**It reveals enrolment, not a code and not a signal.** That distinction matters and does not
+rescue the claim. The three safeguards were stated as "the constant-time comparison with
+matched work on both paths"; matched work was true of match versus no-match and had never
+been true of enrolled versus not-enrolled. And this section already recorded that enrolment
+is opt-in, so *"I have no duress code"* is a claim a coercer can press on and the holder
+cannot disprove: **a coercer who can measure it does not have to press.** Against the
+operator-as-coercer named below, it is cleaner still, because they type the field and read
+the latency off their own screen.
+
+**The fix.** The comparison runs against `_DURESS_TIMING_BALLAST`, a real scrypt hash at the
+same parameters, when nothing is enrolled; both paths pay one comparison and the standin's
+result is discarded. `check_duress_timing_ballast` fails the build if the standin
+disappears, stops being a well-formed hash, drifts to cheaper parameters, or if the early
+return comes back.
+
+**The harness got this wrong first, in the way this repository keeps rediscovering.** Its
+initial version split the source on the text `check_password_hash` and searched what came
+before. The comment explaining the defect names that function, so the split landed inside the
+comment, the check saw none of the code, and it reported the channel CLOSED against the
+pre-fix source. It was caught by mutating the fix away and watching the harness not notice.
+It reads an abstract syntax tree now, and so does the check. Match what the code does, never
+text that also appears in a comment.
+
+**What this does not say.** It measures the comparison cost, not a live request: the
+surrounding query, template render and network dominate the variance and are not modelled.
+It closes one channel on one axis. It says nothing about the three coercers above, and
+nothing about the three items below.
+
+---
 
 ## What is still unmeasured
 

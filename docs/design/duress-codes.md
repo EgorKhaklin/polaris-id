@@ -41,10 +41,23 @@ Timing is the obvious way that could leak, and three things address it. The
 comparison uses Werkzeug's `check_password_hash`, the same primitive that
 checks operator passwords, chosen because it is constant-time rather than
 because it is convenient. `_check_and_record_duress` performs the hash
-comparison whenever the token has an enrolled hash, so the work is paid on the
-negative path as well as the positive one. What remains is the database write
+comparison whether or not the token has an enrolled hash, so the work is paid on
+the negative path as well as the positive one. What remains is the database write
 on a match, which is below the variance of the surrounding request. A no-op
 write on the negative path would close even that, and is not built.
+
+**That sentence used to say "whenever the token has an enrolled hash", and the
+difference was a channel.** Measured 2026-09-17
+(`lab/duress/enrolment_timing.py`): the function returned before the comparison
+when nothing was enrolled, and the enrolled hashes are `scrypt:32768:8:1`, which
+costs about 287 ms. So a token with no duress code answered roughly a third of a
+second sooner, and typing anything at all into the duress field told you whether
+this holder had enrolled one. "Matched work on both paths" had always been true
+of match versus no-match and never of enrolled versus not-enrolled. The
+comparison now runs against `_DURESS_TIMING_BALLAST`, a real scrypt hash at the
+same parameters whose result is discarded, and `check_duress_timing_ballast`
+fails the build if the standin disappears, stops being well-formed, or drifts to
+parameters that no longer cost what they stand in for.
 
 ## Keeping it off the operator's screen
 
@@ -93,9 +106,16 @@ takes the alert. Nothing sets it yet; the workflow that would is not built.
   screen for a tell. This succeeds only if the operator-visible surface
   differs, which is why the three measures above are structural rather than
   cosmetic.
-- **Where it settles.** The front of house cannot distinguish, so the attacker
-  must attack the back: an admin or auditor session, or the database directly.
-  Both need a privilege escalation the verification surface does not provide.
+- **Where it settles.** The front of house cannot distinguish WHICH
+  verification carried a duress code, so for that question the attacker must
+  attack the back: an admin or auditor session, or the database directly. Both
+  need a privilege escalation the verification surface does not provide. This
+  bullet was unqualified until 2026-09-17 and was false as written: a separate
+  question, whether a holder has a duress code AT ALL, was readable from the
+  front of house by timing, with no privilege of any kind. That one is closed
+  above. Enrolment is not a signal, but it is what makes a signal usable, and an
+  opt-in defence whose absence can be measured is interrogable without a word
+  being said.
 - **The next attack.** Timing. Addressed by the constant-time comparison and
   by paying the comparison cost on both paths; what remains is one database
   write, below the noise floor.

@@ -8792,6 +8792,22 @@ def _federation_trust_holds(verifier_agency_id, token_id, context_id):
     return match is not None
 
 
+#: A real scrypt hash at the same parameters as an enrolled duress code
+#: (scrypt:32768:8:1, matching polaris_sql/10_auth.sql). Nothing is ever expected to match
+#: it: it exists so that a token with NO enrolled code pays the same comparison cost as one
+#: that has one. Without it, `_check_and_record_duress` returned before the hash, and the
+#: 287 ms that hash costs told anybody who typed into the duress field and timed the
+#: response whether this holder had enrolled. Measured in lab/duress/enrolment_timing.py.
+#: If the enrolled hashes ever move to different parameters this must move with them, or
+#: the ballast stops costing what it is standing in for; check_duress_timing_ballast pins
+#: the two together.
+_DURESS_TIMING_BALLAST = (
+    "scrypt:32768:8:1$polaris-duress-timing-ballast$"
+    "5291651f76c568f2b7d039443c85ebd33ad5f97eee0841926cafbef6e7b95de1"
+    "cbc5a17852c15b53d4bb3acfe64ce5e1fdf29b070c2255bf317a5b704b94ce08"
+)
+
+
 def _record_duress_async(token_id, context_id, requesting_agency_id):
     """Write the silent DuressEvent + bump the operator alert counter. Runs on a
     background daemon thread by default (see _check_and_record_duress) so the
@@ -8860,11 +8876,33 @@ def _check_and_record_duress(token_id, context_id, requesting_agency_id, duress_
         "SELECT duress_code_hash FROM IdentityToken WHERE token_id = %s",
         (token_id,), fetch='one'
     )
-    if not row or not row['duress_code_hash']:
-        return
+    # 2026-09-17, measured in lab/duress: this used to `return` here when the token had no
+    # enrolled hash, BEFORE check_password_hash. The design record says the comparison cost
+    # is "paid on the negative path as well as the positive one", and that was true of
+    # match versus no-match; it was never true of enrolled versus not-enrolled. The shipped
+    # hashes are scrypt:32768:8:1, which costs 287 ms on the machine this was measured on,
+    # so typing anything at all into the duress field and timing the response told you
+    # whether this holder had a duress code. A third of a second is not a side channel you
+    # need instruments for.
+    #
+    # That contradicts the design record's own conclusion: "The front of house cannot
+    # distinguish, so the attacker must attack the back: an admin or auditor session, or the
+    # database directly. Both need a privilege escalation the verification surface does not
+    # provide." This needed no escalation and nothing but the verification surface.
+    #
+    # It matters because enrolment is opt-in. lab/duress already records that "I have no
+    # duress code" is a claim a coercer can press on and the holder cannot disprove. A
+    # coercer who can MEASURE it does not have to press: they check, and an operator who is
+    # themselves the coercer types the field and reads their own screen.
+    #
+    # So the work is paid whether or not a hash is enrolled. _DURESS_TIMING_BALLAST is a
+    # real scrypt hash at the same parameters as the enrolled ones; comparing against it
+    # costs what comparing against a real one costs, and its result is discarded.
+    enrolled = row['duress_code_hash'] if row else None
     # Constant-time hash comparison. This is the same primitive used
     # for AppUser password validation in security.py (lines 392, 427, 449).
-    if not check_password_hash(row['duress_code_hash'], duress_input):
+    matched = check_password_hash(enrolled or _DURESS_TIMING_BALLAST, duress_input)
+    if not enrolled or not matched:
         return
     # MATCH — record the silent alert OFF the request thread by default, so the
     # synchronous response latency is identical to a non-match. The recording
