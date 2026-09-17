@@ -75,7 +75,7 @@ XL (multi-arc). Risk is delivery risk, not security risk.
 
 ---
 
-## Where we are (inventory restated at 1.0.0-rc.1)
+## Where we are (inventory restated at 1.0.0-rc.2)
 
 **Have, working, CI-proven:** a 45-table constraint-enforced schema (52 tables
 in a migrated deployment) with append-only audit; a 124-route application with

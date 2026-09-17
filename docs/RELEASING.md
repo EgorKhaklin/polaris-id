@@ -126,7 +126,7 @@ spells the same thing). The go-forward contract names five conditions for callin
 Why a candidate and not 1.0.0: the contract's 90-day objective also asks for an operator who
 is not the author to have used the verifier, and that row of the scoreboard is blank. A release
 candidate is the number that says both things at once. That operator makes 1.0.0; a defect
-found in the candidate makes rc.2. Nothing else does.
+found in the candidate makes the next candidate, which is what rc.2 was. Nothing else does.
 
 The PyPI maturity classifier is `4 - Beta`. There is no classifier for a candidate, and
 `5 - Production/Stable` would say more than has happened.

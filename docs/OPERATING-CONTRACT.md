@@ -70,7 +70,8 @@ semantic version. 1.0.0 requires all of:
 
 All five held on 15 September 2026 and the four artifacts moved to `1.0.0-rc.1`. The
 candidate holds until an operator who is not the author reaches a verified result without
-help; a defect found in the candidate makes rc.2; nothing else moves the number.
+help; a defect found in the candidate makes the NEXT candidate, which is how rc.1 became
+rc.2 on 2026-09-17; nothing else moves the number.
 
 ## 5. Cryptographic mode
 

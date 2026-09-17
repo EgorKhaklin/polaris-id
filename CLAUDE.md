@@ -1,7 +1,7 @@
 # CLAUDE.md: agent runbook for Polaris
 
 Read this first in a fresh session. It is the operating context for an agent working in this
-repository at `1.0.0-rc.1`: what Polaris is, which rules cannot be crossed, what work may be
+repository at `1.0.0-rc.2`: what Polaris is, which rules cannot be crossed, what work may be
 added, and what evidence must exist before anything is called done. Deeper documents are
 linked where they govern; this file does not replace them.
 
@@ -131,13 +131,14 @@ outside party did the thing. Polaris's own SDK talking to Polaris does not count
 own conformance suite is not external evidence. Do not present the invariant count as the
 progress metric.
 
-**Versions.** The tree stopped counting ships at v9.467; it is `1.0.0-rc.1` and moves only for
+**Versions.** The tree stopped counting ships at v9.467; it is `1.0.0-rc.2` and moves only for
 an externally observable change. The four standalone packages carry their own semver. The
 five conditions for 1.0.0 all hold: clean-machine install; explicit, safe crypto mode; a named
 external client completed a presentation; a named external conformance suite has run; its
 result is published where it is not green. What keeps the candidate a candidate is an operator
 who is not the author reaching a verified result without help. A defect found in the
-candidate makes rc.2. Nothing else moves the number.
+candidate makes the NEXT candidate: rc.1 became rc.2 on 2026-09-17 for twenty-two of
+them. Nothing else moves the number.
 
 **The kill line.** At 180 days, if the external fields of the scoreboard are still effectively
 empty while internal counts keep growing, the core is frozen and the project is archived as a
@@ -157,7 +158,7 @@ never upgrade one into the next in prose.
 
 | Mark | Means | Does not mean |
 |---|---|---|
-| **implemented** | A path that runs at `1.0.0-rc.1`, exercised by a test or a drill in CI, and pinned by an invariant check that fails the build if it stops being true. | That anyone outside has run it. |
+| **implemented** | A path that runs at `1.0.0-rc.2`, exercised by a test or a drill in CI, and pinned by an invariant check that fails the build if it stops being true. | That anyone outside has run it. |
 | **experimental** | A path that runs but is limited in a way the repository itself names: not covered by CI, notional in scale, or dependent on a backend that CI simulates. | Validated. |
 | **external validation required** | Implemented and tested internally, but no external party has audited, attacked, deployed or independently re-implemented it. | That such validation is scheduled. |
 | **externally exercised** | A named party outside the repository ran it, on a date, with a result the scoreboard records: one wallet, one hosted conformance suite, one published test corpus so far. | Audited, certified, deployed, piloted, adopted, or interoperable in general. |
