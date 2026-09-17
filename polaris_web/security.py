@@ -566,7 +566,7 @@ def authenticate(get_conn, username, password):
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT user_id, username, password_hash, role, is_active, "
-                "       failed_login_count, locked_until "
+                "       failed_login_count, locked_until, agency_id "
                 "FROM AppUser WHERE username = %s",
                 (username,)
             )
@@ -695,6 +695,12 @@ def authenticate(get_conn, username, password):
                 'user_id':  user['user_id'],
                 'username': user['username'],
                 'role':     user['role'],
+                # P3.9: the authority this operator acts for, or None for unscoped, which is
+                # the default and correct for a single-authority instance. login_user() puts
+                # it in the session and _apply_operator_scope() puts it in the database
+                # session, where the row-level policies filter on it. Dropping it here is
+                # what left those policies permanently permissive.
+                'agency_id': user['agency_id'],
             }, None)
     finally:
         conn.close()

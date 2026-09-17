@@ -9033,6 +9033,13 @@ def sql_query():
                     # refused by Postgres ("cannot execute DELETE in a read-only
                     # transaction"), not just discouraged by the keyword gate.
                     conn.set_session(readonly=True)
+                    # The console is a database connection like any other, so it carries the
+                    # operator's authority like any other: without this the row-level policies
+                    # see an unset GUC and go permissive, and an operator scoped to one
+                    # authority everywhere else would read every authority's rows here. A SET
+                    # is permitted inside a read-only transaction, so this is safe after
+                    # set_session() above.
+                    _apply_operator_scope(conn)
                     # Set statement_timeout BEFORE starting our query. SET of a
                     # runtime parameter is permitted inside a read-only transaction;
                     # it lasts until this connection closes — scoped to the request.

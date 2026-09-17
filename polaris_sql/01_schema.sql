@@ -198,7 +198,11 @@ COMMENT ON TABLE VerificationContext IS
 -- - AuthAuditLog is append-only by trigger (06_triggers.sql).
 -- ----------------------------------------------------------------------------
 
--- coverage:exempt — C4 atomic failed-login enforced by sp_atomic_failed_login + tg_appuser_failed_login_atomic; security_watcher detects auth-route changes
+-- coverage:exempt — C4 atomic failed-login enforced in the application, by the single-statement
+-- UPDATE ... RETURNING in security.py::authenticate(), and pinned by check_c4_atomic_failed_login.
+-- This line used to name sp_atomic_failed_login, tg_appuser_failed_login_atomic and
+-- security_watcher: none of the three was ever defined, so it claimed a database-level guarantee
+-- the schema does not make. C4 is an engineering invariant enforced where the table above says.
 CREATE TABLE AppUser (
     user_id              SERIAL  PRIMARY KEY,
     username             VARCHAR(50)  NOT NULL UNIQUE,

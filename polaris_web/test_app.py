@@ -12244,6 +12244,55 @@ class OperatorAuthorityScopeTests(PolarisTestCase):
             finally:
                 conn.close()
 
+    def test_authenticating_carries_the_operators_authority_out_of_the_database(self):
+        """THE DEFECT the test above could not see. That one proves the binding reaches the
+        database ONCE IT IS IN THE SESSION, and it puts the value there by hand. Nothing
+        asserted that logging in ever puts it there, and nothing did: authenticate() selected
+        six columns and agency_id was not among them, so login_user() read `agency_id` off a
+        dict that never carried it, every session got None, _apply_operator_scope() returned
+        early, and the row-level policies stayed permanently permissive. A scoped operator read
+        every authority's rows. Go through the real credential path and assert the authority
+        comes back with the user, in both directions."""
+        from app import security as sec
+        from werkzeug.security import generate_password_hash
+        get_db = lambda: psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            cur.execute("SELECT agency_id FROM Agency ORDER BY agency_id LIMIT 1")
+            agency = cur.fetchone()["agency_id"]
+            cur.execute(
+                "SELECT set_config('polaris.actor', 'test-fixture', true), "
+                "       set_config('polaris.justification', "
+                "                  'test fixture account for the per-authority binding', true)")
+            cur.execute(
+                "INSERT INTO AppUser (username, password_hash, role, agency_id, is_active, "
+                "failed_login_count, locked_until) "
+                "VALUES (%s, %s, 'operator', %s, TRUE, 0, NULL) "
+                "ON CONFLICT (username) DO UPDATE SET "
+                "  password_hash=EXCLUDED.password_hash, agency_id=EXCLUDED.agency_id, "
+                "  is_active=TRUE, failed_login_count=0, locked_until=NULL",
+                ('scoped_operator_probe',
+                 generate_password_hash('CorrectPass!1', method='scrypt'), agency))
+            conn.commit()
+
+        with flask_app.app.test_request_context('/'):
+            bound, err = sec.authenticate(get_db, 'scoped_operator_probe', 'CorrectPass!1')
+        self.assertIsNone(err, "the fixture operator must authenticate")
+        self.assertIn('agency_id', bound,
+                      "authenticate() must return the operator's authority, or login_user() has "
+                      "nothing to put in the session and the policies scope by nothing")
+        self.assertEqual(bound['agency_id'], agency,
+                         "the authority returned must be the one the account carries")
+
+        # The other direction, without which a function that always returned an authority
+        # would pass: an unbound operator stays unscoped, which is the single-authority
+        # default every existing deployment relies on.
+        with flask_app.app.test_request_context('/'):
+            unbound, err = sec.authenticate(get_db, 'admin', 'Admin@123!')
+        if err is None:
+            self.assertIsNone(unbound['agency_id'],
+                              "an account with no authority must come back unscoped, or the "
+                              "permissive default is gone and single-authority instances break")
+
     def test_the_scope_is_coerced_to_an_integer(self):
         # The value reaches SQL. A session cookie is signed, but the coercion is what keeps a
         # tampered or malformed value from ever being interpolated anywhere.
