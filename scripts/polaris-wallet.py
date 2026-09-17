@@ -274,6 +274,27 @@ def cmd_holder_keygen(args):
             binding = json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         raise SystemExit("binding refused: HTTP %d %s" % (e.code, e.read().decode("utf-8", "replace")[:200]))
+    except urllib.error.URLError as e:
+        # The key is ALREADY on disk at this point, and only HTTPError was caught, so a
+        # connection failure exited with a traceback and left the wallet in a state nobody
+        # had named. lab/linkability measured what that state does: `present --holder-nonce`
+        # emits `holder_proof` WITHOUT `holder_binding`, identically at every verifier, which
+        # is a stable one-bit fingerprint of this holder's device state. Saying so is the
+        # point of this message: the holder is the only person who can put it right.
+        raise SystemExit(
+            "could not reach %s to register the binding (%s).\n"
+            "\n"
+            "The holder key IS generated and saved in %s. Nothing was lost, and the private\n"
+            "half never left this machine. But the wallet is now HALF-BOUND: it can prove\n"
+            "possession, and its presentations will carry holder_proof with no\n"
+            "holder_binding beside it. A relying party can see that field is missing, it is\n"
+            "missing in the same way at every relying party, and few enough holders are in\n"
+            "that state that it distinguishes you.\n"
+            "\n"
+            "Re-run `holder-keygen` against a reachable instance to finish the binding. It\n"
+            "reuses nothing: a second run mints a new key, so pass --rotate if the first one\n"
+            "was ever registered."
+            % (args.instance.rstrip("/"), e.reason, path))
     out = os.path.join(wallet, "holder_binding.json")
     with open(out, "w") as f:
         json.dump(binding, f, indent=2)

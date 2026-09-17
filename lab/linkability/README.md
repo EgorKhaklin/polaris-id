@@ -4,16 +4,18 @@
 architecture.** The front door says *issuer-unlinkable*. That is a claim about the issuer.
 This directory is about the other side: two verifiers who kept what they were shown.
 
-**Status: six findings, three measured studies, most of the threat model still unmeasured.**
+**Status: seven findings, four measured studies, most of the threat model still unmeasured.**
 Findings 1 and 4 came from reading the question carefully enough to build a counterexample,
-and 4 is 1 again in a container the first fix did not look at. Findings 2, 5 and 6 are
-measured, each with a positive control. Finding 3 measures the adversary rather than the
-system, and Finding 5 is what happens when you take that seriously: the instrument behind
-Finding 2 could not have seen the channel it was read as clearing. Finding 6 is what happens
-when you read the artifact before measuring it: two of the four fields its question named are
-not in a presentation at all. What is listed under "What has NOT
-been measured" is exactly that, and nothing here should be read as evidence that the rest
-holds.
+and 4 is 1 again in a container the first fix did not look at. Findings 2, 5, 6 and 7 are
+measured, each against the shipped builders rather than a model of them. Finding 3 measures
+the adversary rather than the system, and Finding 5 is what happens when you take that
+seriously: the instrument behind Finding 2 could not have seen the channel it was read as
+clearing. Finding 6 is what happens when you read the artifact before measuring it: two of
+the four fields its question named are not in a presentation at all, and Finding 7 the same
+again, except that there the eighth conditional field was a defect. Seven of the eight are
+set by the verifier's own request. What is listed under
+"What has NOT been measured" is exactly that, and nothing here should be read as evidence
+that the rest holds.
 
 ---
 
@@ -368,6 +370,61 @@ struct and fails loudly rather than quietly measuring a stale one.
 
 ---
 
+## Finding 7: a field that is missing in the same way at every verifier
+
+**2026-09-17. Measured, through the shipped wallet. `scripts/polaris-wallet.py`.**
+
+Transcript structure was on the list below as "field ordering, optional-field presence,
+format minor version". Reading `cmd_present` answers most of it immediately: of the eight
+fields it emits conditionally, seven are gated by a flag the RELYING PARTY's request sets,
+so every holder answering the same request emits the same key set. `status_assertion`,
+`zk_proof`, `holder_proof`, `verifier_scope`, `pairwise_handle`, `context_id` and
+`disclosure_level` are all that shape. `presented_code` is always present, null or not, which
+is what makes a duress presentation structurally identical to a consenting one.
+
+**One is not.** `holder_binding` is emitted only `if os.path.isfile(binding_path)`, and
+`holder_proof` beside it is gated on a DIFFERENT file, the holder key. Those two files are
+written at two different moments, and nothing had asked what happens between them.
+
+    $ polaris-wallet holder-keygen --instance <unreachable>
+    urllib.error.URLError: <urlopen error [Errno 61] Connection refused>
+
+`cmd_holder_keygen` writes the key to disk, then registers it with the instance, and caught
+only `HTTPError`. A connection failure exited with a traceback, after the key was saved and
+before the binding was. The wallet is then HALF-BOUND, and this was measured rather than
+reasoned about, by presenting from exactly that wallet to two verifiers:
+
+    V1 keys: [context_id, credential, format, holder_proof, pairwise_handle,
+              presented_code, verifier_scope]
+    V2 keys: [context_id, credential, format, holder_proof, pairwise_handle,
+              presented_code, verifier_scope]
+
+    same key set at both verifiers:  True
+    holder_proof present:            True
+    holder_binding present:          False
+    pairwise handles differ:         True
+
+The handles differ, as the design intends. The **absence** does not. A colluding pair sees
+`holder_proof` with nothing beside it, in the same way, at both of them: a stable one-bit
+fingerprint of the holder's device state, and the bit is worth more to the adversary the
+rarer it is, because the set it names is small.
+
+**The cause is fixed, and the message now says what the state costs.** `holder-keygen`
+catches `URLError` and tells the holder the key is saved, the wallet is half-bound, the
+missing field is visible at every relying party, and how to finish. Pinned by
+`test_an_unreachable_instance_explains_the_half_bound_wallet`, which asserts the message and
+not merely the exit code, and which fails when the handler is removed.
+
+**What this does not say.** The bit still exists for any wallet already in that state, and
+nothing here can reach back and fix those; the message is for the next holder, not the
+previous one. It does not say the other seven conditionals are safe in general: they are
+verifier-controlled, which means they do not separate holders answering the SAME request,
+and a verifier that varies its request across holders would be a different study. Field
+ordering was not measured and does not vary in the shipped builder, which emits a dict
+literal in source order. Format minor version is one value today.
+
+---
+
 ## What has NOT been measured
 
 Everything in the threat model except the stable-field case above. In particular, for a
@@ -376,11 +433,11 @@ transcript that now legitimately reports `bounded`:
 - **Timing.** Does the interval between presentations, or proving time, carry a signal?
 - **Status artifacts.** A stapled status assertion is signed material with its own
   timestamps and identifiers.
-- **Transcript structure.** Field ordering, optional-field presence, format minor version.
 
-Presentation size is no longer on this list: it is Finding 5. Issuer metadata is no
-longer on it either: it is Finding 6, which found that two of the four fields it named
-are not in a presentation at all.
+Three bullets have left this list. Presentation size is Finding 5. Issuer metadata is
+Finding 6, which found that two of the four fields it named are not in a presentation at
+all. Transcript structure is Finding 7, which found that seven of the eight conditional
+fields are set by the verifier's own request and the eighth was a defect.
 
 The honest statement today: **`bounded` now means no field in the transcript is trivially
 identical across verifiers. It does not mean an adversary has no advantage.** The advantage

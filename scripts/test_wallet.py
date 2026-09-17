@@ -40,6 +40,13 @@ def _holder_secret(token_id, token_value, context_id):
     return hashlib.sha3_256(("%s|%s|%s" % (token_id, token_value, context_id)).encode()).hexdigest()
 
 
+try:
+    import oqs as _oqs  # noqa: F401
+    _HAVE_OQS = True
+except Exception:  # noqa: BLE001
+    _HAVE_OQS = False
+
+
 class HolderWalletTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -91,6 +98,31 @@ class HolderWalletTests(unittest.TestCase):
         self.assertEqual(set(a), {"format", "credential", "presented_code"})
         self.assertNotEqual(a["presented_code"], b["presented_code"])
         self.assertEqual(b["presented_code"], "secret-duress-code")
+
+    @unittest.skipUnless(_HAVE_OQS, "holder-keygen refuses before the network call without "
+                                     "liboqs, so this path is unreachable here; CI runs it "
+                                     "under the real-PQC interpreter")
+    def test_an_unreachable_instance_explains_the_half_bound_wallet(self):
+        """`holder-keygen` writes the key BEFORE it calls the instance, and only HTTPError
+        was caught. A connection failure therefore exited with a traceback and left the
+        wallet in a state nobody had named.
+
+        2026-09-17, found by lab/linkability while measuring transcript structure: a wallet
+        in that state presents `holder_proof` with no `holder_binding` beside it, identically
+        at every relying party, which is a stable one-bit fingerprint of the holder's device.
+        The refusal has to SAY that, because the holder is the only person who can put it
+        right, so this asserts the message and not merely the exit code.
+        """
+        self._enroll()
+        # Port 1 on the loopback refuses immediately: a connection error, not a timeout, so
+        # this test costs nothing and cannot hang waiting for a network that is not there.
+        r = self._run("holder-keygen", "--instance", "http://127.0.0.1:1")
+        self.assertNotEqual(r.returncode, 0, "an unreachable instance is not a success")
+        self.assertNotIn("Traceback", r.stderr,
+                         "a connection failure must be reported, not raised: %s" % r.stderr[-400:])
+        for phrase in ("could not reach", "HALF-BOUND", "holder_binding", "holder-keygen"):
+            self.assertIn(phrase, r.stderr,
+                          "the refusal must name %r so the holder can act on it" % phrase)
 
     def test_prove_membership_roundtrips_through_polaris_zk(self):
         binary = _zk_binary()
