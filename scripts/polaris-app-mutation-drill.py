@@ -240,7 +240,10 @@ def refusals(src: str) -> list[dict]:
             out.append({
                 "view": fn.name, "route": route, "line": node.lineno, "status": codes[0],
                 "span": (t.lineno, t.col_offset, t.end_lineno, t.end_col_offset),
-                "source": (ast.get_source_segment(src, t) or "")[:78].replace("\n", " "),
+                # The FULL condition, not a display-length slice: DECLARED matches against
+                # this, and truncating first made a declared key silently stop matching the
+                # refusal it named. Printing truncates; matching does not.
+                "source": " ".join((ast.get_source_segment(src, t) or "").split()),
             })
     return out
 
@@ -386,7 +389,7 @@ def main() -> int:
             APP.write_text(original)
         if green:
             survivors.append(case)
-            print("          SURVIVED: %s" % case["source"])
+            print("          SURVIVED: %s" % case["source"][:78])
 
     assert APP.read_text() == original, "app.py was not restored; repair with git checkout"
 
@@ -409,7 +412,7 @@ def main() -> int:
         print("\n== %d REFUSAL(S) NOTHING NOTICES ==" % len(undeclared))
         for c in undeclared:
             print("   %-30s %-3d %s:%d" % (c["route"][:30], c["status"], c["view"], c["line"]))
-            print("        %s" % c["source"])
+            print("        %s" % c["source"][:78])
         print("\nEach is a decision the application makes that no test would miss. Cover it, or "
               "add it to DECLARED with the reason it does not need covering.")
         return 1
