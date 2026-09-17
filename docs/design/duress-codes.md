@@ -153,10 +153,26 @@ role gate on the queue. Removing any one of them degrades the property.
   different system.
 - **No external notification channels.** The column names them; the wiring is
   an operator integration.
-- **No defence against long-run frequency analysis.** Constant-time comparison
-  covers a single call. An attacker measuring aggregate rates over a long
-  period could in principle infer how often duress events occur, which is
-  accepted rather than solved.
+- **No defence against long-run frequency analysis, and it is sharper than "aggregate
+  rates" (corrected 2026-09-17).** Constant-time comparison covers a single call. This
+  entry used to say an attacker measuring rates over a long period could infer how often
+  duress events occur, accepted rather than solved. That much is true and is close to what
+  the alarm exists to publish; `polaris_duress_events_total` is unlabelled, so it breaks the
+  population down by nothing.
+
+  A coercer does not have to wait for rates to accumulate, because **they choose when the
+  victim presents**. Read the counter, make the holder present, read it again: if a duress
+  code was handed over, it moved by one more than the background did. `lab/duress/
+  counter_oracle.py` measures it at 91 per cent from a SINGLE forced presentation against a
+  hundred presentations a minute, and effectively certain at the volumes a coercer would
+  pick. That is not "how often duress events occur"; it is *did this person signal*, which
+  is the question the mechanism exists to make unanswerable.
+
+  It needs read access to `/metrics`, which is why that surface is restricted to the
+  monitoring network at both edges and why CI scrapes from outside to prove it. The
+  conclusion is unchanged and the reason is not: the control is access to the surface, not
+  suppression of the metric, because an unread duress signal is the coercion-cover failure
+  mode the alarm exists to prevent.
 - **No acknowledgement workflow.** The field exists; the responder-facing
   process does not.
 

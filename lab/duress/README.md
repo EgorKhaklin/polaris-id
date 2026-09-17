@@ -351,7 +351,78 @@ nothing about the record reader, because there is nothing to measure there: it i
 
 ---
 
+## Finding: the accepted limitation is a population statistic, and it is also an oracle
+
+**2026-09-17. Measured. `counter_oracle.py`. The last bullet on this list.**
+
+`docs/design/duress-codes.md` accepted one thing:
+
+> **No defence against long-run frequency analysis.** Constant-time comparison covers a
+> single call. An attacker measuring aggregate rates over a long period could in principle
+> infer how often duress events occur, which is accepted rather than solved.
+
+As a population statistic that is defensible, and the counter is built for it:
+`polaris_duress_events_total` is **unlabelled**, checked rather than assumed. One global
+number, no agency dimension, no context dimension. How often duress events occur across an
+authority is close to what the alarm exists to publish.
+
+**A coercer does not have to wait for rates to accumulate.** They choose when the victim
+presents, which turns the counter into a chosen-input oracle:
+
+    read polaris_duress_events_total
+    make the holder present
+    read it again
+
+If the holder handed over a duress code, the counter moved by one more than the background
+did. Measured, 4000 trials per cell, with a control that must be certain at zero background:
+
+    background     attempts   P(coercer is right)
+    0/min          1          1.0000
+    10/min         1          0.9892
+    100/min        1          0.9117
+    100/min        3          0.9655
+    100/min        10         0.9995
+
+**One forced presentation is 91 per cent right at a hundred presentations a minute**, which
+is a busy authority, and three gets to 97. At the volumes a coercer would actually pick, one
+observation decides it. That is not "how often duress events occur". It is *did THIS person
+signal*, which is the single question the mechanism exists to make unanswerable, and
+README.md's own framing is that duress codes resist a coercer **who does not know the
+mechanism exists**. This is one who does and who can read one number.
+
+**What it needs, and what it does not change.** Read access to `/metrics`, which is restricted
+at the edge to the monitoring network, enforced in both the Caddyfile and the Helm configmap,
+with CI scraping from outside to prove it. So the attacker is an insider on that network: the
+operator-as-coercer this directory names as the adversary every safeguard assumes away, which
+is now the third finding to land on that same person.
+
+It is **not** an argument for deleting the metric. An unread duress signal is the
+coercion-cover failure mode the alarm exists to prevent, and the route's docstring has always
+said the control is access to the surface rather than suppression. What changes is the design
+record: the limitation it accepts is written as a population statistic, and the same
+observable is an individual test. The document now says both.
+
+**What this does not say.** It is a model of background arrivals, not a measurement of a
+deployment, and the estimator is deliberately the simplest one that works because a coercer
+does not need to be clever. A defender who wanted to close this would have to break the link
+between one signal and one observable moment, which is a different mechanism and is not
+proposed here.
+
+---
+
 ## What is still unmeasured
 
-- **Long-run frequency analysis.** The design document accepts it rather than solving it. No
-  measurement of how much an attacker learns from aggregate rates.
+**The enumerated list is empty as of 2026-09-17, and that is not the same as nothing being
+unmeasured.** Every bullet this directory wrote down has been answered: the operator as
+coercer (audited surface by surface, then again across the whole operator surface),
+enrolment-rate inference (the set is a product, and the enrolment term dominates), and
+long-run frequency analysis (a population statistic, and also an oracle). Two of the three
+answers found the bullet's own premise wrong, which is the reason to distrust an empty list:
+it records what somebody thought to write down.
+
+What remains open is not on it. The mechanism still does not resist a coercer who watches the
+holder, it is still net-negative against lawful or institutional access, and the three
+findings above all land on the same person, the insider who can read the operator's screen or
+the monitoring network. None of that is measured away; it is the assessment this directory
+opened with, and it has not changed.
+
