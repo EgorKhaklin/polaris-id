@@ -15,6 +15,22 @@ externally observable changes.
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc1, 2026-09-16 | 0.1.0, 2026-09-15 |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.1, 2026-09-16 | 0.1.0, 2026-09-15 |
 
+> **rc.2 is owed on `polaris-oid4vp`, and this is the decision waiting to be taken.**
+> On 2026-09-17 an adversarial review found fifteen defects in the published 1.0.0rc1 and
+> all fifteen are fixed in the tree: expired credentials accepted because `exp` and `nbf`
+> were never read, a key binding `iat` of `NaN` defeating the replay window entirely, a
+> disclosure able to overwrite the issuer or the key-binding key in the returned claims, any
+> end-entity certificate the trust anchor ever signed accepted as an issuer, the credential
+> type the query asked for never compared, four denial-of-service paths needing no
+> credential, five totality escapes, and a normative disclosure form being rejected.
+> `docs/PRODUCTION-READINESS.md` carries them all.
+>
+> The operating contract is explicit that a defect found in the candidate makes rc.2. What
+> is on PyPI today is the version with those fifteen defects in it, and anyone who installed
+> it has them. Nothing here bumps a version or publishes: both are the owner's call, and
+> this note exists so the call is in front of whoever next opens this file rather than lost
+> in a commit message.
+
 All four names were unclaimed when checked (the first three on 2026-09-13, `polaris-oid4vp`
 on 2026-09-14, each against a calibration that tells an absent name from a present one) and
 are held by this project now. The npm package was `@polaris/verify` until then and had to
