@@ -48,6 +48,37 @@ _ALG = "ML-DSA-65"          # the default parameter set
 _ACCEPTED = {"ML-DSA-65": ("MLDSA65PublicKey", 1952, 3309), "ML-DSA-87": ("MLDSA87PublicKey", 2592, 4627)}
 
 
+def _window_within(issued_at, expires_at, max_window_seconds):
+    """Is this artifact's stated window no wider than the caller's cap?
+
+    Two functions hand-rolled `if (ea - ia).total_seconds() > max_window_seconds` and failed
+    OPEN on a non-finite cap: `anything > nan` is False, so a 99-year window passed as fresh
+    while `_verify_window`, which writes the same test as `0 < window <= max`, refused it.
+    Written once, as a predicate that answers False whenever it cannot answer.
+    """
+    if not _finite(max_window_seconds):
+        return False
+    try:
+        width = (expires_at - issued_at).total_seconds()
+    except (TypeError, AttributeError):
+        return False
+    return 0 < width <= max_window_seconds
+
+
+def _finite(x):
+    """True for a real, finite number. Not `math.isfinite` alone: a bool is an int in Python
+    and `True` is not an epoch number, a use count or a spending limit.
+
+    Every numeric comparison in this file that decides something now goes through this.
+    Three separate holes on 2026-09-17 were the same shape: a NaN walked past an
+    `isinstance(x, (int, float))` test and then made every comparison against it False,
+    which silently turned a refusal into an acceptance.
+    """
+    import math as _math
+    return (isinstance(x, (int, float)) and not isinstance(x, bool)
+            and _math.isfinite(x))
+
+
 def _accepted_alg(alg):
     """True iff `alg` names an accepted parameter set. Total: a hostile non-string is simply
     not accepted (never a TypeError from an unhashable value)."""
@@ -140,6 +171,21 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
     alg = pack.get("algorithm")
     sig_hex = pack.get("signature_hex")
     pk_hex = pack.get("public_key_hex")
+    # 2026-09-17: the docstring above has always promised totality and this function was the
+    # one artifact type that did not deliver it. `token_value: 1` reached
+    # `token_value.encode()` and raised AttributeError; `signature_hex: 1` reached
+    # `bytes.fromhex` which raises TypeError, and only ValueError was caught. Every OTHER
+    # artifact type in this file already catches (ValueError, TypeError) there.
+    #
+    # It is the primary external door and the stranger chooses the JSON, so the crash came
+    # out of the shipped command as a traceback on stderr, an EMPTY stdout and exit 1, a code
+    # this module's own docstring does not define. A relying party parsing stdout gets
+    # nothing; one branching on the exit code sees a state that is not in the table.
+    if not isinstance(tok, str):
+        verdict_note = ("token_value must be a string, got %s" % type(tok).__name__)
+        return {"algorithm": alg, "token_value": None, "signature_valid": False,
+                "witnesses": [], "authenticity": None, "issuer_trusted": None,
+                "note": verdict_note}
     verdict = {
         "algorithm": alg,
         "token_value": tok,
@@ -158,7 +204,7 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
         # key. Say so plainly rather than reporting a green check.
         try:
             got = bytes.fromhex(sig_hex or "")
-        except ValueError:
+        except (ValueError, TypeError):
             got = b""
         matches = got == _digest(tok)
         verdict["signature_valid"] = False
@@ -178,7 +224,7 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
     try:
         sig = bytes.fromhex(sig_hex)
         pk = bytes.fromhex(pk_hex)
-    except ValueError:
+    except (ValueError, TypeError):
         verdict["note"] = "signature_hex/public_key_hex are not valid hex"
         return verdict
 
@@ -457,6 +503,10 @@ def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_ke
     authenticity AND a fresh, bound, ACTIVE status assertion — with no connectivity.
     accept iff both signatures are genuine (and issuer-trusted, when anchored), the
     assertion is bound to this credential, fresh, and ACTIVE."""
+    # `verify_pack` and `verify_status_assertion` each coerce a hostile shape internally;
+    # this function then dereferenced both again on the ORIGINALS and raised. 2026-09-17.
+    pack = pack if isinstance(pack, dict) else {}
+    assertion = assertion if isinstance(assertion, dict) else {}
     a = verify_pack(pack, anchor_keys)
     s = verify_status_assertion(assertion, now=now, max_window_seconds=max_window_seconds,
                                 anchor_keys=anchor_keys)
@@ -592,7 +642,30 @@ def _attestation_canonical(att):
     return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def verify_attestation(att, attesting_agency_id=None, expected_key=None):
+def _attestation_window_open(att, now=None):
+    """False when this attestation's own `valid_until` has passed, or cannot be read.
+
+    Four places match an attestation by key and context. Only one of them called
+    `verify_attestation`, so the window rule has to live somewhere all four can reach it or
+    it will be enforced in one and not the others, which is the shape of the defect this
+    function exists to close.
+
+    A window nobody can parse counts as closed. An attestation that says something about its
+    own lifetime this verifier cannot evaluate must not be treated as open-ended, or
+    `valid_until: "forever"` becomes the way to sign a permanent trust edge.
+    """
+    if not isinstance(att, dict):
+        return False
+    until = att.get("valid_until")
+    if until is None:
+        return True          # no window stated is not a window that has closed
+    try:
+        return _parse_iso(str(until)) >= _instant(now)
+    except (ValueError, TypeError):
+        return False
+
+
+def verify_attestation(att, attesting_agency_id=None, expected_key=None, now=None):
     """Verify OFFLINE that a federation attestation carries the ATTESTING agency's own
     signature over the attested key, the context and the window (P9.5).
 
@@ -605,7 +678,8 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None):
     recorded before v9.348 stay verifiable for one major, and a relying party that requires
     signatures asks for them. Total on hostile input."""
     v = {"signed": False, "attestation_authentic": False, "attester_matches": None,
-         "key_matches": None, "witnesses": [], "note": None}
+         "key_matches": None, "expired": None, "valid_until": None,
+         "witnesses": [], "note": None}
     if not isinstance(att, dict):
         v["note"] = "attestation must be an object"
         return v
@@ -642,6 +716,30 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None):
         v["key_matches"] = (str(att.get("attested_public_key_hex") or "").lower() == str(expected_key).lower())
         if not v["key_matches"]:
             v["note"] = "the attestation is signed over a different attested key"
+
+    # 2026-09-17: `valid_until` is in the signed statement and was compared to NOTHING. It
+    # appeared exactly once in this file, in `_attestation_canonical`, and no consumer read
+    # it. Measured: a trust edge an authority time-boxed to 2020 kept granting
+    # cross-authority acceptance in 2026, and so did one whose window said "not-a-date",
+    # because a manifest carrying the row was fresh and the row's own window was never
+    # looked at. Every other windowed artifact in this file is checked; this was the one
+    # that was not.
+    #
+    # Two published promises it contradicted. WIRE-SPEC section 3.14: the attestation "binds
+    # the context, so an edge cannot be widened after the fact, and the window, so it cannot
+    # be extended". And the Python SDK's own comment: "an attestation's window is its
+    # `valid_until`, which the trust decision reads."
+    v["valid_until"] = att.get("valid_until")
+    if v["valid_until"] is not None:
+        v["expired"] = not _attestation_window_open(att, now)
+        try:
+            _parse_iso(str(v["valid_until"]))
+        except (ValueError, TypeError):
+            v["note"] = "the attestation's valid_until is not a readable instant"
+        if v["expired"] and not v["note"]:
+            v["note"] = ("the attestation's own window closed at %s: the attesting authority "
+                         "time-boxed this edge and the box has run out"
+                         % (v["valid_until"],))
     return v
 
 
@@ -689,11 +787,17 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                 # P9.5: is this edge signed by the agency that made it, or is it the
                 # operator's word carried by the manifest's signature?
                 agency = (mv["authority"] or {}).get("agency_id") if isinstance(mv["authority"], dict) else None
-                av = verify_attestation(att, attesting_agency_id=agency, expected_key=token_key)
+                av = verify_attestation(att, attesting_agency_id=agency, expected_key=token_key,
+                                        now=now)
                 if av["signed"] and not (av["attestation_authentic"]
                                          and av["attester_matches"] is not False
                                          and av["key_matches"] is not False):
                     continue   # a present-but-bad signature is worse than none: refuse the edge
+                # An edge whose own window has closed is not an edge, however fresh the
+                # manifest carrying it. Before 2026-09-17 nothing read `valid_until` and a
+                # one-year edge granted acceptance six years past its end.
+                if av["expired"]:
+                    continue
                 if require_signed_attestation and not av["signed"]:
                     continue
                 attestation_signed = bool(av["signed"])
@@ -720,6 +824,18 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
         if status == "compromised":
             return {"decision": "reject", "authentic": True,
                     "reasons": ["the issuer key is listed COMPROMISED by a trusted trust list"],
+                    "via": via, "revocation_checked": False, "revoked": None, "key_status": status,
+                    "attestation_signed": attestation_signed}
+        # A status this verifier does not recognise is not a licence to proceed. The wire
+        # specification fixes the vocabulary; a list carrying anything else is either a
+        # newer list this verifier cannot read or a corrupted one, and both are reasons to
+        # stop rather than to continue. Before 2026-09-17 `key_status_at` answered "active"
+        # for every out-of-vocabulary value, so 'COMPROMISED' with a capital letter read as
+        # a usable key.
+        if status == "unknown":
+            return {"decision": "reject", "authentic": True,
+                    "reasons": ["the trust list gives this issuer key a status this verifier "
+                                "does not recognise; refusing rather than assuming it is active"],
                     "via": via, "revocation_checked": False, "revoked": None, "key_status": status,
                     "attestation_signed": attestation_signed}
     # P3.2b: fail-closed revocation propagation, if the relying party supplies the feed.
@@ -838,12 +954,16 @@ def _verify_window(obj, v, now, max_window_seconds):
         return
     window = (ea - ia).total_seconds()
     within = ia <= now < ea
-    window_ok = True if max_window_seconds is None else (0 < window <= max_window_seconds)
+    window_ok = True if max_window_seconds is None else _window_within(ia, ea, max_window_seconds)
     v["fresh"] = bool(within and window_ok)
     if not within:
         v["note"] = "object is stale or not yet valid"
     elif not window_ok:
-        v["note"] = "validity window %ds exceeds the accepted maximum %ds" % (int(window), max_window_seconds)
+        # The boolean above already failed closed on a non-finite cap; this line then raised
+        # while writing the note, because `"%ds" % nan` is a ValueError. Refusing correctly
+        # and then crashing on the way to saying so is still a crash. 2026-09-17.
+        v["note"] = ("validity window %ds exceeds the accepted maximum %s"
+                     % (int(window), max_window_seconds))
 
 
 def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=None):
@@ -892,24 +1012,42 @@ def check_epoch_chain(cp1, cp2):
     Returns {"consistent": bool, "fork": bool, "note": str}. fork=True means the two
     checkpoints assign DIFFERENT roots to the SAME epoch number, or the later one does not
     extend the earlier one it should -- the equivocation the alignment protocol catches."""
-    e1, e2 = (cp1.get("epoch") or {}), (cp2.get("epoch") or {})
-    pk1, pk2 = (cp1.get("public_key_hex") or "").lower(), (cp2.get("public_key_hex") or "").lower()
+    # 2026-09-17: every one of these took an artifact straight off the wire and
+    # dereferenced it with no type guard. For the fork detectors that is the whole point of
+    # the function: two artifacts from two different sources, compared.
+    cp1 = cp1 if isinstance(cp1, dict) else {}
+    cp2 = cp2 if isinstance(cp2, dict) else {}
+    e1 = cp1.get("epoch") if isinstance(cp1.get("epoch"), dict) else {}
+    e2 = cp2.get("epoch") if isinstance(cp2.get("epoch"), dict) else {}
+    pk1 = str(cp1.get("public_key_hex") or "").lower()
+    pk2 = str(cp2.get("public_key_hex") or "").lower()
     if pk1 and pk2 and pk1 != pk2:
         return {"consistent": False, "fork": False,
                 "note": "checkpoints are signed by different keys; not one authority's chain"}
     n1, n2 = e1.get("number"), e2.get("number")
-    if n1 is None or n2 is None:
-        return {"consistent": False, "fork": False, "note": "a checkpoint is missing its epoch number"}
+    # 2026-09-17: this read `if n1 is None or n2 is None`, and everything after it compared
+    # the two numbers. A NaN walked past that test, and every comparison against NaN is
+    # False, so `n1 <= n2` was False, `nlo == nhi` was False and `nhi == nlo + 1` was False:
+    # the pair fell through to the "monotone but non-adjacent" SUCCESS return at the bottom.
+    # Measured: two checkpoints with DIFFERENT roots at the same epoch reported
+    # {'fork': True} with an integer and {'consistent': True, 'fork': False} with NaN. This
+    # is a fork detector, so defeating it is the whole attack, and `json.loads` accepts the
+    # bare literal NaN by default, which is how it arrives.
+    for label, n in (("first", n1), ("second", n2)):
+        if isinstance(n, bool) or not isinstance(n, (int, float)) or not _finite(n):
+            return {"consistent": False, "fork": False,
+                    "note": "the %s checkpoint's epoch number is %r, which is not a finite "
+                            "number: these two cannot be placed in an order" % (label, n)}
     (_, elo), (hi, ehi) = ((cp1, e1), (cp2, e2)) if n1 <= n2 else ((cp2, e2), (cp1, e1))
     nlo, nhi = elo["number"], ehi["number"]
     if nlo == nhi:
-        if (elo.get("root_hex") or "").lower() != (ehi.get("root_hex") or "").lower():
+        if str(elo.get("root_hex") or "").lower() != str(ehi.get("root_hex") or "").lower():
             return {"consistent": False, "fork": True,
                     "note": "FORK: two different roots signed at epoch %s" % nlo}
         return {"consistent": True, "fork": False, "note": "identical epoch checkpoint"}
-    hp = (hi.get("prev") or {})
+    hp = hi.get("prev") if isinstance(hi.get("prev"), dict) else {}
     if nhi == nlo + 1:
-        if hp.get("number") != nlo or (hp.get("root_hex") or "").lower() != (elo.get("root_hex") or "").lower():
+        if hp.get("number") != nlo or str(hp.get("root_hex") or "").lower() != str(elo.get("root_hex") or "").lower():
             return {"consistent": False, "fork": True,
                     "note": "FORK: epoch %s does not extend the published epoch %s" % (nhi, nlo)}
         return {"consistent": True, "fork": False, "note": "adjacent checkpoints chain cleanly"}
@@ -922,11 +1060,17 @@ def epoch_aligned(manifest, checkpoint):
     the authority's own (separately trusted) manifest commits to -- same number, same
     root. An authority cannot serve a checkpoint that disagrees with the epoch its signed
     manifest published without being caught. Returns None if either side omits the epoch."""
-    me, ce = (manifest.get("epoch") or {}), (checkpoint.get("epoch") or {})
+    # 2026-09-17: every one of these took an artifact straight off the wire and
+    # dereferenced it with no type guard. For the fork detectors that is the whole point of
+    # the function: two artifacts from two different sources, compared.
+    manifest = manifest if isinstance(manifest, dict) else {}
+    checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+    me = manifest.get("epoch") if isinstance(manifest.get("epoch"), dict) else {}
+    ce = checkpoint.get("epoch") if isinstance(checkpoint.get("epoch"), dict) else {}
     if me.get("number") is None or ce.get("number") is None:
         return None
     return (me.get("number") == ce.get("number")
-            and (me.get("root_hex") or "").lower() == (ce.get("root_hex") or "").lower())
+            and str(me.get("root_hex") or "").lower() == str(ce.get("root_hex") or "").lower())
 
 
 def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=None):
@@ -1000,10 +1144,25 @@ def check_revocation_progression(prev_feed, next_feed):
     dropped leaf or a regressed as_of is a ROLLBACK (equivocation). Pure structural check.
 
     Returns {"progresses": bool, "rolled_back": bool, "note": str}."""
-    pk1, pk2 = (prev_feed.get("public_key_hex") or "").lower(), (next_feed.get("public_key_hex") or "").lower()
+    # 2026-09-17: every one of these took an artifact straight off the wire and
+    # dereferenced it with no type guard. For the fork detectors that is the whole point of
+    # the function: two artifacts from two different sources, compared.
+    prev_feed = prev_feed if isinstance(prev_feed, dict) else {}
+    next_feed = next_feed if isinstance(next_feed, dict) else {}
+    pk1 = str(prev_feed.get("public_key_hex") or "").lower()
+    pk2 = str(next_feed.get("public_key_hex") or "").lower()
     if pk1 and pk2 and pk1 != pk2:
         return {"progresses": False, "rolled_back": False,
                 "note": "feeds are signed by different keys; not one issuer's history"}
+    # `revoked_leaves: 5` reached a set comprehension and raised TypeError. A leaf set that
+    # is not a list is not an empty leaf set, so it is refused rather than coerced: reading
+    # it as empty would make a rollback look like a clean first publication.
+    for label, feed in (("older", prev_feed), ("newer", next_feed)):
+        leaves = feed.get("revoked_leaves")
+        if leaves is not None and not isinstance(leaves, (list, tuple, set)):
+            return {"progresses": False, "rolled_back": False,
+                    "note": "the %s feed's revoked_leaves is %s, not a list: these two "
+                            "cannot be compared" % (label, type(leaves).__name__)}
     prev_leaves = {str(x).lower() for x in (prev_feed.get("revoked_leaves") or [])}
     next_leaves = {str(x).lower() for x in (next_feed.get("revoked_leaves") or [])}
     dropped = prev_leaves - next_leaves
@@ -1347,7 +1506,8 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
             if not isinstance(att, dict):
                 continue
             if (str(att.get("attested_public_key_hex") or "").lower() == cp_key
-                    and (context_id is None or att.get("context_id") == context_id)):
+                    and (context_id is None or att.get("context_id") == context_id)
+                    and _attestation_window_open(att, now)):
                 via = mv["authority"]
                 break
         if via:
@@ -1710,7 +1870,7 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
         now = _instant(now)
         ia, ea = _parse_iso(reg["issued_at"]), _parse_iso(reg["expires_at"])
         fresh = ia <= now < ea
-        if max_window_seconds is not None and (ea - ia).total_seconds() > max_window_seconds:
+        if max_window_seconds is not None and not _window_within(ia, ea, max_window_seconds):
             fresh = False
         v["fresh"] = fresh
     except Exception:
@@ -1882,7 +2042,8 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
                 continue
             for att in mv.get("attestations") or []:
                 if isinstance(att, dict) and str(att.get("attested_public_key_hex") or "").lower() == pk_hex \
-                        and att.get("context_id") == ctx:
+                        and att.get("context_id") == ctx \
+                        and _attestation_window_open(att):
                     authorized = True
         v["requester_authorized"] = authorized
     if body is not None:
@@ -2352,7 +2513,7 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
         now = _instant(now)
         ia, ea = _parse_iso(tl["issued_at"]), _parse_iso(tl["expires_at"])
         fresh = ia <= now < ea
-        if max_window_seconds is not None and (ea - ia).total_seconds() > max_window_seconds:
+        if max_window_seconds is not None and not _window_within(ia, ea, max_window_seconds):
             fresh = False
         v["fresh"] = fresh
     except Exception:
@@ -2403,6 +2564,15 @@ def key_status_at(tl, public_key_hex, instant=None):
             return "retired"
         if k.get("status") == "retired" and ret is None:
             return "retired"
+        # 2026-09-17: this fell through to "active" for ANY status the list carried,
+        # including 'COMPROMISED', 'Compromised', 'suspended', None and 1. The wire
+        # specification fixes the vocabulary to lowercase active|retired|compromised, so an
+        # out-of-vocabulary value is not a forgery path; it is a fail-OPEN default in a key
+        # revocation function, which is the one place a default should say "unknown".
+        # `verify_cross_authority` rejects only on exactly "compromised", so 'COMPROMISED'
+        # read as a usable key.
+        if k.get("status") != "active":
+            return "unknown"
         return "active"
     return None
 
@@ -2471,7 +2641,8 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
                 if not isinstance(att, dict):
                     continue
                 if str(att.get("attested_public_key_hex") or "").lower() == req_key and \
-                   (ctx is None or att.get("context_id") == ctx):
+                   (ctx is None or att.get("context_id") == ctx) and \
+                   _attestation_window_open(att, now):
                     via = mv["authority"]
                     break
             if via:
@@ -2741,6 +2912,12 @@ def verify_cosignature(cosig, witness_key=None):
     """Verify a witness cosignature over a log head (P3.3b): the signature over
     SHA3-256(canonical) with two witnesses, and (with witness_key) that it is from the
     expected witness. Returns a verdict dict."""
+    # An unsigned `anchor` is attacker-writable by design, and `verify_witnessed_checkpoint`
+    # calls this for every element of the `cosignatures` list it carries. One string in that
+    # list raised AttributeError out of `verify_timestamp_anchor`, whose docstring ends
+    # "Total on hostile input." The sibling Python SDK already guards this exact spot.
+    if not isinstance(cosig, dict):
+        cosig = {}
     v = {"cosignature_authentic": False, "log_id": cosig.get("log_id"),
          "tree_size": cosig.get("tree_size"), "root_hash_hex": cosig.get("root_hash_hex"),
          "witness": cosig.get("public_key_hex"), "witness_matches": None, "witnesses": [], "note": None}
@@ -2848,16 +3025,23 @@ def verify_publication(log_sth, receipt, ledger_key):
     confirms the head's entry is a leaf in the ledger and the ledger head is signed by the
     trusted ledger key. So the log cannot use a head it has not publicly committed, and the
     ledger (being append-only) cannot later drop it. Returns {published, ledger_size, note}."""
+    # 2026-09-17: every one of these took an artifact straight off the wire and
+    # dereferenced it with no type guard. For the fork detectors that is the whole point of
+    # the function: two artifacts from two different sources, compared.
+    receipt = receipt if isinstance(receipt, dict) else {}
+    log_sth = log_sth if isinstance(log_sth, dict) else {}
     v = {"published": False, "ledger_size": None, "note": None}
     if receipt.get("format") != _PUBLICATION_FORMAT:
         v["note"] = "not a %s" % _PUBLICATION_FORMAT
         return v
     if (receipt.get("log_id") != log_sth.get("log_id")
             or receipt.get("tree_size") != log_sth.get("tree_size")
-            or (receipt.get("root_hash_hex") or "").lower() != (log_sth.get("root_hash_hex") or "").lower()):
+            or str(receipt.get("root_hash_hex") or "").lower()
+                != str(log_sth.get("root_hash_hex") or "").lower()):
         v["note"] = "the receipt does not bind to this log head"
         return v
-    ledger_sth = receipt.get("ledger_sth") or {}
+    ledger_sth = receipt.get("ledger_sth")
+    ledger_sth = ledger_sth if isinstance(ledger_sth, dict) else {}
     lv = verify_sth(ledger_sth, issuer_key=ledger_key)
     if not lv["sth_authentic"]:
         v["note"] = "the ledger's signed head is not authentic (%s)" % lv["note"]
@@ -2874,7 +3058,15 @@ def verify_publication(log_sth, receipt, ledger_key):
     except (ValueError, TypeError, KeyError):
         v["note"] = "the receipt's leaf_index, proof, or ledger root is malformed"
         return v
-    if verify_inclusion(idx, ledger_sth.get("tree_size"), _lh(entry), root, proof):
+    # `tree_size` came out of an attacker-signed ledger STH and went straight into a
+    # comparison inside verify_inclusion: `"1"` raised TypeError on `idx >= tree_size`. The
+    # sibling call in verify_timestamp_anchor wraps this in try/except with the comment "a
+    # hostile proof shape is a refusal, never a crash"; this one did not.
+    ledger_size = ledger_sth.get("tree_size")
+    if not isinstance(ledger_size, int) or isinstance(ledger_size, bool) or ledger_size < 0:
+        v["note"] = "the ledger head's tree_size is not a non-negative integer"
+        return v
+    if verify_inclusion(idx, ledger_size, _lh(entry), root, proof):
         v["published"] = True
         v["note"] = ("the head is recorded at index %d in ledger %r (ledger size %s)"
                      % (idx, ledger_sth.get("log_id"), ledger_sth.get("tree_size")))
@@ -3035,7 +3227,16 @@ def decode_presentation_frames(frames):
     payload = "".join(parts[i] for i in range(total))
     if len(payload) > _QR_MAX_COMPRESSED * 4 // 3 + 4:
         return None, "payload exceeds the compressed-size bound (%d bytes)" % _QR_MAX_COMPRESSED
-    if hashlib.sha3_256(payload.encode("ascii")).hexdigest() != digest:
+    # 2026-09-17: this line sat OUTSIDE the try below, so a non-ASCII character in a frame
+    # raised UnicodeEncodeError out of a function whose docstring says "Total: hostile input
+    # yields a reason, never a crash". A QR or NFC payload is exactly where a stray byte
+    # arrives. The CLI happened to survive because UnicodeEncodeError subclasses ValueError,
+    # and then printed the wrong diagnosis; a library caller got the raise.
+    try:
+        payload_bytes = payload.encode("ascii")
+    except UnicodeEncodeError:
+        return None, "a frame carries a non-ASCII character; the payload is base64url only"
+    if hashlib.sha3_256(payload_bytes).hexdigest() != digest:
         return None, "payload digest mismatch (a frame was altered)"
     try:
         data = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
@@ -3569,14 +3770,28 @@ _MDOC_FORBIDDEN = frozenset({"token_value", "token_id", "individual_id", "legal_
                              "date_of_birth", "signature_hex", "public_key_hex"})
 
 
-def _cbor_load(buf, i=0):
+#: How deep a CBOR document may nest. `_cbor_load` recurses once per level and had no
+#: counter: 996 nested arrays, 997 bytes of input, raised RecursionError out of
+#: `verify_mdoc`, whose catch clause does not list it. Worse with the recursion limit raised,
+#: which embedders do: measured in a subprocess, 100,000 nested arrays returned SIGSEGV, and
+#: a segmentation fault is not an exception anybody can catch. 64 is deeper than any mdoc.
+_CBOR_MAX_DEPTH = 64
+
+
+def _cbor_load(buf, i=0, depth=0):
     """Decode one CBOR item at offset i. Returns (value, next_offset).
 
     Handles the subset an mdoc uses: unsigned and negative integers, byte and text strings,
     arrays, maps, tag 24, and the simple values. Anything else raises ValueError, which the
     callers turn into a refusal: a verifier that guessed at an encoding it did not implement
     would be deciding on bytes it had not read.
+
+    `depth` is the nesting counter. It raises ValueError like every other refusal here, so
+    the existing handlers catch it without being widened to RecursionError, which fires at a
+    point that depends on how much stack the caller had already spent.
     """
+    if depth > _CBOR_MAX_DEPTH:
+        raise ValueError("CBOR nests deeper than %d levels" % _CBOR_MAX_DEPTH)
     if i >= len(buf):
         raise ValueError("truncated CBOR")
     ib = buf[i]; major, info = ib >> 5, ib & 0x1F
@@ -3608,18 +3823,22 @@ def _cbor_load(buf, i=0):
     if major == 4:
         out = []
         for _ in range(val):
-            item, i = _cbor_load(buf, i)
+            item, i = _cbor_load(buf, i, depth + 1)
             out.append(item)
         return out, i
     if major == 5:
         out = {}
         for _ in range(val):
-            k, i = _cbor_load(buf, i)
-            v, i = _cbor_load(buf, i)
+            k, i = _cbor_load(buf, i, depth + 1)
+            v, i = _cbor_load(buf, i, depth + 1)
+            # A CBOR map with a list or map as its key raised `TypeError: unhashable type`
+            # here, which the mdoc handler does not catch. A non-scalar key is not a key.
+            if isinstance(k, (list, dict, tuple)):
+                raise ValueError("a CBOR map key must be a scalar, got %s" % type(k).__name__)
             out[k] = v
         return out, i
     if major == 6:
-        inner, i = _cbor_load(buf, i)
+        inner, i = _cbor_load(buf, i, depth + 1)
         return ("tag", val, inner), i
     if major == 7:
         return {20: False, 21: True, 22: None, 23: None}.get(val, val), i
@@ -3663,7 +3882,7 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
         return v
     try:
         doc = _cbor_decode(bytes(document_bytes))
-    except (ValueError, UnicodeDecodeError, IndexError) as e:
+    except (ValueError, UnicodeDecodeError, IndexError, TypeError) as e:
         v["note"] = "the document is not decodable CBOR (%s)" % e
         return v
     if not isinstance(doc, dict) or doc.get("docType") != _MDOC_DOC_TYPE:
@@ -3934,19 +4153,37 @@ def grant_within_limits(grant, uses_so_far=0, amount=None):
     if unknown:
         return False, ("the grant carries limits this verifier does not understand (%s); refusing "
                        "rather than ignoring them" % ", ".join(unknown))
+    # 2026-09-17. Both limits were defeated by a non-finite number, and `limits` is inside
+    # the SIGNED statement, so a grant signed with `"max_amount": NaN` was a signed unlimited
+    # grant wearing a limit field. `float(1000000) > float('nan')` is False, so the refusal
+    # never fired. A service passing an attacker-supplied `amount` of NaN cleared any limit
+    # the same way. `json.loads` accepts the bare literal NaN and `1e400` becomes inf, so
+    # both arrive straight off the wire.
+    #
+    # `int(float('inf'))` raises OverflowError, which `(TypeError, ValueError)` does not
+    # catch, so the infinity case crashed rather than being refused. The docstring above
+    # promises a limit this verifier cannot evaluate is REFUSED, not ignored, and neither
+    # branch delivered that.
     max_uses = limits.get("max_uses")
     if max_uses is not None:
+        if not _finite(max_uses) or not _finite(uses_so_far):
+            return False, ("max_uses or the use count is not a finite number (%r, %r); "
+                           "refusing rather than ignoring the limit" % (max_uses, uses_so_far))
         try:
             if int(uses_so_far) >= int(max_uses):
                 return False, "the grant's use limit (%s) is exhausted" % max_uses
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return False, "max_uses is not a number"
     max_amount = limits.get("max_amount")
     if max_amount is not None and amount is not None:
+        if not _finite(max_amount) or not _finite(amount):
+            return False, ("max_amount or the requested amount is not a finite number "
+                           "(%r, %r); refusing rather than ignoring the limit"
+                           % (max_amount, amount))
         try:
             if float(amount) > float(max_amount):
                 return False, "the requested amount exceeds the grant's limit (%s)" % max_amount
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return False, "max_amount or the requested amount is not a number"
     return True, None
 

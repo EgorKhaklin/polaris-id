@@ -139,6 +139,29 @@ status assertion would each open the channel. The OpenID4VP path is not covered 
 measurement, and an SD-JWT VC presentation discloses the holder's own attribute values, so
 its disclosures vary in length by construction. `lab/linkability/`.
 
+**Eleven defects in the detached verifier, from the same day's review of the PRIMARY external
+door (2026-09-17).** `polaris-verify` is the package a stranger installs, and every finding
+below was reproduced by running code before anything was changed. **A trust attestation's
+`valid_until` is in the signed statement and was compared to nothing**: the word appeared
+exactly once in the file, inside the canonicaliser, and no consumer read it, so a trust edge an
+authority time-boxed to one year kept granting cross-authority acceptance six years past its
+end, and so did one whose window said "not-a-date". That contradicts the wire specification's
+own sentence about the attestation binding "the window, so it cannot be extended". **An agent
+grant's spending limit was defeated by a single non-numeric value**: `limits` is inside the
+signed statement, so a grant signed with a non-finite `max_amount` was a signed UNLIMITED grant
+wearing a limit field, and the infinite case crashed rather than refusing. **The epoch fork
+detector was defeated the same way**: every comparison against a non-finite number is false, so
+two checkpoints with different roots at the same epoch reported agreement instead of a fork.
+**A key-revocation lookup defaulted to "active"** for every status it did not recognise, so a
+capitalised `COMPROMISED` read as a usable key. Five entry points raised instead of returning a
+verdict, one of them the pack verifier itself, which came out of the shipped command as a
+traceback with empty output and an exit code the documentation does not define. The mdoc CBOR
+decoder had no depth limit and segmentation-faulted the process on a thousand nested arrays.
+The QR decoder raised on one non-ASCII byte. Two hand-rolled freshness caps failed OPEN where
+the shared one failed closed. All eleven are fixed with tests, each shown to fail when its
+mechanism is removed, and the totality battery that missed five of them now carries
+wrong-typed and non-finite values.
+
 **Fifteen defects in the OpenID4VP verifier, found by adversarial review (2026-09-17).**
 `polaris-oid4vp` is the newest external door: unmodified third-party wallets present to it
 over the network. An adversarial review ran code against the shipped module rather than
