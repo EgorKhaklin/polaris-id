@@ -4716,6 +4716,94 @@ class DuressCodeTests(PolarisTestCase):
             self.assertEqual(cur.fetchone()['n'], duress_before,
                 'Duress against unenrolled token must NOT write a DuressEvent')
 
+    #: Substitutions that turn a route rule into a fetchable path.
+    _DURESS_SWEEP_SAMPLES = ((r'<int:[^>]+>', '1'), (r'<path:[^>]+>', 'x'), (r'<[^>]+>', 'x'))
+
+    #: Operator-reachable pages where the word appears and does NOT name a holder, each with
+    #: the reason. Declared rather than filtered by a pattern, because a pattern would also
+    #: have hidden the four surfaces that started this and nobody would have known.
+    _DURESS_WORD_ALLOWED = {
+        '/metrics': "polaris_duress_events_total, the page-able alarm. The route's own "
+                    "docstring says whoever can scrape it learns an alarm fired and roughly "
+                    "when; the control is edge access (check_metrics_edge_acl), not "
+                    "suppression, because the audience that must page is the audience that "
+                    "would learn it. It names no holder.",
+        '/api/metrics': "the same counter on the JSON surface, under the same edge ACL.",
+        '/demo': "a documented walkthrough of the SYSTEM, including that a duress code can "
+                 "be enrolled at all. The mechanism's existence is public: it is in the "
+                 "README, the paper and docs/design/. What must not leak is WHICH holder "
+                 "enrolled, and this page names none.",
+        '/athena': "the mechanism inventory, which lists duress as one of the mechanisms the "
+                   "constitution names. Same reason as /demo: a mechanism, not a holder.",
+        '/verifications/new': "the input ships as name/id `duress_code` behind a visible "
+                              "label reading 'Holder verification code (optional)'. A "
+                              "coercer glancing at the screen sees the neutral label, which "
+                              "is the standard the template states; one who opens View "
+                              "Source sees the attribute. RECORDED, NOT FIXED: the field "
+                              "name is in docs/reference/API.md, so renaming it is a change "
+                              "to a published contract and the owner's call, not a test's.",
+    }
+
+    def test_no_operator_reachable_page_reveals_that_a_HOLDER_enrolled(self):
+        """The property the design actually enforces, across the whole operator surface.
+
+        docs/design/duress-codes.md says "the word duress does not appear on the operator's
+        screen". Swept against the real route table on 2026-09-17, that sentence is not true
+        and cannot be: /metrics carries the alarm counter by design, and /demo and /athena
+        describe the mechanism, whose existence is public. The property that IS enforced, and
+        the one a coercer cares about, is narrower and sharper: **no page an operator can
+        open says that a particular holder enrolled**. The design record now states it that
+        way.
+
+        The sweep walks every GET an operator is allowed to reach. It would have caught the
+        four holder-revealing surfaces found by hand that day, and it catches the fifth
+        without anybody thinking to look. Every page where the word legitimately appears is
+        declared above WITH ITS REASON, because a regex exclusion would have swallowed the
+        original four in silence.
+        """
+        import re as _re
+        self._logout()
+        self._login('operator')
+
+        checked, leaks = [], []
+        for rule in flask_app.app.url_map.iter_rules():
+            if 'GET' not in (rule.methods or ()):
+                continue
+            view = flask_app.app.view_functions.get(rule.endpoint)
+            if view is None:
+                continue
+            roles = getattr(view, '__polaris_roles__', None)
+            if roles and 'operator' not in roles:
+                continue          # the role gate already refuses this one
+            path = rule.rule
+            for pattern, value in self._DURESS_SWEEP_SAMPLES:
+                path = _re.sub(pattern, value, path)
+            if path.startswith('/static'):
+                continue
+            r = self.client.get(path)
+            if r.status_code != 200:
+                continue          # a 404 on a sample id proves nothing either way
+            checked.append(path)
+            if 'duress' in r.get_data(as_text=True).lower() \
+                    and path not in self._DURESS_WORD_ALLOWED:
+                leaks.append(path)
+
+        # Vacuity guard. If the enumeration stops finding pages this reports a clean sweep
+        # over nothing, which is the failure mode this whole file exists to refuse.
+        self.assertGreater(len(checked), 15,
+                           'only %d operator-reachable pages fetched; the route walk has '
+                           'drifted and this sweep is measuring nothing' % len(checked))
+        self.assertEqual(leaks, [],
+                         'an operator was shown the word duress on a page with no declared '
+                         'reason: %r' % leaks)
+
+        # And the list must not go stale: a declared page that no longer says it, or is no
+        # longer operator-reachable, is a reason nobody has re-read.
+        stale = [p for p in self._DURESS_WORD_ALLOWED if p not in checked]
+        self.assertEqual(stale, [],
+                         'declared pages that are no longer reachable or no longer contain '
+                         'the word; re-read the reason before deleting it: %r' % stale)
+
     def test_the_word_duress_is_absent_from_every_operator_surface(self):
         """docs/design/duress-codes.md states it as a property, not a preference:
 

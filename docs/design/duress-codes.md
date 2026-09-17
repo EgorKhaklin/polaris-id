@@ -66,9 +66,28 @@ must be blind:
 
 - The verification list does not join `DuressEvent`, so the row count cannot
   be inferred from the operator's own history.
-- The form field is labelled neutrally. The word duress does not appear on the
-  operator's screen, and the field carries `autocomplete="off"` so the browser
-  does not remember a typed code.
+- The form field is labelled neutrally: the visible label reads "Holder verification code
+  (optional)", and the field carries `autocomplete="off"` so the browser does not remember a
+  typed code. The input's `name` and `id` attributes are still `duress_code`, so a coercer
+  who opens View Source sees the word where one glancing at the screen does not. That is
+  recorded rather than fixed: the field name is part of `docs/reference/API.md`, so renaming
+  it changes a published contract.
+
+**The property, stated as what is actually enforced (corrected 2026-09-17).** This section
+used to say "the word duress does not appear on the operator's screen". Swept against the
+real route table, that sentence is not true and cannot be: `/metrics` carries
+`polaris_duress_events_total` by design, and `/demo` and `/athena` describe the mechanism,
+whose existence is public in the README, the paper and this directory. The property that is
+enforced, and the one a coercer actually cares about, is narrower and sharper:
+
+> **No page an operator can open says that a particular holder enrolled.**
+
+That held on the verifications list and nowhere else until 2026-09-17, when four surfaces
+were found saying exactly that to any logged-in operator: the token detail card, the token
+export JSON, and both investigate views. All four are gated on admin or auditor now.
+`DuressCodeTests.test_no_operator_reachable_page_reveals_that_a_HOLDER_enrolled` walks every
+GET an operator may reach and asserts it, with each legitimate appearance of the word
+declared beside the reason it is not a holder.
 - `/duress` and `/api/duress/events` require the admin or auditor role, and
   the navigation link to the queue is hidden from the operator role.
 

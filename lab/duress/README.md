@@ -230,6 +230,30 @@ absence of permission and never absence of enrolment.
 the operator and all four for admin and auditor. Opening the gate to everyone turns four
 assertions red; closing it to nobody turns the control red.
 
+**And then the same question was asked of the whole surface, which found five more pages and
+corrected the design record.** Four surfaces found by grepping a column name is four
+surfaces, not a property. Walking every GET an operator may reach turned up `/metrics`,
+`/api/metrics`, `/demo`, `/athena` and `/verifications/new`, and none of them is the same
+kind of thing as a token card reading ENROLLED:
+
+- `/metrics` and `/api/metrics` carry `polaris_duress_events_total`, the page-able alarm,
+  under an edge ACL. They name no holder.
+- `/demo` and `/athena` describe the MECHANISM. Its existence is public, in the README, the
+  paper and `docs/design/`. They name no holder.
+- `/verifications/new` ships the input as `name="duress_code"` behind a visible label reading
+  "Holder verification code (optional)". A coercer glancing at the screen sees the neutral
+  label, which is the standard the template itself states; one who opens View Source sees the
+  attribute. **Recorded, not fixed**: that field name is in `docs/reference/API.md`, so
+  renaming it changes a published contract and is the owner's call, not a test's.
+
+So the design record's sentence, "the word duress does not appear on the operator's screen",
+was not true and could not be. It now states the property that IS enforced and that a coercer
+actually cares about: **no page an operator can open says that a particular holder enrolled.**
+`test_no_operator_reachable_page_reveals_that_a_HOLDER_enrolled` walks the route table and
+asserts it, with every legitimate appearance declared beside its reason, because a regex
+exclusion would have swallowed the original four in silence. It also fails when a declared
+page stops being reachable, so the reasons cannot rot unread.
+
 ---
 
 ## Finding: the operator as coercer, audited surface by surface
