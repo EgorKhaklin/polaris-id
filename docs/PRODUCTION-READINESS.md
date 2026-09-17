@@ -144,6 +144,33 @@ broken: selective disclosure means disclosing, and a name is not a fixed-width f
 country. It is recorded because a deploying organisation choosing that door is choosing this
 with it. `lab/linkability/`.
 
+**Eleven defects on the authentication surface (2026-09-17).** MISSION names the operator
+password as "the compulsion surface that matters most: a coerced or phished operator password
+reaches every use case", and an adversarial review of it found eleven, all reproduced by
+running code. **An account could be locked exactly once, ever**: the lock statement held only
+while the account had never been locked, and nothing clears that field when a lock expires, so
+after the first fifteen minutes lapsed thirty-five further wrong passwords moved nothing and
+the account accepted unlimited online guessing until the legitimate operator next signed in.
+**The lock deadline was compared against the wrong machine's clock**, the application process
+against a value the database wrote, so a database six hours behind made the lock a no-op from
+the moment it was written and six hours ahead turned fifteen minutes into six. **The failure
+window was published and compared nowhere**: the control says five failures within ten minutes
+and the counter decayed only on a successful sign-in, so failures a fortnight apart
+accumulated. **A demoted administrator kept their rights** for up to the eight-hour session
+lifetime, because the per-request check re-read whether the account was active and never its
+role, while deactivation took effect immediately. **A successful-authentication event was
+recorded for sign-ins that never completed**, so the append-only audit could not tell an
+authentication that finished from one that only proved a password, which is the exact
+distinction that framing turns on. The rest: the authenticator allow-list applied at enrolment
+and never again, so narrowing it on a running deployment left every enrolled model working; a
+rate-limit window of zero silently removed the flood bound on every state-changing route; a
+session setting beyond the database's range passed the boot the validator promises it would
+fail and then broke every request; an exempt role could enrol a second factor the sign-in
+discarded; a non-finite number reached an unhandled error on a relying-party endpoint; and an
+applicant typing an accented character crashed the enrolment-code path instead of being
+refused. All eleven are fixed with tests, two schema migrations and a new invariant check, and
+each mechanism is shown to fail when removed.
+
 **A credential past its own expiry stayed usable, and the dashboard was counting them
 (2026-09-17).** `IdentityToken.expiration_date` is written at issuance, `ACTIVE -> EXPIRED` is
 a legal transition in the credential state machine, and the operator dashboard has a counter

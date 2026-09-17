@@ -501,6 +501,16 @@ def webauthn_status_for_user(conn, user_id, role):
     refuse login.
     """
     if role in ROLES_EXEMPT_WEBAUTHN:
+        # 2026-09-17: the exemption returns BEFORE the credential count is read, which is
+        # correct for the policy and wrong for the operator. `/settings/webauthn` carries
+        # only `@login_required`, so an exempt role can enrol a key, see it listed, and
+        # believe a second factor is on; the login path then discards it and a password alone
+        # completes the sign-in. The role policy stands. What does not stand is selling
+        # somebody a factor that is not consulted, so a credential enrolled by an exempt role
+        # makes the factor REQUIRED for them: they asked for it, and honouring that is
+        # strictly safer than the page lying.
+        if _credential_count(conn, user_id) > 0:
+            return 'mfa_required'
         return 'not_required'
 
     with conn.cursor() as cur:
@@ -620,13 +630,51 @@ def insert_credential(conn, user_id, cred, device_label=None):
         )
 
 
+def _credential_count(conn, user_id):
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM OperatorWebauthnCredential WHERE user_id = %s",
+                    (user_id,))
+        return cur.fetchone()['n']
+
+
+def credential_model_allowed(stored):
+    """Does this ALREADY-ENROLLED credential still satisfy the model policy?
+
+    Hardening a running deployment has to mean something. Before 2026-09-17 the allow-list
+    was applied at enrolment and nowhere else, so an operator who narrowed it stopped new
+    enrolments of a model and left every existing one working, with nothing on the settings
+    page or in the boot log saying which credentials now violated the policy.
+
+    A credential enrolled before the policy existed may carry no `aaguid` at all. With a
+    list configured that is refused, for the same reason an unreadable expiry counts as
+    expired: a model this verifier cannot identify is not one the operator named.
+    """
+    allowed = _allowed_aaguids()
+    if allowed is None:
+        return True, None
+    aaguid = (stored or {}).get('aaguid')
+    text = str(aaguid).lower() if aaguid else None
+    if text and text in allowed:
+        return True, None
+    return False, ('authenticator model %s is not in POLARIS_WEBAUTHN_ALLOWED_AAGUIDS; '
+                   'this credential was enrolled before the policy narrowed and is no '
+                   'longer an accepted second factor' % (text or 'unreported'))
+
+
 def fetch_credential(conn, credential_id):
     """Fetch one credential by its raw id (base64url encoded). Returns
     dict or None. Normalizes padded/unpadded id to the stored padded key."""
     credential_id = _canonical_credential_id(credential_id)
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT credential_id, user_id, public_key, sign_count "
+            # `aaguid` joins the selection on 2026-09-17 so the assertion path can apply
+            # the same model policy enrolment does. It was checked ONLY inside
+            # `verify_registration`, then stored and never read again, so narrowing
+            # POLARIS_WEBAUTHN_ALLOWED_AAGUIDS on a running deployment refused NEW
+            # enrolments of a model while every credential of that model already enrolled
+            # stayed a valid second factor. The module docstring says "anything else
+            # refused"; it meant anything else enrolled.
+            "SELECT credential_id, user_id, public_key, sign_count, aaguid "
             "FROM OperatorWebauthnCredential WHERE credential_id = %s",
             (credential_id,)
         )

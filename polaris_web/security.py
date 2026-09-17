@@ -44,6 +44,7 @@ auditable rather than hidden behind a third-party DSL.
 ============================================================================
 """
 
+import sys
 import os
 import hmac
 import time
@@ -77,12 +78,36 @@ ACCOUNT_LOCK_MIN          = 15        # locked out for this many minutes
 # raises the write cap on the scratch server it starts. A production stack
 # that raises them has lowered its own brute-force and flood resistance and
 # should say why in polaris.env.
-def _env_int(name, default):
+def _env_int(name, default, minimum=1, cap=None):
+    """A positive integer from the environment, or the default.
+
+    2026-09-17: this accepted ANY parseable int, including zero and negatives, and the value
+    went straight into the limiter. `POLARIS_RATE_LIMIT_WRITE_WINDOW=0` made the window
+    `now - 0`, so every previous event fell outside it and 500 of 500 attempts were allowed:
+    the flood bound on every state-changing route, including the WebAuthn assertion, silently
+    removed. Zero is the plausible misreading too, because `POLARIS_SESSION_MAX_*` documents
+    `0 = unlimited` a few lines below.
+
+    The sibling `_role_int_env` already REFUSED a negative and raised. This one silently
+    returned it. A value outside the usable range now falls back to the default and says so
+    on stderr, rather than either crashing a boot that was working or quietly disarming a
+    control. `minimum=0` is passed where zero genuinely means something.
+    """
     raw = os.environ.get(name, '').strip()
-    try:
-        return int(raw) if raw else default
-    except ValueError:
+    if not raw:
         return default
+    try:
+        value = int(raw)
+    except ValueError:
+        sys.stderr.write("polaris: %s=%r is not an integer; using %d\n" % (name, raw, default))
+        return default
+    if value < minimum or (cap is not None and value > cap):
+        sys.stderr.write(
+            "polaris: %s=%d is outside the usable range (%d..%s); using %d. A limiter "
+            "configured out of range is a limiter that is not there.\n"
+            % (name, value, minimum, cap if cap is not None else "unbounded", default))
+        return default
+    return value
 
 
 # Per-IP rate limit on login attempts (token bucket)
@@ -915,6 +940,12 @@ def network_policy_allows(role, ip):
     return any(addr in net for net in nets)
 
 
+#: The largest value a session cap or idle timeout may take. Chosen so the value survives
+#: `make_interval(mins => ...)` and an INTEGER column with room to spare: a million minutes
+#: is close to two years, and a million concurrent sessions per account is not a policy.
+_ROLE_INT_CEILING = 1_000_000
+
+
 def _role_int_env(prefix, role, default):
     raw = _role_env(prefix, role)
     if raw == '':
@@ -929,6 +960,21 @@ def _role_int_env(prefix, role, default):
         raise ValueError(
             f"{prefix}_{str(role).upper()} must be a non-negative integer, "
             f"got {raw!r}")
+    # 2026-09-17: the bound was "non-negative" and nothing else, and the value then reached
+    # SQL unconverted. The docstring above promises "a bad value fails the BOOT, never a
+    # login". Measured: POLARIS_SESSION_IDLE_MINUTES_ADMIN=2147483648 booted cleanly and then
+    # made every authenticated request raise `make_interval(mins => bigint) does not exist`,
+    # and POLARIS_SESSION_MAX_ADMIN=10**31 booted cleanly and made every LOGIN raise
+    # `bigint out of range`. Fail-closed, so it is availability rather than bypass, but it is
+    # precisely the failure the stated design says it prevents.
+    #
+    # A session cap or an idle timeout beyond this is not a configuration anybody means.
+    if value > _ROLE_INT_CEILING:
+        raise ValueError(
+            f"{prefix}_{str(role).upper()}={value} is beyond {_ROLE_INT_CEILING}, which is "
+            f"not a session policy anybody means. It would pass this boot and then make "
+            f"every request fail in the database, which is the one thing this check exists "
+            f"to stop.")
     return value
 
 

@@ -5046,6 +5046,73 @@ class F01_AuthenticationTests(UnauthenticatedTestCase):
         self.assertIsNone(st['last_failed_login_at'],
                           "the new column must be cleared with the rest of the record")
 
+    def test_a_rate_limit_window_of_zero_does_not_disable_the_limiter(self):
+        """`_env_int` accepted any parseable int, including zero and negatives, and the
+        value went straight into the limiter. A window of zero makes the cutoff `now - 0`,
+        so every previous event falls outside it and nothing is ever refused: the flood
+        bound on every state-changing route, silently removed. Zero is the plausible
+        misreading too, because POLARIS_SESSION_MAX_* documents `0 = unlimited` nearby.
+        """
+        import os as _os
+        from app import security as sec
+        saved = {k: _os.environ.get(k) for k in
+                 ('POLARIS_RATE_LIMIT_WRITE_WINDOW', 'POLARIS_RATE_LIMIT_LOGIN_MAX')}
+        try:
+            # Positive control: a real value survives.
+            self.assertEqual(sec._env_int('POLARIS_NO_SUCH_VAR_HERE', 60), 60)
+            _os.environ['POLARIS_RATE_LIMIT_WRITE_WINDOW'] = '30'
+            self.assertEqual(sec._env_int('POLARIS_RATE_LIMIT_WRITE_WINDOW', 60), 30,
+                             "a usable value must be honoured")
+            for bad in ('0', '-1', '-9999'):
+                with self.subTest(value=bad):
+                    _os.environ['POLARIS_RATE_LIMIT_WRITE_WINDOW'] = bad
+                    self.assertEqual(
+                        sec._env_int('POLARIS_RATE_LIMIT_WRITE_WINDOW', 60), 60,
+                        "%r must fall back, not disarm the limiter" % bad)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    _os.environ.pop(k, None)
+                else:
+                    _os.environ[k] = v
+
+    def test_a_session_knob_beyond_the_database_fails_the_boot(self):
+        """The docstring promises "a bad value fails the BOOT, never a login". It bounded
+        only negatives, so an idle timeout of 2**31 booted cleanly and then made every
+        authenticated request raise inside `make_interval`, and a session cap of 10**31
+        made every LOGIN raise on a bigint overflow. Fail-closed, and exactly the failure
+        the stated design says it prevents."""
+        from app import security as sec
+        import os as _os
+        key = 'POLARIS_SESSION_IDLE_MINUTES_ADMIN'
+        saved = _os.environ.get(key)
+        try:
+            _os.environ[key] = '45'
+            self.assertEqual(sec._role_int_env('POLARIS_SESSION_IDLE_MINUTES', 'admin', 30), 45,
+                             "a usable value must be honoured")
+            for bad in ('2147483648', '10000000000000000000000000000000'):
+                with self.subTest(value=bad):
+                    _os.environ[key] = bad
+                    with self.assertRaises(ValueError):
+                        sec._role_int_env('POLARIS_SESSION_IDLE_MINUTES', 'admin', 30)
+        finally:
+            if saved is None:
+                _os.environ.pop(key, None)
+            else:
+                _os.environ[key] = saved
+
+    def test_an_enrolment_code_is_refused_rather_than_raising(self):
+        """`redeem` is documented as refusing "with the reason" and CodeRefused is the
+        declared vocabulary. A non-ASCII code raised UnicodeEncodeError and a non-string
+        raised AttributeError, so an applicant who types an accent crashed the path instead
+        of being refused, and the attempt counter never moved."""
+        import enrollment_code as ec
+        self.assertEqual(len(ec.hash_code('AB-CD-EF')), 64, "the positive control")
+        for bad in ('caf\u00e9', None, 123, b'abc', '   '):
+            with self.subTest(code=repr(bad)):
+                with self.assertRaises(ec.CodeRefused):
+                    ec.hash_code(bad)
+
     def test_account_locks_after_threshold_failures(self):
         """5 wrong-password attempts in 10 min must lock the account."""
         from app import security as sec

@@ -1401,6 +1401,19 @@ def webauthn_assert_finish():
     conn = get_db()
     try:
         stored = webauthn_auth.fetch_credential(conn, cred_id)
+        if stored is not None and stored['user_id'] == pending['user_id']:
+            # The model policy, applied to an ALREADY-ENROLLED credential. Until 2026-09-17
+            # it was applied at enrolment only, so narrowing the allow-list on a running
+            # deployment refused new enrolments of a model and left every existing one a
+            # valid second factor. Refused here rather than at the database, because the
+            # credential is still the operator's and the settings page must keep showing it
+            # so they can see WHY they can no longer sign in with it.
+            allowed, why = webauthn_auth.credential_model_allowed(stored)
+            if not allowed:
+                security._audit(get_db, 'WEBAUTHN_ASSERTION_FAILED',
+                    username=pending.get('username'),
+                    user_id=pending['user_id'], detail=why)
+                return jsonify(error=why), 401
         if stored is None or stored['user_id'] != pending['user_id']:
             security._audit(get_db, 'WEBAUTHN_ASSERTION_FAILED',
                 username=pending.get('username'),

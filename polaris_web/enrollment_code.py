@@ -60,9 +60,20 @@ def hash_code(code: str) -> str:
     should not fail on whitespace. Normalising before hashing keeps the comparison
     constant-time: there is no second, sloppier path that a near-miss falls into.
     """
+    # 2026-09-17: `code` was dereferenced and encoded with no guard, so a non-string raised
+    # AttributeError or TypeError and any non-ASCII character raised UnicodeEncodeError.
+    # `redeem` is documented as refusing "with the reason" and `CodeRefused` is the declared
+    # vocabulary, so a crash here is a promise broken and, worse, a path where the attempt
+    # counter never moves. Latent today, since no web route reaches `redeem` yet; the
+    # applicant who types an accented character is the case, and they are not an attacker.
+    if not isinstance(code, str):
+        raise CodeRefused("a code is text, not %s" % type(code).__name__)
     cleaned = "".join(code.split()).replace("-", "").upper()
     if not cleaned:
         raise CodeRefused("an empty code is not a code")
+    if not cleaned.isascii():
+        raise CodeRefused("a code is ASCII; this one carries characters the alphabet "
+                          "does not contain")
     return hashlib.sha256(cleaned.encode("ascii", "strict")).hexdigest()
 
 
