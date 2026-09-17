@@ -201,6 +201,64 @@ _RATE_LIMITED_ROUTES = (
 )
 
 
+def check_json_body_must_be_an_object(root: pathlib.Path) -> list[Finding]:
+    """No route dereferences a JSON body without confirming it is an object (2026-09-17).
+
+    `request.get_json(silent=True) or {}` reads as "the body, or nothing" and is not: JSON's
+    top level is any value, so `"x"`, `42`, `true` and `[]` all parse and all are truthy. The
+    next line is invariably `body.get(...)`, which raises AttributeError on every one of
+    them. Twenty-one routes carried that idiom, `/api/v1/auth/authorize` among them, which is
+    unauthenticated: an anonymous caller could make the application raise by sending a JSON
+    string. Found by the route totality battery on unmutated code.
+
+    `_json_object()` is the repair, in one place. This check is what stops the twenty-second
+    route being written the old way, which is the only way this comes back.
+    """
+    name = "json_body_object"
+    app = _read(root, "polaris_web/app.py")
+    if not app:
+        return _fail(name, "polaris_web/app.py could not be read")
+    if "def _json_object(" not in app:
+        return _fail(name, "_json_object() is gone: the helper that answers an empty object "
+                           "for a JSON body that is not one no longer exists")
+    if "isinstance(body, dict)" not in app:
+        return _fail(name, "_json_object() no longer tests that the body is a dict, so a JSON "
+                           "string or list reaches the route and its first .get() raises")
+    # The bare idiom, found in the SYNTAX rather than the text. A line scan reports this
+    # check's own docstring and the helper's, both of which necessarily quote the idiom they
+    # exist to describe; searching prose as if it were code has produced a false result four
+    # times in this tree, and an AST walk cannot make that mistake.
+    try:
+        tree = ast.parse(app)
+    except SyntaxError as exc:
+        return _fail(name, "polaris_web/app.py does not parse (%s), so this check cannot "
+                           "read it" % exc)
+    offenders = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)
+                and len(node.values) == 2):
+            continue
+        left, right = node.values
+        if not (isinstance(right, ast.Dict) and not right.keys):
+            continue
+        if (isinstance(left, ast.Call) and isinstance(left.func, ast.Attribute)
+                and left.func.attr == "get_json"):
+            offenders.append(node.lineno)
+    if offenders:
+        return _fail(name, "%d route(s) still read a JSON body with the bare "
+                           "`get_json(silent=True) or {}` idiom, at line(s) %s. A JSON string "
+                           "or list is truthy and sails past the `or`; use _json_object()."
+                           % (len(offenders), ", ".join(str(n) for n in offenders)))
+    uses = app.count("_json_object()")
+    if uses < 5:
+        return _fail(name, "_json_object() is defined but used %d time(s); the routes that "
+                           "read a JSON body are not going through it" % (uses - 1))
+    return _ok(name, "every JSON body goes through _json_object(), which answers an empty "
+                     "object for a body that is not one (%d call sites); the bare "
+                     "`get_json(silent=True) or {}` idiom, which a JSON string walks straight "
+                     "past, appears in no route" % (uses - 1))
+
+
 def check_rate_limits_are_enforced(root: pathlib.Path) -> list[Finding]:
     """Every rate limiter is written as a refusal, not merely called (2026-09-17).
 
@@ -18583,6 +18641,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_athena_rule_enforcement_resolves,
     check_csp_forbids_unsafe_inline,
     check_json_door_refuses_non_finite,
+    check_json_body_must_be_an_object,
     check_rate_limits_are_enforced,
     check_one_active_token_index,
     check_aor_append_only_triggers,

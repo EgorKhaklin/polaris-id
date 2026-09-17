@@ -47,6 +47,55 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when CSP enables 'unsafe-inline' for scripts"
 
 
+def test_json_body_object_check_discriminates(tmp_path):
+    """Including the trap this check fell into on its first draft.
+
+    A line scan for the idiom reports the DOCSTRINGS that describe it, in the helper and in
+    the check itself, because prose about a defect necessarily quotes the defect. Searching
+    prose as if it were code has produced a false result four separate times in this tree, so
+    the fixture below carries a docstring quoting the idiom and the check must not count it.
+    """
+    (tmp_path / "polaris_web").mkdir()
+    app = tmp_path / "polaris_web" / "app.py"
+
+    GOOD = ('def _json_object():\n'
+            '    """Replaces `get_json(silent=True)` followed by `or {}`, which a string '
+            'walks past."""\n'
+            '    body = request.get_json(silent=True)\n'
+            '    return body if isinstance(body, dict) else {}\n'
+            '\n'
+            + "".join("def route_%d():\n    body = _json_object()\n    return body.get('x')\n"
+                      % i for i in range(6)))
+    app.write_text(GOOD)
+    out = checks.check_json_body_must_be_an_object(tmp_path)[0]
+    assert out.level == "OK", \
+        "must PASS on the good fixture, whose docstring quotes the idiom: %s" % out.message
+
+    def level(text, expect_in=None):
+        app.write_text(text)
+        got = checks.check_json_body_must_be_an_object(tmp_path)
+        if expect_in is not None:
+            assert any(expect_in in f.message for f in got), \
+                "expected %r in %r" % (expect_in, [f.message for f in got])
+        return got[0].level
+
+    # One route written the old way.
+    assert level(GOOD + "def sneaky():\n    body = request.get_json(silent=True) or {}\n",
+                 "bare") == "FAIL", "must FAIL when a route reintroduces the idiom"
+    # The helper gone.
+    assert level(GOOD.replace("def _json_object():", "def _something_else():"),
+                 "_json_object() is gone") == "FAIL"
+    # The helper present but no longer testing the type: the shape a refactor leaves behind.
+    assert level(GOOD.replace("    return body if isinstance(body, dict) else {}\n",
+                              "    return body\n"),
+                 "no longer tests") == "FAIL"
+    # Defined and unused: a helper nothing calls is not a repair.
+    assert level(GOOD.split("\n\n")[0] + "\n", "not going through it") == "FAIL"
+
+    assert level("", "could not be read") == "FAIL", \
+        "an empty app.py is not a passing set of JSON body reads"
+
+
 def test_rate_limits_check_discriminates(tmp_path):
     """The mutation this check exists for is the subtle one.
 

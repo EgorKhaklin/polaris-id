@@ -291,6 +291,25 @@ class _FiniteNumbersOnly(DefaultJSONProvider):
 app.json = _FiniteNumbersOnly(app)
 
 
+def _json_object():
+    """The request's JSON body when it is an OBJECT, and an empty one otherwise.
+
+    The idiom this replaces, `get_json(silent=True)` followed by `or {}`, reads as "the body,
+    or nothing", and is not what it reads as. JSON's top level is ANY value: `"x"`, `42`,
+    `true` and `[]` all parse, all are truthy, and all sail past the `or`. The next line is
+    invariably `body.get(...)`, which raises AttributeError on every one of them.
+
+    Found 2026-09-17 by the route totality battery, on unmutated code, at
+    `/api/v1/auth/authorize`: an UNAUTHENTICATED endpoint an anonymous caller could make raise
+    by sending a JSON string. Twenty-one routes read a body that way, so the repair is one
+    function rather than twenty-one guards, for the same reason the non-finite refusal became
+    a provider: the twenty-second route is the one that would be written without it.
+    """
+    body = request.get_json(silent=True)
+    return body if isinstance(body, dict) else {}
+
+
+
 # ----------------------------------------------------------------------------
 # Application configuration — secret key + session/cookie hardening
 # ----------------------------------------------------------------------------
@@ -1446,7 +1465,7 @@ def webauthn_assert_finish():
     # One-shot challenge: clear immediately so a replay can't re-use it
     session.pop('webauthn_assert_challenge', None)
 
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     cred_id = body.get('id') or body.get('rawId')
     if not cred_id:
         return jsonify(error='missing credential id'), 400
@@ -1565,7 +1584,7 @@ def webauthn_register_finish():
         return jsonify(error='no pending registration'), 400
     session.pop('webauthn_register_challenge', None)
 
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     device_label = (body.get('device_label') or '').strip() or 'unnamed'
 
     try:
@@ -3866,7 +3885,7 @@ def api_anchor_batch_close():
     Request: JSON { "algorithm_id": <int> }
     Response: { "batch_id": <int>, "merkle_root": <hex>, "batch_size": <int> }
     """
-    payload = request.get_json(silent=True) or {}
+    payload = _json_object()
     try:
         algorithm_id = int(payload['algorithm_id'])
     except (KeyError, ValueError, TypeError):
@@ -3990,7 +4009,7 @@ def api_federation_attest():
                     "context_id", "valid_until" (YYYY-MM-DD) }
     Response: { "attestation_id": <int>, "status": "active" }
     """
-    payload = request.get_json(silent=True) or {}
+    payload = _json_object()
     try:
         attesting_id = int(payload['attesting_agency_id'])
         attested_id = int(payload['attested_agency_id'])
@@ -4047,7 +4066,7 @@ def api_federation_revoke():
     Request: JSON { "attestation_id", "revocation_reason" (≥ 8 chars) }
     Response: { "attestation_id", "status": "revoked" }
     """
-    payload = request.get_json(silent=True) or {}
+    payload = _json_object()
     try:
         attestation_id = int(payload['attestation_id'])
         reason = str(payload['revocation_reason'])
@@ -4095,7 +4114,7 @@ def api_zk_epoch_close():
     Request: JSON { "context_id": <int>, "valid_until": "YYYY-MM-DD HH:MM:SS" }
     Response: { "epoch_id": <int>, "merkle_root": <hex>, "committed_count": <int> }
     """
-    payload = request.get_json(silent=True) or {}
+    payload = _json_object()
     try:
         context_id = int(payload['context_id'])
         valid_until = payload['valid_until']
@@ -4254,7 +4273,7 @@ def api_zk_verify():
     }
     Response: { "verified": <bool>, "reason": <optional str> }
     """
-    payload = request.get_json(silent=True) or {}
+    payload = _json_object()
     try:
         epoch_id = int(payload['epoch_id'])
         context_id = int(payload['context_id'])
@@ -4382,7 +4401,7 @@ def api_duress_record():
     Request: JSON { "token_id", "context_id", "requesting_agency_id" }
     Response: { "event_id": <int> }
     """
-    payload = request.get_json(silent=True) or {}
+    payload = _json_object()
     try:
         token_id = int(payload['token_id'])
         context_id = int(payload['context_id'])
@@ -5405,7 +5424,7 @@ def api_v1_verify():
     payload, err = _rp_require_token()
     if err:
         return err
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     token_value = body.get('token_value')
     presented_sig_hex = body.get('signature_hex')
     if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
@@ -5844,7 +5863,7 @@ def api_v1_holder_key_bind():
     Possession-authenticated, exactly like the status assertion: no bearer, no operator, no
     session. The private key never reaches this endpoint and is never asked for. Nothing
     about who bound a key is recorded beyond the append-only register itself."""
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     token_value = body.get('token_value')
     presented_sig_hex = body.get('signature_hex')
     holder_key = body.get('holder_public_key_hex')
@@ -5906,7 +5925,7 @@ def api_v1_holder_binding():
     """P9.1: fetch the current issuer-signed holder key binding for a credential, proved by
     possession. A holder staples it to a presentation so a relying party can check the
     holder proof offline without contacting the issuer."""
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     token_value = body.get('token_value')
     presented_sig_hex = body.get('signature_hex')
     if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
@@ -5936,7 +5955,7 @@ def api_v1_status_assertion():
     the genuine credential signature, as /verify does); no bearer, so a holder can
     refresh its own status without being a registered relying party. No personal data,
     no who-fetched record."""
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     token_value = body.get('token_value')
     presented_sig_hex = body.get('signature_hex')
     if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
@@ -6005,7 +6024,7 @@ def api_v1_mdoc():
     `token_value`: that is the correlation handle the presentation layer bounds (P9.4), and an
     mdoc is not a way around it. mdoc.py refuses it at build time rather than trusting callers.
     """
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     token_value = body.get('token_value')
     presented_sig_hex = body.get('signature_hex')
     if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
@@ -6107,7 +6126,7 @@ def api_v1_verifiable_credential():
     Read-only and derived: possession-authenticated like the status assertion, no new mutation
     path, no record of who asked.
     """
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     token_value = body.get('token_value')
     presented_sig_hex = body.get('signature_hex')
     if not isinstance(token_value, str) or not isinstance(presented_sig_hex, str):
@@ -6770,7 +6789,7 @@ def api_v1_exchange_receipt(agency_id):
     responder, err = _federated_agency(agency_id)
     if err:
         return err
-    return _mint_exchange_receipt(responder, agency_id, request.get_json(silent=True) or {})
+    return _mint_exchange_receipt(responder, agency_id, _json_object())
 
 
 @app.route('/api/v1/exchange-receipt/<int:agency_id>/signed', methods=['POST'])
@@ -6793,7 +6812,7 @@ def api_v1_exchange_receipt_signed(agency_id):
     responder, err = _federated_agency(agency_id)
     if err:
         return err
-    payload = request.get_json(silent=True) or {}
+    payload = _json_object()
     mint = payload.get('mint')
     sig_hex = payload.get('signature_hex')
     if not isinstance(mint, dict) or not isinstance(sig_hex, str) or not sig_hex:
@@ -6892,7 +6911,7 @@ def api_v1_timestamp(agency_id):
     agency, err = _federated_agency(agency_id)
     if err:
         return err
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     digest_hex = str(body.get('digest_hex', '')).lower()
     if not (len(digest_hex) == 64 and all(c in '0123456789abcdef' for c in digest_hex)):
         return jsonify(error='invalid_request',
@@ -7191,7 +7210,7 @@ def api_v1_exchange(target_agency_id):
     target, err = _federated_agency(target_agency_id)
     if err:
         return err
-    payload = request.get_json(silent=True) or {}
+    payload = _json_object()
     env = payload.get('envelope')
     body = payload.get('body')
     sig_hex = env.get('signature_hex') if isinstance(env, dict) else None
@@ -7384,7 +7403,7 @@ def api_v1_sign(agency_id):
     agency, err = _federated_agency(agency_id)
     if err:
         return err
-    doc, err = _sign_document(agency, agency_id, request.get_json(silent=True) or {}, None)
+    doc, err = _sign_document(agency, agency_id, _json_object(), None)
     return err if err else jsonify(doc)
 
 
@@ -7401,7 +7420,7 @@ def api_v1_sign_holder(agency_id):
     agency, err = _federated_agency(agency_id)
     if err:
         return err
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     token_value, presented = body.get('token_value'), body.get('signature_hex')
     if not isinstance(token_value, str) or not isinstance(presented, str):
         return jsonify(error='invalid_request', error_description='token_value and signature_hex (the presented credential) are required'), 400
@@ -7494,7 +7513,7 @@ def api_v1_auth_authorize():
     recorded silently. The relying party's REGISTERED policy (require_zk, required_enrollment,
     required_context_id) binds; the request may only add to it. Returns an encrypted, opaque,
     stateless authorization code bound to the PKCE challenge. Nothing is written."""
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
     client_id = body.get('client_id')
     rp = query("SELECT rp_id, client_id, scope, enabled, require_zk, required_enrollment, required_context_id "
                "FROM RelyingParty WHERE client_id = %s",

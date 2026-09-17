@@ -5568,6 +5568,126 @@ class F03_RateLimitingTests(UnauthenticatedTestCase):
                 self.assertEqual(over.get_json()['error'], 'rate_limited')
 
 
+class JsonRouteTotalityTests(PolarisTestCase):
+    """No JSON route answers 5xx to a body it does not like.
+
+    2026-09-17. `scripts/polaris-app-mutation-drill.py` switched off each of the 76 refusals
+    answering 400, 404 and 503 in turn, and 39 of them survived with the suite green. Most
+    were not separate defects: they were one property nothing asserted. A route that stops
+    checking the type of a field it is about to call `.encode()` on does not start accepting
+    bad input, it starts raising, and an unhandled exception on an unauthenticated endpoint
+    is an availability defect and, with a traceback, an information one.
+
+    So this is one test for the property rather than thirty-one for the branches, which is
+    also how the packaged verifier states it: `TotalityTests` in scripts/test_verify_p9.py
+    feeds every entry point the same battery and demands a verdict rather than a raise. The
+    difference here is that the verdict is an HTTP status.
+
+    HOW A RAISE SHOWS UP HERE. `app.config['TESTING']` is True, so an unhandled exception
+    propagates out of the test client rather than becoming a 500 response: a crashing route
+    ERRORS this test rather than failing it. Both shapes are caught, and the 500 check is
+    what covers the non-testing configuration.
+
+    WHAT THIS DOES AND DOES NOT ESTABLISH. It says these routes refuse rather than crash on
+    these bodies. It does not say they refuse for the right REASON, and it is not a
+    substitute for the tests that pin a specific refusal: a route answering 400 to everything
+    would pass this and fail those. The two are complementary and both are in this file.
+    """
+
+    #: Bodies that are well-formed JSON and wrong in a way some route's next line cares
+    #: about. Every shape here broke something in this tree during 2026-09-17: a wrong-typed
+    #: field walked past a missing `isinstance` guard, a list arrived where a string was
+    #: expected, a nested object reached an `int()`. Non-finite numbers are NOT here: the
+    #: JSON door refuses them before any handler runs, and `JsonDoorTests` covers that.
+    HOSTILE = [
+        {},
+        [],
+        "a string, not an object",
+        42,
+        {"token_value": 1, "signature_hex": 1},
+        {"token_value": [], "signature_hex": {}},
+        {"token_value": None, "signature_hex": None},
+        {"event": 5, "holder_public_key_hex": 7, "holder_algorithm": []},
+        {"digest_hex": 1, "nonce": []},
+        {"client_id": [], "nonce": 1, "code_challenge": {}, "context_id": []},
+        {"envelope": "not-an-object", "body": 1},
+        {"mint": [], "signature_hex": 1},
+        {"disclosure_level": 5, "requested": "not-a-list", "scope": []},
+        {"credential_id": [], "response": "not-an-object"},
+        {"proof": 1, "public_inputs": "not-an-object"},
+        {"a": {"b": {"c": [1, 2, {"d": None}]}}},
+    ]
+
+    #: Every route in the application that reads a JSON body, with a concrete id where the
+    #: rule takes one. Derived by hand and asserted against the live url_map below, so a
+    #: route added without a row here fails this test rather than quietly escaping it.
+    ROUTES = [
+        '/api/anchor/batch', '/api/duress/record', '/api/federation/attest',
+        '/api/federation/revoke', '/api/v1/auth/authorize',
+        '/api/v1/exchange-receipt/1', '/api/v1/exchange-receipt/1/signed',
+        '/api/v1/exchange/1', '/api/v1/holder-binding', '/api/v1/holder-key',
+        '/api/v1/mdoc', '/api/v1/sign/1', '/api/v1/sign/1/holder',
+        '/api/v1/status-assertion', '/api/v1/timestamp/1',
+        '/api/v1/verifiable-credential', '/api/v1/verify', '/api/zk/epoch/close',
+        '/api/zk/verify', '/auth/webauthn/assert/finish',
+        '/auth/webauthn/register/finish',
+    ]
+
+    def test_the_route_list_still_matches_the_application(self):
+        """A route added without a row above must fail here, not escape the battery.
+
+        This is the vacuity guard. Without it the list silently stops covering the
+        application the first time somebody adds a JSON route, and the test below keeps
+        reporting a clean result over a shrinking fraction of the surface.
+        """
+        import ast as _ast
+        import pathlib as _pathlib
+        import re as _re
+        src = _pathlib.Path(flask_app.__file__.replace('.pyc', '.py')).read_text()
+        tree = _ast.parse(src)
+        declared = set()
+        for fn in _ast.walk(tree):
+            if not isinstance(fn, _ast.FunctionDef):
+                continue
+            seg = _ast.get_source_segment(src, fn) or ''
+            if 'get_json(' not in seg and '_json_object()' not in seg:
+                continue
+            decs = ' '.join(_ast.get_source_segment(src, d) or '' for d in fn.decorator_list)
+            m = _re.search(r"""route\(['"]([^'"]+)""", decs)
+            if m:
+                declared.add(_re.sub(r'<[^>]+>', '<id>', m.group(1)))
+        covered = {_re.sub(r'/\d+', '/<id>', p) for p in self.ROUTES}
+        self.assertTrue(declared, 'no JSON routes were found at all; the parser has drifted '
+                                  'and this guard is measuring nothing')
+        self.assertEqual(sorted(declared - covered), [],
+                         'JSON route(s) with no row in ROUTES, so the battery never reaches '
+                         'them: %r' % sorted(declared - covered))
+
+    def test_no_json_route_answers_5xx_to_a_body_it_dislikes(self):
+        # One token for the whole battery: fetching it per request turned 336 posts into
+        # 672 and told us nothing extra.
+        csrf = self._csrf_token_from('/dashboard')
+        crashes = []
+        for path in self.ROUTES:
+            for body in self.HOSTILE:
+                # The per-address WRITE limiter is 60 a minute and this battery is 336
+                # requests. Without this reset the first four routes ran and every request
+                # after them came back 429 without reaching a view, so the test reported a
+                # clean result over a tenth of its own surface. It passed a six-guard
+                # mutation that way.
+                flask_app.security.rate_limiter.reset()
+                r = self.client.post(path, json=body, headers={'X-CSRFToken': csrf})
+                # A 503 with a JSON reason is a deliberate refusal, not a crash: the
+                # exchange gateway and the receipt mint fail CLOSED under the placeholder
+                # profile, because a placeholder signature is not authentication, and
+                # app.py documents that ordering. Everything else at 5xx is a raise.
+                if r.status_code >= 500 and not (
+                        r.status_code == 503 and (r.get_json(silent=True) or {}).get('error')):
+                    crashes.append((path, repr(body)[:60], r.status_code))
+        self.assertEqual(crashes, [],
+            'a JSON route raised instead of refusing:\n' +
+            '\n'.join('  %-42s %-62s -> %d' % c for c in crashes))
+
 class F04b_AtlasBasemapCspTests(PolarisTestCase):
     """v9.237: the Atlas basemap origin is a deployment setting, and the page's
     CSP follows it. The default admits CARTO on /atlas only; a self-hosted style
