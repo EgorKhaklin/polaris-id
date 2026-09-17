@@ -270,9 +270,28 @@ specification's sentence about grants is that a scope editable in transit "would
 credential hand-over that grants exist to replace"; an algorithm the agent chooses is that, one
 field over. A proof that names an algorithm the grant did not authorize is now refused rather
 than verified. `scripts/polaris-unread-signed-fields.py` is the sweep, kept so the question can be
-asked again: it reports eleven more fields, and the output says how to tell a defect from a field
-bound by a stronger sibling (`attested_agency_id` is unread because the edge is bound by the key
-itself, `iss` because issuer trust is decided against the anchor keys).
+asked again, and it fails on any signed field nobody has declared a reason for.
+
+The other eleven it reports were triaged field by field and none of them is fixed here, which is
+a decision worth stating rather than leaving as a gap in a list. Five are **bound by something
+stronger**: `attested_agency_id` because the edge is bound by the attested KEY rather than a
+number naming its owner, `iss` because issuer trust is decided against the anchor keys,
+`attested_date` because `valid_until` now bounds the edge, and the registry's `contexts` and
+`relying_parties` because they are directory data no decision is taken on. Six are **signed,
+and not surfaced**: the verifier does not act on them, no published contract says it must, and
+a relying party cannot see them in the verdict. The two an assessor should weigh are
+`epoch_number` on a revocation feed, where `as_of` is the monotonic field the specification
+names and two feeds whose `as_of` advances while `epoch_number` regresses are accepted as
+legitimate progression; and `purpose` on a signed document, which means an operator cannot see
+whether a signature made for one purpose is being read as authorization for another. The
+remaining four are `auth_time` (so no OIDC-style `max_age` can be derived), `authorized_via`,
+`bound_at` and `revoked_at`.
+
+None of the six is changed, because the operating contract admits a product change for a named
+external requirement or an executable counterexample against an existing promise, and these are
+neither: no contract promises them and no test can be written that shows one broken. The reasons
+live in the script's own declared list, so the next person to read this does not have to derive
+them again.
 
 **The local gate was narrower than CI in nine places, and the check that existed to prevent
 that reported OK (2026-09-17).** `check_local_gate_covers_ci` was written so that a suite CI
