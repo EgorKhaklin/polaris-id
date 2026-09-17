@@ -4,12 +4,14 @@
 architecture.** The front door says *issuer-unlinkable*. That is a claim about the issuer.
 This directory is about the other side: two verifiers who kept what they were shown.
 
-**Status: five findings, two measured studies, most of the threat model still unmeasured.**
+**Status: six findings, three measured studies, most of the threat model still unmeasured.**
 Findings 1 and 4 came from reading the question carefully enough to build a counterexample,
-and 4 is 1 again in a container the first fix did not look at. Findings 2 and 5 are measured,
-each with a positive control. Finding 3 measures the adversary rather than the system, and
-Finding 5 is what happens when you take that seriously: the instrument behind Finding 2
-could not have seen the channel it was read as clearing. What is listed under "What has NOT
+and 4 is 1 again in a container the first fix did not look at. Findings 2, 5 and 6 are
+measured, each with a positive control. Finding 3 measures the adversary rather than the
+system, and Finding 5 is what happens when you take that seriously: the instrument behind
+Finding 2 could not have seen the channel it was read as clearing. Finding 6 is what happens
+when you read the artifact before measuring it: two of the four fields its question named are
+not in a presentation at all. What is listed under "What has NOT
 been measured" is exactly that, and nothing here should be read as evidence that the rest
 holds.
 
@@ -313,19 +315,72 @@ happens. Timing, repeat visits and network metadata remain unmodelled.
 
 ---
 
+## Finding 6: two of the four fields that bullet named are not in the transcript
+
+**2026-09-17. Measured. `issuer_metadata.py`.**
+
+The unmeasured list asked: "Agency id, algorithm, epoch id and epoch root each narrow the
+anonymity set to a subpopulation. How small does that set get in practice?" Answering it
+started by reading what a presentation actually carries, and the premise did not survive
+that. `PublicInputs` in `polaris_zk/src/lib.rs` is six fields:
+
+    epoch_root_hex, epoch_id, context_id, nonce, scope, nullifier_hex
+
+**There is no agency id and no algorithm.** The relying party's request to `/api/zk/verify`
+adds `epoch_id`, `context_id` and `nonce`, all of which the bundle already carries, so it
+adds nothing an adversary did not have. Two of the four fields the question named cannot
+narrow anything, because a colluding verifier never sees them.
+
+The epoch half is answered by the schema rather than by an experiment. `TokenStateEpoch` has
+columns `epoch_id, merkle_root, valid_from, valid_until, committed_count, closed_at,
+closed_by_user_id`, checked against the live catalogue and not only the DDL: **there is no
+agency column, so epochs are global.** Every holder presenting against an epoch shows the
+same `epoch_id` and the same `epoch_root_hex` as every other holder in it. A field identical
+for everybody present partitions nobody.
+
+That leaves `context_id`, the purpose the check is for, which is a real partition and is what
+the instrument measures. Two verifiers, two scopes, one population; the adversary reads every
+issuer-metadata field, partitions the other verifier's transcripts into cells, and guesses
+inside the matching cell. At 600 holders over 6 contexts, 20 trials:
+
+    exposed (control)    accuracy 1.0000   mean cell      1.0   1/cell 1.0000
+    bounded (measured)   accuracy 0.0098   mean cell    100.0   1/cell 0.0100
+
+The control is the load-bearing row. With every holder alone in its own cell the adversary
+must be right every time, and it is; without that leg the measured row would be a null result
+from an instrument nobody had shown could register the effect, which is the mistake Finding 5
+is about.
+
+**The advantage is the cell, not the fields.** 0.0098 against a 0.0100 baseline is the
+adversary doing exactly as well as guessing uniformly among everyone in the same
+(epoch, context), and no better. Issuer metadata told it which cell to look in and nothing
+further.
+
+**What this does not say.** The cell is real and it is not privacy. A colluding pair learns
+that the holder presented in this epoch for this context: a subpopulation of 100 at these
+parameters, and smaller at a rarer context, where the same measurement would report a larger
+number. It says nothing about timing, status artifacts or transcript structure, which remain
+below. It says nothing about a FULL presentation, which carries a stable token value by
+design and is not the mode this claim is about. And it is a statement about the fields a
+presentation carries TODAY: adding an issuer-identifying field to the public inputs would
+reopen the question, which is why the instrument asserts the field set against the prover's
+struct and fails loudly rather than quietly measuring a stale one.
+
+---
+
 ## What has NOT been measured
 
 Everything in the threat model except the stable-field case above. In particular, for a
 transcript that now legitimately reports `bounded`:
 
 - **Timing.** Does the interval between presentations, or proving time, carry a signal?
-- **Issuer metadata.** Agency id, algorithm, epoch id and epoch root each narrow the
-  anonymity set to a subpopulation. How small does that set get in practice?
 - **Status artifacts.** A stapled status assertion is signed material with its own
   timestamps and identifiers.
 - **Transcript structure.** Field ordering, optional-field presence, format minor version.
 
-The first bullet, presentation size, is no longer on this list. It is Finding 5.
+Presentation size is no longer on this list: it is Finding 5. Issuer metadata is no
+longer on it either: it is Finding 6, which found that two of the four fields it named
+are not in a presentation at all.
 
 The honest statement today: **`bounded` now means no field in the transcript is trivially
 identical across verifiers. It does not mean an adversary has no advantage.** The advantage
