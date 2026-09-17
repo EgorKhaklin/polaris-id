@@ -183,6 +183,84 @@ class CorrelationIsAboutTheTranscriptTests(unittest.TestCase):
     def test_no_nullifier_is_never_bounded(self):
         self.assertEqual(self._corr(credential=self.CRED)["correlation"], "exposed")
 
+    # ---- 2026-09-16: the same defect, one container over -------------------------------
+    # The fix above enumerated the containers somebody had thought of, not the ones the
+    # presentation format defines. `holder_proof` carries the token value AND the holder's
+    # public key, and neither was looked at, so this transcript reported `bounded`.
+
+    HOLDER_PROOF = {"format": "polaris-holder-proof/1", "token_value": "STABLE-TOKEN-0001",
+                    "context_id": 4, "verifier_nonce": "nonce-from-verifier-A",
+                    "issued_at": "2026-09-16T00:00:00Z", "algorithm": "ML-DSA-65",
+                    "signature_hex": "bb" * 3309, "public_key_hex": "aa" * 1952}
+
+    def test_a_holder_proof_without_a_binding_is_not_bounded(self):
+        """The counterexample. The wallet emits `holder_proof` whenever a verifier supplies
+        a nonce, and `holder_binding` only when the wallet holds a binding file, so a
+        transcript with the proof and no binding is a shape the shipped tool produces."""
+        v = self._corr(zk_proof=self.ZK, holder_proof=self.HOLDER_PROOF)
+        self.assertEqual(v["correlation"], "exposed",
+                         "the holder proof showed a stable token value and the holder's "
+                         "public key; two verifiers link on either in one comparison")
+
+    def test_each_container_that_can_carry_stable_material_is_checked(self):
+        """One field per container, alone, with nothing else stable in the transcript."""
+        for container, field, value in (
+                ("credential", "token_value", "STABLE-TOKEN-0001"),
+                ("credential", "token_id", 4711),
+                ("holder_binding", "token_value", "STABLE-TOKEN-0001"),
+                ("holder_binding", "signature_hex", "ff" * 64),
+                ("holder_proof", "token_value", "STABLE-TOKEN-0001"),
+                ("holder_proof", "public_key_hex", "aa" * 1952),
+                ("status_assertion", "token_value", "STABLE-TOKEN-0001"),
+                ("status_assertion", "signature_hex", "ff" * 64)):
+            with self.subTest(container=container, field=field):
+                v = self._corr(zk_proof=self.ZK, **{container: {field: value}})
+                self.assertEqual(v["correlation"], "exposed",
+                                 "%s.%s is the same value at every verifier" % (container, field))
+
+    def test_an_integer_token_id_is_as_linkable_as_a_string_one(self):
+        """The check tested `isinstance(val, str)`, so a numeric id would have walked past
+        it. A token id is a small integer in every pack the application builds."""
+        v = self._corr(zk_proof=self.ZK, credential={"token_id": 4711})
+        self.assertEqual(v["correlation"], "exposed")
+
+    def test_the_presented_code_alone_is_enough(self):
+        """It is opaque and never interpreted. It does not have to be interpreted to be a
+        handle: the holder sends the same code wherever they present."""
+        v = self._corr(zk_proof=self.ZK, presented_code="CODE-HOLDER-0001")
+        self.assertEqual(v["correlation"], "exposed")
+
+    def test_the_strong_form_still_reaches_bounded(self):
+        """The direction that keeps the widening honest. If every transcript became
+        `exposed`, these tests would all pass and the verdict would carry no information."""
+        v = self._corr(zk_proof=self.ZK)
+        self.assertEqual(v["correlation"], "bounded")
+        self.assertEqual(v["pairwise_handle"], "cc" * 32)
+
+    def test_the_epoch_root_does_not_make_a_presentation_exposed(self):
+        """It is identical at every verifier and must NOT be listed: it is the commitment
+        the proof is made against and is deliberately shared by the whole epoch. Listing it
+        would make `bounded` unreachable and would misdescribe the anonymity set."""
+        zk = {"proof_hex": "00",
+              "public_inputs": {"epoch_root_hex": "ab" * 32, "epoch_id": 3, "scope": 77,
+                                "nullifier_hex": "cc" * 32}}
+        self.assertEqual(self._corr(zk_proof=zk)["correlation"], "bounded")
+
+    def test_every_container_the_format_defines_has_been_decided_about(self):
+        """The structural guard, and the actual lesson. An allowlist of field paths repeats
+        this defect every time a sub-object is added. This fails if a container appears in
+        the format with no entry in the stable-field table and no recorded reason."""
+        listed = {c for c, _, _ in V._STABLE_CROSS_VERIFIER_FIELDS}
+        # zk_proof carries nothing stable, for reasons stated beside the table: its
+        # nullifier is scoped and its epoch root is the anonymity set.
+        decided = listed | {"zk_proof"}
+        self.assertEqual(set(V._PRESENTATION_CONTAINERS) - decided, set(),
+                         "a container the presentation format defines has no decision "
+                         "recorded about whether stable material can ride in it")
+        for container, _field, why in V._PER_VERIFIER_SIGNATURES:
+            self.assertIn(container, V._PRESENTATION_CONTAINERS)
+            self.assertTrue(why.strip(), "say WHY it differs per verifier, not just that it does")
+
 
 class HolderProofStatementTests(unittest.TestCase):
     """P9.1's constitutional property, on the bytes."""

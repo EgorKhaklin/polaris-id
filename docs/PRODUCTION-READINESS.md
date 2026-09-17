@@ -122,9 +122,15 @@ patterns and network metadata are not modelled at all, and the adversary that pr
 result matches on EXACT EQUALITY only: shown a population that is perfectly linkable with no
 equal field in it, it stays at chance, so the measurement says no field is identical across
 verifiers and not that none is correlated. One channel it can read is transcript LENGTH, which
-carried the entire above-chance residue in that control. Nothing in a bounded Polaris
-presentation varies in size per holder today; a deployment where disclosed attribute sets or
-optional elements made it vary would open that channel. `lab/linkability/`.
+carried the entire above-chance residue in that control. **That measurement was made against a
+model, not against the shipped format**, and the correction matters: the harness builds each
+holder's transcript from fixed-width values, so its transcripts are identical in size by
+construction and could not have shown a length leak whether or not one exists. The real
+builders are not fixed-width (a free-text issuer name, an integer token id, eight
+conditionally emitted fields, and a QR frame count that is a direct function of serialized
+size). Nothing in the tree builds a population of real transcripts, so whether a bounded
+Polaris presentation varies in size per holder is **unmeasured**, not established.
+`lab/linkability/`.
 
 **Two facts about the migration path, for the same reader (2026-09-13).** The agility is real
 issuer-side: the algorithm is a row with a `deprecation_date`, `uc6_migrate_algorithm` re-signs a

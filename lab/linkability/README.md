@@ -4,10 +4,12 @@
 architecture.** The front door says *issuer-unlinkable*. That is a claim about the issuer.
 This directory is about the other side: two verifiers who kept what they were shown.
 
-**Status: two findings, one measured study, most of the threat model still unmeasured.**
-Finding 1 came from reading the question carefully enough to build a counterexample. Finding
-2 is measured, with a positive control. What is listed under "What has NOT been measured" is
-exactly that, and nothing here should be read as evidence that the rest holds.
+**Status: four findings, one measured study, most of the threat model still unmeasured.**
+Findings 1 and 4 came from reading the question carefully enough to build a counterexample,
+and 4 is 1 again in a container the first fix did not look at. Finding 2 is measured, with a
+positive control. Finding 3 measures the adversary rather than the system. What is listed
+under "What has NOT been measured" is exactly that, and nothing here should be read as
+evidence that the rest holds.
 
 ---
 
@@ -164,6 +166,72 @@ this small. It takes a seeded generator.
 
 ---
 
+## Finding 4: the fix for Finding 1 enumerated the containers somebody had thought of
+
+**2026-09-16. Fixed the same day.**
+
+Finding 1's fix made `bounded` require "the absence of any field that is identical across
+verifiers", and then listed four field paths in two containers: three in `credential`, one in
+`holder_binding`. A presentation is an envelope of five named sub-objects. The other three
+were never looked at, and every one of them carries the token value.
+
+The counterexample, which runs:
+
+```python
+verify_presentation({
+  "format": "polaris-presentation/1", "context_id": 4,
+  "zk_proof": {"proof_hex": "00", "public_inputs": {"nullifier_hex": "9e"*32, ...}},
+  "holder_proof": {"format": "polaris-holder-proof/1",
+                   "token_value": "STABLE-TOKEN-0001",     # identical at every verifier
+                   "public_key_hex": "aa"*1952,            # the HOLDER's key
+                   "verifier_nonce": "nonce-from-verifier-A", ...},
+}, verifier_scope="verifier-A")["correlation"]
+# -> "bounded"
+```
+
+The verifier is holding this holder's token value and this holder's public key. Both are the
+same value at the next verifier. Two verifiers who kept their transcripts link on either in
+one string comparison, and both of their verifiers reported the correlation as bounded. That
+is Finding 1's sentence, word for word, one container over.
+
+**The shape is one the shipped wallet produces.** `cmd_present` in `scripts/polaris-wallet.py`
+emits `holder_proof` whenever a verifier supplies a nonce, and emits `holder_binding` only
+when the wallet holds a binding file. A wallet with a holder key and no binding writes the
+proof without the binding, which is the transcript above.
+
+Three more shapes reported `bounded` for the same reason, each measured: a stapled
+`status_assertion` (it names the token value and carries the issuer's signature over this
+holder's status), a `holder_binding` carrying anything other than the one field on the list,
+and a `presented_code`, which is the holder's own opaque code and goes unchanged to whoever
+they present to. A fourth was a type rather than a path: the check tested
+`isinstance(val, str)`, so `credential.token_id`, an integer in every pack the application
+builds, walked past it.
+
+**The fix, and why it is not another four paths.** The table now covers every container the
+format defines, and `_PRESENTATION_CONTAINERS` names all five beside it, with a test that
+fails if a container appears there with no decision recorded about it. An allowlist of field
+paths reproduces this defect every time a sub-object is added; naming the containers makes
+the omission the thing that fails.
+
+Two entries are deliberate exclusions, recorded rather than silently left out, because
+"nobody listed it" and "checked, and it is not stable" are different facts:
+
+- **`zk_proof` carries nothing stable.** Its nullifier is scoped, which is the mechanism, and
+  its `epoch_root_hex` is identical for the whole epoch by design. The root is not
+  credential-bound material, it is the commitment the proof is made against; listing it would
+  make `bounded` unreachable and would misdescribe the anonymity set as a handle. A test pins
+  that a transcript carrying an epoch root is still bounded.
+- **`holder_proof.signature_hex` is not stable.** Its signed payload includes
+  `verifier_nonce`, so the value differs between two verifiers.
+
+**What the fix does not do.** It corrects a verdict, again. No presentation became more
+private, and no deployed behaviour changed. It also does not touch the length channel below:
+every field named here is about a value being IDENTICAL, and a transcript can be perfectly
+linkable with no equal field in it, which Finding 3 demonstrated and this fix does not
+address.
+
+---
+
 ## What has NOT been measured
 
 Everything in the threat model except the stable-field case above. In particular, for a
@@ -176,6 +244,20 @@ transcript that now legitimately reports `bounded`:
 - **Status artifacts.** A stapled status assertion is signed material with its own
   timestamps and identifiers.
 - **Transcript structure.** Field ordering, optional-field presence, format minor version.
+
+And one limitation of the harness itself, recorded 2026-09-16 while Finding 4 was being
+chased. **`adversary.py` is the only population of presentations in the tree, and it is a
+model, not the shipped format.** `_transcript` builds each holder's transcript from
+fixed-width values: `"TOKEN-%06d" % holder`, sha3 hex of a constant length, a proof modelled
+as a constant-length blob. So every transcript it produces has the same byte count as every
+other by construction, and Finding 2's null result on the length channel is a property of
+that construction rather than a measurement of Polaris. The real builders do not share it:
+`token_authenticity_pack` in `polaris_web/app.py` emits a free-text issuer name and an
+integer token id, `cmd_present` in `scripts/polaris-wallet.py` emits eight fields
+conditionally, and `encode_presentation_frames` turns the serialized length directly into a
+QR frame count. Nothing in the tree builds a population of real transcripts, so the first
+bullet above is not merely unmeasured: the instrument that would measure it does not exist
+yet.
 
 The honest statement today: **`bounded` now means no field in the transcript is trivially
 identical across verifiers. It does not mean an adversary has no advantage.** The advantage

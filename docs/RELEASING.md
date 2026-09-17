@@ -129,10 +129,7 @@ four values. Two things cost time on 2026-09-15 and are worth knowing:
 `package not found` until it was actually created, two refused runs later). Its fields, which
 npm does not let you edit afterwards: publisher GitHub Actions, organization or user
 `EgorKhaklin`, repository `polaris-id`, workflow filename `publish.yml`, environment name
-`npm`, direct `npm publish` allowed. npm's stronger option is staged publishing only, where a
-run uploads to a staging area and a person promotes it on the website; it would need the
-publish step changed to the staged command, and is worth taking when the next person who is
-not the author publishes. npm cannot do any of this for a package's *first* publish: the
+`npm`, direct `npm publish` allowed. npm cannot do any of this for a package's *first* publish: the
 publisher is configured on a package page that does not exist until something has been
 published (npm/cli#8544). 0.1.0 therefore went out under a granular token scoped to the one
 package, held as a repository secret for that one run and revoked within the hour. The secret
@@ -144,6 +141,38 @@ prerelease is refused without a dist-tag; `setup-node` with a `registry-url` wri
 placeholder token into the npm config, which the CLI then uses instead of the identity
 exchange; and the exchange needs npm 11.5.1 or later, so the job upgrades the CLI first and
 publishes verbose so the exchange's answer is in the log.
+
+#### The npm job stages; it does not publish (2026-09-16)
+
+**A green npm job means STAGED, not published.** The step runs `npm stage publish`, which
+uploads the tarball and stops. The version is not on the registry, `npm install` cannot
+reach it, and it becomes available only when a maintainer approves it with a 2FA code that
+no workflow can produce. So the workflow, compromised or merely run by mistake with
+`confirm: PUBLISH`, cannot put code in front of an installer by itself. `npm stage publish`
+needs npm 11.15.0 and Node 22.14.0, and the job asserts both rather than trusting
+`npm@latest` to be new enough: a silent fall back to a direct publish is the one outcome
+staging exists to prevent.
+
+Finish it from your own machine, where the 2FA code lives:
+
+```bash
+npm stage list polaris-sdk-ts       # the stage-id of what the run uploaded
+npm stage view <stage-id>           # what is in it, before approving anything
+npm stage download <stage-id>       # or unpack the tarball and read it
+npm stage approve <stage-id> --otp <code>
+npm stage reject <stage-id>         # to abandon it instead
+```
+
+Then verify from the live registry as below. Until `approve` runs, the verification will
+correctly find nothing, and that is the staging working rather than a failed publish.
+
+**One setting still has to change on npmjs.com, and it is not in this repository.** The
+trusted publisher was created with direct `npm publish` allowed, which leaves that path open
+beside this one and makes the approval optional rather than required. On the package's
+access page, under the trusted publisher, leave "allow `npm publish`" **unchecked**. npm's
+own wording calls the checked state not recommended. Nothing in the tree can enforce this,
+which is why it is written here: the staging in `publish.yml` is half of the control, and
+this checkbox is the other half.
 
 ---
 

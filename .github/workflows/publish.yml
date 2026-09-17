@@ -125,8 +125,24 @@ jobs:
       # the exchange's answer is in the log if the registry refuses.
       - uses: actions/setup-node@v7
         with:
+          # `npm stage publish` needs Node 22.14.0 or later. 24 satisfies it; the assertion
+          # below is what actually holds the floor, because a pin can be edited.
           node-version: '24'
-      - run: npm install -g npm@latest && npm --version
+      # `npm@latest` is not a version floor, it is a hope. Two things below depend on real
+      # floors: the OIDC exchange needs 11.5.1 and `npm stage publish` needs 11.15.0. If the
+      # registry ever serves an older `latest`, a silent fall back to a direct publish is
+      # exactly the outcome staging exists to prevent, so the job refuses instead.
+      - name: npm CLI new enough to stage
+        run: |
+          npm install -g npm@latest
+          NPM_V="$(npm --version)"; NODE_V="$(node --version | tr -d v)"
+          echo "npm $NPM_V, node $NODE_V"
+          need() {
+            [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ] || {
+              echo "::error::$3 $1 is older than the required $2"; exit 1; }
+          }
+          need "$NPM_V" 11.15.0 "npm"
+          need "$NODE_V" 22.14.0 "node"
       - run: cd sdk/typescript && npm ci
       # prepack builds dist/, which is what `exports` points at. Publishing without it
       # would ship a package with nothing to import, which is the state this repository
@@ -143,7 +159,19 @@ jobs:
       # run 35148098228, nothing uploaded). A prerelease version goes out under `next`:
       # `npm install polaris-sdk-ts` keeps resolving the last full release, and the
       # candidate is `npm install polaris-sdk-ts@next`, the same shape as pip's --pre.
-      - name: Publish
+      #
+      # STAGED, not direct. `npm stage publish` uploads the tarball and stops: the version
+      # is not on the registry and nobody can install it until a maintainer runs
+      # `npm stage approve <stage-id>` with a 2FA code, which no workflow can produce. So a
+      # workflow that is compromised, or simply run by mistake with confirm=PUBLISH, cannot
+      # put code in front of an installer on its own. That is the whole reason to prefer it
+      # over `npm publish`, and it is why the trusted publisher on npmjs.com should have
+      # "allow npm publish" UNCHECKED: with it checked, the direct path stays open beside
+      # this one and the approval is optional rather than required.
+      #
+      # THE JOB GOING GREEN NO LONGER MEANS PUBLISHED. It means staged. The approval is a
+      # separate, human, 2FA step, and docs/RELEASING.md carries it.
+      - name: Stage the publish
         run: |
           cd sdk/typescript
           VERSION="$(node -p "require('./package.json').version")"
@@ -151,5 +179,22 @@ jobs:
             *-*) TAG=next ;;
             *)   TAG=latest ;;
           esac
-          echo "publishing polaris-sdk-ts@$VERSION under dist-tag $TAG"
-          npm publish --provenance --access public --tag "$TAG" --loglevel verbose
+          echo "staging polaris-sdk-ts@$VERSION under dist-tag $TAG"
+          npm stage publish --provenance --access public --tag "$TAG" --loglevel verbose
+      - name: What is staged, and what has to happen next
+        run: |
+          cd sdk/typescript
+          npm stage list || true
+          cat <<'EOF'
+          ============================================================
+          STAGED, NOT PUBLISHED. Nothing is installable yet.
+          A maintainer with 2FA finishes it from their own machine:
+              npm stage list polaris-sdk-ts
+              npm stage view <stage-id>          # inspect before approving
+              npm stage download <stage-id>      # or unpack the tarball first
+              npm stage approve <stage-id> --otp <code>
+          To abandon it instead:
+              npm stage reject <stage-id>
+          Then verify from the live registry, per docs/RELEASING.md.
+          ============================================================
+          EOF

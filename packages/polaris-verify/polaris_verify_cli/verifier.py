@@ -3951,17 +3951,68 @@ def grant_within_limits(grant, uses_so_far=0, amount=None):
     return True, None
 
 
+#: Every container a presentation may carry, and whether stable cross-verifier material can
+#: ride in it. A presentation is a shallow envelope of named sub-objects, and this names all
+#: of them, so that adding one without deciding this question fails a test rather than
+#: quietly widening what `bounded` covers. `zk_proof` is the one that carries nothing: its
+#: nullifier is scoped, which is the whole mechanism, and its epoch root is shared by every
+#: member of the epoch, which makes it the anonymity set rather than a handle.
+_PRESENTATION_CONTAINERS = ("credential", "holder_binding", "holder_proof", "status_assertion",
+                            "zk_proof")
+
 #: Fields a presentation may carry that are THE SAME VALUE at every verifier. Any one of
 #: them lets two verifiers who kept the raw transcript match their records, whatever handle
 #: they were told to key on. The holder key is here too: it is stable across verifiers by
 #: construction, which is exactly what makes the pairwise handle derived FROM it useful and
 #: the key itself dangerous to show.
+#
+#: 2026-09-16. This listed four paths and covered two containers. `holder_proof`,
+#: `status_assertion` and the rest of `holder_binding` were not looked at, and every one of
+#: them carries the token value. Measured: a transcript of `{format, context_id, zk_proof,
+#: holder_proof}` reported `correlation: bounded` while showing the verifier the stable token
+#: value AND the holder's public key, which two verifiers link on in one string comparison.
+#: That is Finding 1 exactly, one field path over: the fix then enumerated the containers
+#: somebody had thought of rather than the ones the format defines. Hence
+#: `_PRESENTATION_CONTAINERS` above and the completeness test beside it.
+#
+#: What belongs here is CREDENTIAL-BOUND material: a value that belongs to this credential,
+#: this holder or this issuer and travels unchanged to whoever is shown it. The issuer's key
+#: qualifies even though every holder of that issuer shares it, because narrowing a
+#: population to one issuer is a real narrowing (lab/linkability, Finding 2). The epoch root
+#: does not, and the distinction is not a matter of degree: the root is not credential-bound
+#: material at all, it is the public commitment the proof is made AGAINST, and it is
+#: deliberately identical for the whole epoch. Listing it would make `bounded` unreachable
+#: and would misdescribe the anonymity set as a handle.
 _STABLE_CROSS_VERIFIER_FIELDS = (
     ("credential", "token_value", "a stable token value"),
+    ("credential", "token_id", "the credential's stable token id"),
     ("credential", "public_key_hex", "the issuer's public key"),
     ("credential", "signature_hex", "the issuer's signature over this credential"),
     ("holder_binding", "holder_public_key_hex", "the holder's public key"),
+    ("holder_binding", "token_value", "the token value named by the holder binding"),
+    ("holder_binding", "public_key_hex", "the issuer's public key, from the holder binding"),
+    ("holder_binding", "signature_hex", "the issuer's signature over this holder binding"),
+    ("holder_proof", "token_value", "the token value named by the holder proof"),
+    ("holder_proof", "public_key_hex", "the holder's public key, from the holder proof"),
+    ("status_assertion", "token_value", "the token value named by the stapled status assertion"),
+    ("status_assertion", "public_key_hex", "the issuer's public key, from the status assertion"),
+    ("status_assertion", "signature_hex", "the issuer's signature over this status assertion"),
 )
+
+#: Top-level scalars that are the same value at every verifier. `presented_code` is the
+#: holder's own opaque code, reused wherever they present, so two verifiers who kept it
+#: match on a string comparison. It is deliberately not interpreted anywhere else in this
+#: file, and it does not need to be interpreted to be a handle.
+_STABLE_CROSS_VERIFIER_SCALARS = (
+    ("presented_code", "the opaque code this holder presents, unchanged at every verifier"),
+)
+
+#: Signatures whose signed payload includes something the VERIFIER chose, so the value
+#: differs between two verifiers and cannot be matched on. Recorded rather than merely
+#: omitted, because "not on the list" and "checked and found not to be stable" are different
+#: facts and only one of them survives the next person reading this.
+#: `holder_proof.signature_hex` signs over `verifier_nonce` (`_holder_proof_canonical`).
+_PER_VERIFIER_SIGNATURES = (("holder_proof", "signature_hex", "signs the verifier's own nonce"),)
 
 
 def _stable_cross_verifier_material(presentation, cred):
@@ -3972,12 +4023,27 @@ def _stable_cross_verifier_material(presentation, cred):
     """
     if not isinstance(presentation, dict):
         return None
-    sources = {"credential": cred if isinstance(cred, dict) else {},
-               "holder_binding": presentation.get("holder_binding")
-               if isinstance(presentation.get("holder_binding"), dict) else {}}
+    sources = {}
+    for name in _PRESENTATION_CONTAINERS:
+        val = cred if name == "credential" else presentation.get(name)
+        sources[name] = val if isinstance(val, dict) else {}
     for where, field, human in _STABLE_CROSS_VERIFIER_FIELDS:
         val = sources.get(where, {}).get(field)
-        if isinstance(val, str) and val.strip():
+        # An integer token id is as linkable as a string one, so the check is on a present,
+        # non-blank value rather than on a type.
+        if isinstance(val, bool) or val is None:
+            continue
+        if isinstance(val, str) and not val.strip():
+            continue
+        if isinstance(val, (str, int, float)):
+            return human
+    for field, human in _STABLE_CROSS_VERIFIER_SCALARS:
+        val = presentation.get(field)
+        if isinstance(val, bool) or val is None:
+            continue
+        if isinstance(val, str) and not val.strip():
+            continue
+        if isinstance(val, (str, int, float)):
             return human
     return None
 
