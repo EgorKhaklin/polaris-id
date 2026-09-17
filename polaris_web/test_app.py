@@ -12293,6 +12293,47 @@ class OperatorAuthorityScopeTests(PolarisTestCase):
                               "an account with no authority must come back unscoped, or the "
                               "permissive default is gone and single-authority instances break")
 
+    def test_a_bound_operator_cannot_make_another_authority_sign(self):
+        """P3.9's other half. The row-level policies bound what a bound operator READS, and
+        signing is not a row, so no policy can reach it: without this check an operator confined
+        to one authority could still make any other authority on the instance sign a digest of
+        their choosing. The holder-authorised path already refuses a credential another authority
+        issued; this is the operator-authorised half of the same rule."""
+        self._login('operator')
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+            token = sess['csrf_token']
+        body = {'digest_hex': 'a' * 64}
+        r = self.client.post('/api/v1/sign/2', json=body, headers={'X-CSRFToken': token})
+        self.assertEqual(r.status_code, 403,
+                         "an operator bound to authority 1 must not sign as authority 2")
+        self.assertIn('cannot act as another',
+                      (r.get_json() or {}).get('error_description', ''),
+                      "the refusal must be the authority binding rather than some other 403, or "
+                      "this passes on a failure that has nothing to do with the rule")
+
+        # The other direction: their OWN authority must not be refused by the binding. It may
+        # still fail for unrelated reasons (no registered key), so what is asserted is the
+        # absence of THIS refusal, not a 200.
+        own = self.client.post('/api/v1/sign/1', json=body, headers={'X-CSRFToken': token})
+        self.assertNotIn('cannot act as another',
+                         (own.get_json() or {}).get('error_description', ''),
+                         "an operator must be able to act as the authority they are bound to")
+
+    def test_an_unbound_operator_is_not_refused_by_the_authority_binding(self):
+        """THE REGRESSION GUARD. Every deployment today leaves AppUser.agency_id NULL, which is
+        the single-authority default the policies themselves take. If the binding refused an
+        unbound operator, every one of those instances would lose document signing at once."""
+        self._login('operator')
+        with self.client.session_transaction() as sess:
+            sess.pop('operator_agency_id', None)
+            token = sess['csrf_token']
+        r = self.client.post('/api/v1/sign/1', json={'digest_hex': 'a' * 64},
+                             headers={'X-CSRFToken': token})
+        self.assertNotIn('cannot act as another',
+                         (r.get_json() or {}).get('error_description', ''),
+                         "an unbound operator must not be refused by the authority binding")
+
     def test_the_scope_is_coerced_to_an_integer(self):
         # The value reaches SQL. A session cookie is signed, but the coercion is what keeps a
         # tampered or malformed value from ever being interpolated anywhere.

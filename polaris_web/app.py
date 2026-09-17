@@ -635,6 +635,32 @@ def _apply_operator_scope(conn):
         raise
 
 
+def _operator_authority_permits(agency_id):
+    """P3.9: an operator bound to an authority may only act AS that authority.
+
+    Returns None when the action is permitted, or a 403 response when it is not. The row-level
+    policies bound what a bound operator READS; this bounds what they can make an authority DO,
+    which no policy can reach because signing is not a row. The holder-authorised path already
+    refuses a credential another authority issued; this is the operator-authorised half.
+
+    An UNBOUND operator is permitted. That is the single-authority default every current
+    deployment runs, it is what the policies themselves do with an unset scope, and refusing
+    here instead would break every instance whose operators carry no authority. So this refuses
+    only what the binding actually forbids, and is a no-op until an operator is bound.
+    """
+    bound = session.get('operator_agency_id')
+    if bound is None:
+        return None
+    try:
+        if int(bound) == int(agency_id):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return jsonify(
+        error='forbidden',
+        error_description='an operator bound to one authority cannot act as another'), 403
+
+
 def _replica_lag_seconds(conn):
     """Seconds the replica is behind the primary. 0.0 when the peer is not in
     recovery (a single-node router pointed at the leader), and 0.0 when the
@@ -6632,6 +6658,9 @@ def api_v1_exchange_receipt(agency_id):
     Request JSON: {requester_public_key_hex, context_id, request_hash, response_hash}. This is
     the OPERATOR path (login + CSRF); the responder's own service mints with no session at
     /signed (P8.2b, below). 403 if the requester is not authorized in the context."""
+    denied = _operator_authority_permits(agency_id)
+    if denied:
+        return denied
     responder, err = _federated_agency(agency_id)
     if err:
         return err
@@ -7243,6 +7272,9 @@ def api_v1_sign(agency_id):
     {digest_hex, digest_algorithm?, media_type?, name?, purpose?}. Returns a
     polaris-signed-document/1 with long-term-validation evidence attached. The document itself
     is never sent."""
+    denied = _operator_authority_permits(agency_id)
+    if denied:
+        return denied
     agency, err = _federated_agency(agency_id)
     if err:
         return err
