@@ -4,12 +4,14 @@
 architecture.** The front door says *issuer-unlinkable*. That is a claim about the issuer.
 This directory is about the other side: two verifiers who kept what they were shown.
 
-**Status: four findings, one measured study, most of the threat model still unmeasured.**
+**Status: five findings, two measured studies, most of the threat model still unmeasured.**
 Findings 1 and 4 came from reading the question carefully enough to build a counterexample,
-and 4 is 1 again in a container the first fix did not look at. Finding 2 is measured, with a
-positive control. Finding 3 measures the adversary rather than the system. What is listed
-under "What has NOT been measured" is exactly that, and nothing here should be read as
-evidence that the rest holds.
+and 4 is 1 again in a container the first fix did not look at. Findings 2 and 5 are measured,
+each with a positive control. Finding 3 measures the adversary rather than the system, and
+Finding 5 is what happens when you take that seriously: the instrument behind Finding 2
+could not have seen the channel it was read as clearing. What is listed under "What has NOT
+been measured" is exactly that, and nothing here should be read as evidence that the rest
+holds.
 
 ---
 
@@ -232,12 +234,72 @@ address.
 
 ---
 
+## Finding 5: the length channel, measured at last, and the instrument that could not see it
+
+**2026-09-16. Measured. `transcript_size.py`.**
+
+Finding 3 established that byte length is a channel this lab's adversary can read. The
+readiness ledger then carried the sentence **"nothing in a bounded Polaris presentation
+varies in size per holder today"**, and that sentence had never been measured. It could not
+have been. `adversary.py` builds every holder from fixed-width values (`"TOKEN-%06d" %
+holder`, sha3 hex, a proof modelled at constant length), so its transcripts are identical in
+size *by construction*. It would have returned the same null result whether or not a leak
+existed, and a null result from an instrument that cannot register the effect is not a null
+result. The real builders have no such property: `token_authenticity_pack` emits a free-text
+issuer name and an unpadded integer token id, `cmd_present` emits eight fields conditionally,
+and `encode_presentation_frames` turns serialized length straight into a QR frame count.
+
+`transcript_size.py` is the instrument. It serializes with the shipped
+`presentation_payload`, frames with the shipped encoder, derives nullifiers with the tree's
+own Poseidon, and asserts every transcript in the bounded population reports
+`correlation: bounded` before measuring it, so the population measured is the one the claim
+is about. The people come from `polaris_sim`'s own name lists, whose names run 8 to 21
+characters.
+
+**The statistic, and the one that looks right and is not.** Counting distinct byte lengths
+measures nothing on its own. A length that rerolls per presentation inflates that count
+exactly as a real leak would, and it is noise: what makes length a handle is being
+*holder-stable*, the same person landing at the same size wherever they present. So the
+measurement is a matcher that pairs one verifier's rows to the other's on byte count and
+nothing else. Distinct lengths are reported beside it, never as the result. Getting this
+wrong in the first draft would have produced a finding out of a random nonce's decimal width.
+
+200 holders, 5 trials, chance 0.0050:
+
+| Population | match on length alone | vs chance | distinct lengths |
+|---|---|---|---|
+| positive control (size is the holder, by construction) | 1.0000 | x200 | 200 of 200 |
+| the presentation the wallet emits (pack attached) | 0.0280 | x5.6 | 9 of 200 |
+| bounded (the claim's population) | 0.0040 | x0.8 | 3 of 200 |
+
+**A bounded presentation's size carries nothing about the holder.** The matcher sits at
+chance while solving the fingerprinted control outright, so this is a null result from an
+instrument demonstrated to register the effect. The three distinct lengths are the proof
+nonce's decimal width, which rerolls per presentation. Every bounded transcript fits in one
+QR frame.
+
+**The presentation the wallet actually emits is a different answer: x5.6 chance.** `cmd_present`
+always attaches the authenticity pack, and the pack carries a free-text issuer name and an
+unpadded integer token id, so size partitions 200 holders into 9 buckets. That transcript is
+already `exposed` on its token value, so size tells a colluding pair nothing they did not
+already have in a single string comparison. It is recorded because the two facts come apart
+the moment a pack rides alongside a withheld credential.
+
+**What this does not say.** It is a measurement of these shapes at this population size, not
+a proof. It holds while a bounded presentation carries no per-holder variable-length field.
+Disclosed attribute values, optional elements or a variable-length status assertion would
+each open the channel, and the control above shows exactly what happens when one does. The
+OpenID4VP path is a separate question and is not measured here: an SD-JWT VC presentation
+discloses the holder's own attribute values, so its disclosures vary in length by
+construction. Timing, repeat visits and network metadata remain unmodelled.
+
+---
+
 ## What has NOT been measured
 
 Everything in the threat model except the stable-field case above. In particular, for a
 transcript that now legitimately reports `bounded`:
 
-- **Presentation size.** Does byte length vary with anything holder-specific?
 - **Timing.** Does the interval between presentations, or proving time, carry a signal?
 - **Issuer metadata.** Agency id, algorithm, epoch id and epoch root each narrow the
   anonymity set to a subpopulation. How small does that set get in practice?
@@ -245,19 +307,7 @@ transcript that now legitimately reports `bounded`:
   timestamps and identifiers.
 - **Transcript structure.** Field ordering, optional-field presence, format minor version.
 
-And one limitation of the harness itself, recorded 2026-09-16 while Finding 4 was being
-chased. **`adversary.py` is the only population of presentations in the tree, and it is a
-model, not the shipped format.** `_transcript` builds each holder's transcript from
-fixed-width values: `"TOKEN-%06d" % holder`, sha3 hex of a constant length, a proof modelled
-as a constant-length blob. So every transcript it produces has the same byte count as every
-other by construction, and Finding 2's null result on the length channel is a property of
-that construction rather than a measurement of Polaris. The real builders do not share it:
-`token_authenticity_pack` in `polaris_web/app.py` emits a free-text issuer name and an
-integer token id, `cmd_present` in `scripts/polaris-wallet.py` emits eight fields
-conditionally, and `encode_presentation_frames` turns the serialized length directly into a
-QR frame count. Nothing in the tree builds a population of real transcripts, so the first
-bullet above is not merely unmeasured: the instrument that would measure it does not exist
-yet.
+The first bullet, presentation size, is no longer on this list. It is Finding 5.
 
 The honest statement today: **`bounded` now means no field in the transcript is trivially
 identical across verifiers. It does not mean an adversary has no advantage.** The advantage

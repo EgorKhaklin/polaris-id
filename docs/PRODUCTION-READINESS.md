@@ -122,15 +122,22 @@ patterns and network metadata are not modelled at all, and the adversary that pr
 result matches on EXACT EQUALITY only: shown a population that is perfectly linkable with no
 equal field in it, it stays at chance, so the measurement says no field is identical across
 verifiers and not that none is correlated. One channel it can read is transcript LENGTH, which
-carried the entire above-chance residue in that control. **That measurement was made against a
-model, not against the shipped format**, and the correction matters: the harness builds each
-holder's transcript from fixed-width values, so its transcripts are identical in size by
-construction and could not have shown a length leak whether or not one exists. The real
-builders are not fixed-width (a free-text issuer name, an integer token id, eight
-conditionally emitted fields, and a QR frame count that is a direct function of serialized
-size). Nothing in the tree builds a population of real transcripts, so whether a bounded
-Polaris presentation varies in size per holder is **unmeasured**, not established.
-`lab/linkability/`.
+carried the entire above-chance residue in that control. This ledger used to add that nothing
+in a bounded presentation varies in size per holder; that had never been measured, and the
+harness that appeared to support it builds every holder from fixed-width values, so it would
+have returned the same answer whether or not a leak existed. It has now been measured against
+the shipped serializer, with a positive control the matcher solves at 1.0000
+(`lab/linkability/transcript_size.py`): over 200 holders, a matcher reading nothing but the
+byte count sits at chance on a bounded presentation (0.0040 against 0.0050), and reaches
+**5.6 times chance on the presentation the wallet actually emits** (0.0280), because the
+authenticity pack carries a free-text issuer name and an unpadded integer token id. That
+transcript is already `exposed` on its token value, so size gives a colluding pair nothing
+further there; the two facts come apart the moment a pack rides alongside a withheld
+credential. The bounded result holds only while a bounded presentation carries no per-holder
+variable-length field: disclosed attribute values, optional elements or a variable-length
+status assertion would each open the channel. The OpenID4VP path is not covered by that
+measurement, and an SD-JWT VC presentation discloses the holder's own attribute values, so
+its disclosures vary in length by construction. `lab/linkability/`.
 
 **Two facts about the migration path, for the same reader (2026-09-13).** The agility is real
 issuer-side: the algorithm is a row with a `deprecation_date`, `uc6_migrate_algorithm` re-signs a

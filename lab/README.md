@@ -8,7 +8,7 @@ world has done with Polaris.
 | Entry | What it holds |
 |---|---|
 | [EXTERNAL-NOUNS.md](EXTERNAL-NOUNS.md) | The scoreboard: every named outside party that has exercised Polaris, on a date, with a result; zero and blank are valid; invented evidence is prohibited. |
-| [linkability/](linkability/README.md) | The colluding-verifier question: given two presentation transcripts, what advantage at "same holder?"; the adversary, the harness, the measured bound and its blind spots. |
+| [linkability/](linkability/README.md) | The colluding-verifier question: given two presentation transcripts, what advantage at "same holder?"; two adversaries (`adversary.py` on equal values, `transcript_size.py` on byte count alone), the measured bounds, and the blind spots of each. |
 | [duress/](duress/README.md) | The three coercers (casual, informed, post-hoc institutional) against the duress mechanism, and the vocabulary the result allows: duress-aware. |
 | [crypto-migration/](crypto-migration/README.md) | The algorithm-migration path under measurement: what a break would and would not cost, and what the mixed window leaves exposed. |
 | [interop/](interop/README.md) | The outside wallet probe: an unmodified walt.id wallet presenting to `polaris-oid4vp`, reproduced end to end, with its controls. |
