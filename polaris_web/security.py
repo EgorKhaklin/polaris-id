@@ -50,7 +50,6 @@ import time
 import secrets
 import functools
 import ipaddress
-from datetime import datetime
 from collections import deque, OrderedDict
 from urllib.parse import urlsplit
 
@@ -603,9 +602,24 @@ def authenticate(get_conn, username, password):
                        user_id=user['user_id'], detail='account inactive')
                 return None, GENERIC_ERROR
 
-            # Lockout check.
-            now = datetime.now()
-            if user['locked_until'] and user['locked_until'] > now:
+            # Lockout check, decided by the DATABASE's clock.
+            #
+            # 2026-09-17: this compared `locked_until` against the APP process's
+            # `datetime.now()`. The column is TIMESTAMP without a zone and is written by
+            # `CURRENT_TIMESTAMP`, which is the database session's wall clock, so the two
+            # sides of this comparison came from two different machines' idea of the time.
+            # Measured with the database six hours behind the app, which is an app container
+            # on UTC against a managed Postgres left on a local zone: the lock read as
+            # already expired the moment it was written and the correct password went
+            # straight through. Six hours ahead turned a fifteen-minute lock into six hours.
+            #
+            # Every other expiry on this surface is already decided in SQL or in UTC. This
+            # one now asks the same clock that wrote the value.
+            cur.execute("SELECT locked_until > CURRENT_TIMESTAMP AS still_locked, "
+                        "CURRENT_TIMESTAMP AS db_now FROM AppUser WHERE user_id = %s",
+                        (user['user_id'],))
+            lock_row = cur.fetchone() or {}
+            if user['locked_until'] and lock_row.get('still_locked'):
                 _audit(get_conn, 'LOGIN_LOCKED', username=username,
                        user_id=user['user_id'],
                        detail=f"locked until {user['locked_until']}")
@@ -635,11 +649,27 @@ def authenticate(get_conn, username, password):
                 # spamming concurrent attempts. UPDATE...SET col=col+1 is
                 # atomic in PostgreSQL and resolves under row lock; both
                 # transactions get sequenced and observe the correct counter.
+                # LOGIN_FAILURE_WINDOW_MIN is part of the published control ("5 failures
+                # within 10 minutes") and was compared NOWHERE: the constant existed, the
+                # document stated it, and the counter only ever decayed on a SUCCESSFUL
+                # login. Failures a fortnight apart accumulated toward one lockout.
+                #
+                # The window is measured from the last failure rather than kept in a
+                # separate column, so no migration is needed: a failure that arrives more
+                # than the window after the previous one starts the count again. The
+                # direction it was wrong in was fail-CLOSED, which is why it was survivable,
+                # but a control that is stricter than its own documentation is still a
+                # control nobody can reason about.
                 cur.execute(
-                    "UPDATE AppUser SET failed_login_count = failed_login_count + 1 "
+                    "UPDATE AppUser SET failed_login_count = CASE "
+                    "         WHEN last_failed_login_at IS NULL "
+                    "           OR last_failed_login_at > CURRENT_TIMESTAMP - "
+                    "              (%s || ' minutes')::INTERVAL "
+                    "         THEN failed_login_count + 1 ELSE 1 END, "
+                    "    last_failed_login_at = CURRENT_TIMESTAMP "
                     "WHERE user_id = %s "
                     "RETURNING failed_login_count",
-                    (user['user_id'],)
+                    (LOGIN_FAILURE_WINDOW_MIN, user['user_id'])
                 )
                 new_count = cur.fetchone()['failed_login_count']
 
@@ -647,10 +677,31 @@ def authenticate(get_conn, username, password):
                     # Lock the account. Use the same row-locked path: the
                     # threshold test above used the post-increment value, so
                     # exactly one of N concurrent failures crosses the line.
+                    # `WHERE ... AND locked_until IS NULL` was here, and nothing clears
+                    # the column when a lock EXPIRES: only a successful login does. So the
+                    # second crossing of the threshold, and every one after it, updated zero
+                    # rows. Measured 2026-09-17: five wrong passwords locked the account,
+                    # and after the fifteen minutes lapsed, thirty-five more wrong passwords
+                    # moved nothing and no response ever said "locked". The account then
+                    # accepted unlimited online guessing until the legitimate operator next
+                    # logged in successfully, because the attacker's own guesses never heal
+                    # the state.
+                    #
+                    # docs/operator/SECURITY-CONTROLS.md states the control as "5 failures
+                    # ... locks the account for 15 minutes", with no "once". The remaining
+                    # bound was the per-address limiter, which rotating addresses defeats,
+                    # and account lockout exists precisely to bound guesses independently of
+                    # where they come from.
+                    #
+                    # The guard it replaces exists so that N concurrent failures do not each
+                    # push the deadline out. `locked_until IS NULL OR locked_until <=
+                    # CURRENT_TIMESTAMP` keeps that: a live lock is never extended by more
+                    # failures against it, and an expired one can be replaced.
                     cur.execute(
                         "UPDATE AppUser SET locked_until = CURRENT_TIMESTAMP + "
                         "(%s || ' minutes')::INTERVAL "
-                        "WHERE user_id = %s AND locked_until IS NULL",
+                        "WHERE user_id = %s "
+                        "  AND (locked_until IS NULL OR locked_until <= CURRENT_TIMESTAMP)",
                         (ACCOUNT_LOCK_MIN, user['user_id'])
                     )
                     conn.commit()
@@ -684,11 +735,28 @@ def authenticate(get_conn, username, password):
             # Success — reset counter, update last login
             cur.execute(
                 "UPDATE AppUser SET failed_login_count=0, locked_until=NULL, "
+                "last_failed_login_at=NULL, "
                 "last_login_at=CURRENT_TIMESTAMP WHERE user_id=%s",
                 (user['user_id'],)
             )
             conn.commit()
-            _audit(get_conn, 'LOGIN_SUCCESS', username=username,
+            # 2026-09-17: this wrote LOGIN_SUCCESS, which
+            # docs/operator/SECURITY-CONTROLS.md defines as "Successful authentication",
+            # before the caller had run the second-factor gate. Measured: a correct password
+            # whose assertion was never attempted wrote LOGIN_SUCCESS with no session
+            # created, and a login REFUSED outright for a passed enrolment deadline wrote
+            # LOGIN_SUCCESS immediately followed by LOGIN_FAILED.
+            #
+            # That matters here more than it would elsewhere. MISSION names the operator
+            # password as "the compulsion surface that matters most", and the append-only
+            # audit of record could not tell an authentication that COMPLETED from one that
+            # only proved a password. A phished password that the second factor stopped
+            # looked, in the record, exactly like a successful sign-in.
+            #
+            # `authenticate` does not know whether a second factor is owed, so it records
+            # what it actually established. `login_user` writes LOGIN_SUCCESS when the login
+            # completes, which is the event the document describes.
+            _audit(get_conn, 'PASSWORD_VERIFIED', username=username,
                    user_id=user['user_id'])
 
             return ({
@@ -731,6 +799,12 @@ def login_user(user, get_conn=None):
     if get_conn is None:
         get_conn = current_app.config['GET_DB']
     session['sid'] = register_session(get_conn, user)
+    # LOGIN_SUCCESS is written HERE, where the login actually completes, and not in
+    # `authenticate`, which only establishes that a password was correct. Before
+    # 2026-09-17 it was written there, so a correct password whose second factor was never
+    # attempted, and a login refused outright for a passed enrolment deadline, both recorded
+    # a successful authentication in the append-only audit of record.
+    _audit(get_conn, 'LOGIN_SUCCESS', username=user['username'], user_id=user['user_id'])
 
 
 def logout_user(get_conn):
@@ -992,7 +1066,7 @@ def validate_session(get_conn):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT s.revoked_at, u.is_active, "
+                "SELECT s.revoked_at, u.is_active, u.role AS current_role, "
                 "       (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, "
                 "       (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale "
                 "  FROM OperatorSession s JOIN AppUser u ON u.user_id = s.user_id "
@@ -1003,6 +1077,24 @@ def validate_session(get_conn):
                 ended = None          # already audited when it was revoked, or never registered
             elif not row['is_active']:
                 ended = ('deactivated', 'SESSION_REVOKED', 'account deactivated')
+            elif row['current_role'] != role:
+                # 2026-09-17: this query already re-read `is_active` every request and never
+                # re-read the ROLE, which `require_role` takes from the cookie. Measured: an
+                # admin demoted to auditor kept full admin on their live session for up to
+                # the eight-hour cookie lifetime, reaching admin-only routes with a 200,
+                # while deactivating the same account took effect on the next request.
+                # Removing someone's admin rights is the first thing an incident does, and
+                # it was the one account change that did not take.
+                #
+                # `OperatorSession.role` was written at registration and read nowhere, so
+                # the registry already carried the answer and nothing compared it. Ending the
+                # session rather than adopting the new role on the spot is deliberate: a
+                # privilege change is a reason to re-authenticate, and silently continuing
+                # under a different role would leave an audit trail that says one thing and a
+                # session that did another.
+                ended = ('role_changed', 'SESSION_REVOKED',
+                         "the account's role changed from %s to %s while this session was "
+                         "live; re-authentication required" % (role, row['current_role']))
             elif row['idle_expired']:
                 ended = ('idle', 'SESSION_EXPIRED',
                          f"idle longer than POLARIS_SESSION_IDLE_MINUTES_{role.upper()}={idle}")

@@ -4947,6 +4947,105 @@ class F01_AuthenticationTests(UnauthenticatedTestCase):
         self.assertIn('LOGIN_SUCCESS', events)
         self.assertIn('LOGIN_FAILED', events)
 
+    def _auth_state(self, username='admin'):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        with conn.cursor() as cur:
+            cur.execute("SELECT failed_login_count, locked_until, last_failed_login_at, "
+                        "       locked_until > CURRENT_TIMESTAMP AS still_locked "
+                        "  FROM AppUser WHERE username=%s", (username,))
+            row = cur.fetchone()
+        conn.close()
+        return row
+
+    def _age_lock(self, username='admin'):
+        """Move the lock into the past, which is all the passage of time does."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE AppUser SET locked_until = CURRENT_TIMESTAMP - "
+                        "interval '1 minute' WHERE username=%s", (username,))
+            conn.commit()
+        conn.close()
+
+    def test_an_account_can_be_locked_more_than_once(self):
+        """2026-09-17: it could be locked exactly ONCE, ever.
+
+        The lock was written `WHERE user_id = %s AND locked_until IS NULL`, and nothing
+        clears that column when a lock EXPIRES: only a successful login does. So the second
+        crossing of the threshold, and every one after it, updated zero rows. Measured: after
+        the first fifteen minutes lapsed, thirty-five further wrong passwords moved nothing
+        and no response ever said "locked", so the account accepted unlimited online guessing
+        until the legitimate operator next signed in. The attacker's own guesses never heal
+        the state, and the per-address limiter that remained is defeated by rotating
+        addresses, which is exactly what account lockout exists to bound independently of.
+        """
+        from app import security as sec
+        for _ in range(sec.LOGIN_FAILURE_THRESHOLD):
+            self.client.post('/login', data={'username': 'admin', 'password': 'wrong'})
+        self.assertTrue(self._auth_state()['still_locked'], "the first lock must happen")
+
+        self._age_lock()
+        self.assertFalse(self._auth_state()['still_locked'], "the lock has lapsed")
+
+        for _ in range(sec.LOGIN_FAILURE_THRESHOLD):
+            self.client.post('/login', data={'username': 'admin', 'password': 'wrong'})
+        self.assertTrue(self._auth_state()['still_locked'],
+                        "crossing the threshold a SECOND time must lock the account again")
+
+        r = self.client.post('/login', data={'username': 'admin', 'password': 'Admin@123!'})
+        self.assertNotIn('/dashboard', r.headers.get('Location', ''),
+                         "the correct password must not pass during the second lock")
+
+    def test_a_live_lock_is_not_extended_by_further_failures(self):
+        """The other direction, and the reason the old guard existed. N concurrent failures
+        must not each push the deadline out, or an attacker lengthens their own lockout
+        indefinitely and a legitimate operator never gets back in."""
+        from app import security as sec
+        for _ in range(sec.LOGIN_FAILURE_THRESHOLD):
+            self.client.post('/login', data={'username': 'admin', 'password': 'wrong'})
+        first = self._auth_state()['locked_until']
+        for _ in range(sec.LOGIN_FAILURE_THRESHOLD * 2):
+            self.client.post('/login', data={'username': 'admin', 'password': 'wrong'})
+        self.assertEqual(self._auth_state()['locked_until'], first,
+                         "a lock that is still live must not be pushed further out")
+
+    def test_the_failure_counter_restarts_outside_the_documented_window(self):
+        """`LOGIN_FAILURE_WINDOW_MIN` existed, SECURITY-CONTROLS.md stated the control as
+        "5 failures within 10 minutes", and nothing compared it: the counter decayed only on
+        a SUCCESSFUL login, so failures a fortnight apart accumulated toward one lockout.
+        Fail-closed, which is why it survived, but a control stricter than its own
+        documentation is one nobody can reason about."""
+        from app import security as sec
+        self.client.post('/login', data={'username': 'admin', 'password': 'wrong'})
+        self.assertEqual(self._auth_state()['failed_login_count'], 1)
+
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE AppUser SET last_failed_login_at = CURRENT_TIMESTAMP - "
+                        "make_interval(mins => %s) WHERE username='admin'",
+                        (sec.LOGIN_FAILURE_WINDOW_MIN * 3,))
+            conn.commit()
+        conn.close()
+
+        self.client.post('/login', data={'username': 'admin', 'password': 'wrong'})
+        self.assertEqual(self._auth_state()['failed_login_count'], 1,
+                         "a failure outside the window starts the count again")
+
+    def test_failures_inside_the_window_still_accumulate(self):
+        """The positive control: a window that restarted on every failure would mean the
+        account never locks at all."""
+        for _ in range(3):
+            self.client.post('/login', data={'username': 'admin', 'password': 'wrong'})
+        self.assertEqual(self._auth_state()['failed_login_count'], 3)
+
+    def test_a_successful_login_clears_the_failure_record(self):
+        self.client.post('/login', data={'username': 'admin', 'password': 'wrong'})
+        self.client.post('/login', data={'username': 'admin', 'password': 'Admin@123!'})
+        st = self._auth_state()
+        self.assertEqual(st['failed_login_count'], 0)
+        self.assertIsNone(st['locked_until'])
+        self.assertIsNone(st['last_failed_login_at'],
+                          "the new column must be cleared with the rest of the record")
+
     def test_account_locks_after_threshold_failures(self):
         """5 wrong-password attempts in 10 min must lock the account."""
         from app import security as sec

@@ -2596,11 +2596,97 @@ def check_c2_zk_token_null(root: pathlib.Path) -> list[Finding]:
 # C4 — the failed-login counter increments atomically (no TOCTOU race): a
 # single UPDATE that references the column, not a read-then-write.
 # ---------------------------------------------------------------------------
+def check_lockout_uses_one_clock(root: pathlib.Path) -> list[Finding]:
+    """The account-lock deadline must be decided by the clock that wrote it.
+
+    2026-09-17: `locked_until` is a TIMESTAMP WITHOUT TIME ZONE written by
+    `CURRENT_TIMESTAMP`, which is the DATABASE session's wall clock, and the lockout check
+    compared it against the APP process's `datetime.now()`. Two machines' idea of the time on
+    the two sides of one comparison.
+
+    Measured with the database six hours behind the app, which is an ordinary deployment (an
+    application container on UTC against a managed PostgreSQL left on a local zone): the lock
+    read as already expired the instant it was written, and the correct password went
+    straight through the first lockout. Six hours ahead turned a fifteen-minute lock into six.
+
+    A test cannot see this without a differently-zoned database, so the property is pinned
+    structurally: the comparison happens in SQL, against CURRENT_TIMESTAMP, and no Python
+    `datetime.now()` is compared against `locked_until`.
+    """
+    name = "lockout_one_clock"
+    sec = _read(root, "polaris_web/security.py")
+    if not sec:
+        return _fail(name, "polaris_web/security.py is missing")
+    if "locked_until" not in sec:
+        return _fail(name, "security.py no longer mentions locked_until; the account lock "
+                           "this pins is gone and so is the reason for this check")
+    # The deadline must be compared in SQL, by the same clock that writes it.
+    if not re.search(r"locked_until\s*>\s*CURRENT_TIMESTAMP", sec, re.I):
+        return _fail(name,
+                     "no `locked_until > CURRENT_TIMESTAMP` in security.py: the lock "
+                     "deadline is written by the database's clock and must be read by it, "
+                     "or a database in another zone makes the lock a no-op or makes it last "
+                     "for hours")
+    # And it must not be compared against the application process's clock.
+    # Quote-agnostic: `user['locked_until']`, `row["locked_until"]` and a bare attribute
+    # access all reach the same comparison, and a pattern that only knows one of them is a
+    # check on the author's quoting habits. Written the wrong way first and caught by its own
+    # detection test, which used the other quote.
+    for m in re.finditer(r"""locked_until["']?\]?\s*>\s*([A-Za-z_.()]+)""", sec):
+        right = m.group(1)
+        if "datetime" in right or right.startswith("now") or right == "now":
+            line = sec[:m.start()].count("\n") + 1
+            return _fail(name,
+                         "security.py:%d compares locked_until against %s, the application "
+                         "process's clock, while the column is written by the database's. "
+                         "That comparison is between two machines" % (line, right))
+    return _ok(name,
+               "the account-lock deadline is written and read by the same clock: the "
+               "comparison is `locked_until > CURRENT_TIMESTAMP` in SQL, not against the "
+               "application process's own time")
+
+
 def check_c4_atomic_failed_login(root: pathlib.Path) -> list[Finding]:
     sec = _read(root, "polaris_web/security.py")
-    if re.search(r"failed_login_count\s*=\s*failed_login_count\s*\+\s*1", sec):
-        return _ok("c4_atomic_login", "failed-login counter increments atomically in one UPDATE (C4)")
-    return _fail("c4_atomic_login", "no atomic 'failed_login_count = failed_login_count + 1' UPDATE in security.py (C4)")
+    # 2026-09-17: this matched the literal `failed_login_count = failed_login_count + 1`,
+    # which is ONE spelling of the property rather than the property. Adding the failure
+    # WINDOW the control has always documented ("5 failures within 10 minutes", compared
+    # nowhere until that day) turns the increment into a CASE that either adds one or
+    # restarts at one, and the check failed a change that kept C4 exactly as it was.
+    #
+    # C4 is that the counter is read and written in ONE statement under the row lock, never
+    # read-then-write, because two simultaneous failures under the old pattern both read N
+    # and both wrote N+1, losing one and letting lockout be outrun by concurrency. So the
+    # property is: a single UPDATE, referencing the column on the right-hand side, RETURNING
+    # the new value. How the new value is computed is not the invariant.
+    # The bound is generous because the statement is built from adjacent Python string
+    # literals, so the SOURCE span carries quotes, newlines and indentation that the SQL does
+    # not. 400 was too short the day the window clause was added, which is the kind of
+    # arbitrary number that turns a real check into a tripwire for its own author.
+    update = re.search(r"UPDATE AppUser SET failed_login_count\s*=(.{0,1200}?)RETURNING\s+"
+                       r"failed_login_count", sec, re.S)
+    if not update:
+        return _fail("c4_atomic_login",
+                     "no single 'UPDATE AppUser SET failed_login_count = ... RETURNING "
+                     "failed_login_count' in security.py: the counter is not read and "
+                     "written in one statement, which is the whole of C4")
+    body = update.group(1)
+    if "failed_login_count" not in body:
+        return _fail("c4_atomic_login",
+                     "the failed-login UPDATE does not reference failed_login_count on its "
+                     "right-hand side, so it assigns a value computed elsewhere: that is a "
+                     "read-then-write and two concurrent failures lose one (C4)")
+    # A third leg was written here and removed the same hour: "the counter must not be
+    # SELECTed before the UPDATE". It fired immediately on the legitimate SELECT that loads
+    # the whole user row, which reads the counter among a dozen columns and does not compute
+    # anything from it. A check that refuses correct code is worse than a missing leg,
+    # because the next person makes it pass rather than making it right. What C4 forbids is
+    # the UPDATE assigning a value computed OUTSIDE the statement, and the right-hand-side
+    # test above is what establishes that.
+    return _ok("c4_atomic_login",
+               "the failed-login counter is read and written in one UPDATE ... RETURNING "
+               "that references the column itself, so concurrent failures serialise under "
+               "the row lock rather than losing one (C4)")
 
 
 # ---------------------------------------------------------------------------
@@ -18391,6 +18477,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_dockerfile_copies_app_modules,
     check_c2_zk_token_null,
     check_c4_atomic_failed_login,
+    check_lockout_uses_one_clock,
     check_c8_atlas_caps,
     check_c9_concurrency_threading,
     check_c10_no_money_tables,

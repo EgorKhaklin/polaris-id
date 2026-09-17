@@ -429,14 +429,89 @@ def test_c2_zk_null_check_fails_without_constraint(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when the ZK->token_id NULL CHECK is absent"
 
 
-def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
+def test_lockout_one_clock_check_discriminates(tmp_path):
+    """The lock deadline is written by the database's clock and must be read by it.
+
+    No test can see this without a differently-zoned database, which is why it is pinned
+    structurally. Measured with the database six hours behind the application: the lock read
+    as already expired the instant it was written and the correct password went straight
+    through the first lockout.
+    """
     (tmp_path / "polaris_web").mkdir()
     sec = tmp_path / "polaris_web" / "security.py"
-    sec.write_text("execute('UPDATE AppUser SET failed_login_count = failed_login_count + 1')\n")
-    assert checks.check_c4_atomic_failed_login(tmp_path)[0].level == "OK", "must PASS on the good fixture"
-    sec.write_text("n = read_count()\nexecute('UPDATE AppUser SET failed_login_count = %s', n + 1)\n")
+
+    GOOD = ('cur.execute("SELECT locked_until > CURRENT_TIMESTAMP AS still_locked "\n'
+            '            "FROM AppUser WHERE user_id = %s", (uid,))\n'
+            'if user["locked_until"] and row["still_locked"]:\n'
+            '    refuse()\n')
+    sec.write_text(GOOD, encoding="utf-8")
+    assert checks.check_lockout_uses_one_clock(tmp_path)[0].level == "OK", \
+        "must PASS when the deadline is compared in SQL"
+
+    sec.write_text('if user["locked_until"] > datetime.now():\n    refuse()\n', encoding="utf-8")
+    out = checks.check_lockout_uses_one_clock(tmp_path)[0]
+    assert out.level == "FAIL", "must FAIL when the deadline is compared to the app's clock"
+    assert "CURRENT_TIMESTAMP" in out.message
+
+    sec.write_text(GOOD + 'if row["locked_until"] > datetime.now():\n    pass\n',
+                   encoding="utf-8")
+    out = checks.check_lockout_uses_one_clock(tmp_path)[0]
+    assert out.level == "FAIL", \
+        "a SQL comparison somewhere does not excuse a second one against the app's clock"
+    assert "two machines" in out.message
+
+    sec.write_text("nothing about locking here\n", encoding="utf-8")
+    assert checks.check_lockout_uses_one_clock(tmp_path)[0].level == "FAIL", \
+        "must FAIL rather than pass vacuously when the lock is gone entirely"
+
+    sec.write_text(GOOD, encoding="utf-8")
+    assert checks.check_lockout_uses_one_clock(tmp_path)[0].level == "OK"
+
+
+def test_c4_atomic_login_check_fails_on_read_then_write(tmp_path):
+    """C4 is that the counter is read and written in ONE statement, not that it is spelled
+    one particular way.
+
+    The check matched the literal `failed_login_count = failed_login_count + 1` until
+    2026-09-17, when adding the failure WINDOW the control has always documented turned the
+    increment into a CASE. C4 was unchanged and the check failed the change, so the fixtures
+    below include both spellings: a check that only recognises one is a check on the author's
+    habits.
+    """
+    (tmp_path / "polaris_web").mkdir()
+    sec = tmp_path / "polaris_web" / "security.py"
+
+    PLAIN = ("execute('UPDATE AppUser SET failed_login_count = failed_login_count + 1 "
+             "WHERE user_id = %s RETURNING failed_login_count')\n")
+    WINDOWED = ("execute('UPDATE AppUser SET failed_login_count = CASE "
+                "WHEN last_failed_login_at IS NULL "
+                "  OR last_failed_login_at > CURRENT_TIMESTAMP - interval "
+                "THEN failed_login_count + 1 ELSE 1 END, "
+                "last_failed_login_at = CURRENT_TIMESTAMP "
+                "WHERE user_id = %s RETURNING failed_login_count')\n")
+
+    for label, good in (("plain increment", PLAIN), ("windowed CASE", WINDOWED)):
+        sec.write_text(good)
+        assert checks.check_c4_atomic_failed_login(tmp_path)[0].level == "OK", \
+            "must PASS on the %s: both are one atomic statement" % label
+
+    # The defect: the new value is computed in Python and assigned. Two simultaneous
+    # failures both read N and both write N+1, one is lost, and lockout is outrun.
+    sec.write_text("n = read_count()\n"
+                   "execute('UPDATE AppUser SET failed_login_count = %s "
+                   "WHERE user_id = %s RETURNING failed_login_count', (n + 1, uid))\n")
     out = checks.check_c4_atomic_failed_login(tmp_path)
-    assert out[0].level == "FAIL", "must FAIL when the increment is not a single atomic UPDATE"
+    assert out[0].level == "FAIL", "must FAIL when the new value is computed outside the UPDATE"
+    assert "right-hand side" in out[0].message
+
+    # And no single statement at all.
+    sec.write_text("execute('UPDATE AppUser SET failed_login_count = failed_login_count + 1')\n")
+    out = checks.check_c4_atomic_failed_login(tmp_path)
+    assert out[0].level == "FAIL", \
+        "must FAIL without RETURNING: the caller then has to read the value back separately"
+
+    sec.write_text(WINDOWED)
+    assert checks.check_c4_atomic_failed_login(tmp_path)[0].level == "OK"
 
 
 def test_zk_anti_replay_requires_the_uniqueness_key(tmp_path):

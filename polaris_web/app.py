@@ -7440,8 +7440,14 @@ def api_v1_auth_authorize():
             or body.get('code_challenge_method', 'S256') != 'S256':
         return jsonify(error='invalid_request', error_description='nonce (8-128 chars), code_challenge (43-128 chars) and code_challenge_method S256 are required'), 400
     try:
+        # OverflowError, and it belongs here for a reason measured on 2026-09-17: JSON
+        # accepts the bare literal `Infinity`, `1e400` overflows to it, and
+        # `int(float('inf'))` raises OverflowError, which `(TypeError, ValueError)` does not
+        # catch. `context_id=Infinity` came back as an unhandled 500 from an endpoint a
+        # relying party reaches, while `NaN` and `"abc"` were both refused correctly. The
+        # same shape two blocks down is widened with it.
         context_id = int(body.get('context_id'))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return jsonify(error='invalid_request', error_description='context_id must be an integer'), 400
     # P8.4b (v9.336): the relying party's REGISTERED policy binds. The holder-side request may add
     # a requirement (a stricter ask), never remove one; the context it registered is the only one.
@@ -7479,7 +7485,7 @@ def api_v1_auth_authorize():
         try:
             ok, reason, _status = _zk_verify_and_consume(int(zk_req['epoch_id']), context_id, int(zk_req['nonce']), zk_req['proof_bundle']) \
                 if zk_req else (False, 'no proof presented', 200)
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             ok, reason = False, 'malformed zk step-up'
         if not ok:
             return jsonify(error='insufficient_assurance', error_description='step-up required: %s' % (reason or 'the proof did not verify')), 403

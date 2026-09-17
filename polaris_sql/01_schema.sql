@@ -212,6 +212,12 @@ CREATE TABLE AppUser (
     created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_login_at        TIMESTAMP,
     failed_login_count   INTEGER      NOT NULL DEFAULT 0,
+    -- When the most recent failure was recorded (migration 2026-09-17-001). The counter
+    -- RESTARTS rather than incrementing when a new failure arrives more than
+    -- LOGIN_FAILURE_WINDOW_MIN after this instant. That window was documented as part of the
+    -- control and compared nowhere until this column existed: failures a fortnight apart
+    -- accumulated toward one lockout.
+    last_failed_login_at TIMESTAMP,
     locked_until         TIMESTAMP,
     -- WebAuthn MFA deadline (migration 2026-05-14-002): NULL = no requirement;
     -- a future TIMESTAMPTZ is the deadline the login flow checks against now().
@@ -569,6 +575,10 @@ CREATE TABLE AuthAuditLog (
     CONSTRAINT chk_authaudit_event_type
         CHECK (event_type IN (
             'LOGIN_SUCCESS', 'LOGIN_FAILED', 'LOGIN_LOCKED',
+            -- 2026-09-17: what `authenticate` actually establishes. LOGIN_SUCCESS
+            -- is written when a login COMPLETES; this is written when a password is
+            -- verified, which is a different event whenever a second factor is owed.
+            'PASSWORD_VERIFIED',
             'LOGOUT',
             'PASSWORD_CHANGED', 'ACCOUNT_CREATED', 'ACCOUNT_DEACTIVATED',
             'CSRF_REJECTED', 'AUTH_REQUIRED', 'AUTHZ_DENIED',
