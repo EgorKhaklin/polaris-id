@@ -20,6 +20,14 @@ updates:
       - dependencies
     commit-message:
       prefix: deps
+    ignore:
+      # patroni 4.1.5 declares ydiff!=1.4.0,!=1.4.1,<1.5,>=1.2.0. A ydiff at or
+      # above 1.5 cannot be installed beside it and makes the postgres/patroni
+      # image unbuildable, which takes every container job in CI down with it.
+      # Proposed and applied on 2026-09-16, reverted the same day. Remove this
+      # block when patroni's own upper bound moves.
+      - dependency-name: "ydiff"
+        versions: [">=1.5"]
 
   # The Rust ZK crate.
   - package-ecosystem: cargo
