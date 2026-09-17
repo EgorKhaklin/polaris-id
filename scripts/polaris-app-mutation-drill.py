@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import os
 import pathlib
 import re
@@ -248,6 +249,11 @@ def refusals(src: str) -> list[dict]:
     return out
 
 
+def _concrete(route: str) -> str:
+    """A rule with its parameters filled in, because a probe cannot POST to `<int:id>`."""
+    return re.sub(r"<[^>]+>", "1", route)
+
+
 def mutate(src: str, span) -> str:
     """The same source with one condition replaced by `False`, byte for byte elsewhere."""
     lo_line, lo_col, hi_line, hi_col = span
@@ -285,6 +291,109 @@ def classes_exercising(route: str, view: str) -> list[str]:
     return sorted(set(out))
 
 
+
+# ---------------------------------------------------------------------------
+# The probe: what does the ROUTE answer, with this refusal switched off?
+# ---------------------------------------------------------------------------
+# A survivor means no test noticed. It does not say what the route now does, and those are
+# different facts. A refusal whose removal leaves the route answering exactly as before is
+# redundant with something after it; a refusal whose removal makes the route ACCEPT input it
+# used to turn away is a hole that nothing is watching. 2026-09-17: 35 refusals on the 400
+# and 404 surface survived, and calling them all "masked by a neighbour" without measuring it
+# would be the exact move this drill exists to catch somebody else making.
+#
+# So the probe asks the route directly, in a subprocess that imports the application fresh so
+# it picks up the mutated source. Same bodies before and after; only the mutation differs.
+
+PROBE_BODIES = [
+    {},
+    [],
+    "a string, not an object",
+    {"token_value": 1, "signature_hex": 1},
+    {"token_value": "x", "signature_hex": "00"},
+    {"event": 5, "holder_public_key_hex": 7, "holder_algorithm": []},
+    {"digest_hex": "ab" * 32},
+    {"client_id": "x", "nonce": "n" * 12, "code_challenge": "c" * 50, "context_id": 1},
+    {"envelope": {}, "body": {}},
+    {"id": "x", "rawId": "x"},
+]
+
+#: Seeded operator credentials, so a guarded route can be reached at all. A probe that is
+#: bounced by `login_required` measures the decorator, not the refusal under test, and would
+#: report every guarded refusal as "answers the same either way".
+PROBE_LOGIN = ("admin", "Admin@123!")
+
+
+def _probe_child(route: str) -> int:
+    """Run inside the subprocess: print this route's answers as JSON."""
+    sys.path.insert(0, str(ROOT / "polaris_web"))
+    os.chdir(str(ROOT / "polaris_web"))
+    import app as application
+
+    application.app.config["TESTING"] = False   # a raise must become 500, not propagate
+    client = application.app.test_client()
+    client.post("/login", data={"username": PROBE_LOGIN[0], "password": PROBE_LOGIN[1]})
+    page = client.get("/dashboard")
+    # A probe that is not signed in measures `login_required`, not the refusal under test,
+    # and its 302 to /login is BELOW 400, so the classifier reads it as the route ACCEPTING
+    # input it used to turn away. That produced two false ACCEPTS on 2026-09-17, and the
+    # cause is worth naming because it will recur: the test classes for the two WebAuthn
+    # routes ENROL a credential for the seeded admin, so every probe after them lands on the
+    # second factor instead of the dashboard. The three real ACCEPTS that run found were on
+    # an unauthenticated route and were unaffected.
+    #
+    # Printing nothing is the honest answer: the case reports "unprobed", which is a third
+    # thing from "masked" and from "a hole", and a probe that cannot tell those apart is
+    # worse than none.
+    if page.status_code != 200:
+        print(json.dumps([]))
+        return 0
+    m = re.search(rb'name="csrf_token"[^>]*value="([^"]+)"', page.data or b"")
+    csrf = m.group(1).decode() if m else ""
+
+    out = []
+    for body in PROBE_BODIES:
+        try:
+            r = client.post(route, json=body, headers={"X-CSRFToken": csrf})
+            out.append(r.status_code)
+        except Exception as exc:                # noqa: BLE001  a raise IS the answer
+            out.append("raise:%s" % type(exc).__name__)
+    print(json.dumps(out))
+    return 0
+
+
+def probe(route: str, env: dict) -> list:
+    """This route's answers to PROBE_BODIES, or [] if the probe itself could not run."""
+    r = subprocess.run([sys.executable, str(pathlib.Path(__file__).resolve()),
+                        "--probe-route", route],
+                       capture_output=True, env=env, cwd=str(ROOT))
+    line = (r.stdout or b"").decode("utf-8", "replace").strip().splitlines()
+    for candidate in reversed(line):
+        try:
+            return json.loads(candidate)
+        except ValueError:
+            continue
+    return []
+
+
+def classify(before: list, after: list) -> str:
+    """What the mutation did to the route's answers, in one word."""
+    if not before or not after or len(before) != len(after):
+        return "unprobed"
+    if before == after:
+        return "same"
+    accepted = [(b, a) for b, a in zip(before, after)
+                if isinstance(b, int) and isinstance(a, int) and b >= 400 and a < 400]
+    crashed = [(b, a) for b, a in zip(before, after)
+               if str(a).startswith("raise") or (isinstance(a, int) and a >= 500
+                                                 and not (isinstance(b, int) and b >= 500))]
+    if accepted:
+        return "ACCEPTS"
+    if crashed:
+        return "CRASHES"
+    return "differs"
+
+
 def run_tests(targets: list[str], env: dict) -> tuple[bool, str]:
     """(green, tail). No targets is not green: it is 'nothing looked'."""
     if not targets:
@@ -304,9 +413,15 @@ def main() -> int:
     ap.add_argument("--all", action="store_true",
                     help="every refusal, including the 400/404 surface that is measured and "
                          "OPEN: see the note in the module docstring")
+    ap.add_argument("--probe", action="store_true",
+                    help="also ask each route what it ANSWERS with the refusal switched off, "
+                         "so 'masked by a neighbour' is measured instead of assumed")
+    ap.add_argument("--probe-route", help=argparse.SUPPRESS)
     ap.add_argument("--exhaustive", action="store_true",
                     help="run the whole application suite per mutation, not the named classes")
     args = ap.parse_args()
+    if args.probe_route:                      # the subprocess half of --probe
+        return _probe_child(args.probe_route)
 
     print("REPAIR, if this run is killed:  git checkout -- polaris_web/app.py")
     print()
@@ -369,6 +484,19 @@ def main() -> int:
     if args.limit:
         cases = cases[:args.limit]
 
+    baselines: dict[str, list] = {}
+    if args.probe:
+        routes = sorted({c["route"] for c in cases})
+        print("probing %d route(s) unmutated, for the baseline every comparison rests on"
+              % len(routes), flush=True)
+        for r in routes:
+            baselines[r] = probe(_concrete(r), env)
+        unprobed = [r for r, v in baselines.items() if not v]
+        if unprobed:
+            print("   %d route(s) the probe could not reach; their cases report 'unprobed': %s"
+                  % (len(unprobed), ", ".join(unprobed[:4])), flush=True)
+        print()
+
     survivors, blind, started = [], [], time.time()
     for i, case in enumerate(cases, 1):
         targets = ([] if args.exhaustive else
@@ -388,8 +516,13 @@ def main() -> int:
         finally:
             APP.write_text(original)
         if green:
+            if args.probe:
+                case["verdict"] = classify(baselines.get(case["route"], []),
+                                           probe(_concrete(case["route"]), env))
             survivors.append(case)
-            print("          SURVIVED: %s" % case["source"][:78])
+            print("          SURVIVED%s: %s"
+                  % (" [%s]" % case["verdict"] if case.get("verdict") else "",
+                     case["source"][:78]))
 
     assert APP.read_text() == original, "app.py was not restored; repair with git checkout"
 
@@ -401,6 +534,14 @@ def main() -> int:
                                          sorted(_C(r["status"] for r in outside).items()))))
     print("no test class names the route  %d" % len(blind))
     print("survived the mutation          %d" % len(survivors))
+    if args.probe:
+        from collections import Counter as _C
+        tally = _C(c.get("verdict", "unprobed") for c in survivors)
+        for verdict in ("ACCEPTS", "CRASHES", "differs", "same", "unprobed"):
+            if tally.get(verdict):
+                print("   %-28s %d%s" % (verdict, tally[verdict],
+                                         "   <-- a hole nothing is watching"
+                                         if verdict in ("ACCEPTS", "CRASHES") else ""))
     print("elapsed                        %d s" % (time.time() - started))
 
     def _declared(case):

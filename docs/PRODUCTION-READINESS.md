@@ -338,11 +338,29 @@ list, so an anonymous caller could make the unauthenticated authorization endpoi
 sending `"a string"`. Twenty-one routes carried that idiom and now go through one helper, pinned
 by `check_json_body_must_be_an_object`.
 
-What is **not** established is which of those 35 refuse for their own reason and which are
-masked by a neighbour. Declaring them one way or the other without measuring it is the mistake
-the drill exists to catch, so they are recorded as open rather than declared, the drill prints
-how many refusals each run did not examine, and the five that were plainly authentication
-decisions (the assertion ceremony's own state machine) are covered.
+Which of those refuse for their own reason and which are masked by a neighbour is now
+**measured rather than assumed**, which was the open item. The drill's `--probe` mode asks each
+route what it ANSWERS with the refusal switched off, against the same bodies before and after:
+27 of 32 answer identically, so something after them refuses the same input, and **three accept
+input they used to turn away**. All three are on the timestamp authority, and they are the
+reason that route can call itself one.
+
+**The timestamp authority signed whatever it was handed (2026-09-17).** Its docstring promises
+that "the content itself is never sent, so the authority learns nothing"; the `digest_hex` shape
+check is the entirety of that promise. With it switched off the route ACCEPTS, so a caller puts
+arbitrary text where a digest belongs and receives the authority's signature over it inside a
+`polaris-timestamp/1` that an independent party verifies offline. The other two are the same
+shape one field over: an unchecked `digest_algorithm` lets the signed statement name an
+algorithm the authority did not compute, and an unbounded `nonce` is echoed into the signed
+statement whatever it is. All three now have tests; switching the three off turns 21 assertions
+red.
+
+Two further ACCEPTS that run reported were **artifacts of the probe, not defects**, and the
+distinction was worth chasing down rather than writing up. The test classes for the two guarded
+WebAuthn routes enrol a credential for the seeded admin, so every probe after them lands on the
+second factor instead of the dashboard, and an unauthenticated `302` is below 400 and reads as
+acceptance. The probe now refuses to report when it is not signed in, and those cases come back
+as "unprobed", which is a third thing from "masked" and from "a hole".
 
 Separately, of the fourteen rate limiters the application installs, **the login one was the only
 one any test drove**. `F03_RateLimitingTests` now drives the five holder-facing limiters past

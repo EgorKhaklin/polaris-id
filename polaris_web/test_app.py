@@ -330,6 +330,91 @@ class TimestampLogTests(PolarisTestCase):
     anchor; an anchored timestamp's hash is in the append-only timestamp log with inclusion
     evidence the detached verifier checks; the log's public surface mirrors the receipt log's."""
 
+    def test_the_authority_signs_a_DIGEST_and_refuses_anything_else(self):
+        """"The content itself is never sent" is a promise this check is the whole of.
+
+        2026-09-17, from the application mutation drill run with --probe: switching off the
+        `digest_hex` shape check makes this route ACCEPT, not merely stop refusing. A caller
+        could then put arbitrary text where a digest belongs and receive the authority's
+        ML-DSA signature over it, inside a `polaris-timestamp/1` that an independent party
+        verifies offline. A timestamp authority that signs content rather than a digest is
+        not a timestamp authority; it is an oracle that signs whatever it is handed, and it
+        learns and republishes exactly what the docstring above promises it never sees.
+
+        The probe is what separated this from the twenty-seven refusals on the same surface
+        whose removal changes nothing, because something after them answers identically.
+        """
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
+                        ('ab' * 16,), fetch='none')
+        good = 'ab' * 32
+        self.assertEqual(
+            self.client.post('/api/v1/timestamp/1', json={'digest_hex': good}).status_code, 200,
+            'control: a real digest is timestamped, so the refusals below are the shape check '
+            'and not a route that turns everything away')
+
+        for bad in ('a secret the authority must never see',   # content, not a digest
+                    '', 'ab' * 31, 'ab' * 33,                  # wrong length
+                    'zz' * 32,                                 # not hex
+                    'AB' * 32 + 'x',                           # length after lowercasing
+                    1, [], {}, None):
+            with self.subTest(digest=repr(bad)[:40]):
+                r = self.client.post('/api/v1/timestamp/1', json={'digest_hex': bad})
+                self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+                self.assertIn('digest_hex', r.get_json()['error_description'])
+
+    def test_the_authority_refuses_a_digest_algorithm_it_did_not_compute(self):
+        """The signed statement says SHA3-256. It must be the only thing accepted.
+
+        With this check off the route ACCEPTS, so a caller names a different algorithm and
+        the authority signs a statement asserting a binding it never made. What the artifact
+        claims and what the authority checked would then be two different things, which is
+        the property the whole signature exists to carry.
+        """
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
+                        ('ab' * 16,), fetch='none')
+        body = {'digest_hex': 'cd' * 32}
+        self.assertEqual(self.client.post('/api/v1/timestamp/1',
+                                          json=dict(body, digest_algorithm='SHA3-256')
+                                          ).status_code, 200, 'control: the real algorithm')
+        self.assertEqual(self.client.post('/api/v1/timestamp/1',
+                                          json=dict(body, digest_algorithm='sha3-256')
+                                          ).status_code, 200, 'case-insensitive, by design')
+        for bad in ('SHA-256', 'SHA3-512', 'MD5', 1, True):
+            with self.subTest(alg=repr(bad)[:30]):
+                r = self.client.post('/api/v1/timestamp/1', json=dict(body, digest_algorithm=bad))
+                self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+
+        # A FALSY value reads as absent, because the guard defaults with `or`. That is not a
+        # hole and the test says so rather than asserting a refusal the code never makes: the
+        # signed statement still carries `digest_algorithm: SHA3-256`, which is what the
+        # authority actually computed, so the artifact remains true about itself.
+        for falsy in ('', [], {}, 0, None):
+            with self.subTest(falsy=repr(falsy)[:30]):
+                r = self.client.post('/api/v1/timestamp/1', json=dict(body, digest_algorithm=falsy))
+                self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+                self.assertEqual(r.get_json()['digest_algorithm'], 'SHA3-256',
+                                 'the statement must name what was computed, not what was sent')
+
+    def test_the_authority_bounds_the_nonce_the_caller_chooses(self):
+        """The nonce is echoed into the SIGNED statement, so its shape is not cosmetic.
+
+        With the bound off the route ACCEPTS, and whatever the caller sent goes into the
+        artifact: an unbounded string, or a list, or an object. A field the authority signs
+        is a field the authority is answerable for.
+        """
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
+                        ('ab' * 16,), fetch='none')
+        body = {'digest_hex': 'ef' * 32}
+        self.assertEqual(self.client.post('/api/v1/timestamp/1',
+                                          json=dict(body, nonce='n' * 128)).status_code, 200,
+                         'control: 128 characters is the bound, not one past it')
+        self.assertEqual(self.client.post('/api/v1/timestamp/1', json=body).status_code, 200,
+                         'control: absent is allowed, which is why the check is `is not None`')
+        for bad in ('n' * 129, '', 1, [], {}, True):
+            with self.subTest(nonce=repr(bad)[:30]):
+                r = self.client.post('/api/v1/timestamp/1', json=dict(body, nonce=bad))
+                self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+
     def test_unanchored_request_retains_nothing_and_anchored_is_included(self):
         import hashlib
         flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,), fetch='none')
