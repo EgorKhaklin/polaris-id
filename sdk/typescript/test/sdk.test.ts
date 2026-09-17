@@ -7,7 +7,8 @@ import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant,
          verifyInclusion, verifyStatusAssertion, verifyIdToken,
          verifySignedArtifact, verifyCosignature,
-         verifyAttestation, verifyCrossAuthority } from "../src/index.ts";
+         verifyAttestation, verifyCrossAuthority,
+         __canonicalJsonForTest, __isoToEpochForTest } from "../src/index.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const vec = (n: string) => JSON.parse(readFileSync(join(ROOT, "vectors", n), "utf8"));
@@ -330,4 +331,94 @@ test("a broken commitment reports freshness the same way in every artifact", () 
     `reported ${JSON.stringify(revocation.fresh)}: the same failure answering differently`);
   assert.equal(leaves.note, "the published leaves do not match the committed set",
     "falling through must not lose the reason");
+});
+
+
+// 2026-09-17: an adversarial review compared this SDK against the Python reference and found
+// them disagreeing on inputs a federation of national agencies produces every day. Two
+// divergences made this SDK REJECT genuinely-signed artifacts; two made it accept what the
+// reference refuses. Every case below was executed against both sides first.
+
+test("canonical JSON escapes non-ASCII the way the wire format does", () => {
+  // The comment on canonicalJson claimed it matched Python byte for byte. It did not, for
+  // any non-ASCII byte: JSON.stringify emits raw UTF-8 and json.dumps escapes to uXXXX.
+  // Measured with real ML-DSA-65 signatures: an artifact whose signer carries an accent
+  // verified in Python and was REJECTED here. No JSON fixture in the tree has a non-ASCII
+  // byte, which is why nothing caught it, and an accent in an agency name is ordinary.
+  const cases: [unknown, string][] = [
+    [{ signer: "Ministere des Affaires \u00c9trang\u00e8res" },
+     '{"signer":"Ministere des Affaires \\u00c9trang\\u00e8res"}'],
+    [{ purpose: "\u6771\u4eac" },
+     '{"purpose":"\\u6771\\u4eac"}'],
+    [{ emoji: "\u{1F600}" },
+     '{"emoji":"\\ud83d\\ude00"}'],
+    [{ del: "\u007f", ctl: "\u001f" },
+     '{"ctl":"\\u001f","del":"\\u007f"}'],
+    [{ "\u00e9": "an accented KEY" },
+     '{"\\u00e9":"an accented KEY"}'],
+    [{ z: 1, a: [1, { y: "\u00ff", x: null }] },
+     '{"a":[1,{"x":null,"y":"\\u00ff"}],"z":1}'],
+  ];
+  for (const [value, expected] of cases) {
+    assert.equal(__canonicalJsonForTest(value), expected,
+      "canonical form must equal Python json.dumps(sort_keys=True, separators=(',',':'))");
+  }
+});
+
+test("an instant with no offset is read as UTC, not as local time", () => {
+  // Date.parse reads an offset-less date-time as LOCAL. The Python reference stamps it UTC.
+  // Measured: an epoch checkpoint whose window closed three hours earlier verified as FRESH
+  // for any verifier west of UTC. The wire spec requires issued_at <= now < expires_at, and
+  // a window that means something different depending on where the verifier stands is not
+  // that window.
+  assert.equal(__isoToEpochForTest("2026-09-17T09:00:00"), Date.UTC(2026, 8, 17, 9) / 1000,
+    "no offset must mean UTC, whatever the machine timezone is");
+  assert.equal(__isoToEpochForTest("2026-09-17T09:00:00Z"), Date.UTC(2026, 8, 17, 9) / 1000);
+  assert.equal(__isoToEpochForTest("2026-09-17T09:00:00+02:00"), Date.UTC(2026, 8, 17, 7) / 1000);
+  assert.equal(__isoToEpochForTest("2026-09-17T09:00:00-05:00"), Date.UTC(2026, 8, 17, 14) / 1000);
+  assert.equal(__isoToEpochForTest("2026-09-17"), Date.UTC(2026, 8, 17) / 1000);
+});
+
+test("date shapes the Python reference refuses are refused here too", () => {
+  // Date.parse accepted forms fromisoformat does not, so the two sides disagreed on 12 of
+  // 33 freshness cases. A verifier that reads more date formats than the signer wrote is
+  // not being generous; it is disagreeing about when things expire.
+  for (const bad of ["Thu, 17 Sep 2026 13:00:00 GMT", "09/17/2026", "2026-09-17T09",
+                     "not a date", "", "2026-9-7T09:00:00Z"]) {
+    assert.equal(__isoToEpochForTest(bad), null, bad + " must not parse");
+  }
+});
+
+test("verifyInclusion refuses arguments that are not bytes", () => {
+  // sameBytes had no type check, so two equal-length hex STRINGS compared EQUAL at every
+  // position and reported the leaf INCLUDED. Hex is the form these values arrive in inside
+  // the proof JSON, so passing it is the natural mistake rather than an exotic one. The
+  // Python reference returns false for all of them.
+  const bytes = new Uint8Array([1, 2, 3]);
+  assert.equal(verifyInclusion(0, 1, "deadbeef" as any, "cafebabe" as any, []), false);
+  assert.equal(verifyInclusion(0, 1, "x" as any, new Uint8Array([0]) as any, []), false);
+  assert.equal(verifyInclusion(0, 1, ["a"] as any, ["b"] as any, []), false);
+  // And the documented totality: false, never a throw.
+  assert.equal(verifyInclusion(0, 1, null as any, null as any, []), false);
+  assert.equal(verifyInclusion(0, 1, bytes, bytes, {} as any), false);
+  // The positive control: a one-leaf tree whose root IS the leaf still verifies, so the
+  // guards refuse the wrong TYPE rather than refusing everything.
+  assert.equal(verifyInclusion(0, 1, bytes, bytes, []), true);
+});
+
+test("a grant limit is refused when either side is not a whole finite number", () => {
+  // Number.isFinite guarded maxUses and not usesSoFar, so a NaN use count cleared the limit
+  // here exactly as a NaN limit cleared it in the Python reference: each SDK had a hole the
+  // other did not, and limits is inside the SIGNED statement.
+  assert.equal(grantWithinLimits({ limits: { max_uses: 3 } }, NaN)[0], false);
+  assert.equal(grantWithinLimits({ limits: { max_uses: Infinity } }, 0)[0], false);
+  assert.equal(grantWithinLimits({ limits: { max_uses: [2] as any } }, 0)[0], false);
+  assert.equal(grantWithinLimits({ limits: { max_uses: 1.9 } }, 1)[0], false);
+  assert.equal(grantWithinLimits({ limits: { max_amount: NaN } }, 0, 1e9)[0], false);
+  assert.equal(grantWithinLimits({ limits: { max_amount: 100 } }, 0, NaN)[0], false);
+  // Positive controls, or a function that refused everything would pass all of the above.
+  assert.equal(grantWithinLimits({ limits: { max_uses: 3 } }, 1)[0], true);
+  assert.equal(grantWithinLimits({ limits: { max_uses: 3 } }, 3)[0], false);
+  assert.equal(grantWithinLimits({ limits: { max_amount: 100 } }, 0, 50)[0], true);
+  assert.equal(grantWithinLimits({ limits: { max_amount: 100 } }, 0, 1000)[0], false);
 });

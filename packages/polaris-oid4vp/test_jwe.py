@@ -252,3 +252,49 @@ def _decode(value):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TheCoordinateDecodeRefusalIsAssertedTests(unittest.TestCase):
+    """The mutation drill found this refusal unprotected on 2026-09-17, and why is worth
+    recording: a guard added the same day made it harder to reach.
+
+    `_public_key_from_jwk` now checks that `x` and `y` are STRINGS before decoding them, so
+    every wrong-type case is refused above this line. A refusal made unreachable by a new
+    guard in front of it is the quiet way a verifier loses a check.
+
+    Measured while writing this: the branch is narrower than it looks. `urlsafe_b64decode` is
+    lenient, so `"!!!!"`, `"a b c"` and `"===="` all decode to something short and are caught
+    by the LENGTH check below rather than here. What actually reaches the decode refusal is a
+    coordinate that is a string and is not ASCII.
+    """
+
+    GOOD = {"kty": "EC", "crv": "P-256",
+            "x": b64u_encode(b"\x01" * 32), "y": b64u_encode(b"\x02" * 32)}
+
+    def test_a_non_ascii_coordinate_is_a_JweError_from_the_decode(self):
+        from polaris_oid4vp.jwe import JweError, _public_key_from_jwk
+        for field in ("x", "y"):
+            for bad in ("éééé", "日本語です", "\u00ff" * 43):
+                with self.subTest(field=field, value=repr(bad)[:18]):
+                    with self.assertRaises(JweError) as caught:
+                        _public_key_from_jwk(dict(self.GOOD, **{field: bad}))
+                    self.assertIn("decode", str(caught.exception))
+
+    def test_a_short_but_decodable_coordinate_gets_past_the_decode(self):
+        """The positive control, and the thing that makes the test above meaningful: these
+        reach the LENGTH refusal, which proves the decode let them through."""
+        from polaris_oid4vp.jwe import JweError, _public_key_from_jwk
+        for bad in (b64u_encode(b"\x01" * 8), "!!!!", "===="):
+            with self.subTest(value=repr(bad)[:14]):
+                with self.assertRaises(JweError) as caught:
+                    _public_key_from_jwk(dict(self.GOOD, x=bad))
+                self.assertIn("32 bytes", str(caught.exception))
+
+    def test_a_well_formed_coordinate_pair_builds_a_key(self):
+        from polaris_oid4vp.jwe import _public_key_from_jwk
+        from cryptography.hazmat.primitives.asymmetric import ec
+        k = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
+        jwk = {"kty": "EC", "crv": "P-256",
+               "x": b64u_encode(k.x.to_bytes(32, "big")),
+               "y": b64u_encode(k.y.to_bytes(32, "big"))}
+        self.assertIsNotNone(_public_key_from_jwk(jwk))

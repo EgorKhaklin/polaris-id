@@ -121,15 +121,62 @@ export type StatusAssertionVerdict = {
 
 const STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"];
 
+/** A JSON string literal escaped the way Python's `json.dumps(..., ensure_ascii=True)`
+ * escapes it: every code unit above 0x7e as `\uXXXX`, lower case hex, surrogate pairs kept
+ * as two escapes.
+ *
+ * This did not exist until 2026-09-17 and the omission was a real interoperability break.
+ * `canonicalJson` used `JSON.stringify` for strings, which emits raw UTF-8, while the wire
+ * specification pins the canonical form to Python's `json.dumps(statement, sort_keys=True,
+ * separators=(",", ":")).encode("utf-8")` and warns that "a one-byte drift means the signer
+ * and every independent verifier disagree". Measured with real ML-DSA-65 signatures: an
+ * artifact whose signer is "Ministere des Affaires Etrangeres" with its accent, or whose
+ * purpose is written in Japanese, verified in Python and was REJECTED here. An accent in an
+ * agency name is ordinary in a federation of national agencies, and no JSON fixture in the
+ * tree carries a non-ASCII byte, which is why nothing caught it.
+ *
+ * Note this is NOT what RFC 8785 would ask for. The contract is the wire specification, and
+ * the wire specification is Python's default. Changing which one is authoritative is a
+ * protocol decision, not something a verifier gets to take on its own. */
+export function __canonicalJsonStringForTest(s: string): string {
+  return pythonJsonString(s);
+}
+
+function pythonJsonString(s: string): string {
+  let out = '"';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    const ch = s[i];
+    if (ch === '"') out += '\\"';
+    else if (ch === "\\") out += "\\\\";
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\t") out += "\\t";
+    else if (ch === "\b") out += "\\b";
+    else if (ch === "\f") out += "\\f";
+    else if (c < 0x20 || c > 0x7e) out += "\\u" + c.toString(16).padStart(4, "0");
+    else out += ch;
+  }
+  return out + '"';
+}
+
 /** Recursive canonical JSON: sorted keys at every level, compact separators. Matches
  * Python's json.dumps(value, sort_keys=True, separators=(",",":")) byte for byte, which is
  * what the signer used. JSON.stringify alone would NOT sort nested object keys, so a signed
- * statement with nested values (epoch, anchors, members) needs this. */
+ * statement with nested values (epoch, anchors, members) needs this; nor would it escape
+ * non-ASCII, which is the other half and the half that was missing. */
+/** @internal Exported so the differential test can compare this byte for byte with
+ * Python's json.dumps. It is not part of the SDK's public surface. */
+export function __canonicalJsonForTest(value: any): string {
+  return canonicalJson(value);
+}
+
 function canonicalJson(value: any): string {
+  if (typeof value === "string") return pythonJsonString(value);
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
   const keys = Object.keys(value).sort();
-  return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalJson(value[k])).join(",") + "}";
+  return "{" + keys.map((k) => pythonJsonString(k) + ":" + canonicalJson(value[k])).join(",") + "}";
 }
 
 /** The canonical bytes a signer signs: the sorted-keys compact JSON of the signed fields. */
@@ -145,10 +192,63 @@ function bytesToHex(b: Uint8Array): string {
   return s;
 }
 
+/** True when a signed statement carries a number JavaScript cannot render the way the wire
+ * format does: an INTEGRAL float. Python distinguishes `4` from `4.0` and renders them
+ * differently; JavaScript has one number type and `JSON.parse("4.0")` is indistinguishable
+ * from `JSON.parse("4")`. Non-integral values are fine: `-0.5` renders identically.
+ *
+ * It is reachable. `polaris-agent-grant/1` signs `limits`, and `max_amount` is a monetary
+ * amount an issuer may well write as `100.0`. This SDK cannot verify such a grant, and the
+ * worst outcome would be reporting it inauthentic with no reason, which reads as a forgery.
+ * So the fact is named in the note instead. */
+function hasIntegralNumber(value: any, depth = 0): boolean {
+  if (depth > 32) return false;
+  if (typeof value === "number") return Number.isInteger(value);
+  if (Array.isArray(value)) return value.some((v) => hasIntegralNumber(v, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.values(value).some((v) => hasIntegralNumber(v, depth + 1));
+  }
+  return false;
+}
+
+/** Seconds since the epoch, reading an instant the way the Python reference does.
+ *
+ * `Date.parse` alone was wrong in two directions, both measured on 2026-09-17 with real
+ * signatures. It reads a date-time carrying NO offset as LOCAL time, where the Python side
+ * stamps it UTC, so an epoch checkpoint whose window closed three hours earlier verified as
+ * FRESH for any verifier west of UTC and stale for any verifier east of it. And it accepts
+ * shapes Python refuses outright, including RFC 2822 and US slash dates, so the two sides
+ * disagreed on 12 of 33 freshness cases.
+ *
+ * The wire specification says a verifier MUST reject an artifact unless
+ * `issued_at <= now < expires_at`. A window that means something different depending on
+ * where the verifier is standing is not that. */
+/** @internal Exported for the differential test; not public surface. */
+export function __isoToEpochForTest(s: unknown): number | null {
+  return isoToEpoch(s);
+}
+
 function isoToEpoch(s: unknown): number | null {
   if (typeof s !== "string") return null;
-  const t = Date.parse(s);
-  return Number.isNaN(t) ? null : t / 1000;
+  // ISO 8601 only, and the same subset Python's fromisoformat accepts: a date, optionally a
+  // time, optionally fractional seconds, optionally an offset. Anything else is refused
+  // rather than guessed at.
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$/.exec(s.trim());
+  if (!m) return null;
+  const [, y, mo, d, hh, mi, ss, frac, z, sign, oh, om] = m;
+  let t = Date.UTC(Number(y), Number(mo) - 1, Number(d),
+                   Number(hh || 0), Number(mi || 0), Number(ss || 0),
+                   frac ? Math.round(Number("0." + frac) * 1000) : 0);
+  if (Number.isNaN(t)) return null;
+  if (sign) {
+    // An explicit offset is applied; no offset at all means UTC, which is the whole fix.
+    const shift = (Number(oh) * 60 + Number(om)) * 60000;
+    t += sign === "+" ? -shift : shift;
+  } else if (!z) {
+    // Deliberately nothing: Date.UTC already read it as UTC. Named so that a later reader
+    // does not "helpfully" reintroduce local time here.
+  }
+  return t / 1000;
 }
 
 /** Formats whose freshness is a REPLAY WINDOW rather than a validity interval, with the
@@ -322,6 +422,20 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     return { authentic: false, fresh: null, note: "verification error: " + (e as Error).message };
   }
   let commitmentNote: string | undefined;
+  if (!ok) {
+    // One reason a GENUINE artifact fails here and the signer is not at fault: the wire
+    // format's canonicalisation distinguishes `4` from `4.0` and JavaScript cannot. An
+    // agent grant signing `limits: {max_amount: 100.0}` is the reachable case. Reporting
+    // `authentic: false` with no reason reads as a forgery, so the fact is named.
+    const statement: Record<string, unknown> = {};
+    for (const k of keys) statement[k] = o?.[k] ?? null;
+    if (hasIntegralNumber(statement)) {
+      commitmentNote = "the signature does not verify, AND this statement carries a whole " +
+        "number: JavaScript cannot tell 4 from 4.0 and the canonical form does, so a " +
+        "genuine artifact whose signer wrote a float here cannot be checked by this SDK. " +
+        "Verify it with the Python reference before treating it as a forgery";
+    }
+  }
   if (ok && o.format === "polaris-epoch-leaves/1") {
     // P9.2: the leaves ride outside the signed statement, committed to by leaves_root_hex.
     const leaves = Array.isArray(o.all_leaves_hex) ? o.all_leaves_hex : [];
@@ -410,6 +524,18 @@ function nodeHash(left: Uint8Array, right: Uint8Array): Uint8Array {
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  // 2026-09-17: there was no type check anywhere on this path, and `verifyInclusion` is
+  // exported. Two hex STRINGS of equal length compared EQUAL: `"d"[i] ^ "c"[i]` coerces each
+  // character to NaN, `NaN | 0` is 0, and every position "matched", so
+  // `verifyInclusion(0, 1, "deadbeef", "cafebabe", [])` reported the leaf INCLUDED. Passing
+  // hex is the natural mistake, because that is the form the values arrive in inside the
+  // proof JSON. The Python reference returns false for all of them.
+  //
+  // The guard that a test can see is in `verifyInclusion`, the exported entry point and the
+  // only caller. This one is behind it and cannot be reached with the wrong type, so the
+  // mutation drill would call it unprotected; it is kept because this function's whole job
+  // is to compare BYTES and a silent coercion here is the bug it just had.
+  if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) return false;
   if (a.length !== b.length) return false;
   let d = 0;
   for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
@@ -420,6 +546,11 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
  * is `root`? Total on hostile input: a malformed path is false, never a throw. */
 export function verifyInclusion(idx: number, treeSize: number, leaf: Uint8Array, root: Uint8Array, proof: Uint8Array[]): boolean {
   if (!Number.isInteger(idx) || !Number.isInteger(treeSize) || idx < 0 || idx >= treeSize) return false;
+  // The docstring says "false, never a throw" and it threw: `null` reached a property read,
+  // and a non-iterable `proof` reached the for-of before the per-element instanceof check
+  // inside the loop could run. Both are verdicts now, as the Python reference gives.
+  if (!(leaf instanceof Uint8Array) || !(root instanceof Uint8Array)) return false;
+  if (!Array.isArray(proof)) return false;
   let fn = idx, sn = treeSize - 1, r = leaf;
   for (const p of proof) {
     if (sn === 0 || !(p instanceof Uint8Array)) return false;
@@ -925,12 +1056,23 @@ export function grantWithinLimits(grant: any, usesSoFar = 0, amount?: number): [
   }
   const maxUses = limits["max_uses"];
   if (maxUses !== null && maxUses !== undefined) {
-    if (!Number.isFinite(Number(maxUses))) return [false, "max_uses is not a number"];
-    if (Number(usesSoFar) >= Number(maxUses)) return [false, `the grant's use limit (${maxUses}) is exhausted`];
+    // 2026-09-17: `usesSoFar` was not guarded, only `maxUses`, so a NaN use count cleared
+    // the limit here exactly as a NaN limit cleared it in the Python reference. Each SDK had
+    // a hole the other did not. `Number([2])` is 2 and `Number("")` is 0, so the value is
+    // required to BE a finite number rather than be coercible to one: a one-element array
+    // and a fractional count both slipped through before.
+    if (typeof maxUses !== "number" || !Number.isFinite(maxUses) || !Number.isInteger(maxUses)) {
+      return [false, "max_uses is not a whole finite number"];
+    }
+    if (typeof usesSoFar !== "number" || !Number.isFinite(usesSoFar) || !Number.isInteger(usesSoFar)) {
+      return [false, "the use count is not a whole finite number"];
+    }
+    if (usesSoFar >= maxUses) return [false, `the grant's use limit (${maxUses}) is exhausted`];
   }
   const maxAmount = limits["max_amount"];
   if (maxAmount !== null && maxAmount !== undefined && amount !== undefined) {
-    if (!Number.isFinite(Number(maxAmount)) || !Number.isFinite(Number(amount))) {
+    if (typeof maxAmount !== "number" || !Number.isFinite(maxAmount)
+        || typeof amount !== "number" || !Number.isFinite(amount)) {
       return [false, "max_amount or the requested amount is not a number"];
     }
     if (Number(amount) > Number(maxAmount)) return [false, `the requested amount exceeds the grant's limit (${maxAmount})`];

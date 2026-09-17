@@ -62,6 +62,17 @@ DECLARED_SURVIVORS = {
         "the no-backend refusal; a suite with cryptography installed cannot reach it",
     "jwe:encrypt_compact:0ecee1":
         "the no-backend refusal; a suite with cryptography installed cannot reach it",
+    # 2026-09-17, and a different reason from the three above. This one is defence in depth
+    # behind two outer bounds that both refuse first: `_json_bounded` rejects a document
+    # nesting past MAX_JSON_DEPTH before it is parsed, and `_committed_digests` iterates only
+    # MAX_RESOLVE_DEPTH times, so a disclosure chain longer than the cap is refused as
+    # UNCOMMITTED before the resolver ever sees it. Three bounds, one number, and the
+    # resolver's is the innermost. It is kept because it is the guard that holds if either
+    # outer bound is ever loosened, and tested directly against `_resolve` in
+    # TheBoundsThemselvesAreAssertedTests rather than through `verify_presentation`.
+    "sdjwt:verify_presentation:3f535a":
+        "the resolver depth cap; two outer bounds refuse first, so no presentation can reach "
+        "it. Tested directly against _resolve",
 }
 
 #: Every way this package says no, and what saying yes looks like instead.

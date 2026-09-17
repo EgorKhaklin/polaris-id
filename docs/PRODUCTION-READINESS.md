@@ -139,6 +139,27 @@ status assertion would each open the channel. The OpenID4VP path is not covered 
 measurement, and an SD-JWT VC presentation discloses the holder's own attribute values, so
 its disclosures vary in length by construction. `lab/linkability/`.
 
+**The two reference SDKs disagreed with each other, and one of them with the wire
+specification (2026-09-17).** `polaris-sdk-python` and `polaris-sdk-ts` exist so an integrator
+can build against either and get the same security answer. A differential review found them
+giving different answers on inputs a federation of national agencies produces every day. **The
+TypeScript SDK's canonicalisation was not the wire format's**: it emitted raw UTF-8 where the
+specification pins Python's escaped form, so an artifact whose signer carries an accent, or
+whose purpose is written in Japanese, verified in Python and was REJECTED as a forgery in
+TypeScript. Its own comment claimed the two matched byte for byte. No JSON fixture in the tree
+carries a non-ASCII byte, which is why nothing caught it. **And it read an instant with no UTC
+offset as LOCAL time**, where the reference stamps it UTC, so an artifact whose window closed
+three hours earlier verified as fresh for every verifier west of Greenwich and stale for every
+one east of it; the two sides disagreed on twelve of thirty-three freshness cases. Three more
+were the same non-finite-number class found elsewhere that day, one in each SDK, each a hole
+the other did not have. One let a Merkle inclusion proof report a leaf INCLUDED when the
+caller passed hex strings instead of bytes, which is the form those values arrive in. All are
+fixed, with a differential test comparing the canonical forms byte for byte and the instants
+across five offset shapes. **One divergence cannot be fixed at this layer and is now stated in
+the verdict rather than silently rejected**: the canonical form distinguishes `4` from `4.0`
+and JavaScript has one number type, so a grant signing a monetary limit as a float cannot be
+checked by the TypeScript SDK, which now says so instead of reporting a forgery.
+
 **Eleven defects in the detached verifier, from the same day's review of the PRIMARY external
 door (2026-09-17).** `polaris-verify` is the package a stranger installs, and every finding
 below was reproduced by running code before anything was changed. **A trust attestation's

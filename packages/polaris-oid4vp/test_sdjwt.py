@@ -28,7 +28,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  #
 from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.sdjwt import (  # noqa: E402
-    MAX_PRESENTATION_BYTES, Verdict, b64u_encode, verify_presentation)
+    MAX_DISCLOSURES, MAX_PRESENTATION_BYTES, MAX_RESOLVE_DEPTH, Verdict,
+    b64u_encode, verify_presentation)
 
 NONCE = "vJ3xQ2kZ8fLpN1sT7wRm5bYc0aHdEgUi"
 AUDIENCE = "x509_hash:0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
@@ -1076,3 +1077,86 @@ class IssuerCertificateTests(unittest.TestCase):
                                 expected_audience=AUDIENCE, trust_anchors=[ca])
         self.assertIsInstance(v, Verdict)
         self.assertFalse(v.authentic)
+
+
+class TheBoundsThemselvesAreAssertedTests(unittest.TestCase):
+    """Two refusals added on 2026-09-17 were not covered by any test.
+
+    The package's mutation drill found them: it inverts every refusal in turn and runs the
+    whole suite, and a refusal the suite still passes with is a refusal nothing is watching.
+    Both of these were mine, added in the same commit as the bounds they enforce, and the
+    tests around them exercised the bound's EFFECT without ever reaching the refusal itself.
+    """
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def test_more_disclosures_than_the_limit_is_refused(self):
+        """The count bound. The exhaustion tests all stayed under it, so it could have been
+        deleted with everything still green."""
+        claims = tuple(("claim_%d" % i, "v") for i in range(MAX_DISCLOSURES + 5))
+        v = self.w.verify(self.w.present(claims=claims))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+        self.assertIn("limit", v.reason)
+
+    def test_a_credential_at_the_limit_is_not_refused_for_its_count(self):
+        """The other direction: a bound that refused everything would pass the test above
+        while making the verifier useless."""
+        claims = tuple(("claim_%d" % i, "v") for i in range(8))
+        self.assertTrue(self.w.verify(self.w.present(claims=claims)).authentic)
+
+    def test_the_resolver_refuses_to_recurse_past_its_cap(self):
+        """The depth bound, tested where it lives.
+
+        It cannot be reached through `verify_presentation`, and that is worth stating rather
+        than leaving somebody to rediscover: `_json_bounded` refuses a document nesting past
+        64 levels before parsing, and `_committed_digests` only iterates that many times, so
+        a disclosure chain longer than the cap is refused as UNCOMMITTED before the resolver
+        ever sees it. Three bounds, one number, and the resolver's is the innermost.
+
+        So this calls `_resolve` directly. It is still worth keeping and worth testing: it is
+        the guard that holds if either of the outer two is ever loosened, and a guard nothing
+        exercises is one the mutation drill correctly calls unprotected.
+        """
+        from polaris_oid4vp import sdjwt as S
+        node = {"leaf": "x"}
+        for _ in range(MAX_RESOLVE_DEPTH + 5):
+            node = {"n": node}
+        with self.assertRaises(ValueError) as caught:
+            S._resolve(node, {}, set(), [])
+        self.assertIn("levels", str(caught.exception))
+
+    def test_the_resolver_handles_a_structure_within_its_cap(self):
+        """The positive control. A cap that refused everything would pass the test above
+        while making every credential unreadable."""
+        from polaris_oid4vp import sdjwt as S
+        node = {"leaf": "x"}
+        for _ in range(10):
+            node = {"n": node}
+        self.assertIsInstance(S._resolve(node, {}, set(), []), dict)
+
+    def test_a_chain_longer_than_the_commitment_fixpoint_is_refused_as_uncommitted(self):
+        """And the bound that DOES fire on the public path, so the refusal a wallet actually
+        meets is asserted too."""
+        salt = "d"
+        inner = _disclosure(salt + "0", "leaf", "x")
+        digest = b64u_encode(hashlib.sha256(inner.encode("ascii")).digest())
+        disclosures = [inner]
+        for i in range(1, MAX_RESOLVE_DEPTH + 10):
+            nxt = _disclosure(salt + str(i), "n%d" % i, {"_sd": [digest]})
+            disclosures.append(nxt)
+            digest = b64u_encode(hashlib.sha256(nxt.encode("ascii")).digest())
+        issuer_jwt = _jws(self.w.issuer_key,
+                          {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"},
+                          {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                           "iat": int(time.time()), "_sd": [digest], "_sd_alg": "sha-256",
+                           "cnf": {"jwk": _public_jwk(self.w.holder_key)}})
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
+        computed = b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())
+        kb = _jws(self.w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
+                   "sd_hash": computed})
+        v = self.w.verify(presented + kb)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")

@@ -29,6 +29,7 @@ verifier CLI the published conformance suite drives (see conformance/SPEC.md).
 """
 import base64
 import dataclasses
+import math
 import hashlib
 import json
 import time
@@ -134,7 +135,18 @@ def _verify_liboqs(digest, sig, pk, alg=ALGORITHM):
 def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
     """Verify a Polaris authenticity pack OFFLINE. `anchors` is an optional
     iterable of trusted issuer public keys (hex); when given, issuer_trusted says
-    whether the pack's key is one of them."""
+    whether the pack's key is one of them.
+
+    Total on hostile input: a non-dict pack is a verdict, not an exception."""
+    # 2026-09-17: this was the ONLY one of eight verify functions without the guard, and it
+    # is reachable from the documented top-level API, because `PolarisVerifier
+    # .verify_presentation` passes `presentation["credential"]` straight through. A wallet
+    # handing over a compact-serialised credential STRING crashed the relying party instead
+    # of getting a rejection. The TypeScript SDK returned a verdict for every one of these.
+    if not isinstance(pack, dict):
+        return AuthenticityVerdict(False, None, None,
+                                   note="an authenticity pack must be an object, got %s"
+                                        % type(pack).__name__)
     tok = pack.get("token_value")
     alg = pack.get("algorithm")
     if alg != PLACEHOLDER_LABEL and not _accepted(alg):
@@ -508,7 +520,7 @@ def verify_inclusion(idx: int, tree_size: int, leaf: bytes, root: bytes, proof) 
     head is `root`? Total on hostile input: a malformed path is False, never an exception."""
     try:
         idx, tree_size = int(idx), int(tree_size)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
     if idx < 0 or idx >= tree_size:
         return False
@@ -592,7 +604,7 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
         idx, size = int(proof.get("index")), int(proof.get("tree_size"))
         root = bytes.fromhex(str(sth.get("root_hash_hex")))
         path = [bytes.fromhex(str(x)) for x in (proof.get("proof_hex") or [])]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         v.note = "malformed proof"
         return v
     v.index, v.tree_size = idx, size
@@ -983,13 +995,33 @@ def grant_within_limits(grant, uses_so_far: int = 0, amount=None):
     if unknown:
         return False, ("the grant carries limits this verifier does not understand (%s); refusing "
                        "rather than ignoring them" % ", ".join(unknown))
+    # 2026-09-17: both limits were defeated by a non-finite number. `limits` is inside the
+    # SIGNED statement, so a grant signed with `max_amount: NaN` was a signed UNLIMITED grant
+    # wearing a limit field: `float(1000000) > float('nan')` is False and the refusal never
+    # fired. `json.loads` accepts the bare literal NaN by default, so it arrives off the
+    # wire. And `int(float('inf'))` raises OverflowError, which `(TypeError, ValueError)`
+    # does not catch, so the infinity case crashed instead of refusing. The docstring
+    # promises unknown limits are REFUSED, not ignored; neither branch delivered that.
+    #
+    # The TypeScript SDK guarded `max_uses` with `Number.isFinite` and not `uses_so_far`, so
+    # each SDK had a hole the other did not. Both are closed and the differential test
+    # compares them.
+    for label, value in (("max_uses", limits.get("max_uses")),
+                         ("the use count", uses_so_far),
+                         ("max_amount", limits.get("max_amount")),
+                         ("the requested amount", amount)):
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return False, ("%s is not a finite number (%r); refusing rather than ignoring "
+                           "the limit" % (label, value))
     try:
         if limits.get("max_uses") is not None and int(uses_so_far) >= int(limits["max_uses"]):
             return False, "the grant's use limit (%s) is exhausted" % limits["max_uses"]
         if limits.get("max_amount") is not None and amount is not None \
                 and float(amount) > float(limits["max_amount"]):
             return False, "the requested amount exceeds the grant's limit (%s)" % limits["max_amount"]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False, "a limit or the requested amount is not a number"
     return True, None
 
