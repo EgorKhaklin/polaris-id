@@ -192,6 +192,7 @@ CHANGELOG.md                       every ship, never edited retroactively
 | A contributor's working note (gotchas, house style, the project record) | [`DEVNOTES/`](../../DEVNOTES/README.md) |
 | Naming and structural conventions | [`docs/CONVENTIONS.md`](../CONVENTIONS.md) |
 | The checks | [`polaris_checks/checks.py`](../../polaris_checks/checks.py) |
+| **Where is revocation enforced? authorization decided? proof verification done? which reads need the primary?** | [`docs/reference/SECURITY-DECISIONS.md`](SECURITY-DECISIONS.md) |
 
 ---
 

@@ -9667,6 +9667,89 @@ class TokenVerifyTests(PolarisTestCase):
                         (token_value,))
             return cur.fetchone()['token_id']
 
+    def _set_expiry(self, token_id, when, age_days=0):
+        """Move a credential's expiry, backdating its issue when the expiry is in the past.
+
+        `chk_token_time_order` requires `expiration_date >= issued_date::date`, so the schema
+        makes an already-expired credential UNISSUABLE: the only way to reach that state is
+        the passage of time. That is the right constraint and it is why this helper has to
+        move the issue date as well, rather than the test being able to mint one directly.
+        """
+        with self._new_conn() as conn, conn.cursor() as cur:
+            if age_days:
+                cur.execute("UPDATE IdentityToken "
+                            "SET issued_date = now() - make_interval(days => %s), "
+                            "    activated_date = now() - make_interval(days => %s) "
+                            "WHERE token_id = %s", (age_days, age_days, token_id))
+            cur.execute("UPDATE IdentityToken SET expiration_date = %s WHERE token_id = %s",
+                        (when, token_id))
+            conn.commit()
+
+    def test_a_credential_past_its_expiry_is_not_currently_authoritative(self):
+        """2026-09-17: `expiration_date` was compared NOWHERE on a verification path.
+
+        It is written at issuance, `ACTIVE -> EXPIRED` is a legal transition in the state
+        machine, and the operator dashboard COUNTS active credentials past their expiry. But
+        nothing drives that transition, no sweeper exists, and both verification endpoints
+        decided on `status == 'ACTIVE'` alone. So the dashboard reported a growing number of
+        credentials past their stated end while the API called every one of them the "usable
+        right now" verdict docs/reference/API.md promises.
+        """
+        import datetime as _dt
+        tok = self._issue_token('EXPIRY-PAST-0001')
+        # The positive control FIRST, so the refusal below is attributable to the expiry
+        # rather than to the fixture never having been usable.
+        r = self.client.get('/api/tokens/%d/verify' % tok)
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body['currently_authoritative'], "the fixture must start usable")
+        self.assertTrue(body['usable'])
+
+        self._set_expiry(tok, _dt.date.today() - _dt.timedelta(days=1), age_days=400)
+        body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
+        self.assertEqual(body['status'], 'ACTIVE',
+                         "the status column is untouched: this is decided at READ time")
+        self.assertTrue(body['signature_valid'],
+                        "the signature is still genuine; expiry is an authorization fact")
+        self.assertFalse(body['currently_authoritative'],
+                         "a credential past its stated end is not usable right now")
+        self.assertFalse(body['usable'])
+        self.assertTrue(body['expired'])
+
+    def test_a_credential_expiring_today_is_still_honoured(self):
+        """Valid THROUGH the expiry date, matching the schema's own
+        `expiration_date >= issued_date` ordering. A rule that expired a credential at one
+        second past midnight on its final day would be a different rule."""
+        import datetime as _dt
+        tok = self._issue_token('EXPIRY-TODAY-0001')
+        self._set_expiry(tok, _dt.date.today())
+        body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
+        self.assertTrue(body['currently_authoritative'], body)
+        self.assertFalse(body['expired'])
+
+    def test_a_credential_with_no_expiry_does_not_expire(self):
+        """The column is nullable and NULL means no expiry, not an unreadable one."""
+        tok = self._issue_token('EXPIRY-NULL-0001')
+        self._set_expiry(tok, None)
+        body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
+        self.assertTrue(body['currently_authoritative'], body)
+
+    def test_the_relying_party_endpoint_agrees_about_expiry(self):
+        """The two endpoints answer the same question for two different audiences, and a
+        disagreement between them is worse than either answer: an operator would see one
+        thing and the relying party another."""
+        import datetime as _dt
+        tok = self._issue_token('EXPIRY-RP-0001')
+        self._set_expiry(tok, _dt.date.today() - _dt.timedelta(days=1), age_days=400)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT status, expiration_date FROM IdentityToken WHERE token_id=%s",
+                        (tok,))
+            after = cur.fetchone()
+        self.assertEqual(after['status'], 'ACTIVE')
+        self.assertLess(after['expiration_date'], _dt.date.today())
+        operator = self.client.get('/api/tokens/%d/verify' % tok).get_json()
+        self.assertFalse(operator['currently_authoritative'])
+
     def test_issued_token_verifies_single_witness_and_is_usable(self):
         tok_id = self._issue_token('TKN-OH-VERIFY-0001')
         data = self.client.get(f'/api/tokens/{tok_id}/verify').get_json()

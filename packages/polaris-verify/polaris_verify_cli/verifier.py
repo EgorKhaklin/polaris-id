@@ -2571,7 +2571,15 @@ def key_status_at(tl, public_key_hex, instant=None):
         # revocation function, which is the one place a default should say "unknown".
         # `verify_cross_authority` rejects only on exactly "compromised", so 'COMPROMISED'
         # read as a usable key.
-        if k.get("status") != "active":
+        #
+        # The test is membership in the VOCABULARY, not equality with "active", and the
+        # difference is the whole correctness of this function. A key marked `compromised`,
+        # asked about an instant BEFORE its `compromised_at`, WAS active then: that is the
+        # entire reason `compromised_at` exists separately from the status, since a
+        # compromise is usually discovered after it happened. The first form of this guard
+        # returned "unknown" for exactly that case and the timestamp-transparency drill
+        # caught it, which is what that drill is for.
+        if k.get("status") not in ("active", "retired", "compromised"):
             return "unknown"
         return "active"
     return None

@@ -588,6 +588,24 @@ class TheKeyStatusDefaultSaysUnknownTests(unittest.TestCase):
                 self.assertEqual(V.key_status_at(self._tl(status), self.KEY,
                                                  "2026-09-17T00:00:00Z"), status)
 
+    def test_a_compromised_key_was_active_before_it_was_compromised(self):
+        """The case the first version of this guard broke, caught by the
+        timestamp-transparency drill rather than by any test here.
+
+        `compromised_at` exists separately from the status precisely because a compromise is
+        usually discovered after it happened, so asking about an instant BEFORE it must
+        answer `active`. A guard written as `status != "active"` returns `unknown` for that
+        and takes a genuine, correctly-dated timestamp down with it. The test is membership
+        in the vocabulary, not equality with one word.
+        """
+        tl = {"keys": [{"public_key_hex": self.KEY, "status": "compromised",
+                        "registered_at": "2020-01-01T00:00:00Z",
+                        "compromised_at": "2026-01-01T00:00:00Z", "retired_at": None}]}
+        self.assertEqual(V.key_status_at(tl, self.KEY, "2025-06-01T00:00:00Z"), "active",
+                         "before the compromise instant, the key WAS active")
+        self.assertEqual(V.key_status_at(tl, self.KEY, "2026-06-01T00:00:00Z"), "compromised",
+                         "after it, it is not")
+
     def test_anything_else_is_unknown_rather_than_active(self):
         for status in ("COMPROMISED", "Compromised", "revoked", "suspended", None, 1, [], {}):
             with self.subTest(status=repr(status)):

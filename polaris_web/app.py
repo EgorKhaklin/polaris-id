@@ -1740,9 +1740,13 @@ def _dashboard_model():
     revoked = _window_counts("SELECT COUNT(*) AS n FROM TokenLifecycleEvent "
                              "WHERE event_type = 'REVOKED' AND event_timestamp >= now() - {window}")
     expiry = query("""
-        SELECT SUM(CASE WHEN expiration_date < now() THEN 1 ELSE 0 END) AS past,
-               SUM(CASE WHEN expiration_date >= now()
-                         AND expiration_date < now() + INTERVAL '30 days' THEN 1 ELSE 0 END) AS soon
+        -- `< CURRENT_DATE`, matching `_not_expired`, not `< now()`. The two differed by up
+        -- to a day: a credential expiring today read as already past here from one second
+        -- after midnight while the verification path still honoured it. One predicate, two
+        -- spellings, is how the next disagreement starts.
+        SELECT SUM(CASE WHEN expiration_date < CURRENT_DATE THEN 1 ELSE 0 END) AS past,
+               SUM(CASE WHEN expiration_date >= CURRENT_DATE
+                         AND expiration_date < CURRENT_DATE + INTERVAL '30 days' THEN 1 ELSE 0 END) AS soon
           FROM IdentityToken WHERE status = 'ACTIVE'
     """, fetch='one')
     by_issuer = query("""
@@ -5075,9 +5079,11 @@ def api_token_verify(tok_id):
     # not read as usable within a replica's lag window. `as_of` and
     # max_staleness_seconds below make the freshness contract explicit for the
     # relying party, so it never confuses a genuine signature with a current one.
-    auth_row = query("SELECT status, now() AS as_of FROM IdentityToken WHERE token_id = %s",
+    auth_row = query("SELECT status, expiration_date, now() AS as_of "
+                     "FROM IdentityToken WHERE token_id = %s",
                      (tok_id,), fetch='one', primary=True)
     status = auth_row['status'] if auth_row else None
+    not_expired = _not_expired(auth_row['expiration_date']) if auth_row else False
     as_of = auth_row['as_of'].isoformat() if auth_row and auth_row.get('as_of') else None
 
     token_value = rows[0]['token_value']
@@ -5152,11 +5158,12 @@ def api_token_verify(tok_id):
         # cache only signature_valid, never the authorization.
         status=status,
         status_source='primary',
-        currently_authoritative=(status == 'ACTIVE'),
+        currently_authoritative=(status == 'ACTIVE' and not_expired),
+        expired=(not not_expired) if auth_row else None,
         as_of=as_of,
         max_staleness_seconds=0,
         # Back-compat convenience: authenticity AND current authorization.
-        usable=(all_valid and status == 'ACTIVE'),
+        usable=(all_valid and status == 'ACTIVE' and not_expired),
     )
 
 
@@ -5356,7 +5363,7 @@ def api_v1_verify():
                        decision='reject', reason='not a verifiable presentation')
 
     row = query("""
-        SELECT it.token_value, it.status,
+        SELECT it.token_value, it.status, it.expiration_date,
                ts.signature_bytes, ts.signing_public_key_hex,
                ag.signing_public_key_hex AS agency_key,
                now() AS as_of
@@ -5384,7 +5391,9 @@ def api_v1_verify():
         return _not_verifiable()
 
     status = row['status']
-    currently_authoritative = (status == 'ACTIVE')
+    # Same predicate as /api/tokens/<id>/verify, so the relying-party answer and the operator
+    # answer cannot drift about what "currently authoritative" means.
+    currently_authoritative = (status == 'ACTIVE' and _not_expired(row['expiration_date']))
     tkey, akey = row['signing_public_key_hex'], row['agency_key']
     issuer_authentic = (tkey == akey) if (tkey and akey) else None
     return jsonify(
@@ -5495,6 +5504,37 @@ def _leaves_root(leaves):
 # cannot outlive it. When the artifact expires the cache entry expires with it and the next
 # consumer goes back to the origin. Freshness rules are stated in docs/design/status-
 # distribution.md and pinned by check_status_distribution.
+
+#: A credential whose `expiration_date` has passed is not currently authoritative, whatever
+#: its status column says.
+#:
+#: 2026-09-17: nothing compared this column anywhere on a verification path. It is written at
+#: issuance (`uc1_issue_and_activate`, CURRENT_DATE + 10 years), `ACTIVE -> EXPIRED` is a
+#: legal transition in the state machine, and the operator dashboard COUNTS active
+#: credentials past their expiry. Nothing drives the transition: no sweeper exists. So the
+#: count grew and both verification endpoints answered `currently_authoritative: true` for
+#: every one of them, which docs/reference/API.md describes as "the usable right now
+#: authorization verdict". A credential a decade past its stated end was usable right now.
+#:
+#: Enforced at READ time rather than by a background job, deliberately: a sweeper that stops
+#: running silently restores the defect, and a predicate cannot stop running. The column stays
+#: the record; this decides what it means.
+#:
+#: Valid THROUGH the expiry date, not up to its start: a DATE compared with `>= CURRENT_DATE`
+#: matches the schema's own `expiration_date >= issued_date` ordering CHECK. A NULL expiry is
+#: no expiry, which is what the nullable column means.
+def _not_expired(expiration_date) -> bool:
+    if expiration_date is None:
+        return True
+    import datetime as _dt
+    if isinstance(expiration_date, _dt.datetime):
+        expiration_date = expiration_date.date()
+    if not isinstance(expiration_date, _dt.date):
+        # A value this function cannot read is not an open-ended credential. The same rule
+        # the OpenID4VP and detached verifiers took the same day for the same reason.
+        return False
+    return expiration_date >= _dt.date.today()
+
 
 def _artifact_max_age(body, now=None):
     """Seconds of life the artifact has left, from the window it was signed with.

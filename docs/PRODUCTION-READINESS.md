@@ -139,6 +139,30 @@ status assertion would each open the channel. The OpenID4VP path is not covered 
 measurement, and an SD-JWT VC presentation discloses the holder's own attribute values, so
 its disclosures vary in length by construction. `lab/linkability/`.
 
+**A credential past its own expiry stayed usable, and the dashboard was counting them
+(2026-09-17).** `IdentityToken.expiration_date` is written at issuance, `ACTIVE -> EXPIRED` is
+a legal transition in the credential state machine, and the operator dashboard has a counter
+for active credentials past their expiry. Nothing drove that transition: no sweeper exists,
+and **no verification path compared the column at all**. Both endpoints decided
+`currently_authoritative` on the status column alone, which `docs/reference/API.md` describes
+as "the usable right now authorization verdict". So the count on the dashboard grew and every
+credential in it answered usable. Found by mapping where each security decision is made, which
+is the other half of why that map now exists. Both endpoints share one predicate, enforced at
+read time rather than by a background job, because a sweeper that stops running silently
+restores the defect and a predicate cannot stop running. A credential is valid through its
+expiry date; a null expiry never expires; an unreadable one counts as expired. The schema will
+not allow an already-expired credential to be issued, so that state was only ever reachable by
+the passage of time, which is why it went unnoticed for as long as it did.
+
+**Where each security decision is made is now written down**
+(`docs/reference/SECURITY-DECISIONS.md`). It names the file and the symbol for issuance
+authorization, authority binding, expiry, revocation, proof verification, replay protection,
+trust-edge validity, primary-database reads, audit writing, the database invariants that are
+load-bearing, key selection and administrative authorization, says which layer is
+authoritative where a decision is split across several, and names the check that pins each. It
+exists because an outside review asked whether a reviewer could find any of this in a
+nine-thousand-line module, and the answer was no.
+
 **The two reference SDKs disagreed with each other, and one of them with the wire
 specification (2026-09-17).** `polaris-sdk-python` and `polaris-sdk-ts` exist so an integrator
 can build against either and get the same security answer. A differential review found them

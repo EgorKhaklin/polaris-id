@@ -547,7 +547,8 @@ Returns JSON:
 | `issuer_authentic` | bool \| null | PE.3b federation binding: the signature was produced by the token's issuing agency's own registered key. `null` when it cannot be decided (a placeholder signature, or an agency with no registered key) |
 | `status` | string | the token's current lifecycle status, read from the PRIMARY |
 | `status_source` | string | always `primary` — the authorization verdict is made on fresh state, never a stale replica |
-| `currently_authoritative` | bool | the "usable right now" authorization verdict: `status` is `ACTIVE`, read fresh from the primary |
+| `currently_authoritative` | bool | the "usable right now" authorization verdict: `status` is `ACTIVE` **and** `expiration_date` has not passed, read fresh from the primary. Until 2026-09-17 this was `status` alone, and a credential a decade past its stated end answered `true` |
+| `expired` | bool \| null | the credential's own `expiration_date` has passed. `null` when the token does not exist. A NULL expiry never expires |
 | `as_of` | string | ISO-8601 timestamp (primary clock) at which the authorization state was read |
 | `max_staleness_seconds` | int | the freshness bound the authorization verdict guarantees: `0` = primary-backed, no replica lag |
 | `usable` | bool | back-compat convenience: `signature_valid` AND `currently_authoritative` |
@@ -647,7 +648,7 @@ authenticity pack — and receives the verdict. Never any personal data.
 | `api_version` | string | `v1` |
 | `authentic` | bool | the presented signature is the genuine issued signature over `SHA3-256(token_value)` |
 | `issuer_authentic` | bool \| null | signed by the issuing agency's own registered key; `null` when undecidable |
-| `currently_authoritative` | bool | the token is `ACTIVE`, read fresh from the primary |
+| `currently_authoritative` | bool | the token is `ACTIVE` **and** not past its `expiration_date`, read fresh from the primary. The same predicate the operator endpoint uses, so the two cannot disagree |
 | `status` | string \| null | the lifecycle status; `null` when not verifiable |
 | `as_of` | string \| null | ISO-8601 primary-clock time of the authorization read |
 | `usable` | bool | `authentic` AND `currently_authoritative` |
