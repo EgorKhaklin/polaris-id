@@ -41,4 +41,4 @@ coverage>=7.16.0,<8.0
 # The pyflakes-family hygiene gate (unused imports, unused locals, undefined
 # names, placeholder-free f-strings), configured in ruff.toml with select = F.
 # Run by the pre-commit hook and the CI "Ruff" step; formatting is not enforced.
-ruff==0.16.6
+ruff==0.16.7
