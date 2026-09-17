@@ -370,6 +370,19 @@ jobs:
       - name: Check layer — no check passes on a broken tree, or on a missing one
         run: python scripts/polaris-check-mutation-drill.py
 
+      # 2026-09-17 — the OTHER half of that question. Every mutation drill here deletes a
+      # mechanism and requires something to go red, and all of them passed while four
+      # separate properties shipped enforced only on the part somebody had looked at: the
+      # word duress on four operator pages of many, C6 on one of its two halves, C8's regex
+      # accepting a lower bound as a cap, C1's fourteen audit-of-record tables against the
+      # schema's thirty-four. None is an enforcement failure. Each is a check whose "every"
+      # reaches only the members it was handed, which no deletion can reveal because the
+      # member it would delete was never there. So this ADDS one: a new Atlas route with an
+      # unclamped count, a location query with no disclosure clause, an unclassified
+      # append-only table, a migration with no down, an alert with no runbook. No database.
+      - name: Coverage — no surface can grow past the check that quantifies over it
+        run: python scripts/polaris-coverage-mutation-drill.py
+
       # v9.388 (P1.18 item 8) — the external-review packet, RE-CHECKED IN BOTH DIRECTIONS.
       # Every citation resolves and every cited check runs, which is the discipline the 800-63
       # mapping already uses. The new half is the limitations: each carries a WITNESS, a file

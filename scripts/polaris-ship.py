@@ -74,6 +74,16 @@ VERIFICATION = [
      r"|^polaris_checks/checks\.py$",
      ["python3 scripts/polaris-constitution-mutation-drill.py"],
      "a surface where C1-C10 is enforced, or a check that pins one, moved"),
+    # Coverage, which is the other half of the question the drill above asks. That one
+    # deletes a mechanism; this one ADDS a member to a surface that lacks it, because the
+    # defect this project actually keeps finding is a check whose "every" reaches only the
+    # members it was handed. Keyed on checks.py (where reach lives) and on every surface the
+    # drill grows: routes, the schema's guards, the migration set, the alert set, docs/.
+    (r"^polaris_checks/checks\.py$|^polaris_web/app\.py$"
+     r"|^polaris_sql/06_triggers\.sql$|^polaris_sql/migrations/"
+     r"|^deploy/observability/polaris-alerts\.yml$|^docs/design/",
+     ["python3 scripts/polaris-coverage-mutation-drill.py"],
+     "a surface a check quantifies over, or a check that quantifies, moved"),
     (r"^scripts/polaris-.*drill\.(py|sh)$", ["the changed drill itself"], "a drill moved"),
     (r"^deploy/|^polaris_web/Dockerfile|^\.github/workflows/", ["the deploy jobs in CI (helm, rolling, failover drills); nothing runs locally"], "deployment moved"),
 ]
