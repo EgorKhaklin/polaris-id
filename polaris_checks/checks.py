@@ -4261,6 +4261,69 @@ def check_npm_publish_is_staged(root: pathlib.Path) -> list[Finding]:
                "versions that needs, and the runbook carries the 2FA approval step")
 
 
+# 2026-09-17 — there are TWO documented ways to create an admin, and they disagreed about
+# the second factor. `scripts/polaris-create-operator.sh --role admin` set
+# webauthn_required_after to now + 30 days; `polaris-id user-create NAME admin` left the
+# column NULL, which docs/design/webauthn.md reads as "No second factor | The password is
+# sufficient" while the same document states the policy as "the second factor is required
+# for admin". So an admin provisioned through the CLI never had a second factor demanded,
+# and nothing anywhere said the two doors differed.
+#
+# A policy that lives in two places drifts, and this drift was silent because BOTH paths
+# succeed. The check exists to make the next divergence loud.
+def check_admin_mfa_deadline(root: pathlib.Path) -> list[Finding]:
+    sh = _read(root, "scripts/polaris-create-operator.sh")
+    cli = _read(root, "polaris_cli/polaris.py")
+    if not sh or not cli:
+        return _fail("admin_mfa", "the operator-creation script or the CLI is missing")
+
+    m_sh = re.search(r"WEBAUTHN_DEADLINE_SQL=\"now\(\)\s*\+\s*interval\s*'(\d+)\s*days?'\"", sh)
+    if not m_sh:
+        return _fail("admin_mfa",
+                     "polaris-create-operator.sh no longer sets a WebAuthn deadline for a "
+                     "new admin; docs/design/webauthn.md requires the second factor for "
+                     "admin, and a NULL deadline is the state where the password suffices")
+    # The shell script must apply it to admin and NOT to the other roles: the policy is
+    # required for admin, optional for operator, not asked of the auditor.
+    if not re.search(r'\[\[\s*"\$\{ROLE\}"\s*==\s*"admin"\s*\]\]', sh):
+        return _fail("admin_mfa",
+                     "polaris-create-operator.sh sets a deadline but no longer keys it on "
+                     "the admin role; the policy is admin-only")
+
+    m_cli = re.search(r"ADMIN_WEBAUTHN_GRACE_DAYS\s*=\s*(\d+)", cli)
+    if not m_cli:
+        return _fail("admin_mfa",
+                     "polaris_cli defines no ADMIN_WEBAUTHN_GRACE_DAYS; `user-create NAME "
+                     "admin` would leave webauthn_required_after NULL, which is the state "
+                     "docs/design/webauthn.md calls 'the password is sufficient'")
+    if "webauthn_required_after" not in cli:
+        return _fail("admin_mfa",
+                     "polaris_cli names the grace period but its INSERT does not write "
+                     "webauthn_required_after; the constant is decoration")
+    if not re.search(r"WHEN %s = 'admin'", cli):
+        return _fail("admin_mfa",
+                     "polaris_cli writes webauthn_required_after unconditionally; the "
+                     "policy is admin-only, and an operator handed a deadline is a "
+                     "different policy than the one the design record states")
+
+    if m_sh.group(1) != m_cli.group(1):
+        return _fail("admin_mfa",
+                     "the two admin-creation paths disagree on the grace period: the shell "
+                     "script gives %s days, the CLI gives %s. One admin's second factor "
+                     "would fall due before another's for no reason anybody stated"
+                     % (m_sh.group(1), m_cli.group(1)))
+
+    design = _read(root, "docs/design/webauthn.md")
+    if not design or "required for admin" not in design:
+        return _fail("admin_mfa",
+                     "docs/design/webauthn.md no longer states the policy these two paths "
+                     "implement; the number would then be enforced by nothing but itself")
+    return _ok("admin_mfa",
+               "both documented ways to create an admin give the same %s-day WebAuthn "
+               "deadline, neither gives one to an operator or an auditor, and the design "
+               "record states the policy they implement" % m_sh.group(1))
+
+
 # P0.7 — the Rust prover and the Python second witness must build the SAME
 # circuit shape, which means the SAME tree depth. Depth is now runtime-
 # parameterized (POLARIS_ZK_TREE_DEPTH); both sides read that env var and must
@@ -18151,6 +18214,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sbom_trivy_matches_scan,
     check_release_provenance,
     check_npm_publish_is_staged,
+    check_admin_mfa_deadline,
     check_zk_tree_depth_synced,
     check_coverage_gated,
     check_offsite_backup_env_driven,

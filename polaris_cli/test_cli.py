@@ -495,6 +495,48 @@ class UserCreateCommandTests(CLIBaseTestCase):
         self.assertEqual(row['role'], 'operator')
         self.assertTrue(row['is_active'])
 
+    def _deadline_days(self, username):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        with conn.cursor() as cur:
+            cur.execute("""SELECT webauthn_required_after,
+                                  round(extract(epoch from
+                                        (webauthn_required_after - now()))/86400) AS days
+                             FROM AppUser WHERE username=%s""", (username,))
+            row = cur.fetchone()
+        conn.close()
+        self.assertIsNotNone(row, "the account was not created")
+        return row['webauthn_required_after'], row['days']
+
+    def test_a_new_admin_gets_the_webauthn_deadline_the_policy_requires(self):
+        """docs/design/webauthn.md: "the second factor is required for admin", and a NULL
+        `webauthn_required_after` is the state that document calls "the password is
+        sufficient". Until 2026-09-17 this command left it NULL, so every admin created
+        through the CLI sat permanently in the one state the policy forbids, while
+        `scripts/polaris-create-operator.sh --role admin` gave thirty days. Two documented
+        doors onto the same account type, different defaults, nothing saying so."""
+        r = run_cli('user-create', 'mfaadmin1', 'admin', '--password', 'StrongPass123!',
+                    '--justification', 'admin account for the webauthn deadline regression test')
+        self.assertEqual(r.returncode, 0)
+        deadline, days = self._deadline_days('mfaadmin1')
+        self.assertIsNotNone(deadline,
+                             "an admin with no deadline never has a second factor demanded")
+        self.assertEqual(int(days), 30,
+                         "the CLI must give the same grace period as the shell script; "
+                         "check_admin_mfa_deadline pins the two numbers together")
+
+    def test_an_operator_and_an_auditor_get_no_deadline(self):
+        """The other direction, and it matters as much. The policy is admin-only: optional
+        for operator, not asked of the read-only auditor. A fix that handed everybody a
+        deadline would pass the test above while changing the policy."""
+        for role, user in (('operator', 'mfaop1'), ('auditor', 'mfaaud1')):
+            with self.subTest(role=role):
+                r = run_cli('user-create', user, role, '--password', 'StrongPass123!',
+                            '--justification', 'account for the webauthn deadline regression test')
+                self.assertEqual(r.returncode, 0)
+                deadline, _ = self._deadline_days(user)
+                self.assertIsNone(deadline,
+                                  "%s must not be handed a second-factor deadline" % role)
+
     def test_create_user_rejects_short_password(self):
         r = run_cli('user-create', 'shortpw', 'operator', '--password', 'Short1!',
                     '--justification', 'test account created by the CLI suite', expect_success=False)

@@ -196,6 +196,18 @@ Pass `--password` for scripting (less secure: visible in process listings).
 Password complexity is enforced: ≥12 characters, at least one digit, one
 letter, and one symbol.
 
+**An `admin` account is created with a 30-day WebAuthn deadline**, the same one
+`scripts/polaris-create-operator.sh --role admin` sets, because the policy in
+[docs/design/webauthn.md](../docs/design/webauthn.md) requires a second factor
+for admin. During those 30 days the password alone completes a login and the
+interface asks for enrolment; after the deadline with a credential registered
+both are required, and after it with none the login is refused with the recovery
+path named. Operator and auditor accounts get no deadline: the second factor is
+optional for operator and not asked of the read-only auditor. Until 2026-09-17
+this command set no deadline at all, so an admin created here never had a second
+factor demanded; `check_admin_mfa_deadline` now fails the build if the two
+creation paths disagree.
+
 ```bash
 # Interactive (recommended):
 polaris-id user-create alice operator

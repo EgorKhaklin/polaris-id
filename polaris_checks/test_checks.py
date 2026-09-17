@@ -1828,6 +1828,77 @@ def test_npm_publish_is_staged_check_discriminates(tmp_path):
         "must PASS again once every leg is restored"
 
 
+def test_admin_mfa_deadline_check_discriminates(tmp_path):
+    # There are two documented ways to create an admin and they disagreed about the second
+    # factor: the shell script gave 30 days, the CLI left the column NULL, which the design
+    # record reads as "the password is sufficient". Both paths succeeded, so the divergence
+    # was silent. This check exists to make the next one loud.
+    (tmp_path / "scripts").mkdir(parents=True)
+    (tmp_path / "polaris_cli").mkdir(parents=True)
+    (tmp_path / "docs" / "design").mkdir(parents=True)
+    sh = tmp_path / "scripts" / "polaris-create-operator.sh"
+    cli = tmp_path / "polaris_cli" / "polaris.py"
+    design = tmp_path / "docs" / "design" / "webauthn.md"
+
+    SH = ('if [[ "${ROLE}" == "admin" ]]; then\n'
+          '    WEBAUTHN_DEADLINE_SQL="now() + interval \'30 days\'"\n'
+          'else\n    WEBAUTHN_DEADLINE_SQL="NULL"\nfi\n')
+    CLI = ("ADMIN_WEBAUTHN_GRACE_DAYS = 30\n"
+           "INSERT INTO AppUser (username, password_hash, role, webauthn_required_after)\n"
+           "VALUES (%s, %s, %s,\n"
+           "        CASE WHEN %s = 'admin'\n"
+           "             THEN now() + make_interval(days => %s)\n"
+           "             ELSE NULL END)\n")
+    DESIGN = "the second factor is required for admin, optional for operator\n"
+
+    def write(sh_text=SH, cli_text=CLI, design_text=DESIGN):
+        sh.write_text(sh_text, encoding="utf-8")
+        cli.write_text(cli_text, encoding="utf-8")
+        design.write_text(design_text, encoding="utf-8")
+
+    write()
+    assert checks.check_admin_mfa_deadline(tmp_path)[0].level == "OK", \
+        "must PASS when both paths agree on the admin deadline"
+
+    # The defect this was written for: the CLI leaves the column NULL.
+    write(cli_text="# no deadline anywhere\n")
+    assert checks.check_admin_mfa_deadline(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the CLI sets no admin deadline: NULL is the state the design " \
+        "record calls 'the password is sufficient'"
+
+    # The constant present but the INSERT not writing it: decoration.
+    write(cli_text="ADMIN_WEBAUTHN_GRACE_DAYS = 30\nINSERT INTO AppUser (username, role)\n")
+    assert checks.check_admin_mfa_deadline(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the constant exists but no INSERT writes the column"
+
+    # THE ONE THAT MATTERS MOST: both write it, and they disagree. Both paths succeed, so
+    # nothing else in the tree would notice that one admin's second factor falls due months
+    # after another's.
+    write(cli_text=CLI.replace("= 30", "= 90"))
+    out = checks.check_admin_mfa_deadline(tmp_path)[0]
+    assert out.level == "FAIL", "must FAIL when the two paths disagree on the grace period"
+    assert "30" in out.message and "90" in out.message, \
+        "the message must name BOTH numbers, or the reader has to go find the other one"
+
+    # The policy must stay admin-only in each path.
+    write(sh_text=SH.replace('"${ROLE}" == "admin"', '"${ROLE}" != "nobody"'))
+    assert checks.check_admin_mfa_deadline(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the shell script stops keying the deadline on the admin role"
+    write(cli_text=CLI.replace("CASE WHEN %s = 'admin'\n             THEN ", ""))
+    assert checks.check_admin_mfa_deadline(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the CLI writes the deadline unconditionally: handing an operator a " \
+        "deadline is a different policy than the design record states"
+
+    # And the number must stay tied to a stated policy rather than to itself.
+    write(design_text="WebAuthn exists.\n")
+    assert checks.check_admin_mfa_deadline(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the design record no longer states the policy the number serves"
+
+    write()
+    assert checks.check_admin_mfa_deadline(tmp_path)[0].level == "OK", \
+        "must PASS again once every leg is restored"
+
+
 def test_zk_tree_depth_synced_check_discriminates(tmp_path):
     zk = tmp_path / "polaris_zk"
     src = zk / "src"

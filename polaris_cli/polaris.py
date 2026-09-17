@@ -86,6 +86,15 @@ def _require_werkzeug():
 
 USE_COLOR = sys.stdout.isatty() and not os.environ.get('NO_COLOR')
 
+#: Days a new ADMIN account has before its WebAuthn second factor is demanded.
+#: docs/design/webauthn.md states the policy the number serves: required for admin,
+#: optional for operator, not asked of the read-only auditor. The same number is in
+#: `scripts/polaris-create-operator.sh`, the other documented way to create an admin, and
+#: `check_admin_mfa_deadline` fails the build if the two disagree. They did until
+#: 2026-09-17: this command left the column NULL, which the design record reads as "the
+#: password is sufficient", so an admin made here never had a second factor demanded.
+ADMIN_WEBAUTHN_GRACE_DAYS = 30
+
 def _c(code, text):
     return f"\033[{code}m{text}\033[0m" if USE_COLOR else text
 
@@ -1057,19 +1066,42 @@ def cmd_user_create(args):
     conn = connect()
     try:
         with conn.cursor() as cur:
+            # 2026-09-17: this used to INSERT (username, password_hash, role) and leave
+            # webauthn_required_after at its schema default of NULL. docs/design/webauthn.md
+            # reads that state as "No second factor | The password is sufficient", and the
+            # same document states the policy as "the second factor is required for admin,
+            # optional for operator, and not asked of the read-only auditor role". So every
+            # admin created through this command sat permanently in the one state the policy
+            # says an admin must not be in, while `scripts/polaris-create-operator.sh --role
+            # admin`, the other documented way to make an admin, gave thirty days. Two
+            # supported doors onto the same account type with different second-factor
+            # defaults, and nothing anywhere said they differed.
+            #
+            # The value is the shell script's, deliberately, and check_admin_mfa_deadline
+            # fails the build if the two ever disagree again: a policy that lives in two
+            # places drifts, and the drift is silent because both paths succeed.
+            # The deadline is computed in SQL from a bound parameter rather than spliced
+            # into the statement: `make_interval(days => %s)` keeps the number a value.
             # One statement, deliberately: set_config and the INSERT must land on the
             # same pooled connection or the reason never reaches the trigger.
             cur.execute("""
                 SELECT set_config('polaris.actor', %s, true),
                        set_config('polaris.justification', %s, true);
-                INSERT INTO AppUser (username, password_hash, role)
-                VALUES (%s, %s, %s)
+                INSERT INTO AppUser (username, password_hash, role, webauthn_required_after)
+                VALUES (%s, %s, %s,
+                        CASE WHEN %s = 'admin'
+                             THEN now() + make_interval(days => %s)
+                             ELSE NULL END)
                 RETURNING user_id
             """, (args.actor or 'console', args.justification,
-                  args.username.lower(), pw_hash, args.role))
+                  args.username.lower(), pw_hash, args.role,
+                  args.role, ADMIN_WEBAUTHN_GRACE_DAYS))
             new_id = cur.fetchone()['user_id']
             _audit_operator_action(cur, 'ACCOUNT_CREATED', args.username.lower(), new_id,
-                                   "role=%s" % args.role)
+                                   "role=%s webauthn_deadline=%s"
+                                   % (args.role,
+                                      "now+%ddays" % ADMIN_WEBAUTHN_GRACE_DAYS
+                                      if args.role == 'admin' else "none"))
             conn.commit()
         print(green(f"✓ Created user #{new_id}: {args.username} ({args.role})"))
     except psycopg2.errors.UniqueViolation:
