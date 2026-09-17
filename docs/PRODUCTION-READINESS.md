@@ -293,6 +293,29 @@ neither: no contract promises them and no test can be written that shows one bro
 live in the script's own declared list, so the next person to read this does not have to derive
 them again.
 
+**The ten constraints themselves had never been mutation-tested, and one of them was not
+enforced (2026-09-17).** CHECK constraints, triggers, the ZK witnesses, the conformance
+contract, the stored procedures, both SDKs and the Flask application all have a drill that
+inverts a mechanism and requires something to go red. Every one of those asks the question of
+a MECHANISM. Nothing asked it of C1 to C10, which are the claims the mechanisms exist to
+serve. `scripts/polaris-constitution-mutation-drill.py` now does: it deletes each
+constraint's enforcement in turn and requires that constraint's OWN named check to fail.
+
+First run: **nine of ten held, C8 did not.** The clamp on `/api/atlas/points` could be
+deleted, leaving a caller-controlled result-set size unbounded, while `check_c8_atlas_caps`
+reported "all 10 caller-controlled counts across 17 atlas routes are clamped". Its regex
+accepted `limit <= 0` as a cap, which is a LOWER bound; C8 bounds a result set from above, and
+rejecting zero is not a cap. A bare `_ATLAS_MAX` unbound to the parameter did the rest, so a
+constant named anywhere in a route vouched for every count in it. The application suite and
+the check's own detection tests passed throughout. The check's own comment says it was
+written because "the constants existing is not the invariant ... Mechanism present, property
+assumed"; the regex did that one level down, which is worth recording as a thing that happens
+to checks and not only to code.
+
+A file-level audit ran first and came back clean: all ten constraints have pinning checks that
+read every file their claim names. That was not enough, and the gap between "reads the right
+file" and "would notice the enforcement leaving" is the whole reason this drill exists.
+
 **Thirty-one of thirty-seven refusals the application makes were untested, and the login rate
 limiter was the only one of fourteen that anything exercised (2026-09-17).** CHECK constraints
 have been mutation-tested since v9.407, triggers since v9.413, the ZK witnesses since v9.419,
