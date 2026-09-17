@@ -4220,6 +4220,47 @@ def check_release_provenance(root: pathlib.Path) -> list[Finding]:
                "documents the verify command")
 
 
+# 2026-09-16 — the npm job STAGES; it must not publish. `npm stage publish` uploads the
+# tarball and stops, and a maintainer with 2FA approves it before anyone can install it, so
+# a workflow that is compromised or merely run by mistake cannot put code in front of an
+# installer on its own. The control has two halves and only one of them lives here: the
+# other is a checkbox on npmjs.com that this tree cannot see or enforce. So this check holds
+# the half it can, and requires the runbook to carry the half it cannot.
+def check_npm_publish_is_staged(root: pathlib.Path) -> list[Finding]:
+    wf = _read(root, ".github/workflows/publish.yml")
+    if not wf:
+        return _fail("npm_staged", ".github/workflows/publish.yml is missing")
+    if "npm stage publish" not in wf:
+        return _fail("npm_staged",
+                     "the npm job does not use `npm stage publish`; a direct publish reaches "
+                     "installers with no human approval in between")
+    # The direct command must not survive beside the staged one. `npm stage publish` contains
+    # the substring `npm publish` is NOT a superstring of, so this is checked on whole lines.
+    for line in wf.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if re.search(r"(?<!stage )\bnpm publish\b", stripped):
+            return _fail("npm_staged",
+                         "a direct `npm publish` remains in the workflow: %s" % stripped[:90])
+    # `npm stage publish` needs npm 11.15.0 and Node 22.14.0. Without an assertion, an older
+    # `npm@latest` would fail in a way that invites someone to "fix" it back to a direct
+    # publish, which is the outcome the staging exists to prevent.
+    if "11.15.0" not in wf or "22.14.0" not in wf:
+        return _fail("npm_staged",
+                     "the npm job does not assert the versions `npm stage publish` requires "
+                     "(npm 11.15.0, node 22.14.0)")
+    rel = _read(root, "docs/RELEASING.md")
+    if not rel or "npm stage approve" not in rel:
+        return _fail("npm_staged",
+                     "docs/RELEASING.md does not carry `npm stage approve`; a green job now "
+                     "means STAGED, and a runbook that does not say so leaves a release "
+                     "looking published when nothing is installable")
+    return _ok("npm_staged",
+               "the npm job stages rather than publishes, asserts the CLI and runtime "
+               "versions that needs, and the runbook carries the 2FA approval step")
+
+
 # P0.7 — the Rust prover and the Python second witness must build the SAME
 # circuit shape, which means the SAME tree depth. Depth is now runtime-
 # parameterized (POLARIS_ZK_TREE_DEPTH); both sides read that env var and must
@@ -18109,6 +18150,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_sbom_workflow,
     check_sbom_trivy_matches_scan,
     check_release_provenance,
+    check_npm_publish_is_staged,
     check_zk_tree_depth_synced,
     check_coverage_gated,
     check_offsite_backup_env_driven,

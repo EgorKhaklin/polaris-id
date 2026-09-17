@@ -1768,6 +1768,66 @@ def test_release_provenance_check_discriminates(tmp_path):
         "must PASS with attestation, permissions, and a documented verify command"
 
 
+def test_npm_publish_is_staged_check_discriminates(tmp_path):
+    # The control has two halves and this tree owns one: the npm job must STAGE, so that a
+    # maintainer's 2FA approval stands between a workflow run and an installer. The other
+    # half is a checkbox on npmjs.com that nothing here can see, which is why the runbook
+    # step is part of what this check requires.
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    wf = wf_dir / "publish.yml"
+    rel = tmp_path / "docs"
+    rel.mkdir(parents=True)
+    runbook = rel / "RELEASING.md"
+
+    STAGED = ("      - name: npm CLI new enough to stage\n"
+              "        run: |\n"
+              "          need \"$NPM_V\" 11.15.0 \"npm\"\n"
+              "          need \"$NODE_V\" 22.14.0 \"node\"\n"
+              "      - name: Stage the publish\n"
+              "        run: npm stage publish --provenance --access public --tag \"$TAG\"\n")
+    GOOD_RUNBOOK = "npm stage list polaris-sdk-ts\nnpm stage approve <stage-id> --otp <code>\n"
+
+    def write(workflow=STAGED, book=GOOD_RUNBOOK):
+        wf.write_text(workflow, encoding="utf-8")
+        runbook.write_text(book, encoding="utf-8")
+
+    write()
+    assert checks.check_npm_publish_is_staged(tmp_path)[0].level == "OK", \
+        "must PASS on a staged job with the version floors and a runbook approval step"
+
+    write(workflow=STAGED.replace("npm stage publish", "npm publish"))
+    assert checks.check_npm_publish_is_staged(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a direct publish: nothing stands between the run and an installer"
+
+    # The one that matters most, and the one a substring test would miss. Adding the staged
+    # command without REMOVING the direct one leaves the unapproved path open beside it,
+    # and the job would still look like it had been converted.
+    write(workflow=STAGED + "      - run: npm publish --tag next\n")
+    assert checks.check_npm_publish_is_staged(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a direct publish survives BESIDE the staged one"
+
+    # A commented-out direct publish is a note, not a path.
+    write(workflow=STAGED + "      # was: npm publish --tag next\n")
+    assert checks.check_npm_publish_is_staged(tmp_path)[0].level == "OK", \
+        "a mention of the old command in a comment is not a live direct publish"
+
+    for floor in ("11.15.0", "22.14.0"):
+        write(workflow=STAGED.replace(floor, "1.0.0"))
+        assert checks.check_npm_publish_is_staged(tmp_path)[0].level == "FAIL", \
+            "must FAIL without the %s floor: an older toolchain cannot stage, and the " \
+            "obvious repair is a direct publish" % floor
+
+    write(book="Run the workflow and the package is live.\n")
+    assert checks.check_npm_publish_is_staged(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the runbook does not carry the approval step: a green job now " \
+        "means staged, and a reader would think the release was published"
+
+    write()
+    assert checks.check_npm_publish_is_staged(tmp_path)[0].level == "OK", \
+        "must PASS again once every leg is restored"
+
+
 def test_zk_tree_depth_synced_check_discriminates(tmp_path):
     zk = tmp_path / "polaris_zk"
     src = zk / "src"
