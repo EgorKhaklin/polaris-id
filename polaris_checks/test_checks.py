@@ -47,6 +47,56 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     assert out[0].level == "FAIL", "must FAIL when CSP enables 'unsafe-inline' for scripts"
 
 
+def test_c6_app_read_paths_check_discriminates(tmp_path):
+    """C6 is redaction at EVERY read path; the sibling check covers only the Atlas SQL.
+
+    The three legitimate shapes are each asserted, because the risk in a check built on
+    exceptions is that an exception is too generous. "Reads from an atlas_* function" is only
+    safe while the sibling check pins those functions, and "touches no verification table"
+    has to mean exactly that rather than "mentions a lifecycle table somewhere".
+    """
+    (tmp_path / "polaris_web").mkdir()
+    app = tmp_path / "polaris_web" / "app.py"
+    Q = chr(34) * 3          # a triple quote, built rather than nested
+
+    INLINE = ("SELECT ve.event_id, ve.latitude AS lat FROM VerificationEvent ve "
+              "WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE'")
+    FUNC = "SELECT event_id, lat, requestor_location FROM atlas_points_verifications(%s)"
+    LIFECYCLE = "SELECT le.event_id, le.latitude AS lat FROM TokenLifecycleEvent le"
+    LEAK = "SELECT ve.event_id, ve.latitude AS lat FROM VerificationEvent ve"
+
+    def write(queries):
+        app.write_text("\n".join("q = %s\n%s\n%s" % (Q, s, Q) for s in queries))
+
+    def level(queries, expect_in=None):
+        write(queries)
+        out = checks.check_c6_app_read_paths_redact(tmp_path)
+        if expect_in is not None:
+            assert any(expect_in in f.message for f in out), \
+                "expected %r in %r" % (expect_in, [f.message for f in out])
+        return out[0].level
+
+    # The positive control, written in the direct form so `check_detection_controls` can
+    # attribute it: routed through a helper, the meta-check cannot tell which check this
+    # asserts OK for, and it correctly reported the FAIL below as uncontrolled.
+    write([INLINE, FUNC, LIFECYCLE])
+    assert checks.check_c6_app_read_paths_redact(tmp_path)[0].level == "OK", \
+        "must PASS: inline redaction, an atlas function, and a table C6 does not govern"
+
+    # The defect: a verification location with neither a clause nor a function.
+    assert level([INLINE, FUNC, LIFECYCLE, LEAK], "ZERO_KNOWLEDGE") == "FAIL", \
+        "must FAIL on a verification-location query that redacts nothing"
+
+    # Vacuity: too few queries means the parser drifted, not that the tree is clean.
+    assert level([INLINE], "measuring nothing") == "FAIL", \
+        "must FAIL rather than pass over a surface it can no longer see"
+
+    app.write_text("")
+    out = checks.check_c6_app_read_paths_redact(tmp_path)
+    assert out[0].level == "FAIL" and "could not be read" in out[0].message, \
+        "an empty app.py is not a passing set of read paths"
+
+
 def test_json_body_object_check_discriminates(tmp_path):
     """Including the trap this check fell into on its first draft.
 

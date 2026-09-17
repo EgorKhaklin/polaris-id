@@ -3798,6 +3798,57 @@ def _atlas_zk_location_leaks(atlas: str) -> tuple[list, int]:
     return leaks, scanned
 
 
+def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
+    """C6's OTHER half: the event queries in app.py, not only the Atlas SQL.
+
+    MISSION and CLAUDE.md state C6 as redaction at "every read path (the Atlas functions in
+    11_atlas.sql, the event queries in app.py)". `check_c6_atlas_redacts_zk_location` pins the
+    first half thoroughly and nothing pinned the second, so a fifth query selecting a
+    verification location without a ZERO_KNOWLEDGE clause would have shipped green.
+
+    Measured 2026-09-17 before writing this: four SELECTs in app.py touch a location column
+    and all four are correct. Two redact inline, one reads from `atlas_points_verifications`
+    where the redaction lives and is pinned by the sibling check, and one reads
+    TokenLifecycleEvent, which has no disclosure level for C6 to govern. So this pins a
+    property that holds rather than reporting one that does not.
+
+    A query qualifies if ANY of those three is true. The third is the one to be careful with:
+    it is not "mentions a lifecycle table", it is "touches no verification table at all".
+    """
+    name = "c6_app_read_paths"
+    app = _read(root, "polaris_web/app.py")
+    if not app:
+        return _fail(name, "polaris_web/app.py could not be read")
+
+    loc = re.compile(r"\b(requestor_location|latitude|longitude)\b", re.I)
+    offenders, scanned = [], 0
+    for m in re.finditer(r'"""(?:.|\n)*?"""', app):
+        q = m.group(0)
+        if not loc.search(q) or not re.search(r"\bSELECT\b", q, re.I):
+            continue
+        scanned += 1
+        if re.search(r"ZERO_KNOWLEDGE", q):
+            continue                       # redacts inline
+        if re.search(r"\bFROM\s+atlas_\w+\(", q, re.I):
+            continue                       # redaction lives in the SQL function
+        if not re.search(r"VerificationEvent|\bve\.", q, re.I):
+            continue                       # no verification table: C6 does not govern it
+        offenders.append(app[:m.start()].count("\n") + 1)
+
+    if scanned < 3:
+        return _fail(name, "only %d location-reading SELECT(s) found in app.py; the parser and "
+                           "the application have drifted, so this check is measuring nothing"
+                           % scanned)
+    if offenders:
+        return _fail(name, "%d verification-location query(ies) in app.py with no "
+                           "ZERO_KNOWLEDGE clause and no atlas_* function to redact for them, "
+                           "at line(s) %s. C6 is redaction at EVERY read path, not only the "
+                           "Atlas SQL." % (len(offenders), ", ".join(str(n) for n in offenders)))
+    return _ok(name, "all %d location-reading queries in app.py satisfy C6: each redacts "
+                     "zero-knowledge rows inline, reads from an atlas_* function that does, or "
+                     "touches no verification table at all" % scanned)
+
+
 def check_c6_atlas_redacts_zk_location(root: pathlib.Path) -> list[Finding]:
     atlas = _read(root, "polaris_sql/11_atlas.sql")
     leaks, scanned = _atlas_zk_location_leaks(atlas)
@@ -18747,6 +18798,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_helm_reference_profile,
     check_local_clock_convention,
     check_c6_atlas_redacts_zk_location,
+    check_c6_app_read_paths_redact,
     check_coercion_evidence_retained,
     check_zk_verify_anti_replay,
     check_no_migration_column_drift,
