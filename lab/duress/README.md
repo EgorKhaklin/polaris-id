@@ -301,9 +301,57 @@ remembered. The defence is at the render layer, not the query.
 
 ---
 
+## Finding: the enrolment rate IS the signal, and only one adversary has to infer anything
+
+**2026-09-17. Measured. `enrolment_rate.py`.**
+
+The bullet asked: "If few holders enrol, a `DuressEvent` is more identifying, which is the
+same anonymity-set problem measured in `lab/linkability/`." Reading the table first, as
+Finding 6 in that directory taught, the premise does not survive:
+
+    DuressEvent: event_id, token_id, context_id, requesting_agency_id,
+                 event_timestamp, oob_channel, oob_notified_at
+
+**It records `token_id`.** Anyone who can read the row knows which credential signalled and
+therefore which holder. There is no anonymity set to be small and no inference to make, and
+the enrolment rate does not enter into it. That adversary is Coercer 3 above, where the
+conclusion is already that the mechanism is net-negative against lawful or institutional
+access, for exactly this reason.
+
+**So the bullet conflated two adversaries.** The one with an anonymity-set problem is the
+COUNTER WATCHER: whoever scrapes `/metrics` and sees `polaris_duress_events_total` move. They
+learn an alarm fired and roughly when, and nothing else.
+
+For that adversary the candidate set is a **product**: the presentations in the window they
+can resolve, times the share of holders who could have signalled at all. The window is the
+scrape period. Measured across 3 scrape periods, 4 presentation rates and 4 enrolment rates,
+4000 trials each, with a control that forces one presentation and must name the holder:
+
+    27 of the 48 configurations name a SINGLE holder more than half the time
+
+    300s scrape,    1 pres/min,  0.1% enrolled   ->  set 1, certain
+     60s scrape, 1000 pres/min,  0.1% enrolled   ->  set 1, 74% of the time
+     60s scrape, 1000 pres/min,   50% enrolled   ->  set 499
+
+**The bullet was right, and the reason is sharper than it said.** It is not that a rare event
+is vaguely more identifying. At one in a thousand enrolled, the counter names one person at
+the busiest rate in the table. **Low adoption does not dilute the signal; it is the signal**,
+and that is the opposite of how an anonymity set usually behaves, because the set is the
+people who COULD have signalled rather than the people who did something.
+
+This is why the control on `/metrics` is access to the surface rather than suppression of the
+metric, and the route's docstring said so before this was measured. `check_metrics_edge_acl`
+enforces it at two substrates and CI scrapes from outside to prove it. What changed today is
+that the reason is measured instead of asserted.
+
+**What this does not say.** It is a model of arrival times, not a measurement of a
+deployment: presentations are drawn around an expected rate rather than taken from traffic
+nobody has. The shape is what it establishes, and the shape is the finding. It also says
+nothing about the record reader, because there is nothing to measure there: it is a lookup.
+
+---
+
 ## What is still unmeasured
 
 - **Long-run frequency analysis.** The design document accepts it rather than solving it. No
   measurement of how much an attacker learns from aggregate rates.
-- **Enrolment-rate inference.** If few holders enrol, a `DuressEvent` is more identifying,
-  which is the same anonymity-set problem measured in `lab/linkability/`.
