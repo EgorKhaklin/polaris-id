@@ -823,3 +823,65 @@ class TheGrantPinsTheAgentsAlgorithmTests(unittest.TestCase):
         del grant["agent_algorithm"]
         v = V.verify_agent_grant(grant, agent_proof=self._proof(algorithm="ML-DSA-87"))
         self.assertIs(v["agent_proved"], True)
+
+
+class ATrimmedStapleIsStillAHandleTests(unittest.TestCase):
+    """`bounded` must not rest on a container the verifier did not read.
+
+    2026-09-17, lab/linkability measuring the status-artifact bullet. The stable-material
+    list caught a WELL-FORMED status assertion, which always names its credential. It did
+    not catch a TRIMMED one: drop `token_value` and the keys, keep the timestamps, and the
+    verdict said `bounded` while the holder handed over an instant to the second that is
+    byte-identical at every verifier the same assertion is stapled to. Assertions are
+    short-lived and a person doing two things in a row staples one artifact to both.
+
+    This is Finding 1 in a third container, and the reason it keeps recurring is that
+    `bounded` is a claim about a TRANSCRIPT while the fix each time was about a FIELD.
+    """
+
+    BARE = {"format": "polaris-presentation/1", "context_id": 4,
+            "disclosure_level": "ZERO_KNOWLEDGE",
+            "zk_proof": {"proof_hex": "00" * 8,
+                         "public_inputs": {"epoch_root_hex": "ab" * 32, "epoch_id": 5,
+                                           "context_id": 4, "nonce": 7, "scope": 1001,
+                                           "nullifier_hex": "cc" * 32}}}
+
+    def _corr(self, **extra):
+        p = dict(self.BARE)
+        p.update(extra)
+        return V.verify_presentation(p, verifier_scope="RP-1")["correlation"]
+
+    def test_a_bare_zk_presentation_is_still_bounded(self):
+        """The control. Without it every assertion below would pass on a verdict that had
+        simply stopped saying `bounded` at all."""
+        self.assertEqual(self._corr(), "bounded")
+
+    def test_a_status_assertion_trimmed_to_its_timestamps_is_not_bounded(self):
+        for field in ("issued_at", "expires_at"):
+            with self.subTest(field=field):
+                self.assertEqual(self._corr(status_assertion={
+                    "format": "polaris-status-assertion/1", "status": "ACTIVE",
+                    field: "2026-09-17T10:00:00Z"}), "exposed")
+
+    def test_a_holder_binding_trimmed_to_its_instant_is_not_bounded(self):
+        """The binding is fetched once and stapled for its lifetime, so its instant is
+        stable at every verifier that sees it."""
+        self.assertEqual(self._corr(holder_binding={
+            "format": "polaris-holder-binding/1", "bound_at": "2026-09-01T00:00:00Z"}),
+            "exposed")
+
+    def test_the_holder_proofs_instant_is_NOT_treated_as_stable(self):
+        """And it must not be. A holder proof is minted per presentation against the
+        verifier's own nonce, so its instant differs at each verifier by construction.
+        Listing it would make `bounded` unreachable for any holder who proves possession,
+        which is the mistake the epoch-root note in the verifier warns about.
+        """
+        self.assertEqual(self._corr(holder_proof={
+            "format": "polaris-holder-proof/1", "issued_at": "2026-09-17T10:00:00Z",
+            "verifier_nonce": "n1"}), "bounded")
+
+    def test_status_alone_does_not_expose(self):
+        """`ACTIVE` is shared by almost everyone and narrows nothing. A list that counted it
+        would report every stapled presentation as exposed for the wrong reason."""
+        self.assertEqual(self._corr(status_assertion={
+            "format": "polaris-status-assertion/1", "status": "ACTIVE"}), "bounded")

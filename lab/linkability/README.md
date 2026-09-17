@@ -4,7 +4,7 @@
 architecture.** The front door says *issuer-unlinkable*. That is a claim about the issuer.
 This directory is about the other side: two verifiers who kept what they were shown.
 
-**Status: seven findings, four measured studies, most of the threat model still unmeasured.**
+**Status: eight findings, five measured studies, most of the threat model still unmeasured.**
 Findings 1 and 4 came from reading the question carefully enough to build a counterexample,
 and 4 is 1 again in a container the first fix did not look at. Findings 2, 5, 6 and 7 are
 measured, each against the shipped builders rather than a model of them. Finding 3 measures
@@ -12,8 +12,9 @@ the adversary rather than the system, and Finding 5 is what happens when you tak
 seriously: the instrument behind Finding 2 could not have seen the channel it was read as
 clearing. Finding 6 is what happens when you read the artifact before measuring it: two of
 the four fields its question named are not in a presentation at all, and Finding 7 the same
-again, except that there the eighth conditional field was a defect. Seven of the eight are
-set by the verifier's own request. What is listed under
+again, except that there the eighth conditional field was a defect. Finding 8 is Finding 1 in
+a third container, which is the pattern worth naming: `bounded` is a claim about a whole
+transcript, and every repair so far has been a longer list of fields. What is listed under
 "What has NOT been measured" is exactly that, and nothing here should be read as evidence
 that the rest holds.
 
@@ -425,19 +426,77 @@ literal in source order. Format minor version is one value today.
 
 ---
 
+## Finding 8: `bounded` is a claim about a transcript, and the fix keeps being about a field
+
+**2026-09-17. Measured against the shipped verifier. Finding 1 in a third container.**
+
+Status artifacts were the last of the structural bullets. `polaris-status-assertion/1` signs
+`format, token_value, status, issued_at, expires_at`, so a WELL-FORMED assertion always names
+its credential, and `_STABLE_CROSS_VERIFIER_FIELDS` already listed that token value, the
+issuer key and the signature. Stapling one correctly reports `exposed`. That much was
+already right, and measuring it said so:
+
+    well-formed staple             exposed
+
+**A trimmed one did not.** Drop `token_value` and the keys, keep the timestamps, and:
+
+    trimmed staple, timestamps     bounded        <- before
+    binding, bound_at only         bounded        <- before
+
+An assertion's `issued_at` is an instant to the second, and it is byte-identical at every
+verifier the SAME assertion is stapled to. Assertions are short-lived, which is what makes
+this realistic rather than clever: a person doing two things in a row staples one artifact to
+both, and two verifiers comparing that one field link them in a single comparison. The holder
+binding is worse in the same way, because it is fetched once and stapled for its lifetime.
+
+These qualify under the stable list's own stated rule: a value that belongs to this
+credential and travels unchanged to whoever is shown it. They are also far sharper than the
+issuer public key already on that list, which narrows a population to one issuer; an instant
+to the second narrows it to one second.
+
+    trimmed staple, timestamps     exposed        <- after
+    binding, bound_at only         exposed        <- after
+    bare ZK, no staple             bounded        <- unchanged, and the control that matters
+
+**Two things were deliberately NOT added, and saying which is half the finding.** `status`
+is not listed: "ACTIVE" is shared by almost everyone and narrows nothing, which is the
+epoch-root distinction one artifact over. The holder PROOF's `issued_at` is not listed
+either, and must not be: a proof is minted per presentation against the verifier's own nonce,
+so its instant differs at each verifier by construction, and listing it would make `bounded`
+unreachable for any holder who proves possession.
+
+**Why this keeps happening.** Finding 1 was a stable field in the credential. Finding 4 was
+the same in a container the first fix had not enumerated. This is the same again in a third.
+The pattern is that `bounded` is a claim about a WHOLE TRANSCRIPT and every repair so far has
+been a longer list of FIELDS. A list is the right mechanism for a format that is specified
+field by field, and it is also why a completeness test sits beside it, and why the honest
+verdict keeps needing to be re-measured against artifacts rather than re-argued.
+
+**What this does not say.** It does not say the list is complete now; it says three more
+entries earn their place and two do not. It says nothing about timing, which is the last
+bullet below and needs infrastructure this lab does not have. And a `bounded` verdict still
+means only that no field in THIS transcript is identical at another verifier, which is not
+the same as an adversary having no advantage: Finding 6 measured what the anonymity set
+actually is.
+
+---
+
 ## What has NOT been measured
 
 Everything in the threat model except the stable-field case above. In particular, for a
 transcript that now legitimately reports `bounded`:
 
 - **Timing.** Does the interval between presentations, or proving time, carry a signal?
-- **Status artifacts.** A stapled status assertion is signed material with its own
-  timestamps and identifiers.
 
-Three bullets have left this list. Presentation size is Finding 5. Issuer metadata is
-Finding 6, which found that two of the four fields it named are not in a presentation at
-all. Transcript structure is Finding 7, which found that seven of the eight conditional
-fields are set by the verifier's own request and the eighth was a defect.
+Four bullets have left this list. Presentation size is Finding 5. Issuer metadata is Finding
+6, which found that two of the four fields it named are not in a presentation at all.
+Transcript structure is Finding 7, where seven of the eight conditional fields are set by the
+verifier's own request and the eighth was a defect. Status artifacts are Finding 8, where a
+well-formed assertion was already caught and a trimmed one was not.
+
+Timing is the one left, and it is left for a reason rather than by oversight: measuring it
+needs presentation timestamps at two verifiers over a real population, which is
+infrastructure this lab does not have and would have to build honestly rather than model.
 
 The honest statement today: **`bounded` now means no field in the transcript is trivially
 identical across verifiers. It does not mean an adversary has no advantage.** The advantage

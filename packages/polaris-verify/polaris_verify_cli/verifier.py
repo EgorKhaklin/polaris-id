@@ -4267,6 +4267,26 @@ _STABLE_CROSS_VERIFIER_FIELDS = (
     ("status_assertion", "token_value", "the token value named by the stapled status assertion"),
     ("status_assertion", "public_key_hex", "the issuer's public key, from the status assertion"),
     ("status_assertion", "signature_hex", "the issuer's signature over this status assertion"),
+    # 2026-09-17, lab/linkability measuring the status-artifact bullet. The three entries
+    # above catch a WELL-FORMED assertion, which always names its credential. They did not
+    # catch a TRIMMED one: drop `token_value` and the keys, keep the timestamps, and the
+    # verdict reported `bounded` while the holder handed over an instant to the second that
+    # is byte-identical at every verifier the same assertion is stapled to. Assertions are
+    # short-lived and a person doing two things in a row staples one artifact to both.
+    #
+    # These qualify under this list's own rule. `issued_at` belongs to an artifact that
+    # belongs to this credential, and it travels unchanged to whoever is shown it. It is also
+    # far sharper than the issuer key already listed here: that narrows a population to one
+    # issuer, this narrows it to one second. `status` is deliberately NOT listed, because
+    # "ACTIVE" is shared by almost everyone and narrows nothing, which is the epoch-root
+    # distinction one artifact over.
+    ("status_assertion", "issued_at", "the instant the stapled status assertion was issued"),
+    ("status_assertion", "expires_at", "the instant the stapled status assertion expires"),
+    # The same shape on the binding, which is fetched once and stapled for its lifetime, so
+    # its instant is stable across every verifier that sees it. The holder PROOF's instant is
+    # not here and must not be: it is minted per presentation against the verifier's own
+    # nonce, so it differs at each one by construction.
+    ("holder_binding", "bound_at", "the instant the holder binding was made"),
 )
 
 #: Top-level scalars that are the same value at every verifier. `presented_code` is the
