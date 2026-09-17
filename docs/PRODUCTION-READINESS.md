@@ -327,6 +327,23 @@ the only thing between a caller and an unbounded body. The other is that a **bea
 outlived the relying party's standing to use it**: the lookup on every verification is what makes
 withdrawing a relying party take effect immediately rather than when its token happens to expire.
 
+**The 400 and 404 surface is measured and OPEN.** The same drill run with `--all` covers the
+other 76 refusals, the ones answering "that request is malformed" or "there is no such thing"
+rather than "you may not", and 35 of them survive. That is not 35 defects. Most are
+input-validation guards with another guard behind them, so switching one off does not make the
+route accept the input, and what actually matters there is the property `JsonRouteTotalityTests`
+asserts: that no body shape reaches a raise. Asserting it found a real defect nobody had
+mutated, in `request.get_json(silent=True) or {}`, which is truthy for a JSON string, number or
+list, so an anonymous caller could make the unauthenticated authorization endpoint raise by
+sending `"a string"`. Twenty-one routes carried that idiom and now go through one helper, pinned
+by `check_json_body_must_be_an_object`.
+
+What is **not** established is which of those 35 refuse for their own reason and which are
+masked by a neighbour. Declaring them one way or the other without measuring it is the mistake
+the drill exists to catch, so they are recorded as open rather than declared, the drill prints
+how many refusals each run did not examine, and the five that were plainly authentication
+decisions (the assertion ceremony's own state machine) are covered.
+
 Separately, of the fourteen rate limiters the application installs, **the login one was the only
 one any test drove**. `F03_RateLimitingTests` now drives the five holder-facing limiters past
 their bounds; the rest are coarse velocity bounds of 120 to 600 per minute, which a unit test

@@ -11193,6 +11193,65 @@ class WebAuthnCeremonyTests(PolarisTestCase):
     # -- mutation drill switched each of them off (2026-09-17). Every one of them is an
     # -- authentication decision, and the suite stayed green without it.
 
+    def test_the_assertion_ceremony_refuses_every_state_it_was_not_started_from(self):
+        """The ceremony's own state machine: five refusals, none of them tested.
+
+        2026-09-17, from the application mutation drill's 400 sweep. These are what stop an
+        assertion being driven from outside the flow that created it. Without them a caller
+        who never presented a password can ask for a challenge, and one who has a challenge
+        can finish without naming a credential. They answer 400 rather than 401 because they
+        describe a request that makes no sense, not a credential that failed, and the
+        distinction is deliberate: a 401 here would tell a prober that the account exists.
+        """
+        fresh = flask_app.app.test_client()
+
+        # begin, with no password step at all
+        r = fresh.post('/auth/webauthn/assert/begin')
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        self.assertIn('no pending', r.get_json()['error'])
+
+        # finish, likewise
+        r = fresh.post('/auth/webauthn/assert/finish', json={'id': 'x'})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('no pending', r.get_json()['error'])
+
+        # An account with NO enrolled credential cannot start an assertion either. The
+        # admin in this fixture has none until a test enrolls one.
+        pwd = flask_app.app.test_client()
+        r = pwd.post('/login', data={'username': 'admin',
+                                     'password': TEST_PASSWORDS['admin']})
+        self.assertEqual(r.status_code, 302)
+        self.assertNotIn('/auth/webauthn/assert', r.headers['Location'],
+                         'with no credential enrolled the login completes; this leg is '
+                         'about a caller who asks for a challenge anyway')
+        r = pwd.post('/auth/webauthn/assert/begin')
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+
+        # And with a credential enrolled, `finish` still refuses a body naming none: the
+        # challenge is consumed on the way past, so this is one shot wasted, not a retry.
+        auth = _SyntheticAuthenticator('es256')
+        self._enroll(auth)
+        client = flask_app.app.test_client()
+        r = client.post('/login', data={'username': 'admin',
+                                        'password': TEST_PASSWORDS['admin']})
+        self.assertIn('/auth/webauthn/assert', r.headers['Location'])
+        self.assertEqual(client.post('/auth/webauthn/assert/begin').status_code, 200)
+        r = client.post('/auth/webauthn/assert/finish', json={'not_an_id': 'x'})
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        self.assertIn('credential id', r.get_json()['error'])
+        self.assertEqual(client.get('/dashboard').status_code, 302,
+                         'a refused finish leaves no usable session')
+
+    def test_registration_cannot_be_finished_without_a_challenge(self):
+        """`register/finish` with no challenge in the session is refused.
+
+        The challenge is what binds a registration to the ceremony the server started. A
+        finish that supplies its own would be an enrolment the server never asked for.
+        """
+        r = self.client.post('/auth/webauthn/register/finish', json={'id': 'x'},
+                             headers={'X-CSRFToken': self._csrf()})
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+
     def test_an_authenticator_model_refused_by_policy_cannot_complete_a_LOGIN(self):
         """The model policy binds on the ASSERTION path, not only at enrolment.
 
