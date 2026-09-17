@@ -98,6 +98,13 @@ SURVIVORS_EXPECTED = (
     "verify_agent_grant.pairwise_handle",
     "verify_agent_grant.principal_bound",
     "verify_agent_grant.revoked",
+    # 2026-09-17: `valid_until` was added to the attestation verdict when the trust edge's
+    # own window started being enforced, and it is the window ECHOED BACK, not a decision.
+    # Forcing it permissive changes no verdict because nothing downstream reads it: the
+    # decision is `expired`, and the acceptance is `verify_cross_authority`, which refuses an
+    # expired edge. A field that reports an input cannot be constrained by a case, because
+    # there is no case in which it being wrong changes an answer.
+    "verify_attestation.valid_until",
     "verify_cosignature.witness_matches",
     "verify_cross_authority.authentic",
     "verify_cross_authority.revoked",
