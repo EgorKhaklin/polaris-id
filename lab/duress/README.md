@@ -188,11 +188,54 @@ nothing about the three items below.
 
 ---
 
+## Finding: the operator as coercer, audited surface by surface
+
+**2026-09-17. Audited against the code, not argued.** This was on the unmeasured list as
+"every safeguard assumes the operator is neutral". Enumerating what an OPERATOR-role account
+can actually reach found the premise mostly wrong, and saying so is more useful than leaving
+the bullet to imply an open hole.
+
+Every surface that touches `DuressEvent`, with its guard:
+
+| Surface | Guard | Covered by |
+|---|---|---|
+| `/duress`, `/api/duress/events`, `/api/duress/record` | `require_role('admin')` | `test_duress_dashboard_blocked_for_operator`, `test_api_duress_events_operator_rejected` |
+| `/dashboard` duress panel and 24-hour count | `privileged_view = role in (admin, auditor)`, in the template | `test_duress_is_visible_to_admin_and_auditor_only` |
+| `/verifications` | operator-reachable, and shows nothing | a test asserting the operator view does not reveal duress |
+| `/metrics`, `/api/metrics` | unauthenticated BY DESIGN, restricted at the edge | `check_metrics_edge_acl`, plus a CI job that scrapes from outside |
+
+The metrics row is the interesting one and the tree already says so in the route's own
+docstring: `polaris_duress_events_total` is a page-able alarm, whoever can scrape it learns
+that a duress alarm fired and roughly when, and the control is **access to the surface, not
+suppression of the metric**, because the audience that needs to page is the audience that
+would learn it. That control is enforced at two substrates, the Caddyfile and the Helm
+configmap, each requiring a named matcher and a `respond 404`, and
+`check_metrics_edge_acl` fails the build if either loses it or if CI stops exercising it.
+
+**One real gap, and it was in a test rather than the system.**
+`test_duress_is_visible_to_admin_and_auditor_only` logged in as admin and as operator and
+never as an AUDITOR. Narrowing the template guard to `role == 'admin'` passed it while its
+name still claimed otherwise. The auditor leg is there now, and the mutation turns it red.
+
+**What remains, and it is narrower than the bullet was.** The guards separate OPERATOR from
+admin and auditor. An admin or auditor who is the coercer sees everything, and no guard in
+this table helps: that person is the authority. That is not a new finding, it is Coercer 3
+above, where this directory's conclusion is already that the mechanism is **net-negative**,
+because the duress record is append-only and institutional access reads it. The honest
+statement is that the operator-as-coercer question decomposes into a part that is handled and
+tested, and a part that is Coercer 3 and was never claimed to be solved.
+
+**One structural note for whoever changes the dashboard.** The duress query in
+`_dashboard_model` runs for every role; only the template withholds it. There is exactly one
+caller today and it renders HTML, so nothing leaks. A JSON variant of that model, added
+later, would carry the duress counts and the latest instant with it unless its author
+remembered. The defence is at the render layer, not the query.
+
+---
+
 ## What is still unmeasured
 
 - **Long-run frequency analysis.** The design document accepts it rather than solving it. No
   measurement of how much an attacker learns from aggregate rates.
-- **The operator as coercer.** Every safeguard assumes the operator is neutral. An operator
-  who is the coercer sees the terminal the code is typed on.
 - **Enrolment-rate inference.** If few holders enrol, a `DuressEvent` is more identifying,
   which is the same anonymity-set problem measured in `lab/linkability/`.

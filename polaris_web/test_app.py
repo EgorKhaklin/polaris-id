@@ -1023,9 +1023,21 @@ class DashboardAnalyticsTests(PolarisTestCase):
                         'past their expiry date', 'signed under a classical algorithm')
 
     def test_duress_is_visible_to_admin_and_auditor_only(self):
-        body = self.client.get('/dashboard').get_data(as_text=True)
-        self.assertIn('duress signals in the last 24 hours', body)
-        self.assertIn('Duress signals', body)
+        """All three roles, because the name says three.
+
+        2026-09-17, auditing the operator-as-coercer question in lab/duress: this asserted
+        admin and operator and never logged in as an AUDITOR, so narrowing `privileged_view`
+        to `role == 'admin'` would have passed it while the name still claimed otherwise. A
+        green test proves what it exercises, not what it is called.
+        """
+        for role in ('admin', 'auditor'):
+            with self.subTest(role=role):
+                self._logout()
+                self._login(role)
+                body = self.client.get('/dashboard').get_data(as_text=True)
+                self.assertIn('duress signals in the last 24 hours', body)
+                self.assertIn('Duress signals', body)
+        self._logout()
         self._login('operator')
         body = self.client.get('/dashboard').get_data(as_text=True)
         self.assertNotIn('duress signals in the last 24 hours', body)
