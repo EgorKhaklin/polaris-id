@@ -82,6 +82,32 @@ def _drop_regex(text: str, pattern: str) -> str:
 #: The expected check is asserted BY NAME: a mutation that turns some unrelated check red is
 #: not evidence that this constraint is pinned, and counting failures rather than naming one
 #: is how a drill flatters itself.
+def _in_app_package(needle):
+    """Resolve to whichever module of polaris_web/ carries this text, at run time.
+
+    A mutation that names a PATH stops finding its target the moment the code moves, and a
+    drill that cannot find its target proves nothing. app.py is being decomposed into route
+    modules, and on 2026-09-18 the Atlas left it: C8's clamp went to atlas_routes.py and this
+    drill raised "the mutation changed nothing" on the next run, which is the assertion below
+    doing its job rather than a failure of the move.
+
+    So the target is resolved the way the check layer resolves its inputs, by looking in the
+    PACKAGE rather than at a file. Exactly one module must carry the text: zero means the
+    mutation is stale and is silently testing nothing, and more than one means the mutation
+    would change only the first and the drill would credit a check that noticed the other.
+    """
+    def resolve():
+        hits = [q for q in sorted((ROOT / "polaris_web").glob("*.py"))
+                if not q.name.startswith("test_") and needle in q.read_text()]
+        if len(hits) != 1:
+            raise AssertionError(
+                "the mutation target is in %d modules of polaris_web/ (%s); it must be in "
+                "exactly one, or this mutation is stale or ambiguous: %r"
+                % (len(hits), ", ".join(h.name for h in hits) or "none", needle[:70]))
+        return hits[0].relative_to(ROOT).as_posix()
+    return resolve
+
+
 MUTATIONS = [
     ("C1", "polaris_sql/06_triggers.sql",
      lambda t: _drop_regex(t, r"CREATE TRIGGER \w+[^;]*?EXECUTE FUNCTION reject_audit_modification\(\);"),
@@ -95,10 +121,10 @@ MUTATIONS = [
     ("C3", "polaris_sql/02_indexes.sql",
      lambda t: _drop_regex(t, r"CREATE UNIQUE INDEX uq_one_active_per_person[\s\S]*?;"),
      "c3_one_active", "the partial unique index behind one active token per person"),
-    ("C4", "polaris_web/security.py",
+    ("C4", _in_app_package('"RETURNING failed_login_count",'),
      lambda t: t.replace('"RETURNING failed_login_count",', '"",', 1),
      "c4_atomic_login", "the counter stops being read and written in one statement"),
-    ("C5", "polaris_web/security.py",
+    ("C5", _in_app_package("script-src 'self'"),
      lambda t: t.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'", 1),
      "csp", "the response policy starts admitting inline script"),
     ("C6", "polaris_sql/11_atlas.sql",
@@ -108,7 +134,7 @@ MUTATIONS = [
      lambda t: t.replace('ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")',
                          'ACCEPTED_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87", "ECDSA-P256")', 1),
      "algorithm_agility", "a classical algorithm joins the accepted-signer allowlist"),
-    ("C8", "polaris_web/app.py",
+    ("C8", _in_app_package("limit = min(int(request.args.get('limit', '500')), _ATLAS_MAX_POINTS)"),
      lambda t: t.replace("limit = min(int(request.args.get('limit', '500')), _ATLAS_MAX_POINTS)",
                          "limit = int(request.args.get('limit', '500'))", 1),
      "c8_atlas_caps", "one Atlas route stops clamping a caller-controlled count"),
@@ -209,7 +235,10 @@ def main() -> int:
     print()
     # Only the files this drill REWRITES. Asking about the whole tree makes the drill refuse
     # to run because of its own untracked self, which is how the first invocation went.
-    touched = sorted({rel for _c, rel, _m, _e, _w in MUTATIONS})
+    # A resolved target is looked up NOW, so a stale mutation is reported here rather
+    # than after the first seven cases have already run.
+    touched = sorted({rel() if callable(rel) else rel
+                      for _c, rel, _m, _e, _w in MUTATIONS})
     dirty = subprocess.run(["git", "status", "--porcelain", "--"] + touched,
                            cwd=str(ROOT), capture_output=True).stdout.decode().strip()
     if dirty:
@@ -231,7 +260,7 @@ def main() -> int:
     cases = [m for m in MUTATIONS if not args.only or m[0] == args.only.upper()]
     survivors, results = [], []
     for cid, rel, mutate, expected, what in cases:
-        path = ROOT / rel
+        path = ROOT / (rel() if callable(rel) else rel)
         original = path.read_text()
         try:
             path.write_text(_mutate_c9(original) if cid == "C9" else mutate(original))
