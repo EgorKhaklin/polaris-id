@@ -53,6 +53,20 @@ _ok_all = True
 _cases_recorded = 0
 
 
+def _files_under(d):
+    """Source files of a package a MODELS binding may name, skipping tests.
+
+    A binding must resolve against the product, not against a test that happens to mention the
+    object: a spec bound to its own test suite is a spec bound to nothing."""
+    for base, dirs, names in os.walk(d):
+        dirs[:] = [x for x in dirs if x not in ("__pycache__", "venv", ".venv", "node_modules",
+                                                "target", "templates", "static")]
+        for n in sorted(names):
+            if n.startswith("test_") or not n.endswith((".py", ".sql", ".rs", ".ts", ".js")):
+                continue
+            yield os.path.join(base, n)
+
+
 def _row(label, got, want):
     global _cases_recorded
     _cases_recorded += 1
@@ -102,7 +116,7 @@ def main():
     _row("every spec has a companion .cfg on disk", unconfigured, [])
 
     # THE BINDINGS RESOLVE. This is the drift answer.
-    unresolved, bindings = [], 0
+    unresolved, bindings, package_scoped = [], 0, []
     for spec in specs:
         text = open(os.path.join(TLA_DIR, spec)).read()
         for obj, path in re.findall(r"MODELS:\s*(\S+)\s+IN\s+(\S+)", text):
@@ -110,10 +124,32 @@ def main():
             target = os.path.join(ROOT, path)
             if not os.path.exists(target):
                 unresolved.append("%s: no such file %s" % (spec, path))
+            elif os.path.isdir(target):
+                # A binding may name a PACKAGE rather than a file. app.py is being decomposed
+                # into route modules, and on 2026-09-18 StatusFreshness stopped resolving
+                # because the status-assertion route moved to rp_api.py while the binding still
+                # said polaris_web/app.py. What a spec models is a mechanism, not a file, so a
+                # binding that names the package survives the mechanism moving within it, and
+                # still fails when the mechanism leaves the package entirely.
+                hits = [f for f in sorted(_files_under(target))
+                        if obj in open(f, errors="replace").read()]
+                if not hits:
+                    unresolved.append("%s: %s not found anywhere in %s/" % (spec, obj, path))
+                else:
+                    # Printed, not just counted. A package-scoped binding is a WEAKER claim
+                    # than a file-scoped one: it says the mechanism is somewhere in the
+                    # package, not where. Saying where it landed keeps that visible, so the
+                    # weakening is a thing a reader can see rather than a thing that happened.
+                    package_scoped.append("%s: %s in %s" % (
+                        spec, obj, ", ".join(os.path.relpath(h, ROOT) for h in hits[:3])))
             elif obj not in open(target).read():
                 unresolved.append("%s: %s not found in %s" % (spec, obj, path))
     _row("every MODELS binding resolves against the tree", unresolved, [])
     _note("bindings resolved", bindings)
+    if package_scoped:
+        _note("...of which scoped to a package, not a file", len(package_scoped))
+        for line in package_scoped:
+            print("        %s" % line)
     _row("...and the specs actually declare some",
          bindings >= len(specs), True)
 

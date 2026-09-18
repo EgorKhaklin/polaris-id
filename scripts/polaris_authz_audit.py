@@ -35,7 +35,7 @@ import sys
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-APP_PY = ROOT / "polaris_web" / "app.py"
+WEB = ROOT / "polaris_web"
 GRANTS_SQL = ROOT / "polaris_sql" / "09_grants.sql"
 SCHEMA_SQL = ROOT / "polaris_sql" / "01_schema.sql"
 AUTH_SQL = ROOT / "polaris_sql" / "10_auth.sql"
@@ -60,10 +60,19 @@ def parse_app_routes() -> list[dict[str, Any]]:
       - csrf_protect (bool)
       - function_name + line number for citation
     """
-    if not APP_PY.exists():
+    if not WEB.is_dir():
         return []
-    src = APP_PY.read_text(errors="replace")
-    lines = src.splitlines()
+    # Every non-test module of the package, not app.py alone. app.py is being decomposed into
+    # route modules, and on 2026-09-18 this audit silently narrowed from 120 routes to the 66
+    # still in app.py: it reported "no routes have a role gate without a login gate" over two
+    # thirds of the application and said nothing about the rest. An authorization audit that
+    # names a file audits that file, and calls it the application.
+    modules = [f for f in sorted(WEB.glob("*.py")) if not f.name.startswith("test_")]
+    lines, origin = [], []
+    for f in modules:
+        for n, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
+            lines.append(line)
+            origin.append((f.name, n))
 
     routes = []
     i = 0
@@ -85,7 +94,9 @@ def parse_app_routes() -> list[dict[str, Any]]:
         roles: list[str] = []
         csrf_protect = False
         func_name = "<unknown>"
-        func_line = i + 1
+        # Citations are (module, line) now, resolved through `origin`: `j + 1` is an index into
+        # the concatenated package and would cite a line number in the wrong file.
+        func_module, func_line = origin[i]
         j = i + 1
         while j < len(lines):
             ln = lines[j]
@@ -103,7 +114,7 @@ def parse_app_routes() -> list[dict[str, Any]]:
             m_def = re.match(r"^def\s+(\w+)\s*\(", ln)
             if m_def:
                 func_name = m_def.group(1)
-                func_line = j + 1
+                func_module, func_line = origin[j]
                 break
             j += 1
 
@@ -114,6 +125,7 @@ def parse_app_routes() -> list[dict[str, Any]]:
             "required_roles": roles,
             "csrf_protect": csrf_protect,
             "function": func_name,
+            "module": func_module,
             "line": func_line,
         })
         i = j + 1
