@@ -18252,9 +18252,14 @@ def check_oid4vp_verifier_boundary(root: pathlib.Path) -> list[Finding]:
     if not src:
         return _fail("oid4vp_boundary", "%s is missing" % _OID4VP_REL)
 
+    # The whole package, not four files named by hand. The package has six modules and this
+    # list had four, so __init__.py and cli.py were unscanned: a module importing psycopg2
+    # passed with an OK that still said the package imports no Polaris code (measured
+    # 2026-09-18, the same defect as check_detached_verifier's). The promise is that
+    # verifying one presentation needs no database and no operator console, which is a
+    # property of what gets INSTALLED, so the scan has to be the installed thing.
+    surface = _read_package(root, "packages/polaris-oid4vp/polaris_oid4vp") or src
     for mod in _OID4VP_FORBIDDEN:
-        surface = src + _read(root, _OID4VP_JWE_REL) + _read(root, _OID4VP_SERVE_REL) \
-            + _read(root, _OID4VP_VERIFIER_REL)
         if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", surface, re.M):
             return _fail("oid4vp_boundary",
                          "the OpenID4VP verifier imports %r. It is a separate package so that "

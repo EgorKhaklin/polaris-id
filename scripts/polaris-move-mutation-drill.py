@@ -145,6 +145,19 @@ def fetch_status(url):
 '''
 
 
+_DBDRIVER = '''"""MUTATION: a module of the kind an oid4vp split would produce.
+
+polaris-oid4vp is a separate package so that verifying one presentation does not require
+installing the operator console or a database. An import is how that stops being true, and
+the boundary scan enumerated four of the package's six modules by hand."""
+import psycopg2
+
+
+def cached_status(token):
+    return psycopg2.connect("").cursor()
+'''
+
+
 #: (expected check, what moved, module name, payload).
 #: Every payload is one the coverage drill catches in app.py. If a case survives here, the
 #: difference is the FILE and nothing else, which is the whole measurement.
@@ -169,16 +182,22 @@ MOVES = [
     # standalone.
     ("detached_verifier", "network code moves into a sibling of the detached verifier",
      "status_client_moved", _NETWORK, "verify"),
+    # The same promise on the other shipped verifier. polaris-oid4vp exists so that
+    # verifying one presentation needs no database and no operator console, and its boundary
+    # scan named four files by hand in a six-module package.
+    ("oid4vp_boundary", "a database driver moves into a sibling of the OpenID4VP verifier",
+     "db_cache_moved", _DBDRIVER, "oid4vp"),
 ]
 
 
 VERIFY_PKG = ROOT / "packages" / "polaris-verify" / "polaris_verify_cli"
+OID4VP_PKG = ROOT / "packages" / "polaris-oid4vp" / "polaris_oid4vp"
 
 #: Modules land beside the file whose mechanism they are taking, so a case names its
 #: package. polaris-verify is here for the same reason polaris_web is: one 4,806-line file
 #: that 40 checks read by path, and a promise ("contains no code that could reach a
 #: network") that is about the package rather than about that file.
-_PKG = {"web": WEB, "verify": VERIFY_PKG}
+_PKG = {"web": WEB, "verify": VERIFY_PKG, "oid4vp": OID4VP_PKG}
 
 
 def _target(case):
