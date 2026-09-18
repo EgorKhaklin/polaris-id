@@ -11109,7 +11109,7 @@ def test_transparency_program_check_discriminates(tmp_path):
         "a report that does not say it cannot show an unrecorded access must FAIL"
 
 
-def test_no_module_imports_a_conditional_name_check_discriminates(tmp_path):
+def test_no_module_imports_an_unstable_name_check_discriminates(tmp_path):
     # 2026-09-18, found while moving the second block out of app.py. app.py imports
     # prometheus_client in a module-level try whose except arm binds _PROM_AVAILABLE = False and
     # nothing else, so _METRICS_DURESS and its siblings exist only when the library is
@@ -11129,7 +11129,7 @@ def test_no_module_imports_a_conditional_name_check_discriminates(tmp_path):
         for name, body in files.items():
             (web / name).write_text(body)
 
-    check = checks.check_no_module_imports_a_conditional_name
+    check = checks.check_no_module_imports_an_unstable_name
 
     # THE CORRECT ARRANGEMENT: the conditional name is reached as an ATTRIBUTE, which resolves
     # at use time behind the same guard that decided whether it was ever bound.
@@ -11175,6 +11175,54 @@ def test_no_module_imports_a_conditional_name_check_discriminates(tmp_path):
     result = check(tmp_path)[0]
     assert result.level == "FAIL", "the hazard is cross-module, not app.py-specific"
     assert "helper.py" in result.message
+
+    # THE SECOND SHAPE: a lazily-filled memo, rebound from inside a function with `global`.
+    # app.py has one, _RP_DUMMY_HASH: None until the first relying-party credential check fills
+    # it, and it is what the constant-time path compares against when no such client exists. An
+    # importer holds the None forever, the equalization stops working, and nothing fails: the
+    # endpoint answers, faster, for one class of input.
+    MEMO = ("MEMO = None\n\n\ndef get():\n    global MEMO\n    if MEMO is None:\n"
+            "        MEMO = 1\n    return MEMO\n")
+    write({"app.py": MEMO + "app = 1\n", "routes.py": "from app import MEMO\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "importing a name rebound under `global` must be caught"
+    assert "MEMO" in result.message
+    assert "global" in result.message, "and the SHAPE named, since the remedy differs"
+
+    # Calling the accessor is the correct door, and must not be flagged.
+    write({"app.py": MEMO + "app = 1\n",
+           "routes.py": "import app\n\ndef f():\n    return app.get()\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "reaching a memo through its accessor resolves at use time"
+
+    # A `global` DECLARED but never assigned does not make the name unstable.
+    write({"app.py": "READY = 1\n\n\ndef f():\n    global READY\n    return READY\n"
+                     "app = 1\n",
+           "routes.py": "from app import READY\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "a global statement with no assignment rebinds nothing"
+
+    # An AUGMENTED assignment under `global` is a rebind too.
+    write({"app.py": "COUNT = 0\n\n\ndef bump():\n    global COUNT\n    COUNT += 1\n"
+                     "app = 1\n",
+           "routes.py": "from app import COUNT\n"})
+    assert check(tmp_path)[0].level == "FAIL", "`global COUNT; COUNT += 1` rebinds the name"
+
+    # THE THIRD SHAPE: assigned more than once at module level, so what an importer gets
+    # depends on when it imported rather than on anything the author wrote.
+    write({"app.py": "X = 1\nX = 2\napp = 1\n", "routes.py": "from app import X\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "a name assigned twice at module level is not one binding"
+    assert "twice" in result.message or "2 times" in result.message
+
+    # MUTATED IN PLACE IS NOT REBOUND. app.py's Atlas cache is a dict that is only ever
+    # mutated, never reassigned, so an importer shares the same object and sees every change.
+    # Flagging it would make the check refuse the arrangement that is actually correct.
+    write({"app.py": "CACHE = {}\n\n\ndef put(k, v):\n    global CACHE\n    CACHE[k] = v\n"
+                     "app = 1\n",
+           "routes.py": "from app import CACHE\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "an item assignment is a mutation of the object, not a rebinding of the name"
 
     # VACUITY: an empty tree must not pass.
     write({"app.py": "", "routes.py": ""})

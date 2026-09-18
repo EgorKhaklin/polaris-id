@@ -16521,15 +16521,26 @@ def check_route_modules_register_under_both_entry_points(root: pathlib.Path) -> 
                % (alias_at, len(importers), ", ".join(importers)))
 
 
-def _conditionally_defined(tree: ast.Module) -> set:
-    """Module-level names this module binds on SOME import paths and not others.
+def _unstable_module_names(tree: ast.Module) -> dict:
+    """Module-level names whose binding at IMPORT time is not the binding at USE time.
 
-    A name assigned inside a module-level `try` whose handlers do not also assign it, or in one
-    arm of a module-level `if` and not the other, exists only when that path was taken. Inside
-    the module that is safe, because every use sits behind the same runtime guard that decided
-    the path. Across a module boundary it is not: `from that_module import the_name` runs at
-    import time, ahead of any guard, and raises ImportError on the path where the name was never
-    bound."""
+    `from that_module import the_name` copies a binding once, when the importing module loads.
+    That is correct only for a name the defining module binds exactly once, unconditionally,
+    before anyone imports it. Three shapes break it, and all three are invisible at the import
+    site:
+
+    BOUND ON ONLY SOME PATHS. A name assigned inside a module-level `try` whose handlers do not
+    also assign it, or in one arm of a module-level `if`. Inside the defining module every use
+    sits behind the same runtime guard that decided the path, so the name is never looked up
+    where it was not bound. The import runs ahead of any guard and raises ImportError.
+
+    REBOUND LATER WITH `global`. A lazily-filled memo is `None` at import time and something
+    else after first use. An importer holds the None forever.
+
+    ASSIGNED MORE THAN ONCE AT MODULE LEVEL. The importer gets whichever value was current when
+    it loaded, which is a function of import order rather than of anything the author wrote.
+
+    Returns name -> the reason, so a finding can say which shape it is."""
     def assigned(stmts) -> set:
         out = set()
         for n in stmts:
@@ -16541,55 +16552,88 @@ def _conditionally_defined(tree: ast.Module) -> set:
                         out.add((a.asname or a.name).split(".")[0])
         return out
 
-    cond = set()
+    out = {}
     for n in tree.body:
         if isinstance(n, ast.Try):
             # Bound on every path only if EVERY handler rebinds it (or the else/finally does).
             always = (set.intersection(*[assigned(h.body) for h in n.handlers])
                       if n.handlers else set())
             always |= assigned(n.orelse) | assigned(n.finalbody)
-            cond |= assigned(n.body) - always
+            for nm in assigned(n.body) - always:
+                out.setdefault(nm, "is bound only on the path a module-level try took")
         elif isinstance(n, ast.If):
             taken, other = assigned(n.body), assigned(n.orelse)
-            cond |= (taken - other) | (other - taken)
-    return cond
+            for nm in (taken - other) | (other - taken):
+                out.setdefault(nm, "is bound in only one arm of a module-level if")
+
+    # Assigned more than once at module level.
+    seen = {}
+    for n in tree.body:
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    seen[t.id] = seen.get(t.id, 0) + 1
+    for nm, count in seen.items():
+        if count > 1:
+            out.setdefault(nm, "is assigned %d times at module level" % count)
+
+    # Rebound from inside a function with `global`.
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        declared = {nm for g in ast.walk(fn) if isinstance(g, ast.Global) for nm in g.names}
+        if not declared:
+            continue
+        for node in ast.walk(fn):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = [node.target]
+            for t in targets:
+                if isinstance(t, ast.Name) and t.id in declared:
+                    out.setdefault(t.id, "is rebound from inside %s() with `global`" % fn.name)
+    return out
 
 
-def check_no_module_imports_a_conditional_name(root: pathlib.Path) -> list[Finding]:
-    """No application module imports BY NAME something another one defines only sometimes.
+def check_no_module_imports_an_unstable_name(root: pathlib.Path) -> list[Finding]:
+    """No application module imports BY NAME something another one does not bind once and keep.
 
-    Found while moving the second block out of app.py (2026-09-18). app.py imports
-    prometheus_client in a module-level try, and the `except ImportError` arm binds
-    `_PROM_AVAILABLE = False` and nothing else. So `_METRICS_DURESS`, `_METRICS_VERIFICATIONS`
-    and twenty-two of their siblings exist only when the library is installed. Inside app.py
-    every use of them sits behind `if _PROM_AVAILABLE:`, so the name is never looked up on the
-    path where it was not bound, and the arrangement is correct.
+    Found while moving blocks out of app.py (2026-09-18). `from app import X` copies a binding
+    at import time. app.py has names that are not one fixed binding:
 
-    It stops being correct the moment the code using them moves. `from app import
-    _METRICS_DURESS` at the top of a route module runs at import time, before any guard, and
-    raises ImportError where the library is absent. app.py imports its route modules, so the
-    failure is not a missing metric: the application does not start at all, in a configuration
-    the try/except exists to support.
+    _METRICS_VERIFICATIONS and twenty-two siblings are bound inside a module-level `try` for
+    prometheus_client whose `except ImportError` arm binds `_PROM_AVAILABLE = False` and nothing
+    else. Inside app.py every use sits behind `if _PROM_AVAILABLE:` and the name is never looked
+    up on the path where it was not bound, which is correct. `from app import
+    _METRICS_VERIFICATIONS` in a route module runs ahead of that guard, and because app.py
+    imports its route modules, the application does not start at all where the library is
+    absent. Measured both ways on 2026-09-18.
 
-    This is a hazard OF the decomposition specifically. The names are safe where they are, and
-    unsafe one file over, which is the general shape of the defect this repository keeps finding:
-    a property that holds over the part someone was looking at. Nothing warns, because the
-    configuration that breaks is the one CI does not run, prometheus_client being in
-    requirements.txt.
+    _RP_DUMMY_HASH is the other shape: a lazily-filled memo, None until the first relying-party
+    credential check fills it under `global`. An importer would hold the None forever, and it is
+    the hash the constant-time path compares against when no such client exists, so the
+    equalization that keeps the endpoint from being a client-id oracle would quietly stop
+    working. Nothing would fail; the endpoint would answer, faster, for one class of input.
 
-    Attribute access is not flagged, and the distinction is the whole mechanism rather than an
-    exemption: `import app` then `app._METRICS_DURESS` resolves at USE time, behind the same
-    guard, which is exactly what makes it the correct way to reach one of these from another
-    module."""
-    name = "conditional_imports"
+    Both are safe where they are and unsafe one file over, which is this repository's dominant
+    defect shape: a property that holds over the part someone was looking at. The decomposition
+    of app.py is what moves code across that line, so this is a hazard OF the decomposition and
+    is checked over the whole package rather than only at app.py.
+
+    Attribute access is not flagged, and the distinction is the mechanism rather than an
+    exemption: `import app` then `app._METRICS_VERIFICATIONS`, or calling the accessor
+    `app._rp_dummy_hash()`, resolves at USE time and sees whatever the defining module holds
+    then."""
+    name = "unstable_imports"
     mods = _app_modules(root)
     if not mods:
         return _fail(name, "polaris_web/ is missing")
 
-    trees, unparsed = {}, []
+    trees, empty = {}, []
     for fname, code in mods:
         if not code.strip():
-            unparsed.append(fname)
+            empty.append(fname)
             continue
         try:
             trees[fname[:-3]] = ast.parse(code)
@@ -16598,36 +16642,39 @@ def check_no_module_imports_a_conditional_name(root: pathlib.Path) -> list[Findi
     if not trees:
         return _fail(name, "no application module in polaris_web/ carries code to check")
 
-    cond = {stem: _conditionally_defined(t) for stem, t in trees.items()}
-    total = sum(len(v) for v in cond.values())
+    unstable = {stem: _unstable_module_names(t) for stem, t in trees.items()}
+    total = sum(len(v) for v in unstable.values())
     bad = []
     for stem, tree in trees.items():
         for node in tree.body:
             if (isinstance(node, ast.ImportFrom) and node.level == 0
-                    and node.module in cond):
+                    and node.module in unstable):
                 for a in node.names:
-                    if a.name in cond[node.module]:
-                        bad.append((stem, node.lineno, a.name, node.module))
+                    if a.name in unstable[node.module]:
+                        bad.append((stem, node.lineno, a.name, node.module,
+                                    unstable[node.module][a.name]))
     if bad:
+        stem, line, nm, src, why = bad[0]
         return _fail(name,
                      "; ".join("polaris_web/%s.py line %d imports %s by name from %s.py, which "
-                               "binds it on only some import paths" % b for b in bad)
-                     + ". The import runs before any runtime guard, so where that path is not "
-                       "taken the module raises ImportError and, because app.py imports its "
-                       "route modules, the application does not start. Reach it as an "
-                       "attribute instead (`import %s` then `%s.%s`), which resolves at use "
-                       "time behind the same guard"
-                     % (bad[0][3], bad[0][3], bad[0][2]))
+                               "%s" % b for b in bad)
+                     + ". `from` copies the binding once, when the importing module loads, so "
+                       "what it holds is not what the defining module holds later (or, for a "
+                       "name that may never be bound, the import itself raises and the "
+                       "application does not start, since app.py imports its route modules). "
+                       "Reach it as an attribute instead (`import %s` then `%s.%s`), which "
+                       "resolves at use time" % (src, src, nm))
 
     return _ok(name,
-               "no application module imports by name any of the %d names its siblings bind on "
-               "only some import paths (app.py's optional-dependency metrics are most of them). "
-               "Such a name is safe where it is, because every use sits behind the guard that "
-               "decided the path, and unsafe one file over, because the import runs first; this "
-               "is derived from the module trees rather than listed, so a new one is covered by "
-               "being written%s"
-               % (total, "" if not unparsed else
-                  " (%d empty module(s) skipped: %s)" % (len(unparsed), ", ".join(unparsed))))
+               "no application module imports by name any of the %d names its siblings do not "
+               "bind once and keep: bound on only some module-level paths, rebound later with "
+               "`global`, or assigned more than once. Such a name is safe where it is, because "
+               "every use resolves against the module's current state, and unsafe one file "
+               "over, because `from` copies the binding at import time; the set is derived from "
+               "the module trees rather than listed, so a new one is covered by being "
+               "written%s"
+               % (total, "" if not empty else
+                  " (%d empty module(s) skipped: %s)" % (len(empty), ", ".join(empty))))
 
 
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
@@ -19748,7 +19795,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_coexistence_plan,
     check_modules_are_measured,
     check_route_modules_register_under_both_entry_points,
-    check_no_module_imports_a_conditional_name,
+    check_no_module_imports_an_unstable_name,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,

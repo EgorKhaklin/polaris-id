@@ -17,7 +17,8 @@ use sits behind `if _PROM_AVAILABLE:` and the name is never looked up on the pat
 not bound. `from app import _METRICS_VERIFICATIONS` here would run at import time, ahead of that
 guard, and raise ImportError where the library is absent; and because app.py imports this
 module, the application would not start at all. `_app._METRICS_VERIFICATIONS` resolves at use
-time, behind the same guard. check_no_module_imports_a_conditional_name pins the distinction.
+time, behind the same guard. check_no_module_imports_an_unstable_name pins the distinction,
+for this shape and for the other two a `from` import copies wrongly.
 
 Routes register by import: app.py imports this module at the END, after every name below
 exists, and aliases itself into sys.modules first so `python3 app.py` does not load it twice.
