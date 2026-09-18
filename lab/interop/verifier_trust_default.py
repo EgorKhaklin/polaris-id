@@ -16,13 +16,22 @@ tool useless for the case where authenticity is the only question.
 
 THE QUESTION IS THEREFORE NOT THE VERDICT BUT ITS LEGIBILITY. `polaris-verify` is a CLI, and
 a CLI is integrated through its EXIT CODE far more often than through its JSON. So this runs
-the same genuine pack three ways and records what an integrator can actually distinguish.
+the same genuine pack four ways and records what an integrator can actually distinguish.
 
     no --issuer-anchor          nobody asked about the issuer
     an anchor set WITHOUT it    a genuine signature by an untrusted key
     an anchor set WITH it       the case everyone wants
+    --signature-only            the caller saying authenticity alone IS the question
 
-WHY IT MATTERS HERE RATHER THAN IN GENERAL. The package's own contract already refuses this
+WHAT IT FOUND, and what changed. On 2026-09-17 the first three all reported honestly in JSON
+and the un-anchored case exited 0, the same as the trusted one, so nothing branching on exit
+status could tell them apart. That is fixed: the un-anchored case now abstains with exit 2 and
+`--signature-only` is how a caller asks for the authenticity-only answer. This file stays as
+the GUARD on that: it fails if the three states are ever collapsed back onto one exit code,
+and it fails just as loudly if --signature-only stops working, because a verifier that cannot
+answer "does this signature verify" has lost a real use case rather than gained a guarantee.
+
+WHY IT MATTERED RATHER THAN BEING A NIT. The package's own contract already refuses this
 shape of silent default one field over: the verifier will not run until the caller names its
 cryptography, and the code says why, that "the mode a run uses is something the caller states,
 not something the machine's installed packages decide for them." There is no
@@ -45,11 +54,13 @@ PACK = ROOT / "vectors" / "ml-dsa-65-valid.json"
 OTHER = ROOT / "vectors" / "ml-dsa-65-wrong-key.json"
 
 
-def _run(anchor_path):
+def _run(anchor_path, signature_only=False):
     cmd = [sys.executable, str(VERIFIER), "--pack", str(PACK),
            "--pqc-provider", "auto", "--json"]
     if anchor_path:
         cmd += ["--issuer-anchor", str(anchor_path)]
+    if signature_only:
+        cmd += ["--signature-only"]
     r = subprocess.run(cmd, capture_output=True)
     out = (r.stdout or b"").decode("utf-8", "replace")
     start = out.find("{")
@@ -72,19 +83,20 @@ def main():
         (d / "with.json").write_text(json.dumps([signer]))
         (d / "without.json").write_text(json.dumps([stranger]))
 
-        cases = [("no --issuer-anchor", None),
-                 ("anchor set WITHOUT the signer", d / "without.json"),
-                 ("anchor set WITH the signer", d / "with.json")]
+        cases = [("no --issuer-anchor", None, False),
+                 ("anchor set WITHOUT the signer", d / "without.json", False),
+                 ("anchor set WITH the signer", d / "with.json", False),
+                 ("--signature-only, no anchor", None, True)]
         rows = []
-        for label, anchor in cases:
-            verdict, code, err = _run(anchor)
+        for label, anchor, sig_only in cases:
+            verdict, code, err = _run(anchor, sig_only)
             if verdict is None:
                 print("== VOID: no JSON verdict for %r (exit %d): %s =="
                       % (label, code, err), file=sys.stderr)
                 return 1
             rows.append((label, verdict, code))
 
-    print("the SAME genuine pack, three ways:\n")
+    print("the SAME genuine pack, four ways:\n")
     print("%-32s %-8s %-12s %-16s %s"
           % ("case", "sig", "authenticity", "issuer_trusted", "exit"))
     for label, v, code in rows:
@@ -96,9 +108,15 @@ def main():
         print("  %-32s note: %s" % (label, v.get("note") or "(none)"))
     print()
 
-    none_row = rows[0]
-    untrusted_row = rows[1]
-    trusted_row = rows[2]
+    none_row, untrusted_row, trusted_row, sig_only_row = rows
+
+    # The explicit opt-out must still work, or the fix traded one wrong answer for another:
+    # a tool that cannot answer "does this signature verify" has lost a real use case.
+    if sig_only_row[2] != 0:
+        print("== VOID: --signature-only on a genuine signature exited %d. The legitimate "
+              "question 'is this signature mathematically valid' must still be answerable =="
+              % sig_only_row[2], file=sys.stderr)
+        return 1
 
     # The control. If the verifier did NOT distinguish a genuine-but-untrusted key when it
     # was given a trust root, the finding below would be a much larger one, and this file
@@ -116,9 +134,12 @@ def main():
 
     same_exit = none_row[2] == trusted_row[2]
     if not same_exit:
-        print("== The no-anchor case exits %d and the trusted case exits %d, so the exit code "
-              "already distinguishes them and there is nothing here. =="
-              % (none_row[2], trusted_row[2]))
+        print("== FIXED, AND THIS FILE IS NOW THE GUARD. The un-anchored case exits %d and the "
+              "trusted case exits %d, so a caller branching on exit status can tell 'this key "
+              "is one I trust' from 'nobody asked me about the key'. --signature-only exits 0 "
+              "and says `trust was NOT evaluated`, so the legitimate authenticity-only "
+              "question is still answerable by asking for it. If a later change collapses "
+              "those three onto one exit code, this run says so. ==" % (none_row[2], trusted_row[2]))
         return 0
 
     print("== THE VERDICT IS HONEST AND THE EXIT CODE IS NOT. With no trust root the JSON "

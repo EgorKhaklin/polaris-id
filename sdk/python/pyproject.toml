@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polaris-sdk-python"
-version = "1.0.0rc2"
+version = "1.0.0rc3"
 description = "Reference Python SDK for verifying Polaris identity credentials: offline authenticity and online status. A library; the command-line verifier is the separate polaris-verify package."
 readme = "README.md"
 requires-python = ">=3.9"

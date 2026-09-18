@@ -11,6 +11,82 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.3 — 2026-09-17 (a genuine signature is not a trusted issuer)
+
+Two published-contract ambiguities, found by an outside design-intent review and
+resolved against the owner's stated principles: signature validity must not silently
+imply issuer trust, historical authorization and current-key status are separate facts,
+and where a fact cannot be established safely the answer is UNKNOWN rather than a guess.
+
+Both are externally observable, so this is a version and not housekeeping.
+
+**The detached verifier abstains instead of implying trust.** `polaris-verify` computed
+`accept` as `signature_valid and issuer_trusted in (None, True)`, and `None` is what you
+get when the caller passes no `--issuer-anchor`. So a credential signed by any key at all
+exited 0, indistinguishable, to anything branching on exit status, from a verification
+against a trust root that matched. The JSON was honest (`issuer_trusted: null` was right
+there); the exit code was not.
+
+A run with no trust root now abstains with exit 2 and says why. `--signature-only` is how
+a caller states that cryptographic validity alone is the question, and that run exits 0
+while reporting `trust was NOT evaluated`. The verdict carries a new `trust_evaluated`
+field so the three states are distinguishable in JSON as well as by exit code. This is the
+same discipline the package already applied to `--pqc-provider`: the mode a run uses is
+something the caller states, not something the machine decides for them.
+
+Measured before and after in `lab/interop/verifier_trust_default.py`, which now stands as
+the guard: it fails if the three states are collapsed back onto one exit code, and fails
+equally if `--signature-only` stops working, because a verifier that cannot answer "does
+this signature verify" has lost a use case rather than gained a guarantee.
+
+**`issuer_authentic` is replaced by two fields, because it was answering two questions and
+getting the common one wrong.** It compared the signing key against
+`Agency.signing_public_key_hex`, the authority's CURRENT key. Since a signature row is
+immutable and `polaris key-event ... registered` moves that column, the two diverge the
+moment an authority rotates: every credential issued before the last rotation reported
+`issuer_authentic = false` while being perfectly legitimate. The field fired on good
+credentials, which teaches an integrator to ignore it.
+
+`/verify` and the relying-party API now report:
+
+- `issuer_authorized_at_signing`: was this key authorized for this authority at the
+  instant the credential was signed? Survives an ordinary rotation.
+- `issuer_key_current`: is that key still active for the authority today? A rotation makes
+  this false, which is a fact about the key and not a verdict on the credential.
+
+Either is `null` when it cannot be established, which is not the same as false.
+
+**The instant is the one that cannot be moved.** Historical authorization is only
+meaningful if the time it compares against is integrity-protected.
+`IdentityToken.issued_date` cannot serve: IdentityToken carries a state machine and an
+audit trigger but no immutability guard, and a database session can UPDATE it freely
+(measured). The instant used is the `ISSUED` row in `TokenLifecycleEvent`, an audit of
+record under C1, where the same edit is refused. With no `ISSUED` row there is no
+trustworthy instant and the answer is `null` rather than a guess.
+
+What this does not survive, stated rather than discovered later:
+`AuthorityKeyEvent.effective_at` is operator-supplied, so an authority that writes its own
+key history can backdate an authorization. This answers against the recorded history; it
+does not defend against the operator who writes it, which is the operator-as-adversary
+`lab/duress/` already names.
+
+**Six cases pin the new semantics**, in `FederationInAppTests`: a credential surviving an
+ordinary rotation (the case the single boolean got wrong), a key never authorized for that
+authority, a key authorized at signing and retired later, a credential signed *after* its
+key was retired (the one case that must answer false rather than null), no protected
+issuance instant, and a placeholder signature that decides neither.
+
+`check_federation_in_app` requires both field names, requires the rotation case by name,
+and now fails if `issuer_authentic=` reappears in the application.
+
+**Not changed**, deliberately: the mdoc bridge's own `issuer_authentic` is a different
+field answering a different question about an ISO 18013-5 document, and is untouched.
+`polaris_card`'s pairwise handle, the other finding from the same review, is recorded in
+`lab/linkability/pairwise_constructions.py` and left for a decision rather than swept in
+here.
+
+---
+
 ## v1.0.0-rc.2 — 2026-09-17 (a defect found in the candidate)
 
 The contract says a defect found in the candidate makes rc.2 and nothing else moves the

@@ -5,7 +5,7 @@ console: a relying party installs it, configures a trust root, and decides for i
 whether material is authentic.
 
     pip install polaris-verify
-    polaris-verify --pqc-provider auto --pack credential.json
+    polaris-verify --pqc-provider auto --issuer-anchor trusted-keys.json --pack credential.json
 
 It refuses to start unless the run says what cryptography it is doing (`--pqc-provider`
 or `--dev-placeholder`). There is no default and no environment variable for that choice,

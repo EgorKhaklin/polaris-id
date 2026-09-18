@@ -5237,8 +5237,8 @@ def api_token_verify(tok_id):
     # authenticity of the ISSUER, distinct from signature_valid (the signature is
     # genuine) and currently_authoritative (the token is usable now).
     _token_key = rows[0].get('signing_public_key_hex')
-    _agency_key = rows[0].get('agency_key')
-    issuer_authentic = (_token_key == _agency_key) if (_token_key and _agency_key) else None
+    _authorized_at_signing, _key_current = _issuer_key_facts(
+        tok_id, rows[0].get('issuing_agency_id'), _token_key)
 
     return jsonify(
         token_id=tok_id,
@@ -5247,9 +5247,12 @@ def api_token_verify(tok_id):
         # usable now.
         signature_valid=all_valid,
         signature_cacheable=True,
-        # PE.3b: the signature was produced by the token's issuing agency's own
-        # registered key (federation binding); None when it cannot be decided.
-        issuer_authentic=issuer_authentic,
+        # PE.3b, split into two facts on 2026-09-17. `issuer_authentic` compared the
+        # signing key against the agency's CURRENT key, so an ordinary key rotation turned
+        # it false for every credential issued before it. These answer the two questions
+        # separately; either is null when it cannot be established. See _issuer_key_facts.
+        issuer_authorized_at_signing=_authorized_at_signing,
+        issuer_key_current=_key_current,
         # Which witness set actually ran for this response: 'single' on the
         # throughput path, 'both' when this request was sampled through the second
         # witness (the availability clause). A disagreement pages; it never
@@ -5464,12 +5467,16 @@ def api_v1_verify():
     # a signature that does not match the stored one, or an invalid stored
     # signature, so none of those cases is distinguishable from another.
     def _not_verifiable():
+        # The same field set as the success path, so a caller never has to branch on which
+        # keys are present; both issuer facts are null because nothing here is verifiable.
         return jsonify(api_version='v1', authentic=False, currently_authoritative=False,
-                       usable=False, issuer_authentic=None, status=None, as_of=None,
+                       usable=False, issuer_authorized_at_signing=None,
+                       issuer_key_current=None, status=None, as_of=None,
                        decision='reject', reason='not a verifiable presentation')
 
     row = query("""
-        SELECT it.token_value, it.status, it.expiration_date,
+        SELECT it.token_id, it.issuing_agency_id,
+               it.token_value, it.status, it.expiration_date,
                ts.signature_bytes, ts.signing_public_key_hex,
                ag.signing_public_key_hex AS agency_key,
                now() AS as_of
@@ -5500,12 +5507,17 @@ def api_v1_verify():
     # Same predicate as /api/tokens/<id>/verify, so the relying-party answer and the operator
     # answer cannot drift about what "currently authoritative" means.
     currently_authoritative = (status == 'ACTIVE' and _not_expired(row['expiration_date']))
-    tkey, akey = row['signing_public_key_hex'], row['agency_key']
-    issuer_authentic = (tkey == akey) if (tkey and akey) else None
+    tkey = row['signing_public_key_hex']
+    authorized_at_signing, key_current = _issuer_key_facts(
+        row['token_id'], row['issuing_agency_id'], tkey)
     return jsonify(
         api_version='v1',
         authentic=True,
-        issuer_authentic=issuer_authentic,
+        # Two facts, never one boolean (2026-09-17). See _issuer_key_facts: a rotation makes
+        # issuer_key_current false for every credential issued under the previous key, which
+        # says nothing about whether that credential was properly issued.
+        issuer_authorized_at_signing=authorized_at_signing,
+        issuer_key_current=key_current,
         currently_authoritative=currently_authoritative,
         status=status,
         status_source='primary',
@@ -5629,6 +5641,65 @@ def _leaves_root(leaves):
 #: Valid THROUGH the expiry date, not up to its start: a DATE compared with `>= CURRENT_DATE`
 #: matches the schema's own `expiration_date >= issued_date` ordering CHECK. A NULL expiry is
 #: no expiry, which is what the nullable column means.
+def _issuer_key_facts(token_id, agency_id, token_key):
+    """Two separate facts about the key that signed a credential, never one boolean.
+
+    Until 2026-09-17 `/verify` reported a single `issuer_authentic`, computed as
+    `token_key == Agency.signing_public_key_hex`: the agency's CURRENT key. Because
+    `polaris key-event ... registered` moves that column and the signature row is immutable,
+    the two diverge the moment an authority rotates, so every credential issued before the
+    last rotation reported `issuer_authentic = false` while being perfectly legitimate. The
+    field fired on good credentials and taught integrators to ignore it.
+
+    They are two questions and they get two answers:
+
+      issuer_authorized_at_signing   was this key authorized for this authority AT THE TIME
+                                     the credential was signed? Survives rotation.
+      issuer_key_current             is this key still active for that authority TODAY?
+                                     Goes false on a rotation, which is correct and is not a
+                                     statement about the credential.
+
+    TIME INTEGRITY. The historical question is only meaningful if the instant it compares
+    against cannot be moved. `IdentityToken.issued_date` CANNOT be used: IdentityToken carries
+    a state machine and an audit trigger but no immutability guard, and a database session can
+    UPDATE it freely (measured 2026-09-17). The instant used here is the ISSUED row in
+    TokenLifecycleEvent, which is an audit of record under C1: the same UPDATE is refused by
+    `reject_audit_modification`. If there is no ISSUED row, there is no trustworthy instant
+    and the historical answer is None rather than a guess.
+
+    Either fact is None when it cannot be established: no key history for this authority, no
+    real signing key on the credential (the development placeholder path), or no protected
+    issuance instant. None means unknown, never false.
+
+    WHAT IT DOES NOT SURVIVE. `AuthorityKeyEvent.effective_at` is operator-supplied
+    (`polaris key-event --effective-at`), so an authority that can write its own key history
+    can backdate an authorization. This answers the question against the recorded history; it
+    does not defend against the operator who writes that history, which is the same
+    operator-as-adversary `lab/duress/` already names.
+    """
+    if not token_key or not agency_id:
+        return None, None
+    rows = query(
+        """
+        SELECT k.status, k.registered_at, k.retired_at, k.compromised_at,
+               (SELECT min(event_timestamp) FROM TokenLifecycleEvent
+                 WHERE token_id = %s AND event_type = 'ISSUED') AS signed_at
+          FROM AuthorityKeyCurrent k
+         WHERE k.agency_id = %s AND lower(k.public_key_hex) = lower(%s)
+        """, (token_id, agency_id, token_key))
+    if not rows:
+        return None, None                      # no recorded history: unknown, not false
+    k = rows[0]
+    key_current = (k['status'] == 'active')
+    signed_at, registered = k['signed_at'], k['registered_at']
+    if signed_at is None or registered is None:
+        return None, key_current               # no protected instant: unknown, not false
+    authorized = (registered <= signed_at
+                  and (k['retired_at'] is None or k['retired_at'] > signed_at)
+                  and (k['compromised_at'] is None or k['compromised_at'] > signed_at))
+    return authorized, key_current
+
+
 def _not_expired(expiration_date) -> bool:
     if expiration_date is None:
         return True

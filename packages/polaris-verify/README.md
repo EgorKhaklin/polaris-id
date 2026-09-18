@@ -16,8 +16,17 @@ it to fetch status.
 ```bash
 pip install --pre "polaris-verify[cryptography]"
 
-polaris-verify --pqc-provider auto --pack credential.json
+# cryptographic validity alone; issuer trust NOT evaluated
+polaris-verify --pqc-provider auto --signature-only --pack credential.json
+
+# validity AND whether that key is one you trust
+polaris-verify --pqc-provider auto --issuer-anchor trusted-keys.json --pack credential.json
 ```
+
+A genuine signature is not a trusted issuer. Without `--issuer-anchor` there is no trust root
+to judge against, so the run abstains (exit 2) instead of exiting 0 on a credential that could
+have been signed by anyone; `--signature-only` is how a caller says that is the question they
+meant to ask.
 
 This is 1.0.0-rc.1, published to PyPI by GitHub Actions trusted publishing over OIDC.
 It is a release candidate: `--pre` tells pip to consider it, and 0.1.0 remains as the prior

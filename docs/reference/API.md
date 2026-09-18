@@ -544,7 +544,8 @@ Returns JSON:
 | `token_id` | int | echoes the path |
 | `signature_valid` | bool | authenticity: the active signature verifies. Immutable material, replica-safe, and safe for a relying party to cache |
 | `signature_cacheable` | bool | always `true` — the authenticity verdict may be cached; the authorization verdict below may NOT |
-| `issuer_authentic` | bool \| null | PE.3b federation binding: the signature was produced by the token's issuing agency's own registered key. `null` when it cannot be decided (a placeholder signature, or an agency with no registered key) |
+| `issuer_authorized_at_signing` | bool \| null | Was the signing key authorized for this authority **at the instant the credential was signed**? Read from the append-only `AuthorityKeyEvent` register against the `ISSUED` row in `TokenLifecycleEvent`. Survives an ordinary key rotation. `null` when it cannot be established: no key history, no real signing key, or no `ISSUED` row to date it by |
+| `issuer_key_current` | bool \| null | Is that key still **active** for the authority today (not retired, not compromised)? A rotation makes this `false`, which is a fact about the key and not a verdict on the credential. `null` when undecidable |
 | `status` | string | the token's current lifecycle status, read from the PRIMARY |
 | `status_source` | string | always `primary` — the authorization verdict is made on fresh state, never a stale replica |
 | `currently_authoritative` | bool | the "usable right now" authorization verdict: `status` is `ACTIVE` **and** `expiration_date` has not passed, read fresh from the primary. Until 2026-09-17 this was `status` alone, and a credential a decade past its stated end answered `true` |
@@ -594,7 +595,7 @@ Returns JSON:
 | `verify_with` | string | the exact command to check the pack offline |
 
 `404` if the token does not exist or has no active signature. Verify a pack with
-`python3 scripts/polaris-verify.py --pack pack.json`; the published test vectors
+`python3 scripts/polaris-verify.py --issuer-anchor trusted-keys.json --pack pack.json`; the published test vectors
 under [`vectors/`](../../vectors/) are re-verified under the app's real witnesses
 (liboqs + cryptography/OpenSSL) on every CI run.
 
@@ -647,7 +648,8 @@ authenticity pack — and receives the verdict. Never any personal data.
 |---|---|---|
 | `api_version` | string | `v1` |
 | `authentic` | bool | the presented signature is the genuine issued signature over `SHA3-256(token_value)` |
-| `issuer_authentic` | bool \| null | signed by the issuing agency's own registered key; `null` when undecidable |
+| `issuer_authorized_at_signing` | bool \| null | the key was authorized for this authority when the credential was signed; survives rotation; `null` when undecidable |
+| `issuer_key_current` | bool \| null | the key is still active for that authority today; `false` after a rotation, which says nothing about the credential; `null` when undecidable |
 | `currently_authoritative` | bool | the token is `ACTIVE` **and** not past its `expiration_date`, read fresh from the primary. The same predicate the operator endpoint uses, so the two cannot disagree |
 | `status` | string \| null | the lifecycle status; `null` when not verifiable |
 | `as_of` | string \| null | ISO-8601 primary-clock time of the authorization read |
@@ -794,7 +796,7 @@ an expired assertion, an over-long window, a wrong binding, or a non-`ACTIVE` st
 is rejected.
 
 ```bash
-python3 scripts/polaris-verify.py --pqc-provider auto --pack pack.json --status-assertion assertion.json --max-window 86400
+python3 scripts/polaris-verify.py --pqc-provider auto --issuer-anchor trusted-keys.json --pack pack.json --status-assertion assertion.json --max-window 86400
 ```
 
 Because verification touches no issuer, the issuer never learns that a verification

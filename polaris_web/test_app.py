@@ -10324,24 +10324,118 @@ class FederationInAppTests(PolarisTestCase):
         finally:
             conn.close()
 
-    def test_issuer_authentic_true_when_signed_by_the_agencys_key(self):
-        tid = self._token_signed_by('FED-MATCH-0001', agency_id=1, signing_key_hex='a1a1a1')
-        self._register_agency_key(1, 'a1a1a1')
-        v = self.client.get('/api/tokens/%d/verify' % tid).get_json()
-        self.assertIs(v['issuer_authentic'], True)
+    # --- the bounded matrix for the two facts (2026-09-17) ------------------------
+    #
+    # `issuer_authentic` compared the signing key against the agency's CURRENT key, so an
+    # ordinary rotation turned it false for every credential issued before it. These are the
+    # cases that distinguish "was this key authorized when it signed" from "is this key the
+    # authority's current one", which is the whole point of splitting the field.
 
-    def test_issuer_authentic_false_when_signed_by_a_different_key(self):
-        tid = self._token_signed_by('FED-MISMATCH-0001', agency_id=1, signing_key_hex='a1a1a1')
-        self._register_agency_key(1, 'b2b2b2')  # the agency is registered to a DIFFERENT key
-        v = self.client.get('/api/tokens/%d/verify' % tid).get_json()
-        self.assertIs(v['issuer_authentic'], False)
+    KEY_A = 'a1' * 32
+    KEY_B = 'b2' * 32
+    KEY_NEVER = 'cc' * 32
 
-    def test_issuer_authentic_none_when_binding_undecidable(self):
-        # A placeholder token (no signing key) — the binding cannot be decided.
+    def _key_event(self, agency_id, key_hex, event, effective_at=None):
+        """Append one AuthorityKeyEvent, the append-only register the facts are read from."""
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, "
+                    "event, effective_at) VALUES (%s, %s, 'ML-DSA-65', %s, "
+                    "COALESCE(%s::timestamp, CURRENT_TIMESTAMP - INTERVAL '1 day'))",
+                    (agency_id, key_hex, event, effective_at))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _issued_at(self, token_id, agency_id, when):
+        """The ISSUED row in TokenLifecycleEvent: the only issuance instant that cannot be
+        edited afterwards. IdentityToken.issued_date has no immutability guard and a database
+        session can move it, so it is deliberately not what the facts are computed from."""
+        conn = self._new_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO TokenLifecycleEvent (token_id, actor_agency_id, event_type, "
+                    "reason_code, event_timestamp) VALUES (%s, %s, 'ISSUED', 'TEST_SEED', %s)",
+                    (token_id, agency_id, when))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _facts(self, token_id):
+        v = self.client.get('/api/tokens/%d/verify' % token_id).get_json()
+        return v['issuer_authorized_at_signing'], v['issuer_key_current']
+
+    def test_E_credential_survives_an_ordinary_key_rotation(self):
+        """The case the old single boolean got wrong. Issued under A, authority rotates to B:
+        the credential was properly issued and says so, and the key is simply no longer the
+        current one. Nothing about the credential changed."""
+        tid = self._token_signed_by('FED-ROTATE-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        authorized, current = self._facts(tid)
+        self.assertIs(authorized, True, "key A WAS authorized when it signed")
+        self.assertIs(current, True, "A is still active until it is retired")
+
+        # The authority rotates: B is registered, A retired, both after the credential.
+        self._key_event(1, self.KEY_B, 'registered', '2026-03-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'retired', '2026-03-01 00:00:00')
+        authorized, current = self._facts(tid)
+        self.assertIs(authorized, True, "rotation must NOT retroactively unauthorize it")
+        self.assertIs(current, False, "and A is correctly no longer current")
+
+    def test_F_key_never_authorized_for_that_authority(self):
+        """A key with no registration for this authority: not authorized, and not merely
+        unknown, because the authority HAS a key history to be absent from."""
+        tid = self._token_signed_by('FED-NEVER-0001', agency_id=1, signing_key_hex=self.KEY_NEVER)
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        authorized, current = self._facts(tid)
+        self.assertIsNone(authorized, "no record for this key: unknown, never a false claim")
+        self.assertIsNone(current)
+
+    def test_G_key_authorized_at_signing_but_retired_later(self):
+        """Signed inside the window, retired after it. Authorized then; not current now."""
+        tid = self._token_signed_by('FED-RETIRED-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'retired', '2026-06-01 00:00:00')
+        self._issued_at(tid, 1, '2026-02-01 00:00:00')
+        authorized, current = self._facts(tid)
+        self.assertIs(authorized, True)
+        self.assertIs(current, False)
+
+    def test_G2_signed_after_the_key_was_retired(self):
+        """The same history, the other side of the line: a credential whose ISSUED instant
+        falls after the retirement was NOT authorized, and this is the one case that must
+        actually answer False rather than None."""
+        tid = self._token_signed_by('FED-LATE-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        self._key_event(1, self.KEY_A, 'retired', '2026-06-01 00:00:00')
+        self._issued_at(tid, 1, '2026-07-01 00:00:00')
+        authorized, _current = self._facts(tid)
+        self.assertIs(authorized, False, "signed after retirement is not authorized")
+
+    def test_H_no_protected_issuance_instant_is_unknown_not_false(self):
+        """No ISSUED row, so there is no instant that cannot be moved. The historical answer
+        must be None. Manufacturing one from IdentityToken.issued_date would be inventing
+        certainty from a column a database session can edit."""
+        tid = self._token_signed_by('FED-NOTIME-0001', agency_id=1, signing_key_hex=self.KEY_A)
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        authorized, current = self._facts(tid)
+        self.assertIsNone(authorized, "no protected instant: unknown")
+        self.assertIs(current, True, "but the key's status today is still knowable")
+
+    def test_H2_placeholder_signature_decides_neither(self):
+        """The development placeholder path carries no signing key, so there is nothing to
+        ask about and both facts are unknown."""
         tid = self._token_signed_by('FED-NONE-0001', agency_id=1, signing_key_hex=None)
-        self._register_agency_key(1, 'a1a1a1')
-        v = self.client.get('/api/tokens/%d/verify' % tid).get_json()
-        self.assertIsNone(v['issuer_authentic'])
+        self._key_event(1, self.KEY_A, 'registered', '2026-01-01 00:00:00')
+        authorized, current = self._facts(tid)
+        self.assertIsNone(authorized)
+        self.assertIsNone(current)
+
 
 
 class TokenVerifyTests(PolarisTestCase):

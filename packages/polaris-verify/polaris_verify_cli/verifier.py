@@ -15,7 +15,7 @@ different questions with two different freshness needs (see
 docs/design/verification-scaling.md). Authorization is a tiny online call to
 `GET /api/tokens/<id>/verify`; authenticity is this, and it needs no network.
 
-    python3 polaris-verify.py --pack credential.json
+    python3 polaris-verify.py --issuer-anchor trusted-keys.json --pack credential.json
     python3 polaris-verify.py --pack credential.json --issuer-anchor issuer.json
     cat credential.json | python3 polaris-verify.py --json
 
@@ -185,14 +185,18 @@ def verify_pack(pack: dict, anchor_keys=None) -> dict:
         verdict_note = ("token_value must be a string, got %s" % type(tok).__name__)
         return {"algorithm": alg, "token_value": None, "signature_valid": False,
                 "witnesses": [], "authenticity": None, "issuer_trusted": None,
-                "note": verdict_note}
+                "trust_evaluated": anchor_keys is not None, "note": verdict_note}
     verdict = {
         "algorithm": alg,
         "token_value": tok,
         "signature_valid": False,
         "witnesses": [],
         "authenticity": None,
+        # Three states, not two. False is "I checked and this key is not yours"; None is
+        # "you did not give me a trust root, so I did not look". Conflating them is what
+        # let a stranger-signed credential exit 0 (2026-09-17 design-intent review).
         "issuer_trusted": None,
+        "trust_evaluated": anchor_keys is not None,
         "note": None,
     }
     if not tok or not alg:
@@ -440,7 +444,8 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
         assertion = {}
     v = {"status_authentic": False, "fresh": None, "status": assertion.get("status"),
          "issued_at": assertion.get("issued_at"), "expires_at": assertion.get("expires_at"),
-         "issuer_trusted": None, "witnesses": [], "note": None}
+         "issuer_trusted": None, "trust_evaluated": anchor_keys is not None,
+         "witnesses": [], "note": None}
     alg = assertion.get("algorithm")
     pk_hex = assertion.get("public_key_hex")
     sig_hex = assertion.get("signature_hex")
@@ -3092,6 +3097,35 @@ def verify_publication(log_sth, receipt, ledger_key):
     return v
 
 
+def _pack_exit(verdict, signature_only):
+    """The exit status for a pack verification, as one rule in one place.
+
+        0  the signature verified AND either issuer trust was evaluated and held, or the
+           caller explicitly asked for signature-only
+        2  abstain: the signature did not verify, the key is not in the trust root, or no
+           trust root was given and the caller did not say that was deliberate
+
+    2 is the tool's existing "abstain" code (see the accept/abstain mapping on the stapled
+    path); this reuses it rather than minting a third meaning for a third state.
+
+    The case this exists for: before 2026-09-17, `issuer_trusted in (None, True)` collapsed
+    "checked, and it is trusted" together with "nobody asked me to check", so a credential
+    signed by any key at all exited 0. Measured in lab/interop/verifier_trust_default.py.
+    """
+    if not verdict.get("signature_valid"):
+        return 2
+    if verdict.get("issuer_trusted") is False:
+        return 2
+    if verdict.get("issuer_trusted") is None and not signature_only:
+        print("abstain: the signature is genuine, but no --issuer-anchor was given, so "
+              "nothing here establishes that the key belongs to an issuer you trust. A "
+              "genuine signature is not a trusted issuer. Pass --issuer-anchor to decide "
+              "it, or --signature-only to say that cryptographic validity alone is the "
+              "question you are asking.", file=sys.stderr)
+        return 2
+    return 0
+
+
 def _load_anchor(path):
     with open(path) as f:
         data = json.load(f)
@@ -4569,6 +4603,16 @@ def main(argv=None):
     ap.add_argument("--max-window", type=int, default=None,
                     help="reject a status assertion whose validity window exceeds this many seconds")
     ap.add_argument("--issuer-anchor", help="JSON file of the issuer's published verification key(s)")
+    # 2026-09-17, from the design-intent review. Without a trust root this tool can say a
+    # signature is genuine and nothing about whose key made it, and it used to say that with
+    # exit 0 -- indistinguishable, to anything branching on exit status, from a verification
+    # against a trust root that matched. A genuine signature is not a trusted issuer. The
+    # default now abstains (exit 2) when no trust root was given; this flag is how a caller
+    # says that answering authenticity alone is what they actually wanted. Same reasoning as
+    # --pqc-provider one field over: the mode a run uses is something the caller states.
+    ap.add_argument("--signature-only", action="store_true",
+                    help="answer cryptographic validity alone, with issuer trust NOT "
+                         "evaluated; without this a run with no --issuer-anchor abstains")
     ap.add_argument("--json", action="store_true", help="machine-readable verdict")
     # Section 5 of the product contract. No default, and deliberately no environment
     # variable: the mode a run uses is something the caller states, not something the
@@ -4729,6 +4773,14 @@ def main(argv=None):
             print("bound:            %s" % verdict["bound"])
             for r in verdict["reasons"]:
                 print("  - %s" % r)
+        if not args.signature_only and not (
+                verdict.get("credential", {}).get("trust_evaluated")
+                and verdict.get("status_assertion", {}).get("trust_evaluated")):
+            print("abstain: no --issuer-anchor, so issuer trust was NOT evaluated for the "
+                  "credential, the status assertion, or both. A genuine signature is not a "
+                  "trusted issuer. Pass --issuer-anchor to decide it, or --signature-only to "
+                  "say that cryptographic validity alone is the question.", file=sys.stderr)
+            return 2
         return 0 if verdict["decision"] == "accept" else 2
 
     verdict = verify_pack(pack, anchor)
@@ -4743,10 +4795,11 @@ def main(argv=None):
             print("witnesses:        %s" % ", ".join(verdict["witnesses"]))
         if verdict["issuer_trusted"] is not None:
             print("issuer_trusted:   %s" % verdict["issuer_trusted"])
+        else:
+            print("issuer_trusted:   null (trust was NOT evaluated: no --issuer-anchor)")
         if verdict["note"]:
             print("note:             %s" % verdict["note"])
-    ok = verdict["signature_valid"] and (verdict["issuer_trusted"] in (None, True))
-    return 0 if ok else 2
+    return _pack_exit(verdict, args.signature_only)
 
 
 if __name__ == "__main__":

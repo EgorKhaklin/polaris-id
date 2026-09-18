@@ -13015,19 +13015,43 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
                      "uc1_issue must REFUSE to issue a token whose real signature was produced by a key that is "
                      "not the issuing agency's registered key (the federation binding), or an agency's identity is "
                      "not cryptographically its own")
-    if "issuer_authentic" not in app:
+    # 2026-09-17: two fields, because one boolean was answering two questions and getting
+    # the common one wrong. `issuer_authentic` compared the signing key against the agency's
+    # CURRENT key, so an ordinary rotation reported false for every credential issued before
+    # it. Both names are required, so a future edit cannot quietly collapse them back.
+    for field, why in (
+            ("issuer_authorized_at_signing",
+             "whether the key was authorized for that authority WHEN the credential was "
+             "signed, which must survive an ordinary key rotation"),
+            ("issuer_key_current",
+             "whether that key is still active for the authority today, which is a fact "
+             "about the key and not a verdict on the credential")):
+        if field not in app:
+            return _fail("federation_in_app", "/verify must report %s: %s" % (field, why))
+    if "issuer_authentic=" in app:
         return _fail("federation_in_app",
-                     "/verify must report issuer_authentic — whether the token was signed by its issuing agency's "
-                     "registered key")
+                     "/verify still reports issuer_authentic, which conflated 'authorized "
+                     "when it signed' with 'is the current key' and answered false for every "
+                     "credential issued before the last rotation")
     if "get_custody_for_agency" not in _read(root, "polaris_web/test_custody.py"):
         return _fail("federation_in_app",
                      "test_custody must prove per-agency signing under real ML-DSA (get_custody_for_agency)")
-    if "issuer_authentic" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("federation_in_app", "test_app must prove /verify reports issuer_authentic")
+    tests = _read(root, "polaris_web/test_app.py")
+    # The rotation case by name: it is the one the old field got wrong, so a suite that
+    # dropped it would be back to testing only the cases that already passed.
+    for needle, why in (
+            ("issuer_authorized_at_signing", "the historical fact must be exercised"),
+            ("issuer_key_current", "the current-key fact must be exercised"),
+            ("rotation", "a credential must be shown to SURVIVE an ordinary key rotation, "
+                         "which is the case the single boolean answered wrongly")):
+        if needle not in tests:
+            return _fail("federation_in_app", "test_app must cover %s: %s" % (needle, why))
     return _ok("federation_in_app",
                "federation is in the running app: each agency signs its own tokens (custody selects the agency "
-               "key), issuance refuses a cross-key token, and /verify reports issuer_authentic — with per-agency "
-               "signing tested under real ML-DSA and the issuer-binding field tested in the suite")
+               "key), issuance refuses a cross-key token, and /verify reports issuer_authorized_at_signing and "
+               "issuer_key_current as SEPARATE facts read from the append-only key register, so an ordinary "
+               "rotation no longer reports a legitimate credential as inauthentic — with per-agency signing "
+               "tested under real ML-DSA and the rotation case tested by name in the suite")
 
 
 

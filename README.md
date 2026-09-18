@@ -30,7 +30,7 @@ Polaris issues, holds, presents and verifies one credential per person, and it a
 
 A relying party needs both, and the verdict keeps them apart ([Try it](#try-it)). Python and TypeScript verify SDKs and a language-agnostic conformance suite of 118 published cases make "correctly verifying a Polaris credential" a contract anyone can hold their own code to. Around the credential sits a protocol of signed statements (an authority's registry and trust list, exchange receipts, timestamps, signed documents, a credential-bound login token, offline wallet presentations), each verified offline by the same verifier and both SDKs. Version 1 of that protocol is frozen, and a cross-version suite proves on every push that today's verifiers still accept what version 1 published. Trust between agencies is explicit and non-transitive.
 
-The backbone is a 45-table PostgreSQL schema whose constraints are the security boundary: **the guarantees live in the database, not in application code.** A rule enforced by a trigger, a CHECK constraint or a unique index binds every client, survives every restore from backup and cannot be bypassed by the next caller. Around it sit a Rust ZK-SNARK prover with an independent second witness, a Flask application and an operator CLI, a hardened five-service container stack behind a post-quantum TLS edge, and a flat layer of 282 machine-checked invariants (v1.0.0-rc.2) that gates every change in CI.
+The backbone is a 45-table PostgreSQL schema whose constraints are the security boundary: **the guarantees live in the database, not in application code.** A rule enforced by a trigger, a CHECK constraint or a unique index binds every client, survives every restore from backup and cannot be bypassed by the next caller. Around it sit a Rust ZK-SNARK prover with an independent second witness, a Flask application and an operator CLI, a hardened five-service container stack behind a post-quantum TLS edge, and a flat layer of 282 machine-checked invariants (v1.0.0-rc.3) that gates every change in CI.
 
 **The problem it models.** Americans carry six to eight credentials that do not talk to each other: driver's license, passport, Social Security card, Real ID, voter registration, insurance card. Each is a separate artifact, signed by a separate authority, secured to a separate standard, with no shared revocation path and no shared audit trail. Polaris models consolidating them into **one active credential record per person**, verified through **context-scoped events** (banking, voting and healthcare are different events with different disclosure rules) at three disclosure levels. The default level is **zero-knowledge**: the typical verification stores no token identifier at all, so the verification graph cannot be reconstructed even by someone holding the whole database.
 
@@ -44,9 +44,9 @@ The backbone is a 45-table PostgreSQL schema whose constraints are the security 
 
 ## Status
 
-**This tree is 1.0.0-rc.2. The published packages are 1.0.0-rc.1. They are not the same software, and the difference is not cosmetic.**
+**This tree is 1.0.0-rc.3. The published packages are 1.0.0-rc.1. They are not the same software, and the difference is not cosmetic.**
 
-Two version numbers, because a release candidate has two lives. Every `(v1.0.0-rc.2)` stamp on this page describes the source you are reading. What `pip install` and `npm install` give you is rc.1, published 2026-09-16.
+Two version numbers, because a release candidate has two lives. Every `(v1.0.0-rc.3)` stamp on this page describes the source you are reading. What `pip install` and `npm install` give you is rc.1, published 2026-09-16.
 
 rc.2 exists because twenty-two defects were found in rc.1 over two days, across all four external doors and the application. They are listed, measured inside the downloaded wheels rather than inferred, under [**What a stranger installing rc.1 has**](CHANGELOG.md#v100-rc2--2026-09-17-a-defect-found-in-the-candidate) in the changelog. Read that before depending on a published package. The short version: `polaris-oid4vp` 1.0.0rc1 never reads `exp`, so it accepts a credential whose validity has ended; `polaris-verify` 1.0.0rc1 lets a time-boxed trust edge outlive its `valid_until` and has no finite-number guards, so a grant signed with a non-finite limit is an unlimited grant wearing a limit field.
 
@@ -69,10 +69,16 @@ The verifier installs from PyPI and runs with no database, no server and none of
 
 ```bash
 pip install --pre "polaris-verify[cryptography]"
-polaris-verify --pqc-provider auto --pack your-credential.json
+# does the signature verify? issuer trust NOT evaluated
+polaris-verify --pqc-provider auto --signature-only --pack your-credential.json
+
+# the real question: and does that key belong to an issuer you trust?
+polaris-verify --pqc-provider auto --issuer-anchor trusted-keys.json --pack your-credential.json
 ```
 
 It refuses to start until the run says what cryptography it is doing. There is no default and no environment variable for that choice, because a verifier that quietly stopped verifying still answers every question.
+
+**A genuine signature is not a trusted issuer**, and the second flag is how you say which question you asked. Without `--issuer-anchor` the tool can tell you the signature is mathematically valid and nothing about whose key made it, so it abstains (exit 2) rather than returning a success anyone could read as trust. `--signature-only` says that cryptographic validity alone is genuinely what you wanted.
 
 A verdict makes the split concrete. A signature stays genuine forever; the authorization under it can change. The same credential, after it is revoked:
 
@@ -118,7 +124,7 @@ Above the ten sits the project's vocation: **no person can be compelled to renou
 | **C9** | Concurrency claims are tested with real threads, not mocks. | Engineering | Threaded test suites against a live database |
 | **C10** | Identity is not money. The schema carries no monetary claim. | Constitutional | Structural absence, pinned by a check |
 
-Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 282 plain `check_*` functions (v1.0.0-rc.2), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. Why these ten, and why they interlock: [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
+Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 282 plain `check_*` functions (v1.0.0-rc.3), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. Why these ten, and why they interlock: [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
 
 ---
 
@@ -179,7 +185,7 @@ Four layers. The schema is the core; everything else is a client of it.
 | [`polaris_web/`](polaris_web/) | Flask application: dashboard, the Atlas, per-use-case flows, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 Merkle-inclusion prover (Rust), plus [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation that must agree with it. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI: issuance, revocation, recovery, audit queries, without a browser. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer. 282 checks (v1.0.0-rc.2), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer. 282 checks (v1.0.0-rc.3), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
 | [`packages/`](packages/), [`sdk/`](sdk/), [`conformance/`](conformance/) | The standalone products: the detached verifier, the OpenID4VP verifier, the Python and TypeScript verify SDKs, and the conformance suite that holds any verifier to the published cases. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | The holder wallet and relying-party verifier (`polaris-wallet.py`, `polaris-relying-party.py`), operator tooling (backup, restore, archive, purge, migrate, recover-admin) and observability config (Prometheus alerts, Grafana dashboards-as-code, opt-in OTel tracing). |
 
@@ -210,7 +216,7 @@ The claim is **algorithm agility under an audited migration path**, not settled 
 
 ## Verified, not asserted
 
-Every claim above is backed by a gate that fails if the claim stops being true. The table, check, route and CI-job counts are re-measured by `polaris_checks` on every run and are current; the two test counts are a point-in-time measurement (v1.0.0-rc.2) and are restated when re-measured, never extrapolated.
+Every claim above is backed by a gate that fails if the claim stops being true. The table, check, route and CI-job counts are re-measured by `polaris_checks` on every run and are current; the two test counts are a point-in-time measurement (v1.0.0-rc.3) and are restated when re-measured, never extrapolated.
 
 | Layer | Scale | What it proves |
 |---|---|---|
@@ -219,7 +225,7 @@ Every claim above is backed by a gate that fails if the claim stops being true. 
 | Invariant checks | 282 | C1-C10 plus production posture, each check paired with a detection test |
 | CI jobs | 20 | Below |
 
-Both test rows count tests passing on the reference machine at v1.0.0-rc.2 (`pytest -q` per suite). The three product tests skipped there need real ML-DSA and four of the crypto tests a PKCS#11 module, and CI runs both; the fifth needs a real KMS key and is opt-in, so it runs nowhere in this repository.
+Both test rows count tests passing on the reference machine at v1.0.0-rc.3 (`pytest -q` per suite). The three product tests skipped there need real ML-DSA and four of the crypto tests a PKCS#11 module, and CI runs both; the fifth needs a real KMS key and is opt-in, so it runs nowhere in this repository.
 
 CI does not just run tests; it exercises the artifacts. On every push it:
 
