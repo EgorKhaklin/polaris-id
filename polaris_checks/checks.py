@@ -6861,7 +6861,12 @@ def check_ui_drill(root: pathlib.Path) -> list[Finding]:
     # The live view is actually live: the aggregate cache is bypassed under SIM_MODE.
     app = _read_app(root)
     cache_fn = app.split("def _atlas_cache_get", 1)
-    if len(cache_fn) != 2 or not re.search(r"if\s+SIM_MODE\s*:\s*\n\s*return None", cache_fn[1][:800]):
+    # `SIM_MODE` or `<module>.SIM_MODE`: once _atlas_cache_get moved out of app.py (2026-09-18)
+    # the qualified form became the CORRECT one, because a bare `from app import SIM_MODE` copy
+    # freezes the flag at startup and the bypass silently stops happening. Accepting only the
+    # bare spelling would have pinned this check to the shape that is now the bug.
+    if len(cache_fn) != 2 or not re.search(r"if\s+(?:[A-Za-z_]\w*\.)?SIM_MODE\s*:\s*\n\s*return None",
+                                           cache_fn[1][:1200]):
         return _fail("ui_drill", "_atlas_cache_get must `return None` (bypass the aggregate cache) under "
                      "SIM_MODE, so the live simulation's charts refresh with the stream")
     ci = _read(root, ".github/workflows/ci.yml")
@@ -16643,6 +16648,39 @@ def check_no_module_imports_an_unstable_name(root: pathlib.Path) -> list[Finding
         return _fail(name, "no application module in polaris_web/ carries code to check")
 
     unstable = {stem: _unstable_module_names(t) for stem, t in trees.items()}
+
+    # THE FOURTH SOURCE, and the one the module trees cannot show. A name app.py binds exactly
+    # once is stable as far as its own source goes, and a suite that repoints it at runtime
+    # makes it not. `flask_app.ATLAS_BASEMAP_STYLE_URL = ...` is how F04b_AtlasBasemapCspTests
+    # proves the basemap origin is configurable, and it only reaches the module it names. On
+    # 2026-09-18 the Atlas moved out of app.py holding a `from app import` copy of that value,
+    # and the test split in half: the CSP, built in app.py, saw the new origin; the page,
+    # rendered from the copy, did not. An operator repointing the basemap would have got a page
+    # whose tiles their own policy blocked. A value with two readers cannot be copied to one.
+    for tp in sorted((root / "polaris_web").glob("test_*.py")):
+        code = _cached_text(tp, tp.name, strip=False)
+        if not code.strip():
+            continue
+        try:
+            ttree = ast.parse(code)
+        except SyntaxError:
+            continue
+        alias = {}
+        for node in ast.walk(ttree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name in trees:
+                        alias[a.asname or a.name] = a.name
+        for node in ast.walk(ttree):
+            if not isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+                        and t.value.id in alias):
+                    unstable[alias[t.value.id]].setdefault(
+                        t.attr, "is repointed at runtime by polaris_web/%s" % tp.name)
+
     total = sum(len(v) for v in unstable.values())
     bad = []
     for stem, tree in trees.items():
@@ -16668,7 +16706,8 @@ def check_no_module_imports_an_unstable_name(root: pathlib.Path) -> list[Finding
     return _ok(name,
                "no application module imports by name any of the %d names its siblings do not "
                "bind once and keep: bound on only some module-level paths, rebound later with "
-               "`global`, or assigned more than once. Such a name is safe where it is, because "
+               "`global`, assigned more than once, or repointed at runtime by a suite. Such a "
+               "name is safe where it is, because "
                "every use resolves against the module's current state, and unsafe one file "
                "over, because `from` copies the binding at import time; the set is derived from "
                "the module trees rather than listed, so a new one is covered by being "

@@ -11224,6 +11224,38 @@ def test_no_module_imports_an_unstable_name_check_discriminates(tmp_path):
     assert check(tmp_path)[0].level == "OK", \
         "an item assignment is a mutation of the object, not a rebinding of the name"
 
+    # THE FOURTH SOURCE, which no module tree can show: a name app.py binds exactly once, and
+    # a SUITE repoints at runtime. Both of app.py's are real. F04b_AtlasBasemapCspTests flips
+    # ATLAS_BASEMAP_STYLE_URL to prove the basemap origin is configurable, and the CSP is built
+    # in app.py while the page is rendered in atlas_routes: a copy splits them, and an operator
+    # repointing the basemap gets a page whose tiles their own policy blocks. The simulation
+    # suite flips SIM_MODE per test because, as its docstring says, it is read at request time;
+    # a copy froze it and _atlas_cache_get stopped bypassing the cache, so the live console
+    # would have shown 30-second-stale roll-ups. That second one broke nothing visible: no test
+    # covers the bypass and check_ui_drill reads the function's SOURCE, which still said the
+    # right thing. This check is what found it, on 2026-09-18, in the move that caused it.
+    write({"app.py": "FLAG = 1\napp = 1\n",
+           "routes.py": "from app import FLAG\n",
+           "test_app.py": "import app as flask_app\n\n\ndef t():\n    flask_app.FLAG = 2\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "a global a suite repoints is not one binding either"
+    assert "repointed at runtime" in result.message
+    assert "test_app.py" in result.message, "and the suite that does it is named"
+
+    # READING it in a suite is not repointing it, and flagging that would make every module
+    # constant unimportable.
+    write({"app.py": "FLAG = 1\napp = 1\n",
+           "routes.py": "from app import FLAG\n",
+           "test_app.py": "import app as flask_app\n\n\ndef t():\n    assert flask_app.FLAG == 1\n"})
+    assert check(tmp_path)[0].level == "OK", "a suite that only reads the name changes nothing"
+
+    # And it follows the ALIAS the suite imported under, not a fixed name.
+    write({"app.py": "FLAG = 1\napp = 1\n",
+           "routes.py": "from app import FLAG\n",
+           "test_app.py": "import app as _a\n\n\ndef t():\n    _a.FLAG = 2\n"})
+    assert check(tmp_path)[0].level == "FAIL", \
+        "the suite names the module however it likes; the import alias is what resolves it"
+
     # VACUITY: an empty tree must not pass.
     write({"app.py": "", "routes.py": ""})
     assert check(tmp_path)[0].level == "FAIL", "a tree with no code is not a passing tree"

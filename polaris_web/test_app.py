@@ -39,6 +39,9 @@ from psycopg2.extras import RealDictCursor
 # Import the Flask app
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import app as flask_app
+# The Atlas moved out of app.py on 2026-09-18. Imported AFTER app, though either order
+# works: app.py imports it at the end of its own startup, so it is already loaded here.
+import atlas_routes
 
 
 # ----------------------------------------------------------------------------
@@ -5058,7 +5061,7 @@ class RouteModuleTests(PolarisTestCase):
     #: test_roster_is_complete until it is added here, which is the point: the roster is what
     #: `check_modules_are_measured` reads to know a module has a measured suite at all, and a
     #: derived-only test would let one arrive with neither a line here nor any coverage.
-    ROUTE_MODULES = {'sql_console', 'verification_routes'}
+    ROUTE_MODULES = {'atlas_routes', 'sql_console', 'verification_routes'}
 
     @staticmethod
     def _derive():
@@ -7794,7 +7797,7 @@ class AtlasAPITests(PolarisTestCase):
     def test_cache_stats_endpoint_reports_counters(self):
         """/api/atlas/cache-stats reports cache observability counters."""
         # Clear cache first so we get clean numbers
-        from app import _atlas_cache_clear
+        from atlas_routes import _atlas_cache_clear   # moved out of app.py 2026-09-18
         _atlas_cache_clear()
         # Miss: cold cache
         self.client.get('/api/atlas/clusters?bbox=10,20,30,40&grid=5&kind=verification&window=all')
@@ -7853,7 +7856,7 @@ class AtlasConsoleAPITests(PolarisTestCase):
         # request far above the cap; the response must not exceed it
         r = self.client.get('/api/atlas/breakdown?window=all&dimension=agency&limit=100000')
         self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(r.get_json()['limit'], flask_app._ATLAS_MAX_CATEGORIES)
+        self.assertLessEqual(r.get_json()['limit'], atlas_routes._ATLAS_MAX_CATEGORIES)
 
     def test_breakdown_disclosure_counts_zero_knowledge(self):
         r = self.client.get('/api/atlas/breakdown?window=all&dimension=disclosure')
@@ -7892,8 +7895,8 @@ class AtlasConsoleAPITests(PolarisTestCase):
     def test_crosstab_rows_capped_at_max_categories(self):
         r = self.client.get('/api/atlas/crosstab?window=all&row=agency&col=outcome&limit=100000')
         self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(len(r.get_json()['rows']), flask_app._ATLAS_MAX_CATEGORIES)
-        self.assertLessEqual(r.get_json()['limit'], flask_app._ATLAS_MAX_CATEGORIES)
+        self.assertLessEqual(len(r.get_json()['rows']), atlas_routes._ATLAS_MAX_CATEGORIES)
+        self.assertLessEqual(r.get_json()['limit'], atlas_routes._ATLAS_MAX_CATEGORIES)
 
     def test_crosstab_rejects_unknown_dimensions(self):
         self.assertEqual(self.client.get('/api/atlas/crosstab?window=all&row=gender&col=outcome').status_code, 400)
@@ -7940,7 +7943,7 @@ class AtlasConsoleAPITests(PolarisTestCase):
     def test_agency_facet_capped(self):
         r = self.client.get('/api/atlas/facet/agencies?window=all&limit=100000')
         self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(len(r.get_json()['results']), flask_app._ATLAS_MAX_CATEGORIES)
+        self.assertLessEqual(len(r.get_json()['results']), atlas_routes._ATLAS_MAX_CATEGORIES)
 
     def test_global_filter_narrows_every_aggregate(self):
         # A facet filter must flow through the aggregates (coordinated views):
@@ -8006,7 +8009,7 @@ class AtlasConsoleAPITests(PolarisTestCase):
     def test_records_capped_at_max_events(self):
         r = self.client.get('/api/atlas/records?window=all&kind=verification&limit=100000')
         self.assertEqual(r.status_code, 200)
-        self.assertLessEqual(r.get_json()['count'], flask_app._ATLAS_MAX_EVENTS)
+        self.assertLessEqual(r.get_json()['count'], atlas_routes._ATLAS_MAX_EVENTS)
 
     def test_records_rejects_bad_cursor(self):
         self.assertEqual(
@@ -8021,7 +8024,7 @@ class AtlasConsoleAPITests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         d = r.get_json()
         self.assertEqual(d['count'], len(d['hexes']))
-        self.assertLessEqual(len(d['hexes']), flask_app._ATLAS_MAX_CLUSTERS)  # C8
+        self.assertLessEqual(len(d['hexes']), atlas_routes._ATLAS_MAX_CLUSTERS)  # C8
         for h in d['hexes']:
             for k in ('lat', 'lon', 'n_total', 'n_failure'):
                 self.assertIn(k, h)
@@ -8054,7 +8057,7 @@ class AtlasConsoleAPITests(PolarisTestCase):
         r = self.client.get('/api/atlas/geo/jurisdictions?window=all&kind=verification')
         self.assertEqual(r.status_code, 200)
         d = r.get_json()
-        self.assertLessEqual(d['count'], flask_app._ATLAS_MAX_REGIONS)  # C8
+        self.assertLessEqual(d['count'], atlas_routes._ATLAS_MAX_REGIONS)  # C8
         # every PLACEABLE region has a centroid; the count includes ZK, but the
         # located count (which the centroid is built from) never exceeds total.
         saw_zk = False
@@ -8450,7 +8453,7 @@ class AtlasFilterAPITests(PolarisTestCase):
         the cache. Pre-v8.3 the cache key did not include the filter set
         and a call with window=1h would receive the cached payload from
         a prior window=all call."""
-        from app import _atlas_cache_clear
+        from atlas_routes import _atlas_cache_clear   # moved out of app.py 2026-09-18
         _atlas_cache_clear()
         r1 = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179'
                              '&grid=5&window=all')
@@ -12339,8 +12342,9 @@ class ReplicaRoutingTests(PolarisTestCase):
         super().setUp()
         self._login('admin')
         self._saved_replica = flask_app.DB_CONFIG_REPLICA
-        with flask_app._atlas_cache_lock:   # the atlas cache would mask which backend served a read
-            flask_app._atlas_cache.clear()
+        import atlas_routes                 # the cache moved out of app.py 2026-09-18
+        with atlas_routes._atlas_cache_lock:  # it would mask which backend served a read
+            atlas_routes._atlas_cache.clear()
 
     def tearDown(self):
         flask_app.DB_CONFIG_REPLICA = self._saved_replica
