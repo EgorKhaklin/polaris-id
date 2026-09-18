@@ -9026,8 +9026,14 @@ def test_holder_verifier_flow_check_discriminates(tmp_path):
 def test_federation_in_app_check_discriminates(tmp_path):
     # PE.3b (v9.286): federation is in the running app — Agency registers a signing
     # key, custody selects it, issuance signs with the agency's key and refuses a
-    # cross-key token, /verify reports issuer_authentic, both halves tested. Each
+    # cross-key token, and /verify reports the issuer facts, both halves tested. Each
     # perturbation removes one leg.
+    #
+    # rc.3 (2026-09-17): the single `issuer_authentic` became two fields, because one
+    # boolean was answering "was this key authorized when it signed" and "is it the
+    # current key" at once and getting the first wrong on every rotation. The fixture
+    # carries both names and the rotation case, and case 2b proves the old name coming
+    # back is itself a failure.
     good = {
         "polaris_sql/01_schema.sql": "CREATE TABLE Agency (agency_id SERIAL, signing_public_key_hex TEXT);\n",
         "polaris_web/custody.py": "def get_custody_for_agency(agency_id):\n    d = os.environ.get('POLARIS_AGENCY_KEYS_DIR')\n    return None\n",
@@ -9036,10 +9042,13 @@ def test_federation_in_app_check_discriminates(tmp_path):
             "sig, alg, pk = pqc_signing.signature_with_key_for_token(tv, agency_id=aid)\n"
             "if registered and registered != pk:\n"
             "    raise pqc_signing.SigningError('PE.3b federation binding')\n"
-            "return jsonify(issuer_authentic=(token_key == agency_key))\n"
+            "return jsonify(issuer_authorized_at_signing=a, issuer_key_current=b)\n"
         ),
         "polaris_web/test_custody.py": "class PerAgencyCustodyTests:\n    def t(self): custody.get_custody_for_agency(1)\n",
-        "polaris_web/test_app.py": "class FederationInAppTests:\n    def t(self): assert v['issuer_authentic']\n",
+        "polaris_web/test_app.py": ("class FederationInAppTests:\n"
+                                    "    def test_survives_an_ordinary_rotation(self):\n"
+                                    "        assert v['issuer_authorized_at_signing']\n"
+                                    "        assert v['issuer_key_current'] is False\n"),
     }
 
     def write(overrides=None):
@@ -9053,9 +9062,27 @@ def test_federation_in_app_check_discriminates(tmp_path):
     # 1. issuance no longer enforces the binding (a cross-key token could be issued)
     write({"polaris_web/app.py": good["polaris_web/app.py"].replace("federation binding", "note")})
     assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", "must FAIL without the issuance binding enforcement"
-    # 2. /verify no longer reports issuer_authentic
-    write({"polaris_web/app.py": good["polaris_web/app.py"].replace("issuer_authentic", "something_else")})
-    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", "must FAIL without the issuer_authentic field"
+    # 2. /verify stops reporting the historical fact
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace(
+        "issuer_authorized_at_signing", "something_else")})
+    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", \
+        "must FAIL without issuer_authorized_at_signing"
+    # 2a. ...or the current-key fact. Both are required: one of them alone is the shape
+    #     that shipped, where a rotation read as a verdict on the credential.
+    write({"polaris_web/app.py": good["polaris_web/app.py"].replace(
+        "issuer_key_current", "something_else")})
+    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", \
+        "must FAIL without issuer_key_current"
+    # 2b. ...and the field that conflated them must not come back.
+    write({"polaris_web/app.py": good["polaris_web/app.py"]
+           + "\nreturn jsonify(issuer_authentic=(token_key == agency_key))\n"})
+    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", \
+        "must FAIL if issuer_authentic reappears in the application"
+    # 2c. the suite must still exercise the rotation case by name, since that is the one
+    #     the single boolean answered wrongly.
+    write({"polaris_web/test_app.py": good["polaris_web/test_app.py"].replace("rotation", "thing")})
+    assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the suite stops covering the rotation case"
     # 3. custody no longer selects the agency's key
     write({"polaris_web/custody.py": "def get_custody():\n    return None\n"})
     assert checks.check_federation_in_app(tmp_path)[0].level == "FAIL", "must FAIL without per-agency custody selection"
