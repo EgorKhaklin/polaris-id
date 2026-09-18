@@ -600,15 +600,30 @@ def main() -> int:
     # declaration as obsolete and exited 1 on a finding it had no evidence for: `--limit 4`
     # called 17 of them stale on 2026-09-18. Say so instead.
     partial = bool(args.limit) or bool(outside)
-    stale = [] if partial else sorted(
-        k for k in DECLARED
-        if not any(k[0] == c["view"] and k[1] in c["source"] for c in survivors + blind))
+    matched = sorted(k for k in DECLARED
+                     if any(k[0] == c["view"] and k[1] in c["source"] for c in survivors + blind))
+    unmatched = sorted(set(DECLARED) - set(matched))
+    # A partial run cannot prove a declaration OBSOLETE, because it did not examine most of
+    # them. It can prove one LIVE, because a declaration matched by a survivor here is matched
+    # whatever the rest of the run would have found. So report the half that is sound. When
+    # every declaration is matched, the audit is complete even though the run was not, and
+    # saying that is better than saying nothing: on 2026-09-18 the default scope matched all
+    # 17 of 17 while examining 37 of 113 refusals.
+    stale = [] if partial else unmatched
     if partial:
-        print("\ndeclarations not audited: this run examined %d of %d refusals (%s), and "
-              "whether a declaration is obsolete cannot be read off a partial run. Re-run "
-              "with --all and no --limit to audit the %d in DECLARED."
-              % (len(cases), len(found),
-                 "--limit" if args.limit else "status scope", len(DECLARED)))
+        if not unmatched:
+            print("\ndeclarations: all %d matched a survivor in this run, so none is obsolete. "
+                  "A partial run cannot prove a declaration stale, but a declaration matched "
+                  "here is matched whatever the unexamined %d refusals would have shown, so "
+                  "this audit is complete even though the run is not."
+                  % (len(DECLARED), len(found) - len(cases)))
+        else:
+            print("\ndeclarations: %d of %d matched a survivor in this run. The other %d were "
+                  "not examined (%s), and a partial run cannot tell an obsolete declaration "
+                  "from an unexamined one. Re-run with --all and no --limit: %s"
+                  % (len(matched), len(DECLARED), len(unmatched),
+                     "--limit" if args.limit else "status scope",
+                     ", ".join("%s(%s)" % k for k in unmatched[:6])))
     if stale:
         print("\nSTALE DECLARATIONS (%d): covered now, or the refusal was rewritten, so the "
               "reason is obsolete: %s"
