@@ -19274,6 +19274,54 @@ def check_security_page_matches_the_release_ledger(root: pathlib.Path) -> list[F
                      % (_RELEASE_LEDGER_REL, seen))
 
 
+def check_stranger_path_was_walked_against_what_is_published(root: pathlib.Path) -> list[Finding]:
+    """The stranger's path must have been walked against the artifact a stranger installs.
+
+    STRANGER-PATH.md opens by promising it "is run start to finish before it is changed,
+    from outside the repository, against the package on PyPI rather than a working copy",
+    and records the version it was last walked against. That promise goes stale the moment a
+    publish outruns the walk: the page then describes a run against an artifact the registry
+    no longer serves, while telling a reader to install the one it does.
+
+    So this compares the walked version against what docs/RELEASING.md records as published
+    for `polaris-oid4vp`, which is the package the path installs. It is deliberately strict.
+    Re-walking on a publish is what the page already says it does, and the walk is ten
+    minutes; the alternative is a front-door document whose only claim is that somebody once
+    ran it against something else.
+
+    Held to the LEDGER rather than a registry, for the same reason as
+    check_security_page_matches_the_release_ledger: a check that reached pypi.org would fail
+    on an offline machine.
+    """
+    name = "stranger_path_current"
+    ledger = _ledger_published_versions(root)
+    published = ledger.get("polaris-oid4vp")
+    if not published:
+        return _fail(name, "no published polaris-oid4vp version could be read out of %s, so "
+                           "there is nothing to hold the walk against" % _RELEASE_LEDGER_REL)
+    page = _read_raw(root, "docs/STRANGER-PATH.md")
+    if not page:
+        return _fail(name, "docs/STRANGER-PATH.md could not be read")
+
+    m = re.search(r"Last walked\s+(\d{4}-\d{2}-\d{2})\s+against\s+`?polaris-oid4vp`?\s*\n?"
+                  r"\s*([0-9][^\s]*)", page)
+    if not m:
+        return _fail(name, "docs/STRANGER-PATH.md no longer records a `Last walked DATE "
+                           "against polaris-oid4vp VERSION` line, so nothing says which "
+                           "artifact the page describes")
+    walked_on, walked = m.group(1), m.group(2).rstrip(".,")
+    if walked.replace("-", "").replace(".", "") != published.replace("-", "").replace(".", ""):
+        return _fail(name, "docs/STRANGER-PATH.md was last walked on %s against "
+                           "polaris-oid4vp %s, and %s is what the registry serves. The page "
+                           "tells a reader to install the published one while describing a "
+                           "run against a different artifact; re-walk it and restate the "
+                           "line" % (walked_on, walked, published))
+    return _ok(name, "docs/STRANGER-PATH.md was last walked on %s against polaris-oid4vp %s, "
+                     "which is what %s records as published, so the path a stranger follows "
+                     "is the path somebody actually ran"
+                     % (walked_on, walked, _RELEASE_LEDGER_REL))
+
+
 def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
     """No check may report OK over a tree that contains nothing.
 
@@ -19332,6 +19380,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
     check_security_page_matches_the_release_ledger,
+    check_stranger_path_was_walked_against_what_is_published,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,
     check_drills_count_their_cases,

@@ -74,6 +74,36 @@ different artifact, and only the second one tells you whether the product bounda
                                writing down: an interoperability success is not a security
                                result, and here they point in opposite directions.
 
+**Re-walked 2026-09-18, against the HARDENED published package.** rc.3 went to all four
+registries that morning, which makes the 2026-09-17 caveat above a dated one: the artifact a
+stranger installs is no longer the pre-hardening build.
+
+    Installed:                 pip install --pre polaris-oid4vp  ->  1.0.0rc3 from PyPI,
+                               into a fresh venv, from outside the repository
+    Wallet:                    waltid/wallet-api2:1.0.0, stock image, unmodified
+    Path:                      docs/STRANGER-PATH.md, every step as written
+    Result:                    IT PRESENTED AND THE PUBLISHED VERIFIER ACCEPTED.
+
+                                 {"transmission_success":true,
+                                  "verifier_response":{"redirect_uri":"..."}}
+                                 <- 200 authentic, claims ['cnf', 'family_name',
+                                    'given_name', 'iat', 'iss', 'vct']
+
+    What CHANGED since rc.1:   the defects the entry above names are fixed in what the
+                               registry now serves. `exp` is read, the finite-number guards,
+                               the forbidden-disclosure-name list, the presentation size
+                               bounds and the `vct` binding are all present. SECURITY.md
+                               carries the older versions' defects for anyone who pinned
+                               them.
+
+    What that STILL does not   the same thing it did not mean on 2026-09-17. One wallet,
+    mean:                      one presentation, one happy path. walt.id ran the client
+                               half; nobody outside this repository has attacked the
+                               verifier half, audited it, or deployed it. An
+                               interoperability success is not a security result, and the
+                               row this fills is "externally exercised", which is the
+                               weakest of the five marks that involve an outside party.
+
 **It refused Polaris first, and it was right.** `polaris-oid4vp keygen` produced a
 request-signing leaf certificate with no KeyUsage extension at all:
 

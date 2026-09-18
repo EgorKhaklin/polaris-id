@@ -16480,3 +16480,50 @@ def test_security_page_current_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
         "must FAIL rather than report a current page when the ledger cannot be parsed"
+
+
+def test_stranger_path_current_check_discriminates(tmp_path):
+    """The walked version must be the published one, or the page describes another artifact.
+
+    STRANGER-PATH.md promises it is run "against the package on PyPI rather than a working
+    copy". A publish that outruns the walk makes that promise stale: the page tells a reader
+    to install what the registry serves while describing a run against something else.
+    """
+    LEDGER = ("| Source | Registry | Package | Latest published | Previous |\n|---|---|---|---|---|\n"
+              "| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |\n"
+              "| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.3, 2026-09-18 | 0.1.0, 2026-09-15 |\n")
+    PAGE = ("# The stranger's path\n\nThis page is run start to finish before it is changed.\n"
+            "Last walked 2026-09-18 against `polaris-oid4vp`\n1.0.0-rc.3 installed from the registry.\n")
+
+    def write(page=PAGE, ledger=LEDGER):
+        (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "docs" / "RELEASING.md").write_text(ledger)
+        (tmp_path / "docs" / "STRANGER-PATH.md").write_text(page)
+
+    fn = checks.check_stranger_path_was_walked_against_what_is_published
+    write()
+    assert fn(tmp_path)[0].level == "OK", "must PASS when the walk matches what is published"
+
+    # THE defect: a publish lands and nobody re-walks.
+    write(ledger=LEDGER.replace("1.0.0rc3, 2026-09-18", "1.0.0rc4, 2026-09-19"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "1.0.0rc4" in out[0].message, \
+        "must FAIL when the registry has moved past the last walk"
+
+    # The page claims a walk against something never published.
+    write(page=PAGE.replace("1.0.0-rc.3", "1.0.0-rc.9"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "1.0.0rc3" in out[0].message, \
+        "must FAIL when the page names a version the ledger does not record as published"
+
+    # The recording line is removed entirely.
+    write(page="# The stranger's path\n\nNo record of any walk.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no longer records" in out[0].message, \
+        "must FAIL when nothing says which artifact the page describes"
+
+    # A ledger with no oid4vp row: nothing to hold the walk against.
+    write(ledger="| Source | Registry | Package | Latest published | Previous |\n|---|---|---|---|---|\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "nothing to hold" in out[0].message, \
+        "must FAIL rather than pass when the published version cannot be read"
