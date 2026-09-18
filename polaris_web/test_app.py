@@ -5043,47 +5043,99 @@ class VerificationTests(PolarisTestCase):
 
 
 # ============================================================================
+# ROUTE MODULE TESTS
+# ============================================================================
+
+class RouteModuleTests(PolarisTestCase):
+    """app.py is being decomposed into route modules; these hold the roster honest.
+
+    A route module registers its routes as a side effect of app.py importing it at the end of
+    startup. Nothing raises if that import is dropped or ordered wrong: the application boots,
+    serves everything still defined in app.py, and answers the moved routes with a 404 that
+    reads like a routing typo. So the roster is asserted rather than assumed."""
+
+    #: The route modules, written out. The next module moved out of app.py fails
+    #: test_roster_is_complete until it is added here, which is the point: the roster is what
+    #: `check_modules_are_measured` reads to know a module has a measured suite at all, and a
+    #: derived-only test would let one arrive with neither a line here nor any coverage.
+    ROUTE_MODULES = {'sql_console', 'verification_routes'}
+
+    @staticmethod
+    def _derive():
+        """Modules that import the entry point back out of app.py, read off the sources."""
+        here = os.path.dirname(os.path.abspath(__file__))
+        found = set()
+        for fn in sorted(os.listdir(here)):
+            if not fn.endswith('.py') or fn.startswith('test_') or fn == 'app.py':
+                continue
+            with open(os.path.join(here, fn)) as fh:
+                if re.search(r'^\s*(?:from\s+app\s+import\b|import\s+app\b)',
+                             fh.read(), re.M):
+                    found.add(fn[:-3])
+        return found
+
+    def test_roster_is_complete(self):
+        self.assertEqual(self._derive(), self.ROUTE_MODULES,
+                         'a module that imports the entry point back is a route module. Add it '
+                         'to ROUTE_MODULES, and give it a measured suite while you are here')
+
+    def test_every_route_module_was_imported_at_startup(self):
+        for module in sorted(self.ROUTE_MODULES):
+            self.assertTrue(module in sys.modules,
+                            'app.py did not import %s at startup, so its routes were never '
+                            'registered. The imports are the last statements before the MAIN '
+                            'section, after the sys.modules alias. (assertTrue, not assertIn: '
+                            'assertIn renders sys.modules on failure.)' % module)
+
+    def test_every_route_module_actually_registered_something(self):
+        # The import alone is not the guarantee. Under `python3 app.py` a missing alias makes
+        # `from app import ...` load app.py a second time, and the routes register on a Flask
+        # instance nobody serves: the module IS imported and the application still 404s.
+        registered = {}
+        for rule in flask_app.app.url_map.iter_rules():
+            view = flask_app.app.view_functions.get(rule.endpoint)
+            if view is not None:
+                registered.setdefault(getattr(view, '__module__', ''), []).append(rule.rule)
+        for module in sorted(self.ROUTE_MODULES):
+            self.assertIn(module, registered,
+                          '%s is imported but owns no route on the served application' % module)
+
+    def test_moved_views_are_the_ones_their_modules_define(self):
+        """The roster above proves the SHAPE; this proves the identity, module by module.
+
+        Naming each module here is also how `check_modules_are_measured` knows it is reached by
+        a measured suite rather than only by a drill: that check reads the suite sources for the
+        module's name, and a module exercised only by a drill counts zero toward the coverage
+        floor while looking thoroughly tested."""
+        import sql_console
+        import verification_routes
+
+        for endpoint, module, fn in (
+                ('sql_query', sql_console, 'sql_query'),
+                ('verifications_list', verification_routes, 'verifications_list'),
+                ('verifications_new', verification_routes, 'verifications_new')):
+            view = flask_app.app.view_functions.get(endpoint)
+            self.assertIsNotNone(view, '%s is not registered on the served application' % endpoint)
+            self.assertIs(view, getattr(module, fn),
+                          '%s resolves to a different function than the one %s defines, which '
+                          'is what happens when app.py is loaded twice under two names'
+                          % (endpoint, module.__name__))
+
+    def test_no_route_is_registered_twice(self):
+        seen = {}
+        for rule in flask_app.app.url_map.iter_rules():
+            key = (rule.rule, tuple(sorted(rule.methods)))
+            seen[key] = seen.get(key, 0) + 1
+        dupes = sorted(k[0] for k, n in seen.items() if n > 1)
+        self.assertEqual(dupes, [], 'duplicate rule(s) %r: app.py was imported under two names '
+                                    'and registered its routes twice' % dupes)
+
+
+# ============================================================================
 # SQL CONSOLE TESTS
 # ============================================================================
 
 class SQLConsoleTests(PolarisTestCase):
-
-    def test_route_is_served_from_the_sql_console_module(self):
-        """/sql lives in polaris_web/sql_console.py and registers by import (2026-09-18).
-
-        The first module lifted out of app.py. A route module registers by being imported at
-        the END of app.py, and the failure mode of that arrangement is silent: drop the import,
-        or move it above a name it needs and catch the ImportError, and the application still
-        boots, still serves every other page, and answers /sql with a 404 that reads like a
-        routing typo. Nothing else in this class would notice, because a 404 is what an
-        unauthenticated client sees anyway.
-
-        So this asserts the binding rather than the behaviour: the endpoint exists, and the
-        function behind it was defined in sql_console, not in app. Asserting the module is the
-        point. If the block is ever folded back into app.py this test fails and is the place to
-        record that decision, rather than being quietly satisfied by a route that happens to
-        answer."""
-        # Read the module out of sys.modules rather than importing it here. Importing it at
-        # test time would install the route the assertion is looking for, so the test would be
-        # creating the condition it verifies; and against an app that has already served a
-        # request Flask raises about setup methods, which reads as a framework problem rather
-        # than as the missing import it actually is. What is being asserted is that app.py
-        # imported it AT STARTUP.
-        self.assertTrue('sql_console' in sys.modules,
-                        'app.py did not import sql_console at startup, so /sql was never '
-                        'registered. The import is the last statement before the MAIN '
-                        'section. (assertTrue, not assertIn: assertIn renders the whole '
-                        'container on failure, and sys.modules is 150KB of it.)')
-        sql_console = sys.modules['sql_console']
-
-        view = flask_app.app.view_functions.get('sql_query')
-        self.assertIsNotNone(view, '/sql is not registered')
-        self.assertIs(view, sql_console.sql_query)
-        self.assertEqual(view.__module__, 'sql_console')
-
-        rules = [r for r in flask_app.app.url_map.iter_rules() if r.rule == '/sql']
-        self.assertEqual(len(rules), 1, 'exactly one /sql rule; more than one means app.py was '
-                                        'imported twice under different module names')
 
     def test_console_renders(self):
         r = self.client.get('/sql')

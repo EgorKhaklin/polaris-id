@@ -11109,6 +11109,78 @@ def test_transparency_program_check_discriminates(tmp_path):
         "a report that does not say it cannot show an unrecorded access must FAIL"
 
 
+def test_no_module_imports_a_conditional_name_check_discriminates(tmp_path):
+    # 2026-09-18, found while moving the second block out of app.py. app.py imports
+    # prometheus_client in a module-level try whose except arm binds _PROM_AVAILABLE = False and
+    # nothing else, so _METRICS_DURESS and its siblings exist only when the library is
+    # installed. Every use inside app.py sits behind `if _PROM_AVAILABLE:`, which is correct.
+    # `from app import _METRICS_DURESS` in a route module runs before that guard and raises
+    # ImportError where the library is absent, and since app.py imports its route modules the
+    # application does not start at all.
+    OPTIONAL = ("try:\n    from prom import Counter\n    METRIC = Counter()\n"
+                "except ImportError:\n    HAVE = False\n")
+
+    def write(files):
+        web = tmp_path / "polaris_web"
+        if web.exists():
+            for f in web.glob("*.py"):
+                f.unlink()
+        web.mkdir(parents=True, exist_ok=True)
+        for name, body in files.items():
+            (web / name).write_text(body)
+
+    check = checks.check_no_module_imports_a_conditional_name
+
+    # THE CORRECT ARRANGEMENT: the conditional name is reached as an ATTRIBUTE, which resolves
+    # at use time behind the same guard that decided whether it was ever bound.
+    write({"app.py": OPTIONAL + "app = 1\n",
+           "routes.py": "import app\n\ndef f():\n    if app.HAVE:\n        app.METRIC.inc()\n"})
+    assert check(tmp_path)[0].level == "OK", "attribute access at use time must PASS"
+
+    # THE DEFECT.
+    write({"app.py": OPTIONAL + "app = 1\n",
+           "routes.py": "from app import METRIC\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "importing a try-only name by name must be caught"
+    assert "METRIC" in result.message, "and the name given"
+    assert "routes.py" in result.message, "and the importer given"
+
+    # A NAME BOUND ON EVERY PATH is safe to import, and must not be swept up with it.
+    write({"app.py": OPTIONAL + "app = 1\n", "routes.py": "from app import app\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "a name bound unconditionally is importable; flagging it would make the check useless"
+
+    # THE except ARM THAT REBINDS IT closes the hole, and the check must see that.
+    write({"app.py": "try:\n    from prom import Counter\n    METRIC = Counter()\n"
+                     "except ImportError:\n    METRIC = None\napp = 1\n",
+           "routes.py": "from app import METRIC\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "a try whose handler rebinds the name binds it on every path"
+
+    # ONE HANDLER OF TWO is not every path.
+    write({"app.py": "try:\n    METRIC = 1\nexcept ImportError:\n    METRIC = None\n"
+                     "except ValueError:\n    pass\napp = 1\n",
+           "routes.py": "from app import METRIC\n"})
+    assert check(tmp_path)[0].level == "FAIL", \
+        "a name rebound by only one of two handlers is still conditional"
+
+    # THE OTHER SHAPE: one arm of a module-level if.
+    write({"app.py": "import os\nif os.environ.get('X'):\n    FLAG = 1\napp = 1\n",
+           "routes.py": "from app import FLAG\n"})
+    assert check(tmp_path)[0].level == "FAIL", "one arm of a module-level if is conditional too"
+
+    # AND IT IS NOT SCOPED TO app.py: any application module can be the source.
+    write({"app.py": "app = 1\n", "helper.py": OPTIONAL,
+           "routes.py": "from helper import METRIC\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "the hazard is cross-module, not app.py-specific"
+    assert "helper.py" in result.message
+
+    # VACUITY: an empty tree must not pass.
+    write({"app.py": "", "routes.py": ""})
+    assert check(tmp_path)[0].level == "FAIL", "a tree with no code is not a passing tree"
+
+
 def test_route_modules_register_under_both_entry_points_check_discriminates(tmp_path):
     # 2026-09-18, the first module lifted out of app.py. A route module imports `app` back out
     # of the entry point. Under `gunicorn app:app` that resolves to the running module; under
@@ -11172,10 +11244,22 @@ def test_route_modules_register_under_both_entry_points_check_discriminates(tmp_
         "guarding the alias on the path that needs it is the same guarantee"
 
     # THE SET IS DERIVED, NOT LISTED: a module that does not import the entry point back is
-    # not a route module and imposes no ordering.
-    write({"app.py": "import sys\napp = 1\nimport helper\n", "helper.py": "y = 2\n"})
+    # not a route module and imposes no ordering. Asserted BESIDE a real route module, so the
+    # pass is attributable to the helper being ignored rather than to an empty set.
+    write({"app.py": "import sys\napp = 1\nimport helper\n" + ALIAS + "import sql_console\n",
+           "helper.py": "y = 2\n", "sql_console.py": ROUTE_MODULE})
     assert check(tmp_path)[0].level == "OK", \
-        "an ordinary helper does not import app back and needs no alias"
+        "an ordinary helper does not import app back and needs no alias, and being imported "\
+        "before the alias is therefore not a finding about it"
+
+    # AND AN EMPTY SET IS A FAILURE, not a pass. The check-mutation drill comments out every
+    # line carrying a check's own search strings; this check greps for `from app import`, so
+    # that mutation empties the set it quantifies over. Reporting the guarantee from nothing is
+    # what it did on 2026-09-18, and what the drill is for.
+    write({"app.py": "import sys\napp = 1\n" + ALIAS, "helper.py": "y = 2\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "quantifying over an empty set is not a guarantee"
+    assert "empty set" in result.message
 
     # AND A SECOND ROUTE MODULE ADDED WITHOUT THE ORDERING FAILS, which is the case a
     # hardcoded list of route modules would have passed.

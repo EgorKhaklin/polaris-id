@@ -16434,9 +16434,21 @@ def check_route_modules_register_under_both_entry_points(root: pathlib.Path) -> 
     importers = sorted(n[:-3] for n, code in mods if n != "app.py"
                        and re.search(r"^\s*(?:from\s+app\s+import\b|import\s+app\b)", code, re.M))
     if not importers:
-        return _ok(name, "no module imports the entry point back, so nothing depends on the "
-                         "order app.py imports it in; the ordering rule applies from the first "
-                         "route module that does")
+        # FAIL, not OK. Zero route modules trivially satisfies the ordering rule, and a check
+        # that reports a guarantee from an empty set is reporting nothing: the check-mutation
+        # drill comments out every line carrying a check's own search strings and requires the
+        # check to go red, and on 2026-09-18 this one survived that exactly here, because
+        # commenting out the `from app import` lines emptied the set it quantifies over.
+        # app.py IS decomposed; a tree where nothing imports the entry point back is a tree
+        # where either the route modules were deleted or this check stopped being able to see
+        # them, and both deserve to fail. If the decomposition is ever undone deliberately,
+        # this check is deleted with it rather than left passing over nothing.
+        return _fail(name,
+                     "no module in polaris_web/ imports the entry point back out of app.py, so "
+                     "this check is quantifying over an empty set. app.py is decomposed into "
+                     "route modules and at least one must import `app`; if that is no longer "
+                     "true, delete this check rather than leave it reporting a guarantee about "
+                     "nothing")
 
     try:
         tree = ast.parse(app_src)
@@ -16507,6 +16519,115 @@ def check_route_modules_register_under_both_entry_points(root: pathlib.Path) -> 
                "the set is derived from which modules import the entry point rather than "
                "listed, so one added without the ordering fails here"
                % (alias_at, len(importers), ", ".join(importers)))
+
+
+def _conditionally_defined(tree: ast.Module) -> set:
+    """Module-level names this module binds on SOME import paths and not others.
+
+    A name assigned inside a module-level `try` whose handlers do not also assign it, or in one
+    arm of a module-level `if` and not the other, exists only when that path was taken. Inside
+    the module that is safe, because every use sits behind the same runtime guard that decided
+    the path. Across a module boundary it is not: `from that_module import the_name` runs at
+    import time, ahead of any guard, and raises ImportError on the path where the name was never
+    bound."""
+    def assigned(stmts) -> set:
+        out = set()
+        for n in stmts:
+            for x in ast.walk(n):
+                if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store):
+                    out.add(x.id)
+                elif isinstance(x, (ast.Import, ast.ImportFrom)):
+                    for a in x.names:
+                        out.add((a.asname or a.name).split(".")[0])
+        return out
+
+    cond = set()
+    for n in tree.body:
+        if isinstance(n, ast.Try):
+            # Bound on every path only if EVERY handler rebinds it (or the else/finally does).
+            always = (set.intersection(*[assigned(h.body) for h in n.handlers])
+                      if n.handlers else set())
+            always |= assigned(n.orelse) | assigned(n.finalbody)
+            cond |= assigned(n.body) - always
+        elif isinstance(n, ast.If):
+            taken, other = assigned(n.body), assigned(n.orelse)
+            cond |= (taken - other) | (other - taken)
+    return cond
+
+
+def check_no_module_imports_a_conditional_name(root: pathlib.Path) -> list[Finding]:
+    """No application module imports BY NAME something another one defines only sometimes.
+
+    Found while moving the second block out of app.py (2026-09-18). app.py imports
+    prometheus_client in a module-level try, and the `except ImportError` arm binds
+    `_PROM_AVAILABLE = False` and nothing else. So `_METRICS_DURESS`, `_METRICS_VERIFICATIONS`
+    and twenty-two of their siblings exist only when the library is installed. Inside app.py
+    every use of them sits behind `if _PROM_AVAILABLE:`, so the name is never looked up on the
+    path where it was not bound, and the arrangement is correct.
+
+    It stops being correct the moment the code using them moves. `from app import
+    _METRICS_DURESS` at the top of a route module runs at import time, before any guard, and
+    raises ImportError where the library is absent. app.py imports its route modules, so the
+    failure is not a missing metric: the application does not start at all, in a configuration
+    the try/except exists to support.
+
+    This is a hazard OF the decomposition specifically. The names are safe where they are, and
+    unsafe one file over, which is the general shape of the defect this repository keeps finding:
+    a property that holds over the part someone was looking at. Nothing warns, because the
+    configuration that breaks is the one CI does not run, prometheus_client being in
+    requirements.txt.
+
+    Attribute access is not flagged, and the distinction is the whole mechanism rather than an
+    exemption: `import app` then `app._METRICS_DURESS` resolves at USE time, behind the same
+    guard, which is exactly what makes it the correct way to reach one of these from another
+    module."""
+    name = "conditional_imports"
+    mods = _app_modules(root)
+    if not mods:
+        return _fail(name, "polaris_web/ is missing")
+
+    trees, unparsed = {}, []
+    for fname, code in mods:
+        if not code.strip():
+            unparsed.append(fname)
+            continue
+        try:
+            trees[fname[:-3]] = ast.parse(code)
+        except SyntaxError as e:
+            return _fail(name, f"polaris_web/{fname} does not parse: {e}")
+    if not trees:
+        return _fail(name, "no application module in polaris_web/ carries code to check")
+
+    cond = {stem: _conditionally_defined(t) for stem, t in trees.items()}
+    total = sum(len(v) for v in cond.values())
+    bad = []
+    for stem, tree in trees.items():
+        for node in tree.body:
+            if (isinstance(node, ast.ImportFrom) and node.level == 0
+                    and node.module in cond):
+                for a in node.names:
+                    if a.name in cond[node.module]:
+                        bad.append((stem, node.lineno, a.name, node.module))
+    if bad:
+        return _fail(name,
+                     "; ".join("polaris_web/%s.py line %d imports %s by name from %s.py, which "
+                               "binds it on only some import paths" % b for b in bad)
+                     + ". The import runs before any runtime guard, so where that path is not "
+                       "taken the module raises ImportError and, because app.py imports its "
+                       "route modules, the application does not start. Reach it as an "
+                       "attribute instead (`import %s` then `%s.%s`), which resolves at use "
+                       "time behind the same guard"
+                     % (bad[0][3], bad[0][3], bad[0][2]))
+
+    return _ok(name,
+               "no application module imports by name any of the %d names its siblings bind on "
+               "only some import paths (app.py's optional-dependency metrics are most of them). "
+               "Such a name is safe where it is, because every use sits behind the guard that "
+               "decided the path, and unsafe one file over, because the import runs first; this "
+               "is derived from the module trees rather than listed, so a new one is covered by "
+               "being written%s"
+               % (total, "" if not unparsed else
+                  " (%d empty module(s) skipped: %s)" % (len(unparsed), ", ".join(unparsed))))
 
 
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
@@ -19627,6 +19748,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_coexistence_plan,
     check_modules_are_measured,
     check_route_modules_register_under_both_entry_points,
+    check_no_module_imports_a_conditional_name,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,
