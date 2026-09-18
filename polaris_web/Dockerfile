@@ -29,12 +29,14 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 #   webauthn_auth.py v8.97 WebAuthn/MFA module (app.py imports it at startup)
 #   __version__.py  v9.06 canonical POLARIS_VERSION source (app.py imports it)
 #   tracing.py      v9.187 opt-in OTel distributed tracing (P1.6)
+#   sql_console.py  the /sql console, the first route module lifted out of
+#                    app.py; app.py imports it at the END of startup
 #   observability.py v9.31 operator-readable metrics (app.py + security.py
 #                    import it at startup; v9.40 fix — was missed because
 #                    the regression-guard regex didn't tolerate trailing
 #                    comments on the `import observability  # ...` line)
 COPY app.py security.py test_app.py gunicorn.conf.py ./
-COPY anchoring.py zk.py webauthn_auth.py __version__.py observability.py pqc_signing.py custody.py rp_auth.py tracing.py mdoc.py vc.py ./
+COPY anchoring.py zk.py webauthn_auth.py __version__.py observability.py pqc_signing.py custody.py rp_auth.py tracing.py mdoc.py vc.py sql_console.py ./
 COPY templates/ ./templates/
 COPY static/   ./static/
 

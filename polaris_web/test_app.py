@@ -5048,6 +5048,43 @@ class VerificationTests(PolarisTestCase):
 
 class SQLConsoleTests(PolarisTestCase):
 
+    def test_route_is_served_from_the_sql_console_module(self):
+        """/sql lives in polaris_web/sql_console.py and registers by import (2026-09-18).
+
+        The first module lifted out of app.py. A route module registers by being imported at
+        the END of app.py, and the failure mode of that arrangement is silent: drop the import,
+        or move it above a name it needs and catch the ImportError, and the application still
+        boots, still serves every other page, and answers /sql with a 404 that reads like a
+        routing typo. Nothing else in this class would notice, because a 404 is what an
+        unauthenticated client sees anyway.
+
+        So this asserts the binding rather than the behaviour: the endpoint exists, and the
+        function behind it was defined in sql_console, not in app. Asserting the module is the
+        point. If the block is ever folded back into app.py this test fails and is the place to
+        record that decision, rather than being quietly satisfied by a route that happens to
+        answer."""
+        # Read the module out of sys.modules rather than importing it here. Importing it at
+        # test time would install the route the assertion is looking for, so the test would be
+        # creating the condition it verifies; and against an app that has already served a
+        # request Flask raises about setup methods, which reads as a framework problem rather
+        # than as the missing import it actually is. What is being asserted is that app.py
+        # imported it AT STARTUP.
+        self.assertTrue('sql_console' in sys.modules,
+                        'app.py did not import sql_console at startup, so /sql was never '
+                        'registered. The import is the last statement before the MAIN '
+                        'section. (assertTrue, not assertIn: assertIn renders the whole '
+                        'container on failure, and sys.modules is 150KB of it.)')
+        sql_console = sys.modules['sql_console']
+
+        view = flask_app.app.view_functions.get('sql_query')
+        self.assertIsNotNone(view, '/sql is not registered')
+        self.assertIs(view, sql_console.sql_query)
+        self.assertEqual(view.__module__, 'sql_console')
+
+        rules = [r for r in flask_app.app.url_map.iter_rules() if r.rule == '/sql']
+        self.assertEqual(len(rules), 1, 'exactly one /sql rule; more than one means app.py was '
+                                        'imported twice under different module names')
+
     def test_console_renders(self):
         r = self.client.get('/sql')
         self.assertEqual(r.status_code, 200)

@@ -11109,6 +11109,89 @@ def test_transparency_program_check_discriminates(tmp_path):
         "a report that does not say it cannot show an unrecorded access must FAIL"
 
 
+def test_route_modules_register_under_both_entry_points_check_discriminates(tmp_path):
+    # 2026-09-18, the first module lifted out of app.py. A route module imports `app` back out
+    # of the entry point. Under `gunicorn app:app` that resolves to the running module; under
+    # `python3 app.py` (how polaris-abuse-drill.sh and polaris-dr-drill.sh start the server)
+    # app.py is `__main__`, so the same import loads app.py a SECOND time and the routes land
+    # on a Flask instance nobody serves. Measured: /sql answered 404 while /dashboard answered
+    # 302 and the server looked healthy. The alias is what prevents it.
+    ALIAS = "sys.modules.setdefault('app', sys.modules[__name__])\n"
+    ROUTE_MODULE = "from app import app\n\n@app.route('/sql')\ndef sql_query():\n    pass\n"
+
+    def write(files):
+        web = tmp_path / "polaris_web"
+        if web.exists():
+            for f in web.glob("*.py"):
+                f.unlink()
+        web.mkdir(parents=True, exist_ok=True)
+        for name, body in files.items():
+            (web / name).write_text(body)
+
+    check = checks.check_route_modules_register_under_both_entry_points
+
+    write({"app.py": "import sys\napp = 1\n" + ALIAS + "import sql_console\n",
+           "sql_console.py": ROUTE_MODULE})
+    assert check(tmp_path)[0].level == "OK", "the shipped arrangement must PASS"
+
+    # THE DEFECT: the alias is gone, so the dev-server path double-imports app.py.
+    write({"app.py": "import sys\napp = 1\nimport sql_console\n",
+           "sql_console.py": ROUTE_MODULE})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "a route module imported with no alias must be caught"
+    assert "sql_console" in result.message, "and the module named"
+    assert "__main__" in result.message, "and the reason stated, not just the rule"
+
+    # THE ORDERING, which is the same defect one line apart: by the time the import runs, the
+    # `from app import ...` inside it has already resolved against something else.
+    write({"app.py": "import sys\napp = 1\nimport sql_console\n" + ALIAS,
+           "sql_console.py": ROUTE_MODULE})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "the alias AFTER the import is the same bug"
+    assert "before it aliases" in result.message
+
+    # THE OTHER HALF: a route module nothing imports registers nothing at all, under either
+    # entry point. That is a louder bug than the one above and must not read as the same one.
+    write({"app.py": "import sys\napp = 1\n" + ALIAS,
+           "sql_console.py": ROUTE_MODULE})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "a route module app.py never imports must be caught"
+    assert "never imports" in result.message
+
+    # A NESTED IMPORT IS NOT REGISTRATION. Only module level runs at startup.
+    write({"app.py": "import sys\napp = 1\n" + ALIAS + "def later():\n    import sql_console\n",
+           "sql_console.py": ROUTE_MODULE})
+    assert check(tmp_path)[0].level == "FAIL", \
+        "an import inside a function does not register anything at startup"
+
+    # THE ALIAS UNDER A __main__ GUARD is correct: it runs exactly on the path that needs it.
+    write({"app.py": "import sys\napp = 1\nif __name__ == '__main__':\n    " + ALIAS
+                     + "import sql_console\n",
+           "sql_console.py": ROUTE_MODULE})
+    assert check(tmp_path)[0].level == "OK", \
+        "guarding the alias on the path that needs it is the same guarantee"
+
+    # THE SET IS DERIVED, NOT LISTED: a module that does not import the entry point back is
+    # not a route module and imposes no ordering.
+    write({"app.py": "import sys\napp = 1\nimport helper\n", "helper.py": "y = 2\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "an ordinary helper does not import app back and needs no alias"
+
+    # AND A SECOND ROUTE MODULE ADDED WITHOUT THE ORDERING FAILS, which is the case a
+    # hardcoded list of route modules would have passed.
+    write({"app.py": "import sys\napp = 1\nimport federation_routes\n" + ALIAS
+                     + "import sql_console\n",
+           "sql_console.py": ROUTE_MODULE,
+           "federation_routes.py": "from app import app\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "the module added without the ordering is the one that breaks"
+    assert "federation_routes" in result.message
+
+    # VACUITY: an empty tree must not pass.
+    write({"app.py": "", "sql_console.py": ""})
+    assert check(tmp_path)[0].level == "FAIL", "an empty app.py is not a passing arrangement"
+
+
 def test_modules_are_measured_check_discriminates(tmp_path):
     # v9.379: a module exercised only by a drill counts ZERO toward the coverage floor while
     # looking thoroughly tested. proofing.py and pilot.py each shipped that way and the gate

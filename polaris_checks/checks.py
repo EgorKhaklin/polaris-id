@@ -16393,6 +16393,122 @@ def check_modules_are_measured(root: pathlib.Path) -> list[Finding]:
                "is added rather than when the floor happens to break")
 
 
+def check_route_modules_register_under_both_entry_points(root: pathlib.Path) -> list[Finding]:
+    """A route module's routes register under BOTH ways the application is started (2026-09-18).
+
+    app.py is being decomposed into domain modules. A route module registers by being imported
+    at the END of app.py, and it imports `app` and the helpers it needs back out of app.py.
+    That arrangement has a failure mode with no symptom.
+
+    The application has two entry points. The container runs `gunicorn app:app`, which imports
+    app.py under the name `app`, so a route module's `from app import ...` finds the running
+    module in sys.modules and binds to the Flask instance being served. But
+    polaris-abuse-drill.sh and polaris-dr-drill.sh start the development server with
+    `python3 app.py`, and then app.py is `__main__`. There is no `app` in sys.modules, so the
+    import loads app.py A SECOND TIME, as a separate module, with a second Flask instance. The
+    route module registers its routes on that one. Nothing raises. The server boots, serves
+    every route still defined in app.py, and answers the moved route with a 404 that reads like
+    a routing typo.
+
+    Measured on 2026-09-18, booting the development server both ways: with the alias, /sql
+    answered 302 (the login redirect) and an absent path answered 404; with the alias removed,
+    /sql answered 404 while /dashboard still answered 302. The application looked healthy.
+
+    So app.py aliases itself into sys.modules under the name the route modules import, BEFORE
+    importing any of them, and this pins the ordering. The set of route modules is derived from
+    which modules import the entry point back, not listed here: a list would go stale the first
+    time one is added, and the module added without the ordering is exactly the one that breaks.
+
+    No suite covers this. test_app.py imports app as `app`, which is the entry point that works
+    either way, so the gunicorn path is tested and the development-server path is not testable
+    from inside a suite that is itself an import of the thing under test."""
+    name = "route_module_entry_points"
+    mods = _app_modules(root)
+    src = dict(mods)
+    app_src = src.get("app.py")
+    if not app_src:
+        return _fail(name, "polaris_web/app.py must exist and carry code; it is the entry "
+                           "point gunicorn names (app:app) and the file the drills run")
+
+    # Derived: a route module is one that imports the entry point back out of app.py.
+    importers = sorted(n[:-3] for n, code in mods if n != "app.py"
+                       and re.search(r"^\s*(?:from\s+app\s+import\b|import\s+app\b)", code, re.M))
+    if not importers:
+        return _ok(name, "no module imports the entry point back, so nothing depends on the "
+                         "order app.py imports it in; the ordering rule applies from the first "
+                         "route module that does")
+
+    try:
+        tree = ast.parse(app_src)
+    except SyntaxError as e:
+        return _fail(name, f"polaris_web/app.py does not parse: {e}")
+
+    alias_at = None
+    imported_at = {}
+    for node in tree.body:          # module level only: a nested import is not registration
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+            f = node.value.func
+            if (isinstance(f, ast.Attribute) and f.attr == "setdefault"
+                    and isinstance(f.value, ast.Attribute) and f.value.attr == "modules"
+                    and node.value.args
+                    and isinstance(node.value.args[0], ast.Constant)
+                    and node.value.args[0].value == "app"):
+                alias_at = node.lineno if alias_at is None else alias_at
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name in importers and a.name not in imported_at:
+                    imported_at[a.name] = node.lineno
+        elif isinstance(node, ast.If):
+            # `if __name__ == '__main__':` guarding the alias would run it only on the path
+            # that needs it, which is correct, so look one level in for the call as well.
+            for inner in node.body:
+                if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Call):
+                    f = inner.value.func
+                    if (isinstance(f, ast.Attribute) and f.attr == "setdefault"
+                            and isinstance(f.value, ast.Attribute) and f.value.attr == "modules"
+                            and inner.value.args
+                            and isinstance(inner.value.args[0], ast.Constant)
+                            and inner.value.args[0].value == "app"):
+                        alias_at = inner.lineno if alias_at is None else alias_at
+
+    missing = [m for m in importers if m not in imported_at]
+    if missing:
+        return _fail(name,
+                     "polaris_web/%s import(s) the entry point back out of app.py, but app.py "
+                     "never imports %s at module level, so its routes are never registered on "
+                     "the served application at all"
+                     % (", ".join(m + ".py" for m in missing),
+                        "them" if len(missing) > 1 else "it"))
+
+    if alias_at is None:
+        return _fail(name,
+                     "app.py imports route module(s) %s but never aliases itself into "
+                     "sys.modules under the name they import (`sys.modules.setdefault('app', "
+                     "sys.modules[__name__])`). Under `python3 app.py` -- how "
+                     "polaris-abuse-drill.sh and polaris-dr-drill.sh start the server -- this "
+                     "file is `__main__`, so `from app import ...` loads it a SECOND time and "
+                     "registers those routes on a Flask instance nobody serves. Nothing raises; "
+                     "the moved routes just 404" % ", ".join(importers))
+
+    first = min(imported_at.values())
+    if alias_at > first:
+        early = sorted(m for m, ln in imported_at.items() if ln < alias_at)
+        return _fail(name,
+                     "app.py imports route module(s) %s at line %d, before it aliases itself "
+                     "into sys.modules at line %d. The alias has to come first: by the time "
+                     "the import runs, `from app import ...` inside it has already resolved "
+                     "against an `app` that is not this module"
+                     % (", ".join(early), first, alias_at))
+
+    return _ok(name,
+               "app.py aliases itself into sys.modules at line %d, before importing the %d "
+               "route module(s) that import it back (%s), so their routes register on the "
+               "served application under `gunicorn app:app` and under `python3 app.py` alike; "
+               "the set is derived from which modules import the entry point rather than "
+               "listed, so one added without the ordering fails here"
+               % (alias_at, len(importers), ", ".join(importers)))
+
+
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
     """A pilot can be wound back, and says truthfully what that leaves (P5.1).
 
@@ -19510,6 +19626,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_audited_reads_are_logged,
     check_coexistence_plan,
     check_modules_are_measured,
+    check_route_modules_register_under_both_entry_points,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,

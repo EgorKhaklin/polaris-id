@@ -9264,150 +9264,6 @@ def verifications_new():
                            contexts=contexts), status
 
 
-# ============================================================================
-# RAW SQL QUERY INTERFACE (read-only)
-# ============================================================================
-
-@app.route('/sql', methods=['GET', 'POST'])
-@security.login_required
-@security.require_role('admin', 'auditor')
-@security.csrf_protect
-def sql_query():
-    """
-    Read-only SQL console. The polaris_app role only has SELECT/INSERT/UPDATE/DELETE,
-    not DDL, so users can't drop tables. We additionally refuse anything that's
-    not a SELECT to keep this strictly read-only from this page.
-
-    Hardening:
-        - Query length capped at 5000 chars to prevent pasting huge payloads
-        - Statement timeout of 5 seconds so a runaway query can't hang the worker
-        - The session is set READ ONLY (`set_session(readonly=True)`) before any
-          statement opens a transaction, so the engine itself refuses every write.
-          This is the real boundary: the first-keyword whitelist below is only a
-          friendly early error, and it is bypassable by a data-modifying CTE
-          (`WITH t AS (DELETE ... RETURNING *) SELECT * FROM t` starts with WITH).
-          The read-only session makes Postgres reject that CTE with "cannot
-          execute DELETE in a read-only transaction" regardless.
-        - Whitelist on first keyword (SELECT or WITH only) — UX, not security
-        - EXPLAIN ANALYZE button surfaces query plans (still read-only)
-    """
-    SQL_MAX_LENGTH = 5000
-    SQL_TIMEOUT_MS = 5000  # 5 seconds
-
-    results = None
-    columns = None
-    error = None
-    explain_mode = bool(request.form.get('explain'))
-    sql = request.form.get('sql', '') if request.method == 'POST' else ''
-
-    if request.method == 'POST' and sql.strip():
-        # Length check first - cheap to evaluate, prevents pathological inputs
-        if len(sql) > SQL_MAX_LENGTH:
-            error = (f"Query length {len(sql)} exceeds the {SQL_MAX_LENGTH}-character limit. "
-                     f"Save complex queries as stored procedures instead.")
-        else:
-            # Whitelist: must start with SELECT or WITH
-            first_word = sql.strip().split()[0].upper() if sql.strip() else ''
-            if first_word not in ('SELECT', 'WITH'):
-                error = "This console is read-only. Only SELECT and WITH queries are accepted."
-            else:
-                conn = None
-                try:
-                    # Use a plain cursor here (NOT RealDictCursor) so cur.fetchall()
-                    # returns tuples we can zip with column names.
-                    conn = psycopg2.connect(**DB_CONFIG)
-                    # The security boundary: make the whole session read-only at
-                    # the engine level, BEFORE any statement opens a transaction.
-                    # `set_session(readonly=True)` must be issued outside a
-                    # transaction, so it goes here, immediately after connect and
-                    # before the first execute — `SET default_transaction_read_only`
-                    # issued mid-transaction would NOT bind the query's own
-                    # (already-started) transaction. Now any write — including one
-                    # smuggled past the first-keyword whitelist via a data-modifying
-                    # CTE (`WITH t AS (DELETE ... RETURNING *) SELECT * FROM t`) — is
-                    # refused by Postgres ("cannot execute DELETE in a read-only
-                    # transaction"), not just discouraged by the keyword gate.
-                    conn.set_session(readonly=True)
-                    # The console is a database connection like any other, so it carries the
-                    # operator's authority like any other: without this the row-level policies
-                    # see an unset GUC and go permissive, and an operator scoped to one
-                    # authority everywhere else would read every authority's rows here. A SET
-                    # is permitted inside a read-only transaction, so this is safe after
-                    # set_session() above.
-                    _apply_operator_scope(conn)
-                    # Set statement_timeout BEFORE starting our query. SET of a
-                    # runtime parameter is permitted inside a read-only transaction;
-                    # it lasts until this connection closes — scoped to the request.
-                    with conn.cursor() as cur:
-                        cur.execute(f"SET statement_timeout = {SQL_TIMEOUT_MS}")
-
-                        # If EXPLAIN ANALYZE was requested, wrap the query
-                        actual_sql = f"EXPLAIN ANALYZE {sql}" if explain_mode else sql
-                        cur.execute(actual_sql)
-
-                        if cur.description:
-                            columns = [c.name for c in cur.description]
-                            results = [dict(zip(columns, row)) for row in cur.fetchall()]
-                        else:
-                            error = "Query returned no result set."
-                except psycopg2.errors.QueryCanceled:
-                    error = (f"Query timed out after {SQL_TIMEOUT_MS}ms. "
-                             f"Add LIMIT, narrow WHERE conditions, or use the appropriate index.")
-                except psycopg2.Error as e:
-                    error = db_error_to_message(e)
-                finally:
-                    # F-10 patch: always rollback any partial transaction and
-                    # close the connection. Without this, a failed query could
-                    # leave the connection in 'aborted' state for any subsequent
-                    # request that picked it up (only relevant if we ever pool
-                    # connections, but the discipline matters either way).
-                    if conn is not None:
-                        try:
-                            conn.rollback()
-                        except Exception:
-                            pass
-                        conn.close()
-
-    examples = [
-        ("Active tokens with PQ algorithms (Q2)",
-         "SELECT t.token_id, i.legal_name, alg.name AS algorithm\n"
-         "FROM IdentityToken t\n"
-         "JOIN Individual i ON t.individual_id = i.individual_id\n"
-         "JOIN CryptographicAlgorithm alg ON t.algorithm_id = alg.algorithm_id\n"
-         "WHERE alg.quantum_resistant = TRUE AND t.status = 'ACTIVE'\n"
-         "ORDER BY t.token_id;"),
-        ("Verification volume by context (Q5)",
-         "SELECT vc.context_type, COUNT(ve.event_id) AS vol\n"
-         "FROM VerificationEvent ve\n"
-         "JOIN VerificationContext vc ON ve.context_id = vc.context_id\n"
-         "GROUP BY vc.context_type\n"
-         "ORDER BY vol DESC;"),
-        ("Agencies with BOTH grants on ML-DSA-65 (Q3)",
-         "SELECT ag.name, ag.jurisdiction\n"
-         "FROM CryptographicAlgorithm CA\n"
-         "JOIN AgencyAlgorithmAuth aaa ON CA.algorithm_id = aaa.algorithm_id\n"
-         "JOIN Agency ag ON aaa.agency_id = ag.agency_id\n"
-         "WHERE CA.name = 'ML-DSA-65' AND aaa.authorization_type = 'BOTH';"),
-        ("Token succession lineage (Q6)",
-         "SELECT t1.token_id AS current_token,\n"
-         "       t1.activation_sequence,\n"
-         "       t2.token_id AS predecessor_token,\n"
-         "       t2.status AS predecessor_status\n"
-         "FROM IdentityToken t1\n"
-         "JOIN IdentityToken t2 ON t1.predecessor_token_id = t2.token_id\n"
-         "WHERE t1.status = 'ACTIVE'\n"
-         "ORDER BY t1.activation_sequence DESC;"),
-    ]
-
-    return render_template('sql_console.html',
-                           sql=sql,
-                           results=results,
-                           columns=columns,
-                           error=error,
-                           examples=examples,
-                           explain_mode=explain_mode,
-                           max_length=SQL_MAX_LENGTH,
-                           timeout_ms=SQL_TIMEOUT_MS)
 
 
 # ============================================================================
@@ -9428,6 +9284,22 @@ def server_error(e):
                            message='The request could not be completed. The '
                                    'failure is recorded in the log with the '
                                    'request id below.'), 500
+
+
+# ============================================================================
+# ROUTE MODULES
+# ============================================================================
+# Domain modules that register their own routes by import. This import is LAST on purpose:
+# each one imports `app` and the helpers above back out of this module, so every name it needs
+# has to exist by the time it loads. Moving it upward is a circular import, not a subtle bug.
+#
+# Under `python3 app.py` (the development server that polaris-abuse-drill.sh and
+# polaris-dr-drill.sh start) this file is `__main__` rather than `app`. The alias is what stops
+# `from app import ...` loading app.py a SECOND time and registering the routes on a Flask
+# instance nobody serves, which fails silently: the server answers, and the moved route 404s.
+sys.modules.setdefault('app', sys.modules[__name__])
+
+import sql_console  # noqa: E402,F401  -- /sql, the read-only console
 
 
 # ============================================================================

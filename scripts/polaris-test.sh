@@ -37,13 +37,20 @@ fi
 
 # -----------------------------------------------------------------------------
 # Find a Python venv with flask + psycopg2.
-# Order of preference: env var override, repo-local venv, the codex venv that
-# the macOS dev box is using, system python3.
+# Order of preference: env var override, repo-local venv, the durable 3.12 venv under
+# ~/.local/share, the older /private/tmp venv the macOS dev box used, system python3.
+#
+# 2026-09-18: the /private/tmp one is kept only so an existing box still resolves. macOS reaps
+# files under /private/tmp that have not been read in a few days, and it does so FILE BY FILE:
+# it removed pyvenv.cfg and parts of site-packages while leaving the directory tree and enough
+# of psycopg2 to import, so `import psycopg2` succeeded and `import psycopg2.extras` did not.
+# A venv there looks present and is not. Prefer the ~/.local/share path, which nothing reaps.
 # -----------------------------------------------------------------------------
 PYVENV="${POLARIS_TEST_PYTHON:-}"
 if [ -z "$PYVENV" ]; then
     for cand in \
         "$ROOT/polaris_web/venv/bin/python" \
+        "$HOME/.local/share/polaris-venv312/bin/python" \
         "/private/tmp/polaris-codex-venv312/bin/python" \
         "/Users/$(whoami)/venv/bin/python" \
         "$(command -v python3.12)" \
