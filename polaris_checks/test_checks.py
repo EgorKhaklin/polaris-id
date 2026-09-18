@@ -16583,3 +16583,185 @@ def test_precommit_wiring_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
         "must FAIL rather than report a wired net when no hooks can be parsed"
+
+
+def test_drill_case_counts_check_discriminates(tmp_path):
+    """A drill that records no cases must not print its verdict and exit 0.
+
+    Written 2026-09-18: this check shipped with no detection test at all, while README.md
+    said every check was "paired with a detection test proving it fails on a broken
+    fixture". It was one of two.
+    """
+    GOOD = ('_cases_recorded = 0\n'
+            'def case(name, got, want):\n'
+            '    global _cases_recorded\n'
+            '    _cases_recorded += 1\n'
+            'def main():\n'
+            '    if not _cases_recorded:\n'
+            '        return 1\n'
+            '    print("PASS: the guarantee holds")\n')
+
+    def write(bodies=None):
+        d = tmp_path / "scripts"
+        d.mkdir(parents=True, exist_ok=True)
+        for f in d.glob("polaris-*drill.py"):
+            f.unlink()
+        for i in range(16):
+            (d / ("polaris-%02d-drill.py" % i)).write_text(GOOD)
+        for rel, body in (bodies or {}).items():
+            (d / rel).write_text(body)
+
+    fn = checks.check_drills_count_their_cases
+    write()
+    assert fn(tmp_path)[0].level == "OK", "must PASS when every drill counts and guards"
+
+    # THE defect: a drill prints a verdict with no counter at all.
+    write({"polaris-00-drill.py": GOOD.replace("    _cases_recorded += 1\n", "    pass\n")})
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no counter" in out[0].message, \
+        "must FAIL on a drill that prints a verdict without counting its cases"
+
+    # It counts but never refuses, which is the same accident one step later.
+    write({"polaris-00-drill.py": GOOD.replace("    if not _cases_recorded:\n        return 1\n", "")})
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no guard" in out[0].message, \
+        "must FAIL on a drill that counts but reports a verdict from zero anyway"
+
+    # Anti-vacuity: too few drills means the shape detection has broken.
+    write()
+    for f in list((tmp_path / "scripts").glob("polaris-*drill.py"))[:14]:
+        f.unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "passing by finding nothing" in out[0].message, \
+        "must FAIL rather than report coverage when almost no drills are found"
+
+    # No drills at all is a broken parse, not a clean tree.
+    for f in (tmp_path / "scripts").glob("polaris-*drill.py"):
+        f.unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "parse has broken" in out[0].message, \
+        "must FAIL when no drills are found at all"
+
+
+def test_benchmark_growth_check_discriminates(tmp_path):
+    """The benchmark must grade growth and exit non-zero on a superlinear aggregate.
+
+    Written 2026-09-18: the second of two checks that shipped with no detection test while
+    README.md claimed every one was paired with a test proving it fails on a broken fixture.
+    """
+    BENCH = (
+        "GROWTH_FRACTION = 10\n"
+        "GROWTH_TOLERANCE = 1.5\n"
+        "\n"
+        "def measure_growth(small_ms, large_ms, rows_small, rows_large):\n"
+        "    rows_factor = rows_large / rows_small\n"
+        "    out = {'rows_factor': rows_factor, 'tolerance': GROWTH_TOLERANCE,\n"
+        "           'aggregates': {}, 'superlinear': []}\n"
+        "    for k, small in small_ms.items():\n"
+        "        grew = large_ms[k] / small\n"
+        "        out['aggregates'][k] = grew\n"
+        "        if grew > rows_factor * GROWTH_TOLERANCE:\n"
+        "            out['superlinear'].append(k)\n"
+        "    return out\n"
+        "\n"
+        "class Report:\n"
+        "    def as_dict(self):\n"
+        '        return {"atlas_growth": self.atlas_growth}\n')
+    MAIN = ("def main():\n"
+            "    report = run()\n"
+            "    if report['atlas_growth']['superlinear']:\n"
+            "        return 1\n"
+            "    return 0\n")
+
+    def write(bench=BENCH, main=MAIN):
+        d = tmp_path / "polaris_sim"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "benchmark.py").write_text(bench)
+        (d / "__main__.py").write_text(main)
+
+    fn = checks.check_benchmark_measures_growth
+    write()
+    assert fn(tmp_path)[0].level == "OK", "must PASS on a benchmark that grades and fails"
+
+    # THE defect: a superlinear aggregate is printed rather than exited on.
+    write(main=MAIN.replace("        return 1\n", "        print('finding')\n"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "EXIT NON-ZERO" in out[0].message, \
+        "must FAIL when a superlinear aggregate does not fail the run"
+
+    # The grading is EXERCISED, not read: a grader that never finds anything must fail.
+    write(bench=BENCH.replace("        if grew > rows_factor * GROWTH_TOLERANCE:\n"
+                              "            out['superlinear'].append(k)\n", "        pass\n"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "NOT reported" in out[0].message, \
+        "must FAIL when a 4x-superlinear aggregate is not graded as one"
+
+    # ...and one that finds everything is just as useless.
+    write(bench=BENCH.replace("        if grew > rows_factor * GROWTH_TOLERANCE:\n",
+                              "        if True:\n"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "cry wolf" in out[0].message, \
+        "must FAIL when an aggregate growing exactly with the data is called a finding"
+
+    # The measurement must be serialised, or nothing can read it.
+    write(bench=BENCH.replace('"atlas_growth": self.atlas_growth', '"other": 1'))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL", "must FAIL when atlas_growth is not serialised"
+
+    # A missing module is a failure, not a pass by finding nothing.
+    (tmp_path / "polaris_sim" / "benchmark.py").unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "must both be present" in out[0].message, \
+        "must FAIL when the benchmark module is absent"
+
+
+def test_checks_are_detection_tested_check_discriminates(tmp_path):
+    """Every registered check must be named in the detection suite.
+
+    README.md: the checks are "each paired with a detection test proving it fails on a
+    broken fixture". Measured 2026-09-18, nothing enforced it, and two real checks were
+    named nowhere in the suite.
+    """
+    def registry(names):
+        return ("CHECKS = [\n" + "".join("    %s,\n" % n for n in names) + "]\n")
+
+    NAMES = ["check_thing_%02d" % i for i in range(60)]
+
+    def write(names=NAMES, tested=None):
+        d = tmp_path / "polaris_checks"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "checks.py").write_text(registry(names))
+        listed = NAMES if tested is None else tested
+        (d / "test_checks.py").write_text(
+            "".join("def test_%s_discriminates(tmp_path):\n    %s\n\n" % (n, n)
+                    for n in listed))
+
+    fn = checks.check_every_check_has_a_detection_test
+    write()
+    assert fn(tmp_path)[0].level == "OK", "must PASS when every check is named in the suite"
+
+    # THE defect: a check ships and the suite never mentions it.
+    write(tested=NAMES[:-1])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and NAMES[-1] in out[0].message, \
+        "must FAIL on a registered check the detection suite never names"
+
+    # Several missing are all reported, not just the first.
+    write(tested=NAMES[:-3])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and all(n in out[0].message for n in NAMES[-3:]), \
+        "must name every untested check, not only one"
+
+    # The suite being absent is a failure, not a clean layer.
+    write()
+    (tmp_path / "polaris_checks" / "test_checks.py").unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "rests on nothing" in out[0].message, \
+        "must FAIL when the detection suite is absent"
+
+    # Anti-vacuity: a registry that will not parse must not read as fully covered.
+    write()
+    (tmp_path / "polaris_checks" / "checks.py").write_text("no registry here at all\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
+        "must FAIL rather than report coverage when CHECKS cannot be parsed"

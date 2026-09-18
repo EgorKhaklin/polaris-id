@@ -19378,6 +19378,50 @@ def check_precommit_config_wires_what_the_docs_claim(root: pathlib.Path) -> list
                      % (len(_PRECOMMIT_HOOKS), ", ".join(sorted(_PRECOMMIT_HOOKS))))
 
 
+def check_every_check_has_a_detection_test(root: pathlib.Path) -> list[Finding]:
+    """README.md's claim about this layer, held to the layer.
+
+    The front door says the checks are "each paired with a detection test proving it fails
+    on a broken fixture. A check that cannot detect its own violation is treated as broken."
+    That is the sentence the whole layer's credibility rests on, and nothing enforced it.
+
+    Measured 2026-09-18: a check doing real work with no detection test anywhere passed
+    every other check in the layer, and two REAL checks were in that state --
+    check_drills_count_their_cases and check_benchmark_measures_growth, neither named once
+    in polaris_checks/test_checks.py. Both have tests now; this is what stops the third.
+
+    The bar is deliberately "named in the detection suite" rather than a naming convention.
+    Tests here are named for the check's REPORTED name rather than its function name
+    (check_c8_atlas_caps reports c8_atlas_caps), several cover more than one check, and a
+    convention would fail honest tests while a mention cannot be satisfied by accident: a
+    test file that names a check is a test file somebody pointed at it.
+
+    It pairs with check_detection_tests_have_a_positive_control, which asks whether those
+    tests establish anything. Existence and quality are two questions and this is the first.
+    """
+    name = "checks_are_detection_tested"
+    tests = _read_raw(root, "polaris_checks/test_checks.py")
+    if not tests:
+        return _fail(name, "polaris_checks/test_checks.py is absent; the layer's detection "
+                           "claim rests on nothing")
+    src = _read(root, "polaris_checks/checks.py")
+    registered = re.findall(r"^\s{4}(check_\w+),\s*$", src, re.M)
+    if len(registered) < 50:
+        return _fail(name, "only %d registered check(s) parsed out of CHECKS; the parse has "
+                           "broken and this check would pass by finding nothing"
+                           % len(registered))
+    untested = sorted({c for c in registered if c not in tests})
+    if untested:
+        return _fail(name, "%d registered check(s) are never named in "
+                           "polaris_checks/test_checks.py, so nothing shows they can fail: "
+                           "%s. README.md says every check is paired with a detection test"
+                           % (len(untested), ", ".join(untested)))
+    return _ok(name, "all %d registered checks are named in the detection suite, so the "
+                     "front door's claim that each is paired with a test proving it fails on "
+                     "a broken fixture is held to the layer rather than asserted about it"
+                     % len(registered))
+
+
 def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
     """No check may report OK over a tree that contains nothing.
 
@@ -19438,6 +19482,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_security_page_matches_the_release_ledger,
     check_stranger_path_was_walked_against_what_is_published,
     check_precommit_config_wires_what_the_docs_claim,
+    check_every_check_has_a_detection_test,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,
     check_drills_count_their_cases,
