@@ -18935,7 +18935,11 @@ def check_checks_do_not_grep_one_module(root: pathlib.Path) -> list[Finding]:
     written reason, not an exemption.
     """
     name = "checks_reach_the_package"
-    src = _read_raw(root, "polaris_checks/checks.py")
+    # Comment-stripped, deliberately. A grep that lives in a comment is not a coupling, so
+    # counting it would overstate the layer's path-boundness; and reading raw meant this
+    # check could not notice its own subject being commented out, which is what
+    # polaris-check-mutation-drill exists to refuse (it caught exactly that, 2026-09-18).
+    src = _read(root, "polaris_checks/checks.py")
     if not src:
         return _fail(name, "polaris_checks/checks.py could not be read")
 
@@ -18962,11 +18966,23 @@ def check_checks_do_not_grep_one_module(root: pathlib.Path) -> list[Finding]:
                            "app.py is split. If the property really is about that one file, "
                            "add the entry and say why"
                            % (len(offenders), ", ".join(sorted(offenders))))
-    stale = [k for k in _APP_PATH_READERS
-             if ('\ndef %s' % k) not in src]
-    if stale:
+    # An entry is stale in TWO ways, and both matter: the check is gone, or the check no
+    # longer reads app.py by path, so the excuse buys nothing and misdescribes the layer.
+    # The second half also makes this check detect its own mechanism being disabled: comment
+    # out the greps it forbids and the declarations become unnecessary, which is a finding
+    # rather than a clean pass. polaris-check-mutation-drill caught it passing without it.
+    bodies = {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
+    gone = [k for k in _APP_PATH_READERS if k not in bodies]
+    if gone:
         return _fail(name, "_APP_PATH_READERS names %s, which checks.py no longer defines; "
-                           "the entry excuses a check that is gone" % ", ".join(sorted(stale)))
+                           "the entry excuses a check that is gone" % ", ".join(sorted(gone)))
+    unneeded = [k for k in _APP_PATH_READERS
+                if '_read(root, "polaris_web/app.py")' not in bodies[k]]
+    if unneeded:
+        return _fail(name, "_APP_PATH_READERS excuses %s, which no longer reads "
+                           "polaris_web/app.py by path. The entry describes a coupling that "
+                           "is gone; remove it rather than leave the layer looking more "
+                           "path-bound than it is" % ", ".join(sorted(unneeded)))
     return _ok(name, "every check reaches the application through _read_app rather than "
                      "naming a module inside it, except %d that make a cross-module "
                      "assertion and record why; so a mechanism moving between modules of "

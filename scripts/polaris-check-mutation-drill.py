@@ -109,21 +109,49 @@ def _module_path_constants():
 _PATH_CONSTANTS = None
 
 
+def _package_modules(rel_dir):
+    """Every non-test module of a package, as repo-relative paths."""
+    d = ROOT / rel_dir
+    if not d.is_dir():
+        return []
+    return ["%s/%s" % (rel_dir, p.name) for p in sorted(d.glob("*.py"))
+            if not p.name.startswith("test_")]
+
+
 def reads_of(fn):
-    """Files the check names through _read / _read_raw, literally or via a constant."""
+    """Files the check names, through a path or through a PACKAGE door.
+
+    Resolving only `_read`/`_read_raw` path arguments stopped being enough on 2026-09-18,
+    when 73 checks moved from `_read(root, "polaris_web/app.py")` to `_read_app(root)` so
+    that a mechanism could live in any module of the application. The path is the point of
+    that change and it is also how this drill found what to mutate, so the drill saw 73
+    checks with no inputs at all: it deleted nothing, mutated nothing, and reported them as
+    trivially passing. `check_duress_is_indistinguishable` surfaced as a survivor for that
+    reason and not for any weakness of its own.
+
+    So the package doors resolve to the files they actually read. A check that widens its
+    reach must not thereby shrink what this drill can take away from it.
+    """
     global _PATH_CONSTANTS
     if _PATH_CONSTANTS is None:
         _PATH_CONSTANTS = _module_path_constants()
     out = []
     for node in ast.walk(fn):
-        if (isinstance(node, ast.Call)
-                and getattr(node.func, "id", "") in ("_read", "_read_raw")
-                and len(node.args) >= 2):
+        if not isinstance(node, ast.Call):
+            continue
+        fname = getattr(node.func, "id", "")
+        if fname in ("_read", "_read_raw") and len(node.args) >= 2:
             arg = node.args[1]
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 out.append(arg.value)
             elif isinstance(arg, ast.Name) and arg.id in _PATH_CONSTANTS:
                 out.append(_PATH_CONSTANTS[arg.id])
+        elif fname in ("_read_app", "_app_modules"):
+            out.extend(_package_modules("polaris_web"))
+        elif fname == "_read_package" and len(node.args) >= 2:
+            arg = node.args[1]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                out.extend(_package_modules(arg.value))
     return out
 
 
