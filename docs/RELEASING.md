@@ -15,25 +15,32 @@ externally observable changes.
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.1, 2026-09-16 (rc.3 STAGED, not published) | 0.1.0, 2026-09-15 |
 
-> **rc.3 IS PUBLISHED ON PyPI. npm IS STAGED AND NEEDS A MAINTAINER.** On 2026-09-18 the
-> three PyPI packages went out at 1.0.0rc3 through trusted publishing over OIDC, verified by
-> reading the versions back from the live registry and by walking
-> [STRANGER-PATH.md](STRANGER-PATH.md) end to end against the published `polaris-oid4vp`
-> 1.0.0rc3: a walt.id wallet presented a credential and the verifier answered
-> `200 authentic`.
+> **rc.3 IS PUBLISHED, ALL FOUR.** On 2026-09-18 the three PyPI packages went out at
+> 1.0.0rc3 through trusted publishing over OIDC, and `polaris-sdk-ts` 1.0.0-rc.3 followed
+> under `next`. Every one was verified by reading the version back from the live registry,
+> and [STRANGER-PATH.md](STRANGER-PATH.md) was walked end to end against the published
+> `polaris-oid4vp` 1.0.0rc3: a walt.id wallet presented a credential and the verifier
+> answered `200 authentic`.
 >
-> `polaris-sdk-ts` did not publish. npm now requires a maintainer's 2FA approval as the final
-> step of a staged publish, so the workflow uploads the tarball and stops, which is the
-> behaviour it is meant to have. The run also reports `401 Unauthorized` on
-> `GET /-/stage`, so the token cannot even list what it staged. Finishing it is a person with
-> the account's second factor, from their own machine:
+> **npm now takes two people-steps, and the first one lies.** `npm stage publish` uploads the
+> tarball and stops; the job exits 0 while nothing is installable. A maintainer then approves
+> it from their own machine with a second factor. Three things cost time here and are worth
+> knowing before the next release:
 >
->     npm stage list polaris-sdk-ts
->     npm stage view <stage-id>          # inspect before approving
->     npm stage approve <stage-id> --otp <code>
+> - The workflow's own `npm stage list` step returns `401 Unauthorized`: the OIDC token can
+>   publish that package but cannot list stages. Cosmetic, but it reads like a failure.
+> - `npm stage` needs npm >= 11.15.0, and `npm install -g npm@latest` fetches npm 12, which
+>   requires node `^22.22.2 || ^24.15.0 || >=26.0.0`. On an older node that install fails and
+>   the command stays missing. `npm install -g npm@11.19.1` has `stage` and runs on
+>   node >= 22.9.0, so it is the smaller change.
+> - Several auth attempts in quick succession trip `E429 ... rate limited otp`. The passkey is
+>   fine; the rate is not. Wait, then retry ONCE.
 >
-> Then read the version back from the registry rather than trusting the workflow's exit code,
-> which is what caught this: the job reported success while nothing had become installable.
+> The approval is what makes it real, and the tarball's shasum is the thing to check before
+> approving: `npm stage view <id>` must match what the build published. For rc.3 that was
+> `7bc35e6dbaf0e505b9bb7a4f6c90f5e79e3ffcad`, and the registry serves the same digest.
+> Verify from the registry rather than the exit code, always: a green workflow and an
+> unpublished package look identical from outside.
 
 All four names were unclaimed when checked (the first three on 2026-09-13, `polaris-oid4vp`
 on 2026-09-14, each against a calibration that tells an absent name from a present one) and
@@ -234,7 +241,8 @@ worse state to be in than three runs.
 | 35298509935 | 2026-09-18 | `polaris-verify` 1.0.0rc3 | published to PyPI by trusted publishing over OIDC; version read back from the live registry |
 | 35298624742 | 2026-09-18 | `polaris-sdk-python` 1.0.0rc3 | published to PyPI the same way; version read back from the live registry |
 | 35298734112 | 2026-09-18 | `polaris-oid4vp` 1.0.0rc3 | published to PyPI the same way; read back, and STRANGER-PATH walked end to end against it |
-| 35298838076 | 2026-09-18 | `polaris-sdk-ts` 1.0.0-rc.3 | STAGED, not published. npm requires a maintainer's 2FA approval to finish; the job exited 0 and the registry still shows rc.1 |
+| 35298838076 | 2026-09-18 | `polaris-sdk-ts` 1.0.0-rc.3 | staged (id b399d351), not published by the job; npm requires a maintainer's second factor to finish |
+| (by hand) | 2026-09-18 | `polaris-sdk-ts` 1.0.0-rc.3 | approved with a passkey via `npm stage approve` and published under `next`; shasum 7bc35e6d matches the staged tarball, and `npm install polaris-sdk-ts@next` into a clean directory runs |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different

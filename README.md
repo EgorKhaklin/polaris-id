@@ -44,13 +44,13 @@ The backbone is a 45-table PostgreSQL schema whose constraints are the security 
 
 ## Status
 
-**1.0.0-rc.3, a release candidate.** The tree and the three PyPI packages are the same version, published 2026-09-18. The TypeScript SDK on npm is still 1.0.0-rc.1: npm's staged-publish flow requires a maintainer's 2FA approval as its final step, so rc.3 is staged there and not yet installable.
+**1.0.0-rc.3, a release candidate.** The tree and all four published packages are the same version as of 2026-09-18.
 
 | | version | where |
 |---|---|---|
 | this tree | 1.0.0-rc.3 | the source you are reading |
-| `polaris-verify`, `polaris-sdk-python`, `polaris-oid4vp` | 1.0.0rc3 | PyPI, published 2026-09-18 |
-| `polaris-sdk-ts` | 1.0.0-rc.1 | npm; rc.3 staged, awaiting 2FA approval |
+| `polaris-verify`, `polaris-sdk-python`, `polaris-oid4vp` | 1.0.0rc3 | PyPI |
+| `polaris-sdk-ts` | 1.0.0-rc.3 | npm, under `next`; `latest` stays 0.1.0, so a plain install resolves the stable release |
 
 Each candidate exists because a defect was found in the one before it, which is the only thing that moves the number. rc.2 collected twenty-two, measured inside the downloaded wheels rather than inferred, under [**What a stranger installing rc.1 has**](CHANGELOG.md#v100-rc2--2026-09-17-a-defect-found-in-the-candidate). rc.3 resolved two published-contract ambiguities found by an outside design-intent review: a genuine signature no longer implies a trusted issuer at the detached verifier's exit code, and `issuer_authentic` became two fields because one boolean was reporting every credential issued before a key rotation as inauthentic.
 
