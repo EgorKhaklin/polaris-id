@@ -161,9 +161,9 @@ invariants**; no deeper apparatus governs them (see v9.55).
 | C3 | At most one `ACTIVE` token per `Individual` | Constitutional | `02_indexes.sql::uq_one_active_per_person` partial unique index |
 | C4 | Failed login increments are atomic (no TOCTOU) | Engineering | `security.py::authenticate()` uses `UPDATE … SET col = col + 1 RETURNING …` |
 | C5 | CSP is `script-src 'self'`, with no `'unsafe-inline'` for production scripts | Engineering | `security.py::apply_security_headers()` |
-| C6 | Disclosure level is enforced server-side; client cannot upgrade | Constitutional | `app.py::verifications_new()` coerces `token_id` to NULL for ZERO_KNOWLEDGE; the C2 CHECK constraint rejects anything else; the Atlas redacts ZK locations server-side (`polaris_checks::check_c6_atlas_redacts_zk_location`) |
+| C6 | Disclosure level is enforced server-side; client cannot upgrade | Constitutional | `verification_routes.py::verifications_new()` coerces `token_id` to NULL for ZERO_KNOWLEDGE; the C2 CHECK constraint rejects anything else; the Atlas redacts ZK locations server-side (`polaris_checks::check_c6_atlas_redacts_zk_location`) |
 | C7 | Cryptographic algorithm metadata flows through `CryptographicAlgorithm`, never hardcoded in app code | Engineering | `01_schema.sql::CryptographicAlgorithm` table |
-| C8 | All `/api/atlas/*` endpoints have hard caps preventing unbounded result sets | Engineering | `app.py::_ATLAS_MAX_*` constants LIMIT the list endpoints (clusters, points, events); the timeline is capped at 240 buckets and search at 20 rows; the remaining Atlas endpoints return aggregates |
+| C8 | All `/api/atlas/*` endpoints have hard caps preventing unbounded result sets | Engineering | `atlas_routes.py::_ATLAS_MAX_*` constants LIMIT the list endpoints (clusters, points, events); the timeline is capped at 240 buckets and search at 20 rows; the remaining Atlas endpoints return aggregates |
 | C9 | Tests for concurrency hazards use real threading, not mocks | Engineering | `test_app.py::ConcurrencyTests` |
 | C10 | Identity attestation never carries spending authority | Constitutional | Structural absence: no `MonetaryClaim` table exists, pinned by `polaris_checks` |
 

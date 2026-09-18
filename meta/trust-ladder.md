@@ -22,7 +22,7 @@ position, it is an opinion; the check layer holds these names to the code.
 
 | # | Normally trusted | Refused by | Mechanism |
 |---|---|---|---|
-| 1 | The user's input | Server-side enforcement | C6 disclosure enforcement in `polaris_web/app.py`; `check_operator_scripts_validate_argv` for operator argv |
+| 1 | The user's input | Server-side enforcement | C6 disclosure enforcement in `polaris_web/verification_routes.py`; `check_operator_scripts_validate_argv` for operator argv |
 | 2 | The operator and the issuing authority | An audit of record they cannot edit | C1 append-only triggers in `polaris_sql/06_triggers.sql`; `check_audited_reads_are_logged` for the warrant path |
 | 3 | The application code | Guarantees that live below it | C1 to C10 as triggers, CHECK constraints and partial unique indexes, not as policy; `polaris_checks/checks.py` |
 | 4 | The test suite that proves the code | Mutation, not assertion | `scripts/polaris-check-mutation-drill.py` for the checks, `scripts/polaris-constraint-mutation-drill.py` for the database constraints |

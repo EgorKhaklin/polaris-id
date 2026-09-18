@@ -32,6 +32,10 @@ polaris/
 │
 ├── polaris_web/        ← the Flask application
 │   ├── app.py / security.py / webauthn_auth.py / custody.py / pqc_signing.py
+│   ├── rp_api.py / atlas_routes.py / use_case_routes.py / verification_routes.py
+│   │      route modules split out of app.py (2026-09-18); each registers by
+│   │      import at the end of app.py, which aliases itself into sys.modules first
+│   ├── sql_console.py
 │   ├── templates/ static/                         ← Jinja2 templates; external-only JS and CSS
 │   ├── Dockerfile / docker-compose.yml            ← dev image and dev stack
 │   ├── Dockerfile.prod / docker-compose.prod.yml  ← prod image and the five-service stack
@@ -133,7 +137,7 @@ The authority layer's institutional protocol, built on the product and verified 
 
 | Subsystem | Where | Record |
 |---|---|---|
-| The exchange gateway and its receipts (evidence without retention), service-to-service minting, the receipt transparency log | `POST /api/v1/exchange/<id>`, the mint and receipt-log routes in `app.py`; `verify_exchange_receipt`, `verify_exchange_mint`, `exchange_evidence` | [exchange-gateway.md](../design/exchange-gateway.md) |
+| The exchange gateway and its receipts (evidence without retention), service-to-service minting, the receipt transparency log | `POST /api/v1/exchange/<id>`, the mint and receipt-log routes in `rp_api.py`; `verify_exchange_receipt`, `verify_exchange_mint`, `exchange_evidence` | [exchange-gateway.md](../design/exchange-gateway.md) |
 | The signed registry: discovery over the authority layer (services, authorities and their key registers, contexts, trust, protocol formats and versions, accepted algorithms) | `GET /api/v1/registry/<id>`; `verify_registry`, `registry_service`, `registry_authority`, `registry_key_status`, `registry_speaks` | [registry.md](../design/registry.md) |
 | The timestamp authority (digest-only, unlogged time evidence) | `POST /api/v1/timestamp/<id>`; `verify_timestamp`, `timestamp_binds` | [timestamp-authority.md](../design/timestamp-authority.md) |
 | Document signing with long-term validation | the signing routes; `verify_signed_document`, `attach_ltv` | [document-signing.md](../design/document-signing.md) |

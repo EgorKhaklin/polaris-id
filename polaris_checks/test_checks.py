@@ -11109,6 +11109,76 @@ def test_transparency_program_check_discriminates(tmp_path):
         "a report that does not say it cannot show an unrecorded access must FAIL"
 
 
+def test_documented_symbols_resolve_check_discriminates(tmp_path):
+    # 2026-09-18: MISSION.md's constraint table cited app.py for C6's handler and C8's caps
+    # after both had moved to route modules. Nothing failed. The link check passed, because
+    # polaris_web/app.py still exists; check_c1c10_objects_resolve passed, because it resolves
+    # the OBJECT rather than the path. A reader following the constitution to find where a
+    # constitutional guarantee is enforced would have opened the wrong file.
+    def write(files):
+        for rel, body in files.items():
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    def clean():
+        for f in list(tmp_path.rglob("*.md")) + list(tmp_path.rglob("*.py")):
+            f.unlink()
+
+    check = checks.check_documented_symbols_resolve
+
+    clean()
+    write({"polaris_web/app.py": "def query():\n    pass\n",
+           "polaris_web/atlas_routes.py": "_ATLAS_MAX_CLUSTERS = 5000\n",
+           "MISSION.md": "| C8 | `atlas_routes.py::_ATLAS_MAX_*` caps the endpoints |\n"
+                         "| C0 | `app.py::query()` is the one read path |\n"})
+    assert check(tmp_path)[0].level == "OK", "citations that resolve must PASS"
+
+    # THE DEFECT: the symbol moved and the document did not.
+    clean()
+    write({"polaris_web/app.py": "def query():\n    pass\n",
+           "polaris_web/atlas_routes.py": "_ATLAS_MAX_CLUSTERS = 5000\n",
+           "MISSION.md": "| C8 | `app.py::_ATLAS_MAX_*` caps the endpoints |\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "a citation naming the wrong file must be caught"
+    assert "_ATLAS_MAX_" in result.message and "app.py" in result.message, \
+        "and say which symbol, and which file the document named"
+
+    # A CITATION TO A FILE THAT DOES NOT EXIST AT ALL is a different error and says so.
+    clean()
+    write({"polaris_web/app.py": "def query():\n    pass\n",
+           "MISSION.md": "| C1 | `routes/gone.py::handler` |\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL"
+    assert "no file in the tree" in result.message
+
+    # RESOLUTION BY FULL PATH, which is the other form the documents use.
+    clean()
+    write({"scripts/polaris-verify-load.py": "PERCENTILE_FLOORS = {}\n",
+           "docs/REVIEW-PACKET.md": "`scripts/polaris-verify-load.py::PERCENTILE_FLOORS`\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "a hyphenated path must resolve; splitting it at the hyphen finds `load.py`"
+
+    # POINT-IN-TIME DOCUMENTS ARE EXCLUDED. A changelog entry records where something WAS, and
+    # holding it to the present would mean editing history to keep a check green.
+    clean()
+    write({"polaris_web/app.py": "def query():\n    pass\n",
+           "CHANGELOG.md": "v9.0: `app.py::_ATLAS_MAX_*` was introduced\n"})
+    assert check(tmp_path)[0].level == "FAIL", \
+        "a tree whose ONLY citations are historical yields none to check, which is vacuous"
+    write({"MISSION.md": "| C0 | `app.py::query()` |\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "and the historical one is still ignored once a live citation exists"
+
+    # VACUITY: no citations anywhere is not a pass.
+    clean()
+    write({"polaris_web/app.py": "def query():\n    pass\n",
+           "MISSION.md": "nothing is cited here\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "finding no citation at all means the parser has drifted"
+    assert "measuring nothing" in result.message
+
+
 def test_no_module_imports_an_unstable_name_check_discriminates(tmp_path):
     # 2026-09-18, found while moving the second block out of app.py. app.py imports
     # prometheus_client in a module-level try whose except arm binds _PROM_AVAILABLE = False and

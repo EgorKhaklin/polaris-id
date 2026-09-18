@@ -109,7 +109,13 @@ break.
 
 ### Web application
 
-- **Every route in [app.py](../polaris_web/app.py)**, with role enforcement
+- **Every route in the application**, which since 2026-09-18 is
+  [app.py](../polaris_web/app.py) plus the route modules split out of it:
+  [rp_api.py](../polaris_web/rp_api.py) (the 36 `/api/v1` routes),
+  [atlas_routes.py](../polaris_web/atlas_routes.py),
+  [use_case_routes.py](../polaris_web/use_case_routes.py),
+  [verification_routes.py](../polaris_web/verification_routes.py) and
+  [sql_console.py](../polaris_web/sql_console.py), with role enforcement
   (`admin`, `operator`, `auditor`) as implemented by `require_role` in
   [security.py](../polaris_web/security.py). The
   [authz audit script](../scripts/polaris-authz-audit.sh) lists the expected

@@ -16754,6 +16754,85 @@ def check_no_module_imports_an_unstable_name(root: pathlib.Path) -> list[Finding
                   " (%d empty module(s) skipped: %s)" % (len(empty), ", ".join(empty))))
 
 
+#: Documents that are records of a moment rather than descriptions of the tree. A citation in
+#: one of these was true when it was written and is not a claim about the code now, so holding
+#: it to the current tree would force the rewriting of history to keep a check green.
+_POINT_IN_TIME_DOCS = ("docs/history/", "docs/paper/", "DEVNOTES/presentation-plan.md",
+                       "CHANGELOG.md")
+
+
+def check_documented_symbols_resolve(root: pathlib.Path) -> list[Finding]:
+    """Every `file.py::symbol` citation in a live document resolves against the tree.
+
+    MISSION.md's constraint table cites the object that enforces each constraint, and two of
+    them named app.py after the thing they name had moved: C6's handler went to
+    verification_routes.py and C8's caps to atlas_routes.py on 2026-09-18. Nothing failed. The
+    link check passed, because polaris_web/app.py still exists; check_c1c10_objects_resolve
+    passed, because it resolves the OBJECT and not the path. A reader following the
+    constitution to find where a constitutional guarantee is enforced would have opened the
+    wrong file, and this is the document that says what the guarantees are.
+
+    Six layers of the assurance machinery had the same dependency and were converted over two
+    days. The documents were the seventh, and they are the one place where being wrong is
+    invisible: a stale citation reads exactly like a live one.
+
+    So the citation has to resolve. The path is tried first and then the basename, because
+    `security.py::authenticate` and `scripts/polaris-verify-load.py::PERCENTILE_FLOORS` are
+    both forms the documents use. The symbol is matched as a substring, because the citations
+    carry `_ATLAS_MAX_*` and `verifications_new()` rather than bare identifiers, and a check
+    that demanded exact names would refuse the notation the documents actually use.
+
+    Point-in-time documents are excluded: a design note or a changelog entry describes where
+    something was, and holding it to the present would mean editing history to keep a check
+    green."""
+    name = "documented_symbols"
+    skip = _POINT_IN_TIME_DOCS
+    by_name: dict = {}
+    for p in root.rglob("*.py"):
+        s = str(p)
+        if any(x in s for x in ("/.git/", "/venv/", "/node_modules/", "__pycache__")):
+            continue
+        by_name.setdefault(p.name, []).append(p)
+    if not by_name:
+        return _fail(name, "no Python files found; a check that cannot find its input measures "
+                           "nothing")
+
+    unresolved, cited = [], 0
+    for md in sorted(root.rglob("*.md")):
+        rel = md.relative_to(root).as_posix()
+        if "/.git/" in str(md) or any(rel.startswith(x) or rel == x for x in skip):
+            continue
+        for m in re.finditer(r"([A-Za-z0-9_][A-Za-z0-9_./-]*\.py)::([A-Za-z_]\w*)",
+                             _read_path(md)):
+            cited += 1
+            path, sym = m.group(1), m.group(2)
+            direct = root / path
+            cands = [direct] if direct.is_file() else by_name.get(pathlib.Path(path).name, [])
+            if not cands:
+                unresolved.append("%s cites %s, which is no file in the tree" % (rel, path))
+            elif not any(sym in _read_path(c) for c in cands):
+                unresolved.append("%s cites %s::%s and %s does not contain %s"
+                                  % (rel, path, sym, path, sym))
+    if cited == 0:
+        return _fail(name, "no `file.py::symbol` citation was found in any live document. The "
+                           "documents use that notation throughout, so finding none means the "
+                           "parser has drifted and this check is measuring nothing")
+    if unresolved:
+        return _fail(name,
+                     "%d documented citation(s) name a symbol that is not where the document "
+                     "says: %s. A stale citation reads exactly like a live one, which is why "
+                     "it has to resolve rather than be maintained by care"
+                     % (len(unresolved), "; ".join(unresolved[:6])))
+    return _ok(name,
+               "all %d `file.py::symbol` citations in the live documents resolve: the file "
+               "exists and carries the symbol. MISSION.md's constraint table is the reason "
+               "this exists, because two of its rows named app.py after the objects they name "
+               "had moved out of it, and nothing failed: the link check passed on a path that "
+               "still exists and check_c1c10_objects_resolve passed on an object it found "
+               "elsewhere. Point-in-time documents are excluded, since a record of where "
+               "something was is not a claim about where it is" % cited)
+
+
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
     """A pilot can be wound back, and says truthfully what that leaves (P5.1).
 
@@ -19873,6 +19952,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_modules_are_measured,
     check_route_modules_register_under_both_entry_points,
     check_no_module_imports_an_unstable_name,
+    check_documented_symbols_resolve,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,
