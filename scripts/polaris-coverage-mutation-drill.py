@@ -196,6 +196,39 @@ _NEW_COMPOSE_SERVICE = '''
     command: ["sleep", "3600"]
 '''
 
+#: A new prod-compose service that IS resource-bounded and DOES rotate logs, so it clears
+#: compose_limits, and drops no capabilities. The point of two nearly identical payloads is
+#: that a surface can satisfy one of its checks and not the other, and the drill must catch
+#: the second by name rather than be satisfied by the first going red.
+_NEW_COMPOSE_UNHARDENED = '''
+  coverage-drill-caps:
+    image: alpine:3.20
+    command: ["sleep", "3600"]
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.10"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+'''
+
+
+def _new_doc_example() -> list:
+    """A documented polaris-verify invocation that does not say what cryptography it is doing.
+
+    The product contract: the verifier refuses to run until the caller names its mode, and a
+    fenced example in any document must name one too, or a reader copies a command that
+    exits 4. A NEW document is the way that surface grows.
+    """
+    return [("docs/design/coverage-drill-example.md",
+             "# MUTATION: a documented invocation with no crypto mode\n\n"
+             "```bash\npolaris-verify --pack credential.json\n```\n")]
+
+
 #: A new stylesheet rule naming an animation that no @keyframes defines.
 _NEW_CSS_ANIMATION = '''
 .coverage-drill-mutation {
@@ -295,6 +328,14 @@ MUTATIONS = [
 
     ("migration_drift", "a migration adds a column 01_schema.sql never declares",
      None, _new_drifting_migration),
+
+    # Third wave, 2026-09-18. Surfaces where a new member is a security or honesty
+    # regression rather than an untidiness.
+    ("container_hardening", "a bounded, log-rotating service ships dropping no capabilities",
+     "polaris_web/docker-compose.prod.yml", lambda t: t + _NEW_COMPOSE_UNHARDENED),
+
+    ("documented_commands_run", "a documented verifier invocation names no crypto mode",
+     None, _new_doc_example),
 ]
 
 
