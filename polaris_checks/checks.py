@@ -19322,6 +19322,62 @@ def check_stranger_path_was_walked_against_what_is_published(root: pathlib.Path)
                      % (walked_on, walked, _RELEASE_LEDGER_REL))
 
 
+#: hook id -> what the tree SAYS that hook does, and where it says it. The safety net is
+#: described in three documents and defined in one file; this is what holds them together.
+_PRECOMMIT_HOOKS = {
+    "polaris-checks": "CLAUDE.md and CONTRIBUTING.md present the invariant layer as the "
+                      "local gate",
+    "ruff": "CONTRIBUTING.md names ruff in the local safety net and preflight fails "
+            "without it",
+    "polaris-link-check": "the cross-reference rule is enforced locally as well as in CI",
+    "em-dash-block-new": "CLAUDE.md says a pre-commit hook refuses newly added em dashes, "
+                         "and docs/CONVENTIONS.md describes its exemptions",
+    "polaris-detection-tests": "a check and its detection test change together; the ship "
+                               "plan says so and a commit went out on 2026-09-18 with this "
+                               "suite red",
+}
+
+
+def check_precommit_config_wires_what_the_docs_claim(root: pathlib.Path) -> list[Finding]:
+    """The local safety net must contain the hooks the tree says it contains.
+
+    CLAUDE.md states "a pre-commit hook refuses newly added [em dashes]". CONTRIBUTING.md
+    describes the config as a local safety net and tells a contributor to install it.
+    docs/CONVENTIONS.md describes the em-dash hook's exemptions. All three describe a file,
+    and nothing compared them to it: remove a hook and three documents keep describing it.
+
+    What this cannot check is whether a given clone has RUN `pre-commit install`, because
+    that is per-clone state and not in the repository. It was unrun in the author's clone on
+    2026-09-18, which is how a commit reached main with the detection suite red. The
+    install step is in CONTRIBUTING.md; what is enforceable here is that the thing a
+    contributor installs actually does what it is advertised to do.
+    """
+    name = "precommit_wiring"
+    cfg = _read_raw(root, ".pre-commit-config.yaml")
+    if not cfg:
+        return _fail(name, ".pre-commit-config.yaml is missing, and CLAUDE.md, "
+                           "CONTRIBUTING.md and docs/CONVENTIONS.md all describe it")
+    declared = set(re.findall(r"^\s*-\s*id:\s*(\S+)", cfg, re.M))
+    if len(declared) < 3:
+        return _fail(name, "only %d hook id(s) parsed out of .pre-commit-config.yaml; the "
+                           "parse has broken and this check would pass by finding nothing"
+                           % len(declared))
+    missing = sorted(set(_PRECOMMIT_HOOKS) - declared)
+    if missing:
+        return _fail(name, "the local safety net no longer wires %s, which the tree still "
+                           "describes: %s"
+                           % (", ".join(missing),
+                              "; ".join("%s (%s)" % (m, _PRECOMMIT_HOOKS[m]) for m in missing)))
+    if "pre-commit install" not in _read_raw(root, "CONTRIBUTING.md"):
+        return _fail(name, "CONTRIBUTING.md no longer tells a contributor to run "
+                           "`pre-commit install`, so the safety net the other documents "
+                           "describe is one nobody is told to turn on")
+    return _ok(name, "the local safety net wires all %d hooks the tree describes (%s), and "
+                     "CONTRIBUTING.md still says how to turn it on; whether a given clone "
+                     "has is per-clone state this cannot see"
+                     % (len(_PRECOMMIT_HOOKS), ", ".join(sorted(_PRECOMMIT_HOOKS))))
+
+
 def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
     """No check may report OK over a tree that contains nothing.
 
@@ -19381,6 +19437,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_published_algorithm_table_matches_the_seed,
     check_security_page_matches_the_release_ledger,
     check_stranger_path_was_walked_against_what_is_published,
+    check_precommit_config_wires_what_the_docs_claim,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,
     check_drills_count_their_cases,

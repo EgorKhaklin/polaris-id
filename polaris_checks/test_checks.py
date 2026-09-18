@@ -16531,3 +16531,55 @@ def test_stranger_path_current_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "nothing to hold" in out[0].message, \
         "must FAIL rather than pass when the published version cannot be read"
+
+
+def test_precommit_wiring_check_discriminates(tmp_path):
+    """The local safety net must contain the hooks three documents say it contains.
+
+    CLAUDE.md states a pre-commit hook refuses newly added em dashes; CONTRIBUTING.md
+    describes the config and tells a contributor to install it; docs/CONVENTIONS.md
+    describes the em-dash hook's exemptions. Remove a hook and all three keep describing it.
+    """
+    CFG = "repos:\n  - repo: local\n    hooks:\n" + "".join(
+        "      - id: %s\n        name: %s\n" % (h, h)
+        for h in ("polaris-checks", "ruff", "polaris-link-check",
+                  "em-dash-block-new", "polaris-detection-tests", "no-secret-in-prod-compose"))
+    CONTRIB = "Install the safety net:\n\n    pip install pre-commit\n    pre-commit install\n"
+
+    def write(cfg=CFG, contrib=CONTRIB):
+        (tmp_path / ".pre-commit-config.yaml").write_text(cfg)
+        (tmp_path / "CONTRIBUTING.md").write_text(contrib)
+
+    fn = checks.check_precommit_config_wires_what_the_docs_claim
+    write()
+    assert fn(tmp_path)[0].level == "OK", "must PASS when every described hook is wired"
+
+    # THE defect: the em-dash hook goes, CLAUDE.md keeps claiming it.
+    write(cfg=CFG.replace("      - id: em-dash-block-new\n        name: em-dash-block-new\n", ""))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "em-dash-block-new" in out[0].message, \
+        "must FAIL when a described hook is removed from the config"
+
+    # The detection-test hook is the one whose absence let a red suite reach main.
+    write(cfg=CFG.replace("      - id: polaris-detection-tests\n        name: polaris-detection-tests\n", ""))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris-detection-tests" in out[0].message, \
+        "must FAIL when the detection-test hook is removed"
+
+    # A net nobody is told to turn on is not a net.
+    write(contrib="Nothing about hooks here.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pre-commit install" in out[0].message, \
+        "must FAIL when CONTRIBUTING.md stops saying how to install it"
+
+    # The config is gone entirely, while three documents still describe it.
+    (tmp_path / ".pre-commit-config.yaml").unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "missing" in out[0].message, \
+        "must FAIL when the config is absent"
+
+    # Anti-vacuity: an unparseable config must not read as a complete net.
+    write(cfg="repos: []\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
+        "must FAIL rather than report a wired net when no hooks can be parsed"

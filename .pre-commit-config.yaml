@@ -31,6 +31,19 @@ repos:
         language: system
         types_or: [python, pyi]
 
+      # A check and its detection test change together. polaris-ship.py's plan already
+      # says so ("a check moved: its detection test must still discriminate"), and on
+      # 2026-09-18 a commit went out with checks.py edited and this suite red: the
+      # invariant layer above was green, because a check passing says nothing about
+      # whether it can still FAIL. Scoped to polaris_checks/ so an ordinary commit does
+      # not pay the 30 seconds.
+      - id: polaris-detection-tests
+        name: detection tests (a changed check must still discriminate)
+        entry: python3 -m pytest polaris_checks/test_checks.py -q
+        language: system
+        pass_filenames: false
+        files: '^polaris_checks/'
+
       # Cross-reference integrity: every Markdown link + code path resolves.
       - id: polaris-link-check
         name: polaris-link-check (Markdown + cross-ref resolution)
