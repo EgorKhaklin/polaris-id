@@ -263,6 +263,77 @@ UNSHARDED_SUITES = {
     ".": ["polaris_sim.test_sim", "polaris_web/test_e2e_atlas.py",
           "discover:polaris_card"],
 }
+#: How each UNSHARDED_SUITES group is RUN, and by whom. The list above says what CI runs; this
+#: says what runs it locally, because naming a suite is not running it.
+#:
+#: 2026-09-18: rp_api.py was split out of app.py and two files outside test_app.py reached into
+#: the app module for names that had moved. The local gate reported READY and CI went red. That
+#: is the same gap closed for the standalone packages on 2026-09-17, one level up: the packages
+#: were named and not run, and now the DB-requiring groups were named and not run.
+#: check_local_gate_covers_ci compares UNSHARDED_SUITES against the workflow, so it holds the
+#: NAMING honest and could not see this.
+#:
+#: "preflight" means polaris-preflight.sh already runs it (no database, no network, no ML-DSA),
+#: so `run` does not repeat it. Everything else runs here, against a loaded database, with the
+#: command CI uses.
+UNSHARDED_RUNNERS = {
+    "polaris_web":              ("unittest", None),
+    "polaris_cli":              ("unittest", None),
+    "scripts":                  ("unittest", {"test_verify_p9": "preflight"}),
+    "sdk/python":               ("preflight", None),
+    "packages/polaris-oid4vp":  ("preflight", None),
+    "polaris_zk/witness2":      ("pytest-file", None),
+    ".":                        ("mixed", None),
+}
+
+
+def run_unsharded(py, base_env, db, out):
+    """Run the CI suites `run` does not shard, against one already-loaded database.
+
+    Returns (groups_run, tests_run, failures) where failures is a list of (label, tail)."""
+    state = "/tmp/polaris-state-unsharded"
+    os.makedirs(state, exist_ok=True)
+    env = dict(base_env, POLARIS_DB_NAME=db, POLARIS_STATE_DIR=state, POLARIS_PORT="2299")
+    groups, ran, failures = 0, 0, []
+    for group in sorted(UNSHARDED_SUITES):
+        kind, per_suite = UNSHARDED_RUNNERS.get(group, ("unittest", None))
+        if kind == "preflight":
+            continue
+        suites = [x for x in UNSHARDED_SUITES[group]
+                  if not (per_suite or {}).get(x)]
+        if not suites:
+            continue
+        cwd = ROOT if group == "." else os.path.join(ROOT, group)
+        cmds = []
+        if kind == "unittest":
+            cmds.append(([py, "-m", "unittest"] + suites, cwd, group))
+        elif kind == "pytest-file":
+            cmds.append(([py, "-m", "pytest", "-q"] + ["%s.py" % x for x in suites], cwd, group))
+        else:   # mixed: the "." group carries three different forms
+            mods = [x for x in suites if not x.endswith(".py") and not x.startswith("discover:")]
+            files = [x for x in suites if x.endswith(".py")]
+            disc = [x.split(":", 1)[1] for x in suites if x.startswith("discover:")]
+            if mods:
+                cmds.append(([py, "-m", "unittest"] + mods, ROOT, "unittest " + " ".join(mods)))
+            if files:
+                cmds.append(([py, "-m", "pytest", "-q"] + files, ROOT, "pytest " + " ".join(files)))
+            for d in disc:
+                cmds.append(([py, "-m", "unittest", "discover", "-s", d, "-t", ".", "-p", "test_*.py"],
+                             ROOT, "discover " + d))
+        for cmd, wd, label in cmds:
+            groups += 1
+            pr = subprocess.run(cmd, cwd=wd, env=env, capture_output=True, text=True)
+            text = _plain((pr.stdout or "") + (pr.stderr or ""))
+            m = re.search(r"Ran (\d+) tests?", text) or re.search(r"(\d+) passed", text)
+            n = int(m.group(1)) if m else 0
+            ran += n
+            ok = pr.returncode == 0
+            print("  %-34s %s %d tests" % (label[:34], "ok  " if ok else "FAIL", n), file=out)
+            if not ok:
+                failures.append((label, text[-2500:]))
+    return groups, ran, failures
+
+
 # A class that spawns processes, binds a port or runs gunicorn cannot share a machine slot with
 # another such class; they run one after another in the serial shard.
 SERIAL_MARKERS = ("subprocess", "gunicorn", "socket", "multiprocessing")
@@ -503,6 +574,18 @@ def run(argv, out=None):
                 if not blocks:
                     print("\n    shard %d ended without a unittest summary; its log: /tmp/polaris-ship-shard-%d.log\n%s" % (i, i, text[-1200:]), file=out)
                 print("    full log: /tmp/polaris-ship-shard-%d.log" % i, file=out)
+
+        # The suites CI runs that this command does not shard. Skipped with --no-unsharded,
+        # which is for a fast inner loop and nothing else: on 2026-09-18 a commit whose local
+        # gate said READY went red in CI on a file none of the sharded modules imports.
+        if "--no-unsharded" not in argv:
+            print("run: the unsharded suites CI also runs, against %s" % dbs[0], file=out)
+            u_groups, u_ran, u_failures = run_unsharded(py, base_env, dbs[0], out)
+            print("run: unsharded: %s: %d tests across %d command(s)"
+                  % ("FAILED" if u_failures else "PASS", u_ran, u_groups), file=out)
+            for label, text in u_failures:
+                print("\n    %s:\n%s" % (label, "\n".join("    " + x for x in text.splitlines()[-30:])), file=out)
+                failed = True
         return 1 if (failed or ran != total) else 0
     finally:
         for port in redis_ports:

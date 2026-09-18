@@ -1533,11 +1533,44 @@ def check_local_gate_covers_ci(root: pathlib.Path) -> list[Finding]:
                            "of, so a ship can pass the local gate and break them: %s. Shard them "
                            "in DEFAULT_MODULES or name them in UNSHARDED_SUITES."
                            % (len(unknown), ", ".join(unknown)))
+    # KNOWN is not RUN. Every group UNSHARDED_SUITES names must have a runner beside it, or
+    # `polaris-ship.py run` silently skips it and the gate is narrower than it reports. That is
+    # exactly what happened on 2026-09-18: rp_api.py split out of app.py, two files outside the
+    # sharded modules reached into the app module for names that had moved, the local gate said
+    # READY and CI went red. The naming was checked; the running was not.
+    groups, runners = set(), set()
+    try:
+        ship_tree = ast.parse(ship)
+    except SyntaxError as e:
+        return _fail(name, f"scripts/polaris-ship.py does not parse: {e}")
+    for node in ship_tree.body:
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Dict)):
+            continue
+        keys = {k.value for k in node.value.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        if node.targets[0].id == "UNSHARDED_SUITES":
+            groups = keys
+        elif node.targets[0].id == "UNSHARDED_RUNNERS":
+            runners = keys
+    if not groups or not runners:
+        return _fail(name, "UNSHARDED_SUITES and UNSHARDED_RUNNERS must both be dict literals in "
+                           "scripts/polaris-ship.py; one of them could not be read, and a check "
+                           "that cannot find its input is measuring nothing")
+    unrun = sorted(groups - runners)
+    if unrun:
+        return _fail(name, "%d group(s) are NAMED in UNSHARDED_SUITES with no entry in "
+                           "UNSHARDED_RUNNERS, so `polaris-ship.py run` skips them and the local "
+                           "gate is narrower than it reports: %s" % (len(unrun), ", ".join(unrun)))
+
     return _ok(name, "all %d suites CI runs are known to the ship tool: it shards the DB-heavy "
                      "ones and names the rest, so the local gate cannot be quietly narrower than "
                      "the one that gates the push. Read out of BOTH polaris-coverage.sh and "
                      ".github/workflows/ci.yml, because the workflow is what gates the push and "
-                     "for a year this check only read the script" % len(ci))
+                     "for a year this check only read the script. And every one of the %d "
+                     "unsharded groups has a runner beside it, so naming a suite cannot stand in "
+                     "for running it" % (len(ci), len(groups)))
 
 
 def check_schema_drift_drill(root: pathlib.Path) -> list[Finding]:

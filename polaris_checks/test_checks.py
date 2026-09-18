@@ -14894,11 +14894,17 @@ def test_local_gate_covers_ci_check_discriminates(tmp_path):
           '  sdk-python:\n'
           '    steps:\n'
           '      - run: cd sdk/python && python -m unittest test_sdk\n')
+    # Every group must carry a RUNNER as well as a name: on 2026-09-18 a commit whose local
+    # gate said READY went red in CI because `polaris-ship.py run` skipped groups it only named.
+    RUNNERS = ('\nUNSHARDED_RUNNERS = {"polaris_cli": ("unittest", None),\n'
+               '                     "polaris_web": ("unittest", None),\n'
+               '                     "sdk/python": ("preflight", None),\n'
+               '                     ".": ("mixed", None)}\n')
     SHIP = ('DEFAULT_MODULES = ["test_app"]\n'
             'UNSHARDED_SUITES = {"polaris_cli": ["test_cli"],\n'
             '                    "polaris_web": ["test_capacity"],\n'
             '                    "sdk/python": ["test_sdk"],\n'
-            '                    ".": ["polaris_sim.test_sim"]}\n')
+            '                    ".": ["polaris_sim.test_sim"]}\n') + RUNNERS
 
     def write(cov=None, ship=None, ci=None):
         (sc / "polaris-coverage.sh").write_text(COV if cov is None else cov)
@@ -14918,7 +14924,7 @@ def test_local_gate_covers_ci_check_discriminates(tmp_path):
 
     # The v9.440 shape: the simulation suite runs in CI and the ship tool has not heard of it.
     write(ship='DEFAULT_MODULES = ["test_app"]\nUNSHARDED_SUITES = {"polaris_cli": ["test_cli"],\n'
-               '                    "polaris_web": ["test_capacity"]}\n')
+               '                    "polaris_web": ["test_capacity"]}\n' + RUNNERS)
     assert level("polaris_sim.test_sim") == "FAIL", \
         "must FAIL, and name it, when a CI suite is unknown to the ship tool"
 
@@ -14927,14 +14933,28 @@ def test_local_gate_covers_ci_check_discriminates(tmp_path):
     write(ship='DEFAULT_MODULES = ["test_app"]\n'
                'UNSHARDED_SUITES = {"polaris_cli": ["test_cli"],\n'
                '                    "polaris_web": ["test_capacity"],\n'
-               '                    ".": ["polaris_sim.test_sim"]}\n')
+               '                    ".": ["polaris_sim.test_sim"]}\n' + RUNNERS)
     assert level("test_sdk") == "FAIL", \
         "must FAIL, and name it, when a suite the WORKFLOW runs is unknown to the ship tool"
 
-    write(ship='DEFAULT_MODULES = ["test_app"]\n')
+    write(ship='DEFAULT_MODULES = ["test_app"]\n' + RUNNERS)
     out = checks.check_local_gate_covers_ci(tmp_path)[0]
     assert out.level == "FAIL" and "4 suite(s)" in out.message, \
         "must count every unknown suite, not stop at the first"
+
+    # NAMED BUT NOT RUN. The group is in UNSHARDED_SUITES and has no runner beside it, so
+    # `run` skips it and the gate is narrower than it reports. This is the 2026-09-18 shape:
+    # the naming was checked, the running was not, and CI was the first to know.
+    write(ship=SHIP.replace('"polaris_web": ("unittest", None),\n', ''))
+    out = checks.check_local_gate_covers_ci(tmp_path)[0]
+    assert out.level == "FAIL", "a group with no runner must FAIL"
+    assert "polaris_web" in out.message and "UNSHARDED_RUNNERS" in out.message, \
+        "and say which group, and where the entry belongs"
+
+    # A ship tool with no runners table at all cannot be measured, and must say so.
+    write(ship=SHIP.replace(RUNNERS, ''))
+    assert level("could not be read") == "FAIL", \
+        "a missing UNSHARDED_RUNNERS is an unmeasurable gate, not a passing one"
 
     # A parser that has drifted from the script measures nothing, and must say so rather
     # than reporting a clean result off an empty set. Both legs count: a coverage.sh that
