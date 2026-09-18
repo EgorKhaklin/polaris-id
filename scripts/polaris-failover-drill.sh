@@ -123,6 +123,10 @@ leader_changed_from() { local l; l=$(leader_via "$2"); [[ -n "$l" && "$l" != "$1
 replica_streaming() {  # replica_streaming MEMBER VIA
     [[ "$(cluster_field "$2" role "$1")" == "replica" && "$(cluster_field "$2" state "$1")" == "streaming" ]]
 }
+timeline_followed() {  # timeline_followed MEMBER VIA WANT: the member reports the leader's timeline
+    local tl; tl="$(cluster_field "$2" timeline "$1")"
+    [[ -n "$tl" && "$tl" == "$3" ]]
+}
 container_healthy() { [[ "$(docker inspect --format '{{.State.Health.Status}}' "$1" 2>/dev/null)" == "healthy" ]]; }
 edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" 2>/dev/null | grep -q 200; }
 writes_ok_since() {  # an insert COMPLETED after T
@@ -238,7 +242,12 @@ DCS_NET=$(compose config --format json | python3 -c "import json,sys; print(json
 [[ -n "$NET" && -n "$DCS_NET" ]] || fail "could not resolve the stack networks (is docker-compose.ha.yml in POLARIS_COMPOSE_EXTRA?)"
 L0=$(leader); [[ -n "$L0" ]] || fail "no Patroni leader reachable"
 R0=$(other "$L0")
-replica_streaming "$R0" "$L0" || fail "$R0 is not a streaming replica of $L0 before the drill ($(cluster_field "$L0" role "$R0")/$(cluster_field "$L0" state "$R0"))"
+# Polled, for the reason the timeline assertion below is: a single read of a REST endpoint
+# that is momentarily unreachable reports the cluster as broken when it is merely not
+# answering yet. This is a precondition at drill start, which is exactly when a stack that
+# just booted is least likely to answer on the first ask.
+wait_for 30 replica_streaming "$R0" "$L0" >/dev/null \
+    || fail "$R0 is not a streaming replica of $L0 before the drill, after 30s ($(cluster_field "$L0" role "$R0")/$(cluster_field "$L0" state "$R0"))"
 echo "  leader $L0, replica $R0 streaming, timeline $(cluster_field "$L0" timeline "$L0")"
 
 # v9.246 (roadmap P2.2): the app routes its read-only surfaces to the replica
@@ -301,7 +310,15 @@ tl1=$(cluster_field "$L1" timeline "$L1")
 echo "  promoted $L1 after ${p1}s; writes: ${fails1} failed (span ${gap1}s), longest stall ${stall1}s, outage ${out1}s; $L0 rejoined as a replica ${j1}s after it was started; timeline $tl1; reads dropped $(drops "$WORK/s1.json")"
 le "$out1" "$CEIL_FAILOVER" || fail "write outage ${out1}s exceeds the ${CEIL_FAILOVER}s ceiling"
 no_lost_write "$acked0"
-[[ "$(cluster_field "$L1" timeline "$L0")" == "$tl1" ]] || fail "$L0 is on timeline $(cluster_field "$L1" timeline "$L0"), the leader on $tl1: it did not follow"
+# Poll rather than read once. This asserted on a SINGLE read and failed CI on 2026-09-18
+# with "postgres is on timeline , the leader on 2" -- an EMPTY timeline, three lines after
+# its own summary said the node had rejoined on timeline 2. Patroni's REST endpoint was
+# momentarily unreachable, cluster_field returned "", and "" != "2" read as "it did not
+# follow". A probe that cannot reach the thing it is measuring must not be reported as the
+# thing being broken. It also read the field TWICE, once to compare and once for the
+# message, so the two could disagree.
+wait_for "$CEIL_REJOIN" timeline_followed "$L0" "$L1" "$tl1" >/dev/null \
+    || fail "$L0 is on timeline '$(cluster_field "$L1" timeline "$L0")', the leader on $tl1, after ${CEIL_REJOIN}s: it did not follow"
 verify_recovered || fail "verification did not recover after the leader was lost (scenario 1)"
 
 # --- 2. the leader is cut off from the lease store -------------------------------------
