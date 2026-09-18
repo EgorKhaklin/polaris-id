@@ -14,29 +14,33 @@ for an external engagement is [docs/RED-TEAM-SCOPE.md](docs/RED-TEAM-SCOPE.md).
 
 ---
 
-## Known defects in the PUBLISHED packages (2026-09-17)
+## What the registries serve, and what the older versions carry (2026-09-18)
 
-**If you installed a Polaris package from PyPI or npm, read this.** The fixes below are in
-this repository and are **not published**: bumping a version and publishing are the owner's
-call, and until that call is taken, what a registry serves is the version described here.
-None of this is theoretical, and each line was measured in the downloaded wheel rather than
-inferred from a changelog.
+**Every package is at `1.0.0-rc.3`, published 2026-09-18.** The defects listed below were
+found by measuring the *downloaded wheels* of `1.0.0-rc.1` rather than by reading a
+changelog, and they are fixed in the version the registries now serve. If you installed
+rc.1 or `0.1.0`, or pinned either, this is what you are still running.
 
-| Package | Published | Defect, as measured in the published artifact |
+| Package | Current | Older versions still carrying the defects |
 |---|---|---|
-| `polaris-oid4vp` | `1.0.0rc1`, `0.1.0` | **Never reads `exp`.** The string appears zero times in the installed `sdjwt.py`, against three in this tree, so a credential whose validity has ended verifies as authentic. Also absent: the finite-number guards, the forbidden-disclosure-name list (a disclosure can overwrite `iss` or the key-binding key in the returned claims), the presentation size bounds (four denial-of-service paths that need no credential), and the `vct` binding. |
-| `polaris-verify` | `1.0.0rc1`, `0.1.0` | **Never reads a trust attestation's `valid_until`.** It appears once, inside the canonicaliser, against fourteen here: an authority that time-boxed an edge to one year keeps granting cross-authority acceptance after it ends. No finite-number guards, so an agent grant signed with a non-finite `max_amount` is a signed unlimited grant wearing a limit field; and five entry points raise instead of returning a verdict. |
-| `polaris-sdk-python` | `1.0.0rc1`, `0.1.0` | No finite-number guards on `grant_within_limits`, so a spending ceiling is defeated by a value that is not a number. The cached access-token lifetime is whatever the issuer says, so a revoked client keeps presenting a token. |
-| `polaris-sdk-ts` (npm) | `0.1.0` | Predates `1.0.0-rc.1` entirely. The canonicalisation and instant-parsing divergences from the wire specification, and the constant-time comparison whose length guard could be inverted, are all present. |
+| `polaris-oid4vp` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: **never reads `exp`**, so a credential whose validity has ended verifies as authentic. Also absent: the finite-number guards, the forbidden-disclosure-name list (a disclosure can overwrite `iss` or the key-binding key in the returned claims), the presentation size bounds (four denial-of-service paths that need no credential), and the `vct` binding. |
+| `polaris-verify` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: **never reads a trust attestation's `valid_until`**, so an authority that time-boxed an edge to one year keeps granting cross-authority acceptance after it ends. No finite-number guards, so an agent grant signed with a non-finite `max_amount` is a signed unlimited grant wearing a limit field; and five entry points raise instead of returning a verdict. |
+| `polaris-sdk-python` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: no finite-number guards on `grant_within_limits`, so a spending ceiling is defeated by a value that is not a number. The cached access-token lifetime is whatever the issuer says, so a revoked client keeps presenting a token. |
+| `polaris-sdk-ts` (npm) | `1.0.0-rc.3` under `next` | `0.1.0` predates `1.0.0-rc.1` entirely: the canonicalisation and instant-parsing divergences from the wire specification, and the constant-time comparison whose length guard could be inverted, are all present. `latest` still resolves `0.1.0` by design, so a plain `npm install` gets the stable release and `@next` gets the candidate. |
 
 **What this does and does not mean.** Polaris is a reference implementation on notional data
 and has never held real identity data; these packages are offered for evaluation and
-interoperability work, not to protect anything. The point of naming them is narrower and
-still worth making: someone evaluating the verifier against their own wallet is entitled to
-know that the copy they installed does not check expiry, because **the happy path works.**
-`docs/STRANGER-PATH.md` was walked end to end from PyPI on 2026-09-17 and a stock walt.id
-wallet presented successfully to the published verifier; an interoperability success is not a
-security result, and here the two point in opposite directions.
+interoperability work, not to protect anything. Naming the older defects is still worth
+doing: someone evaluating the verifier against their own wallet is entitled to know whether
+the copy they installed checks expiry, because **the happy path works either way.**
+`docs/STRANGER-PATH.md` was walked end to end from PyPI on 2026-09-18 against the published
+`polaris-oid4vp` 1.0.0rc3 and a stock walt.id wallet presented successfully; an
+interoperability success is not a security result.
+
+This table's Current column is checked against
+[docs/RELEASING.md](docs/RELEASING.md) on every run, so it cannot go on describing a
+registry state that has moved. It did: between the rc.3 publish and 2026-09-18 this section
+still told a reader the fixes were "not published".
 
 The full list, surface by surface, is in
 [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md); the release decision is recorded

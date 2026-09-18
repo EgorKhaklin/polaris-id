@@ -16420,3 +16420,63 @@ def test_published_algorithms_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
         "must FAIL rather than report a clean table when the seed cannot be parsed"
+
+
+def test_security_page_current_check_discriminates(tmp_path):
+    """The security page must describe the registry state that exists.
+
+    The defect (2026-09-18): hours after rc.3 went to all four registries, SECURITY.md
+    still said the fixes were "not published" and listed rc.1 as current. A security page
+    warning about a defect already shipped as fixed is the one document a reader consults
+    when deciding what to trust.
+    """
+    LEDGER = (
+        "| Source | Registry | Package | Latest published | Previous |\n"
+        "|---|---|---|---|---|\n"
+        "| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |\n"
+        "| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |\n"
+        "| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.3, 2026-09-18 | 0.1.0, 2026-09-15 |\n")
+    PAGE = (
+        "| Package | Current | Older |\n|---|---|---|\n"
+        "| `polaris-verify` | `1.0.0rc3` | rc1 never reads valid_until |\n"
+        "| `polaris-oid4vp` | `1.0.0rc3` | rc1 never reads exp |\n"
+        "| `polaris-sdk-ts` (npm) | `1.0.0-rc.3` under `next` | 0.1.0 predates rc.1 |\n")
+
+    def write(page=PAGE, ledger=LEDGER):
+        (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "docs" / "RELEASING.md").write_text(ledger)
+        (tmp_path / "SECURITY.md").write_text(page)
+
+    fn = checks.check_security_page_matches_the_release_ledger
+    write()
+    assert fn(tmp_path)[0].level == "OK", "must PASS when the page matches the ledger"
+
+    # THE defect: the page still names the superseded version as current.
+    write(page=PAGE.replace("| `polaris-verify` | `1.0.0rc3` |", "| `polaris-verify` | `1.0.0rc1` |"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "1.0.0rc3" in out[0].message, \
+        "must FAIL when the page names a version the ledger has superseded"
+
+    # The other direction: a publish happens and the page is not updated with it.
+    write(ledger=LEDGER.replace("`polaris-verify` | 1.0.0rc3, 2026-09-18",
+                                "`polaris-verify` | 1.0.0rc4, 2026-09-19"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "1.0.0rc4" in out[0].message, \
+        "must FAIL when a publish lands and the security page does not move"
+
+    # A published package the page never mentions: no warning exists for it at all.
+    write(page="".join(PAGE.splitlines(True)[:3]))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no warning" in out[0].message, \
+        "must FAIL when a published package is absent from the page"
+
+    # The npm row's name is qualified; the parse must still find it.
+    write(page=PAGE.replace("| `polaris-sdk-ts` (npm) |", "| `polaris-sdk-ts` (npm, `next`) |"))
+    assert fn(tmp_path)[0].level == "OK", \
+        "a qualified package cell must still resolve to its backticked name"
+
+    # Anti-vacuity: an unparseable ledger fails rather than reporting a current page.
+    write(ledger="nothing that looks like a ledger\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
+        "must FAIL rather than report a current page when the ledger cannot be parsed"

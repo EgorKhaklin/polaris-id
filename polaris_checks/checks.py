@@ -19194,6 +19194,86 @@ def check_published_algorithm_table_matches_the_seed(root: pathlib.Path) -> list
                      "cryptographic parameter cannot drift from the row it restates" % rows)
 
 
+#: package name -> the column of docs/RELEASING.md that records what the registry serves.
+_RELEASE_LEDGER_REL = "docs/RELEASING.md"
+
+
+def _ledger_published_versions(root: pathlib.Path) -> dict:
+    """package -> latest published version, from the release ledger's table."""
+    out = {}
+    for line in _read_raw(root, _RELEASE_LEDGER_REL).splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
+        if len(cells) < 4 or cells[1] not in ("PyPI", "npm"):
+            continue
+        version = cells[3].split(",")[0].strip().strip("`")
+        if re.match(r"^\d+\.\d+\.\d+", version):
+            out[cells[2]] = version
+    return out
+
+
+def check_security_page_matches_the_release_ledger(root: pathlib.Path) -> list[Finding]:
+    """SECURITY.md must describe the registry state that actually exists.
+
+    The security page tells a reader which version of each package is current and what the
+    older ones still carry. That is a statement about the outside world, and nothing held
+    it to one: on 2026-09-18, hours after rc.3 went to all four registries, SECURITY.md
+    still said the fixes were "not published" and listed rc.1 as current. A security page
+    that warns about a defect already shipped as fixed is not a harmless staleness; it is
+    the one document a reader consults precisely when deciding what to trust.
+
+    docs/RELEASING.md is the record of what was published, run by run, and is updated as
+    part of publishing. So it is the source, and this binds the page to it.
+
+    Read from the ledger rather than from a registry: a check that reached the network
+    would fail on an offline machine and make the build depend on pypi.org being up.
+    """
+    name = "security_page_current"
+    ledger = _ledger_published_versions(root)
+    if len(ledger) < 3:
+        return _fail(name, "only %d published package(s) parsed out of %s; the parse has "
+                           "broken and this check would pass by finding nothing"
+                           % (len(ledger), _RELEASE_LEDGER_REL))
+    page = _read_raw(root, "SECURITY.md")
+    if not page:
+        return _fail(name, "SECURITY.md could not be read")
+
+    seen, problems = 0, []
+    for line in page.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        # The backticked name, not the whole cell: a row may qualify it, as
+        # "`polaris-sdk-ts` (npm)" does, and stripping backticks off the ends of that
+        # leaves one attached to the name.
+        m = re.match(r"`([^`]+)`", cells[0])
+        if not m:
+            continue
+        pkg = m.group(1)
+        if pkg not in ledger:
+            continue
+        seen += 1
+        current = cells[1]
+        if ledger[pkg] not in current:
+            problems.append("%s: SECURITY.md says %r, the ledger says %s was published"
+                            % (pkg, current[:40], ledger[pkg]))
+    if seen < len(ledger):
+        return _fail(name, "SECURITY.md names %d of the %d published packages. A package a "
+                           "reader can install and the security page does not mention is the "
+                           "one they have no warning about" % (seen, len(ledger)))
+    if problems:
+        return _fail(name, "SECURITY.md describes a registry state that has moved: %s. It is "
+                           "the document somebody reads when deciding what to trust"
+                           % "; ".join(problems))
+    return _ok(name, "SECURITY.md's current-version column matches what %s records as "
+                     "published for all %d packages, so the security page cannot go on "
+                     "describing a registry that has moved under it"
+                     % (_RELEASE_LEDGER_REL, seen))
+
+
 def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
     """No check may report OK over a tree that contains nothing.
 
@@ -19251,6 +19331,7 @@ def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
+    check_security_page_matches_the_release_ledger,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,
     check_drills_count_their_cases,

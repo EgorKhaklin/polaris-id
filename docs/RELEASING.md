@@ -13,7 +13,7 @@ externally observable changes.
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
 | `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.1, 2026-09-16 (rc.3 STAGED, not published) | 0.1.0, 2026-09-15 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.3, 2026-09-18 | 1.0.0-rc.1, 2026-09-16 |
 
 > **rc.3 IS PUBLISHED, ALL FOUR.** On 2026-09-18 the three PyPI packages went out at
 > 1.0.0rc3 through trusted publishing over OIDC, and `polaris-sdk-ts` 1.0.0-rc.3 followed
