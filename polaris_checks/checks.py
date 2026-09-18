@@ -11824,12 +11824,17 @@ def check_exchange_trust_directional(root: pathlib.Path) -> list[Finding]:
         return _fail("exchange_trust_directional", "the three-authority test must exist (C attests M, B does not, M asks B: refused; B attests: allowed)")
     if "trust is directional, not transitive" not in _read(root, "scripts/polaris-federation-instances-drill.py"):
         return _fail("exchange_trust_directional", "the two-instance drill must refuse a third authority's attestation over HTTP")
-    for fn, sym in (("polaris_web/app.py", "the RESPONDER attests an authorized exchange occurred"),
+    # `None` means the polaris_web PACKAGE rather than a path. Everything above this loop
+    # already read the package; this loop still named app.py, and the exchange-receipt code
+    # moved to rp_api.py on 2026-09-18, so the check failed on a statement that had not
+    # changed a word. A check that names a file measures where the code sits, not what it says.
+    for fn, sym in ((None, "the RESPONDER attests an authorized exchange occurred"),
                     (_VERIFIER_REL, "participation is proven by the envelope it signed"),
                     ("docs/design/exchange-receipt.md", "A receipt alone cannot prove\nthe requester took part"),
                     ("docs/reference/API.md", "its own valid `AgencyTrustAttestation`")):
-        if sym not in _read(root, fn):
-            return _fail("exchange_trust_directional", "%s must state a receipt as the responder's attestation and the envelope as the requester's proof" % fn)
+        if sym not in (app if fn is None else _read(root, fn)):
+            return _fail("exchange_trust_directional", "%s must state a receipt as the responder's attestation and the envelope as the requester's proof"
+                         % (fn or "the polaris_web package"))
     return _ok("exchange_trust_directional",
                "exchange authorization is the responder's own in-context attestation of the requester (directional, "
                "non-transitive), pinned in the query, proven with three authorities and drilled across two instances; "

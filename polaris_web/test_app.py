@@ -42,6 +42,7 @@ import app as flask_app
 # The Atlas moved out of app.py on 2026-09-18. Imported AFTER app, though either order
 # works: app.py imports it at the end of its own startup, so it is already loaded here.
 import atlas_routes
+import rp_api          # and the relying-party API v1, the same day
 
 
 # ----------------------------------------------------------------------------
@@ -433,7 +434,7 @@ class TimestampLogTests(PolarisTestCase):
         ts = anchored.get_json()
         self.assertEqual(flask_app.query("SELECT count(*) AS n FROM TimestampLog", fetch='one', primary=True)['n'], before + 1,
                          "an anchored request appends exactly one digest")
-        h = flask_app._timestamp_hash(ts)
+        h = rp_api._timestamp_hash(ts)
         self.assertEqual(ts['anchor']['log_id'], 'polaris-timestamp-log')
         self.assertEqual(ts['anchor']['timestamp_hash'], h)
         self.assertEqual(ts['anchor']['proof']['entry_hex'], h)
@@ -495,31 +496,31 @@ class ExchangeGatewayTests(UnauthenticatedTestCase):
                "VALUES (%s, 3, %s, CURRENT_DATE + INTERVAL '30 days', 1)")
         flask_app.query(ins, (5, ctx), fetch='none')
         try:
-            self.assertIsNone(flask_app._exchange_attestation(1, key_m, ctx), "B holds no attestation of M: C's must not authorize M at B")
-            self.assertEqual(flask_app._exchange_attestation(5, key_m, ctx)['authority_id'], 5, "C's attestation authorizes M at C")
+            self.assertIsNone(rp_api._exchange_attestation(1, key_m, ctx), "B holds no attestation of M: C's must not authorize M at B")
+            self.assertEqual(rp_api._exchange_attestation(5, key_m, ctx)['authority_id'], 5, "C's attestation authorizes M at C")
             flask_app.query(ins, (1, ctx), fetch='none')
-            self.assertEqual(flask_app._exchange_attestation(1, key_m, ctx)['authority_id'], 1, "B's own attestation authorizes M at B")
-            self.assertIsNone(flask_app._exchange_attestation(1, key_m, other), "an attestation is in-context only")
+            self.assertEqual(rp_api._exchange_attestation(1, key_m, ctx)['authority_id'], 1, "B's own attestation authorizes M at B")
+            self.assertIsNone(rp_api._exchange_attestation(1, key_m, other), "an attestation is in-context only")
         finally:
             flask_app.query("UPDATE AgencyTrustAttestation SET revocation_date = CURRENT_TIMESTAMP, revocation_reason = %s "
                             "WHERE attested_agency_id = 3 AND context_id = %s AND revocation_date IS NULL", ('test ' + run, ctx), fetch='none')
-        self.assertIsNone(flask_app._exchange_attestation(1, key_m, ctx), "a revoked attestation authorizes nothing")
+        self.assertIsNone(rp_api._exchange_attestation(1, key_m, ctx), "a revoked attestation authorizes nothing")
 
     def test_unadvertised_format_version_is_refused_not_guessed(self):
         # P8.8b: a known format at another major is unsupported_format_version with the supported
         # list; a wrong name, a non-string, or a missing format is an invalid request.
         with flask_app.app.test_request_context():
-            self.assertIsNone(flask_app._format_check({'format': 'polaris-exchange-request/1'}, 'polaris-exchange-request/1', 'envelope'))
-            resp, status = flask_app._format_check({'format': 'polaris-exchange-request/2'}, 'polaris-exchange-request/1', 'envelope')
+            self.assertIsNone(rp_api._format_check({'format': 'polaris-exchange-request/1'}, 'polaris-exchange-request/1', 'envelope'))
+            resp, status = rp_api._format_check({'format': 'polaris-exchange-request/2'}, 'polaris-exchange-request/1', 'envelope')
             self.assertEqual(status, 400)
             self.assertEqual(resp.get_json()['error'], 'unsupported_format_version')
             self.assertEqual(resp.get_json()['supported'], ['polaris-exchange-request/1'])
             for bad in ({'format': 'polaris-other/1'}, {'format': 7}, {}, None):
-                resp, status = flask_app._format_check(bad, 'polaris-exchange-request/1', 'envelope')
+                resp, status = rp_api._format_check(bad, 'polaris-exchange-request/1', 'envelope')
                 self.assertEqual((status, resp.get_json()['error']), (400, 'invalid_request'))
-        versions = flask_app._protocol_versions()
-        self.assertEqual(set(versions), set(flask_app._PROTOCOL_FORMATS))
-        self.assertTrue(all(v.split('.')[0] == str(flask_app._PROTOCOL_FORMATS[k]) for k, v in versions.items()))
+        versions = rp_api._protocol_versions()
+        self.assertEqual(set(versions), set(rp_api._PROTOCOL_FORMATS))
+        self.assertTrue(all(v.split('.')[0] == str(rp_api._PROTOCOL_FORMATS[k]) for k, v in versions.items()))
 
     def test_gateway_fails_closed_without_real_pqc(self):
         import os
@@ -535,10 +536,10 @@ class ExchangeGatewayTests(UnauthenticatedTestCase):
         second is refused, and a different nonce for the same requester is a new exchange."""
         import os
         run = os.urandom(4).hex()   # the register is append-only, so each run consumes fresh nonces
-        self.assertTrue(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-1-' + run))
-        self.assertFalse(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-1-' + run))
-        self.assertTrue(flask_app._consume_exchange_nonce('ab' * 16, 'nonce-2-' + run))
-        self.assertTrue(flask_app._consume_exchange_nonce('cd' * 16, 'nonce-1-' + run))
+        self.assertTrue(rp_api._consume_exchange_nonce('ab' * 16, 'nonce-1-' + run))
+        self.assertFalse(rp_api._consume_exchange_nonce('ab' * 16, 'nonce-1-' + run))
+        self.assertTrue(rp_api._consume_exchange_nonce('ab' * 16, 'nonce-2-' + run))
+        self.assertTrue(rp_api._consume_exchange_nonce('cd' * 16, 'nonce-1-' + run))
 
 
 class DocumentSigningTests(UnauthenticatedTestCase):
@@ -4240,8 +4241,8 @@ class ZKSnarkTests(PolarisTestCase):
 
     def test_an_expired_artifact_is_not_cached_at_all(self):
         # Caching something every verifier must reject only creates a stale copy to serve.
-        _artifact_max_age = flask_app._artifact_max_age
-        _public_artifact = flask_app._public_artifact
+        _artifact_max_age = rp_api._artifact_max_age
+        _public_artifact = rp_api._public_artifact
         with flask_app.app.test_request_context():
             resp = _public_artifact({'format': 'x', 'expires_at': '2020-01-01T00:00:00Z'})
             self.assertEqual(resp.headers['Cache-Control'], 'no-store')
@@ -5061,7 +5062,7 @@ class RouteModuleTests(PolarisTestCase):
     #: test_roster_is_complete until it is added here, which is the point: the roster is what
     #: `check_modules_are_measured` reads to know a module has a measured suite at all, and a
     #: derived-only test would let one arrive with neither a line here nor any coverage.
-    ROUTE_MODULES = {'atlas_routes', 'sql_console', 'verification_routes'}
+    ROUTE_MODULES = {'atlas_routes', 'rp_api', 'sql_console', 'verification_routes'}
 
     @staticmethod
     def _derive():
@@ -5110,13 +5111,19 @@ class RouteModuleTests(PolarisTestCase):
         a measured suite rather than only by a drill: that check reads the suite sources for the
         module's name, and a module exercised only by a drill counts zero toward the coverage
         floor while looking thoroughly tested."""
+        import atlas_routes
+        import rp_api
         import sql_console
         import verification_routes
 
         for endpoint, module, fn in (
                 ('sql_query', sql_console, 'sql_query'),
                 ('verifications_list', verification_routes, 'verifications_list'),
-                ('verifications_new', verification_routes, 'verifications_new')):
+                ('verifications_new', verification_routes, 'verifications_new'),
+                ('atlas', atlas_routes, 'atlas'),
+                ('api_atlas_stats', atlas_routes, 'api_atlas_stats'),
+                ('api_v1_verify', rp_api, 'api_v1_verify'),
+                ('api_v1_oauth_token', rp_api, 'api_v1_oauth_token')):
             view = flask_app.app.view_functions.get(endpoint)
             self.assertIsNotNone(view, '%s is not registered on the served application' % endpoint)
             self.assertIs(view, getattr(module, fn),
@@ -13298,10 +13305,10 @@ class EpochRevocationTests(PolarisTestCase):
             "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint "
             "WHERE conname = 'epoch_committed_count_cap'", fetch='one', primary=True)
         self.assertIsNotNone(cap, 'the schema cap this route relies on is gone')
-        self.assertIn(str(flask_app._EPOCH_LEAVES_MAX), cap['def'],
+        self.assertIn(str(rp_api._EPOCH_LEAVES_MAX), cap['def'],
                       'the schema cap (%s) and the application cap (%d) must be the same '
                       'number: the route bounds nothing the database does not already bound'
-                      % (cap['def'], flask_app._EPOCH_LEAVES_MAX))
+                      % (cap['def'], rp_api._EPOCH_LEAVES_MAX))
 
         self._register_key(1, 'a1' * 32)
         row = flask_app.query("SELECT epoch_id FROM TokenStateEpoch ORDER BY epoch_id LIMIT 1",
@@ -13316,7 +13323,7 @@ class EpochRevocationTests(PolarisTestCase):
                 "INSERT INTO TokenStateEpoch (merkle_root, valid_until, committed_count, "
                 "closed_by_user_id) VALUES (%s, CURRENT_TIMESTAMP + INTERVAL '1 day', %s, "
                 "(SELECT user_id FROM AppUser ORDER BY user_id LIMIT 1))",
-                ('ee' * 32, flask_app._EPOCH_LEAVES_MAX + 1), fetch='none')
+                ('ee' * 32, rp_api._EPOCH_LEAVES_MAX + 1), fetch='none')
 
     def test_epoch_checkpoint_shape_and_canonical_match(self):
         self._register_key(1, 'a1' * 32)
@@ -13332,7 +13339,7 @@ class EpochRevocationTests(PolarisTestCase):
         self.assertGreater(cp['expires_at'], cp['issued_at'])
         # the app's signed statement bytes MUST equal the standalone verifier's canonical bytes
         verifier = _e2e_load('polaris_verify_epochrevoc_cp', 'polaris-verify.py')
-        self.assertEqual(flask_app._epoch_checkpoint_statement(cp),
+        self.assertEqual(rp_api._epoch_checkpoint_statement(cp),
                          verifier._epoch_checkpoint_canonical(cp),
                          "app and verifier disagree on the checkpoint canonical bytes")
         # no personal data
@@ -13357,7 +13364,7 @@ class EpochRevocationTests(PolarisTestCase):
         verifier = _e2e_load('polaris_verify_epochrevoc_feed', 'polaris-verify.py')
         self.assertEqual(feed['revoked_root_hex'], verifier.revoked_root(feed['revoked_leaves']),
                          "the published commitment must match the listed leaves")
-        self.assertEqual(flask_app._revocation_feed_statement(feed),
+        self.assertEqual(rp_api._revocation_feed_statement(feed),
                          verifier._revocation_feed_canonical(feed),
                          "app and verifier disagree on the feed canonical bytes")
         # the feed publishes leaves (hashes), never the token_value itself
@@ -13417,7 +13424,7 @@ class StatusBundleTests(PolarisTestCase):
         verifier = _e2e_load('polaris_verify_statusbundle', 'polaris-verify.py')
         self.assertEqual(bundle['members_root_hex'], verifier.bundle_members_root(bundle['members']),
                          "the published members_root must commit to the embedded members")
-        self.assertEqual(flask_app._status_bundle_statement(bundle),
+        self.assertEqual(rp_api._status_bundle_statement(bundle),
                          verifier._status_bundle_canonical(bundle),
                          "app and verifier disagree on the bundle canonical bytes")
         # no personal data: a bundle is published trust data, and each member feed carries
