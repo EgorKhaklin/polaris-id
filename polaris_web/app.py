@@ -58,7 +58,6 @@ import functools
 import sys
 import time
 import shutil
-import json
 import math
 import pathlib
 import subprocess
@@ -70,11 +69,10 @@ from flask import (
 )
 from flask.json.provider import DefaultJSONProvider
 import psycopg2
-from psycopg2.extras import RealDictCursor, Json
+from psycopg2.extras import RealDictCursor
 from werkzeug.security import check_password_hash
 
 import security
-import anchoring
 import zk
 import webauthn_auth
 import observability  # v9.31 freeze condition 6 — operator-readable metrics surface
@@ -2624,339 +2622,6 @@ def metrics():
     return payload, 200, {'Content-Type': _PROM_CONTENT_TYPE}
 
 
-# ---------------------------------------------------------------------------
-# Anchor batch endpoints (R10-2 / M2-2)
-# ---------------------------------------------------------------------------
-
-@app.route('/api/anchor/batch', methods=['POST'])
-@security.login_required
-@security.require_role('admin')
-@security.csrf_protect
-def api_anchor_batch_close():
-    """Close a Merkle batch for the pending BlockchainAnchor rows of a
-    given signature algorithm. The Merkle root + per-leaf proofs are
-    pre-computed by anchoring.py, then handed to close_anchor_batch
-    (which holds a per-algorithm advisory lock for the transaction).
-
-    Request: JSON { "algorithm_id": <int> }
-    Response: { "batch_id": <int>, "merkle_root": <hex>, "batch_size": <int> }
-    """
-    payload = _json_object()
-    try:
-        algorithm_id = int(payload['algorithm_id'])
-    except (KeyError, ValueError, TypeError):
-        return jsonify(error="algorithm_id (int) is required"), 400
-
-    pending = query("""
-        SELECT a.anchor_id, a.commitment_hash
-          FROM BlockchainAnchor a
-          JOIN IdentityToken    t ON a.token_id = t.token_id
-         WHERE a.batch_id IS NULL
-           AND t.algorithm_id = %s
-         ORDER BY a.anchor_id
-    """, (algorithm_id,))
-
-    if not pending:
-        return jsonify(error="no pending anchors for that algorithm"), 404
-
-    leaves = [(int(r['anchor_id']), r['commitment_hash']) for r in pending]
-    merkle_root, proofs = anchoring.compute_batch(leaves, 'SHA3-256')
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("CALL close_anchor_batch(%s, %s, %s)",
-                        (algorithm_id, merkle_root, Json(proofs)))
-            conn.commit()
-            cur.execute("""
-                SELECT batch_id, batch_size FROM AnchorBatch
-                 WHERE merkle_root = %s AND algorithm_id = %s
-                 ORDER BY batch_id DESC LIMIT 1
-            """, (merkle_root, algorithm_id))
-            row = cur.fetchone()
-    except psycopg2.Error as e:
-        conn.rollback()
-        return jsonify(error=db_error_to_message(e)), 400
-    finally:
-        conn.close()
-
-    return jsonify(
-        batch_id=row['batch_id'],
-        merkle_root=merkle_root,
-        batch_size=row['batch_size'],
-    )
-
-
-@app.route('/api/anchor/<int:token_id>')
-@security.login_required
-def api_anchor_get(token_id):
-    """Return the BlockchainAnchor row plus the AnchorBatch (if batched)
-    for a given token. Useful for clients that need the inclusion proof
-    + root to verify off-line."""
-    row = query("""
-        SELECT a.anchor_id, a.token_id, a.did, a.commitment_hash,
-               a.ledger_network, a.anchored_date, a.status,
-               a.batch_id, a.merkle_proof,
-               b.merkle_root, b.algorithm_id AS batch_algorithm_id,
-               b.committed_to_chain, b.external_chain, b.external_chain_tx
-          FROM BlockchainAnchor a
-          LEFT JOIN AnchorBatch b ON a.batch_id = b.batch_id
-         WHERE a.token_id = %s
-    """, (token_id,), fetch='one')
-
-    if not row:
-        return jsonify(error="no anchor for that token"), 404
-
-    return jsonify(dict(row))
-
-
-@app.route('/api/anchor/verify/<int:token_id>')
-@security.login_required
-def api_anchor_verify(token_id):
-    """Server-side proof verification: reconstruct the Merkle root from
-    the stored leaf + proof and compare to the AnchorBatch root. Returns
-    {"verified": true|false, ...}. A pending (not-yet-batched) anchor
-    returns verified=false with status='PENDING'."""
-    row = query("""
-        SELECT a.anchor_id, a.commitment_hash, a.batch_id, a.merkle_proof,
-               b.merkle_root
-          FROM BlockchainAnchor a
-          LEFT JOIN AnchorBatch b ON a.batch_id = b.batch_id
-         WHERE a.token_id = %s
-    """, (token_id,), fetch='one')
-
-    if not row:
-        return jsonify(error="no anchor for that token"), 404
-
-    if row['batch_id'] is None:
-        return jsonify(
-            verified=False,
-            status='PENDING',
-            anchor_id=row['anchor_id'],
-        )
-
-    leaf = anchoring.leaf_hash(int(row['anchor_id']), row['commitment_hash'])
-    proof = row['merkle_proof'] or []
-    ok = anchoring.verify_proof(leaf, proof, row['merkle_root'])
-
-    return jsonify(
-        verified=bool(ok),
-        anchor_id=row['anchor_id'],
-        batch_id=row['batch_id'],
-        merkle_root=row['merkle_root'],
-        leaf=leaf,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Federation API endpoints (R11-3 / M2-8)
-# ---------------------------------------------------------------------------
-
-@app.route('/api/federation/attest', methods=['POST'])
-@security.login_required
-@security.require_role('admin')
-@security.csrf_protect
-def api_federation_attest():
-    """Record a federation trust attestation. Admin-only — federation is
-    an agency-level decision, not an operator's. Wraps uc10_attest_trust,
-    which holds a per-attesting-agency advisory lock (5th catalog entry).
-
-    Request: JSON { "attesting_agency_id", "attested_agency_id",
-                    "context_id", "valid_until" (YYYY-MM-DD) }
-    Response: { "attestation_id": <int>, "status": "active" }
-    """
-    payload = _json_object()
-    try:
-        attesting_id = int(payload['attesting_agency_id'])
-        attested_id = int(payload['attested_agency_id'])
-        context_id = int(payload['context_id'])
-        valid_until = payload['valid_until']  # YYYY-MM-DD string
-    except (KeyError, ValueError, TypeError):
-        return jsonify(error="required fields: attesting_agency_id, "
-                             "attested_agency_id, context_id, valid_until"), 400
-
-    signed_by = session.get('user_id')
-    if signed_by is None:
-        return jsonify(error="session missing user_id"), 401
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
-                        (attesting_id, attested_id, context_id, valid_until, signed_by))
-            conn.commit()
-            cur.execute("""
-                SELECT attestation_id FROM AgencyTrustAttestation
-                 WHERE attesting_agency_id = %s
-                   AND attested_agency_id  = %s
-                   AND context_id          = %s
-                   AND revocation_date IS NULL
-            """, (attesting_id, attested_id, context_id))
-            row = cur.fetchone()
-            # P9.5: the ceremony signs the edge it just recorded, under the ATTESTING
-            # agency's own key. Without this the trust graph rests on an operator's word:
-            # a row inserted straight into the database would be published by the next
-            # manifest and be indistinguishable from one made here.
-            signed = _sign_attestation(cur, row['attestation_id']) if row else None
-            conn.commit()
-    except psycopg2.Error as e:
-        conn.rollback()
-        return jsonify(error=db_error_to_message(e)), 400
-    finally:
-        conn.close()
-
-    return jsonify(attestation_id=row['attestation_id'], status='active',
-                   attestation_signed=bool(signed),
-                   signature_hex=(signed or {}).get('signature_hex'))
-
-
-@app.route('/api/federation/revoke', methods=['POST'])
-@security.login_required
-@security.require_role('admin')
-@security.csrf_protect
-def api_federation_revoke():
-    """Revoke an active federation attestation. Admin-only. Wraps
-    uc10_revoke_attestation. The revocation is forward-looking: past
-    VerificationEvent rows are NOT retroactively invalidated.
-
-    Request: JSON { "attestation_id", "revocation_reason" (≥ 8 chars) }
-    Response: { "attestation_id", "status": "revoked" }
-    """
-    payload = _json_object()
-    try:
-        attestation_id = int(payload['attestation_id'])
-        reason = str(payload['revocation_reason'])
-    except (KeyError, ValueError, TypeError):
-        return jsonify(error="required fields: attestation_id, revocation_reason"), 400
-
-    signed_by = session.get('user_id')
-    if signed_by is None:
-        return jsonify(error="session missing user_id"), 401
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
-                        (attestation_id, reason, signed_by))
-            conn.commit()
-    except psycopg2.Error as e:
-        conn.rollback()
-        return jsonify(error=db_error_to_message(e)), 400
-    finally:
-        conn.close()
-
-    return jsonify(attestation_id=attestation_id, status='revoked')
-
-
-# ---------------------------------------------------------------------------
-# ZK-SNARK epoch + verification endpoints (R10-1 / M2-1 / v8.23)
-#
-# C3 + A4 + B3 — transparent setup, Plonky2 SNARK, hybrid-Merkle circuit
-# reusing R10-2 infrastructure. The Rust binary `polaris-zk` provides the
-# crypto; this layer is the schema + route bridge.
-# ---------------------------------------------------------------------------
-
-@app.route('/api/zk/epoch/close', methods=['POST'])
-@security.login_required
-@security.require_role('admin')
-@security.csrf_protect
-def api_zk_epoch_close():
-    """Close a ZK epoch: snapshot currently-valid ACTIVE tokens with
-    their context-permissions, derive per-token leaf seeds, compute the
-    Merkle root via the Rust prover, and CALL uc11_close_epoch which
-    writes TokenStateEpoch + TokenStateEpochLeaf rows under a
-    per-procedure advisory lock.
-
-    Request: JSON { "context_id": <int>, "valid_until": "YYYY-MM-DD HH:MM:SS" }
-    Response: { "epoch_id": <int>, "merkle_root": <hex>, "committed_count": <int> }
-    """
-    payload = _json_object()
-    try:
-        context_id = int(payload['context_id'])
-        valid_until = payload['valid_until']
-    except (KeyError, ValueError, TypeError):
-        return jsonify(error="required fields: context_id (int), valid_until (timestamp)"), 400
-
-    signed_by = session.get('user_id')
-    if signed_by is None:
-        return jsonify(error="session missing user_id"), 401
-
-    # Snapshot the active tokens that have permission for the given context.
-    rows = query("""
-        SELECT t.token_id, t.token_value
-          FROM IdentityToken t
-          JOIN TokenPermission p ON p.token_id = t.token_id
-         WHERE t.status = 'ACTIVE'
-           AND p.context_id = %s
-           AND NOT EXISTS (SELECT 1 FROM RevocationList r WHERE r.token_id = t.token_id)
-         ORDER BY t.token_id
-    """, (context_id,))
-    if not rows:
-        return jsonify(error="no eligible tokens for the given context"), 404
-
-    # Derive per-token leaf commitments (deterministic).
-    leaves = [zk.derive_leaf_seed(r['token_id'], r['token_value'], context_id) for r in rows]
-    # P2.5 (v9.357): the ROOT only. Materialising an inclusion path per member cost 1.7 KB
-    # each, roughly 17 GB of JSON at ten million members, and no query in this application
-    # ever read one back: the holder derives their own path from the published leaf set on
-    # their own device (P9.2). `compute_epoch_leaves` remains for callers that want the paths.
-    root_hex = zk.compute_epoch_root(leaves)
-
-    # Construct the JSONB payload uc11_close_epoch expects. `proof_path` is omitted, which
-    # the procedure reads as SQL NULL into a column that has been nullable since migration 011.
-    token_leaves = [{'token_id': r['token_id'], 'leaf_hash': leaf}
-                    for r, leaf in zip(rows, leaves)]
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "CALL uc11_close_epoch(%s, %s, %s, %s)",
-                (root_hex, valid_until, signed_by, Json(token_leaves)),
-            )
-            conn.commit()
-            cur.execute("""
-                SELECT epoch_id, committed_count FROM TokenStateEpoch
-                 WHERE merkle_root = %s ORDER BY epoch_id DESC LIMIT 1
-            """, (root_hex,))
-            row = cur.fetchone()
-    except psycopg2.Error as e:
-        conn.rollback()
-        return jsonify(error=db_error_to_message(e)), 400
-    finally:
-        conn.close()
-
-    return jsonify(
-        epoch_id=row['epoch_id'],
-        merkle_root=root_hex,
-        committed_count=row['committed_count'],
-    )
-
-
-@app.route('/api/zk/epoch/<int:epoch_id>')
-@security.login_required
-def api_zk_epoch_get(epoch_id):
-    """Return the TokenStateEpoch row for inspection (no witness data)."""
-    row = query("""
-        SELECT epoch_id, merkle_root, valid_from, valid_until,
-               committed_count, closed_at, closed_by_user_id
-          FROM TokenStateEpoch
-         WHERE epoch_id = %s
-    """, (epoch_id,), fetch='one')
-    if not row:
-        return jsonify(error="epoch not found"), 404
-    # Coerce timestamps for JSON.
-    return jsonify({
-        'epoch_id': row['epoch_id'],
-        'merkle_root': row['merkle_root'],
-        'valid_from': str(row['valid_from']),
-        'valid_until': str(row['valid_until']),
-        'committed_count': row['committed_count'],
-        'closed_at': str(row['closed_at']),
-        'closed_by_user_id': row['closed_by_user_id'],
-    })
-
-
 def _zk_verify_and_consume(epoch_id, context_id, nonce, proof_bundle):
     """Verify a ZK membership proof against a published epoch and consume its nonce (R2
     anti-replay). Returns (verified, reason, http_status). Shared by /api/zk/verify and the
@@ -3007,44 +2672,6 @@ def _zk_verify_and_consume(epoch_id, context_id, nonce, proof_bundle):
         return False, "nonce already consumed (replay)", 200
 
     return True, None, 200
-
-
-@app.route('/api/zk/verify', methods=['POST'])
-@security.login_required
-@security.csrf_protect
-def api_zk_verify():
-    """Verify a ZK-SNARK proof bundle against a specified epoch + context
-    + nonce. The caller supplies the proof bundle (from a prover) and
-    states which (epoch_id, context_id, nonce) the proof is supposed to
-    be bound to. The verifier:
-      1. Loads the epoch's merkle_root from TokenStateEpoch.
-      2. Checks valid_until >= now (R4 epoch-boundary).
-      3. Calls the Rust verifier via zk.verify_proof_against_epoch.
-
-    Request: JSON {
-        "epoch_id": <int>,
-        "context_id": <int>,
-        "nonce": <int>,
-        "proof_bundle": <ProofBundle dict>
-    }
-    Response: { "verified": <bool>, "reason": <optional str> }
-    """
-    payload = _json_object()
-    try:
-        epoch_id = int(payload['epoch_id'])
-        context_id = int(payload['context_id'])
-        nonce = int(payload['nonce'])
-        proof_bundle = payload['proof_bundle']
-        if not isinstance(proof_bundle, dict):
-            raise TypeError("proof_bundle must be a dict")
-    except (KeyError, ValueError, TypeError) as e:
-        return jsonify(error=f"required fields: epoch_id, context_id, nonce, proof_bundle ({e})"), 400
-
-    ok, reason, status = _zk_verify_and_consume(epoch_id, context_id, nonce, proof_bundle)
-    body = {'verified': ok}
-    if reason:
-        body['reason'] = reason
-    return jsonify(**body), status
 
 
 # ---------------------------------------------------------------------------
@@ -3190,128 +2817,16 @@ def api_duress_record():
 
 
 # ============================================================================
-# v2 SUBSTRATE READ-ONLY VIEWS (v8.28 — UI catch-up, graduation phase)
-# ============================================================================
-# Three read-only HTML surfaces for the v2 substrate that v8.21–v8.24 added
-# at the backend but never exposed in the UI: anchor batches (R10-2),
-# ZK epochs (R10-1), and the federation attestation graph (R11-3). All three
-# are operator+ (no special role gate beyond login_required) — they're
-# informational. Duress remains admin/auditor-only via the existing /duress.
-
-@app.route('/anchors')
-@security.login_required
-def anchors_list():
-    """AnchorBatch list (R10-2 / M2-2). Read-only view of the Merkle
-    batches that group BlockchainAnchor rows under a per-algorithm
-    advisory lock at close. The dashboard's "Anchor Batches" tile links
-    here. Order is by created_at DESC (newest first), capped at 200 —
-    seed has 2, prod-scale would still keep a single screen useful."""
-    rows = query("""
-        SELECT b.batch_id, b.merkle_root, b.batch_size, b.created_at,
-               b.committed_to_chain, b.external_chain, b.external_chain_tx,
-               alg.name AS algorithm_name, alg.quantum_resistant,
-               (SELECT COUNT(*) FROM BlockchainAnchor a WHERE a.batch_id = b.batch_id) AS member_count
-          FROM AnchorBatch b
-          JOIN CryptographicAlgorithm alg ON b.algorithm_id = alg.algorithm_id
-         ORDER BY b.created_at DESC, b.batch_id DESC
-         LIMIT 200
-    """)
-    pending_anchors = query(
-        "SELECT COUNT(*) AS n FROM BlockchainAnchor WHERE batch_id IS NULL",
-        fetch='one')['n']
-    return render_template('anchors_list.html', rows=rows,
-                           pending_anchors=pending_anchors)
-
-
-@app.route('/epochs')
-@security.login_required
-def epochs_list():
-    """TokenStateEpoch list (R10-1 / M2-1). Read-only view of the closed
-    ZK epochs. Each row carries the Plonky2 Merkle root the SNARK proves
-    inclusion against, plus the committed_count (number of token leaves
-    rolled into the epoch). Click-through shows the per-token leaves."""
-    epoch_id_filter = request.args.get('epoch_id', type=int)
-    rows = query("""
-        SELECT e.epoch_id, e.merkle_root, e.valid_from, e.valid_until,
-               e.committed_count, e.closed_at,
-               u.username AS closed_by_username,
-               (SELECT COUNT(*) FROM TokenStateEpochLeaf l
-                 WHERE l.epoch_id = e.epoch_id) AS leaf_count
-          FROM TokenStateEpoch e
-          JOIN AppUser u ON e.closed_by_user_id = u.user_id
-         ORDER BY e.closed_at DESC, e.epoch_id DESC
-         LIMIT 200
-    """)
-    leaves = []
-    if epoch_id_filter is not None:
-        leaves = query("""
-            SELECT l.leaf_id, l.epoch_id, l.token_id, l.leaf_hash,
-                   i.legal_name AS holder_name,
-                   t.status AS token_status
-              FROM TokenStateEpochLeaf l
-              JOIN IdentityToken t ON l.token_id = t.token_id
-              JOIN Individual i ON t.individual_id = i.individual_id
-             WHERE l.epoch_id = %s
-             ORDER BY l.leaf_id
-        """, (epoch_id_filter,))
-    return render_template('epochs_list.html', rows=rows,
-                           leaves=leaves, selected_epoch=epoch_id_filter)
-
-
-@app.route('/federation')
-@security.login_required
-def federation_viewer():
-    """AgencyTrustAttestation viewer (R11-3 / M2-8). Read-only view of
-    the issuer-federation trust graph. Each row is an explicit
-    attestation: attesting agency vouches that attested agency may
-    verify in this context, until valid_until or until explicitly
-    revoked. NO transitive trust — the v8.22 ship is explicit-only.
-    Status pills (ACTIVE / EXPIRED / REVOKED) make state legible."""
-    rows = query("""
-        SELECT att.attestation_id, att.attested_date, att.valid_until,
-               att.revocation_date, att.revocation_reason,
-               ag1.name AS attesting_name,
-               ag1.agency_type AS attesting_type,
-               ag2.name AS attested_name,
-               ag2.agency_type AS attested_type,
-               vc.context_type,
-               u.username AS signed_by_username,
-               CASE
-                   WHEN att.revocation_date IS NOT NULL THEN 'REVOKED'
-                   WHEN att.valid_until < CURRENT_DATE  THEN 'EXPIRED'
-                   ELSE 'ACTIVE'
-               END AS state
-          FROM AgencyTrustAttestation att
-          JOIN Agency ag1 ON att.attesting_agency_id = ag1.agency_id
-          JOIN Agency ag2 ON att.attested_agency_id  = ag2.agency_id
-          JOIN VerificationContext vc ON att.context_id = vc.context_id
-          JOIN AppUser u ON att.signed_by = u.user_id
-         ORDER BY att.attested_date DESC, att.attestation_id DESC
-         LIMIT 500
-    """)
-    counts = query("""
-        SELECT
-            SUM(CASE WHEN revocation_date IS NOT NULL THEN 1 ELSE 0 END) AS revoked,
-            SUM(CASE WHEN revocation_date IS NULL
-                      AND valid_until <  CURRENT_DATE THEN 1 ELSE 0 END) AS expired,
-            SUM(CASE WHEN revocation_date IS NULL
-                      AND valid_until >= CURRENT_DATE THEN 1 ELSE 0 END) AS active
-          FROM AgencyTrustAttestation
-    """, fetch='one')
-    return render_template('federation_viewer.html', rows=rows, counts=counts)
-
-
-# ============================================================================
 # LEFT BEHIND BY THE RELYING-PARTY API (rp_api.py, 2026-09-18)
 # ============================================================================
 # _issuer_key_facts and _not_expired are SHARED: /api/tokens/<id>/verify is still in this file
 # and uses them as much as the v1 routes do, and a helper with callers on both sides does not
 # belong inside one of them. _check_and_record_duress stayed for that reason one commit earlier.
 #
-# The three attestation names below are not shared at all. They serve /api/federation/attest,
-# two thousand lines up in this file, and they had simply been written inside the v1 section.
-# Nothing in the v1 routes used them. Moving the section out is what made that visible, which
-# is the ordinary way a misfiled helper is found: by moving everything around it.
+# The three attestation names that were here went on to federation_routes.py later the same
+# day, beside /api/federation/attest, their one caller. They had been written inside the
+# relying-party API's section while serving something else entirely; moving that section out
+# made it visible, and moving the federation routes out gave them somewhere to belong.
 
 def _issuer_key_facts(token_id, agency_id, token_key):
     """Two separate facts about the key that signed a credential, never one boolean.
@@ -3401,64 +2916,6 @@ def _not_expired(expiration_date) -> bool:
         # the OpenID4VP and detached verifiers took the same day for the same reason.
         return False
     return expiration_date >= _dt.date.today()
-
-
-_ATTESTATION_FORMAT = 'polaris-trust-attestation/1'
-
-
-def _attestation_statement(body):
-    """Canonical bytes the ATTESTING agency signs when it accepts another authority
-    (P9.5). MUST match scripts/polaris-verify.py's _attestation_canonical, byte for byte;
-    the canonical-equivalence oracle pins the pair.
-
-    The statement binds the decision to the attested KEY, not only to the attested agency:
-    an attestation that named an agency alone would keep meaning what the operator meant
-    after that agency rotated to a key the attester never saw."""
-    statement = {k: body.get(k) for k in
-                 ('format', 'attesting_agency_id', 'attested_agency_id',
-                  'attested_public_key_hex', 'context_id', 'attested_date',
-                  'valid_until', 'algorithm')}
-    return json.dumps(statement, sort_keys=True, separators=(',', ':')).encode('utf-8')
-
-
-def _sign_attestation(cur, attestation_id):
-    """Sign an attestation row under the ATTESTING agency's key and record the signature
-    on the row (P9.5). Written once; the immutability trigger refuses any replacement.
-    Returns the signed body, or None when the row cannot be signed (no attested key yet),
-    in which case the row stays unsigned legacy and a verifier reports it as such."""
-    cur.execute("""
-        SELECT att.attestation_id, att.attesting_agency_id, att.attested_agency_id,
-               att.context_id, att.attested_date, att.valid_until,
-               ag2.signing_public_key_hex AS attested_public_key_hex
-          FROM AgencyTrustAttestation att
-          JOIN Agency ag2 ON ag2.agency_id = att.attested_agency_id
-         WHERE att.attestation_id = %s
-    """, (attestation_id,))
-    row = cur.fetchone()
-    if not row or not row['attested_public_key_hex']:
-        return None
-    body = {
-        'format': _ATTESTATION_FORMAT,
-        'attesting_agency_id': row['attesting_agency_id'],
-        'attested_agency_id': row['attested_agency_id'],
-        'attested_public_key_hex': row['attested_public_key_hex'],
-        'context_id': row['context_id'],
-        'attested_date': row['attested_date'].isoformat() if row['attested_date'] else None,
-        'valid_until': row['valid_until'].isoformat() if row['valid_until'] else None,
-        'algorithm': _signing_algorithm(row['attesting_agency_id']),
-    }
-    sig_bytes, alg, pub = pqc_signing.signature_over_message(
-        _attestation_statement(body), agency_id=row['attesting_agency_id'])
-    body['algorithm'] = alg
-    body['signature_hex'] = sig_bytes.hex()
-    body['public_key_hex'] = pub
-    cur.execute("""
-        UPDATE AgencyTrustAttestation
-           SET attestation_format = %s, attestation_signature_hex = %s,
-               attestation_public_key_hex = %s
-         WHERE attestation_id = %s AND attestation_signature_hex IS NULL
-    """, (_ATTESTATION_FORMAT, body['signature_hex'], body['public_key_hex'], attestation_id))
-    return body
 
 
 # ============================================================================
@@ -3644,6 +3101,8 @@ import atlas_routes         # noqa: E402,F401  -- /atlas and the 17 /api/atlas e
 import rp_api               # noqa: E402,F401  -- the 36 /api/v1 relying-party routes
 import use_case_routes      # noqa: E402,F401  -- UC-1, 4, 5, 6, 7, 8, 9
 import operator_routes      # noqa: E402,F401  -- tokens, individuals, agencies, investigate
+import federation_routes    # noqa: E402,F401  -- /federation, /api/federation
+import transparency_routes  # noqa: E402,F401  -- /epochs, /anchors, /api/zk, /api/anchor
 
 
 # ============================================================================

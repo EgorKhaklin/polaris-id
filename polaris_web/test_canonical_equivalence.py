@@ -38,10 +38,11 @@ import unittest
 
 from hypothesis import given, settings, strategies as st, HealthCheck
 
-import app as flask_app
-
-# The relying-party API v1 moved out of app.py on 2026-09-18; these canonical
-# statements are its wire formats, and they moved with it.
+# Every canonical statement this suite oracles moved out of app.py on 2026-09-18: the
+# relying-party API's wire formats to rp_api, the federation attestation signing to
+# federation_routes. Importing either loads app.py anyway, since both import it back, so this
+# module no longer names it: an import kept only to be present is one ruff correctly deletes.
+import federation_routes
 import rp_api
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -76,7 +77,7 @@ SIGNED_TYPES = {
                  "attested_public_key_hex", "context_id", "attested_date",
                  "valid_until", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._attestation_statement(b),
+        "app": lambda b: federation_routes._attestation_statement(b),
         "verify": lambda b: _V._attestation_canonical(b),
     },
     # P9.1 (v9.349): the issuer's binding of a holder key, and the holder's own proof.
