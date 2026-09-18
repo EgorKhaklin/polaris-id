@@ -27,12 +27,18 @@ anyway is covered by whatever notices that. Those belong in DECLARED below WITH 
 not in a filtered-out category, because the count of things nobody looked at is the number
 this drill exists to keep at zero.
 
-RESTORATION. `polaris_web/app.py` is rewritten in place, one condition at a time, and the
+SCOPE. Every non-test module of `polaris_web/`, not app.py alone. app.py is being decomposed
+into route modules, and a drill that names one file mutates that file and calls it the
+application: after four modules moved out on 2026-09-18 this would have examined the refusals
+of the 66 routes still in app.py and reported on 123. It would not have failed. It would have
+narrowed, which is worse, because a passing drill is read as coverage.
+
+RESTORATION. The modules are rewritten in place, one condition at a time, and each module's
 original bytes are held in memory and written back after every case. A long run can be killed
 outright, and no handler catches that, so the drill prints the one-line repair BEFORE it
-touches anything: `git checkout -- polaris_web/app.py` restores it, and the drill refuses to
-start if that file already has uncommitted changes, because then the repair line would throw
-away work rather than a mutation.
+touches anything: `git checkout -- polaris_web` restores them, and the drill refuses to start
+if any of those modules already has uncommitted changes, because then the repair line would
+throw away work rather than a mutation.
 
 TWO CONTROLS, AND THE POSITIVE ONE IS THE LOAD-BEARING HALF.
 
@@ -86,7 +92,18 @@ import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-APP = ROOT / "polaris_web" / "app.py"
+WEB = ROOT / "polaris_web"
+
+
+def modules():
+    """Every non-test module of the application, in a stable order.
+
+    Was `polaris_web/app.py` alone. app.py is being decomposed into route modules, and a drill
+    that names a file mutates that file and calls it the application: after four modules moved
+    out on 2026-09-18 this would have examined the refusals of 66 routes and reported on 123.
+    It would not have failed. It would have narrowed, which is worse, because a passing drill
+    is read as coverage."""
+    return [f for f in sorted(WEB.glob("*.py")) if not f.name.startswith("test_")]
 
 #: Suites searched for the tests that exercise a given route.
 SUITE_FILES = ("test_app.py",)
@@ -423,22 +440,34 @@ def main() -> int:
     if args.probe_route:                      # the subprocess half of --probe
         return _probe_child(args.probe_route)
 
-    print("REPAIR, if this run is killed:  git checkout -- polaris_web/app.py")
+    mods = modules()
+    print("REPAIR, if this run is killed:  git checkout -- polaris_web")
     print()
-    dirty = subprocess.run(["git", "status", "--porcelain", "--", str(APP)],
+    dirty = subprocess.run(["git", "status", "--porcelain", "--"] + [str(m) for m in mods],
                            cwd=str(ROOT), capture_output=True).stdout.decode().strip()
     if dirty:
-        print("polaris_web/app.py has uncommitted changes. This drill rewrites it in place and "
-              "its documented repair is `git checkout --`, which would throw those away. "
-              "Commit or stash first.", file=sys.stderr)
+        print("polaris_web has uncommitted changes in a module this drill rewrites:\n%s\n\n"
+              "Its documented repair is `git checkout --`, which would throw those away. "
+              "Commit or stash first." % dirty, file=sys.stderr)
         return 2
 
-    original = APP.read_text()
-    found = refusals(original)
+    originals = {m: m.read_text() for m in mods}
+    found = []
+    for m in mods:
+        for r in refusals(originals[m]):
+            r["file"] = m
+            found.append(r)
     if len(found) < 20:
-        print("== VOID: %d refusals found in %s. The parser and the application have drifted, "
-              "so this drill is measuring nothing ==" % (len(found), APP.name), file=sys.stderr)
+        print("== VOID: %d refusals found across %d module(s) of polaris_web. The parser and "
+              "the application have drifted, so this drill is measuring nothing =="
+              % (len(found), len(mods)), file=sys.stderr)
         return 2
+    print("scanning %d module(s) of polaris_web: %d refusals"
+          % (len(mods), len(found)))
+    by_file = {}
+    for r in found:
+        by_file[r["file"].name] = by_file.get(r["file"].name, 0) + 1
+    print("   " + ", ".join("%s %d" % (k, v) for k, v in sorted(by_file.items())) + "\n")
 
     env = dict(os.environ)
     env.setdefault("POLARIS_PQC_PROFILE", "placeholder")
@@ -464,13 +493,14 @@ def main() -> int:
         return 2
     print("   green: %s\n" % (tail or "OK"))
 
-    print("negative control: switching off the refusal on %s (line %d)"
-          % (control["route"], control["line"]))
+    print("negative control: switching off the refusal on %s (%s:%d)"
+          % (control["route"], control["file"].name, control["line"]))
     try:
-        APP.write_text(mutate(original, control["span"]))
+        cf = control["file"]
+        cf.write_text(mutate(originals[cf], control["span"]))
         green, tail = run_tests(control_targets, env)
     finally:
-        APP.write_text(original)
+        cf.write_text(originals[cf])
     if green:
         print("== VOID: the control refusal was switched off and every test stayed green. The "
               "harness is not running the tests, so no result below would mean anything. %s =="
@@ -503,18 +533,22 @@ def main() -> int:
                    classes_exercising(case["route"], case["view"]))
         if args.exhaustive:
             targets = ["test_app"]
-        print("[%3d/%3d] %-30s %-3d line %-5d %s"
-              % (i, len(cases), case["route"][:30], case["status"], case["line"],
+        # The module is printed with the line: once the application is more than one file, a
+        # bare line number cites nothing.
+        print("[%3d/%3d] %-28s %-3d %s:%-5d %s"
+              % (i, len(cases), case["route"][:28], case["status"],
+                 case["file"].name[:20], case["line"],
                  "%d class(es)" % len(targets) if targets else "NO TEST NAMES THIS ROUTE"),
               flush=True)
         if not targets:
             blind.append(case)
             continue
         try:
-            APP.write_text(mutate(original, case["span"]))
+            f = case["file"]
+            f.write_text(mutate(originals[f], case["span"]))
             green, tail = run_tests(targets, env)
         finally:
-            APP.write_text(original)
+            f.write_text(originals[f])
         if green:
             if args.probe:
                 case["verdict"] = classify(baselines.get(case["route"], []),
@@ -524,7 +558,9 @@ def main() -> int:
                   % (" [%s]" % case["verdict"] if case.get("verdict") else "",
                      case["source"][:78]))
 
-    assert APP.read_text() == original, "app.py was not restored; repair with git checkout"
+    not_restored = [m.name for m in mods if m.read_text() != originals[m]]
+    assert not not_restored, ("not restored: %s; repair with `git checkout -- polaris_web`"
+                              % ", ".join(not_restored))
 
     print("\nrefusals examined              %d of %d" % (len(cases), len(found)))
     if outside:
@@ -558,9 +594,21 @@ def main() -> int:
               "add it to DECLARED with the reason it does not need covering.")
         return 1
 
-    stale = sorted(k for k in DECLARED
-                   if not any(k[0] == c["view"] and k[1] in c["source"]
-                              for c in survivors + blind))
+    # STALENESS IS ONLY MEASURABLE FROM A COMPLETE RUN. `stale` asks which declarations name no
+    # refusal that survived or went untested, and a run narrowed by --limit or by a status
+    # scope did not examine most of them. A partial run therefore reported almost every
+    # declaration as obsolete and exited 1 on a finding it had no evidence for: `--limit 4`
+    # called 17 of them stale on 2026-09-18. Say so instead.
+    partial = bool(args.limit) or bool(outside)
+    stale = [] if partial else sorted(
+        k for k in DECLARED
+        if not any(k[0] == c["view"] and k[1] in c["source"] for c in survivors + blind))
+    if partial:
+        print("\ndeclarations not audited: this run examined %d of %d refusals (%s), and "
+              "whether a declaration is obsolete cannot be read off a partial run. Re-run "
+              "with --all and no --limit to audit the %d in DECLARED."
+              % (len(cases), len(found),
+                 "--limit" if args.limit else "status scope", len(DECLARED)))
     if stale:
         print("\nSTALE DECLARATIONS (%d): covered now, or the refusal was rewritten, so the "
               "reason is obsolete: %s"
