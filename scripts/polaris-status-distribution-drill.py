@@ -61,6 +61,9 @@ def _row(label, got, want):
 def main():
     try:
         import app as flask_app
+        # The signed-artifact helpers moved out of app.py on 2026-09-18; app.py imports
+        # this module at the end of its own startup, so it is loaded by the line above.
+        import rp_api
     except Exception as e:  # noqa: BLE001
         print("status-distribution drill needs the app importable (POLARIS_DB_* + the venv): %s" % e,
               file=sys.stderr)
@@ -141,14 +144,14 @@ def main():
 
     # An expired or unreadable window must not be cached at all.
     with flask_app.app.test_request_context():
-        expired = flask_app._public_artifact({"format": "x", "expires_at": "2020-01-01T00:00:00Z"})
+        expired = rp_api._public_artifact({"format": "x", "expires_at": "2020-01-01T00:00:00Z"})
         ok &= _row("an already-expired artifact is no-store",
                    expired.headers.get("Cache-Control"), "no-store")
-        junk = flask_app._public_artifact({"format": "x", "expires_at": "not-an-instant"})
+        junk = rp_api._public_artifact({"format": "x", "expires_at": "not-an-instant"})
         ok &= _row("an unreadable window is no-store, not a guessed interval",
                    junk.headers.get("Cache-Control"), "no-store")
     ok &= _row("a missing window yields no max-age at all",
-               flask_app._artifact_max_age({}), None)
+               rp_api._artifact_max_age({}), None)
 
     print()
     if ok:

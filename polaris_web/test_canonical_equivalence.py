@@ -40,6 +40,9 @@ from hypothesis import given, settings, strategies as st, HealthCheck
 
 import app as flask_app
 
+# The relying-party API v1 moved out of app.py on 2026-09-18; these canonical
+# statements are its wire formats, and they moved with it.
+import rp_api
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -64,7 +67,7 @@ SIGNED_TYPES = {
         "keys": ["format", "authority", "anchors", "attestations", "epoch",
                  "revocation", "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._manifest_statement(b),
+        "app": lambda b: rp_api._manifest_statement(b),
         "verify": lambda b: _V._manifest_canonical(b),
     },
     # P9.5 (v9.348): the attesting agency's own signature over a federation trust edge.
@@ -81,13 +84,13 @@ SIGNED_TYPES = {
         "keys": ["format", "token_value", "holder_public_key_hex", "holder_algorithm",
                  "bound_at", "status", "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._holder_binding_statement(b),
+        "app": lambda b: rp_api._holder_binding_statement(b),
         "verify": lambda b: _V._holder_binding_canonical(b),
     },
     "holder-proof": {
         "keys": ["format", "token_value", "context_id", "verifier_nonce", "issued_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._holder_proof_statement(b),
+        "app": lambda b: rp_api._holder_proof_statement(b),
         "verify": lambda b: _V._holder_proof_canonical(b),
     },
     # P9.8 (v9.354): delegation. Signed by the HOLDER's key and the AGENT's, never the
@@ -96,19 +99,19 @@ SIGNED_TYPES = {
         "keys": ["format", "grant_id", "agent_public_key_hex", "agent_algorithm", "actions",
                  "limits", "context_id", "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._agent_grant_statement(b),
+        "app": lambda b: rp_api._agent_grant_statement(b),
         "verify": lambda b: _V._agent_grant_canonical(b),
     },
     "grant-revocation": {
         "keys": ["format", "grant_id", "revoked_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._grant_revocation_statement(b),
+        "app": lambda b: rp_api._grant_revocation_statement(b),
         "verify": lambda b: _V._grant_revocation_canonical(b),
     },
     "agent-proof": {
         "keys": ["format", "grant_id", "action", "service_nonce", "issued_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._agent_proof_statement(b),
+        "app": lambda b: rp_api._agent_proof_statement(b),
         "verify": lambda b: _V._agent_proof_canonical(b),
     },
     # P9.2 (v9.350): the published anonymity set.
@@ -116,48 +119,48 @@ SIGNED_TYPES = {
         "keys": ["format", "authority", "epoch_id", "context_id", "merkle_root",
                  "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._epoch_leaves_statement(b),
+        "app": lambda b: rp_api._epoch_leaves_statement(b),
         "verify": lambda b: _V._epoch_leaves_canonical(b),
     },
     "epoch-checkpoint": {
         "keys": ["format", "authority", "epoch", "prev", "as_of",
                  "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._epoch_checkpoint_statement(b),
+        "app": lambda b: rp_api._epoch_checkpoint_statement(b),
         "verify": lambda b: _V._epoch_checkpoint_canonical(b),
     },
     "revocation-feed": {
         "keys": ["format", "authority", "epoch_number", "as_of", "revoked_root_hex",
                  "revoked_count", "revoked_leaves", "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._revocation_feed_statement(b),
+        "app": lambda b: rp_api._revocation_feed_statement(b),
         "verify": lambda b: _V._revocation_feed_canonical(b),
     },
     "status-assertion": {
         "keys": ["format", "token_value", "status", "issued_at", "expires_at"],
-        "fixed": {"format": flask_app._STATUS_ASSERTION_FORMAT},
-        "app": lambda b: flask_app._status_assertion_statement(
+        "fixed": {"format": rp_api._STATUS_ASSERTION_FORMAT},
+        "app": lambda b: rp_api._status_assertion_statement(
             b.get("token_value"), b.get("status"), b.get("issued_at"), b.get("expires_at")),
         "verify": lambda b: _V._status_assertion_canonical(b),
     },
     "transparency-sth": {
         "keys": ["format", "log_id", "tree_size", "root_hash_hex", "timestamp"],
         "fixed": {},
-        "app": lambda b: flask_app._sth_statement(b),
+        "app": lambda b: rp_api._sth_statement(b),
         "verify": lambda b: _V._sth_canonical(b),
     },
     "federation-status-bundle": {
         "keys": ["format", "publisher", "members_root_hex", "member_count",
                  "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._status_bundle_statement(b),
+        "app": lambda b: rp_api._status_bundle_statement(b),
         "verify": lambda b: _V._status_bundle_canonical(b),
     },
     "exchange-receipt": {
         "keys": ["format", "requester", "responder", "context_id", "request_hash",
                  "response_hash", "authorized_via", "occurred_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._exchange_receipt_statement(b),
+        "app": lambda b: rp_api._exchange_receipt_statement(b),
         "verify": lambda b: _V._exchange_receipt_canonical(b),
     },
     # polaris-exchange-mint/1 (P8.2b): CLIENT-built, INSTANCE-verified -- the same byte
@@ -166,14 +169,14 @@ SIGNED_TYPES = {
         "keys": ["format", "requester_public_key_hex", "context_id", "request_hash",
                  "response_hash", "responder_agency_id", "occurred_at"],
         "fixed": {},
-        "app": lambda b: flask_app._exchange_mint_statement(b),
+        "app": lambda b: rp_api._exchange_mint_statement(b),
         "verify": lambda b: _V._exchange_mint_canonical(b),
     },
     # polaris-timestamp/1 (P8.7a): the timestamp authority's binding of a digest to an instant.
     "timestamp": {
         "keys": ["format", "authority", "digest_hex", "digest_algorithm", "nonce", "issued_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._timestamp_statement(b),
+        "app": lambda b: rp_api._timestamp_statement(b),
         "verify": lambda b: _V._timestamp_canonical(b),
     },
     # polaris-registry/1 (P8.3): the signed discovery artifact over the Athena authority layer.
@@ -181,7 +184,7 @@ SIGNED_TYPES = {
         "keys": ["format", "publisher", "instance", "authorities", "contexts", "trust",
                  "relying_parties", "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._registry_statement(b),
+        "app": lambda b: rp_api._registry_statement(b),
         "verify": lambda b: _V._registry_canonical(b),
     },
     # polaris-exchange-request/1 (P8.2d): CLIENT-built, GATEWAY-verified -- held to the oracle
@@ -189,14 +192,14 @@ SIGNED_TYPES = {
     "exchange-request": {
         "keys": ["format", "requester", "target", "context_id", "request_hash", "nonce", "issued_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._exchange_request_statement(b),
+        "app": lambda b: rp_api._exchange_request_statement(b),
         "verify": lambda b: _V._exchange_request_canonical(b),
     },
     # polaris-signed-document/1 (P8.5): the portable document container.
     "signed-document": {
         "keys": ["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._signed_document_statement(b),
+        "app": lambda b: rp_api._signed_document_statement(b),
         "verify": lambda b: _V._signed_document_canonical(b),
     },
     # polaris-id-token/1 (P8.4): the auth broker's ID token, signed by the issuing agency.
@@ -204,14 +207,14 @@ SIGNED_TYPES = {
         "keys": ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr",
                  "enrollment", "auth_time", "iat", "exp", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._id_token_statement(b),
+        "app": lambda b: rp_api._id_token_statement(b),
         "verify": lambda b: _V._id_token_canonical(b),
     },
     # polaris-trust-list/1 (P8.7b): the signed authority key register.
     "trust-list": {
         "keys": ["format", "publisher", "keys", "issued_at", "expires_at", "algorithm"],
         "fixed": {},
-        "app": lambda b: flask_app._trust_list_statement(b),
+        "app": lambda b: rp_api._trust_list_statement(b),
         "verify": lambda b: _V._trust_list_canonical(b),
     },
 }
