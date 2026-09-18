@@ -16714,14 +16714,32 @@ def check_no_module_imports_an_unstable_name(root: pathlib.Path) -> list[Finding
                     if a.name in trees:
                         alias[a.asname or a.name] = a.name
         for node in ast.walk(ttree):
-            if not isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
-                continue
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for t in targets:
-                if (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
-                        and t.value.id in alias):
-                    unstable[alias[t.value.id]].setdefault(
-                        t.attr, "is repointed at runtime by polaris_web/%s" % tp.name)
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for t in targets:
+                    if (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+                            and t.value.id in alias):
+                        unstable[alias[t.value.id]].setdefault(
+                            t.attr, "is repointed at runtime by polaris_web/%s" % tp.name)
+            # `patch.object(flask_app, '_VERIFY_SAMPLE_RATE', 1.0)` and
+            # `setattr(flask_app, name, value)` rebind exactly as an assignment does, and
+            # patch.object is the commoner idiom in a suite. Matching only the assignment form
+            # missed _VERIFY_SAMPLE_RATE on 2026-09-18: operator_routes.py moved out of app.py
+            # holding a `from app import` copy, the per-test patch stopped reaching it, the
+            # second witness was never sampled, and the test that proves a witness
+            # disagreement is recorded failed outright. This check exists to say that first.
+            elif isinstance(node, ast.Call) and len(node.args) >= 2:
+                f = node.func
+                is_patch = isinstance(f, ast.Attribute) and f.attr == "object"
+                is_setattr = isinstance(f, ast.Name) and f.id == "setattr"
+                if not (is_patch or is_setattr):
+                    continue
+                mod, attr = node.args[0], node.args[1]
+                if (isinstance(mod, ast.Name) and mod.id in alias
+                        and isinstance(attr, ast.Constant) and isinstance(attr.value, str)):
+                    unstable[alias[mod.id]].setdefault(
+                        attr.value, "is repointed at runtime by polaris_web/%s (%s)"
+                        % (tp.name, "patch.object" if is_patch else "setattr"))
 
     total = sum(len(v) for v in unstable.values())
     bad = []

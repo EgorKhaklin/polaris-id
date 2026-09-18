@@ -11312,6 +11312,36 @@ def test_no_module_imports_an_unstable_name_check_discriminates(tmp_path):
     assert "repointed at runtime" in result.message
     assert "test_app.py" in result.message, "and the suite that does it is named"
 
+    # patch.object IS the commoner idiom in a suite, and rebinds exactly as an assignment
+    # does. Matching only the assignment form missed _VERIFY_SAMPLE_RATE on 2026-09-18:
+    # operator_routes.py moved out of app.py holding a `from app import` copy, the per-test
+    # patch stopped reaching it, the second witness was never sampled, and the test that proves
+    # a witness disagreement is recorded failed outright. The suite caught it; this is what
+    # should have.
+    write({"app.py": "RATE = 0.0\napp = 1\n",
+           "routes.py": "from app import RATE\n",
+           "test_app.py": "import app as flask_app\nfrom unittest.mock import patch\n\n\n"
+                          "def t():\n    with patch.object(flask_app, 'RATE', 1.0):\n        pass\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "patch.object rebinds the name as surely as `=` does"
+    assert "RATE" in result.message and "patch.object" in result.message, \
+        "and the idiom is named, because the remedy reads differently for each"
+
+    # setattr is the third spelling of the same thing.
+    write({"app.py": "RATE = 0.0\napp = 1\n",
+           "routes.py": "from app import RATE\n",
+           "test_app.py": "import app as flask_app\n\n\ndef t():\n"
+                          "    setattr(flask_app, 'RATE', 1.0)\n"})
+    assert check(tmp_path)[0].level == "FAIL", "setattr on the module is a rebind too"
+
+    # patch.object on something that is NOT an application module is not this defect.
+    write({"app.py": "RATE = 0.0\napp = 1\n",
+           "routes.py": "from app import RATE\n",
+           "test_app.py": "import os\nfrom unittest.mock import patch\n\n\ndef t():\n"
+                          "    with patch.object(os, 'sep', '/'):\n        pass\n"})
+    assert check(tmp_path)[0].level == "OK", \
+        "patching a stdlib module says nothing about the application's own names"
+
     # READING it in a suite is not repointing it, and flagging that would make every module
     # constant unimportable.
     write({"app.py": "FLAG = 1\napp = 1\n",
