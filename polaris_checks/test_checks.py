@@ -16305,3 +16305,59 @@ def test_checks_reach_the_package_check_discriminates(tmp_path):
     finally:
         checks._APP_PATH_READERS.clear()
         checks._APP_PATH_READERS.update(original)
+
+
+def test_dependency_budget_check_discriminates(tmp_path):
+    """A published package may not quietly grow what it installs on somebody else's machine.
+
+    The defect (2026-09-18): adding `requests` and `boto3` to polaris-verify's runtime
+    dependencies left all 283 checks green. The import scan does not see it either, because
+    a declared dependency need not be imported yet.
+    """
+    PY_EMPTY = '[project]\nname = "x"\ndependencies = []\n'
+    PY_ONE = '[project]\nname = "y"\ndependencies = ["cryptography>=48"]\n'
+    JS_ONE = '{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1"}}\n'
+
+    def write(verify=PY_EMPTY, oid=PY_ONE, sdk=PY_ONE, ts=JS_ONE):
+        for rel, body in (("packages/polaris-verify/pyproject.toml", verify),
+                          ("packages/polaris-oid4vp/pyproject.toml", oid),
+                          ("sdk/python/pyproject.toml", sdk),
+                          ("sdk/typescript/package.json", ts)):
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    fn = checks.check_publishable_packages_keep_their_dependency_budget
+    write()
+    assert fn(tmp_path)[0].level == "OK", "must PASS when every package is within budget"
+
+    # THE defect: the zero-dependency verifier grows two.
+    write(verify='[project]\nname = "x"\ndependencies = ["requests>=2", "boto3"]\n')
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "requests" in out[0].message and "boto3" in out[0].message, \
+        "must FAIL when the detached verifier declares runtime dependencies"
+
+    # One over budget on a package whose budget is one, not zero.
+    write(sdk='[project]\nname = "y"\ndependencies = ["cryptography>=48", "httpx"]\n')
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "httpx" in out[0].message, \
+        "must FAIL on a package that grows past a non-empty budget"
+
+    # The npm manifest is read too, not only the Python ones.
+    write(ts='{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1", "axios": "^1"}}\n')
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "axios" in out[0].message, \
+        "must FAIL on a TypeScript dependency outside the budget"
+
+    # A version specifier must not smuggle a name past the parse.
+    write(verify='[project]\nname = "x"\ndependencies = ["requests[socks]>=2,<3"]\n')
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "requests" in out[0].message, \
+        "must strip extras and specifiers rather than miss the dependency"
+
+    # A missing manifest is a failure, not a pass by finding nothing.
+    write()
+    (tmp_path / "packages/polaris-verify/pyproject.toml").unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "missing" in out[0].message, \
+        "must FAIL when a manifest is absent rather than report a clean budget"

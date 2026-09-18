@@ -19015,6 +19015,110 @@ def check_checks_do_not_grep_one_module(root: pathlib.Path) -> list[Finding]:
                      "polaris_web cannot go unnoticed (proven by the move drill)" % declared)
 
 
+#: What each publishable package may pull onto a machine that installs it, and why that
+#: number is what it is. A dependency is not an implementation detail here: it is the thing
+#: a relying party's supply-chain review reads, and every entry is surface they inherit
+#: without choosing it.
+#:
+#: `polaris-verify` is empty ON PURPOSE and is the strictest of the four. The product
+#: contract says a relying party runs it "with no Polaris code and no database", and the
+#: install test is a clean machine. Its cryptography is an OPTIONAL extra precisely so the
+#: caller picks a backend and names it, which is the same discipline as --pqc-provider.
+_PACKAGE_DEPENDENCY_BUDGET = {
+    "packages/polaris-verify/pyproject.toml": (
+        set(),
+        "the detached verifier installs with nothing; both crypto backends are optional "
+        "extras so the caller chooses one and says so"),
+    "packages/polaris-oid4vp/pyproject.toml": (
+        {"cryptography"},
+        "one crypto library, for the JWE and the SD-JWT signature; it needs no database and "
+        "no operator console, which is the whole reason it is a separate package"),
+    "sdk/python/pyproject.toml": (
+        {"cryptography"},
+        "one crypto library. A verify SDK that pulls a web stack makes the relying party "
+        "inherit it"),
+    "sdk/typescript/package.json": (
+        {"@noble/post-quantum"},
+        "one ML-DSA implementation, which is also the second witness the vectors are "
+        "checked against"),
+}
+
+
+def _declared_runtime_deps(root: pathlib.Path, rel: str) -> set:
+    """Runtime dependency NAMES a manifest declares, version specifiers stripped."""
+    text = _read_raw(root, rel)
+    if not text:
+        return set()
+    if rel.endswith("package.json"):
+        try:
+            deps = json.loads(text).get("dependencies") or {}
+        except ValueError:
+            return set()
+        return set(deps)
+    m = re.search(r"^dependencies\s*=\s*\[", text, re.M)
+    if not m:
+        return set()
+    # Balanced, not `\[(.*?)\]`. A PEP 508 requirement may carry its own brackets --
+    # "requests[socks]>=2" -- and a non-greedy match stops at the inner one, capturing
+    # `"requests[socks` with no closing quote, so findall returns nothing and the package
+    # reads as having no dependencies at all. The detection test caught exactly that.
+    depth, i = 0, m.end() - 1
+    while i < len(text):
+        if text[i] == "[":
+            depth += 1
+        elif text[i] == "]":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    body = text[m.end():i]
+    return {re.split(r"[<>=!~;\[ ]", s)[0].strip().lower()
+            for s in re.findall(r'"([^"]+)"', body) if s.strip()}
+
+
+def check_publishable_packages_keep_their_dependency_budget(root: pathlib.Path) -> list[Finding]:
+    """A published package may not quietly grow what it puts on somebody else's machine.
+
+    The detached verifier's boundary has two halves and only one was pinned. The SOURCE
+    half -- it imports no Polaris code and nothing that could reach a network -- is
+    check_detached_verifier, widened to the package on 2026-09-18. The MANIFEST half is
+    this: `dependencies = []`, which is what actually gets installed.
+
+    Measured before writing it: adding `requests` and `boto3` to polaris-verify's runtime
+    dependencies left all 283 checks green. The import scan would not have seen it either,
+    because a declared dependency need not be imported yet; declaring it is the step
+    before, and the manifest is what a supply-chain review reads.
+
+    A budget is not a freeze. Widening one is a decision somebody makes on purpose, in this
+    dict, with the reason written down, and the check then holds the new line.
+    """
+    name = "dependency_budget"
+    findings = []
+    for rel, (allowed, why) in sorted(_PACKAGE_DEPENDENCY_BUDGET.items()):
+        if not _read_raw(root, rel):
+            findings.extend(_fail(name, "%s is missing, so its dependency budget cannot be "
+                                        "read" % rel))
+            continue
+        declared = _declared_runtime_deps(root, rel)
+        extra = sorted(declared - {a.lower() for a in allowed})
+        if extra:
+            findings.extend(_fail(
+                name, "%s declares runtime dependencies outside its budget: %s. Every one is "
+                      "surface a relying party inherits by installing this package. The "
+                      "budget is %s, because %s. Widen it here, on purpose, or drop the "
+                      "dependency"
+                      % (rel, ", ".join(extra),
+                         ", ".join(sorted(allowed)) or "EMPTY", why)))
+    if findings:
+        return findings
+    total = sum(len(a) for a, _w in _PACKAGE_DEPENDENCY_BUDGET.values())
+    return _ok(name, "all %d publishable packages install within their declared dependency "
+                     "budget (%d runtime dependencies between them, and polaris-verify's is "
+                     "zero: its crypto backends are optional extras so the caller chooses "
+                     "one and names it)"
+                     % (len(_PACKAGE_DEPENDENCY_BUDGET), total))
+
+
 def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
     """No check may report OK over a tree that contains nothing.
 
@@ -19070,6 +19174,7 @@ def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
+    check_publishable_packages_keep_their_dependency_budget,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,
     check_drills_count_their_cases,
