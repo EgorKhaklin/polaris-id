@@ -10759,7 +10759,11 @@ def test_review_packet_check_discriminates(tmp_path):
                  # clause false. Adding a witness means adding its file here, and forgetting
                  # to is what turned this list red.
                  '.github/workflows/ci.yml',
-                 'scripts/polaris-oid4vp-conformance-drill.py']
+                 'scripts/polaris-oid4vp-conformance-drill.py',
+                 # L-11's first witness since 2026-09-18: the design-intent review that made
+                 # "no external party has reviewed any of this" false while sitting in the
+                 # same tree as the sentence.
+                 'docs/DESIGN-INTENT-REVIEW.md']
 
     def write(old=None, new=None):
         for rel in ['docs/REVIEW-PACKET.md',
