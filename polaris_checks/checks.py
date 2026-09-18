@@ -165,6 +165,87 @@ def _read_path(p: pathlib.Path) -> str:
     return _cached_text(p, p.name, strip=True)
 
 
+#: Joined-package text, keyed on the identity of every module in it, so the join is paid
+#: once per run rather than 77 times for 832 KB.
+_PKG_CACHE: dict = {}
+
+
+def _read_package(root: pathlib.Path, rel_dir: str) -> str:
+    """Every non-test module of a package, concatenated, comments stripped.
+
+    Checks that pin an application mechanism used to name `polaris_web/app.py`, and 77 of
+    them still did on 2026-09-18. That makes a check's reach a FILE while its sentence is
+    about the application, and the two differ the moment the file is split: the mechanism
+    moves, the check keeps reading where it used to be, and passes. `polaris-move-mutation-
+    drill.py` measured it -- violations that are caught in app.py went undetected one file
+    over, 3 of 3.
+
+    Reading the package closes that. It is deliberately LOOSER than naming a path: a check
+    now asserts the application does something, not that app.py does. That is the correct
+    strength for a mechanism that may live in any module, and it is the wrong strength for
+    a check that cares WHICH module (a guard defined in one file and used from another).
+    Those keep `_read` and a path, and say why.
+
+    Test modules are excluded: a presence assertion satisfied by a test would be a check
+    passing because something is TESTED rather than because it is DONE.
+    """
+    d = root / rel_dir
+    if not d.is_dir():
+        return ""
+    mods = sorted(p for p in d.glob("*.py") if not p.name.startswith("test_"))
+    key = []
+    for p in mods:
+        try:
+            st = p.stat()
+            key.append((p.name, st.st_mtime_ns, st.st_size))
+        except OSError:
+            key.append((p.name, 0, 0))
+    ck = (rel_dir, tuple(key))
+    hit = _PKG_CACHE.get(ck)
+    if hit is None:
+        if len(_PKG_CACHE) > 16:
+            _PKG_CACHE.clear()
+        # Join only the modules that HAVE content. Joining empties yields "\n\n", which is
+        # truthy, and every converted check opens with `if not app: return _fail(...)`. A
+        # whitespace-only join would satisfy that guard and send 73 checks on to assert an
+        # ABSENCE over nothing, which they would all pass. check_no_vacuous_checks caught
+        # exactly that on 2026-09-18, which is the meta-check doing the job it was written
+        # for: an empty tree must not look like a compliant one.
+        hit = "\n".join(s for s in (_cached_text(p, p.name, strip=True) for p in mods) if s.strip())
+        _PKG_CACHE[ck] = hit
+    return hit
+
+
+def _app_modules(root: pathlib.Path) -> list:
+    """(name, code) for each non-test module of the application, for checks that PARSE.
+
+    The joined text `_read_app` returns is for grepping. It is not valid Python: two modules
+    concatenated have two sets of imports and can split a construct down the middle, so
+    `ast.parse` on it raises. A check that walks a syntax tree therefore takes the modules
+    one at a time, and gets the same independence from the file layout by iterating rather
+    than by naming a path.
+    """
+    d = root / "polaris_web"
+    if not d.is_dir():
+        return []
+    # RAW, not comment-stripped. Stripping is for grepping: it stops a commented-out line
+    # satisfying a text search. It also breaks Python, because a `#` inside a string literal
+    # is not a comment and the stripper cannot tell, so `ast.parse` then raises on a file
+    # that is perfectly valid (custody.py did, 2026-09-18). An AST walk needs none of it:
+    # a tree cannot be fooled by a comment, which is why these checks walk one.
+    return [(p.name, _cached_text(p, p.name, strip=False))
+            for p in sorted(d.glob("*.py")) if not p.name.startswith("test_")]
+
+
+def _read_app(root: pathlib.Path) -> str:
+    """The application's code, wherever in `polaris_web/` it lives.
+
+    The door for every check that pins an application mechanism. Use this rather than
+    naming app.py, so the check survives the decomposition that file is headed for.
+    """
+    return _read_package(root, "polaris_web")
+
+
 def _read_raw(root: pathlib.Path, rel: str) -> str:
     """The file exactly as written, comments included.
 
@@ -242,7 +323,7 @@ def check_json_body_must_be_an_object(root: pathlib.Path) -> list[Finding]:
     route being written the old way, which is the only way this comes back.
     """
     name = "json_body_object"
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail(name, "polaris_web/app.py could not be read")
     if "def _json_object(" not in app:
@@ -255,22 +336,25 @@ def check_json_body_must_be_an_object(root: pathlib.Path) -> list[Finding]:
     # check's own docstring and the helper's, both of which necessarily quote the idiom they
     # exist to describe; searching prose as if it were code has produced a false result four
     # times in this tree, and an AST walk cannot make that mistake.
-    try:
-        tree = ast.parse(app)
-    except SyntaxError as exc:
-        return _fail(name, "polaris_web/app.py does not parse (%s), so this check cannot "
-                           "read it" % exc)
+    trees = []
+    for modname, src in _app_modules(root):
+        try:
+            trees.append((modname, ast.parse(src)))
+        except SyntaxError as exc:
+            return _fail(name, "polaris_web/%s does not parse (%s), so this check cannot "
+                               "read it" % (modname, exc))
     offenders = []
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)
-                and len(node.values) == 2):
-            continue
-        left, right = node.values
-        if not (isinstance(right, ast.Dict) and not right.keys):
-            continue
-        if (isinstance(left, ast.Call) and isinstance(left.func, ast.Attribute)
-                and left.func.attr == "get_json"):
-            offenders.append(node.lineno)
+    for _modname, tree in trees:
+      for node in ast.walk(tree):
+          if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)
+                  and len(node.values) == 2):
+              continue
+          left, right = node.values
+          if not (isinstance(right, ast.Dict) and not right.keys):
+              continue
+          if (isinstance(left, ast.Call) and isinstance(left.func, ast.Attribute)
+                  and left.func.attr == "get_json"):
+              offenders.append(node.lineno)
     if offenders:
         return _fail(name, "%d route(s) still read a JSON body with the bare "
                            "`get_json(silent=True) or {}` idiom, at line(s) %s. A JSON string "
@@ -300,7 +384,7 @@ def check_rate_limits_are_enforced(root: pathlib.Path) -> list[Finding]:
     ignored fails here, which is the shape a refactor produces.
     """
     name = "rate_limits"
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail(name, "polaris_web/app.py could not be read")
 
@@ -361,7 +445,7 @@ def check_json_door_refuses_non_finite(root: pathlib.Path) -> list[Finding]:
     is why both hooks are named here rather than one.
     """
     name = "json_door"
-    src = _read(root, "polaris_web/app.py")
+    src = _read_app(root)
     if not src:
         return _fail(name, "polaris_web/app.py could not be read")
     m = re.search(r"class\s+(\w+)\(DefaultJSONProvider\):(.*?)(?=\napp\.json\s*=)", src, re.S)
@@ -567,7 +651,7 @@ def check_crypto_algorithm_is_data(root: pathlib.Path) -> list[Finding]:
                      "no algorithm metadata for anything to flow through (C7)"
                      % ", ".join(_C7_METADATA_COLUMNS))
 
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("c7_crypto_data", "polaris_web/app.py could not be read (C7)")
     if not re.search(r"(?:FROM|JOIN)\s+CryptographicAlgorithm\b", app, re.I):
@@ -610,7 +694,7 @@ def check_no_fk_cascade(root: pathlib.Path) -> list[Finding]:
 # Version is canonical — app.py imports __version__ rather than redefining it.
 # ---------------------------------------------------------------------------
 def check_version_is_canonical(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("version_canonical", "polaris_web/app.py is missing or empty")
     if re.search(r"from\s+__version__\s+import|import\s+__version__", app):
@@ -776,7 +860,7 @@ def check_pqc_signing_wired(root: pathlib.Path) -> list[Finding]:
         return _fail("pqc_wired",
                      "uc1_issue_and_activate must accept p_signature_bytes so the app "
                      "supplies the issuance signature (it is a hardcoded SQL string otherwise)")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "import pqc_signing" not in app:
         return _fail("pqc_wired", "app.py does not import pqc_signing")
     # Issuance must route through the signing module — either the 2-tuple
@@ -1132,8 +1216,10 @@ def check_signature_self_contained_verify(root: pathlib.Path) -> list[Finding]:
     if "p_signing_public_key_hex" not in proc:
         return _fail("self_contained_verify",
                      "uc1_issue_and_activate must accept p_signing_public_key_hex and store it")
-    app = _read(root, "polaris_web/app.py")
-    if "verify_stored_signature" not in app:
+    app = _read_app(root)
+    # Qualified, for the same reason as check_offline_verification: the bare name is
+    # satisfied by the definition in pqc_signing.py, which this text now includes.
+    if "pqc_signing.verify_stored_signature" not in app:
         return _fail("self_contained_verify",
                      "the token-detail route must verify each stored signature "
                      "(pqc_signing.verify_stored_signature) so verification is surfaced at use")
@@ -1189,7 +1275,7 @@ def check_prod_real_pqc(root: pathlib.Path) -> list[Finding]:
 # already stops DDL; this stops DML smuggled through the console.
 # ---------------------------------------------------------------------------
 def check_sql_console_readonly(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("sql_console_ro", "polaris_web/app.py is missing")
     m = re.search(r"def sql_query\(.*?\n(?=@app\.route|def [a-z])", app, re.S)
@@ -1855,7 +1941,7 @@ def check_web_concurrency_honored(root: pathlib.Path) -> list[Finding]:
 # mark_process_dead) and the prod compose must set the dir.
 # ---------------------------------------------------------------------------
 def check_prometheus_multiprocess(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     gconf = _read(root, "polaris_web/gunicorn.conf.py")
     compose = _read(root, "polaris_web/docker-compose.prod.yml")
     if not app or not gconf or not compose:
@@ -1888,7 +1974,7 @@ def check_prometheus_multiprocess(root: pathlib.Path) -> list[Finding]:
 # and the container HEALTHCHECK must use liveness.
 # ---------------------------------------------------------------------------
 def check_health_liveness_readiness_split(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("health_probes", "polaris_web/app.py is missing")
     for route in ("/api/health/live", "/api/health/ready"):
@@ -2176,7 +2262,7 @@ def check_alert_runbooks(root: pathlib.Path) -> list[Finding]:
 # DuressEvent is recorded, with an alert on it — otherwise the page never fires.
 # ---------------------------------------------------------------------------
 def check_duress_alertable(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     alerts = _read(root, "deploy/observability/polaris-alerts.yml")
     if not (app and alerts):
         return _fail("duress_alert", "app.py or the alerts file is missing")
@@ -2210,7 +2296,7 @@ def check_duress_alertable(root: pathlib.Path) -> list[Finding]:
 # can be silently dropped (a removed fail-closed check reads as "still safe").
 # ---------------------------------------------------------------------------
 def check_prod_fail_closed(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("prod_fail_closed", "polaris_web/app.py is missing")
     if "_PRODUCTION" not in app:
@@ -2665,7 +2751,7 @@ def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
 # dev/CI (no TLS) keep 'prefer'.
 # ---------------------------------------------------------------------------
 def check_app_db_tls(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     compose = _read(root, "polaris_web/docker-compose.prod.yml")
     init = _read(root, "polaris_web/docker-init.sh")
     entry = _read(root, "polaris_web/pgbouncer-entrypoint.sh")
@@ -2815,7 +2901,7 @@ def check_correlation_id(root: pathlib.Path) -> list[Finding]:
 # "copies security.py" doctor check did not generalize; this does.
 # ---------------------------------------------------------------------------
 def check_dockerfile_copies_app_modules(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     web = root / "polaris_web"
     if not app:
         return _fail("dockerfile_modules", "polaris_web/app.py is missing")
@@ -2954,7 +3040,7 @@ def check_c4_atomic_failed_login(root: pathlib.Path) -> list[Finding]:
 # C8 — /api/atlas/* result sets are bounded by hard caps.
 # ---------------------------------------------------------------------------
 def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     # v9.248: the analytical console added a bounded categorical roll-up; its
     # top-K cap joins the map's cluster/point/event caps under C8.
     missing = [c for c in ("_ATLAS_MAX_CLUSTERS", "_ATLAS_MAX_POINTS",
@@ -3145,7 +3231,7 @@ def check_open_redirect_guard(root: pathlib.Path) -> list[Finding]:
 # Session cookie Secure flag (CWE-614) — mandatory in production, not opt-in.
 # ---------------------------------------------------------------------------
 def check_cookie_secure_in_production(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     m = re.search(r"SESSION_COOKIE_SECURE'\]\s*=\s*(.+)", app)
     if not m:
         return _fail("cookie_secure", "app.py does not set SESSION_COOKIE_SECURE")
@@ -3376,7 +3462,7 @@ def _measured_counts(root: pathlib.Path) -> dict[str, int]:
     return {
         "invariant checks": len(CHECKS),
         "CI jobs": _ci_job_count(_read(root, ".github/workflows/ci.yml")),
-        "routes": len(re.findall(r"^@app\.route\(", _read(root, "polaris_web/app.py"), re.M)),
+        "routes": len(re.findall(r"^@app\.route\(", _read_app(root), re.M)),
         "stored procedures": len(re.findall(r"^CREATE (?:OR REPLACE )?(?:FUNCTION|PROCEDURE)\s+\w+",
                                             _read(root, "polaris_sql/05_procedures.sql"), re.M | re.I)),
     }
@@ -3523,7 +3609,7 @@ def _api_routes_in_doc(doc: str) -> set[str]:
 
 
 def check_api_routes_documented(root: pathlib.Path) -> list[Finding]:
-    app_src = _read(root, "polaris_web/app.py")
+    app_src = _read_app(root)
     doc = _read(root, "docs/reference/API.md")
     if not app_src or not doc:
         return _fail("api_routes_documented", "polaris_web/app.py or docs/reference/API.md is missing")
@@ -3815,7 +3901,7 @@ def check_launcher_refreshes_code(root: pathlib.Path) -> list[Finding]:
 # offset (and is deprecated). One such bug shipped in the ZK epoch check.
 # ---------------------------------------------------------------------------
 def check_local_clock_convention(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("local_clock", "polaris_web/app.py is missing or empty; the clock "
                                     "convention has nothing to hold in")
@@ -3895,14 +3981,27 @@ def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
     it is not "mentions a lifecycle table", it is "touches no verification table at all".
     """
     name = "c6_app_read_paths"
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail(name, "polaris_web/app.py could not be read")
 
     loc = re.compile(r"\b(requestor_location|latitude|longitude)\b", re.I)
     offenders, scanned = [], 0
-    for m in re.finditer(r'"""(?:.|\n)*?"""', app):
-        q = m.group(0)
+    # String CONSTANTS from the parsed modules, not `""".."""` pairs matched by regex.
+    # Pairing quotes by position mis-aligns the moment the text is more than one file: on
+    # 2026-09-18 a moved query was swallowed into a neighbouring docstring that mentions
+    # ZERO_KNOWLEDGE and was skipped as compliant, so the check passed over an unredacted
+    # read. An AST knows where a string starts and ends; a quote-counter guesses.
+    queries = []
+    for _m, _s in _app_modules(root):
+        try:
+            _tree = ast.parse(_s)
+        except SyntaxError as exc:
+            return _fail(name, "polaris_web/%s does not parse (%s)" % (_m, exc))
+        for _n in ast.walk(_tree):
+            if isinstance(_n, ast.Constant) and isinstance(_n.value, str):
+                queries.append((_m, _n.lineno, _n.value))
+    for _mod, _lineno, q in queries:
         if not loc.search(q) or not re.search(r"\bSELECT\b", q, re.I):
             continue
         scanned += 1
@@ -3912,7 +4011,7 @@ def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
             continue                       # redaction lives in the SQL function
         if not re.search(r"VerificationEvent|\bve\.", q, re.I):
             continue                       # no verification table: C6 does not govern it
-        offenders.append(app[:m.start()].count("\n") + 1)
+        offenders.append("%s:%d" % (_mod, _lineno))
 
     if scanned < 3:
         return _fail(name, "only %d location-reading SELECT(s) found in app.py; the parser and "
@@ -3921,8 +4020,8 @@ def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
     if offenders:
         return _fail(name, "%d verification-location query(ies) in app.py with no "
                            "ZERO_KNOWLEDGE clause and no atlas_* function to redact for them, "
-                           "at line(s) %s. C6 is redaction at EVERY read path, not only the "
-                           "Atlas SQL." % (len(offenders), ", ".join(str(n) for n in offenders)))
+                           "at %s. C6 is redaction at EVERY read path, not only the "
+                           "Atlas SQL." % (len(offenders), ", ".join(offenders)))
     return _ok(name, "all %d location-reading queries in app.py satisfy C6: each redacts "
                      "zero-knowledge rows inline, reads from an atlas_* function that does, or "
                      "touches no verification table at all" % scanned)
@@ -3972,7 +4071,7 @@ def check_c6_atlas_redacts_zk_location(root: pathlib.Path) -> list[Finding]:
     # (its inline globe-node query was dead code, removed; the globe fetches
     # via /api/atlas/*, whose SQL functions exclude ZK rows entirely, asserted
     # above). The one remaining app.py HTML read path is /verifications.
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if app.count("THEN NULL ELSE ve.requestor_location") < 1:
         return _fail("c6_atlas_zk",
                      "app.py /verifications must redact requestor_location "
@@ -4012,7 +4111,7 @@ def check_coercion_evidence_retained(root: pathlib.Path) -> list[Finding]:
                      "01_schema.sql falsely documents requesting_purpose_text as ZK-redacted; it is "
                      "the deliberately-retained anti-coercion evidentiary trail (Vocation)")
     # No read path may redact the evidence trail to NULL for ZERO_KNOWLEDGE rows.
-    reads = (_read(root, "polaris_web/app.py")
+    reads = (_read_app(root)
              + _read(root, "polaris_sql/11_atlas.sql")
              + _read(root, "polaris_sql/05_procedures.sql"))
     if re.search(r"THEN\s+NULL\s+ELSE[^;]*requesting_purpose_text", reads, re.I | re.S) or \
@@ -4035,7 +4134,7 @@ def check_coercion_evidence_retained(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 def check_zk_verify_anti_replay(root: pathlib.Path) -> list[Finding]:
     schema = _read(root, "polaris_sql/01_schema.sql")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "CREATE TABLE ZkVerificationNonce" not in schema:
         return _fail("zk_anti_replay",
                      "ZkVerificationNonce single-use nonce store is missing from the schema (R2/T-T2)")
@@ -4132,7 +4231,7 @@ def check_operator_scripts_validate_argv(root: pathlib.Path) -> list[Finding]:
 # UiLinkIntegrityTests crawler in test_app.py now guards dynamically.)
 # ---------------------------------------------------------------------------
 def check_template_endpoints_resolve(root: pathlib.Path) -> list[Finding]:
-    app_src = _read(root, "polaris_web/app.py")
+    app_src = _read_app(root)
     # Collect the function name following each @app.route decorator stack.
     endpoints: set[str] = set()
     pending_route = False
@@ -4798,7 +4897,7 @@ def check_admin_mfa_deadline(root: pathlib.Path) -> list[Finding]:
 # drifting to parameters that no longer cost what a real hash costs.
 def check_duress_timing_ballast(root: pathlib.Path) -> list[Finding]:
     import ast as _ast
-    src = _read(root, "polaris_web/app.py")
+    src = _read_app(root)
     auth = _read(root, "polaris_sql/10_auth.sql")
     if not src or not auth:
         return _fail("duress_timing", "polaris_web/app.py or polaris_sql/10_auth.sql is missing")
@@ -4833,10 +4932,15 @@ def check_duress_timing_ballast(root: pathlib.Path) -> list[Finding]:
     # And the structure: parsed, never grepped. The comment above the comparison names
     # `check_password_hash`, so a text search for what precedes it reads the comment and
     # concludes the opposite. The lab harness made exactly that mistake first.
-    try:
-        tree = _ast.parse(src)
-    except SyntaxError:
-        return _fail("duress_timing", "polaris_web/app.py does not parse")
+    # Per module, raw: the joined package text is for grepping and does not parse, and the
+    # comment-stripped form is not valid Python either. See _app_modules.
+    trees = []
+    for _m, _s in _app_modules(root):
+        try:
+            trees.append(_ast.parse(_s))
+        except SyntaxError:
+            return _fail("duress_timing", "polaris_web/%s does not parse" % _m)
+    tree = _ast.Module(body=[n for tr in trees for n in tr.body], type_ignores=[])
     fn = next((n for n in _ast.walk(tree)
                if isinstance(n, _ast.FunctionDef) and n.name == "_check_and_record_duress"),
               None)
@@ -5138,7 +5242,7 @@ def check_key_custody_abstraction(root: pathlib.Path) -> list[Finding]:
     req = _read(root, "polaris_web/requirements-custody.txt")
     ci = _read(root, ".github/workflows/ci.yml")
     cer = _read(root, "docs/operator/KEY-CEREMONY.md")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not (cu and pq and tests and req and ci and cer and app):
         return _fail("key_custody", "a custody file is missing (custody.py, pqc_signing.py, test_custody.py, "
                      "requirements-custody.txt, ci.yml, KEY-CEREMONY.md, app.py)")
@@ -5613,7 +5717,7 @@ def check_distributed_tracing(root: pathlib.Path) -> list[Finding]:
     import json as _json
     tr = _read(root, "polaris_web/tracing.py")
     ob = _read(root, "polaris_web/observability.py")
-    ap = _read(root, "polaris_web/app.py")
+    ap = _read_app(root)
     rq = _read(root, "polaris_web/requirements.txt")
     prod = _read(root, "polaris_web/docker-compose.prod.yml")
     ovl = _read(root, "polaris_web/docker-compose.observability.yml")
@@ -5839,7 +5943,7 @@ def check_session_origin_hardening(root: pathlib.Path) -> list[Finding]:
         return _fail("session_hardening", "login_user() must register the session server-side")
     if "revoke_session(" not in _fn_body(sec, "logout_user"):
         return _fail("session_hardening", "logout_user() must revoke the registry row")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "security.validate_session(get_db)" not in app:
         return _fail("session_hardening", "app.py does not run security.validate_session on every request")
     if "security.validate_role_policies()" not in app or "webauthn_auth.validate_policy()" not in app:
@@ -5957,7 +6061,7 @@ def check_abuse_controls(root: pathlib.Path) -> list[Finding]:
     for name in ("idx_token_agency_issued", "idx_verification_agency_time"):
         if name not in idx or name not in mig:
             return _fail("abuse_controls", f"window index {name} must exist in 02_indexes.sql and the migration")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for needle in ("'polaris_agency_events_total'", "'polaris_quota_refusals_total'",
                    "_record_agency_event('issue'", "_record_agency_event('revoke'", "_record_agency_event('verify'",
                    "_quota_refused(e, 'issue'", "_quota_refused(e, 'revoke'", "_quota_refused(e, 'verify'",
@@ -6333,7 +6437,7 @@ def check_read_replica_routing(root: pathlib.Path) -> list[Finding]:
     route to a streaming replica when configured, under an explicit staleness
     contract, with failback to the primary; correctness-critical reads stay on
     the primary; single node is unaffected."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("read_replica", "polaris_web/app.py is missing")
     for needle in ("DB_CONFIG_REPLICA", "def replica_reads(", "REPLICA_MAX_LAG_S",
@@ -6552,7 +6656,7 @@ def check_atlas_console(root: pathlib.Path) -> list[Finding]:
             return _fail("atlas_console", f"11_atlas.sql must define {fn_name} (Map v2)")
 
     # The analytical endpoints, replica-routed and capped.
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for route in ("/api/atlas/series", "/api/atlas/breakdown", "/api/atlas/crosstab",
                   "/api/atlas/facet/agencies", "/api/atlas/records",
                   "/api/atlas/hexbin", "/api/atlas/geo/jurisdictions"):
@@ -6670,7 +6774,7 @@ def check_sim_mode_gated(root: pathlib.Path) -> list[Finding]:
          POLARIS_ENV=production, and run_stream / build_nation call it before any
          write — so even a direct invocation cannot touch production.
     """
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("sim_gate", "polaris_web/app.py is missing")
     if not re.search(r"SIM_MODE\s*=\s*_env_flag\(\s*['\"]POLARIS_SIM_MODE['\"].*\)\s*and\s*not\s*_PRODUCTION", app):
@@ -6738,7 +6842,7 @@ def check_ui_drill(root: pathlib.Path) -> list[Finding]:
         return _fail("ui_drill", "polaris-ui-drill.sh must boot the app with SIM_MODE on and install Chromium "
                      "on demand (no standing dependency)")
     # The live view is actually live: the aggregate cache is bypassed under SIM_MODE.
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     cache_fn = app.split("def _atlas_cache_get", 1)
     if len(cache_fn) != 2 or not re.search(r"if\s+SIM_MODE\s*:\s*\n\s*return None", cache_fn[1][:800]):
         return _fail("ui_drill", "_atlas_cache_get must `return None` (bypass the aggregate cache) under "
@@ -8123,7 +8227,7 @@ def check_duress_is_indistinguishable(root: pathlib.Path) -> list[Finding]:
                 findings.extend(_fail(name, why))
                 break
 
-    if "POLARIS_DURESS_SYNC" not in _read(root, "polaris_web/app.py"):
+    if "POLARIS_DURESS_SYNC" not in _read_app(root):
         findings.extend(_fail(name, "the duress recording is no longer forced off the request "
                                     "thread by default, so the latency encodes the match"))
 
@@ -8369,7 +8473,7 @@ def check_authority_creation_is_recorded(root: pathlib.Path) -> list[Finding]:
                                                    "decided about an authority")):
         if needle not in cli:
             findings.extend(_fail(name, why))
-    if re.search(r"INSERT\s+INTO\s+AgencyEvent", _read(root, "polaris_web/app.py"), re.I):
+    if re.search(r"INSERT\s+INTO\s+AgencyEvent", _read_app(root), re.I):
         findings.extend(_fail(name, "the app writes AgencyEvent rows directly; the trigger must "
                                     "be the only writer, or a caller that can write its own "
                                     "record can omit one"))
@@ -8901,7 +9005,7 @@ def check_athena_console(root: pathlib.Path) -> list[Finding]:
     (Constitution / Authority / Proof / Trust) and the external JS must be wired.
     Detection: test_checks removes login_required, adds a person query, assigns
     innerHTML, and drops a tab mount."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     js = _read(root, "polaris_web/static/athena-console.js")
     tpl = _read(root, "polaris_web/templates/athena.html")
     if not app or not js or not tpl:
@@ -9063,7 +9167,7 @@ def check_verify_witness_sampling(root: pathlib.Path) -> list[Finding]:
     witnesses that are optional are one witness with extra docs. Detection:
     test_checks removes the sampling, the production floor, the alert, and the
     witness-set naming."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     obs = _read(root, "polaris_web/observability.py")
     alerts = _read(root, "deploy/observability/polaris-alerts.yml")
     if not app or not obs or not alerts:
@@ -9930,7 +10034,7 @@ def check_detached_verifier(root: pathlib.Path) -> list[Finding]:
                      "scripts/polaris-verify.py must also carry the independent cryptography/OpenSSL second "
                      "witness (MLDSA65PublicKey)")
     # 3. The pack route EXPORTS the crypto (the anti-decal to /export).
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     m = re.search(r"def token_authenticity_pack\(.*?(?=\n\n\n)", app, re.S)
     if "authenticity-pack" not in app or not m:
         return _fail("detached_verifier",
@@ -10333,7 +10437,7 @@ def check_dyno_published(root: pathlib.Path) -> list[Finding]:
 # CI naming.
 # ---------------------------------------------------------------------------
 def check_real_pqc_default_boot(root: pathlib.Path) -> list[Finding]:
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not app:
         return _fail("real_pqc_default_boot", "polaris_web/app.py is missing")
     # Production fails closed when real PQC is not available (is_enabled at boot).
@@ -10759,7 +10863,7 @@ def check_transparency_log(root: pathlib.Path) -> list[Finding]:
                          f"the offline verifier imports {mod!r}; it must stay standalone (a monitor verifies "
                          "the log with no Polaris code, no database)")
     # The app publishes the signed log as a view over the append-only AnchorBatch.
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym in ("/api/v1/transparency/sth", "/api/v1/transparency/consistency",
                 "/api/v1/transparency/proof", "/api/v1/transparency/entries",
                 "_sth_statement", "signature_over_message", "AnchorBatch"):
@@ -10883,7 +10987,7 @@ def check_canonical_equivalence(root: pathlib.Path) -> list[Finding]:
     The runtime oracle (polaris_web/test_canonical_equivalence.py, Hypothesis) proves byte
     equality over generated inputs; this check pins the key lists and the CI wiring so the
     two can never drift unnoticed."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     v = _read(root, _VERIFIER_REL)
     if not app or not v:
         return _fail("canonical_equivalence", "app.py or scripts/polaris-verify.py is missing")
@@ -10974,7 +11078,7 @@ def check_epoch_revocation_propagation(root: pathlib.Path) -> list[Finding]:
     leaves it issued, monotone because RevocationList is append-only, so a ROLLBACK is
     caught). A foreign credential is rejected offline when it is revoked in the issuer's
     authentic feed -- revocation crosses the authority boundary with no issuer contact."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym in ("/api/v1/epoch-checkpoint", "/api/v1/revocation-feed",
                 "_epoch_checkpoint_statement", "_revocation_feed_statement"):
         if sym not in app:
@@ -11036,7 +11140,7 @@ def check_federation_status_bundle(root: pathlib.Path) -> list[Finding]:
     signature, the member set is committed so it cannot be tampered, and an omitted authority
     is fail-closed (not verifiable). The aggregator adds availability, not trust -- it cannot
     forge a member's status."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym in ("/api/v1/federation-status-bundle", "_status_bundle_statement",
                 "_bundle_members_root", "_STATUS_BUNDLE_FORMAT"):
         if sym not in app:
@@ -11191,7 +11295,7 @@ def check_holder_side_prover(root: pathlib.Path) -> list[Finding]:
     The check requires the set to be published, signed, bounded, and checkable with SHA3-256
     alone: a verifier that needed the Poseidon proving library to check the set would not be
     standalone, and the SDKs an outsider installs could not do it at all."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "_epoch_leaves_statement" not in app or "api_v1_epoch_leaves" not in app:
         return _fail("holder_side_prover",
                      "the authority must publish the epoch's leaf set, signed (_epoch_leaves_statement, "
@@ -11265,7 +11369,7 @@ def check_holder_key_binding(root: pathlib.Path) -> list[Finding]:
                      "would let an operator replace the holder's key")
     if "'holderkeyevent'" not in _read(root, "polaris_sql/09_grants.sql"):
         return _fail("holder_key", "polaris_app must lose UPDATE/DELETE on holderkeyevent (the privilege boundary)")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for needed, why in (("_holder_binding_statement", "the issuer must sign a holder key binding"),
                         ("_holder_proof_statement", "the app must build the holder proof's canonical bytes"),
                         ("api_v1_holder_key_bind", "a holder must be able to bind, rotate and revoke a key"),
@@ -11351,7 +11455,7 @@ def check_attestation_signed(root: pathlib.Path) -> list[Finding]:
         return _fail("attestation_signed",
                      "enforce_attestation_immutability must refuse a replaced attestation signature; a signature "
                      "that can be rewritten proves nothing the operator's word did not already prove")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "_attestation_statement" not in app or "_sign_attestation" not in app:
         return _fail("attestation_signed",
                      "the app must build the canonical attestation statement and sign the edge at the ceremony "
@@ -11437,7 +11541,13 @@ def check_ship_tool(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "the ship tool does not run: %s: %s" % (type(e).__name__, e))
     if cr != ["/a"] or dr != {"d.py": ["/b/<int:i>"]}:
         return _fail(name, "changed_routes must flag the route that calls a changed helper and drills_for_routes must match a parameterised path (got %r, %r)" % (cr, dr))
-    if len(ver) != 1 or "custody" not in ver[0]["why"] or not any("verifier-fuzz" in x for x in ver[0]["run"]):
+    # The property is SELECTION, not a count: a change to custody.py needs the signing
+    # verification, and since 2026-09-18 it also needs the move drill, because any
+    # application module moving is exactly what that drill exists to notice. Asserting
+    # len(ver) == 1 pinned the plan's size rather than its judgement, and went stale the
+    # first time a second entry was correctly added.
+    signing = [v for v in ver if "custody" in v["why"]]
+    if not signing or not any("verifier-fuzz" in x for x in signing[0]["run"]):
         return _fail(name, "verification_for must select the signing verification for polaris_web/custody.py and nothing for a document (got %r)" % (ver,))
     if flake != "flake" or real != "investigate" or gone != "upstream":
         return _fail(name, "classify_failure_log must call the apt index hash mismatch a flake, an "
@@ -11475,7 +11585,7 @@ def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
     if not (root / "polaris_sql" / "migrations" / "2026-09-09-007-timestamp-log.up.sql").is_file() \
             or not (root / "polaris_sql" / "migrations" / "2026-09-09-007-timestamp-log.down.sql").is_file():
         return _fail("timestamp_transparency", "the timestamp log must ship as a reversible migration (007)")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym in ("_TIMESTAMP_LOG_ID = 'polaris-timestamp-log'", "def _anchor_timestamp", "if body.get('anchor') is True:",
                 "/api/v1/timestamp/inclusion/<timestamp_hash>", "/api/v1/transparency/timestamps/sth",
                 "'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID, _TIMESTAMP_LOG_ID]", "fields.get('anchor_timestamp') is True"):
@@ -11584,7 +11694,7 @@ def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
     if not (root / "polaris_sql" / "migrations" / "2026-09-09-006-relying-party-policy.up.sql").is_file() \
             or not (root / "polaris_sql" / "migrations" / "2026-09-09-006-relying-party-policy.down.sql").is_file():
         return _fail("broker_policy_bound", "the policy columns must ship as a reversible migration (006)")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym in ("rp['required_context_id'] is not None and context_id != int(rp['required_context_id'])",
                 "required = rp['required_enrollment'] or body.get('required_enrollment')",
                 "if rp['require_zk'] or body.get('require_zk'):", "policy_violation"):
@@ -11651,7 +11761,7 @@ def check_ltv_timestamp_trust(root: pathlib.Path) -> list[Finding]:
     for mod in _VERIFIER_FORBIDDEN_IMPORTS:
         if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
             return _fail("ltv_timestamp_trust", f"the offline verifier imports {mod!r}; it must stay standalone")
-    if "timestamp_agency_id" not in _read(root, "polaris_web/app.py"):
+    if "timestamp_agency_id" not in _read_app(root):
         return _fail("ltv_timestamp_trust", "the signing route must let an operator take the timestamp from another federated agency")
     drill = _read(root, "scripts/polaris-document-signing-drill.py")
     for sym in ("SELF-issued timestamp", "does NOT trust", "without trusted timestamp-authority anchors"):
@@ -11676,7 +11786,7 @@ def check_exchange_trust_directional(root: pathlib.Path) -> list[Finding]:
     exactly as a relying party trusts only the manifests it chose. Pinned in the query, proven
     by a three-authority test and drilled over HTTP across two instances. A receipt is stated
     for what it is: the responder's signed attestation; the envelope proves the requester."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     m = re.search(r"def _exchange_attestation\(responder_agency_id, req_key, context_id\):(.*?)\n\n\n", app, re.S)
     if not m or "att.attesting_agency_id = %s" not in m.group(1):
         return _fail("exchange_trust_directional", "_exchange_attestation must take the responder agency and constrain attesting_agency_id to it")
@@ -11709,7 +11819,7 @@ def check_protocol_versioning(root: pathlib.Path) -> list[Finding]:
     FROZEN (cases, vectors, and a pinned older verifier) under SHA256SUMS this check recomputes,
     and the compatibility suite proves both directions in CI: the current verifiers hold every
     frozen case and the pinned older verifier never accepts what the current suite rejects."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym in ("_PROTOCOL_MINORS", "def _protocol_versions", "'versions': _protocol_versions()", "def _format_check",
                 "unsupported_format_version", "advertised_in="):
         if sym not in app:
@@ -11787,7 +11897,7 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
             return _fail("algorithm_agility", "polaris_web/pqc_signing.py must be algorithm-agile (%s missing)" % sym)
     if "_oqs.Signature(_ALG_NAME)" in pq:
         return _fail("algorithm_agility", "pqc_signing.py still signs or verifies under a hardcoded parameter set")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "'algorithm': 'ML-DSA-65'" in app:
         return _fail("algorithm_agility", "polaris_web/app.py hardcodes a signed body's algorithm; the signing key decides it (C7)")
     for sym in ("def _signing_algorithm", "def _algorithm_of_key", "'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS)",
@@ -11860,7 +11970,7 @@ def check_trust_lifecycle(root: pathlib.Path) -> list[Finding]:
         return _fail("trust_lifecycle", "03_view.sql must derive AuthorityKeyCurrent (compromised over retired over active)")
     if "trg_authority_key_event_append_only" not in _read(root, "polaris_sql/06_triggers.sql") or "authoritykeyevent" not in _read(root, "polaris_sql/09_grants.sql").lower():
         return _fail("trust_lifecycle", "the key register must be append-only by trigger and by privilege")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym, why in (("/api/v1/trust-list/<int:agency_id>", "the trust-list route"),
                      ("_trust_list_statement", "the statement builder"),
                      ("polaris-trust-list/1", "the format"),
@@ -11961,7 +12071,7 @@ def check_auth_broker(root: pathlib.Path) -> list[Finding]:
     with the vocation's guards pinned: the subject is derived PER RELYING PARTY (P9.4), the only
     write is the consumed code's hash (no record of who authenticated where), and a verify bearer
     cannot reach the broker (a running AC-6 adversary)."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym, why in (("/api/v1/auth/authorize", "the holder-side authorize route"),
                      ("/api/v1/auth/token", "the RP-side token route"),
                      ("_id_token_statement", "the ID token statement builder"),
@@ -12038,7 +12148,7 @@ def check_document_signing(root: pathlib.Path) -> list[Finding]:
     retirement. Pins the routes, the digest-only and hash-only rules, possession auth, the
     ACTIVE requirement, the evidence, the offline verifier, the wallet path, the oracle, spec,
     conformance in both SDKs, the fuzzer, the drill, and the two-instance HTTP proof."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym, why in (("/api/v1/sign/<int:agency_id>", "the operator signing route"),
                      ("/api/v1/sign/<int:agency_id>/holder", "the holder-authorized route"),
                      ("_signed_document_statement", "the statement builder"),
@@ -12102,7 +12212,7 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
     persisted), the client-side envelope builder in the detached verifier (oracle-pinned), the
     third-party evidence chain, the replay register's schema, the wire spec, conformance in
     both SDKs, the fuzzer, the registry advertising the gateway, and the two-instance drill."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym, why in (("/api/v1/exchange/<int:target_agency_id>", "the gateway route"),
                      ("_exchange_request_statement", "the envelope statement builder"),
                      ("polaris-exchange-request/1", "the envelope format"),
@@ -12169,7 +12279,7 @@ def check_registry(root: pathlib.Path) -> list[Finding]:
     views, signed by a publisher that must list itself, verified offline, and used for
     DISCOVERY: the two-instance drill drives a call from a path it read out of the registry.
     The advertised formats are pinned to the wire spec's list."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym, why in (("/api/v1/registry/<int:agency_id>", "the registry route"),
                      ("_registry_statement", "the statement builder"),
                      ("polaris-registry/1", "the format"),
@@ -12242,7 +12352,7 @@ def check_receipt_transparency(root: pathlib.Path) -> list[Finding]:
     downs = list(mig.glob("*exchange-receipt-log.down.sql")) if mig.is_dir() else []
     if not ups or not downs:
         return _fail("receipt_transparency", "a reversible migration pair must bring a deployed database the receipt log")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym, why in (("_RECEIPT_LOG_ID", "the receipt log id"),
                      ("/api/v1/transparency/receipts/sth", "the receipt log's signed head"),
                      ("/api/v1/transparency/receipts/consistency", "consistency proofs over the receipt log"),
@@ -12279,7 +12389,7 @@ def check_timestamp_authority(root: pathlib.Path) -> list[Finding]:
     nothing), verified offline, and held to the full machinery: the canonical oracle, the wire
     spec, conformance in BOTH SDKs, the metamorphic fuzzer, and a real-ML-DSA drill in CI. The
     time primitive document signing builds on; independent time evidence for any artifact."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym, why in (("/api/v1/timestamp/<int:agency_id>", "the timestamp route"),
                      ("_timestamp_statement", "the statement builder"),
                      ("polaris-timestamp/1", "the format"),
@@ -12326,7 +12436,7 @@ def check_exchange_mint_signed_auth(root: pathlib.Path) -> list[Finding]:
     replay to an identical receipt, the per-responder rate bound, the client-side canonical
     builder in the detached verifier (held byte-equal by the oracle), the wire spec, the
     HTTP proof in the two-instance drill, and the fail-closed unit test."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym, why in (("/api/v1/exchange-receipt/<int:agency_id>/signed", "the signed mint route"),
                      ("_exchange_mint_statement", "the mint statement builder"),
                      ("polaris-exchange-mint/1", "the mint format"),
@@ -12454,7 +12564,7 @@ def check_exchange_receipt(root: pathlib.Path) -> list[Finding]:
     for mod in _VERIFIER_FORBIDDEN_IMPORTS:
         if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", v, re.M):
             return _fail("exchange_receipt", f"the offline verifier imports {mod!r}; it must stay standalone")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for sym in ("/api/v1/exchange-receipt", "_exchange_receipt_statement", "AgencyTrustAttestation",
                 "signature_over_message"):
         if sym not in app:
@@ -12489,7 +12599,7 @@ def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
     cross-authority trust OFFLINE from published manifests, with no central service.
     A foreign credential is accepted iff a TRUSTED authority ATTESTS to its key in the
     presented context: trust flows along published attestation edges, never a closure."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "/api/v1/federation-manifest" not in app or "_manifest_statement" not in app:
         return _fail("inter_authority", "app.py must publish GET /api/v1/federation-manifest signing a canonical manifest")
     if "signature_over_message" not in app or "attestations" not in app or "anchors" not in app:
@@ -12564,7 +12674,7 @@ def check_federation_topology(root: pathlib.Path) -> list[Finding]:
     # Kept honest against the code: every architectural primitive the ADR cites must
     # actually exist, so a central-instance drift would fail this check.
     schema = _read(root, "polaris_sql/01_schema.sql")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     bindings = [
         ("AgencyTrustAttestation" in adr and "AgencyTrustAttestation" in schema,
          "explicit attestation (AgencyTrustAttestation) cited by the ADR and present in the schema"),
@@ -12596,11 +12706,14 @@ def check_offline_verification(root: pathlib.Path) -> list[Finding]:
     verifier decides the whole holder<->verifier flow offline -- the credential's
     authenticity AND a fresh, bound, ACTIVE assertion -- with a freshness/replay
     bound (expiry + a window ceiling) and no issuer contact. Runs every release."""
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "/api/v1/status-assertion" not in app or "_status_assertion_statement" not in app:
         return _fail("offline_verification",
                      "app.py must expose POST /api/v1/status-assertion signing a canonical status statement")
-    if "signature_over_message" not in app or "expires_at" not in app:
+    # The qualified CALL, not the bare name: the name alone is satisfied by the DEFINITION
+    # in pqc_signing.py, which is in the package this now reads. A check for "somebody
+    # defines this" is not a check that the route uses it (2026-09-18).
+    if "pqc_signing.signature_over_message" not in app or "expires_at" not in app:
         return _fail("offline_verification",
                      "the status assertion must be issuer-SIGNED (signature_over_message) and SHORT-LIVED (expires_at)")
     if "def signature_over_message" not in _read(root, "polaris_web/pqc_signing.py"):
@@ -12931,7 +13044,7 @@ def check_relying_party_api(root: pathlib.Path) -> list[Finding]:
                          "polaris_web/rp_auth.py must sign/validate a verify-scoped bearer with a salt distinct from "
                          "the session cookie (%s missing)" % sym)
     # 3. The two versioned routes, client-credentials, and the anti-enumeration core.
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "/api/v1/oauth/token" not in app or "/api/v1/verify" not in app:
         return _fail("relying_party_api", "app.py must expose POST /api/v1/oauth/token and POST /api/v1/verify")
     if "client_credentials" not in app or "invalid_client" not in app:
@@ -13033,7 +13146,7 @@ def check_federation_in_app(root: pathlib.Path) -> list[Finding]:
         return _fail("federation_in_app",
                      "pqc_signing.signature_with_key_for_token must accept agency_id so issuance signs with the "
                      "issuing agency's key")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "signature_with_key_for_token(" not in app or "agency_id=" not in app:
         return _fail("federation_in_app",
                      "uc1_issue must sign with the issuing agency's key (signature_with_key_for_token(..., agency_id=...))")
@@ -13366,7 +13479,7 @@ def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
     zero-knowledge form, whose handle is P9.3's scoped nullifier. A verifier that reported
     only the good word would be lying by omission about the common case."""
     name = "pairwise_presentation"
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "def _pairwise_subject" not in app:
         return _fail(name, "polaris_web/app.py must derive the login subject per relying party "
                            "(_pairwise_subject)")
@@ -13529,7 +13642,7 @@ def check_agent_grant(root: pathlib.Path) -> list[Finding]:
                      "one silently turns a bounded grant into an unbounded one")
 
     # The app builds the same bytes, and the oracle pins the pair.
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for needed in ("_agent_grant_statement", "_grant_revocation_statement", "_agent_proof_statement"):
         if f"def {needed}" not in app:
             return _fail(name, f"polaris_web/app.py must build the identical bytes ({needed})")
@@ -13667,7 +13780,7 @@ def check_epoch_pipeline_scale(root: pathlib.Path) -> list[Finding]:
                      "sixteen million entries of pure-Python Poseidon and it will simply not run")
 
     # NO STORED PATH.
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     close = app.split("def api_zk_epoch_close")[-1].split("\n@app.route")[0] if "def api_zk_epoch_close" in app else app
     if "'proof_path'" in close:
         return _fail(name,
@@ -13740,7 +13853,7 @@ def check_status_distribution(root: pathlib.Path) -> list[Finding]:
     halves are pinned: the per-holder artifacts must be `no-store`, and must never be marked
     public."""
     name = "status_distribution"
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     for needed, why in (("def _artifact_max_age", "the remaining life of an artifact's own window"),
                         ("def _public_artifact", "the cacheable form"),
                         ("def _private_artifact", "the never-cached form")):
@@ -14287,7 +14400,7 @@ def check_csrf_exemptions_do_not_trust_the_session(root: pathlib.Path) -> list[F
     allowed, because /login reads it to redirect somebody who is already signed in, which is a
     question rather than an authority."""
     name = "csrf_exemptions"
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     suite = _read(root, "polaris_web/test_app.py")
     sec = _read(root, "polaris_web/security.py")
     if not app or not suite:
@@ -14309,10 +14422,24 @@ def check_csrf_exemptions_do_not_trust_the_session(root: pathlib.Path) -> list[F
     if len(exempt_paths) < 10:
         problems.append(f"only {len(exempt_paths)} exemptions were parsed; the parse has broken "
                         "and this check is passing by finding nothing")
-    try:
-        tree = ast.parse(app)
-    except SyntaxError as exc:
-        return _fail(name, f"polaris_web/app.py does not parse: {exc}")
+    # Per module, raw. A route may be declared in any application module once app.py is
+    # split, and the joined text does not parse. See _app_modules.
+    nodes = []
+    for _m, _s in _app_modules(root):
+        try:
+            nodes.extend(ast.parse(_s).body)
+        except SyntaxError as exc:
+            return _fail(name, f"polaris_web/{_m} does not parse: {exc}")
+    tree = ast.Module(body=nodes, type_ignores=[])
+    # Vacuity: with no routes the loop below finds nothing to distrust and the check
+    # passes, which is a clean bill of health over an application that does not exist.
+    # Naming a path used to make that impossible by accident; reading the package makes it
+    # possible, so it is refused on purpose (2026-09-18).
+    if not any(isinstance(n, ast.FunctionDef)
+               and any("app.route" in ast.unparse(d) for d in n.decorator_list)
+               for n in ast.walk(tree)):
+        return _fail(name, "no @app.route views were parsed out of polaris_web/; this check "
+                           "would report every exemption safe by finding no views at all")
     authority = re.compile(r"session\.get\('(?:role|user_id|username)'\)")
     trusting = []
     for node in ast.walk(tree):
@@ -15897,7 +16024,7 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     name = "audited_reads_are_logged"
     sec = _read(root, "polaris_web/security.py")
     proc = _read(root, "polaris_sql/05_procedures.sql")
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if not sec or not proc or not app:
         return _fail(name, "security.py, 05_procedures.sql and app.py must all be present")
 
@@ -17915,7 +18042,7 @@ def check_per_authority_isolation(root: pathlib.Path) -> list[Finding]:
                          "column with itself when the setting is absent; a policy that hid rows "
                          "from an unbound caller would be a silent behaviour change")
 
-    app = _read(root, "polaris_web/app.py")
+    app = _read_app(root)
     if "def _apply_operator_scope" not in app:
         return _fail(name, "the app must tell the database which authority is asking")
     get_db = app.split("def get_db")[1].split("\ndef _apply_operator_scope")[0]
@@ -18779,6 +18906,73 @@ def _hollow_tree(root: pathlib.Path, dest: pathlib.Path) -> int:
     return n
 
 
+#: Checks that read `polaris_web/app.py` BY PATH, and why each one's property really is
+#: about that file rather than about the application. Both of these make a DIFFERENTIAL
+#: assertion across modules -- a guard defined in one file and used from another -- which a
+#: package read flattens into one text where "defined" and "used" are indistinguishable.
+_APP_PATH_READERS = {
+    "check_correlation_id":
+        "asserts the id core lives in observability.py and that app.py and security.py USE "
+        "it; joined text cannot tell a definition from a call",
+    "check_open_redirect_guard":
+        "asserts the naive startswith('//') guard is absent from the CALLERS while "
+        "is_safe_next_url in security.py legitimately contains it",
+}
+
+
+def check_checks_do_not_grep_one_module(root: pathlib.Path) -> list[Finding]:
+    """A check's reach must be the application, not a path inside it.
+
+    77 checks named `polaris_web/app.py` on 2026-09-18. That makes a check's REACH a file
+    while its SENTENCE is about the application, and the two differ the moment the file is
+    split: the mechanism moves, the check keeps reading where it used to be, and passes.
+    `polaris-move-mutation-drill.py` measured it before the fix and 3 of 3 violations went
+    undetected one file over.
+
+    They now go through `_read_app`, which reads every non-test module in the package, so a
+    mechanism can live anywhere in it. This keeps that true. A check may still name the path
+    when its property genuinely IS about that file, and then it says so here: an entry is a
+    written reason, not an exemption.
+    """
+    name = "checks_reach_the_package"
+    src = _read_raw(root, "polaris_checks/checks.py")
+    if not src:
+        return _fail(name, "polaris_checks/checks.py could not be read")
+
+    parts = re.split(r"\ndef (check_\w+)", src)
+    if len(parts) < 20:
+        return _fail(name, "only %d check function(s) were parsed out of checks.py; the "
+                           "split has broken and this check is passing by finding nothing"
+                           % (len(parts) // 2))
+    offenders, declared = [], 0
+    for i in range(1, len(parts), 2):
+        fname, body = parts[i], parts[i + 1]
+        if fname == "check_checks_do_not_grep_one_module":
+            continue          # it necessarily quotes the idiom it forbids, in order to find it
+        if '_read(root, "polaris_web/app.py")' not in body:
+            continue
+        if fname in _APP_PATH_READERS:
+            declared += 1
+        else:
+            offenders.append(fname)
+    if offenders:
+        return _fail(name, "%d check(s) read polaris_web/app.py by path with no reason "
+                           "recorded in _APP_PATH_READERS: %s. Use _read_app(root), which "
+                           "reads the whole package, so the check follows the mechanism when "
+                           "app.py is split. If the property really is about that one file, "
+                           "add the entry and say why"
+                           % (len(offenders), ", ".join(sorted(offenders))))
+    stale = [k for k in _APP_PATH_READERS
+             if ('\ndef %s' % k) not in src]
+    if stale:
+        return _fail(name, "_APP_PATH_READERS names %s, which checks.py no longer defines; "
+                           "the entry excuses a check that is gone" % ", ".join(sorted(stale)))
+    return _ok(name, "every check reaches the application through _read_app rather than "
+                     "naming a module inside it, except %d that make a cross-module "
+                     "assertion and record why; so a mechanism moving between modules of "
+                     "polaris_web cannot go unnoticed (proven by the move drill)" % declared)
+
+
 def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
     """No check may report OK over a tree that contains nothing.
 
@@ -18835,6 +19029,7 @@ def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_no_vacuous_checks,
+    check_checks_do_not_grep_one_module,
     check_drills_count_their_cases,
     check_internal_kex_measured,
     check_detection_tests_have_a_positive_control,

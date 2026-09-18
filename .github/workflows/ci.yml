@@ -383,6 +383,16 @@ jobs:
       - name: Coverage — no surface can grow past the check that quantifies over it
         run: python scripts/polaris-coverage-mutation-drill.py
 
+      # 2026-09-18 — the third question, and the one the other two cannot ask. They hold the
+      # mechanism's FILE fixed: one deletes it in place, one adds a bad member beside it.
+      # A mechanism that MOVES to a file the check does not read is invisible to both, and
+      # 77 checks named polaris_web/app.py by path while app.py is 9,370 lines and headed
+      # for a split. This writes a violation the coverage drill proves is caught in app.py
+      # into a NEW sibling module instead, and requires the same check to still catch it.
+      # Measured before the fix: 3 of 3 went blind. No database.
+      - name: Moved code — a check must follow the mechanism, not the path
+        run: python scripts/polaris-move-mutation-drill.py
+
       # v9.388 (P1.18 item 8) — the external-review packet, RE-CHECKED IN BOTH DIRECTIONS.
       # Every citation resolves and every cited check runs, which is the discipline the 800-63
       # mapping already uses. The new half is the limitations: each carries a WITNESS, a file

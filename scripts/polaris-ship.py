@@ -84,6 +84,11 @@ VERIFICATION = [
      r"|^deploy/observability/polaris-alerts\.yml$|^docs/design/",
      ["python3 scripts/polaris-coverage-mutation-drill.py"],
      "a surface a check quantifies over, or a check that quantifies, moved"),
+    # Keyed on the application package and on checks.py: either a module moved, or the
+    # thing that has to follow it did.
+    (r"^polaris_web/[^/]+\.py$|^polaris_checks/checks\.py$",
+     ["python3 scripts/polaris-move-mutation-drill.py"],
+     "an application module or the check layer that reads it moved"),
     (r"^scripts/polaris-.*drill\.(py|sh)$", ["the changed drill itself"], "a drill moved"),
     (r"^deploy/|^polaris_web/Dockerfile|^\.github/workflows/", ["the deploy jobs in CI (helm, rolling, failover drills); nothing runs locally"], "deployment moved"),
 ]

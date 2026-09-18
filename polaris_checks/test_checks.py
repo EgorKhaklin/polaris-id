@@ -16247,3 +16247,61 @@ def test_aor_surface_derived_check_discriminates(tmp_path):
         checks._GUARDED_NOT_AN_INSTANCE.clear()
         checks._GUARDED_NOT_AN_INSTANCE.update(original)
         checks._AOR_TABLES = original_tables
+
+
+def test_checks_reach_the_package_check_discriminates(tmp_path):
+    """A check that greps one module, undeclared, must fail; a declared one must not.
+
+    The defect this guards (2026-09-18): 77 checks named polaris_web/app.py by path, so
+    their reach was a file while their sentence was about the application. A decomposition
+    would have left them reading where the code no longer is, passing in silence.
+    """
+    HEAD = "CHECKS = []\n\n"
+
+    def body(reads_path, fname="check_thing"):
+        call = ('_read(root, "polaris_web/app.py")' if reads_path else "_read_app(root)")
+        return "\ndef %s(root):\n    app = %s\n    return []\n" % (fname, call)
+
+    # Enough check functions to clear the parser's anti-vacuity floor.
+    FILLER = "".join(body(False, "check_filler%d" % i) for i in range(12))
+
+    def write(text):
+        d = tmp_path / "polaris_checks"; d.mkdir(parents=True, exist_ok=True)
+        (d / "checks.py").write_text(text)
+
+    original = dict(checks._APP_PATH_READERS)
+    try:
+        checks._APP_PATH_READERS.clear()
+
+        write(HEAD + FILLER + body(False))
+        assert checks.check_checks_do_not_grep_one_module(tmp_path)[0].level == "OK", \
+            "must PASS when every check goes through _read_app"
+
+        # THE defect: a check greps one module and nobody recorded why.
+        write(HEAD + FILLER + body(True))
+        out = checks.check_checks_do_not_grep_one_module(tmp_path)
+        assert out[0].level == "FAIL" and "check_thing" in out[0].message, \
+            "must FAIL on an undeclared check that reads app.py by path"
+
+        # Declared with a reason: allowed, because some properties really are about one file.
+        checks._APP_PATH_READERS["check_thing"] = "a cross-module assertion"
+        assert checks.check_checks_do_not_grep_one_module(tmp_path)[0].level == "OK", \
+            "must PASS once the reason is recorded"
+
+        # A declaration must not outlive the check it excuses. The fixture stops DEFINING
+        # check_thing at all, which is what "gone" means; rewriting it to use _read_app
+        # would leave the function present and the entry merely unnecessary.
+        write(HEAD + FILLER)
+        out = checks.check_checks_do_not_grep_one_module(tmp_path)
+        assert out[0].level == "FAIL" and "check_thing" in out[0].message, \
+            "must FAIL on a stale entry naming a check that is gone"
+
+        # Anti-vacuity: a broken parse must fail rather than find no checks and pass.
+        checks._APP_PATH_READERS.clear()
+        write("nothing that looks like a check at all\n")
+        out = checks.check_checks_do_not_grep_one_module(tmp_path)
+        assert out[0].level == "FAIL" and "passing by finding nothing" in out[0].message, \
+            "must FAIL rather than pass when the split finds almost no checks"
+    finally:
+        checks._APP_PATH_READERS.clear()
+        checks._APP_PATH_READERS.update(original)
