@@ -107,6 +107,30 @@ def api_moved_drill_json():
 '''
 
 
+_CLOCK = '''
+import datetime
+
+
+def _moved_drill_boundary():
+    """A UTC clock read, in a sibling module.
+
+    The DB stores local-wall-clock TIMESTAMPs, so comparing against utcnow() is off by the
+    offset. check_local_clock_convention is an ABSENCE check, which is the opposite shape
+    from the three above: widening makes an absence check STRICTER, so this is the case
+    that proves the widening did not simply loosen everything."""
+    return datetime.datetime.utcnow()
+'''
+
+_UNDOCUMENTED = '''
+
+@app.route('/api/v1/moved-drill-undocumented')
+@login_required
+def api_moved_drill_undocumented():
+    """An /api route with no heading in the API reference, in a sibling module."""
+    return jsonify({'ok': True})
+'''
+
+
 #: (expected check, what moved, module name, payload).
 #: Every payload is one the coverage drill catches in app.py. If a case survives here, the
 #: difference is the FILE and nothing else, which is the whole measurement.
@@ -117,6 +141,14 @@ MOVES = [
      "event_queries_moved", _LOCATION),
     ("json_body_object", "a raw JSON body moves to a sibling module",
      "api_routes_moved", _JSON),
+    # Deliberately different check SHAPES, so the drill is not three tests of one parser:
+    # c8 slices route bodies by line, c6 walks parsed string constants, json_body_object
+    # walks a syntax tree, local_clock is a plain substring ABSENCE, and
+    # api_routes_documented discovers routes and cross-references a document.
+    ("local_clock", "a utcnow() boundary moves to a sibling module",
+     "clock_helpers_moved", _CLOCK),
+    ("api_routes_documented", "an undocumented /api route moves to a sibling module",
+     "public_api_moved", _UNDOCUMENTED),
 ]
 
 

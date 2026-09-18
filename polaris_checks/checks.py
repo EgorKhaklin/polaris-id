@@ -325,7 +325,7 @@ def check_json_body_must_be_an_object(root: pathlib.Path) -> list[Finding]:
     name = "json_body_object"
     app = _read_app(root)
     if not app:
-        return _fail(name, "polaris_web/app.py could not be read")
+        return _fail(name, "polaris_web/ could not be read")
     if "def _json_object(" not in app:
         return _fail(name, "_json_object() is gone: the helper that answers an empty object "
                            "for a JSON body that is not one no longer exists")
@@ -386,7 +386,7 @@ def check_rate_limits_are_enforced(root: pathlib.Path) -> list[Finding]:
     name = "rate_limits"
     app = _read_app(root)
     if not app:
-        return _fail(name, "polaris_web/app.py could not be read")
+        return _fail(name, "polaris_web/ could not be read")
 
     missing, unguarded = [], []
     for prefix, what in _RATE_LIMITED_ROUTES:
@@ -412,7 +412,7 @@ def check_rate_limits_are_enforced(root: pathlib.Path) -> list[Finding]:
             unguarded.append("%s (%s)" % (prefix, what))
 
     if missing:
-        return _fail(name, "%d rate limiter(s) named here are not installed in app.py: %s. "
+        return _fail(name, "%d rate limiter(s) named here are not installed in the application: %s. "
                            "Either the route lost its limiter or this list is stale; both are "
                            "findings." % (len(missing), ", ".join(missing)))
     if unguarded:
@@ -447,7 +447,7 @@ def check_json_door_refuses_non_finite(root: pathlib.Path) -> list[Finding]:
     name = "json_door"
     src = _read_app(root)
     if not src:
-        return _fail(name, "polaris_web/app.py could not be read")
+        return _fail(name, "polaris_web/ could not be read")
     m = re.search(r"class\s+(\w+)\(DefaultJSONProvider\):(.*?)(?=\napp\.json\s*=)", src, re.S)
     if not m:
         return _fail(name, "no DefaultJSONProvider subclass precedes the app.json assignment in "
@@ -653,7 +653,7 @@ def check_crypto_algorithm_is_data(root: pathlib.Path) -> list[Finding]:
 
     app = _read_app(root)
     if not app:
-        return _fail("c7_crypto_data", "polaris_web/app.py could not be read (C7)")
+        return _fail("c7_crypto_data", "polaris_web/ could not be read (C7)")
     if not re.search(r"(?:FROM|JOIN)\s+CryptographicAlgorithm\b", app, re.I):
         return _fail("c7_crypto_data",
                      "the app never SELECTs from CryptographicAlgorithm. The table exists and "
@@ -696,9 +696,9 @@ def check_no_fk_cascade(root: pathlib.Path) -> list[Finding]:
 def check_version_is_canonical(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if not app:
-        return _fail("version_canonical", "polaris_web/app.py is missing or empty")
+        return _fail("version_canonical", "polaris_web/ is missing or empty")
     if re.search(r"from\s+__version__\s+import|import\s+__version__", app):
-        return _ok("version_canonical", "app.py imports the canonical __version__")
+        return _ok("version_canonical", "the application imports the canonical __version__")
     if re.search(r"POLARIS_VERSION\s*=\s*['\"]", app):
         return _fail("version_canonical", "app.py redefines POLARIS_VERSION instead of importing __version__")
     # Neither importing nor redefining is not a clean tree: app.py USES POLARIS_VERSION, so
@@ -862,13 +862,13 @@ def check_pqc_signing_wired(root: pathlib.Path) -> list[Finding]:
                      "supplies the issuance signature (it is a hardcoded SQL string otherwise)")
     app = _read_app(root)
     if "import pqc_signing" not in app:
-        return _fail("pqc_wired", "app.py does not import pqc_signing")
+        return _fail("pqc_wired", "the application does not import pqc_signing")
     # Issuance must route through the signing module — either the 2-tuple
     # signature_bytes_for_token or the 3-tuple signature_with_key_for_token
     # (v9.117, which also surfaces the public key to store with the signature).
     if not re.search(r"pqc_signing\.signature_(bytes_for_token|with_key_for_token)", app):
         return _fail("pqc_wired",
-                     "app.py does not call pqc_signing.signature_bytes_for_token / "
+                     "the application does not call pqc_signing.signature_bytes_for_token / "
                      "signature_with_key_for_token; the issuance signature would bypass the "
                      "signing module")
     # v9.119: uc6 algorithm-migration must also route through the signing module,
@@ -919,7 +919,7 @@ def check_pqc_signing_wired(root: pathlib.Path) -> list[Finding]:
                      "certified two-witnessed when only one implementation ran")
     if "/api/tokens/<int:tok_id>/verify" not in app:
         return _fail("pqc_wired",
-                     "app.py must expose the verify-at-use endpoint /api/tokens/<id>/verify (the "
+                     "the application must expose the verify-at-use endpoint /api/tokens/<id>/verify (the "
                      "throughput verification path)")
     verify_ep = app.split("def api_token_verify", 1)
     ep_body = verify_ep[1][:7000] if len(verify_ep) == 2 else ""
@@ -1277,7 +1277,7 @@ def check_prod_real_pqc(root: pathlib.Path) -> list[Finding]:
 def check_sql_console_readonly(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if not app:
-        return _fail("sql_console_ro", "polaris_web/app.py is missing")
+        return _fail("sql_console_ro", "polaris_web/ is missing")
     m = re.search(r"def sql_query\(.*?\n(?=@app\.route|def [a-z])", app, re.S)
     body = m.group(0) if m else ""
     if not body:
@@ -1946,10 +1946,10 @@ def check_prometheus_multiprocess(root: pathlib.Path) -> list[Finding]:
     compose = _read(root, "polaris_web/docker-compose.prod.yml")
     if not app or not gconf or not compose:
         return _fail("prom_multiproc",
-                     "app.py / gunicorn.conf.py / docker-compose.prod.yml is missing")
+                     "polaris_web/, gunicorn.conf.py or docker-compose.prod.yml is missing")
     if "MultiProcessCollector" not in app or "PROMETHEUS_MULTIPROC_DIR" not in app:
         return _fail("prom_multiproc",
-                     "app.py must aggregate /metrics via a MultiProcessCollector when "
+                     "the application must aggregate /metrics via a MultiProcessCollector when "
                      "PROMETHEUS_MULTIPROC_DIR is set (else metrics undercount across workers)")
     if "mark_process_dead" not in gconf or "def child_exit" not in gconf:
         return _fail("prom_multiproc",
@@ -1976,11 +1976,11 @@ def check_prometheus_multiprocess(root: pathlib.Path) -> list[Finding]:
 def check_health_liveness_readiness_split(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if not app:
-        return _fail("health_probes", "polaris_web/app.py is missing")
+        return _fail("health_probes", "polaris_web/ is missing")
     for route in ("/api/health/live", "/api/health/ready"):
         if route not in app:
             return _fail("health_probes",
-                         f"app.py must expose {route} — liveness (cheap, no deps) and readiness "
+                         f"the application must expose {route} — liveness (cheap, no deps) and readiness "
                          "(dependency roll-up) are distinct production probes")
     m = re.search(r"def api_health_live\(.*?\n(?=@app\.route|def [a-z])", app, re.S)
     live_body = m.group(0) if m else ""
@@ -2265,10 +2265,10 @@ def check_duress_alertable(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     alerts = _read(root, "deploy/observability/polaris-alerts.yml")
     if not (app and alerts):
-        return _fail("duress_alert", "app.py or the alerts file is missing")
+        return _fail("duress_alert", "polaris_web/ or the alerts file is missing")
     if "polaris_duress_events_total" not in app:
         return _fail("duress_alert",
-                     "app.py must expose polaris_duress_events_total on /metrics (the duress signal "
+                     "the application must expose polaris_duress_events_total on /metrics (the duress signal "
                      "must be alertable, not only in the JSON /api/metrics)")
     # It must be incremented where the DuressEvent is recorded, or the alert sits
     # on a counter that never moves.
@@ -2298,14 +2298,14 @@ def check_duress_alertable(root: pathlib.Path) -> list[Finding]:
 def check_prod_fail_closed(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if not app:
-        return _fail("prod_fail_closed", "polaris_web/app.py is missing")
+        return _fail("prod_fail_closed", "polaris_web/ is missing")
     if "_PRODUCTION" not in app:
-        return _fail("prod_fail_closed", "app.py must compute a _PRODUCTION flag")
+        return _fail("prod_fail_closed", "the application must compute a _PRODUCTION flag")
     # The DB-TLS guard: POLARIS_DB_SSLMODE tied to a sys.exit, rejecting the
     # plaintext-capable modes.
     if not re.search(r"POLARIS_DB_SSLMODE.{0,500}sys\.exit", app, re.S):
         return _fail("prod_fail_closed",
-                     "app.py must refuse to start in production when POLARIS_DB_SSLMODE permits a "
+                     "the application must refuse to start in production when POLARIS_DB_SSLMODE permits a "
                      "silent plaintext DB hop (a sys.exit guard on prefer/allow/disable)")
     if not re.search(r"prefer", app):
         return _fail("prod_fail_closed",
@@ -2315,13 +2315,13 @@ def check_prod_fail_closed(root: pathlib.Path) -> list[Finding]:
     # connect. The guard must tie POLARIS_DB_SSLROOTCERT to a sys.exit.
     if not re.search(r"POLARIS_DB_SSLROOTCERT.{0,500}sys\.exit", app, re.S):
         return _fail("prod_fail_closed",
-                     "app.py must refuse to start in production when sslmode is verify-ca/verify-full "
+                     "the application must refuse to start in production when sslmode is verify-ca/verify-full "
                      "but POLARIS_DB_SSLROOTCERT is unset/missing (verify-* without a pinned CA cannot "
                      "verify the peer)")
     # The duress-sync guard: POLARIS_DURESS_SYNC tied to a sys.exit.
     if not re.search(r"POLARIS_DURESS_SYNC.{0,500}sys\.exit", app, re.S):
         return _fail("prod_fail_closed",
-                     "app.py must refuse to start in production when POLARIS_DURESS_SYNC=1 (it "
+                     "the application must refuse to start in production when POLARIS_DURESS_SYNC=1 (it "
                      "reintroduces the duress timing side-channel)")
     # v9.277 (PE.4) — the HSM-sole-signer profile. When POLARIS_REQUIRE_HSM_SOLE_SIGNER
     # is set, the app must refuse to boot unless the HSM is the sole signer: the pkcs11
@@ -2329,14 +2329,14 @@ def check_prod_fail_closed(root: pathlib.Path) -> list[Finding]:
     # a flipped driver would use). Both are load-bearing to "the only prod signing path".
     if not re.search(r"POLARIS_REQUIRE_HSM_SOLE_SIGNER.{0,900}sys\.exit", app, re.S):
         return _fail("prod_fail_closed",
-                     "app.py must refuse to start when POLARIS_REQUIRE_HSM_SOLE_SIGNER is set but the HSM is "
+                     "the application must refuse to start when POLARIS_REQUIRE_HSM_SOLE_SIGNER is set but the HSM is "
                      "not the sole signer (a sys.exit guard requiring the pkcs11 driver)")
     if not re.search(r"POLARIS_REQUIRE_HSM_SOLE_SIGNER.{0,900}POLARIS_PQC_SIGNING_KEY_FILE", app, re.S):
         return _fail("prod_fail_closed",
                      "the HSM-sole-signer guard must forbid POLARIS_PQC_SIGNING_KEY_FILE (a latent file-key "
                      "fallback the sole-HSM profile must not carry)")
     return _ok("prod_fail_closed",
-               "app.py fails closed in production on a plaintext-capable POLARIS_DB_SSLMODE and on "
+               "the application fails closed in production on a plaintext-capable POLARIS_DB_SSLMODE and on "
                "POLARIS_DURESS_SYNC=1 (the duress timing side-channel), alongside the default-SECRET_KEY "
                "guard and the HSM-sole-signer profile (POLARIS_REQUIRE_HSM_SOLE_SIGNER)")
 
@@ -2904,7 +2904,7 @@ def check_dockerfile_copies_app_modules(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     web = root / "polaris_web"
     if not app:
-        return _fail("dockerfile_modules", "polaris_web/app.py is missing")
+        return _fail("dockerfile_modules", "polaris_web/ is missing")
     # Local modules = `import X` / `from X import` where polaris_web/X.py exists.
     # Tolerate trailing comments on the import line (the v9.40 miss was a regex
     # that did not).
@@ -3064,7 +3064,7 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
     starts = [(i, m.group(1)) for i, line in enumerate(lines)
               for m in [re.search(r"@app\.route\('(/api/atlas[^']*)'", line)] if m]
     if not starts:
-        return _fail("c8_atlas_caps", "no /api/atlas routes found in app.py, so C8 has "
+        return _fail("c8_atlas_caps", "no /api/atlas routes found in polaris_web/, so C8 has "
                                       "nothing to be true of")
     countish = re.compile(r"request\.args\.get\(\s*['\"](buckets|limit|n|top|max|count|size|per_page)['\"]")
     unclamped = []
@@ -3234,7 +3234,7 @@ def check_cookie_secure_in_production(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     m = re.search(r"SESSION_COOKIE_SECURE'\]\s*=\s*(.+)", app)
     if not m:
-        return _fail("cookie_secure", "app.py does not set SESSION_COOKIE_SECURE")
+        return _fail("cookie_secure", "the application does not set SESSION_COOKIE_SECURE")
     if "_PRODUCTION" not in m.group(1):
         return _fail("cookie_secure",
                      "SESSION_COOKIE_SECURE is opt-in only; force it on in production via _PRODUCTION (CWE-614)")
@@ -3612,7 +3612,7 @@ def check_api_routes_documented(root: pathlib.Path) -> list[Finding]:
     app_src = _read_app(root)
     doc = _read(root, "docs/reference/API.md")
     if not app_src or not doc:
-        return _fail("api_routes_documented", "polaris_web/app.py or docs/reference/API.md is missing")
+        return _fail("api_routes_documented", "polaris_web/ or docs/reference/API.md is missing")
     real = _api_routes_in_app(app_src)
     documented = _api_routes_in_doc(doc)
     if not real:
@@ -3903,13 +3903,13 @@ def check_launcher_refreshes_code(root: pathlib.Path) -> list[Finding]:
 def check_local_clock_convention(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if not app:
-        return _fail("local_clock", "polaris_web/app.py is missing or empty; the clock "
+        return _fail("local_clock", "polaris_web/ is missing or empty; the clock "
                                     "convention has nothing to hold in")
     if "utcnow" in app:
         return _fail("local_clock",
-                     "app.py references utcnow; the DB stores local-wall-clock "
+                     "the application references utcnow; the DB stores local-wall-clock "
                      "TIMESTAMPs, so compare against datetime.now() (see the atlas TZ note)")
-    return _ok("local_clock", "app.py uses local-wall-clock datetime.now() for boundaries, never utcnow()")
+    return _ok("local_clock", "the application uses local-wall-clock datetime.now() for boundaries, never utcnow()")
 
 
 # ---------------------------------------------------------------------------
@@ -3983,7 +3983,7 @@ def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
     name = "c6_app_read_paths"
     app = _read_app(root)
     if not app:
-        return _fail(name, "polaris_web/app.py could not be read")
+        return _fail(name, "polaris_web/ could not be read")
 
     loc = re.compile(r"\b(requestor_location|latitude|longitude)\b", re.I)
     offenders, scanned = [], 0
@@ -4014,7 +4014,7 @@ def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
         offenders.append("%s:%d" % (_mod, _lineno))
 
     if scanned < 3:
-        return _fail(name, "only %d location-reading SELECT(s) found in app.py; the parser and "
+        return _fail(name, "only %d location-reading SELECT(s) found in polaris_web/; the parser and "
                            "the application have drifted, so this check is measuring nothing"
                            % scanned)
     if offenders:
@@ -4074,7 +4074,7 @@ def check_c6_atlas_redacts_zk_location(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if app.count("THEN NULL ELSE ve.requestor_location") < 1:
         return _fail("c6_atlas_zk",
-                     "app.py /verifications must redact requestor_location "
+                     "the application's /verifications must redact requestor_location "
                      "for ZERO_KNOWLEDGE (C6)")
     return _ok("c6_atlas_zk",
                "ZK verification location is excluded/redacted at the atlas + list read paths (C6)")
@@ -5752,7 +5752,7 @@ def check_distributed_tracing(root: pathlib.Path) -> list[Finding]:
         return _fail("distributed_tracing", "observability.structured_log must carry trace_id/span_id via the "
                      "trace-context hook (the log half of the correlation join)")
     if "tracing.init_app(app)" not in ap:
-        return _fail("distributed_tracing", "app.py must wire tracing.init_app(app) at import (Flask 3 accepts "
+        return _fail("distributed_tracing", "the application must wire tracing.init_app(app) at import (Flask 3 accepts "
                      "hooks only before the first request)")
     for pkg in ("opentelemetry-sdk==", "opentelemetry-exporter-otlp-proto-http==",
                 "opentelemetry-instrumentation-psycopg2=="):
@@ -5798,7 +5798,7 @@ def check_distributed_tracing(root: pathlib.Path) -> list[Finding]:
     if "polaris-trace-drill.sh" not in ci:
         return _fail("distributed_tracing", "ci.yml must run scripts/polaris-trace-drill.sh")
     if "DistributedTracingTests" not in tests:
-        return _fail("distributed_tracing", "test_app.py must carry DistributedTracingTests (the DB half: psycopg2 "
+        return _fail("distributed_tracing", "test_the application must carry DistributedTracingTests (the DB half: psycopg2 "
                      "client spans inside the request trace, statement templates only)")
     if "Distributed tracing" not in ops or "docker-compose.observability.yml" not in obs_readme:
         return _fail("distributed_tracing", "the operator docs must cover tracing (OPERATIONS.md) and the "
@@ -5945,9 +5945,9 @@ def check_session_origin_hardening(root: pathlib.Path) -> list[Finding]:
         return _fail("session_hardening", "logout_user() must revoke the registry row")
     app = _read_app(root)
     if "security.validate_session(get_db)" not in app:
-        return _fail("session_hardening", "app.py does not run security.validate_session on every request")
+        return _fail("session_hardening", "the application does not run security.validate_session on every request")
     if "security.validate_role_policies()" not in app or "webauthn_auth.validate_policy()" not in app:
-        return _fail("session_hardening", "app.py must validate the role and WebAuthn policies at boot")
+        return _fail("session_hardening", "the application must validate the role and WebAuthn policies at boot")
     if "AttestationPolicyViolation" not in app:
         return _fail("session_hardening", "the register/finish route does not surface (and audit) policy refusals")
     ups = list((root / "polaris_sql" / "migrations").glob("*-operator-session.up.sql"))
@@ -6439,12 +6439,12 @@ def check_read_replica_routing(root: pathlib.Path) -> list[Finding]:
     the primary; single node is unaffected."""
     app = _read_app(root)
     if not app:
-        return _fail("read_replica", "polaris_web/app.py is missing")
+        return _fail("read_replica", "polaris_web/ is missing")
     for needle in ("DB_CONFIG_REPLICA", "def replica_reads(", "REPLICA_MAX_LAG_S",
                    "def _replica_lag_seconds(", "X-Polaris-Data-Source", "primary-failback",
                    "_METRICS_REPLICA_FAILBACK", "database_replica"):
         if needle not in app:
-            return _fail("read_replica", f"app.py must implement read-replica routing ({needle!r}): a replica config, "
+            return _fail("read_replica", f"the application must implement read-replica routing ({needle!r}): a replica config, "
                          "the @replica_reads decorator, a staleness bound, a failback path, the data-source header, "
                          "the failback metric, and the health component")
     # the read-only surfaces carry the decorator; a correctness path must not
@@ -6661,7 +6661,7 @@ def check_atlas_console(root: pathlib.Path) -> list[Finding]:
                   "/api/atlas/facet/agencies", "/api/atlas/records",
                   "/api/atlas/hexbin", "/api/atlas/geo/jurisdictions"):
         if f"@app.route('{route}')" not in app:
-            return _fail("atlas_console", f"app.py must expose {route}")
+            return _fail("atlas_console", f"the application must expose {route}")
     # both must be replica-read routes (analytical reads, no read-your-writes need)
     seg = app.split("def api_atlas_series", 1)
     if len(seg) == 2:
@@ -6699,7 +6699,7 @@ def check_atlas_console(root: pathlib.Path) -> list[Finding]:
     for route, fn in (("/api/atlas/heatmap", "def api_atlas_heatmap"),
                       ("/api/atlas/stacked", "def api_atlas_stacked")):
         if f"@app.route('{route}')" not in app:
-            return _fail("atlas_console", f"app.py must expose {route} (a Trends endpoint)")
+            return _fail("atlas_console", f"the application must expose {route} (a Trends endpoint)")
         head = app.rsplit(f"@app.route('{route}')", 1)[-1].split(fn, 1)[0]
         if "@replica_reads" not in head:
             return _fail("atlas_console", f"{fn[4:]} must be @replica_reads")
@@ -6776,13 +6776,13 @@ def check_sim_mode_gated(root: pathlib.Path) -> list[Finding]:
     """
     app = _read_app(root)
     if not app:
-        return _fail("sim_gate", "polaris_web/app.py is missing")
+        return _fail("sim_gate", "polaris_web/ is missing")
     if not re.search(r"SIM_MODE\s*=\s*_env_flag\(\s*['\"]POLARIS_SIM_MODE['\"].*\)\s*and\s*not\s*_PRODUCTION", app):
         return _fail("sim_gate", "SIM_MODE must be `_env_flag('POLARIS_SIM_MODE', ...) and not _PRODUCTION` "
                      "so the live-simulation control can never be on under POLARIS_ENV=production")
     tick = app.split("def api_sim_tick", 1)
     if len(tick) != 2:
-        return _fail("sim_gate", "app.py must define the api_sim_tick route (the live-simulation writer)")
+        return _fail("sim_gate", "the application must define the api_sim_tick route (the live-simulation writer)")
     head = tick[1][:600]
     if "if not SIM_MODE" not in head or "abort(404)" not in head:
         return _fail("sim_gate", "api_sim_tick must `abort(404)` when SIM_MODE is off (the route is absent "
@@ -10439,15 +10439,15 @@ def check_dyno_published(root: pathlib.Path) -> list[Finding]:
 def check_real_pqc_default_boot(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if not app:
-        return _fail("real_pqc_default_boot", "polaris_web/app.py is missing")
+        return _fail("real_pqc_default_boot", "polaris_web/ is missing")
     # Production fails closed when real PQC is not available (is_enabled at boot).
     if "pqc_signing.is_enabled()" not in app:
         return _fail("real_pqc_default_boot",
-                     "app.py must check pqc_signing.is_enabled() at boot (real PQC actually available), "
+                     "the application must check pqc_signing.is_enabled() at boot (real PQC actually available), "
                      "not merely trust the flag")
     if not re.search(r"if _PRODUCTION and not _pqc_real:.{0,500}sys\.exit", app, re.S):
         return _fail("real_pqc_default_boot",
-                     "app.py must FAIL CLOSED in production when real ML-DSA-65 signing is unavailable, so a "
+                     "the application must FAIL CLOSED in production when real ML-DSA-65 signing is unavailable, so a "
                      "deployment cannot silently issue placeholder-signed tokens (a sys.exit guard)")
     # The placeholder is a NAMED dev profile that warns when used unnamed, and the
     # boot announces which signing profile is active.
@@ -10457,7 +10457,7 @@ def check_real_pqc_default_boot(root: pathlib.Path) -> list[Finding]:
                      "(POLARIS_PQC_PROFILE=placeholder) that warns loudly when used unnamed")
     if "boot.pqc_profile" not in app:
         return _fail("real_pqc_default_boot",
-                     "app.py must announce the active signing profile at boot (boot.pqc_profile)")
+                     "the application must announce the active signing profile at boot (boot.pqc_profile)")
     # The canonical test/dev paths NAME the placeholder profile (so it is explicit,
     # not the silent default the ship replaced).
     ci = _read(root, ".github/workflows/ci.yml")
@@ -10473,7 +10473,7 @@ def check_real_pqc_default_boot(root: pathlib.Path) -> list[Finding]:
     test = _read(root, "polaris_web/test_app.py")
     if "test_production_refuses_boot_without_real_pqc" not in test:
         return _fail("real_pqc_default_boot",
-                     "test_app.py must exercise the production boot refusal (RealPqcDefaultBootTests)")
+                     "test_the application must exercise the production boot refusal (RealPqcDefaultBootTests)")
     return _ok("real_pqc_default_boot",
                "the default boot is the real motor: production fails closed at boot when real ML-DSA-65 signing "
                "is unavailable, and the placeholder is a named dev profile the canonical paths declare, warning "
@@ -10869,7 +10869,7 @@ def check_transparency_log(root: pathlib.Path) -> list[Finding]:
                 "_sth_statement", "signature_over_message", "AnchorBatch"):
         if sym not in app:
             return _fail("transparency_log",
-                         "app.py must publish the signed transparency log over AnchorBatch (%s missing)" % sym)
+                         "the application must publish the signed transparency log over AnchorBatch (%s missing)" % sym)
     anc = _read(root, "polaris_web/anchoring.py")
     if "log_tree_head" not in anc or "log_consistency_proof" not in anc:
         return _fail("transparency_log",
@@ -11083,7 +11083,7 @@ def check_epoch_revocation_propagation(root: pathlib.Path) -> list[Finding]:
                 "_epoch_checkpoint_statement", "_revocation_feed_statement"):
         if sym not in app:
             return _fail("epoch_revocation",
-                         "app.py must publish the signed epoch checkpoint and revocation feed (%s missing)" % sym)
+                         "the application must publish the signed epoch checkpoint and revocation feed (%s missing)" % sym)
     if "signature_over_message" not in app:
         return _fail("epoch_revocation", "the checkpoint and feed must be issuer-SIGNED (signature_over_message)")
     # Built as views over the EXISTING append-only tables, not a new mutable store.
@@ -11123,7 +11123,7 @@ def check_epoch_revocation_propagation(root: pathlib.Path) -> list[Finding]:
         return _fail("epoch_revocation",
                      "the epoch/revocation drill must run in CI (a protocol that never runs is displacement)")
     if "EpochRevocationTests" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("epoch_revocation", "test_app.py must carry EpochRevocationTests for the published endpoints")
+        return _fail("epoch_revocation", "test_the application must carry EpochRevocationTests for the published endpoints")
     return _ok("epoch_revocation",
                "epoch alignment and revocation propagation run across authorities: an authority publishes a signed "
                "epoch checkpoint (GET /api/v1/epoch-checkpoint) and revocation feed (GET /api/v1/revocation-feed) as "
@@ -11144,7 +11144,7 @@ def check_federation_status_bundle(root: pathlib.Path) -> list[Finding]:
     for sym in ("/api/v1/federation-status-bundle", "_status_bundle_statement",
                 "_bundle_members_root", "_STATUS_BUNDLE_FORMAT"):
         if sym not in app:
-            return _fail("status_bundle", "app.py must publish the signed status bundle (%s missing)" % sym)
+            return _fail("status_bundle", "the application must publish the signed status bundle (%s missing)" % sym)
     if "signature_over_message" not in app:
         return _fail("status_bundle", "the bundle envelope must be publisher-SIGNED (signature_over_message)")
     # The bundle is a VIEW assembled from the per-authority feeds, not a new mutable store: it
@@ -11194,7 +11194,7 @@ def check_federation_status_bundle(root: pathlib.Path) -> list[Finding]:
         return _fail("status_bundle",
                      "the status-bundle drill must run in CI (a protocol that never runs is displacement)")
     if "StatusBundleTests" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("status_bundle", "test_app.py must carry StatusBundleTests for the published endpoint")
+        return _fail("status_bundle", "test_the application must carry StatusBundleTests for the published endpoint")
     # The aggregator holds NO member key. A single instance mirrors only its own authority; the
     # app endpoint must never sign a partner's feed. The CORRECT cross-authority aggregation (a
     # hub FETCHES a peer's already-signed feed over HTTP, verifies it, embeds it VERBATIM, and
@@ -11590,7 +11590,7 @@ def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
                 "/api/v1/timestamp/inclusion/<timestamp_hash>", "/api/v1/transparency/timestamps/sth",
                 "'transparency_logs': [_LOG_ID, _RECEIPT_LOG_ID, _TIMESTAMP_LOG_ID]", "fields.get('anchor_timestamp') is True"):
         if sym not in app:
-            return _fail("timestamp_transparency", "polaris_web/app.py must anchor on request and publish the timestamp log (%s missing)" % sym)
+            return _fail("timestamp_transparency", "polaris_web/the application must anchor on request and publish the timestamp log (%s missing)" % sym)
     v = _read(root, _VERIFIER_REL)
     for sym in ("def timestamp_hash", "def verify_timestamp_anchor", "trusted_witnesses=None", "timestamp_quorum=1", "require_anchored=False",
                 '"timestamp_authority_key_status_per_trust_list"', '"independent_timestamps"', "timestamps=None"):
@@ -11823,7 +11823,7 @@ def check_protocol_versioning(root: pathlib.Path) -> list[Finding]:
     for sym in ("_PROTOCOL_MINORS", "def _protocol_versions", "'versions': _protocol_versions()", "def _format_check",
                 "unsupported_format_version", "advertised_in="):
         if sym not in app:
-            return _fail("protocol_versioning", "polaris_web/app.py must advertise major.minor and negotiate formats (%s missing)" % sym)
+            return _fail("protocol_versioning", "polaris_web/the application must advertise major.minor and negotiate formats (%s missing)" % sym)
     if app.count("_format_check(") < 3 or re.search(r"\.get\('format'\)\s*!=\s*_[A-Z_]+_FORMAT", app):
         return _fail("protocol_versioning", "every interactive route must negotiate its format through _format_check, not an ad-hoc comparison")
     v = _read(root, _VERIFIER_REL)
@@ -11903,7 +11903,7 @@ def check_algorithm_agility(root: pathlib.Path) -> list[Finding]:
     for sym in ("def _signing_algorithm", "def _algorithm_of_key", "'algorithms': list(pqc_signing.ACCEPTED_ALGORITHMS)",
                 "'signing_algorithm': _signing_algorithm(agency_id)"):
         if sym not in app:
-            return _fail("algorithm_agility", "polaris_web/app.py must derive algorithms from the key and advertise the accepted set (%s missing)" % sym)
+            return _fail("algorithm_agility", "polaris_web/the application must derive algorithms from the key and advertise the accepted set (%s missing)" % sym)
     if app.count("_signing_algorithm(") < 10:
         return _fail("algorithm_agility", "every signed statement body must carry the signing key's algorithm before signing")
     v = _read(root, _VERIFIER_REL)
@@ -12128,7 +12128,7 @@ def check_auth_broker(root: pathlib.Path) -> list[Finding]:
         if sym not in fed:
             return _fail("auth_broker", "the two-instance drill must run the full code + PKCE flow over HTTP with replay refused (%s missing)" % sym)
     if "AuthBrokerTests" not in _read(root, "polaris_web/test_app.py") or "DuressEvent" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("auth_broker", "polaris_web/test_app.py must exercise the broker incl. duress indistinguishability")
+        return _fail("auth_broker", "polaris_web/test_the application must exercise the broker incl. duress indistinguishability")
     if "def cmd_login" not in _read(root, "scripts/polaris-wallet.py"):
         return _fail("auth_broker", "the holder wallet must be able to drive the authorize step (polaris-wallet.py login)")
     return _ok("auth_broker",
@@ -12193,7 +12193,7 @@ def check_document_signing(root: pathlib.Path) -> list[Finding]:
     if "/api/v1/sign/" not in fed or "polaris-wallet.py" not in fed:
         return _fail("document_signing", "the two-instance drill must sign over HTTP by possession and through the wallet")
     if "DocumentSigningTests" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("document_signing", "polaris_web/test_app.py must exercise holder-authorized signing")
+        return _fail("document_signing", "polaris_web/test_the application must exercise holder-authorized signing")
     return _ok("document_signing",
                "arbitrary documents are signed into a portable, digest-bound container -- by the institution or, on behalf "
                "of a possession-authenticated ACTIVE holder recorded by credential hash, by its issuing authority -- with "
@@ -12263,7 +12263,7 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
         if sym not in fed:
             return _fail("exchange_gateway", "the two-instance drill must run a mediated exchange over HTTP with replay refused (%s missing)" % sym)
     if "ExchangeGatewayTests" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("exchange_gateway", "polaris_web/test_app.py must prove the gateway fails closed")
+        return _fail("exchange_gateway", "polaris_web/test_the application must prove the gateway fails closed")
     return _ok("exchange_gateway",
                "the exchange gateway mediates institution-to-institution requests: requester known by key and "
                "verified two-witness, authorized in-context BEFORE forwarding, nonce consumed in an append-only "
@@ -12373,7 +12373,7 @@ def check_receipt_transparency(root: pathlib.Path) -> list[Finding]:
     if "verify_receipt_inclusion" not in drill or "--log" not in drill:
         return _fail("receipt_transparency", "the two-instance drill must prove inclusion over HTTP and run the monitor against the receipt log")
     if "ExchangeReceiptLogTests" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("receipt_transparency", "polaris_web/test_app.py must exercise the receipt log's public surface")
+        return _fail("receipt_transparency", "polaris_web/test_the application must exercise the receipt log's public surface")
     if "ExchangeReceiptLog" not in _read(root, "docs/reference/DATA-MODEL.md"):
         return _fail("receipt_transparency", "docs/reference/DATA-MODEL.md must document ExchangeReceiptLog")
     return _ok("receipt_transparency",
@@ -12463,7 +12463,7 @@ def check_exchange_mint_signed_auth(root: pathlib.Path) -> list[Finding]:
     tests = _read(root, "polaris_web/test_app.py")
     if "exchange-receipt/1/signed" not in tests or "503" not in tests:
         return _fail("exchange_mint_signed_auth",
-                     "polaris_web/test_app.py must prove the signed route fails CLOSED (503) without real PQC")
+                     "polaris_web/test_the application must prove the signed route fails CLOSED (503) without real PQC")
     return _ok("exchange_mint_signed_auth",
                "service-to-service minting is authenticated by the responder's ML-DSA-65 signature under its "
                "registered key (two-witness, fail-closed without real PQC), bound to the addressed agency and a "
@@ -12568,7 +12568,7 @@ def check_exchange_receipt(root: pathlib.Path) -> list[Finding]:
     for sym in ("/api/v1/exchange-receipt", "_exchange_receipt_statement", "AgencyTrustAttestation",
                 "signature_over_message"):
         if sym not in app:
-            return _fail("exchange_receipt", "app.py must mint the receipt (%s missing)" % sym)
+            return _fail("exchange_receipt", "the application must mint the receipt (%s missing)" % sym)
     # The mint endpoint takes only hashes -- the retention rule enforced at the door.
     if "the payload is never sent" not in app:
         return _fail("exchange_receipt",
@@ -12601,7 +12601,7 @@ def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
     presented context: trust flows along published attestation edges, never a closure."""
     app = _read_app(root)
     if "/api/v1/federation-manifest" not in app or "_manifest_statement" not in app:
-        return _fail("inter_authority", "app.py must publish GET /api/v1/federation-manifest signing a canonical manifest")
+        return _fail("inter_authority", "the application must publish GET /api/v1/federation-manifest signing a canonical manifest")
     if "signature_over_message" not in app or "attestations" not in app or "anchors" not in app:
         return _fail("inter_authority",
                      "the manifest must be issuer-SIGNED and carry anchor cross-publication (anchors) and "
@@ -12637,7 +12637,7 @@ def check_inter_authority_protocol(root: pathlib.Path) -> list[Finding]:
     if not _read(root, "docs/design/inter-authority-protocol.md"):
         return _fail("inter_authority", "docs/design/inter-authority-protocol.md (the protocol spec) is missing")
     if "FederationManifestTests" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("inter_authority", "test_app.py must carry FederationManifestTests")
+        return _fail("inter_authority", "test_the application must carry FederationManifestTests")
     return _ok("inter_authority",
                "two authorities interoperate through signed federation manifests: each publishes its anchors and the "
                "attestations it has made (GET /api/v1/federation-manifest), and the standalone detached verifier "
@@ -12709,7 +12709,7 @@ def check_offline_verification(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     if "/api/v1/status-assertion" not in app or "_status_assertion_statement" not in app:
         return _fail("offline_verification",
-                     "app.py must expose POST /api/v1/status-assertion signing a canonical status statement")
+                     "the application must expose POST /api/v1/status-assertion signing a canonical status statement")
     # The qualified CALL, not the bare name: the name alone is satisfied by the DEFINITION
     # in pqc_signing.py, which is in the package this now reads. A check for "somebody
     # defines this" is not a check that the route uses it (2026-09-18).
@@ -12744,7 +12744,7 @@ def check_offline_verification(root: pathlib.Path) -> list[Finding]:
         return _fail("offline_verification",
                      "the offline-status drill must run in CI (a protocol that never runs is displacement)")
     if "OfflineStatusAssertionTests" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("offline_verification", "test_app.py must carry OfflineStatusAssertionTests")
+        return _fail("offline_verification", "test_the application must carry OfflineStatusAssertionTests")
     return _ok("offline_verification",
                "authorization is verifiable with no connectivity: POST /api/v1/status-assertion mints a "
                "short-lived issuer-signed status assertion (possession-authenticated, no personal data), and the "
@@ -13046,7 +13046,7 @@ def check_relying_party_api(root: pathlib.Path) -> list[Finding]:
     # 3. The two versioned routes, client-credentials, and the anti-enumeration core.
     app = _read_app(root)
     if "/api/v1/oauth/token" not in app or "/api/v1/verify" not in app:
-        return _fail("relying_party_api", "app.py must expose POST /api/v1/oauth/token and POST /api/v1/verify")
+        return _fail("relying_party_api", "the application must expose POST /api/v1/oauth/token and POST /api/v1/verify")
     if "client_credentials" not in app or "invalid_client" not in app:
         return _fail("relying_party_api", "the token endpoint must be OAuth2 client-credentials (invalid_client on bad creds)")
     if "compare_digest" not in app or "not a verifiable presentation" not in app:
@@ -13061,7 +13061,7 @@ def check_relying_party_api(root: pathlib.Path) -> list[Finding]:
         return _fail("relying_party_api",
                      "scripts/polaris-relying-party.py must be able to authenticate as an org (OAuth2) and use /api/v1/verify")
     if "RelyingPartyApiTests" not in _read(root, "polaris_web/test_app.py"):
-        return _fail("relying_party_api", "test_app.py must carry RelyingPartyApiTests")
+        return _fail("relying_party_api", "test_the application must carry RelyingPartyApiTests")
     # 5. The bound and the no-PII rule RUN as adversaries every release.
     controls = _read(root, "attacks/attack_controls.py")
     for adversary in ("ac6_rp_credential_reaches_operator_surface", "ac6_rp_verdict_leaks_personal_data"):
@@ -13481,7 +13481,7 @@ def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
     name = "pairwise_presentation"
     app = _read_app(root)
     if "def _pairwise_subject" not in app:
-        return _fail(name, "polaris_web/app.py must derive the login subject per relying party "
+        return _fail(name, "polaris_web/the application must derive the login subject per relying party "
                            "(_pairwise_subject)")
     if re.search(r"'sub':\s*hashlib\.sha3_256\(token_value", app):
         return _fail(name,
@@ -13645,7 +13645,7 @@ def check_agent_grant(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     for needed in ("_agent_grant_statement", "_grant_revocation_statement", "_agent_proof_statement"):
         if f"def {needed}" not in app:
-            return _fail(name, f"polaris_web/app.py must build the identical bytes ({needed})")
+            return _fail(name, f"polaris_web/the application must build the identical bytes ({needed})")
     oracle = _read(root, "polaris_web/test_canonical_equivalence.py")
     for needed in ("agent-grant", "grant-revocation", "agent-proof"):
         if f'"{needed}"' not in oracle:
@@ -13858,7 +13858,7 @@ def check_status_distribution(root: pathlib.Path) -> list[Finding]:
                         ("def _public_artifact", "the cacheable form"),
                         ("def _private_artifact", "the never-cached form")):
         if needed not in app:
-            return _fail(name, f"polaris_web/app.py must define {why} ({needed})")
+            return _fail(name, f"polaris_web/the application must define {why} ({needed})")
 
     # THE RULE: max-age is computed, never a literal. Scan the CODE, not the docstring: the
     # docstring names the directives it refuses, and a check that matched those words would
@@ -16026,7 +16026,7 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     proc = _read(root, "polaris_sql/05_procedures.sql")
     app = _read_app(root)
     if not sec or not proc or not app:
-        return _fail(name, "security.py, 05_procedures.sql and app.py must all be present")
+        return _fail(name, "security.py, 05_procedures.sql and the application must all be present")
 
     m = re.search(r"AUDIT_TABLES_TRACKED\s*=\s*\(([^)]*)\)", sec)
     if not m:
