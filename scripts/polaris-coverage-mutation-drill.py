@@ -179,8 +179,11 @@ _NEW_ATHENA_WRITES = '''
 
 CREATE OR REPLACE FUNCTION athena_coverage_drill_writes()
 RETURNS TABLE (agency_id INTEGER) LANGUAGE sql STABLE AS $fn$
-    -- MUTATION: Athena acting rather than explaining.
-    INSERT INTO AuditAccessLog (surface) VALUES ('drill');
+    -- MUTATION: Athena acting rather than explaining. The column list is REAL: this
+    -- statement is scanned by the schema-drift drill like every other INSERT in the tree,
+    -- and a mutation that names a column the schema lacks fails that drill instead of
+    -- testing this one (it did, on 2026-09-17, and turned CI red for three commits).
+    INSERT INTO AuditAccessLog (accessed_table) VALUES ('drill');
     SELECT agency_id FROM Agency LIMIT 10;
 $fn$;
 '''
