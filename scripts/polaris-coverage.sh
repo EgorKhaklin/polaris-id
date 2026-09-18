@@ -94,8 +94,22 @@ run_standalone() {  # run_standalone <cwd> <module...>
 
 echo "== running suites under coverage =="
 run "$ROOT"            pytest polaris_checks/test_checks.py -q
-run "$ROOT/polaris_web" unittest test_app test_check_constraints test_pqc_signing test_custody test_secretstore test_transparency test_capacity test_referee test_enrollment_code
-run "$ROOT/polaris_web" unittest test_invariants_property test_redaction_property test_canonical_equivalence
+
+# The four database-heavy modules, SHARDED. They were 24 of this step's 26 minutes and this
+# step is CI's critical path; polaris-ship.py already runs them across processes with a fresh
+# database each, and `coverage run -p` writes one data file per process, which is what it is
+# for. Verified 2026-09-18 by running the same modules serially and sharded and combining:
+# 17087 statements, 16928 missed, identical both ways. A shard failure must fail this script
+# exactly like a serial suite failure, so the exit status is tracked the same way.
+if ! POLARIS_SHIP_COVERAGE=1 "$PY" "$ROOT/scripts/polaris-ship.py" run \
+        --module test_app --module test_check_constraints \
+        --module test_invariants_property --module test_redaction_property; then
+    echo "::error::sharded suite failed (test_app, test_check_constraints, test_invariants_property, test_redaction_property)" >&2
+    SUITE_FAIL=1
+fi
+
+run "$ROOT/polaris_web" unittest test_pqc_signing test_custody test_secretstore test_transparency test_capacity test_referee test_enrollment_code
+run "$ROOT/polaris_web" unittest test_canonical_equivalence
 run "$ROOT/polaris_cli" unittest test_cli
 run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relying_party \
                                        test_verify_conformance test_verify_p9 test_ship_tool

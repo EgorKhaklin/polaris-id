@@ -445,11 +445,38 @@ def run(argv, out=None):
             env = dict(base_env, POLARIS_DB_NAME=dbs[i], POLARIS_STATE_DIR=state, POLARIS_PORT=str(2222 + i),
                        POLARIS_TEST_REDIS_URL="redis://localhost:%d/0" % port if port else "")
             if not port:
-                env.pop("POLARIS_TEST_REDIS_URL", None)
+                # No local redis-server, which is the normal case on a CI runner where Redis
+                # is a SERVICE CONTAINER rather than a binary on PATH. Popping the variable
+                # would silently run these shards without Redis, skipping the tests that need
+                # it and dropping the coverage the floor gate measures. Instead, keep the
+                # ambient server and give each shard its own logical database: one Redis, N
+                # numbered keyspaces, which is the isolation the per-shard server was for.
+                ambient = base_env.get("POLARIS_TEST_REDIS_URL", "")
+                if ambient:
+                    env["POLARIS_TEST_REDIS_URL"] = re.sub(r"/\d+$", "", ambient) + "/%d" % (i % 16)
+                else:
+                    env.pop("POLARIS_TEST_REDIS_URL", None)
             ids = ["%s.%s" % (m, c) for m, c, _ in shard]
             log = open("/tmp/polaris-ship-shard-%d.log" % i, "w")
             logs.append(log.name)
-            running.append(subprocess.Popen([py, "-m", "unittest"] + ids, cwd=WEB, env=env, stdout=log, stderr=subprocess.STDOUT, text=True))
+            # POLARIS_SHIP_COVERAGE: run each shard under `coverage run -p`, so the same
+            # sharding that makes these suites fast can also produce the measurement CI
+            # gates on. `-p` writes a distinct data file per process, which is exactly what
+            # it is for, and `coverage combine` merges them; verified 2026-09-18 by running
+            # two modules serially and then as two concurrent processes and getting the
+            # identical total (6433 statements, 6274 missed, both ways).
+            #
+            # Off by default: a local `run` is for speed and should not litter .coverage.*
+            # files or pay the instrumentation cost.
+            cmd = [py, "-m", "unittest"] + ids
+            if os.environ.get("POLARIS_SHIP_COVERAGE") == "1":
+                src = ",".join(os.path.join(ROOT, d) for d in
+                               ("polaris_web", "polaris_cli", "polaris_checks", "polaris_sim"))
+                cmd = [py, "-m", "coverage", "run", "-p", "--source=" + src,
+                       "-m", "unittest"] + ids
+                env = dict(env, COVERAGE_RCFILE=os.path.join(ROOT, ".coveragerc"),
+                           COVERAGE_FILE=os.path.join(ROOT, ".coverage"))
+            running.append(subprocess.Popen(cmd, cwd=WEB, env=env, stdout=log, stderr=subprocess.STDOUT, text=True))
             log.close()
         t1 = time.time()
         results, failed = [], False
