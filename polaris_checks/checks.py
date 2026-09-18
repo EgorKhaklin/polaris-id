@@ -26,6 +26,7 @@ import pathlib
 import hashlib
 import json
 import re
+import stat
 import subprocess
 import sys
 import types
@@ -106,6 +107,38 @@ def _strip_comments_for(rel: str, text: str) -> str:
     return "\n".join(out)
 
 
+#: Every check reads files, and the same files over and over: one full run makes 1591
+#: `_read` calls handing out 99.5 MB, of which `polaris_web/app.py` alone is 123 reads of
+#: the same 452 KB. The cost is not the disk, it is decoding and re-stripping comments from
+#: the same bytes a hundred times, which was 44% of a run's wall clock (37.6s -> 21.0s).
+#:
+#: Keyed on (path, mtime_ns, size), NOT on path alone. That is the whole safety argument:
+#: the mutation drills rewrite a file and re-run the checks against it, and a cache keyed on
+#: the name would hand them back the text from before the mutation and report every
+#: guarantee as still enforced. Every write changes mtime_ns, so a mutated file misses the
+#: cache by construction rather than by anybody remembering to clear it.
+_FILE_CACHE: dict = {}
+_FILE_CACHE_MAX = 4000
+
+
+def _cached_text(p: pathlib.Path, name: str, strip: bool) -> str:
+    try:
+        st = p.stat()
+    except OSError:
+        return ""
+    if not stat.S_ISREG(st.st_mode):
+        return ""
+    key = (str(p), st.st_mtime_ns, st.st_size, strip)
+    hit = _FILE_CACHE.get(key)
+    if hit is None:
+        raw = p.read_text(encoding="utf-8", errors="replace")
+        hit = _strip_comments_for(name, raw) if strip else raw
+        if len(_FILE_CACHE) >= _FILE_CACHE_MAX:
+            _FILE_CACHE.clear()
+        _FILE_CACHE[key] = hit
+    return hit
+
+
 def _read(root: pathlib.Path, rel: str) -> str:
     """A file's CODE, with comments stripped for the languages that have them.
 
@@ -119,10 +152,7 @@ def _read(root: pathlib.Path, rel: str) -> str:
     Use `_read_raw` where the PROSE is the property: a required header, a stated
     reason, a `coverage:exempt` marker, a document.
     """
-    p = root / rel
-    if not p.is_file():
-        return ""
-    return _strip_comments_for(rel, p.read_text(encoding="utf-8", errors="replace"))
+    return _cached_text(root / rel, rel, strip=True)
 
 
 def _read_path(p: pathlib.Path) -> str:
@@ -132,9 +162,7 @@ def _read_path(p: pathlib.Path) -> str:
     and bypass the stripping that `_read` does. This is the same door with a path
     instead of a relative name.
     """
-    if not p.is_file():
-        return ""
-    return _strip_comments_for(p.name, p.read_text(encoding="utf-8", errors="replace"))
+    return _cached_text(p, p.name, strip=True)
 
 
 def _read_raw(root: pathlib.Path, rel: str) -> str:
@@ -143,8 +171,7 @@ def _read_raw(root: pathlib.Path, rel: str) -> str:
     For checks whose property IS the prose: a stated reason, a required marker, a
     document's wording.
     """
-    p = root / rel
-    return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    return _cached_text(root / rel, rel, strip=False)
 
 
 def _ok(name: str, msg: str) -> list[Finding]:

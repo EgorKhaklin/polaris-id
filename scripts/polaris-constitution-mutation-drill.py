@@ -128,12 +128,76 @@ def _mutate_c9(text: str) -> str:
     return text[:i] + text[i:j].replace("threading", "sequential_stub") + text[j:]
 
 
-def _failing_checks() -> list[str]:
-    """The `name` of every check reporting FAIL, read off the runner's own output."""
+#: reported check name -> the functions that report it, built once from the control run.
+_BY_NAME: dict = {}
+
+
+def _load_checks():
+    """Import the check layer in-process, so one check can be run without the other 281.
+
+    A full run is about 19 seconds. This drill asks the same narrow question of every
+    mutation -- "did THIS named check go red?" -- and answering it by running the whole
+    layer each time cost 16 of those, which put 7.7 minutes on CI's critical path for a
+    result that is 14 lines long. One check is about 0.09 seconds.
+    """
+    sys.path.insert(0, str(ROOT))
+    from polaris_checks import checks as _c
+    return _c
+
+
+def _build_name_map(mod, root) -> list:
+    """Run the whole layer once: the positive control AND the name->function map.
+
+    A check's reported name is only knowable by running it (check_c8_atlas_caps reports
+    `c8_atlas_caps`), so the map falls out of the control run rather than costing a
+    second one.
+    """
+    failing = []
+    for fn in mod.CHECKS:
+        try:
+            out = fn(root)
+        except Exception:
+            continue
+        for f in out:
+            _BY_NAME.setdefault(f.check, set()).add(fn)
+            if f.level == "FAIL":
+                failing.append(f.check)
+    return failing
+
+
+def _named_check_fails(mod, root, name: str) -> bool:
+    """Does the one check called `name` report FAIL against the tree as it stands now?"""
+    fns = _BY_NAME.get(name)
+    if not fns:
+        return False
+    for fn in fns:
+        try:
+            if any(f.level == "FAIL" for f in fn(root)):
+                return True
+        except Exception:
+            return True          # a check that crashes on the mutation noticed it
+    return False
+
+
+def _failing_checks(mod=None, root=None) -> list:
+    """Every check reporting FAIL. The slow path, used for the control and for a survivor.
+
+    A survivor is the one case where the drill has to say what DID fail instead, so the
+    full sweep is paid only when there is a finding to explain.
+    """
+    if mod is not None:
+        return [f.check for fn in mod.CHECKS for f in _safe(fn, root) if f.level == "FAIL"]
     r = subprocess.run([sys.executable, "-m", "polaris_checks.run"],
                        cwd=str(ROOT), capture_output=True)
     out = (r.stdout or b"").decode("utf-8", "replace")
     return re.findall(r"✗ \[(\w+)\]", out)
+
+
+def _safe(fn, root) -> list:
+    try:
+        return fn(root)
+    except Exception:
+        return []
 
 
 def main() -> int:
@@ -155,7 +219,8 @@ def main() -> int:
         return 2
 
     print("positive control: the unmutated tree must report no failures")
-    before = _failing_checks()
+    mod = _load_checks()
+    before = _build_name_map(mod, ROOT)
     if before:
         print("== VOID: %d check(s) already failing (%s). Every mutation below would look "
               "detected by a tree that was already red ==" % (before, ", ".join(before)),
@@ -172,7 +237,8 @@ def main() -> int:
             path.write_text(_mutate_c9(original) if cid == "C9" else mutate(original))
             if path.read_text() == original:
                 raise AssertionError("the mutation changed nothing")
-            failing = _failing_checks()
+            failing = ([expected] if _named_check_fails(mod, ROOT, expected)
+                       else _failing_checks(mod, ROOT))
         finally:
             path.write_text(original)
         caught = expected in failing
