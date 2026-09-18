@@ -10,54 +10,30 @@ externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc1, 2026-09-16 | 0.1.0, 2026-09-15 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc1, 2026-09-16 | 0.1.0, 2026-09-15 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc1, 2026-09-16 | 0.1.0, 2026-09-15 |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.1, 2026-09-16 | 0.1.0, 2026-09-15 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.1, 2026-09-16 (rc.3 STAGED, not published) | 0.1.0, 2026-09-15 |
 
-> **rc.2 IS CUT IN THE TREE, and what is waiting now is the publish.** The version moved to
-> 1.0.0-rc.2 on 2026-09-17 on the owner's instruction: `__version__`, the Helm appVersion,
-> CITATION.cff, the four stamps, the CHANGELOG entry and all four package versions, together,
-> gated locally before the commit. **Nothing has been published.** A version number on a
-> registry can never be reused, the contract puts that call with the owner, and the npm
-> trusted publisher still allows direct publish, which is a separate thing to untick. The
-> "What must hold for any publish" list below is the gate; the workflow runs the product
-> boundary drill and will not publish past a failure.
+> **rc.3 IS PUBLISHED ON PyPI. npm IS STAGED AND NEEDS A MAINTAINER.** On 2026-09-18 the
+> three PyPI packages went out at 1.0.0rc3 through trusted publishing over OIDC, verified by
+> reading the versions back from the live registry and by walking
+> [STRANGER-PATH.md](STRANGER-PATH.md) end to end against the published `polaris-oid4vp`
+> 1.0.0rc3: a walt.id wallet presented a credential and the verifier answered
+> `200 authentic`.
 >
-> The rest of this note is the record of why rc.2 was owed, kept as written.
+> `polaris-sdk-ts` did not publish. npm now requires a maintainer's 2FA approval as the final
+> step of a staged publish, so the workflow uploads the tarball and stops, which is the
+> behaviour it is meant to have. The run also reports `401 Unauthorized` on
+> `GET /-/stage`, so the token cannot even list what it staged. Finishing it is a person with
+> the account's second factor, from their own machine:
 >
-> **rc.2 is owed on `polaris-oid4vp`, and this is the decision waiting to be taken.**
-> On 2026-09-17 an adversarial review found fifteen defects in the published 1.0.0rc1 and
-> all fifteen are fixed in the tree: expired credentials accepted because `exp` and `nbf`
-> were never read, a key binding `iat` of `NaN` defeating the replay window entirely, a
-> disclosure able to overwrite the issuer or the key-binding key in the returned claims, any
-> end-entity certificate the trust anchor ever signed accepted as an issuer, the credential
-> type the query asked for never compared, four denial-of-service paths needing no
-> credential, five totality escapes, and a normative disclosure form being rejected.
-> `docs/PRODUCTION-READINESS.md` carries them all.
+>     npm stage list polaris-sdk-ts
+>     npm stage view <stage-id>          # inspect before approving
+>     npm stage approve <stage-id> --otp <code>
 >
-> The operating contract is explicit that a defect found in the candidate makes rc.2. What
-> is on PyPI today is the version with those fifteen defects in it, and anyone who installed
-> it has them. Nothing here bumps a version or publishes: both are the owner's call, and
-> this note exists so the call is in front of whoever next opens this file rather than lost
-> in a commit message.
->
-> **Updated 2026-09-17, and it is no longer one package.** The same week's adversarial work
-> found and fixed defects on four surfaces: fifteen in `polaris-oid4vp`, sixteen in the
-> detached verifier `polaris-verify` (a trust edge that never expired, a spending limit
-> defeated by a non-finite number, four totality escapes on inclusion proofs, an agent grant
-> whose algorithm the verifier ignored), thirteen across the two reference SDKs, and, in the
-> application, a credential past its own expiry that stayed usable and a timestamp authority
-> that signed whatever it was handed. `docs/PRODUCTION-READINESS.md` carries them all.
->
-> **The published artifact was measured, not assumed.** On 2026-09-17 `docs/STRANGER-PATH.md`
-> was walked end to end from PyPI rather than from this repository: `pip install --pre
-> polaris-oid4vp` gives 1.0.0rc1, and walt.id's stock wallet presented to it and was
-> ACCEPTED. The same hour, in that installed module, `"exp"` appears ZERO times against three
-> in the tree: **the verifier a stranger installs today never checks whether a credential has
-> expired.** The interoperability success and the security gap are both true, and the first
-> is what makes the second worth acting on, because the path looks fine while you walk it.
-> `lab/EXTERNAL-NOUNS.md` records the walk with its controls.
+> Then read the version back from the registry rather than trusting the workflow's exit code,
+> which is what caught this: the job reported success while nothing had become installable.
 
 All four names were unclaimed when checked (the first three on 2026-09-13, `polaris-oid4vp`
 on 2026-09-14, each against a calibration that tells an absent name from a present one) and
@@ -254,6 +230,11 @@ worse state to be in than three runs.
 | 35149358665 | 2026-09-16 | `polaris-sdk-ts` 1.0.0-rc.1 | refused by npm at the identity exchange (`package not found`): no trusted publisher matched the workflow; nothing uploaded |
 | 35150720818 | 2026-09-16 | `polaris-sdk-ts` 1.0.0-rc.1 | refused again at the identity exchange, same answer; nothing uploaded |
 | 35151803855 | 2026-09-16 | `polaris-sdk-ts` 1.0.0-rc.1 | published to npm under `next` by trusted publishing, no token |
+| 35296615756 | 2026-09-18 | dry run | built and gated all seven rc.3 files; nothing published |
+| 35298509935 | 2026-09-18 | `polaris-verify` 1.0.0rc3 | published to PyPI by trusted publishing over OIDC; version read back from the live registry |
+| 35298624742 | 2026-09-18 | `polaris-sdk-python` 1.0.0rc3 | published to PyPI the same way; version read back from the live registry |
+| 35298734112 | 2026-09-18 | `polaris-oid4vp` 1.0.0rc3 | published to PyPI the same way; read back, and STRANGER-PATH walked end to end against it |
+| 35298838076 | 2026-09-18 | `polaris-sdk-ts` 1.0.0-rc.3 | STAGED, not published. npm requires a maintainer's 2FA approval to finish; the job exited 0 and the registry still shows rc.1 |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different

@@ -44,13 +44,17 @@ The backbone is a 45-table PostgreSQL schema whose constraints are the security 
 
 ## Status
 
-**This tree is 1.0.0-rc.3. The published packages are 1.0.0-rc.1. They are not the same software, and the difference is not cosmetic.**
+**1.0.0-rc.3, a release candidate.** The tree and the three PyPI packages are the same version, published 2026-09-18. The TypeScript SDK on npm is still 1.0.0-rc.1: npm's staged-publish flow requires a maintainer's 2FA approval as its final step, so rc.3 is staged there and not yet installable.
 
-Two version numbers, because a release candidate has two lives. Every `(v1.0.0-rc.3)` stamp on this page describes the source you are reading. What `pip install` and `npm install` give you is rc.1, published 2026-09-16.
+| | version | where |
+|---|---|---|
+| this tree | 1.0.0-rc.3 | the source you are reading |
+| `polaris-verify`, `polaris-sdk-python`, `polaris-oid4vp` | 1.0.0rc3 | PyPI, published 2026-09-18 |
+| `polaris-sdk-ts` | 1.0.0-rc.1 | npm; rc.3 staged, awaiting 2FA approval |
 
-rc.2 exists because twenty-two defects were found in rc.1 over two days, across all four external doors and the application. They are listed, measured inside the downloaded wheels rather than inferred, under [**What a stranger installing rc.1 has**](CHANGELOG.md#v100-rc2--2026-09-17-a-defect-found-in-the-candidate) in the changelog. Read that before depending on a published package. The short version: `polaris-oid4vp` 1.0.0rc1 never reads `exp`, so it accepts a credential whose validity has ended; `polaris-verify` 1.0.0rc1 lets a time-boxed trust edge outlive its `valid_until` and has no finite-number guards, so a grant signed with a non-finite limit is an unlimited grant wearing a limit field.
+Each candidate exists because a defect was found in the one before it, which is the only thing that moves the number. rc.2 collected twenty-two, measured inside the downloaded wheels rather than inferred, under [**What a stranger installing rc.1 has**](CHANGELOG.md#v100-rc2--2026-09-17-a-defect-found-in-the-candidate). rc.3 resolved two published-contract ambiguities found by an outside design-intent review: a genuine signature no longer implies a trusted issuer at the detached verifier's exit code, and `issuer_authentic` became two fields because one boolean was reporting every credential issued before a key rotation as inauthentic.
 
-rc.2 is not published yet. Publishing to a registry is irreversible and is the owner's call, made run by run in [docs/RELEASING.md](docs/RELEASING.md); [docs/STRANGER-PATH.md](docs/STRANGER-PATH.md) deliberately stays on rc.1 because it walks the artifact a stranger can actually download, not this tree.
+Publishing to a registry is irreversible and is the owner's call, recorded run by run in [docs/RELEASING.md](docs/RELEASING.md).
 
 The four standalone products are `polaris-verify`, `polaris-oid4vp` and `polaris-sdk-python` on PyPI and `polaris-sdk-ts` on npm, every run recorded in [docs/RELEASING.md](docs/RELEASING.md); `--pre` because pip skips a candidate unless told, and on npm the candidate is `polaris-sdk-ts@next`, so 0.1.0 remains what a plain install resolves. The PyPI packages are published by GitHub Actions trusted publishing over OIDC, with no API token created at any point, and each is verified by installing from the live registry into a clean environment and running it there. Being installable is not being validated: see [scope](#scope-honestly).
 

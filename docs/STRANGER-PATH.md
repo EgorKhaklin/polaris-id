@@ -4,8 +4,8 @@
 asking anyone a question.** If you cannot, that is the bug and we want to hear it.
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-09-16 against `polaris-oid4vp`
-1.0.0-rc.1 installed from the registry, on macOS with Docker Desktop. Nothing here is from memory.
+package on PyPI rather than a working copy. Last walked 2026-09-18 against `polaris-oid4vp`
+1.0.0-rc.3 installed from the registry, on macOS with Docker Desktop. Nothing here is from memory.
 
 ## 0. Prerequisites
 
@@ -36,7 +36,7 @@ and splitting them across two directories is the single most common way this pat
     mkdir -p ~/polaris-try && cd ~/polaris-try
     python3 -m venv .venv && . .venv/bin/activate
 
-From the registry. You do not need this repository. `--pre` because 1.0.0-rc.1 is a release
+From the registry. You do not need this repository. `--pre` because 1.0.0-rc.3 is a release
 candidate and pip skips those unless told; 0.1.0 is the previous release and also works.
 
     pip install --pre polaris-oid4vp
