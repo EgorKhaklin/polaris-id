@@ -7705,10 +7705,14 @@ def check_relying_party_decisions_cannot_be_silent(root: pathlib.Path) -> list[F
                      r"RelyingParty", triggers, re.I):
         findings.extend(_fail(name, "trg_relying_party_audited is not installed AFTER INSERT OR "
                                     "UPDATE on RelyingParty, so some changes are not recorded"))
-    for rel in ("polaris_web/app.py", "polaris_cli/polaris.py"):
-        body = _read(root, rel)
+    # The whole application package, not app.py. This is an ABSENCE assertion, and an absence
+    # asserted over one file says nothing about the rest: after rp_api.py was split out on
+    # 2026-09-18 the relying-party routes themselves, which are the ones with a reason to write
+    # a RelyingPartyEvent, were outside what this could see.
+    for label, body in (("the polaris_web package", _read_app(root)),
+                        ("polaris_cli/polaris.py", _read(root, "polaris_cli/polaris.py"))):
         if re.search(r"INSERT\s+INTO\s+RelyingPartyEvent", body, re.I):
-            findings.extend(_fail(name, f"{rel} inserts into RelyingPartyEvent directly; the "
+            findings.extend(_fail(name, f"{label} inserts into RelyingPartyEvent directly; the "
                                         f"trigger must be the only writer, or a caller that can "
                                         f"write its own record can omit one"))
 
@@ -19386,6 +19390,52 @@ _APP_PATH_READERS = {
 }
 
 
+def _reads_app_by_path(fname: str, body: str) -> bool:
+    """Does this check read polaris_web/app.py through a PATH, in any of its spellings?
+
+    Two forms occur. Directly, `_read(root, "polaris_web/app.py")`. And through a loop variable
+    bound from a literal sequence, `for rel in ("polaris_web/app.py", ...): _read(root, rel)`,
+    which is how one slipped past the first version of this guard.
+
+    `body` is what the split left, which begins at the parameter list, so the def line is put
+    back before parsing. A first attempt indented the fragment under a synthetic `def _f():`,
+    which never parsed, so every call took the literal-only fallback and the widening was
+    inert: the drill below caught it passing on the very form it was written for."""
+    try:
+        tree = ast.parse("def %s%s" % (fname, body))
+    except SyntaxError:
+        return '_read(root, "polaris_web/app.py")' in body
+
+    readers = ("_read", "_read_raw", "_read_path")
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and getattr(node.func, "id", "") in readers
+                and len(node.args) >= 2):
+            a = node.args[1]
+            if isinstance(a, ast.Constant) and a.value == "polaris_web/app.py":
+                return True
+    # The loop form: a literal sequence carrying the path, whose target reaches a reader.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.For) or not isinstance(node.target, ast.Name):
+            continue
+        seq = node.iter
+        elts = []
+        if isinstance(seq, (ast.Tuple, ast.List)):
+            elts = list(seq.elts)
+        # `for label, body in ((x, "polaris_web/app.py"), ...)` unpacks; look one level in.
+        for e in list(elts):
+            if isinstance(e, (ast.Tuple, ast.List)):
+                elts.extend(e.elts)
+        if not any(isinstance(e, ast.Constant) and e.value == "polaris_web/app.py" for e in elts):
+            continue
+        var = node.target.id
+        for inner in ast.walk(node):
+            if (isinstance(inner, ast.Call) and getattr(inner.func, "id", "") in readers
+                    and len(inner.args) >= 2
+                    and isinstance(inner.args[1], ast.Name) and inner.args[1].id == var):
+                return True
+    return False
+
+
 def check_checks_do_not_grep_one_module(root: pathlib.Path) -> list[Finding]:
     """A check's reach must be the application, not a path inside it.
 
@@ -19409,7 +19459,16 @@ def check_checks_do_not_grep_one_module(root: pathlib.Path) -> list[Finding]:
     if not src:
         return _fail(name, "polaris_checks/checks.py could not be read")
 
-    parts = re.split(r"\ndef (check_\w+)", src)
+    # Split on EVERY top-level def, not only the check ones. Splitting on `\ndef (check_\w+)`
+    # made a check's "body" run to the next CHECK, swallowing any helper defined between them
+    # along with any module-level constant. On 2026-09-18 that attributed this module's own
+    # _APP_PATH_READERS table and the _reads_app_by_path helper to the check above them, and
+    # reported that check as an undeclared reader of a path it never mentions.
+    raw = re.split(r"\ndef (\w+)", src)
+    parts = [raw[0]]
+    for i in range(1, len(raw), 2):
+        if raw[i].startswith("check_"):
+            parts += [raw[i], raw[i + 1]]
     if len(parts) < 20:
         return _fail(name, "only %d check function(s) were parsed out of checks.py; the "
                            "split has broken and this check is passing by finding nothing"
@@ -19419,7 +19478,14 @@ def check_checks_do_not_grep_one_module(root: pathlib.Path) -> list[Finding]:
         fname, body = parts[i], parts[i + 1]
         if fname == "check_checks_do_not_grep_one_module":
             continue          # it necessarily quotes the idiom it forbids, in order to find it
-        if '_read(root, "polaris_web/app.py")' not in body:
+        # Matching the literal `_read(root, "polaris_web/app.py")` matched ONE SPELLING of the
+        # idiom. check_relying_party_decisions_cannot_be_silent wrote the path into a tuple and
+        # read it through a loop variable, and slipped past this for that reason alone, taking
+        # an ABSENCE assertion with it: after rp_api.py was split out, "no application path
+        # writes a RelyingPartyEvent directly" was being asserted over a file that no longer
+        # held the relying-party routes. A guard pinned to the spelling of what it forbids is
+        # the defect it exists to prevent, one level up. Both forms are found now.
+        if not _reads_app_by_path(fname, body):
             continue
         if fname in _APP_PATH_READERS:
             declared += 1

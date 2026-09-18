@@ -16624,6 +16624,42 @@ def test_checks_reach_the_package_check_discriminates(tmp_path):
         assert out[0].level == "FAIL" and "check_thing" in out[0].message, \
             "must FAIL on an undeclared check that reads app.py by path"
 
+        # THE OTHER SPELLING, which slipped past the first version of this guard. The path
+        # goes into a literal sequence and is read through the loop variable. That is how
+        # check_relying_party_decisions_cannot_be_silent kept reading app.py after rp_api.py
+        # was split out of it, taking an ABSENCE assertion with it: "no application path writes
+        # a RelyingPartyEvent directly" was being asserted over a file that no longer held the
+        # relying-party routes. A guard pinned to the spelling of what it forbids is the defect
+        # it exists to prevent, one level up.
+        LOOP = ('\ndef check_thing(root):\n'
+                '    for rel in ("polaris_web/app.py", "polaris_cli/polaris.py"):\n'
+                '        body = _read(root, rel)\n'
+                '    return []\n')
+        write(HEAD + FILLER + LOOP)
+        out = checks.check_checks_do_not_grep_one_module(tmp_path)
+        assert out[0].level == "FAIL" and "check_thing" in out[0].message, \
+            "the tuple-and-loop-variable form is the same defect and must be caught"
+
+        # ...and the same shape reading something else is not a finding.
+        OTHER = ('\ndef check_thing(root):\n'
+                 '    for rel in ("polaris_sql/01_schema.sql", "polaris_cli/polaris.py"):\n'
+                 '        body = _read(root, rel)\n'
+                 '    return []\n')
+        write(HEAD + FILLER + OTHER)
+        assert checks.check_checks_do_not_grep_one_module(tmp_path)[0].level == "OK", \
+            "a loop over paths that are not app.py is not this defect"
+
+        # A HELPER BETWEEN TWO CHECKS BELONGS TO NEITHER. Splitting on the next CHECK made a
+        # check's body run through any helper or constant defined after it, and on 2026-09-18
+        # this module's own _APP_PATH_READERS table was attributed to the check above it, which
+        # was then reported as an undeclared reader of a path it never mentions.
+        HELPER = ('\ndef check_thing(root):\n    app = _read_app(root)\n    return []\n'
+                  '\ndef _helper(x):\n    return _read(x, "polaris_web/app.py")\n')
+        write(HEAD + FILLER + HELPER)
+        assert checks.check_checks_do_not_grep_one_module(tmp_path)[0].level == "OK", \
+            "a helper's source must not be attributed to the check written above it"
+
+        write(HEAD + FILLER + body(True))
         # Declared with a reason: allowed, because some properties really are about one file.
         checks._APP_PATH_READERS["check_thing"] = "a cross-module assertion"
         assert checks.check_checks_do_not_grep_one_module(tmp_path)[0].level == "OK", \
