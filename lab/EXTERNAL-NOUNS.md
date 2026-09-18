@@ -465,13 +465,28 @@ configuration is also the one PyPI's own form recommends.
 
 ### Findings from outside
 
-    Bugs/ambiguities filed by non-authors:   0
-    Fixed because of external findings:      1
+    Bugs/ambiguities filed by non-authors:   1
+    Fixed because of external findings:      2
 
-The one: walt.id Wallet API v2 refused `polaris-oid4vp`'s request-signing certificate for
+The first: walt.id Wallet API v2 refused `polaris-oid4vp`'s request-signing certificate for
 carrying no `digitalSignature` key usage. Nobody filed anything -- an implementation simply
 declined to proceed -- and the fix shipped as v9.465. It is counted here because the cause
 was outside this repository, which is the only thing this row is asking.
+
+The second, 2026-09-17: an outside reviewer put five design-intent observations, answered in
+[docs/DESIGN-INTENT-REVIEW.md](../docs/DESIGN-INTENT-REVIEW.md). One was an unintentional
+defect and is the filed ambiguity counted above: README stamped the tree's version four
+times while its status line named the published one, so a reader could not tell which
+number described what they would install. Fixed the same day.
+
+What the count does NOT claim. The reviewer is not named here, so this is not a row the
+rules above would let anyone treat as validated external evidence; it is recorded because
+the CAUSE was outside this repository. Three of the five observations were answered
+"intentional" with the measurement to show it, which is the reviewer being right about the
+design rather than finding a defect in it. And the two product-boundary defects found later
+that week were found by an instrument built because of observation 3, not by the reviewer:
+the prompt was external, the finding was not, and stating it the other way round would be
+inventing external evidence.
 
 ### Independent security review
 
