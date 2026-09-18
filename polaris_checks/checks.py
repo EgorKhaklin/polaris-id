@@ -216,6 +216,23 @@ def _read_package(root: pathlib.Path, rel_dir: str) -> str:
     return hit
 
 
+def _read_verifier_package(root: pathlib.Path) -> str:
+    """Every module of the detached verifier, not just verifier.py.
+
+    `polaris-verify` is the primary external door and its promise is a PACKAGE property:
+    "it holds that property by containing no code that could reach a network at all". The
+    import scans read one file, and verifier.py is 4,806 lines in a two-module package, so
+    the same split pressure app.py is under applies here. Measured 2026-09-18: a sibling
+    module importing `requests` passed check_detached_verifier with a clean OK that still
+    said the verifier was standalone.
+
+    Used for the property scans (forbidden imports, network reach). Checks that assert a
+    specific SYMBOL is defined keep naming the file, because that is a statement about
+    where the canonical implementation lives.
+    """
+    return _read_package(root, "packages/polaris-verify/polaris_verify_cli")
+
+
 def _app_modules(root: pathlib.Path) -> list:
     """(name, code) for each non-test module of the application, for checks that PARSE.
 
@@ -10008,14 +10025,18 @@ def check_detached_verifier(root: pathlib.Path) -> list[Finding]:
         return _fail("detached_verifier",
                      "%s no longer loads the canonical verifier" % _VERIFIER_SHIM_REL)
     # 1. Standalone: no Polaris code, no DB driver (that IS the capability).
+    # Scanned over the whole PACKAGE, not verifier.py alone. The promise is that the
+    # verifier contains no such code; a second module beside it is still the verifier, and
+    # reading one file let a sibling importing `requests` pass with a clean OK (2026-09-18).
+    package = _read_verifier_package(root) or verifier
     for mod in _VERIFIER_FORBIDDEN_IMPORTS:
-        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", verifier, re.M):
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", package, re.M):
             return _fail("detached_verifier",
                          f"scripts/polaris-verify.py imports {mod!r}; the detached verifier must be standalone "
                          "(only a standard ML-DSA-65 library) so a relying party runs it with no Polaris code "
                          "and no database")
     for mod in _VERIFIER_FORBIDDEN_NETWORK:
-        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", verifier, re.M):
+        if re.search(rf"^\s*(?:import|from)\s+{re.escape(mod)}\b", package, re.M):
             return _fail("detached_verifier",
                          f"the detached verifier imports {mod!r}. It decides OFFLINE, and it holds that "
                          "property by containing no code that could reach a network at all, which is "

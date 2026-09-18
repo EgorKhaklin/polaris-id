@@ -131,6 +131,20 @@ def api_moved_drill_undocumented():
 '''
 
 
+_NETWORK = '''"""MUTATION: a module of the kind a polaris-verify split would produce.
+
+The detached verifier's promise is that it decides OFFLINE, and it holds that property by
+containing NO code that could reach a network at all -- which is stronger than not reaching
+one today. That is a property of the package, and verifier.py is 4,806 lines in a two-module
+package, so the same split pressure app.py is under applies here."""
+import requests
+
+
+def fetch_status(url):
+    return requests.get(url).json()
+'''
+
+
 #: (expected check, what moved, module name, payload).
 #: Every payload is one the coverage drill catches in app.py. If a case survives here, the
 #: difference is the FILE and nothing else, which is the whole measurement.
@@ -149,7 +163,26 @@ MOVES = [
      "clock_helpers_moved", _CLOCK),
     ("api_routes_documented", "an undocumented /api route moves to a sibling module",
      "public_api_moved", _UNDOCUMENTED),
+    # A different package, and the sharpest case in the tree: the OFFLINE guarantee on the
+    # primary external door. Measured before this was fixed, a sibling module importing
+    # `requests` passed check_detached_verifier with an OK that still said the verifier was
+    # standalone.
+    ("detached_verifier", "network code moves into a sibling of the detached verifier",
+     "status_client_moved", _NETWORK, "verify"),
 ]
+
+
+VERIFY_PKG = ROOT / "packages" / "polaris-verify" / "polaris_verify_cli"
+
+#: Modules land beside the file whose mechanism they are taking, so a case names its
+#: package. polaris-verify is here for the same reason polaris_web is: one 4,806-line file
+#: that 40 checks read by path, and a promise ("contains no code that could reach a
+#: network") that is about the package rather than about that file.
+_PKG = {"web": WEB, "verify": VERIFY_PKG}
+
+
+def _target(case):
+    return _PKG[case[4] if len(case) > 4 else "web"] / ("%s.py" % case[2])
 
 
 #: reported check name -> the functions that report it, built once from the control run.
@@ -192,7 +225,7 @@ def main() -> int:
     ap.add_argument("--only", help="run one case, by the name of its check")
     args = ap.parse_args()
 
-    created = [WEB / ("%s.py" % m[2]) for m in MOVES]
+    created = [_target(m) for m in MOVES]
     print("REPAIR, if this run is killed:")
     print("  git checkout -- polaris_web/app.py")
     print("  rm -f " + " ".join(str(p.relative_to(ROOT)) for p in created))
@@ -227,15 +260,19 @@ def main() -> int:
 
     app_path = WEB / "app.py"
     survivors = []
-    for expected, what, modname, payload in cases:
-        new = WEB / ("%s.py" % modname)
+    for case in cases:
+        expected, what, modname, payload = case[:4]
+        new = _target(case)
         original = app_path.read_text()
         try:
-            new.write_text(_HEADER + payload)
+            # The verifier payload is a whole module and imports nothing from the app; the
+            # polaris_web ones share a header that wires them into the running application.
+            new.write_text(payload if len(case) > 4 else _HEADER + payload)
             # One import, so the module is genuinely part of the application rather than a
             # file lying beside it. A check that scans the package finds the violation; a
             # check that greps app.py finds only this line.
-            app_path.write_text(original + "\nimport %s  # noqa: E402,F401\n" % modname)
+            if len(case) <= 4:
+                app_path.write_text(original + "\nimport %s  # noqa: E402,F401\n" % modname)
             caught = _named_check_fails(mod, ROOT, expected)
         finally:
             app_path.write_text(original)
@@ -261,8 +298,9 @@ def main() -> int:
               "guarantee is simply somewhere the check does not look.")
         return 1
 
-    print("\n== Every violation here is caught in a sibling module as well as in app.py, so "
-          "these checks reach the PACKAGE and not one path. That is a statement about these "
+    print("\n== Every violation here is caught in a sibling module as well as in the file it "
+          "was taken from, so these checks reach the PACKAGE and not one path. That is a "
+          "statement about these "
           "%d payloads, not about the check layer in general: a mechanism nobody thought to "
           "move is this drill's standing limitation. ==" % len(cases))
     return 0
