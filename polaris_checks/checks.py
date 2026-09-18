@@ -19119,6 +19119,81 @@ def check_publishable_packages_keep_their_dependency_budget(root: pathlib.Path) 
                      % (len(_PACKAGE_DEPENDENCY_BUDGET), total))
 
 
+def _seeded_algorithms(root: pathlib.Path) -> dict:
+    """name -> (level, public_key_size, signature_size, nist_standard) from the seed."""
+    sql = _read(root, "polaris_sql/04_data.sql")
+    m = re.search(r"INSERT INTO CryptographicAlgorithm(.*?);", sql, re.S | re.I)
+    if not m:
+        return {}
+    out = {}
+    for row in re.finditer(
+            r"\(\s*'([^']+)'\s*,\s*'[^']*'\s*,\s*(?:TRUE|FALSE)\s*,\s*'([^']*)'\s*,"
+            r"\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,", m.group(1), re.I | re.S):
+        name, std, level, pk, sig = row.groups()
+        out[name] = (int(level), int(pk), int(sig), std)
+    return out
+
+
+def check_published_algorithm_table_matches_the_seed(root: pathlib.Path) -> list[Finding]:
+    """The algorithm parameters on the front door are the ones the system actually holds.
+
+    README.md publishes a table of five algorithms with their NIST level, public-key size,
+    signature size and standard. Those are also columns of CryptographicAlgorithm, seeded in
+    04_data.sql, and C7 exists so the algorithm is DATA rather than a constant in code. So
+    the table is a restatement of a row, and until 2026-09-18 nothing held the two together:
+    the numbers agreed, and would have gone on agreeing or not agreeing with nobody the
+    wiser.
+
+    They are not decorative numbers. A reader sizes a card applet, an APDU buffer or a
+    database column from a published signature size, and a wrong one is a factual error on
+    the front door rather than an untidiness. This is the same family as the table, route
+    and check counts the tree already re-measures rather than trusts.
+
+    Read from the SEED, not from a live database, so it runs in the no-database layer with
+    every other structural check.
+    """
+    name = "published_algorithms"
+    seeded = _seeded_algorithms(root)
+    if len(seeded) < 3:
+        return _fail(name, "only %d algorithm(s) parsed out of polaris_sql/04_data.sql; the "
+                           "parse has broken and this check would pass by finding nothing"
+                           % len(seeded))
+    readme = _read_raw(root, "README.md")
+    if not readme:
+        return _fail(name, "README.md could not be read")
+
+    rows, problems = 0, []
+    for line in readme.splitlines():
+        if not line.startswith("| ") or "|" not in line[2:]:
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 7 or cells[0] not in seeded:
+            continue
+        rows += 1
+        level, pk, sig, std = seeded[cells[0]]
+        want = {"level": str(level), "pk": "%s B" % format(pk, ","),
+                "sig": "%s B" % format(sig, ","), "std": std}
+        got = {"level": cells[4], "pk": cells[5], "sig": cells[6], "std": cells[3]}
+        for key in ("level", "pk", "sig"):
+            if got[key] != want[key]:
+                problems.append("%s %s: README says %r, the seed says %r"
+                                % (cells[0], key, got[key], want[key]))
+        if not want["std"].startswith(got["std"]):
+            problems.append("%s standard: README says %r, the seed says %r"
+                            % (cells[0], got["std"], want["std"]))
+    if rows < len(seeded):
+        return _fail(name, "README.md's algorithm table carries %d of the %d seeded "
+                           "algorithms. A row that exists in the schema and not on the front "
+                           "door is a signer a reader cannot size for" % (rows, len(seeded)))
+    if problems:
+        return _fail(name, "README.md's published algorithm parameters disagree with "
+                           "polaris_sql/04_data.sql: %s. A reader sizes a card applet or a "
+                           "buffer from these" % "; ".join(problems))
+    return _ok(name, "all %d algorithms on the front door carry the NIST level, key size, "
+                     "signature size and standard the schema actually seeds, so a published "
+                     "cryptographic parameter cannot drift from the row it restates" % rows)
+
+
 def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
     """No check may report OK over a tree that contains nothing.
 
@@ -19175,6 +19250,7 @@ def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
+    check_published_algorithm_table_matches_the_seed,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,
     check_drills_count_their_cases,

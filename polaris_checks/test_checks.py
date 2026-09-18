@@ -16361,3 +16361,62 @@ def test_dependency_budget_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "missing" in out[0].message, \
         "must FAIL when a manifest is absent rather than report a clean budget"
+
+
+def test_published_algorithms_check_discriminates(tmp_path):
+    """A published cryptographic parameter must not drift from the row it restates.
+
+    README.md publishes each algorithm's NIST level, key size, signature size and standard;
+    CryptographicAlgorithm seeds the same four. Until 2026-09-18 nothing held them together.
+    A reader sizes a card applet or an APDU buffer from a published signature size.
+    """
+    SEED = (
+        "INSERT INTO CryptographicAlgorithm\n"
+        "    (name, family, quantum_resistant, nist_standard,\n"
+        "     security_level_bits, public_key_size, signature_size, deprecation_date)\n"
+        "VALUES\n"
+        "    ('ML-DSA-65', 'ML-DSA', TRUE, 'FIPS 204',\n     192, 1952, 3309, NULL),\n"
+        "    ('ML-DSA-87', 'ML-DSA', TRUE, 'FIPS 204',\n     256, 2592, 4627, NULL),\n"
+        "    ('SLH-DSA-128s', 'SLH-DSA', TRUE, 'FIPS 205',\n     128, 32, 7856, NULL);\n")
+    HEAD = ("| Name | Family | PQ | Standard | Level | Public key | Signature | Status |\n"
+            "|---|---|:---:|---|:---:|---:|---:|---|\n")
+    ROWS = ("| ML-DSA-65 | ML-DSA | x | FIPS 204 | 192 | 1,952 B | 3,309 B | default |\n"
+            "| ML-DSA-87 | ML-DSA | x | FIPS 204 | 256 | 2,592 B | 4,627 B | accepted |\n"
+            "| SLH-DSA-128s | SLH-DSA | x | FIPS 205 | 128 | 32 B | 7,856 B | registered |\n")
+
+    def write(readme=None, seed=SEED):
+        (tmp_path / "polaris_sql").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "04_data.sql").write_text(seed)
+        (tmp_path / "README.md").write_text(HEAD + (ROWS if readme is None else readme))
+
+    fn = checks.check_published_algorithm_table_matches_the_seed
+    write()
+    assert fn(tmp_path)[0].level == "OK", "must PASS when the table restates the seed"
+
+    # THE defect, from the README side: a wrong signature size on the front door.
+    write(readme=ROWS.replace("3,309 B", "2,420 B"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "3,309" in out[0].message, \
+        "must FAIL when README publishes a signature size the seed does not hold"
+
+    # And from the seed side: the same drift, introduced in the schema.
+    write(seed=SEED.replace("192, 1952, 3309", "192, 1952, 9999"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "9,999" in out[0].message, \
+        "must FAIL when the seed moves away from what is published"
+
+    # A wrong NIST level is a different column and must be caught too.
+    write(readme=ROWS.replace("| 192 |", "| 128 |"))
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL on a wrong security level"
+
+    # An algorithm the schema seeds and the front door omits: a signer nobody can size for.
+    write(readme="".join(ROWS.splitlines(True)[:2]))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "front door" in out[0].message, \
+        "must FAIL when a seeded algorithm is missing from the published table"
+
+    # Anti-vacuity: an unparseable seed must fail rather than find nothing and pass.
+    write(seed="-- no INSERT here at all\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
+        "must FAIL rather than report a clean table when the seed cannot be parsed"
