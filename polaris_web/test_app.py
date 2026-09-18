@@ -5062,8 +5062,8 @@ class RouteModuleTests(PolarisTestCase):
     #: test_roster_is_complete until it is added here, which is the point: the roster is what
     #: `check_modules_are_measured` reads to know a module has a measured suite at all, and a
     #: derived-only test would let one arrive with neither a line here nor any coverage.
-    ROUTE_MODULES = {'atlas_routes', 'federation_routes', 'operator_routes', 'rp_api',
-                     'sql_console', 'transparency_routes', 'use_case_routes',
+    ROUTE_MODULES = {'atlas_routes', 'auth_routes', 'federation_routes', 'operator_routes',
+                     'rp_api', 'sql_console', 'transparency_routes', 'use_case_routes',
                      'verification_routes'}
 
     @staticmethod
@@ -5115,6 +5115,7 @@ class RouteModuleTests(PolarisTestCase):
         floor while looking thoroughly tested."""
         import atlas_routes
         import rp_api
+        import auth_routes
         import federation_routes
         import operator_routes
         import transparency_routes
@@ -5135,7 +5136,8 @@ class RouteModuleTests(PolarisTestCase):
                 ('tokens_list', operator_routes, 'tokens_list'),
                 ('investigate_token', operator_routes, 'investigate_token'),
                 ('federation_viewer', federation_routes, 'federation_viewer'),
-                ('epochs_list', transparency_routes, 'epochs_list')):
+                ('epochs_list', transparency_routes, 'epochs_list'),
+                ('login', auth_routes, 'login')):
             view = flask_app.app.view_functions.get(endpoint)
             self.assertIsNotNone(view, '%s is not registered on the served application' % endpoint)
             self.assertIs(view, getattr(module, fn),

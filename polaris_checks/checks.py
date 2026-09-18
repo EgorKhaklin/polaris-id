@@ -3266,15 +3266,27 @@ def check_open_redirect_guard(root: pathlib.Path) -> list[Finding]:
     sec = _read(root, "polaris_web/security.py")
     if "def is_safe_next_url" not in sec:
         return _fail("open_redirect", "security.py must define the is_safe_next_url guard (CWE-601)")
-    app = _read(root, "polaris_web/app.py")
-    if "startswith('//')" in app:
+    # THE CALLERS: every application module except security.py, which legitimately contains the
+    # naive '//' test INSIDE is_safe_next_url. This read app.py by path and was declared in
+    # _APP_PATH_READERS for that reason, "the CALLERS" being a thing app.py used to be all of.
+    # The sign-in route moved to auth_routes.py on 2026-09-18 and the check went red on a
+    # property that had not changed: the caller was simply somewhere else. A declared exception
+    # is still an exception to be re-examined when what it excepts stops being true.
+    callers = "\n".join(code for name, code in _app_modules(root) if name != "security.py")
+    if not callers.strip():
+        return _fail("open_redirect", "no application module outside security.py carries code")
+    if "startswith('//')" in callers:
         return _fail("open_redirect",
-                     "app.py still uses the naive startswith('//') next-url guard; "
+                     "a caller still uses the naive startswith('//') next-url guard; "
                      "route ?next= through security.is_safe_next_url (CWE-601)")
-    if "is_safe_next_url" not in app:
-        return _fail("open_redirect", "app.py must route ?next= through security.is_safe_next_url (CWE-601)")
+    if "is_safe_next_url" not in callers:
+        return _fail("open_redirect",
+                     "no application module outside security.py routes ?next= through "
+                     "security.is_safe_next_url (CWE-601)")
     return _ok("open_redirect",
-               "post-login ?next= routed through is_safe_next_url; the naive '//'-only guard is gone (CWE-601)")
+               "post-login ?next= routed through is_safe_next_url by the caller, wherever in "
+               "polaris_web it lives, and the naive '//'-only guard appears nowhere outside "
+               "the guard function itself (CWE-601)")
 
 
 # ---------------------------------------------------------------------------
@@ -19402,9 +19414,6 @@ _APP_PATH_READERS = {
     "check_correlation_id":
         "asserts the id core lives in observability.py and that app.py and security.py USE "
         "it; joined text cannot tell a definition from a call",
-    "check_open_redirect_guard":
-        "asserts the naive startswith('//') guard is absent from the CALLERS while "
-        "is_safe_next_url in security.py legitimately contains it",
 }
 
 
@@ -19534,9 +19543,11 @@ def check_checks_do_not_grep_one_module(root: pathlib.Path) -> list[Finding]:
                            "is gone; remove it rather than leave the layer looking more "
                            "path-bound than it is" % ", ".join(sorted(unneeded)))
     return _ok(name, "every check reaches the application through _read_app rather than "
-                     "naming a module inside it, except %d that make a cross-module "
-                     "assertion and record why; so a mechanism moving between modules of "
-                     "polaris_web cannot go unnoticed (proven by the move drill)" % declared)
+                     "naming a module inside it, except %d that %s a cross-module assertion "
+                     "and record%s why; so a mechanism moving between modules of polaris_web "
+                     "cannot go unnoticed (proven by the move drill)"
+                     % (declared, "makes" if declared == 1 else "make",
+                        "s" if declared == 1 else ""))
 
 
 #: What each publishable package may pull onto a machine that installs it, and why that
