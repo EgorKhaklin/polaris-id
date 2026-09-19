@@ -157,10 +157,33 @@ complement, and it fails only in the world where the whole ecosystem fails.
 
 ## Candidates ranked below this one
 
-- **Conformance vectors for the 13 verifiers no published case reaches** (including `verify_mdoc`
-  and `verify_verifiable_credential`, which already exist and are untestable from outside).
-  Value ~23, cost ~9. High, and next. Not first, because it makes existing capability visible
-  rather than closing a correctness gap.
+- ~~**Conformance vectors for the 13 verifiers no published case reaches**~~ (including
+  `verify_mdoc` and `verify_verifiable_credential`). **REJECTED 2026-09-19 on measurement,
+  after being ranked second here.** I ranked it on the premise that these are advertised
+  capabilities an outsider cannot test. Measured, the premise is false in three ways at once:
+  none of the thirteen appears in `packages/polaris-verify/README.md`, none has a CLI flag, and
+  the package declares no `__all__`, so they are not the package's surface. They are not
+  untested either: each has its own drill or suite, which is exactly what the conformance
+  mutation drill's own output says when it lists them as "not measured (no published case
+  reaches them; their own drills do)".
+
+  Publishing cases for them would not expose existing capability. It would CREATE an external
+  commitment to capabilities Polaris does not advertise, which is the empire-building the
+  mandate warns about, and a conformance case is the most expensive kind of promise because a
+  third party then certifies against it.
+
+  The mdoc half was already settled, with better evidence than I was about to reconstruct.
+  `lab/EXTERNAL-NOUNS.md` records that the OpenID Foundation's HAIP verifier plan offers
+  **11 modules for SD-JWT VC against 4 for mdoc**, and that Polaris's existing mdoc bridge
+  "would buy the thinner plan". The SD-JWT path was chosen on that measurement and is the one
+  that now has 11 of 11 modules and an external wallet result. `scripts/polaris-mdoc-bridge-drill.py`
+  holds the mdoc bridge to being a FORMAT bridge and not a trust bridge, checks it against an
+  independent CBOR implementation, and asserts the verdict says the ML-DSA issuer signature
+  does not bridge. It passes. The remaining step is an unmodified external 18013-5 reader,
+  which is an EXTERNAL-NOUNS row and needs an outside artifact, not more code.
+
+  *What the measurement leaves worth keeping:* nothing here is a defect. It is a direction
+  removed, which is the useful half of asking.
 - **A signed algorithm-policy artifact.** Already on the known-limitations list. Strong
   differentiation, but there is no external standard, so Polaris would be inventing a format,
   and the mandate is right to be wary of that. Also wants this record's machinery first.
