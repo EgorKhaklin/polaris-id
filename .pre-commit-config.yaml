@@ -42,11 +42,18 @@ repos:
         entry: python3 -m pytest polaris_checks/test_checks.py -q
         language: system
         pass_filenames: false
-        # Also the review packet: its detection test copies the REAL packet and the real files
-        # its witnesses name, so a commit touching only that document can break the suite. One
-        # did on 2026-09-18, and because it changed nothing under polaris_checks/ this hook
-        # skipped and the breakage waited for an unrelated change to surface it.
-        files: '^(polaris_checks/|docs/REVIEW-PACKET\.md$)'
+        # Not only polaris_checks/. Six detection tests copy REAL tree files into their
+        # fixtures rather than synthesising one, because a synthetic fixture would test a
+        # document or a schema nobody ships: the review packet and the files its witnesses
+        # name, polaris_sql/01_schema.sql, 06_triggers.sql, migrations/README.md,
+        # polaris_web/enrollment_code.py, polaris_web/referee.py, scripts/polaris-ship.py and
+        # conformance/. A commit touching one of those and nothing under polaris_checks/ can
+        # break the suite, and on 2026-09-18 one did: the hook skipped, CI went red, and the
+        # breakage waited for an unrelated change to surface it.
+        #
+        # Directory prefixes rather than a file list, so a fixture that starts reading a new
+        # file in one of these trees is covered without anyone remembering to extend this.
+        files: '^(polaris_checks/|polaris_sql/|polaris_web/|conformance/|scripts/polaris-ship\.py$|docs/REVIEW-PACKET\.md$)'
 
       # Cross-reference integrity: every Markdown link + code path resolves.
       - id: polaris-link-check
