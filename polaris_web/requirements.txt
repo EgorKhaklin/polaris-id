@@ -36,7 +36,7 @@ gunicorn==26.2.0
 packaging==26.3
 
 # ---- Runtime: Postgres driver ----
-psycopg2-binary==2.9.12
+psycopg2-binary==2.9.13
 
 # ---- Runtime: WebAuthn (operator MFA, v8.97; the 3.x major taken in v9.189,
 # roadmap P1.7, with its own ceremony test pass: it adds the ML-DSA COSE
