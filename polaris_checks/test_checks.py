@@ -17274,6 +17274,76 @@ def test_attacks_report_held_only_after_attacking(tmp_path):
         "must FAIL when there are no attack modules to read"
 
 
+def test_verification_plan_covers_the_check_layer_discriminates(tmp_path):
+    """A change to a check must schedule everything that reads the check layer.
+
+    2026-09-19: polaris-ship.py's VERIFICATION table listed three of the six drills that
+    read polaris_checks. The missing one was the check-mutation drill, whose subject is
+    exactly whether a check can pass on a tree where its property is gone, and it failed a
+    new check in CI forty minutes after the local gate passed it.
+    """
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+
+    def ship(rows):
+        (scripts / "polaris-ship.py").write_text("VERIFICATION = [\n%s]\n" % "".join(
+            "    (%r, [%s], %r),\n" % (pat, ", ".join(repr(c) for c in cmds), why)
+            for pat, cmds, why in rows))
+
+    READER = "from polaris_checks.checks import CHECKS\n"
+    (scripts / "polaris-a-drill.py").write_text(READER)
+    (scripts / "polaris-b-drill.py").write_text(READER)
+    # Names the package in a list of strings, which is the opposite relationship: it is the
+    # import its published artifact must NOT have.
+    (scripts / "polaris-boundary-drill.py").write_text(
+        'FORBIDDEN = ("flask", "polaris_checks")\n')
+
+    COVERED = [
+        (r"^polaris_web/", ["python3 scripts/polaris-ship.py run"], "the app moved"),
+        (r"^polaris_sql/", ["every drill"], "the schema moved"),
+        (r"^polaris_cli/", ["cd polaris_cli"], "the CLI moved"),
+        (r"^polaris_zk/", ["cargo test"], "the prover moved"),
+        (r"^polaris_checks/checks\.py$",
+         ["python3 scripts/polaris-a-drill.py", "python3 scripts/polaris-b-drill.py"],
+         "a check moved"),
+    ]
+
+    fn = checks.check_verification_plan_covers_the_check_layer
+    ship(COVERED)
+    out = fn(tmp_path)
+    assert out[0].level == "OK", \
+        "must PASS when every drill reading the layer is scheduled, and must not demand " \
+        "the one that only names the package in a string"
+
+    # THE defect: a drill reads the layer and no row matching checks.py runs it.
+    ship(COVERED[:-1] + [(r"^polaris_checks/checks\.py$",
+                          ["python3 scripts/polaris-a-drill.py"], "a check moved")])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris-b-drill" in out[0].message, \
+        "must FAIL when a drill that reads the layer is not scheduled by a checks.py row"
+
+    # A row that names both but does not match checks.py schedules nothing.
+    ship(COVERED[:-1] + [(r"^polaris_web/app\.py$",
+                          ["python3 scripts/polaris-a-drill.py",
+                           "python3 scripts/polaris-b-drill.py"], "the app moved")])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris-a-drill" in out[0].message, \
+        "must FAIL when the drills are listed under a pattern checks.py does not match"
+
+    # Anti-vacuity, both directions: a table that will not parse, and no readers at all.
+    ship(COVERED[:2])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "would pass by finding nothing" in out[0].message, \
+        "must FAIL rather than pass when too few VERIFICATION rows parse"
+
+    ship(COVERED)
+    for stem in ("polaris-a-drill", "polaris-b-drill"):
+        (scripts / (stem + ".py")).unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "scan has broken" in out[0].message, \
+        "must FAIL rather than pass when no drill is found to read the layer at all"
+
+
 def test_precommit_folded_entry_check_discriminates(tmp_path):
     """A hook entry wrapped across lines must still be the one command it reads as.
 

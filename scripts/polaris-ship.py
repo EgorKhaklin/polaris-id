@@ -89,6 +89,17 @@ VERIFICATION = [
     (r"^polaris_web/[^/]+\.py$|^polaris_checks/checks\.py$",
      ["python3 scripts/polaris-move-mutation-drill.py"],
      "an application module or the check layer that reads it moved"),
+    # The rest of what reads the check layer. This row exists because on 2026-09-19 a new
+    # check shipped green through everything above and the check-mutation drill failed it in
+    # CI: the drill whose entire subject is "can a check pass on a tree where its property is
+    # gone" was not on the list of what to run when a check changes. The other two resolve
+    # citations INTO the layer, so a renamed or deleted check takes them red, and neither was
+    # listed either. check_verification_plan_covers_the_check_layer keeps this row honest.
+    (r"^polaris_checks/checks\.py$",
+     ["python3 scripts/polaris-check-mutation-drill.py",
+      "python3 scripts/polaris-assurance-mapping-drill.py",
+      "python3 scripts/polaris-review-packet-drill.py"],
+     "a check moved: the drills that mutate it, and the documents that cite it, must hold"),
     (r"^scripts/polaris-.*drill\.(py|sh)$", ["the changed drill itself"], "a drill moved"),
     (r"^deploy/|^polaris_web/Dockerfile|^\.github/workflows/", ["the deploy jobs in CI (helm, rolling, failover drills); nothing runs locally"], "deployment moved"),
 ]

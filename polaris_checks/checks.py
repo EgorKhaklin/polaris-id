@@ -20262,6 +20262,82 @@ def check_precommit_config_wires_what_the_docs_claim(root: pathlib.Path) -> list
                      % (len(_PRECOMMIT_HOOKS), len(declared), ", ".join(sorted(declared))))
 
 
+#: The file a VERIFICATION row has to match for a change to a check to schedule anything.
+_CHECKS_REL = "polaris_checks/checks.py"
+
+
+def check_verification_plan_covers_the_check_layer(root: pathlib.Path) -> list[Finding]:
+    """What runs when a check changes must include everything that reads the check layer.
+
+    scripts/polaris-ship.py carries VERIFICATION, a table from changed path to the
+    verification that change needs. It is how a ship decides what to run, and on 2026-09-19
+    it listed three of the six drills that read polaris_checks. The missing one was
+    polaris-check-mutation-drill.py, whose entire subject is whether a check can pass on a
+    tree where its property is gone. A new check shipped green through the local gate and
+    that drill failed it in CI forty minutes later, correctly: the check returned OK when its
+    own search pattern matched nothing.
+
+    The other two absences were quieter. polaris-assurance-mapping-drill.py and
+    polaris-review-packet-drill.py resolve citations INTO the layer and RUN the checks they
+    cite, so a renamed or deleted check takes both red, and nothing local would have said so.
+
+    A drill counts as reading the layer if it imports polaris_checks or opens checks.py by
+    path. A file that merely names the package in a list of strings does not, which is why
+    polaris-product-boundary-drill.py is out: it names polaris_checks as an import its
+    published artifact must NOT have, which is the opposite relationship.
+    """
+    name = "verification_plan_covers_checks"
+    ship = _read_raw(root, "scripts/polaris-ship.py")
+    sdir = root / "scripts"
+    if not ship or not sdir.is_dir():
+        return _fail(name, "scripts/polaris-ship.py or scripts/ is missing")
+    try:
+        tree = ast.parse(ship)
+    except SyntaxError as exc:
+        return _fail(name, "scripts/polaris-ship.py does not parse (%s)" % exc)
+    rows = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "VERIFICATION" for t in node.targets):
+            if isinstance(node.value, ast.List):
+                for el in node.value.elts:
+                    try:
+                        rows.append(ast.literal_eval(el))
+                    except ValueError:
+                        pass
+    if len(rows) < 5:
+        return _fail(name, "only %d VERIFICATION row(s) parsed out of "
+                           "scripts/polaris-ship.py; the parse has broken and this check "
+                           "would pass by finding nothing" % len(rows))
+    listed = set()
+    for pattern, commands, _why in rows:
+        try:
+            hit = re.search(pattern, _CHECKS_REL)
+        except re.error:
+            continue
+        if hit:
+            for command in commands:
+                listed |= set(re.findall(r"(polaris-[a-z0-9-]*drill)\.(?:py|sh)", command))
+    readers = set()
+    for path in sorted(sdir.glob("polaris-*drill*.py")):
+        src = path.read_text(encoding="utf-8", errors="replace")
+        if re.search(r"^\s*(?:from|import)\s+polaris_checks", src, re.M) \
+                or re.search(r"[\"']polaris_checks[\"']\s*/\s*[\"']checks\.py[\"']", src):
+            readers.add(path.stem)
+    if not readers:
+        return _fail(name, "no drill under scripts/ was found to read the check layer; the "
+                           "scan has broken and this check would pass by finding nothing")
+    missing = sorted(readers - listed)
+    if missing:
+        return _fail(name, "%d drill(s) read polaris_checks and are not in any VERIFICATION "
+                           "row matching %s, so a change to a check does not schedule them: "
+                           "%s" % (len(missing), _CHECKS_REL, ", ".join(missing)))
+    return _ok(name, "all %d drill(s) that read the check layer (%s) are scheduled by a "
+                     "VERIFICATION row matching %s, so changing a check plans the drills "
+                     "that would notice"
+               % (len(readers), ", ".join(sorted(readers)), _CHECKS_REL))
+
+
 def check_pre_commit_folded_entries_stay_one_line(root: pathlib.Path) -> list[Finding]:
     """A hook entry wrapped for readability must still be one command.
 
@@ -20450,6 +20526,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_stranger_path_was_walked_against_what_is_published,
     check_precommit_config_wires_what_the_docs_claim,
     check_pre_commit_folded_entries_stay_one_line,
+    check_verification_plan_covers_the_check_layer,
     check_every_check_has_a_detection_test,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,
