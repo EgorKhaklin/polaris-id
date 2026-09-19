@@ -20459,6 +20459,76 @@ def check_verification_plan_covers_the_check_layer(root: pathlib.Path) -> list[F
                % (len(readers), ", ".join(sorted(readers)), _CHECKS_REL))
 
 
+def check_path_gated_drills_are_named_in_the_plan(root: pathlib.Path) -> list[Finding]:
+    """A drill that decides for itself whether to run must be named for the paths that run it.
+
+    Most drills in CI run unconditionally. Two run with `--changed`, which hands the drill
+    the decision: `polaris-sdk-mutation-drill.py` runs itself when a ship touched an SDK, its
+    suite or the drill, and `polaris-procedure-mutation-drill.py` when it touched
+    `05_procedures.sql` or a migration. The flag exists for a good reason, measured in the
+    first drill's own comments: 28m01s on a ship that touched an SDK against 8m03s on one
+    that did not.
+
+    The hazard is that the gate is then invisible to a reader. On 2026-09-19 a commit to
+    `conformance/SPEC.md` tripped the SDK drill's gate in CI and it found six refusals in the
+    reference SDKs that could be inverted to ACCEPT what they refuse. `polaris-ship.py plan`
+    had named the compat suite, `run_conformance` and `test_canonical_equivalence` for that
+    path, none of which is the drill, so nothing local ran it.
+
+    The half that makes it worth a check rather than a fix: the two commits AFTER the red one
+    went green, because neither touched `sdk/` or `conformance/` and the gate therefore did
+    not fire. The tip of main was green while the defect was live. A gate that fires on some
+    paths and not others cannot be found by pushing and watching.
+
+    So: every drill CI invokes with `--changed` is named somewhere in VERIFICATION. Naming is
+    the weakest useful bar and the right one here. Which paths should schedule it is a
+    judgement the table already encodes, and a check that tried to re-derive it from the
+    drill's own gating logic would be asserting against a second implementation of the thing
+    it is checking.
+    """
+    name = "path_gated_drills_named"
+    ci = _read_raw(root, ".github/workflows/ci.yml")
+    ship = _read_raw(root, "scripts/polaris-ship.py")
+    if not ci or not ship:
+        return _fail(name, ".github/workflows/ci.yml or scripts/polaris-ship.py is missing")
+    gated = sorted(set(re.findall(r"(polaris-[a-z0-9-]*drill)\.(?:py|sh)\s+--changed", ci)))
+    if not gated:
+        return _fail(name, "no drill in ci.yml is invoked with --changed; either the scan has "
+                           "broken or the flag is gone, and this check would pass by finding "
+                           "nothing either way")
+    try:
+        tree = ast.parse(ship)
+    except SyntaxError as exc:
+        return _fail(name, "scripts/polaris-ship.py does not parse (%s)" % exc)
+    named = set()
+    rows = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "VERIFICATION" for t in node.targets):
+            if isinstance(node.value, ast.List):
+                for el in node.value.elts:
+                    try:
+                        _pattern, commands, _why = ast.literal_eval(el)
+                    except (ValueError, TypeError):
+                        continue
+                    rows += 1
+                    for command in commands:
+                        named |= set(re.findall(r"(polaris-[a-z0-9-]*drill)\.(?:py|sh)",
+                                                command))
+    if rows < 5:
+        return _fail(name, "only %d VERIFICATION row(s) parsed out of scripts/polaris-ship.py; "
+                           "the parse has broken and this check would pass by finding nothing"
+                           % rows)
+    missing = [d for d in gated if d not in named]
+    if missing:
+        return _fail(name, "%d drill(s) decide for themselves whether to run and are named in "
+                           "no VERIFICATION row, so only CI ever runs them: %s"
+                           % (len(missing), ", ".join(missing)))
+    return _ok(name, "all %d path-gated drill(s) are named in the plan (%s), so a ship that "
+                     "trips one of their gates is told to run it rather than finding out "
+                     "from CI" % (len(gated), ", ".join(gated)))
+
+
 def check_verification_plan_covers_published_artifacts(root: pathlib.Path) -> list[Finding]:
     """The things a stranger installs are product paths to the tool that plans a ship.
 
@@ -20738,6 +20808,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pre_commit_folded_entries_stay_one_line,
     check_verification_plan_covers_the_check_layer,
     check_verification_plan_covers_published_artifacts,
+    check_path_gated_drills_are_named_in_the_plan,
     check_every_check_has_a_detection_test,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,

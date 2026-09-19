@@ -277,6 +277,20 @@ class MalformedInputIsRefusedTests(unittest.TestCase):
 
     #: (label, callable, input) -> the verdict's authenticity must be falsy.
     CASES = [
+        # 2026-09-19, from polaris-sdk-mutation-drill.py: the `isinstance(pack, dict)` guard
+        # could be inverted, so a pack that is not an object at all reported AUTHENTIC, with
+        # this suite and the conformance suite both green. The guard exists because a wallet
+        # handed a relying party a compact-serialised credential STRING and crashed it, and
+        # the repair for a crash had no test of its own. Every other entry in this table
+        # hands a dict that is wrong in one field; none of them asks whether the argument is
+        # a dict, which is how a whole branch stayed uncovered in a table built to be
+        # exhaustive.
+        ("pack that is a string, not an object",
+         pv.verify_authenticity,
+         "eyJmb3JtYXQiOiAicG9sYXJpcy1hdXRoZW50aWNpdHktcGFjay8xIn0"),
+        ("pack that is a list, not an object",
+         pv.verify_authenticity,
+         [{"format": "polaris-authenticity-pack/1", "token_value": "T"}]),
         ("pack missing signature_hex",
          pv.verify_authenticity,
          {"format": "polaris-authenticity-pack/1", "token_value": "T",

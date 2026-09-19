@@ -17477,6 +17477,71 @@ def test_verification_plan_covers_the_check_layer_discriminates(tmp_path):
         "must FAIL rather than pass when no drill is found to read the layer at all"
 
 
+def test_path_gated_drills_are_named_check_discriminates(tmp_path):
+    """A drill that decides for itself whether to run must be named in the plan.
+
+    2026-09-19: polaris-sdk-mutation-drill.py runs with --changed, a commit to
+    conformance/SPEC.md tripped its gate in CI, and it found six refusals in the reference
+    SDKs that could be inverted to ACCEPT what they refuse. The plan named the compat suite
+    and run_conformance for that path, neither of which is the drill, so nothing local ran
+    it. The two commits after it went green because they touched neither gated path.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+
+    def write(ci_lines, rows):
+        (tmp_path / ".github" / "workflows" / "ci.yml").write_text("\n".join(ci_lines) + "\n")
+        (tmp_path / "scripts" / "polaris-ship.py").write_text(
+            "VERIFICATION = [\n%s]\n" % "".join(
+                "    (%r, [%r], %r),\n" % (p, cmd, w) for p, cmd, w in rows))
+
+    CI = ["      - run: python scripts/polaris-sdk-mutation-drill.py --changed",
+          "      - run: python scripts/polaris-procedure-mutation-drill.py --changed",
+          "      - run: python scripts/polaris-coverage-mutation-drill.py"]
+    # Six rows, because the check refuses to report on fewer than five and two cases below
+    # remove one. A fixture that trips the anti-vacuity guard tests the guard, not the rule.
+    ROWS = [(r"^sdk/", "python3 scripts/polaris-sdk-mutation-drill.py", "an sdk moved"),
+            (r"^polaris_sql/", "python3 scripts/polaris-procedure-mutation-drill.py", "schema"),
+            (r"^polaris_checks/", "python3 scripts/polaris-coverage-mutation-drill.py", "checks"),
+            (r"^polaris_web/", "run the app suite", "the app moved"),
+            (r"^polaris_zk/", "cargo test", "the prover moved"),
+            (r"^deploy/", "the deploy jobs", "deployment moved")]
+
+    fn = checks.check_path_gated_drills_are_named_in_the_plan
+    write(CI, ROWS)
+    assert fn(tmp_path)[0].level == "OK", \
+        "must PASS when every --changed drill is named somewhere in the plan"
+
+    # THE defect exactly as it happened: the gated drill is in CI and nowhere in the plan.
+    write(CI, [r for r in ROWS if "sdk-mutation" not in r[1]])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris-sdk-mutation-drill" in out[0].message, \
+        "must FAIL when a path-gated drill is named in no VERIFICATION row"
+
+    # An UNGATED drill missing from the plan is not this check's business: it runs on every
+    # CI push regardless, so a reader cannot be misled about whether it ran.
+    write(CI, [r for r in ROWS if "coverage-mutation" not in r[1]])
+    assert fn(tmp_path)[0].level == "OK", \
+        "must not flag a drill that runs unconditionally in CI"
+
+    # A new gated drill fails by being gated, without this check being edited.
+    write(CI + ["      - run: python scripts/polaris-future-drill.py --changed"], ROWS)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris-future-drill" in out[0].message, \
+        "a newly gated drill must fail without this check being touched"
+
+    # Anti-vacuity, both parses.
+    write(["      - run: echo nothing gated here"], ROWS)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
+        "must FAIL rather than pass when no --changed drill is found at all"
+
+    write(CI, ROWS[:2])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "parse has broken" in out[0].message, \
+        "must FAIL rather than pass when too few VERIFICATION rows parse"
+
+
 def test_verification_plan_covers_published_artifacts_discriminates(tmp_path):
     """A published artifact must be a product path to the tool that plans a ship.
 

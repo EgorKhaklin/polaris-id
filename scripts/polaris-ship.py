@@ -50,7 +50,16 @@ def _last_tag():
 # --------------------------------------------------------------------------------------
 
 VERIFICATION = [
-    (r"^polaris_sql/", ["python3 scripts/polaris-ship.py run", "every drill CI runs (the schema sits under all of them)"], "the schema moved"),
+    # `polaris-procedure-mutation-drill.py` is named rather than left to the catch-all beside
+    # it because CI runs it with `--changed`: it decides for itself whether this ship touched
+    # 05_procedures.sql or a migration. A drill that gates on a path has to be NAMED for that
+    # path, or the only thing that runs it is CI, and a local gate that says READY is saying
+    # it about less than the reader thinks.
+    (r"^polaris_sql/",
+     ["python3 scripts/polaris-ship.py run",
+      "python3 scripts/polaris-procedure-mutation-drill.py",
+      "every drill CI runs (the schema sits under all of them)"],
+     "the schema moved"),
     (r"^polaris_web/app\.py$", ["python3 scripts/polaris-ship.py run"], "the app moved"),
     (r"^polaris_web/(custody|pqc_signing|kms_standin|secretstore)\.py$",
      ["cd polaris_web && python3 -m unittest test_custody test_pqc_signing test_secretstore", "python3 scripts/polaris-verifier-fuzz.py (ML-DSA-65 and ML-DSA-87)",
@@ -100,6 +109,24 @@ VERIFICATION = [
       "python3 scripts/polaris-assurance-mapping-drill.py",
       "python3 scripts/polaris-review-packet-drill.py"],
      "a check moved: the drills that mutate it, and the documents that cite it, must hold"),
+    # The reference SDKs, which the wire-format row above matches but does not serve. That row
+    # names the compat suite, run_conformance and test_canonical_equivalence, which are about
+    # the FORMAT. None of them is what CI runs when an SDK moves, and on 2026-09-19 that cost
+    # a red build: a change to conformance/SPEC.md tripped the SDK mutation drill's --changed
+    # gate in CI, the drill found six refusals in the reference SDKs that can be inverted to
+    # ACCEPT what they refuse, and nothing local had named it so nothing local had run it.
+    #
+    # Worse than the red build: the two commits after it went GREEN, because neither touched
+    # sdk/ or conformance/ so the drill did not run at all. The tip of main was green while
+    # the defect was live. A gate that only fires on some paths needs the plan to name it on
+    # exactly those paths, or it is a gate you meet by accident.
+    (r"^sdk/|^conformance/",
+     ["python3 scripts/polaris-sdk-mutation-drill.py",
+      "python3 scripts/polaris-sdk-agreement-drill.py (and --prove-control)",
+      "python3 scripts/polaris-contract-reach-drill.py",
+      "cd sdk/python && python3 -m unittest test_sdk",
+      "cd sdk/typescript && npx tsc --noEmit && node --test"],
+     "a reference SDK or the contract it is certified against moved"),
     # The two artifacts a stranger actually installs. They were invisible here until
     # 2026-09-19: `packages/` was not in PRODUCT_PREFIXES, so the plan did not consider a
     # change to polaris-verify or polaris-oid4vp a product change at all and named nothing to

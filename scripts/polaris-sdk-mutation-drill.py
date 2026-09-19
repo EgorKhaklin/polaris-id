@@ -122,6 +122,41 @@ DECLARED_SURVIVORS: dict[str, str] = {
     "typescript:verifyCosignature:c2f6c1":
         "downstream of a real signature verifying; needs a genuine cosignature fixture",
 
+    # --- Unreachable because a guard ABOVE it already refused -------------------------
+    # 2026-09-19. `grant_within_limits` walks max_uses, the use count, max_amount and the
+    # requested amount and refuses any value that is not a finite number, BEFORE the try
+    # block. By the time control reaches the except arm every value is a finite number, so
+    # int() and float() over them cannot raise. It is a defensive catch behind a guard that
+    # has already done the work, which is a reasonable thing to keep and an impossible thing
+    # to test: covering it needs the loop above deleted, and then the test is about the
+    # deletion rather than about this line.
+    "python:grant_within_limits:07af97":
+        "downstream of a loop that already refuses every non-finite value; nothing that "
+        "reaches this except arm can raise",
+
+    # --- Feeds an explanatory NOTE, never a verdict -----------------------------------
+    # 2026-09-19. `hasIntegralNumber` is called in exactly one place, inside `if (!ok)`, to
+    # decide whether to attach a note explaining that JavaScript cannot distinguish 4 from
+    # 4.0 and a genuine artifact may therefore fail here. The verdict is already
+    # not-authentic at that point and no path reads the function's value again. Inverting
+    # either site changes which sentence a reader sees, and cannot turn a refusal into an
+    # acceptance, which is the only thing this drill's name is about.
+    "typescript:hasIntegralNumber:b0ea28":
+        "a recursion depth bound inside a function that only decides a note's wording",
+    "typescript:hasIntegralNumber:dabbdf":
+        "the fall-through of a function that only decides a note's wording",
+
+    # --- Behind an exported guard, and already said so in prose -----------------------
+    # 2026-09-19, and the declaration is overdue rather than new. The comment directly above
+    # this line has said since it was written that "the mutation drill would call it
+    # unprotected", and explained why it is kept anyway: `sameBytes` is only ever called by
+    # `verifyInclusion`, which type-checks its arguments at the exported boundary, so the
+    # inner guard cannot be reached with the wrong type. A reason that lives only in a
+    # comment is a reason no drill can read, which is the whole argument for this table.
+    "typescript:sameBytes:55dd42":
+        "unreachable behind verifyInclusion's exported type guard; kept because this "
+        "function compares BYTES and a silent coercion here was its last bug",
+
     # --- Initial values, not refusals ------------------------------------------------
     # `v = AnchorVerdict(False, ...)` is a default that every path overwrites before the
     # function returns, so inverting it changes nothing observable. The drill cannot tell
@@ -150,6 +185,24 @@ def _invert(line: str, lang: str) -> str | None:
     """
     s = line.rstrip("\n")
     ind = " " * (len(s) - len(s.lstrip()))
+    # A COMMENT IS NOT A REFUSAL. Added 2026-09-19, after this drill reported
+    # `typescript:verifySignedArtifact:b0580f` as an unprotected refusal for four days. The
+    # line is prose:
+    #
+    #     // `authentic: false` with no reason reads as a forgery, so the fact is named.
+    #
+    # The TypeScript arm below searches for `authentic: false` anywhere in the line, so it
+    # matched inside the backticks, rewrote a comment, and of course nothing observable
+    # changed. It survived, and no test could ever have closed it, because there was nothing
+    # there to protect. Python has the same shape through its `Verdict(False` search, which
+    # is also unanchored, so the guard covers both rather than only the one that fired.
+    #
+    # A false survivor is worse than a missing one. The declared list is read by a person
+    # deciding which gaps are real, and an entry that cannot be closed teaches them the list
+    # is noise, which is how the next REAL survivor gets waved through.
+    stripped = s.lstrip()
+    if stripped.startswith("#" if lang == "python" else ("//", "/*", "*")):
+        return None
     if lang == "python":
         if re.match(r"^\s*return False\s*$", s):
             return s.replace("return False", "return True") + "  # MUTATED\n"
