@@ -263,10 +263,28 @@ assigned a fallback before a `return` that still ran. Neither weakened anything 
 attack fired, correctly. A mutation that does not remove the mechanism proves nothing about
 the test, and the failure mode is believing it did.
 
-**State: both falsifiers checked, neither fires. The thesis holds.** What remains is promotion,
-which is a product change to a published package and is its own increment, not a tail end of
-this one. The design question it opens is the fetch: `polaris-oid4vp` may open a socket where
-`polaris-verify` may not, and the timeout, cache and failure-mode policy for a status fetch is
-a decision with its own attacks (what does the verdict say when the fetch fails? `no_authority`
-and "not revoked" must stay distinguishable from "could not reach the list"). That is the next
-increment.
+**State: both falsifiers checked, neither fires. The thesis holds.**
+
+**2026-09-19, the honest half promoted as v1.0.0-rc.4.** Promotion split cleanly in two, and
+only the first half shipped.
+
+*What shipped:* `polaris-oid4vp`'s verdict carries `revocation` in one of three states,
+`no_status_claim`, `not_evaluated` and `unsupported_status`. It fetches nothing. This is not
+the capability in question 1 of this record; it is the removal of the silence that made the
+capability look optional. It needed no authority table, no socket and no configuration,
+because saying "a Token Status List is named here and I did not read it" requires none of
+those. It is worth separating out precisely because it is the part that could have waited
+indefinitely behind the interesting part, and it is the part a relying party needed first.
+
+*What did not:* the fetch, and with it the authority table this record's second increment
+built. The design question is unchanged and is the next increment. `polaris-oid4vp` may open a
+socket where `polaris-verify` may not, and a fetch has a timeout, a cache and a failure mode,
+so a fourth and fifth state appear that must not blur into the three that shipped: **"could
+not reach the list" is not "not revoked", and "nobody is entitled to say" is neither.**
+
+*An unplanned finding, recorded because it is the reason the plan tool matters:* running
+`polaris-ship.py plan` for the promotion returned nothing for it. `packages/` was not in
+`PRODUCT_PREFIXES`, so neither PyPI artifact was a product path to the tool that decides what
+a ship must verify. Fixed in the same commit, with
+`check_verification_plan_covers_published_artifacts` reading the artifact list out of
+docs/RELEASING.md so a new artifact is covered by being published.

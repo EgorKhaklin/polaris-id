@@ -32,7 +32,7 @@ falsifier invented later is always satisfied by whatever was built.
 
 | Record | Capability | State |
 |---|---|---|
-| [001-token-status-list.md](001-token-status-list.md) | Read a foreign issuer's revocation status (IETF Token Status List) | PRIMARY, in progress |
+| [001-token-status-list.md](001-token-status-list.md) | Read a foreign issuer's revocation status (IETF Token Status List) | Both falsifiers checked; the honest-verdict half shipped as v1.0.0-rc.4, the fetch has not |
 
 ## What a record does not do
 
