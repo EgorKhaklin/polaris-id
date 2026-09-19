@@ -461,9 +461,19 @@ refuses whether or not anything was deprecated. The only move is sideways, to a 
 that must already exist, be keyed, and not itself be deprecated on the day. That is intended
 rather than a defect, because TokenSignature is the audit of record for migrations and a record
 you can walk back is not one, but it makes provisioning a spare algorithm a migration-planning
-prerequisite the schema cannot supply in the emergency. The mixed window during a partial
-migration remains unmeasured. Stated in [design/multi-sig-migration.md](design/multi-sig-migration.md)
-and carried as L-13 on the review packet.
+prerequisite the schema cannot supply in the emergency. Stated in
+[design/multi-sig-migration.md](design/multi-sig-migration.md) and carried as L-13 on the review
+packet.
+
+**Which closes that sentence, and the correction is worth keeping.** This entry first said the
+mixed window was still unmeasured. It is not, and had not been since the day before the sentence
+was written: `algorithm_status.py` measured it on 2026-09-17 and `lab/crypto-migration/README.md`
+carries the table under a heading that says so. Over 10,000 holders, a relying party that drops
+the old algorithm locks out the fraction not yet re-signed, one in ten at 90 per cent re-signed,
+and **no signed artifact tells it which row it is on**. That is the finding rather than the
+curve, and it is L-12. What is left is not a measurement anybody here can take: a real
+population's migration rate is a deployment fact, and the ledger should say that rather than
+calling it unmeasured, which implies somebody could go and measure it in this repository.
 
 **And the measurement instruments were wrong three times in ways that flattered them.** The
 conformance drill counted 22 fields that were not fields and misclassified what fixing the rest
