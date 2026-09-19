@@ -218,10 +218,15 @@ looked. The second says somebody looked and the list could not be reached. Repor
 identically decides, on the relying party's behalf, that an unreachable status endpoint is as
 good as a credential whose issuer publishes none.
 
-**Asking is opt-in.** Pass `status_resolver=` to `verify_presentation`; without one the
+**Asking is opt-in.** Pass `status_resolver=` to `Verifier(...)`, which hands it down, or to
+`verify_presentation` directly if you are using the decision half alone. Without one the
 verdict is `not_evaluated` and nothing is fetched. It is opt-in because a status check couples
 your verification path to somebody else's uptime, and what a slow or failed check should cost
 is a policy only you can set.
+
+`polaris-oid4vp serve` does not take one. The CLI is a test harness, and a resolver needs an
+authority table and a fetch policy that belong in an application rather than on a command
+line. A deployment embeds `Verifier`.
 
 [`polaris_oid4vp/status.py`](polaris_oid4vp/status.py) decides the token once you have it,
 per `draft-ietf-oauth-status-list`, the mechanism SD-JWT VC, CWT and ISO mdoc all reference.

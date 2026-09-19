@@ -760,6 +760,30 @@ FLAKE_SIGNATURES = [
      "buildx could not resolve the dockerfile frontend from Docker Hub (DeadlineExceeded). "
      "The build failed before reading the Dockerfile, so this is the registry not answering "
      "rather than anything in the tree; rerun the failed jobs"),
+    # 2026-09-19, run 35473066452, chased by hand because triage said "investigate". The HA
+    # job died in `docker compose up -d` with `pg-router Error received unexpected HTTP
+    # status: 502 Bad Gateway`, then reported no containers at all. The commit touched two
+    # Markdown files under lab/strategy/ and nothing else; the commit AFTER it, carrying the
+    # same content plus a package change, passed the same job. Three pushes were competing
+    # for runners at the time, which is the same shape as the buildkit-frontend flake above.
+    #
+    # This is the registry answering with a 5xx while images are PULLED, where that one is
+    # the registry not answering while metadata is RESOLVED. They are separate rules for the
+    # reason recorded there: rerunning clears a registry that is briefly unwell, and never
+    # clears a registry that has given a definite answer. A 4xx is deliberately NOT matched
+    # here, because `pull access denied` and `repository does not exist` are definite and
+    # belong to registry-removal.
+    #
+    # Anchored on `HTTP status: 5xx` rather than on `Error response from daemon`, which also
+    # prefixes `No such container` and would have swallowed a genuinely dead service. The
+    # string appears nowhere in the tree, so it cannot be matched out of a command's own text
+    # the way `stream error` once was.
+    ("registry-5xx",
+     r"received unexpected HTTP status: 5\d\d",
+     "the image registry returned a 5xx while pulling (502/503 from Docker Hub is the usual "
+     "one), so the containers were never created and the job's later errors are all 'No such "
+     "container'. Nothing in the tree is implicated; confirm the failing job names no "
+     "container it built itself and rerun the failed jobs"),
     # 2026-09-16: the rolling drill's preflight asks `docker compose config --services` for
     # `app-green` and refuses when it is absent. On run 35110741726 it was absent seconds
     # after the boot step of the same job had started both colours and printed them healthy,

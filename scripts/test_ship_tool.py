@@ -126,6 +126,38 @@ class FlakeClassifierTests(unittest.TestCase):
                             "step text rather than on a failure marker is how the Caddy "
                             "signature matched every container log until 2026-09-16")
 
+    def test_a_registry_5xx_during_a_pull_is_a_known_flake(self):
+        """Run 35473066452: `docker compose up` got a 502 and created nothing.
+
+        The commit touched two Markdown files under lab/strategy/. The commit after it,
+        carrying the same content plus a package change, passed the same job.
+        """
+        for line in ("pg-router Error received unexpected HTTP status: 502 Bad Gateway",
+                     "Error response from daemon: received unexpected HTTP status: 502 Bad Gateway",
+                     "received unexpected HTTP status: 503 Service Unavailable"):
+            with self.subTest(line=line[:40]):
+                verdict, name, advice = ship.classify_failure_log(line)
+                self.assertEqual((verdict, name), ("flake", "registry-5xx"))
+                self.assertIn("rerun", advice)
+
+    def test_a_missing_container_alone_is_not_a_registry_flake(self):
+        """The signature is anchored on the HTTP status, not on the daemon's error prefix.
+
+        `Error response from daemon:` also prefixes `No such container`, which is what a
+        genuinely dead service prints. Matching the prefix would have classified every one
+        of those as a registry flake and told the reader to rerun."""
+        verdict, name, _advice = ship.classify_failure_log(
+            "Error response from daemon: No such container: polaris-postgres")
+        self.assertNotEqual(name, "registry-5xx",
+                            "a container that is absent for any other reason must not be "
+                            "answered 'known flake, rerun'")
+
+    def test_a_registry_4xx_is_not_this_flake(self):
+        """A definite answer from a registry that is up. Rerunning never clears it."""
+        verdict, name, _advice = ship.classify_failure_log(
+            "pull access denied for polaris/nope, repository does not exist")
+        self.assertNotEqual(name, "registry-5xx")
+
     def test_the_apt_index_flake_still_classifies(self):
         for line in ("E: Failed to fetch http://azure.archive.ubuntu.com",
                      "Hash Sum mismatch",
