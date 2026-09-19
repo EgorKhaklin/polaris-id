@@ -32,10 +32,12 @@ polaris/
 │
 ├── polaris_web/        ← the Flask application
 │   ├── app.py / security.py / webauthn_auth.py / custody.py / pqc_signing.py
-│   ├── rp_api.py / atlas_routes.py / use_case_routes.py / verification_routes.py
-│   │      route modules split out of app.py (2026-09-18); each registers by
-│   │      import at the end of app.py, which aliases itself into sys.modules first
-│   ├── sql_console.py
+│   ├── rp_api.py / atlas_routes.py / operator_routes.py / use_case_routes.py
+│   ├── status_routes.py / transparency_routes.py / auth_routes.py
+│   ├── verification_routes.py / federation_routes.py / sql_console.py
+│   │      the ten route modules split out of app.py (2026-09-18); each registers
+│   │      by import at the end of app.py, which aliases itself into sys.modules
+│   │      first so `python3 app.py` does not load the entry point twice
 │   ├── templates/ static/                         ← Jinja2 templates; external-only JS and CSS
 │   ├── Dockerfile / docker-compose.yml            ← dev image and dev stack
 │   ├── Dockerfile.prod / docker-compose.prod.yml  ← prod image and the five-service stack

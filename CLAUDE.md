@@ -391,7 +391,7 @@ than that.
 | The checks and their detection tests | [polaris_checks/checks.py](polaris_checks/checks.py), [polaris_checks/test_checks.py](polaris_checks/test_checks.py) |
 | Schema, indexes, procedures, triggers, grants, Atlas functions, migrations | [polaris_sql/](polaris_sql/): `01_schema.sql`, `02_indexes.sql`, `05_procedures.sql`, `06_triggers.sql`, `09_grants.sql`, `11_atlas.sql`, `migrations/` |
 | Flask application, security policy, signing, custody, templates, static | [polaris_web/](polaris_web/): `app.py`, `security.py`, `pqc_signing.py`, `custody.py`, `templates/`, `static/` |
-| The route modules split out of `app.py` (2026-09-18), each registering by import at the END of `app.py` | [polaris_web/](polaris_web/): `rp_api.py` (36 `/api/v1` routes), `atlas_routes.py`, `use_case_routes.py` (UC-1/4/5/6/7/8/9), `verification_routes.py`, `sql_console.py` |
+| The ten route modules split out of `app.py` (2026-09-18), each registering by import at the END of `app.py` | [polaris_web/](polaris_web/): `rp_api.py` (36 `/api/v1` routes), `atlas_routes.py`, `operator_routes.py` (tokens, individuals, agencies, investigate), `use_case_routes.py` (UC-1/4/5/6/7/8/9), `status_routes.py` (health, metrics, security.txt), `transparency_routes.py` (epochs, anchors), `auth_routes.py` (sign-in, WebAuthn), `verification_routes.py`, `federation_routes.py`, `sql_console.py` |
 | Operator CLI | [polaris_cli/](polaris_cli/) |
 | ZK prover and its independent second witness | [polaris_zk/src/lib.rs](polaris_zk/src/lib.rs), [polaris_zk/witness2/](polaris_zk/witness2/) |
 | The standalone products | [packages/polaris-verify](packages/polaris-verify/), [packages/polaris-oid4vp](packages/polaris-oid4vp/), [sdk/python](sdk/python/), [sdk/typescript](sdk/typescript/) |

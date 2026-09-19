@@ -113,8 +113,13 @@ break.
   [app.py](../polaris_web/app.py) plus the route modules split out of it:
   [rp_api.py](../polaris_web/rp_api.py) (the 36 `/api/v1` routes),
   [atlas_routes.py](../polaris_web/atlas_routes.py),
+  [operator_routes.py](../polaris_web/operator_routes.py),
   [use_case_routes.py](../polaris_web/use_case_routes.py),
-  [verification_routes.py](../polaris_web/verification_routes.py) and
+  [status_routes.py](../polaris_web/status_routes.py),
+  [transparency_routes.py](../polaris_web/transparency_routes.py),
+  [auth_routes.py](../polaris_web/auth_routes.py),
+  [verification_routes.py](../polaris_web/verification_routes.py),
+  [federation_routes.py](../polaris_web/federation_routes.py) and
   [sql_console.py](../polaris_web/sql_console.py), with role enforcement
   (`admin`, `operator`, `auditor`) as implemented by `require_role` in
   [security.py](../polaris_web/security.py). The

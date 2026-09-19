@@ -11109,6 +11109,69 @@ def test_transparency_program_check_discriminates(tmp_path):
         "a report that does not say it cannot show an unrecorded access must FAIL"
 
 
+def test_route_module_inventories_are_complete_check_discriminates(tmp_path):
+    # 2026-09-18: app.py was decomposed into ten route modules, five of them after the documents
+    # were first updated. Three documents enumerate the modules and each named the five that
+    # existed when it was written. Nothing failed: every path resolved and every `file.py::symbol`
+    # citation was live. The lists were simply short. docs/RED-TEAM-SCOPE.md is why that matters
+    # rather than being untidy: it tells an external reviewer what the web-application scope IS,
+    # and a reviewer reads the absence of a module as the absence of routes.
+    ROUTE = "from app import app\n\n\n@app.route('/x')\ndef x():\n    pass\n"
+
+    def write(modules, docs):
+        web = tmp_path / "polaris_web"
+        if web.exists():
+            for f in web.glob("*.py"):
+                f.unlink()
+        # The documents too: leaving one behind from a previous case made the missing-document
+        # case pass on a file this call never wrote.
+        for f in tmp_path.rglob("*.md"):
+            f.unlink()
+        web.mkdir(parents=True, exist_ok=True)
+        (web / "app.py").write_text("app = 1\n")
+        for m in modules:
+            (web / ("%s.py" % m)).write_text(ROUTE)
+        for rel, body in docs.items():
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    check = checks.check_route_module_inventories_are_complete
+    FULL = {"CLAUDE.md": "modules: alpha_routes, beta_routes\n",
+            "docs/reference/SYSTEM-MAP.md": "alpha_routes / beta_routes\n",
+            "docs/RED-TEAM-SCOPE.md": "alpha_routes and beta_routes\n"}
+
+    write(["alpha_routes", "beta_routes"], FULL)
+    assert check(tmp_path)[0].level == "OK", "complete inventories must PASS"
+
+    # THE DEFECT: a module exists and one document has not caught up.
+    short = dict(FULL, **{"docs/RED-TEAM-SCOPE.md": "alpha_routes only\n"})
+    write(["alpha_routes", "beta_routes"], short)
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "a short inventory must be caught"
+    assert "beta_routes" in result.message, "and the omitted module named"
+    assert "RED-TEAM-SCOPE" in result.message, "and the document that omits it"
+
+    # A module that does NOT import the entry point back is not a route module, and a document
+    # is not required to mention it.
+    write(["alpha_routes", "beta_routes"], FULL)
+    (tmp_path / "polaris_web" / "helper.py").write_text("y = 2\n")
+    assert check(tmp_path)[0].level == "OK", \
+        "an ordinary helper is not a route module and imposes nothing on the documents"
+
+    # A MISSING DOCUMENT is unmeasurable, not passing.
+    write(["alpha_routes"], {k: v for k, v in FULL.items() if k != "CLAUDE.md"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL"
+    assert "could not be read" in result.message
+
+    # VACUITY: no route modules at all is a failure, not a clean sweep.
+    write([], FULL)
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "quantifying over an empty set is not completeness"
+    assert "empty set" in result.message
+
+
 def test_documented_symbols_resolve_check_discriminates(tmp_path):
     # 2026-09-18: MISSION.md's constraint table cited app.py for C6's handler and C8's caps
     # after both had moved to route modules. Nothing failed. The link check passed, because

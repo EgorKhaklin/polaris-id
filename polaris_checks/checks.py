@@ -16867,6 +16867,73 @@ def check_documented_symbols_resolve(root: pathlib.Path) -> list[Finding]:
                "something was is not a claim about where it is" % cited)
 
 
+#: Documents that ENUMERATE the route modules, and must therefore name all of them. A list is
+#: a promise of completeness; a list that has fallen behind is worse than no list, because a
+#: reader takes the absence of a module as the absence of routes.
+_ROUTE_MODULE_INVENTORIES = (
+    "CLAUDE.md",
+    "docs/reference/SYSTEM-MAP.md",
+    "docs/RED-TEAM-SCOPE.md",
+)
+
+
+def check_route_module_inventories_are_complete(root: pathlib.Path) -> list[Finding]:
+    """Every document that lists the route modules lists all of them.
+
+    app.py was decomposed into ten route modules on 2026-09-18, five of them after the
+    documents were first updated. Three documents enumerate the modules, and each named the
+    five that existed when it was written. Nothing failed: the link check resolved every path,
+    check_documented_symbols_resolve found every `file.py::symbol` citation live, and the lists
+    were simply short.
+
+    docs/RED-TEAM-SCOPE.md is why this is a check rather than a habit. It tells an external
+    reviewer what the web-application scope IS. Before the first correction it said "every route
+    in app.py" while 57 of 123 routes were elsewhere; a list naming half the modules is the same
+    failure wearing more detail. A reviewer reads the absence of a module as the absence of
+    routes, which is the one reading a security scope must never invite.
+
+    The set is derived the way every other check derives it, from which modules import the entry
+    point back, so a module added tomorrow is covered by being written rather than by being
+    remembered."""
+    name = "route_module_inventories"
+    mods = _app_modules(root)
+    if not mods:
+        return _fail(name, "polaris_web/ is missing")
+    route_modules = sorted(
+        fname[:-3] for fname, code in mods
+        if fname != "app.py"
+        and re.search(r"^\s*(?:from\s+app\s+import\b|import\s+app\b)", code, re.M))
+    if not route_modules:
+        return _fail(name,
+                     "no module in polaris_web/ imports the entry point back, so this check is "
+                     "quantifying over an empty set. app.py is decomposed into route modules; "
+                     "if that is no longer true, delete this check rather than leave it "
+                     "reporting completeness about nothing")
+
+    missing = []
+    for rel in _ROUTE_MODULE_INVENTORIES:
+        text = _read(root, rel)
+        if not text:
+            return _fail(name, "%s could not be read, and it is one of the documents that "
+                               "promises a complete list" % rel)
+        absent = [m for m in route_modules if m not in text]
+        if absent:
+            missing.append("%s omits %s" % (rel, ", ".join(absent)))
+    if missing:
+        return _fail(name,
+                     "%d document(s) list the route modules and are short: %s. A list is a "
+                     "promise of completeness, and a reader takes the absence of a module as "
+                     "the absence of routes"
+                     % (len(missing), "; ".join(missing)))
+    return _ok(name,
+               "all %d documents that enumerate the route modules name every one of the %d that "
+               "exist (%s). The set is derived from which modules import the entry point back, "
+               "so one added tomorrow is covered by being written rather than by being "
+               "remembered; docs/RED-TEAM-SCOPE.md is in the list because a short inventory "
+               "there tells an external reviewer that routes do not exist"
+               % (len(_ROUTE_MODULE_INVENTORIES), len(route_modules), ", ".join(route_modules)))
+
+
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
     """A pilot can be wound back, and says truthfully what that leaves (P5.1).
 
@@ -20048,6 +20115,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_route_modules_register_under_both_entry_points,
     check_no_module_imports_an_unstable_name,
     check_documented_symbols_resolve,
+    check_route_module_inventories_are_complete,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,
