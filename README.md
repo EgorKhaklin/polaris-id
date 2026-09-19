@@ -246,9 +246,15 @@ Most of those jobs carry a comment naming the specific past failure they exist t
 
 ```bash
 python3 -m polaris_checks.run      # the invariant layer, no database needed
-./scripts/polaris-test.sh          # the full product suite against local Postgres
-./polaris_mac_launch.sh test       # the same, via the launcher
+python3 scripts/polaris-ship.py run  # the full local gate: 912 sharded + 627 unsharded tests
+./scripts/polaris-test.sh          # the four DB-heavy modules only (912), for an inner loop
+./polaris_mac_launch.sh test       # the same four, via the launcher
 ```
+
+`polaris-ship.py run` is the one that matches CI. `polaris-test.sh` runs the four modules CI
+shards and none of the suites it does not, which is a real gap rather than a detail: twice in
+one day a commit passed the narrower command and went red in CI on a file none of those four
+modules imports.
 
 ---
 

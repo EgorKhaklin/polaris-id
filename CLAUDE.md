@@ -237,7 +237,11 @@ python3 -m pytest polaris_checks/test_checks.py -q
 # Selectors: quick | app | ClassName | ClassName.test_name.
 ./scripts/polaris-test.sh
 
-# The same four modules, sharded across processes with a fresh database per shard.
+# THE LOCAL GATE. The same four modules sharded across processes with a fresh database per
+# shard (912 tests), and then every unsharded suite CI runs, against one of those databases
+# (627 more, about two minutes). --no-unsharded skips the second half and is for an inner loop
+# only: twice on 2026-09-18 a commit passed the sharded set and went red in CI on a file none
+# of the four modules imports.
 python3 scripts/polaris-ship.py run            # --shards N, --module M (repeatable), --keep
 
 # The unsharded suites CI also runs (UNSHARDED_SUITES in scripts/polaris-ship.py is the list):
