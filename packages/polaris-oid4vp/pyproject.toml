@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polaris-oid4vp"
-version = "1.0.0rc5"
+version = "1.0.0rc6"
 description = "OpenID4VP 1.0 + HAIP verifier: verify an SD-JWT VC presentation from a wallet Polaris has never seen."
 readme = "README.md"
 requires-python = ">=3.9"

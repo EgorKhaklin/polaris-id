@@ -82,7 +82,8 @@ class Verifier:
     def __init__(self, *, client_cert_pem, client_key_pem, request_uri, response_uri,
                  issuer_jwks=None, issuer_trust_anchors=None, redirect_uri=None,
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
-                 vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name")):
+                 vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
+                 status_resolver=None):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         self.cert = load_pem_x509_certificate(client_cert_pem)
@@ -100,6 +101,12 @@ class Verifier:
         self.request_ttl_seconds = request_ttl_seconds
         self.vct_values = list(vct_values)
         self.claims = list(claims)
+        # Revocation. None means the verdict reports `not_evaluated`, which is what this
+        # verifier can honestly say about a status list nobody read. Threaded from here
+        # rather than left on `verify_presentation` alone because THIS is the surface an
+        # operator uses: the class that answers the wallet. A parameter reachable only from
+        # the function underneath it is a capability the product does not have.
+        self.status_resolver = status_resolver
         self._sessions = {}
         self._by_request = {}
         self._lock = threading.Lock()
@@ -256,7 +263,8 @@ class Verifier:
                                       # credential and accepted any kind the same issuer
                                       # signed. Measured 2026-09-17: a loyalty card's
                                       # `given_name` came back as though it were a PID's.
-                                      expected_vct=self.vct_values)
+                                      expected_vct=self.vct_values,
+                                      status_resolver=self.status_resolver)
         if not verdict.authentic:
             # The reason goes to the operator through the returned verdict, and the wallet
             # gets the same constant refusal every other cause gets.

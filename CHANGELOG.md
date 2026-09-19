@@ -11,6 +11,38 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.6 — 2026-09-19 (the capability rc.5 shipped, reachable from the thing you use)
+
+A correction to rc.5, as a later entry rather than an edit to it. Externally observable. One
+package: `polaris-oid4vp`. Nothing is published by this entry.
+
+rc.5 added `status_resolver` to `verify_presentation` and did not thread it through
+`Verifier`. `Verifier` is the class an operator constructs, the one that answers the wallet,
+and the one the README's own run instructions show. So the capability existed in the package
+and not in the product: a relying party using the documented entry point could not supply a
+resolver at all, and nothing said so.
+
+`Verifier(..., status_resolver=...)` now takes it and hands it down. The default is unchanged
+in both places: no resolver means `not_evaluated`.
+
+**The test written for this first did not catch it, and that is the more useful half.** It
+asserted `assertIs(verifier.status_resolver, resolver)` against a fixture credential carrying
+no status claim. Both were true with the resolver held in `__init__` and never passed on: the
+object had it, nothing used it, and the assertion could not tell the difference. Removing the
+threading left the suite green.
+
+The credential has to NAME a status list, and the assertion has to be that the resolver's
+answer reached the verdict. It does now, and two mutations confirm it: dropping the resolver
+in `__init__` and failing to thread it past there both turn the suite red.
+
+That is the second time today a test asserted the shape of a mechanism rather than its effect,
+after a status-list adversary that checked a verdict was "not accepted" without checking which
+refusal it was. Both passed against code that did not work.
+
+240 tests across seven suites.
+
+---
+
 ## v1.0.0-rc.5 — 2026-09-19 (asking is opt-in, and the answer can be absent)
 
 Externally observable, so it is a version. One package moved: `polaris-oid4vp`. Nothing is

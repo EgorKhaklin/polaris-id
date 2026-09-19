@@ -29,6 +29,7 @@ from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.jwe import b64u_decode, b64u_encode, encrypt_compact  # noqa: E402
 from polaris_oid4vp.verifier import Verifier  # noqa: E402
+from polaris_oid4vp import sdjwt  # noqa: E402
 
 
 def _jws(key, header, payload):
@@ -87,7 +88,7 @@ class Wallet:
 
     def respond(self, jar, *, nonce=None, audience=None, iat=None, sd_hash=None,
                 corrupt_issuer_sig=False, corrupt_kb_sig=False, extra_disclosure=None,
-                state=None, enc="A128GCM", vp_token=None, vct=None):
+                state=None, enc="A128GCM", vp_token=None, vct=None, status=None):
         _, claims = self.read_request(jar)
         enc_jwk = claims["client_metadata"]["jwks"]["keys"][0]
         enc_public = ec.EllipticCurvePublicNumbers(
@@ -98,14 +99,15 @@ class Wallet:
             nonce=claims["nonce"] if nonce is None else nonce,
             audience=claims["client_id"] if audience is None else audience,
             iat=iat, sd_hash=sd_hash, corrupt_issuer_sig=corrupt_issuer_sig,
-            corrupt_kb_sig=corrupt_kb_sig, extra_disclosure=extra_disclosure, vct=vct)
+            corrupt_kb_sig=corrupt_kb_sig, extra_disclosure=extra_disclosure, vct=vct,
+            status=status)
         body = {"state": claims["state"] if state is None else state,
                 "vp_token": {"pid": [presentation]} if vp_token is None else vp_token}
         token = encrypt_compact(json.dumps(body).encode(), enc_public, enc)
         return {"response": [token]}
 
     def _presentation(self, *, nonce, audience, iat, sd_hash, corrupt_issuer_sig,
-                      corrupt_kb_sig, extra_disclosure, vct=None):
+                      corrupt_kb_sig, extra_disclosure, vct=None, status=None):
         disclosures = [
             b64u_encode(json.dumps([s, n, v], separators=(",", ":")).encode())
             for s, n, v in (("s0", "given_name", "Jean"), ("s1", "family_name", "Dupont"))]
@@ -115,6 +117,8 @@ class Wallet:
                    "vct": "urn:eudi:pid:1" if vct is None else vct,
                    "iat": int(time.time()), "_sd": digests,
                    "cnf": {"jwk": _public_jwk(self.holder_key)}}
+        if status is not None:
+            payload["status"] = status
         issuer_jwt = _jws(self.issuer_key,
                           {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"}, payload)
         if corrupt_issuer_sig:
@@ -264,6 +268,72 @@ class TheHappyPathTests(VerifierTestCase):
     def test_a256gcm_is_accepted_because_it_is_advertised(self):
         _, status, body = self.exchange(enc="A256GCM")
         self.assertEqual(status, 200, body)
+
+
+class RevocationReachesTheOperatorTests(unittest.TestCase):
+    """The resolver has to be reachable from the CLASS, not only from the function under it.
+
+    2026-09-19: `verify_presentation` gained `status_resolver` and `Verifier` did not thread
+    it, so the capability existed in the package and not in the product. `Verifier` is what an
+    operator constructs and what answers the wallet; a parameter reachable only from the layer
+    beneath it is a capability nobody can use.
+    """
+
+    def _verifier(self, **kw):
+        cert_pem, key_pem = _client_chain()
+        self.wallet = Wallet()
+        return Verifier(
+            client_cert_pem=cert_pem, client_key_pem=key_pem,
+            request_uri="https://verifier.test/request.jwt",
+            response_uri="https://verifier.test/response",
+            issuer_jwks=[self.wallet.issuer_jwk], **kw)
+
+    def _exchange(self, verifier):
+        _, jar = verifier.new_request()
+        status, _, verdict = verifier.handle_direct_post(self.wallet.respond(jar))
+        return status, verdict
+
+    def test_without_a_resolver_the_verdict_says_nobody_looked(self):
+        status, verdict = self._exchange(self._verifier())
+        self.assertEqual(status, 200)
+        self.assertFalse(verdict.revocation["checked"])
+        self.assertIn(verdict.revocation["state"],
+                      (sdjwt.NO_STATUS_CLAIM, sdjwt.NOT_EVALUATED))
+
+    STATUS = {"status_list": {"uri": "https://issuer.example/sl/1", "idx": 5}}
+
+    def test_a_resolver_given_to_the_class_is_reached(self):
+        """The regression this class exists for: the class must pass it DOWN.
+
+        Written first as `assertIs(v.status_resolver, resolver)` plus a credential carrying
+        no status claim, which passed with the resolver never threaded past __init__: the
+        resolver was held and not used, and nothing could tell. The credential has to name a
+        list, and the assertion has to be that the resolver's ANSWER reached the verdict.
+        """
+        asked = []
+
+        def resolver(*, uri, idx, issuer):
+            asked.append((uri, idx, issuer))
+            return {"checked": True, "status": 1, "meaning": "INVALID"}
+
+        v = self._verifier(status_resolver=resolver)
+        _, jar = v.new_request()
+        status, _, verdict = v.handle_direct_post(
+            self.wallet.respond(jar, status=self.STATUS))
+        self.assertEqual(status, 200)
+        self.assertEqual(asked, [("https://issuer.example/sl/1", 5, "https://issuer.example")])
+        self.assertTrue(verdict.revocation["checked"])
+        self.assertEqual(verdict.revocation["meaning"], "INVALID")
+
+    def test_without_a_resolver_a_named_list_is_not_evaluated(self):
+        """The same credential, no resolver: nobody looked, and the verdict says so."""
+        v = self._verifier()
+        _, jar = v.new_request()
+        status, _, verdict = v.handle_direct_post(
+            self.wallet.respond(jar, status=self.STATUS))
+        self.assertEqual(status, 200)
+        self.assertFalse(verdict.revocation["checked"])
+        self.assertEqual(verdict.revocation["state"], sdjwt.NOT_EVALUATED)
 
 
 class TheSevenRefusalsReachTheWireTests(VerifierTestCase):
