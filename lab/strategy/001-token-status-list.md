@@ -339,10 +339,40 @@ accepted" slept through it. The boundary is explicit now: the fetch layer classi
 TRANSPORT and `decide` classifies the TOKEN, and a body not even shaped like a compact JWS
 belongs to the first. The attack asserts the code, not just the refusal.
 
-*Still not promoted.* What ships next is a product decision about `polaris-oid4vp`: it may
-open a socket where `polaris-verify` may not, and the five states above have to reach the
-relying party's verdict intact rather than being flattened into the three that shipped in
-rc.4.
+**2026-09-19, promoted as v1.0.0-rc.5. The record closes here.**
+
+`polaris_oid4vp.status` is the decision function, carried over whole and still socket-free.
+`verify_presentation(..., status_resolver=...)` is the hook, and it is OPT-IN: with no
+resolver the verdict is `not_evaluated`, exactly as rc.4 left it. That was the design call
+worth making deliberately. A status check couples a relying party's verification path to
+somebody else's uptime, and a verifier library that fetched by default would be deciding, for
+them and silently, that their traffic stops when a third party's endpoint does. The library's
+job is to make the five states reachable and distinguishable; which of them is acceptable is
+theirs.
+
+237 tests across seven suites, the seventh wired into ci.yml, preflight and the ship tool's
+unsharded table, because a suite that is written and not run is counted as coverage while
+pinning nothing.
+
+**What the bet actually returned, against what it predicted.** The payoff estimate put
+interoperability at 5 and differentiation at 4, on the argument that the parsing is commodity
+and only the semantics are ours. That held, and more narrowly than expected: the parsing took
+an afternoon, and every one of the four things worth having came out of questions the draft
+does not answer. Who may publish status (section 11.3 is a recommendation and `iss` is not
+required). What a stale-but-unexpired list means (only age shows a rollback). What an
+unreachable endpoint means (the draft is silent). Where the boundary sits between a failing
+endpoint and a broken list. None of those is in the specification, and all four are what a
+relying party has to know.
+
+**The option value predicted in question 8 has already been drawn on once.** The freshness,
+staleness and rollback machinery built here is what a signed algorithm-policy artifact needs,
+and that candidate's cost estimate in `lab/strategy/README.md` dropped because this existed
+first. That was the stated reason for ranking this above it, and it is the only part of the
+estimate that has been tested rather than argued.
+
+**What this record does NOT establish.** No outside party has used any of it. The authority
+table is a shape an operator would have to fill, and no operator has. `lab/EXTERNAL-NOUNS.md`
+is where that would be recorded, and it has no row for this.
 
 *An unplanned finding, recorded because it is the reason the plan tool matters:* running
 `polaris-ship.py plan` for the promotion returned nothing for it. `packages/` was not in
