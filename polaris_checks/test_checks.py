@@ -11169,6 +11169,54 @@ def test_transparency_program_check_discriminates(tmp_path):
         "a report that does not say it cannot show an unrecorded access must FAIL"
 
 
+def test_every_test_suite_is_run_check_discriminates(tmp_path):
+    # A suite nobody runs is worse than no suite: it is counted, read as coverage, and can go
+    # stale for years. The tree has no orphan and the structure permits exactly one, because
+    # packages/polaris-oid4vp names its six suites explicitly while polaris_card is discovered.
+    def write(files):
+        for f in list(tmp_path.rglob("*.py")) + list(tmp_path.rglob("*.yml")) + \
+                 list(tmp_path.rglob("*.sh")) + list(tmp_path.rglob("*.yaml")):
+            f.unlink()
+        for rel, body in files.items():
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    check = checks.check_every_test_suite_is_run
+
+    NAMED = {"scripts/polaris-ship.py": 'UNSHARDED = ["test_alpha"]\n',
+             "pkg/test_alpha.py": "x = 1\n"}
+    write(NAMED)
+    assert check(tmp_path)[0].level == "OK", "a suite named in a runner must PASS"
+
+    # THE DEFECT: a seventh file beside six named ones.
+    write(dict(NAMED, **{"pkg/test_beta.py": "x = 1\n"}))
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "a suite no runner names must be caught"
+    assert "pkg/test_beta.py" in result.message, "and named"
+
+    # A DISCOVER ROOT covers everything under it, so a file added there is run by being written.
+    write({"scripts/polaris-ship.py": 'cmd = "unittest discover -s pkg -t . -p test_*.py"\n',
+           "pkg/test_alpha.py": "x = 1\n", "pkg/test_beta.py": "x = 1\n"})
+    assert check(tmp_path)[0].level == "OK", "a discovered directory needs no per-file naming"
+
+    # WORD BOUNDARIES. `test_verifier` named in a runner must not credit `test_verifier_device`,
+    # which is how the first version of this search reported a clean result off bad evidence.
+    write({"scripts/polaris-ship.py": 'S = ["test_verifier"]\n',
+           "pkg/test_verifier.py": "x = 1\n", "pkg/test_verifier_device.py": "x = 1\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "a substring match must not count as being run"
+    assert "test_verifier_device" in result.message
+
+    # VACUITY, both ways: no suites at all, and no readable runner.
+    write({"scripts/polaris-ship.py": 'S = []\n'})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL" and "measures nothing" in result.message
+    write({"pkg/test_alpha.py": "x = 1\n"})
+    result = check(tmp_path)[0]
+    assert result.level == "FAIL", "no runner readable is unmeasurable, not passing"
+
+
 def test_route_module_inventories_are_complete_check_discriminates(tmp_path):
     # 2026-09-18: app.py was decomposed into ten route modules, five of them after the documents
     # were first updated. Three documents enumerate the modules and each named the five that

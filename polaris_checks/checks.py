@@ -17007,6 +17007,75 @@ def check_route_module_inventories_are_complete(root: pathlib.Path) -> list[Find
                % (len(_ROUTE_MODULE_INVENTORIES), len(route_modules), ", ".join(route_modules)))
 
 
+#: Where a suite can be named for running: the workflow that gates the push, the coverage
+#: script, the ship tool's shard and unsharded tables, preflight, and the pre-commit hooks.
+_SUITE_RUNNERS = (".github/workflows/ci.yml", "scripts/polaris-coverage.sh",
+                  "scripts/polaris-ship.py", "scripts/polaris-preflight.sh",
+                  ".pre-commit-config.yaml")
+
+
+def check_every_test_suite_is_run(root: pathlib.Path) -> list[Finding]:
+    """No test file in the tree is run by nothing.
+
+    A suite nobody runs is worse than no suite: it is counted, it is read as coverage, and it
+    can go stale for years without anyone learning that the thing it pins stopped being true.
+
+    The tree has no orphan today and the structure permits exactly one. Two conventions are in
+    use. polaris_card is run by `unittest discover -s polaris_card`, so a file added there is
+    run by being written. packages/polaris-oid4vp names its six suites EXPLICITLY, in ci.yml,
+    in preflight and in the ship tool's unsharded table, so a seventh file added beside them is
+    run by nothing at all and nothing says so. Both conventions are fine; the difference is
+    that one of them needs this check.
+
+    Matched on WORD boundaries, not substrings. A first version of this search asked whether
+    the module name appeared anywhere in the runner text, which credits `test_verifier` for a
+    line that actually runs `test_verifier_device`, and reports a clean result off bad evidence.
+    That is the same mistake as reading one document and not the one beside it."""
+    name = "suites_are_run"
+    skip = ("/.git/", "/venv/", "/.venv/", "/node_modules/", "__pycache__", "/build/", "/dist/")
+    suites = sorted({p for p in root.rglob("test_*.py")
+                     if not any(x in str(p) for x in skip)})
+    if not suites:
+        return _fail(name, "no test_*.py found in the tree; a search that finds nothing is a "
+                           "check that measures nothing")
+
+    corpus = ""
+    for rel in _SUITE_RUNNERS:
+        corpus += _read(root, rel) + "\n"
+    if not corpus.strip():
+        return _fail(name, "none of the runner files could be read (%s)"
+                           % ", ".join(_SUITE_RUNNERS))
+
+    # Directories handed to `unittest discover`: everything under one is run by being written.
+    disc = set()
+    for m in re.finditer(r"discover[^\n]*?-s\s+([\w/.-]+)", corpus):
+        disc.add(m.group(1).strip("./"))
+    for m in re.finditer(r"discover:([\w/.-]+)", corpus):
+        disc.add(m.group(1).strip("./"))
+
+    orphans = []
+    for path in suites:
+        rel = path.relative_to(root).as_posix()
+        if any(rel == d or rel.startswith(d.rstrip("/") + "/") for d in disc if d):
+            continue
+        if re.search(r"\b%s\b" % re.escape(path.stem), corpus):
+            continue
+        orphans.append(rel)
+    if orphans:
+        return _fail(name,
+                     "%d test suite(s) are run by nothing: %s. A suite nobody runs is counted "
+                     "and read as coverage while pinning nothing. Name it in the ship tool's "
+                     "tables and in ci.yml, or put it under a directory something discovers"
+                     % (len(orphans), ", ".join(orphans)))
+    return _ok(name,
+               "all %d test suites in the tree are run: named on a word boundary in one of the "
+               "%d runners, or under a directory handed to `unittest discover` (%s). The tree "
+               "has no orphan and the structure permits one, because packages/polaris-oid4vp "
+               "names its suites explicitly while polaris_card discovers a directory: a seventh "
+               "file beside the first six would be run by nothing, and this is what says so"
+               % (len(suites), len(_SUITE_RUNNERS), ", ".join(sorted(disc)) or "none"))
+
+
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
     """A pilot can be wound back, and says truthfully what that leaves (P5.1).
 
@@ -20189,6 +20258,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_no_module_imports_an_unstable_name,
     check_documented_symbols_resolve,
     check_route_module_inventories_are_complete,
+    check_every_test_suite_is_run,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,
