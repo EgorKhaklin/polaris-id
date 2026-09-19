@@ -487,6 +487,26 @@ Each entry: symptom, likely cause, how to tell it from a real failure, action.
 13. **The paper is stale against its sources.** A check refuses a PDF older than the `.tex`
     files it was rendered from. The build is Docker (`texlive/texlive:latest`), three passes,
     then the source hash list regenerated; the recipe is in `docs/paper/README.md`.
+14. **You are moving code between modules of `polaris_web/`.** `app.py` was decomposed into ten
+    route modules on 2026-09-18 and the moves are mechanical now, but four hazards are not
+    obvious and none of them raises where you would look. **A route module registers by being
+    imported at the END of `app.py`**, and `app.py` aliases itself into `sys.modules` first,
+    because under `python3 app.py` (the dev server the abuse and DR drills start) it is
+    `__main__` and `from app import ...` would otherwise load it a second time and register the
+    routes on a Flask instance nobody serves: the server answers and the moved route 404s.
+    **Never `from app import X` a name `app.py` does not bind once and keep** -- bound only
+    inside a module-level `try` (the `_METRICS_*` names), rebound under `global` (a lazily
+    filled memo), or repointed at runtime by a suite (`SIM_MODE`, `_VERIFY_SAMPLE_RATE`,
+    `DB_CONFIG_REPLICA`, `ATLAS_BASEMAP_STYLE_URL`). Reach those as `app.X` at use time;
+    `check_no_module_imports_an_unstable_name` refuses the import and says which reason.
+    **A helper with callers on both sides of the move stays in `app.py`.** And **anything that
+    looks for a mechanism must look in the PACKAGE**, not at a path: seven layers named
+    `polaris_web/app.py` and were converted one at a time (the checks, the constitution drill,
+    `check_exchange_trust_directional`, the TLA `MODELS` bindings, the authorization audit, the
+    refusal drill, the documents). The first three failed loudly; the last three narrowed
+    silently, which is worse, because a passing audit reads as coverage. Run
+    `python3 scripts/polaris-ship.py run`: it runs the unsharded suites too, and they are where
+    a stale `flask_app.X` reference shows up.
 
 ---
 
