@@ -88,12 +88,43 @@ CADDY_RETRY_LOOP_ECHO = (
     'sleep $((attempt * 20));     done')
 
 
+#: The same package-index failure in the pgbouncer image, which runs `apk upgrade && apk add`
+#: with no pip. Its failure marker comes BEFORE the step text rather than after it, which is
+#: why the pip-shaped pattern missed it: on 2026-09-19 it came back as "investigate" and cost a
+#: hand investigation for a class this table already documented.
+ALPINE_APK_NO_PIP = (
+    'target pgbouncer: failed to solve: process "/bin/sh -c apk upgrade --no-cache     '
+    '&& apk add --no-cache pgbouncer netcat-openbsd openssl" did not complete successfully: '
+    'exit code: 1')
+
+#: BuildKit ECHOES a RUN step when it starts. Matching the bare step text is how the Caddy
+#: retry loop's own message made every container log look like a Caddy flake until 2026-09-16,
+#: so the apk signature must require a real failure marker and this must NOT classify.
+ALPINE_APK_ECHO_ONLY = '#8 [stage-1 3/7] RUN /bin/sh -c apk add --no-cache pgbouncer'
+
+
 class FlakeClassifierTests(unittest.TestCase):
-    def test_the_alpine_pip_layer_is_a_known_flake(self):
+    def test_the_alpine_apk_layer_is_a_known_flake(self):
         verdict, name, advice = ship.classify_failure_log(ALPINE_PIP)
-        self.assertEqual((verdict, name), ("flake", "alpine-pip-layer"))
+        self.assertEqual((verdict, name), ("flake", "alpine-apk-layer"))
         self.assertIn("docker build --no-cache", advice,
                       "the advice must say how to CONFIRM it is a flake, not just assert it")
+
+    def test_the_apk_layer_classifies_in_an_image_that_does_not_pip(self):
+        """The signature was scoped to the image somebody was looking at.
+
+        It required `apk add ... pip3 install`, which is the postgres image's layer. The
+        pgbouncer image installs no Python, so an identical package-index failure returned
+        "investigate"."""
+        verdict, name, _advice = ship.classify_failure_log(ALPINE_APK_NO_PIP)
+        self.assertEqual((verdict, name), ("flake", "alpine-apk-layer"))
+
+    def test_a_buildkit_echo_of_an_apk_step_is_not_a_flake(self):
+        verdict, name, _advice = ship.classify_failure_log(ALPINE_APK_ECHO_ONLY)
+        self.assertNotEqual(name, "alpine-apk-layer",
+                            "BuildKit echoes a RUN step when it starts; classifying on the "
+                            "step text rather than on a failure marker is how the Caddy "
+                            "signature matched every container log until 2026-09-16")
 
     def test_the_apt_index_flake_still_classifies(self):
         for line in ("E: Failed to fetch http://azure.archive.ubuntu.com",
