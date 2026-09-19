@@ -68,7 +68,71 @@ class Verdict(dict):
 
 def _refuse(code, reason):
     return Verdict(checked=False, status=None, meaning=None, fresh=None, age_seconds=None,
-                   stale=None, code=code, reason=reason)
+                   stale=None, authority=None, code=code, reason=reason)
+
+
+# --------------------------------------------------------------------------- authority
+#
+# WHO IS ENTITLED TO SAY A CREDENTIAL IS REVOKED.
+#
+# Measured against draft-20 (2026-04-20) rather than assumed. The draft does not settle this
+# and says so: section 11.3, "Key Resolution and Trust Management", notes that when the Status
+# Issuer and the credential's issuer are the same entity the same key MAY be reused, and that
+# when they differ their certificates SHOULD come from the same Certificate Authority with an
+# extended key usage on the Status Issuer's. Both are recommendations, both presume x.509, and
+# neither is a rule a verifier can apply on its own.
+#
+# It is worse than that for anyone hoping to infer it. `iss` is NOT a required claim of a
+# Status List Token: section 5.1 requires `sub`, `iat` and `status_list` only. So the token
+# frequently does not name its own issuer, and the sole binding it carries is `sub` == the
+# `uri` the credential named. A verifier that fetches that URI and believes whatever signed
+# the response is trusting DNS and TLS to answer an authorization question.
+#
+# Polaris's answer is the one its architecture already takes everywhere else: do not infer it,
+# require it to be stated, and put the basis in the verdict. Two bases are honest.
+#
+#   SAME_KEY    the status list verifies under the very key that verified the credential's
+#               issuer signature. Nothing was delegated and nothing needs to be configured.
+#
+#   STATED      an operator configured, in advance, that a named key may publish status for a
+#               named issuer at a named URI, and why. A relying party that cannot say who it
+#               is trusting has not made a trust decision.
+#
+# Anything else is refused as `no_authority`, which is NOT the same as a valid credential.
+
+SAME_KEY = "same_key"
+STATED = "stated"
+
+
+class StatedAuthority:
+    """An explicit table: who may publish status for whom, and on whose say-so.
+
+    Deliberately not a resolver. There is no lookup, no fetch and no inference: an entry
+    exists because somebody put it there and wrote down why. That is the whole point, and it
+    is why this is a class of about twenty lines rather than a protocol.
+    """
+
+    def __init__(self):
+        self._entries = {}
+
+    def state(self, *, credential_issuer, status_uri, verify, why):
+        """Record that `verify` may decide status lists at `status_uri` for this issuer."""
+        if not (credential_issuer and status_uri and callable(verify) and why):
+            raise ValueError("a stated delegation needs an issuer, a uri, a verifier and a "
+                             "reason; an entry nobody can explain is not a trust decision")
+        self._entries[(credential_issuer, status_uri)] = (verify, why)
+        return self
+
+    def __call__(self, *, credential_issuer, status_uri, header, issuer_key_verify=None):
+        """Return (verify_callable, basis, why) or None when no authority is established."""
+        if issuer_key_verify is not None:
+            return (issuer_key_verify, SAME_KEY,
+                    "the status list is signed by the key that signed the credential")
+        found = self._entries.get((credential_issuer, status_uri))
+        if found is None:
+            return None
+        verify, why = found
+        return (verify, STATED, why)
 
 
 def _b64u(value, what):
@@ -123,21 +187,29 @@ def status_at(array, index, bits):
     return (array[byte_index] >> offset) & ((1 << bits) - 1)
 
 
-def decide(token, *, index, expected_uri, verify_signature, now, max_age_seconds=None):
+def decide(token, *, index, expected_uri, authority, now, credential_issuer=None,
+           issuer_key_verify=None, max_age_seconds=None):
     """Decide the status of one referenced credential. Total on hostile input.
 
-    token             the Status List Token, a compact JWS (str or bytes)
-    index             the `idx` from the credential's own status claim
-    expected_uri      the `uri` from that same claim; must equal the token's `sub`
-    verify_signature  callable(signing_input: bytes, signature: bytes, header: dict) -> bool.
-                      Supplied by the caller because WHICH key is entitled to publish status
-                      for this issuer is a trust-resolution question, not a parsing one, and
-                      this function must not be able to answer it by accident.
-    now               integer POSIX seconds
-    max_age_seconds   the caller's own staleness bound, applied on top of the token's `ttl`.
-                      A relying party is allowed to be stricter than the issuer.
+    token              the Status List Token, a compact JWS (str or bytes)
+    index              the `idx` from the credential's own status claim
+    expected_uri       the `uri` from that same claim; must equal the token's `sub`
+    authority          callable(credential_issuer=, status_uri=, header=, issuer_key_verify=)
+                       returning (verify, basis, why) or None. See StatedAuthority above: the
+                       draft does not settle who may publish status for whom, so this is the
+                       one thing that must be decided outside and stated.
+    now                integer POSIX seconds
+    credential_issuer  the `iss` of the credential being checked. Part of the authority key,
+                       because a key entitled to publish status for one issuer is not thereby
+                       entitled to publish it for another.
+    issuer_key_verify  the verifier that checked the credential's own issuer signature, when
+                       the caller wants the same-key basis considered.
+    max_age_seconds    the caller's own staleness bound, applied on top of the token's `ttl`.
+                       A relying party is allowed to be stricter than the issuer.
 
-    The verdict always carries `checked`. Everything else is meaningful only when it is True.
+    The verdict always carries `checked`. Everything else is meaningful only when it is True,
+    and `authority` says on what basis, because "revoked" from a key nobody vetted is not a
+    fact about the credential.
     """
     if isinstance(token, str):
         token = token.encode("ascii", "replace")
@@ -182,15 +254,32 @@ def decide(token, *, index, expected_uri, verify_signature, now, max_age_seconds
                        "%r; it is a real status list for somebody else"
                        % (expected_uri, subject))
 
-    # PROVENANCE, second half. The caller decides which key may speak for this issuer.
+    # PROVENANCE, second half, and the half the draft leaves open. Establish WHO is entitled
+    # to publish status for this credential's issuer BEFORE checking whether they signed it:
+    # a valid signature by an unauthorized key is the attack, not the answer.
+    try:
+        granted = authority(credential_issuer=credential_issuer, status_uri=subject,
+                            header=header, issuer_key_verify=issuer_key_verify)
+    except Exception as exc:                       # a crashing resolver is not a grant
+        return _refuse("authority_error",
+                       "establishing who may publish this status raised %s: %s"
+                       % (type(exc).__name__, exc))
+    if not granted:
+        return _refuse("no_authority",
+                       "no key is stated as entitled to publish status for issuer %r at %r, "
+                       "and the draft's own section 11.3 does not settle it; an unvetted "
+                       "signature is not an answer about this credential"
+                       % (credential_issuer, subject))
+    verify_signature, basis, why = granted
+
     try:
         ok = verify_signature(b".".join(parts[:2]), signature, header)
-    except Exception as exc:                       # a crashing resolver is not a pass
+    except Exception as exc:                       # a crashing verifier is not a pass
         return _refuse("signature_error",
                        "the signature check raised %s: %s" % (type(exc).__name__, exc))
     if not ok:
         return _refuse("signature", "the status list token's signature did not verify under "
-                                    "the key the caller supplied")
+                                    "the key entitled to publish it (%s)" % basis)
 
     # FRESHNESS. Three separate facts, kept separate: the token may not be used past `exp`;
     # `iat` in the future is nonsense rather than freshness; and `ttl` is the issuer's own
@@ -242,10 +331,12 @@ def decide(token, *, index, expected_uri, verify_signature, now, max_age_seconds
 
     return Verdict(checked=True, status=value, meaning=_MEANING.get(value),
                    fresh=not stale, stale=stale, age_seconds=age,
+                   authority=basis,
                    code=None,
-                   reason=("status %d (%s) published %ds ago%s"
+                   reason=("status %d (%s) published %ds ago on %s authority (%s)%s"
                            % (value, _MEANING.get(value, "application-specific or reserved"),
-                              age, "; past the %ds bound the issuer or caller set" % bound
+                              age, basis, why,
+                              "; past the %ds bound the issuer or caller set" % bound
                               if stale else "")))
 
 

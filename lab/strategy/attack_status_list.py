@@ -23,11 +23,14 @@ import sys
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from status_list import (INVALID, MAX_DECOMPRESSED_BYTES, SUSPENDED, VALID,  # noqa: E402
-                         decide, encode_status_list, status_at)
+from status_list import (INVALID, MAX_DECOMPRESSED_BYTES, SAME_KEY, STATED,  # noqa: E402
+                         SUSPENDED, VALID, StatedAuthority, decide, encode_status_list,
+                         status_at)
 
 NOW = 1_800_000_000
 URI = "https://issuer.example/statuslists/1"
+ISSUER = "https://issuer.example"
+OTHER_ISSUER = "https://other.example"
 
 
 def b64u(raw):
@@ -58,6 +61,13 @@ def refuse_all(signing_input, signature, header):
     return False
 
 
+#: The delegation table a relying party would configure. Entries exist because somebody
+#: put them there; there is no resolver and nothing is inferred.
+AUTHORITY = StatedAuthority().state(
+    credential_issuer=ISSUER, status_uri=URI, verify=accept_all,
+    why="the operator recorded on 2026-09-19 that this key publishes status for this issuer")
+
+
 # --------------------------------------------------------------------------- positive control
 
 def positive_control():
@@ -67,15 +77,15 @@ def positive_control():
     this file while establishing nothing. The suite is VOID if this does not hold.
     """
     v = decide(token(good_payload(bits=2)), index=1, expected_uri=URI,
-               verify_signature=accept_all, now=NOW)
+               authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if not v["checked"] or v["status"] != INVALID:
         return False, "the control did not read a published INVALID: %r" % (dict(v),)
     v2 = decide(token(good_payload(bits=2)), index=0, expected_uri=URI,
-                verify_signature=accept_all, now=NOW)
+                authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if not v2["checked"] or v2["status"] != VALID:
         return False, "the control did not read a published VALID: %r" % (dict(v2),)
     v3 = decide(token(good_payload(bits=2)), index=2, expected_uri=URI,
-                verify_signature=accept_all, now=NOW)
+                authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if not v3["checked"] or v3["status"] != SUSPENDED:
         return False, "the control did not read a published SUSPENDED: %r" % (dict(v3),)
     return True, ("a published VALID, INVALID and SUSPENDED each read back correctly, so a "
@@ -105,7 +115,7 @@ def a_index_past_the_end():
     The tempting implementation returns 0 for a short array, and 0 is VALID.
     """
     v = decide(token(good_payload()), index=10_000, expected_uri=URI,
-               verify_signature=accept_all, now=NOW)
+               authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if v["checked"]:
         return True, "an index past the end of the list returned a status: %r" % (dict(v),)
     return False, "an index past the end is refused (%s), not read as VALID" % v["code"]
@@ -119,7 +129,7 @@ def a_status_list_for_another_issuer():
     """
     other = good_payload(sub="https://issuer.example/statuslists/99")
     v = decide(token(other), index=1, expected_uri=URI,
-               verify_signature=accept_all, now=NOW)
+               authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if v["checked"]:
         return True, "a status list published for another URI answered for this credential"
     return False, "a real status list for another URI is refused (%s)" % v["code"]
@@ -128,7 +138,7 @@ def a_status_list_for_another_issuer():
 def a_plain_jwt_replayed_as_a_status_list():
     """Any other signed object the issuer ever minted, offered here."""
     v = decide(token(good_payload(), typ="JWT"), index=1, expected_uri=URI,
-               verify_signature=accept_all, now=NOW)
+               authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if v["checked"]:
         return True, "a token declaring typ=JWT was accepted as a status list"
     return False, "a token that is not typ=statuslist+jwt is refused (%s)" % v["code"]
@@ -136,7 +146,7 @@ def a_plain_jwt_replayed_as_a_status_list():
 
 def a_expired_list_still_answers():
     v = decide(token(good_payload(exp=NOW - 1)), index=1, expected_uri=URI,
-               verify_signature=accept_all, now=NOW)
+               authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if v["checked"]:
         return True, "an expired status list still answered"
     return False, "an expired status list is refused (%s); the draft says MUST NOT" % v["code"]
@@ -154,7 +164,7 @@ def a_rollback_to_before_the_revocation():
     """
     old = good_payload(statuses=(VALID, VALID, VALID, VALID), iat=NOW - 86_400,
                        exp=NOW + 3600, ttl=None)
-    v = decide(token(old), index=1, expected_uri=URI, verify_signature=accept_all,
+    v = decide(token(old), index=1, expected_uri=URI, authority=AUTHORITY, issuer_key_verify=accept_all,
                now=NOW, max_age_seconds=300)
     if not v["checked"]:
         return False, ("a day-old status list is refused outright (%s), so the rollback has "
@@ -176,7 +186,7 @@ def a_decompression_bomb():
         zlib.compress(b"\x00" * (MAX_DECOMPRESSED_BYTES * 4), 9)).rstrip(b"=").decode()
     p = good_payload()
     p["status_list"]["lst"] = bomb
-    v = decide(token(p), index=1, expected_uri=URI, verify_signature=accept_all, now=NOW)
+    v = decide(token(p), index=1, expected_uri=URI, authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if v["checked"]:
         return True, "a decompression bomb was expanded and answered from"
     return False, "a decompression bomb is refused (%s) without being expanded" % v["code"]
@@ -184,7 +194,7 @@ def a_decompression_bomb():
 
 def a_unsigned_list():
     v = decide(token(good_payload()), index=1, expected_uri=URI,
-               verify_signature=refuse_all, now=NOW)
+               authority=AUTHORITY, issuer_key_verify=refuse_all, now=NOW)
     if v["checked"]:
         return True, "a status list whose signature did not verify still answered"
     return False, "a status list whose signature does not verify is refused (%s)" % v["code"]
@@ -194,7 +204,7 @@ def a_resolver_that_raises():
     def explode(signing_input, signature, header):
         raise RuntimeError("the key resolver is down")
     v = decide(token(good_payload()), index=1, expected_uri=URI,
-               verify_signature=explode, now=NOW)
+               authority=AUTHORITY, issuer_key_verify=explode, now=NOW)
     if v["checked"]:
         return True, "a crashing key resolver was treated as a successful verification"
     return False, "a crashing key resolver is refused (%s), not read as a pass" % v["code"]
@@ -203,7 +213,7 @@ def a_resolver_that_raises():
 def a_unknown_status_folded_into_valid():
     """Value 3 is application-specific. It is not VALID, and must not be reported as one."""
     p = good_payload(statuses=(0, 3, 0, 0), bits=2)
-    v = decide(token(p), index=1, expected_uri=URI, verify_signature=accept_all, now=NOW)
+    v = decide(token(p), index=1, expected_uri=URI, authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
     if not v["checked"]:
         return False, "an application-specific status is refused (%s)" % v["code"]
     if v["status"] == VALID or v["meaning"] == "VALID":
@@ -233,7 +243,7 @@ def a_malformed_everything():
     ]
     for label, tok in cases:
         try:
-            v = decide(tok, index=1, expected_uri=URI, verify_signature=accept_all, now=NOW)
+            v = decide(tok, index=1, expected_uri=URI, authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
         except Exception as exc:
             return True, "%r raised %s: %s" % (label, type(exc).__name__, exc)
         if v["checked"]:
@@ -241,7 +251,7 @@ def a_malformed_everything():
     for label, idx in (("negative index", -1), ("boolean index", True),
                        ("string index", "1"), ("float index", 1.5)):
         try:
-            v = decide(token(p), index=idx, expected_uri=URI, verify_signature=accept_all,
+            v = decide(token(p), index=idx, expected_uri=URI, authority=AUTHORITY, issuer_key_verify=accept_all,
                        now=NOW)
         except Exception as exc:
             return True, "%r raised %s: %s" % (label, type(exc).__name__, exc)
@@ -249,6 +259,93 @@ def a_malformed_everything():
             return True, "%r was accepted and answered" % label
     return False, "%d malformed tokens and 4 malformed indices: none raised, none answered" \
                   % len(cases)
+
+
+
+def a_unvetted_key_publishes_status():
+    """The gap the draft leaves open, and the reason this file has an authority table.
+
+    Section 11.3 of draft-20 says the Status Issuer MAY reuse the credential issuer's key when
+    they are the same entity and SHOULD share a Certificate Authority when they are not. Both
+    are recommendations. `iss` is not even a required claim of a Status List Token, so the
+    token usually does not name who minted it. A verifier that fetches the `uri` and believes
+    whatever signed the response has asked DNS and TLS an authorization question.
+
+    Here: a perfectly well-formed, unexpired status list, correctly signed, for the right URI,
+    from a key nobody stated anything about. It must not answer.
+    """
+    v = decide(token(good_payload()), index=1, expected_uri=URI, credential_issuer=OTHER_ISSUER,
+               authority=AUTHORITY, now=NOW)
+    if v["checked"]:
+        return True, ("a status list signed by a key no one vetted answered for a credential: "
+                      "%r" % (dict(v),))
+    return False, ("a status list from an unstated key is refused (%s) rather than believed"
+                   % v["code"])
+
+
+def a_delegation_leaks_across_issuers():
+    """A key entitled to publish status for one issuer is not entitled to for another.
+
+    The table is keyed on (issuer, uri) for exactly this reason. A single-key table, or one
+    keyed on the URI alone, would let a legitimate status publisher revoke or un-revoke
+    credentials belonging to an issuer that never delegated to it.
+    """
+    v = decide(token(good_payload()), index=1, expected_uri=URI, credential_issuer=OTHER_ISSUER,
+               authority=AUTHORITY, now=NOW)
+    if v["checked"]:
+        return True, ("a delegation stated for %s was used for a credential issued by %s"
+                      % (ISSUER, OTHER_ISSUER))
+    return False, "a delegation does not carry across issuers (%s)" % v["code"]
+
+
+def a_stated_delegation_is_reported_as_same_key():
+    """A stated delegation is weaker evidence than the issuer's own key, and must say so.
+
+    If both bases report identically, a relying party cannot tell a status its issuer signed
+    from one a third party signed under a configuration entry, and the verdict has lost the
+    distinction it exists to carry.
+    """
+    stated = decide(token(good_payload()), index=1, expected_uri=URI, credential_issuer=ISSUER,
+                    authority=AUTHORITY, now=NOW)
+    same = decide(token(good_payload()), index=1, expected_uri=URI, credential_issuer=ISSUER,
+                  authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
+    if not stated["checked"] or not same["checked"]:
+        return True, ("the two bases did not both resolve, so this attack could not run: "
+                      "stated=%r same=%r" % (stated["code"], same["code"]))
+    if stated["authority"] == same["authority"]:
+        return True, ("a stated delegation and the issuer's own key both report authority=%r"
+                      % stated["authority"])
+    if stated["authority"] != STATED or same["authority"] != SAME_KEY:
+        return True, ("the bases are reported as %r and %r, not %r and %r"
+                      % (stated["authority"], same["authority"], STATED, SAME_KEY))
+    return False, ("the two bases are distinguishable in the verdict: %r versus %r"
+                   % (stated["authority"], same["authority"]))
+
+
+def a_authority_that_raises():
+    """A trust table that blows up is not a grant."""
+    def explode(**kw):
+        raise RuntimeError("the delegation table is unreadable")
+    v = decide(token(good_payload()), index=1, expected_uri=URI, credential_issuer=ISSUER,
+               authority=explode, now=NOW)
+    if v["checked"]:
+        return True, "a crashing authority table was treated as a grant"
+    return False, "a crashing authority table is refused (%s)" % v["code"]
+
+
+def a_empty_delegation_accepted():
+    """An entry nobody can explain is not a trust decision, and the table must refuse to hold one."""
+    for kw in ({"credential_issuer": "", "status_uri": URI, "verify": accept_all, "why": "x"},
+               {"credential_issuer": ISSUER, "status_uri": "", "verify": accept_all, "why": "x"},
+               {"credential_issuer": ISSUER, "status_uri": URI, "verify": None, "why": "x"},
+               {"credential_issuer": ISSUER, "status_uri": URI, "verify": accept_all, "why": ""}):
+        try:
+            StatedAuthority().state(**kw)
+        except ValueError:
+            continue
+        return True, "a delegation with %r was accepted into the table" % (
+            [k for k, v in kw.items() if not v],)
+    return False, "a delegation missing an issuer, a uri, a verifier or a reason is refused"
 
 
 ATTACKS = [
@@ -263,6 +360,11 @@ ATTACKS = [
     ("resolver_that_raises", a_resolver_that_raises),
     ("unknown_status_folded_into_valid", a_unknown_status_folded_into_valid),
     ("malformed_everything", a_malformed_everything),
+    ("unvetted_key_publishes_status", a_unvetted_key_publishes_status),
+    ("delegation_leaks_across_issuers", a_delegation_leaks_across_issuers),
+    ("stated_delegation_reported_as_same_key", a_stated_delegation_is_reported_as_same_key),
+    ("authority_that_raises", a_authority_that_raises),
+    ("empty_delegation_accepted", a_empty_delegation_accepted),
 ]
 
 

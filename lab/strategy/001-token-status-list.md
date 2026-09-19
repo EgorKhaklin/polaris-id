@@ -209,10 +209,64 @@ are where the value is: `sub` binding and rollback are both one-line properties 
 straightforward implementation would omit, and the rollback one cannot be fixed by the
 verifier at all unless the age is in the verdict for the caller to bound.
 
-**What it does NOT settle, and this is falsifier 2 still open.** `verify_signature` is a
+**What it did NOT settle at that point, and it was falsifier 2.** `verify_signature` was a
 caller-supplied callable. That was deliberate, so the parser cannot answer a trust question by
-accident, but it means this build *defers* "which key may publish status for this issuer"
-rather than answering it. Until that has an honest answer, a verdict field in the product would
-be reporting a status signed by a key nobody vetted. **The bet is supported, not won, and
-promotion out of LAB waits on the trust question.** That is the next thing to settle, not more
-parsing.
+accident, but it meant the build *deferred* "which key may publish status for this issuer"
+rather than answering it.
+
+**2026-09-19, falsifiers 1 and 2 both checked against the spec. Neither fires.**
+
+*Falsifier 1, the format moving:* checked against draft-20, published 2026-04-20, rather than
+against the version I first read. `typ` is still `statuslist+jwt`; `status_list` still carries
+`bits` and `lst`; still DEFLATE/ZLIB then base64url; the credential's claim is still
+`status.status_list` with `idx` and `uri`. Nothing implemented here has moved.
+
+*Falsifier 2, the trust question having no honest answer:* it has no answer **in the draft**,
+which is a different and more interesting thing. Section 11.3, "Key Resolution and Trust
+Management", says the Status Issuer MAY reuse the credential issuer's key when they are the
+same entity, and that when they differ their certificates SHOULD come from the same
+Certificate Authority with an extended key usage. Both are recommendations, both presume
+x.509, and neither is a rule a verifier can apply by itself. Worse for anyone hoping to infer
+it: **`iss` is not a required claim of a Status List Token.** Section 5.1 requires `sub`, `iat`
+and `status_list` only, so the token frequently does not name its own issuer at all, and the
+sole binding it carries is `sub` equal to the `uri` the credential named.
+
+A verifier that fetches that URI and believes whatever signed the response is asking DNS and
+TLS an authorization question.
+
+So the falsifier does not fire: the honest answer exists, it is just not the draft's. It is the
+one this architecture takes everywhere else. **Do not infer it; require it to be stated; put
+the basis in the verdict.** Two bases are honest and they are not equal:
+
+  * `same_key`: the status list verifies under the very key that verified the credential's
+    issuer signature. Nothing was delegated and nothing needs configuring.
+  * `stated`: an operator recorded in advance that a named key may publish status for a named
+    issuer at a named URI, and why.
+
+Anything else is `no_authority`, which is not a valid credential. `StatedAuthority` is about
+twenty lines and deliberately is not a resolver: no lookup, no fetch, no inference, and an
+entry that cannot say why it exists is refused at insertion.
+
+**Second increment, attacked.** Five more adversaries, sixteen in total, all held. Four more
+mutations, all caught:
+
+| Mutation | Result |
+|---|---|
+| an unknown key granted by default | `unvetted_key_publishes_status` BROKEN: a status list from a key nobody vetted answered |
+| lookup ignores the credential issuer | `delegation_leaks_across_issuers` BROKEN: a delegation stated for one issuer used for another |
+| every basis reported as `same_key` | `stated_delegation_reported_as_same_key` BROKEN: the verdict lost the distinction it exists to carry |
+| a crashing authority table falls back to a grant | `authority_that_raises` BROKEN |
+
+Two of those four were written wrongly on the first attempt and are worth the same note as
+before: one added a `(None, uri)` entry while leaving the lookup keyed on the issuer, and one
+assigned a fallback before a `return` that still ran. Neither weakened anything and neither
+attack fired, correctly. A mutation that does not remove the mechanism proves nothing about
+the test, and the failure mode is believing it did.
+
+**State: both falsifiers checked, neither fires. The thesis holds.** What remains is promotion,
+which is a product change to a published package and is its own increment, not a tail end of
+this one. The design question it opens is the fetch: `polaris-oid4vp` may open a socket where
+`polaris-verify` may not, and the timeout, cache and failure-mode policy for a status fetch is
+a decision with its own attacks (what does the verdict say when the fetch fails? `no_authority`
+and "not revoked" must stay distinguishable from "could not reach the list"). That is the next
+increment.
