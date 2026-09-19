@@ -88,7 +88,11 @@ def _attempt_audit_mutation(sql_tail, args_tail):
     try:
         eid = _first_lifecycle_event(conn)
         if eid is None:
-            return False, "no TokenLifecycleEvent row present (nothing to attack)"
+            # Returning (False, ...) here would print "held" for both attacks below
+            # while the append-only trigger was never touched. There is nothing to
+            # conclude from an attack that did not run, so refuse to conclude it.
+            raise RuntimeError("cannot attack: TokenLifecycleEvent is empty, so the "
+                               "append-only control was never exercised")
         try:
             with conn.cursor() as cur:
                 cur.execute(sql_tail, args_tail + (eid,))

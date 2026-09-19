@@ -9,6 +9,12 @@ FAILS to stop it, and if any attack succeeds this runner exits non-zero. A suite
 asked for that cannot run (missing liboqs, no database) is a hard error, never a
 silent skip, so a green run always means the defenses actually held.
 
+That rule binds an INDIVIDUAL attack too, and on 2026-09-19 three of them broke it:
+they returned "the defense held" from a path where nothing had been attacked (no
+second witness to disagree with, an empty audit table, a fuzz loop in which every
+round was discarded). An attack that cannot reach its defense raises instead, which
+lands here as a hard error. "Held" is a claim about an attack that ran.
+
     python3 attacks/run_attacks.py --suite crypto   # needs liboqs (real ML-DSA-65)
     python3 attacks/run_attacks.py --suite db        # needs the app + Postgres
     python3 attacks/run_attacks.py                   # both

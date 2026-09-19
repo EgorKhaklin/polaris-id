@@ -17220,6 +17220,60 @@ def test_precommit_wiring_check_discriminates(tmp_path):
         "must FAIL rather than report a wired net when no hooks can be parsed"
 
 
+def test_attacks_report_held_only_after_attacking(tmp_path):
+    """An adversary must not report a defense as holding from a path that never ran.
+
+    2026-09-19: three attack paths did. The runner prints "held" for `return False, note`,
+    and those three returned it when the second witness was absent, when the audit table
+    was empty, and (the worst shape) at the end of a fuzz loop that had discarded every
+    round, where the note read "0 fuzz rounds, liboqs and cryptography agreed on every one".
+    """
+    adir = tmp_path / "attacks"
+    adir.mkdir()
+    CLEAN = (
+        "def available():\n"
+        "    return False, 'cannot connect to the test database'\n"
+        "\n"
+        "def attack_forgery():\n"
+        "    if _forged_accepted():\n"
+        "        return True, 'a forged signature verified'\n"
+        "    return False, '%d forgeries, every one refused' % n\n"
+    )
+    (adir / "attack_crypto.py").write_text(CLEAN)
+
+    fn = checks.check_attacks_do_not_report_held_without_attacking
+    assert fn(tmp_path)[0].level == "OK", \
+        "must PASS when held is only returned after the attack ran, and must not flag " \
+        "available(), whose job is to say the suite cannot run"
+
+    # THE defect: an availability guard inside the attack itself.
+    (adir / "attack_crypto.py").write_text(CLEAN.replace(
+        "    if _forged_accepted():",
+        "    if not second_witness_available():\n"
+        "        return False, 'the second witness is unavailable; cannot fuzz'\n"
+        "    if _forged_accepted():"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "attack_forgery" in out[0].message, \
+        "must FAIL when an attack returns held from a path that could not reach its defense"
+
+    # The same words in available() stay legal, or the check would forbid the one place
+    # the runner actually wants them.
+    (adir / "attack_crypto.py").write_text(CLEAN)
+    assert fn(tmp_path)[0].level == "OK", "available() must remain free to say cannot"
+
+    # Anti-vacuity: a module with no held-verdict at all must not read as clean.
+    (adir / "attack_crypto.py").write_text("def available():\n    return True, 'ok'\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "finding nothing" in out[0].message, \
+        "must FAIL rather than pass when no held-verdict can be parsed"
+
+    # And no attack modules at all is not a clean bill of health either.
+    (adir / "attack_crypto.py").unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no attacks" in out[0].message, \
+        "must FAIL when there are no attack modules to read"
+
+
 def test_precommit_folded_entry_check_discriminates(tmp_path):
     """A hook entry wrapped across lines must still be the one command it reads as.
 

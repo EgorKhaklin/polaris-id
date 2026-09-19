@@ -165,7 +165,8 @@ def attack_witnesses_disagree_under_fuzz():
         sys.path.insert(0, pw)
     import pqc_signing
     if not pqc_signing.second_witness_available():
-        return False, "the cryptography second witness is unavailable; cannot fuzz for disagreement"
+        raise RuntimeError("cannot attack: the cryptography second witness is unavailable, "
+                           "so there is no second verdict to disagree with")
     rounds = int(os.environ.get("POLARIS_WITNESS_FUZZ_ROUNDS", "80"))
     rng = random.SystemRandom()
     checked = 0
@@ -195,6 +196,12 @@ def attack_witnesses_disagree_under_fuzz():
                 return True, ("WITNESS DISAGREEMENT at round %d (mode %d): liboqs=%s cryptography=%s; "
                               "pk=%s sig=%s msg=%s" % (i, mode, liboqs_v, crypto_v,
                                                        p.hex()[:32], s.hex()[:32], m.hex()))
+    if not checked:
+        # Every round returned None from the second witness, so nothing was ever
+        # compared. "0 fuzz rounds, they agreed on every one" is true and empty, and
+        # it would print as held.
+        raise RuntimeError("cannot attack: the second witness returned no verdict in any "
+                           "of %d rounds, so no pair of verdicts was ever compared" % rounds)
     return False, "%d fuzz rounds, liboqs and cryptography agreed on every one" % checked
 
 

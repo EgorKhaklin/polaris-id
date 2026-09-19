@@ -17116,6 +17116,89 @@ def check_attack_suites_are_documented(root: pathlib.Path) -> list[Finding]:
                "runner knows" % (len(suites), ", ".join(suites)))
 
 
+#: Words an attack's note uses when it is admitting it never reached its defense. A note is
+#: what the operator reads beside the word "held", so the vocabulary is the surface.
+_NOT_ATTACKED_WORDS = ("cannot", "could not", "unavailable", "not importable", "not available",
+                       "nothing to attack", "no rows", "skipped", "unreachable")
+
+
+def check_attacks_do_not_report_held_without_attacking(root: pathlib.Path) -> list[Finding]:
+    """"Held" is a claim about an attack that ran.
+
+    An attack returns (succeeded, note). False means the defense stopped it, and the runner
+    prints "held". Three attacks on 2026-09-19 returned False from a path where nothing had
+    been attacked at all:
+
+      * witnesses_disagree_under_fuzz returned held when the cryptography second witness was
+        absent, which is the one condition under which two witnesses cannot disagree;
+      * the same attack ended `return False, "%d fuzz rounds, ... agreed on every one" %
+        checked` where checked counts only rounds in which the second witness actually
+        answered. Had it answered in none, that line reads "0 fuzz rounds, liboqs and
+        cryptography agreed on every one": true, empty, and green;
+      * _attempt_audit_mutation returned held when TokenLifecycleEvent was empty, covering
+        both append-only attacks with one untested verdict.
+
+    None of these were reachable in the author's environment on the day, which is the point:
+    they are reachable in a CI runner without liboqs or against a freshly seeded database,
+    and there the harness would have certified defenses it never touched. The runner's
+    docstring already said a suite that cannot run is a hard error and never a silent skip;
+    the rule simply was not carried down to the individual attack.
+
+    The rule enforced here is narrow and textual. Outside `available()`, which exists to say
+    a suite cannot run, an attack module must not return False with a note admitting it did
+    not run. An attack that cannot reach its defense raises, which the runner already treats
+    as a hard error.
+    """
+    name = "attacks_attack"
+    adir = root / "attacks"
+    mods = sorted(adir.glob("attack_*.py")) if adir.is_dir() else []
+    if not mods:
+        return _fail(name, "no attacks/attack_*.py modules found; a check that finds nothing "
+                           "to measure is not evidence that the adversaries are honest")
+    offenders = []
+    returns = 0
+    for path in mods:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError as exc:
+            return _fail(name, "attacks/%s does not parse (%s), so this check cannot read it"
+                               % (path.name, exc))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if fn.name == "available":
+                continue  # its whole job is to report that the suite cannot run
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Tuple):
+                    continue
+                parts = node.value.elts
+                if len(parts) != 2:
+                    continue
+                first, note = parts
+                if not (isinstance(first, ast.Constant) and first.value is False):
+                    continue
+                returns += 1
+                text = " ".join(s.value.lower() for s in ast.walk(note)
+                                if isinstance(s, ast.Constant) and isinstance(s.value, str))
+                hit = [w for w in _NOT_ATTACKED_WORDS if w in text]
+                if hit:
+                    offenders.append("attacks/%s:%d %s reports held while saying %r"
+                                     % (path.name, node.lineno, fn.name, hit[0]))
+    if offenders:
+        return _fail(name, "%d attack path(s) report a defense as holding from a path that "
+                           "did not attack it: %s. Raise instead; the runner makes that a "
+                           "hard error" % (len(offenders), "; ".join(offenders)))
+    if not returns:
+        return _fail(name, "no `return False, note` was found in any of the %d attack "
+                           "module(s), so the parse has broken and this check would pass by "
+                           "finding nothing" % len(mods))
+    return _ok(name, "the %d literal `return False, <note>` path(s) across %d attack "
+                     "module(s) all describe an attack that ran; none reports a defense as "
+                     "holding while saying it could not reach it. This reads note TEXT, so a "
+                     "held-verdict returned through a variable is outside it"
+                     % (returns, len(mods)))
+
+
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
     """A pilot can be wound back, and says truthfully what that leaves (P5.1).
 
@@ -20387,6 +20470,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_route_module_inventories_are_complete,
     check_every_test_suite_is_run,
     check_attack_suites_are_documented,
+    check_attacks_do_not_report_held_without_attacking,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,
