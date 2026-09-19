@@ -20288,18 +20288,34 @@ def check_pre_commit_folded_entries_stay_one_line(root: pathlib.Path) -> list[Fi
 
     Only `>` is checked. A `|` block preserves newlines by definition, so a multi-line
     script written that way is the author saying so; em-dash-block-new is one.
+
+    Its own first draft made the mistake it exists to catch, and scripts/
+    polaris-check-mutation-drill.py caught it within the hour: it scanned only for
+    `entry: >` and returned OK on finding none, so commenting out that one pattern left a
+    check that passed on a tree where its property was gone. It counts every `entry:` line
+    now and fails below three, which is what makes a dead scan visible instead of green.
     """
     name = "precommit_folded_entries"
     cfg = _read_raw(root, ".pre-commit-config.yaml")
     if not cfg:
         return _fail(name, ".pre-commit-config.yaml is missing")
     lines = cfg.split("\n")
-    folded = [(i, ln) for i, ln in enumerate(lines)
-              if re.match(r"^\s*entry:\s*>[-+]?\s*$", ln)]
-    if not folded:
-        return _ok(name, "no hook entry uses a folded scalar, so none can be folded wrong")
+    # Anchored on EVERY entry, not on the folded ones. Scanning only for `entry: >` meant
+    # that a scan finding none returned OK, and the check-mutation drill caught exactly
+    # that on 2026-09-19: comment out the one pattern and the check passes on a tree where
+    # its property is gone. Counting all entries is what makes a broken scan visible.
+    entries = [(i, m) for i, m in ((j, re.match(r"^(\s*)entry:\s*(\S+)", ln))
+                                   for j, ln in enumerate(lines)) if m]
+    if len(entries) < 3:
+        return _fail(name, "only %d `entry:` line(s) parsed out of .pre-commit-config.yaml; "
+                           "the scan has broken and this check would pass by finding nothing"
+                           % len(entries))
+    # `|` keeps newlines by definition and an inline command has none, so only `>` can be
+    # wrapped into something other than what it reads as.
+    folded = [(i, m.group(1)) for i, m in entries if m.group(2).startswith(">")]
     broken = []
-    for i, opener in folded:
+    for i, indent in folded:
+        opener = indent + "entry:"
         hook = "?"
         for back in range(i, max(i - 40, -1), -1):
             m = re.match(r"^\s*-\s*id:\s*(\S+)", lines[back])
@@ -20324,11 +20340,9 @@ def check_pre_commit_folded_entries_stay_one_line(root: pathlib.Path) -> list[Fi
                           % (hook, deeper[0][:48], body[1][0], base))
     if broken:
         return _fail(name, "a folded hook entry is not one line: " + "; ".join(broken))
-    return _ok(name, "%s at one indentation, so each folds back into the single command it "
-                     "reads as"
-               % ("the 1 folded hook entry keeps its continuation lines"
-                  if len(folded) == 1 else
-                  "all %d folded hook entries keep their continuation lines" % len(folded)))
+    return _ok(name, "of %d hook entries, %d use a folded scalar and every one keeps its "
+                     "continuation lines at a single indentation, so each folds back into "
+                     "the one command it reads as" % (len(entries), len(folded)))
 
 
 def check_every_check_has_a_detection_test(root: pathlib.Path) -> list[Finding]:

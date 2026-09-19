@@ -17287,6 +17287,14 @@ def test_precommit_folded_entry_check_discriminates(tmp_path):
     fails if PyYAML's folding stops working the way the check assumes.
     """
     GOOD = ("repos:\n  - repo: local\n    hooks:\n"
+            "      - id: lint\n"
+            "        entry: ruff check\n"
+            "      - id: blocker\n"
+            "        entry: |\n"
+            "          bash -c '\n"
+            "            echo one;\n"
+            "            echo two;\n"
+            "          '\n"
             "      - id: tool-tests\n"
             "        entry: >-\n"
             "          bash -c 'cd scripts && python3 -m unittest\n"
@@ -17296,7 +17304,8 @@ def test_precommit_folded_entry_check_discriminates(tmp_path):
     yaml = pytest.importorskip("yaml")
 
     def entry(text):
-        return yaml.safe_load(text)["repos"][0]["hooks"][0]["entry"]
+        hooks = yaml.safe_load(text)["repos"][0]["hooks"]
+        return next(h["entry"] for h in hooks if h["id"] == "tool-tests")
 
     assert "\n" not in entry(GOOD), \
         "fixture is wrong: the aligned form must fold to one line"
@@ -17315,11 +17324,21 @@ def test_precommit_folded_entry_check_discriminates(tmp_path):
     assert out[0].level == "FAIL" and "tool-tests" in out[0].message, \
         "must FAIL when a continuation line is indented further and the newline survives"
 
-    # A literal block means the newlines on purpose; em-dash-block-new is one.
+    # A literal block means the newlines on purpose; em-dash-block-new is one. The GOOD
+    # fixture already carries one, and this makes the indented body legal under `|`.
     (tmp_path / ".pre-commit-config.yaml").write_text(
         BAD.replace("entry: >-", "entry: |"))
     assert fn(tmp_path)[0].level == "OK", \
         "must not flag a `|` block, where preserved newlines are what the author asked for"
+
+    # Anti-vacuity, and the reason this check was rewritten: the first draft scanned only
+    # for `entry: >` and returned OK when it found none, so the check-mutation drill could
+    # comment out that one pattern and watch it pass on a tree with the property gone.
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n      - id: only-one\n        entry: ruff\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "finding nothing" in out[0].message, \
+        "must FAIL rather than pass when too few entries parse to prove the scan is alive"
 
     (tmp_path / ".pre-commit-config.yaml").unlink()
     out = fn(tmp_path)
