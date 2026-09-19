@@ -11169,6 +11169,56 @@ def test_transparency_program_check_discriminates(tmp_path):
         "a report that does not say it cannot show an unrecorded access must FAIL"
 
 
+def test_attack_suites_are_documented_check_discriminates(tmp_path):
+    # attacks/README.md said "Run them", listed crypto and db, and called the no-argument form
+    # "both". The runner has known three suites for as long as controls has existed, defaults
+    # to all of them, and CI invokes each by name. Only the instructions were short, which is
+    # the half a human follows: a reader copying those commands never ran the eleven controls
+    # adversaries covering authorization, append-only, the login rate limit, CSRF, password
+    # storage and the relying-party boundary.
+    a = tmp_path / "attacks"; a.mkdir(parents=True, exist_ok=True)
+
+    def write(suites, readme):
+        (a / "run_attacks.py").write_text("_SUITES = (%s)\n"
+                                          % ", ".join('"%s"' % x for x in suites))
+        (a / "README.md").write_text(readme)
+
+    check = checks.check_attack_suites_are_documented
+    FULL = ("run:\n python3 attacks/run_attacks.py --suite crypto\n"
+            " python3 attacks/run_attacks.py --suite db\n"
+            " python3 attacks/run_attacks.py --suite controls\n")
+
+    write(("crypto", "db", "controls"), FULL)
+    assert check(tmp_path)[0].level == "OK", "a README documenting every suite must PASS"
+
+    # THE DEFECT: the runner knows a suite the instructions do not name.
+    write(("crypto", "db", "controls"),
+          "run:\n python3 attacks/run_attacks.py --suite crypto\n"
+          " python3 attacks/run_attacks.py --suite db\n # both\n")
+    out = check(tmp_path)[0]
+    assert out.level == "FAIL", "a suite missing from the run instructions must be caught"
+    assert "controls" in out.message, "and named"
+
+    # Mentioning the suite in prose is not documenting how to run it.
+    write(("crypto", "db", "controls"),
+          "run:\n python3 attacks/run_attacks.py --suite crypto\n"
+          " python3 attacks/run_attacks.py --suite db\n\nThe controls adversaries exist.\n")
+    assert check(tmp_path)[0].level == "FAIL", \
+        "the README already described controls in prose while omitting its command"
+
+    # A suite REMOVED from the runner needs no command, so the README may be longer.
+    write(("crypto", "db"), FULL)
+    assert check(tmp_path)[0].level == "OK", \
+        "the runner is the source of truth; a stale extra command is not this defect"
+
+    # VACUITY: no _SUITES, or an empty one, is unmeasurable rather than passing.
+    write((), FULL)
+    assert check(tmp_path)[0].level == "FAIL", "an empty _SUITES measures nothing"
+    (a / "run_attacks.py").write_text("nothing here\n")
+    out = check(tmp_path)[0]
+    assert out.level == "FAIL" and "does not declare _SUITES" in out.message
+
+
 def test_every_test_suite_is_run_check_discriminates(tmp_path):
     # A suite nobody runs is worse than no suite: it is counted, read as coverage, and can go
     # stale for years. The tree has no orphan and the structure permits exactly one, because

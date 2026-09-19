@@ -17076,6 +17076,46 @@ def check_every_test_suite_is_run(root: pathlib.Path) -> list[Finding]:
                % (len(suites), len(_SUITE_RUNNERS), ", ".join(sorted(disc)) or "none"))
 
 
+def check_attack_suites_are_documented(root: pathlib.Path) -> list[Finding]:
+    """Every attack suite the runner knows is in the README's run instructions.
+
+    attacks/README.md says "Run them" and gives the commands. It listed two of the three
+    suites and called the no-argument form "both", so a reader copying those commands ran
+    crypto and db and never ran controls: eleven adversaries covering the authorization
+    surface, the append-only guarantee, the login rate limit, CSRF, password storage and the
+    relying-party boundary. The runner was correct throughout, defaulting to all three, and CI
+    invokes each by name. Only the instructions were short, which is the half a human follows.
+
+    The source of truth is the runner's own `_SUITES` tuple, so this cannot drift: a suite
+    added there and not documented fails here. That is worth checking precisely because the
+    prose form of this defect is not: the adjacency of a path and a symbol in a sentence was
+    measured on 2026-09-19 at 28 false positives in 53, and rejected. A tuple literal is not
+    a guess."""
+    name = "attack_suites_documented"
+    runner = _read(root, "attacks/run_attacks.py")
+    readme = _read(root, "attacks/README.md")
+    if not runner or not readme:
+        return _fail(name, "attacks/run_attacks.py or attacks/README.md is missing")
+    m = re.search(r"_SUITES\s*=\s*\(([^)]*)\)", runner)
+    if not m:
+        return _fail(name, "attacks/run_attacks.py does not declare _SUITES; a check that "
+                           "cannot find its source of truth is measuring nothing")
+    suites = [x for x in re.findall(r"[\"']([a-z_]+)[\"']", m.group(1))]
+    if not suites:
+        return _fail(name, "_SUITES parsed as empty")
+    undocumented = [x for x in suites if ("--suite %s" % x) not in readme]
+    if undocumented:
+        return _fail(name,
+                     "%d attack suite(s) the runner knows are not in attacks/README.md's run "
+                     "instructions: %s. A reader follows the commands, so a suite missing from "
+                     "them is a suite nobody runs by hand"
+                     % (len(undocumented), ", ".join(undocumented)))
+    return _ok(name,
+               "all %d attack suites the runner declares (%s) appear in attacks/README.md's "
+               "run instructions, so the commands a reader copies run every adversary the "
+               "runner knows" % (len(suites), ", ".join(suites)))
+
+
 def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
     """A pilot can be wound back, and says truthfully what that leaves (P5.1).
 
@@ -20259,6 +20299,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_documented_symbols_resolve,
     check_route_module_inventories_are_complete,
     check_every_test_suite_is_run,
+    check_attack_suites_are_documented,
     check_pilot_winddown,
     check_formal_specs,
     check_accessibility,

@@ -15,9 +15,10 @@ db suite), and `check_attacks_run` keeps them wired.
 ## Run them
 
 ```bash
-python3 attacks/run_attacks.py --suite crypto   # needs liboqs (real ML-DSA-65)
+python3 attacks/run_attacks.py --suite crypto    # needs liboqs (real ML-DSA-65)
 python3 attacks/run_attacks.py --suite db        # needs the app + Postgres
-python3 attacks/run_attacks.py                   # both
+python3 attacks/run_attacks.py --suite controls  # needs the app + Postgres
+python3 attacks/run_attacks.py                   # all three
 ```
 
 Exit `0` = every attack failed to break its defense (good). Exit `1` = an attack
