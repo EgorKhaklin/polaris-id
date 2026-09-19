@@ -13,6 +13,7 @@ world has done with Polaris.
 | [crypto-migration/](crypto-migration/README.md) | The algorithm-migration path under measurement: what a break would and would not cost, and `algorithm_status.py`, which found that no signed artifact tells a verifier an algorithm is deprecated and measured what the mixed window costs. |
 | [interop/](interop/README.md) | The outside wallet probe: an unmodified walt.id wallet presenting to `polaris-oid4vp`, reproduced end to end, with its controls. |
 | [benchmark/](benchmark/README.md) | Measured performance and the scale factor, kept apart from projection. |
+| [strategy/](strategy/README.md) | The bets: a decision record per capability admitted on a prediction rather than on evidence, each carrying the falsifier that was written before the work started. |
 
 Lab work needs no external reason to exist; product behaviour does. A lab finding becomes
 product work only as a CORE-BUG against something already promised, or when a named outside

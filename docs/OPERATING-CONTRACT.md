@@ -43,8 +43,25 @@ A product **behaviour** change needs exactly one qualifying reason, named in the
   promises, citing both the existing promise and the failing test. No existing promise means
   it is not a CORE-BUG.
 
+- **STRATEGIC-BUILD.** Added 2026-09-19 by the owner, and the only reason here that does not
+  answer to evidence that already exists. It admits a capability nothing outside has yet asked
+  for, when a written analysis predicts the capability materially raises Polaris's long-term
+  interoperability or assurance position. It is admitted **only** with a decision record under
+  [`lab/strategy/`](../lab/strategy/README.md) answering all ten of that directory's questions,
+  the last of which is the one that keeps this from becoming a licence: *what evidence would
+  prove the bet wrong*, written before the work starts. No record, no STRATEGIC-BUILD.
+
 Cleanliness, completeness, elegance, architectural expansion and "a desirable new guarantee"
-do not qualify. Everything else goes to `lab/`. Do not invent a fifth justification.
+still do not qualify, and a roadmap row, a paper or a competitor's feature list is not an
+analysis. Everything else goes to `lab/`. Do not invent a sixth justification.
+
+**Why the count changed.** The first four reasons are all reactive: each waits for somebody
+outside to act. That is the right default for a reference implementation and it has a failure
+mode, which is that Polaris can only ever answer questions it has already been asked. The
+owner's judgement on 2026-09-19 was that the passivity now costs more than the discipline
+buys. The decision record is what keeps the fifth reason from swallowing the other four: it
+forces the alternatives, the cost, the thing delayed, and the falsifier to be written down
+where a reader can hold the work to them later.
 
 **Housekeeping** (documentation, dependency upgrades, refactors, CI cleanup, formatting,
 citation repairs) may not create a new product guarantee, expand behaviour, bump a product
@@ -53,7 +70,8 @@ a claim guard stays only while it protects a falsifiable technical or security p
 
 **The decision test for every new idea.** Does a named external dependency require this?
 Did a real external user require it? Did an external reviewer find it? Does it repair an
-executable violation of an existing product promise? Four times no: it goes to `lab/`, or it
+executable violation of an existing product promise? Is there a decision record under
+`lab/strategy/` whose falsifier is written down? Five times no: it goes to `lab/`, or it
 is not done.
 
 ## 4. Versioning
