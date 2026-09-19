@@ -6523,9 +6523,27 @@ def test_athena_non_sovereign_check_discriminates(tmp_path):
             "  SELECT x FROM AgencyTrustAttestation ata WHERE ata.revocation_date IS NULL;\n"
             "CREATE OR REPLACE VIEW v_athena_trust_agreement AS\n"
             "  SELECT x FROM AgencyTrustAttestation ata WHERE ata.revocation_date IS NULL;\n"
-            "CREATE TABLE IF NOT EXISTS athena_constitutional_rule (rule_code VARCHAR(16));\n")
+            "CREATE TABLE IF NOT EXISTS athena_constitutional_rule (rule_code VARCHAR(16));\n"
+            # All three allow-listed tables, because the allow-list is compared in BOTH
+            # directions: an entry naming a table nothing creates is a standing approval for
+            # whoever adds one of that name next, granted without the governance event the
+            # entry is supposed to record. A fixture creating one of three would be a tree
+            # whose allow-list is two thirds stale.
+            "CREATE TABLE IF NOT EXISTS athena_rule_enforcement (rule_code VARCHAR(16));\n"
+            "CREATE TABLE IF NOT EXISTS athena_key_custody (backend VARCHAR(16));\n")
     _athena_write(tmp_path, "polaris_sql/16_athena.sql", GOOD)
     assert checks.check_athena_non_sovereign(tmp_path)[0].level == "OK", "must PASS non-sovereign"
+
+    # A CURATED TABLE IS REMOVED AND ITS ALLOW-LIST ENTRY IS LEFT BEHIND. Nothing is rogue,
+    # every edge still resolves, and the tree now carries an approval for a table that does not
+    # exist. Drilled against the real schema on 2026-09-19 as well: renaming the table out of
+    # the athena_ namespace turns this red and names the entry.
+    _athena_write(tmp_path, "polaris_sql/16_athena.sql",
+                  GOOD.replace("CREATE TABLE IF NOT EXISTS athena_key_custody (backend VARCHAR(16));\n", ""))
+    out = checks.check_athena_non_sovereign(tmp_path)[0]
+    assert out.level == "FAIL", "an allow-list entry naming nothing must be caught"
+    assert "athena_key_custody" in out.message, "and the stale entry named"
+    assert "standing approval" in out.message, "and what it costs said"
     # relies_on stops filtering revoked authority
     _athena_write(tmp_path, "polaris_sql/16_athena.sql",
                   GOOD.replace("CREATE OR REPLACE VIEW v_athena_relies_on AS\n"

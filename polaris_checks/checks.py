@@ -9002,9 +9002,27 @@ def check_athena_non_sovereign(root: pathlib.Path) -> list[Finding]:
         return _fail("athena_sovereign",
                      f"Athena owns non-allow-listed table(s) {sorted(rogue)}; a new athena_* table is a "
                      "governance event and must be a descriptive (never authority) allow-listed table")
+    # AND THE OTHER DIRECTION. The allowlist is the record of which athena_* tables passed a
+    # governance event, so an entry naming a table nothing creates is a standing pre-approval:
+    # whoever adds a table of that name later inherits the approval without the event. Compared
+    # against every SQL file rather than 16_athena.sql alone, so a table that legitimately moved
+    # between files is not reported as removed.
+    anywhere = set()
+    for sql in sorted((root / "polaris_sql").glob("*.sql")):
+        anywhere |= set(re.findall(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(athena_[a-z_]+)",
+                                   _read_path(sql), re.I))
+    stale = _ATHENA_TABLE_ALLOWLIST - anywhere
+    if stale:
+        return _fail("athena_sovereign",
+                     f"_ATHENA_TABLE_ALLOWLIST names {sorted(stale)}, which no SQL file creates. An "
+                     "allow-list entry is the record of a governance event, so one naming nothing is a "
+                     "standing approval for whoever adds a table of that name next, granted without the "
+                     "event. Remove it with the table")
     return _ok("athena_sovereign",
                "every Athena authority edge resolves to an existing authority table, 'current' views "
-               "exclude revoked authority, and Athena owns only the three descriptive curated tables")
+               "exclude revoked authority, and Athena owns exactly the %d descriptive curated tables the "
+               "allow-list records (%s), with no unlisted table and no listed one that does not exist"
+               % (len(created), ", ".join(sorted(created))))
 
 
 def check_athena_rule_enforcement_resolves(root: pathlib.Path) -> list[Finding]:
