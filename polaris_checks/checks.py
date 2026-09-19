@@ -8162,6 +8162,53 @@ def check_conformance_contract_constrains(root: pathlib.Path) -> list[Finding]:
                      f"directions, and runs in CI")
 
 
+def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Finding]:
+    """The published contract's own count of what it certifies, held to the manifest.
+
+    conformance/SPEC.md is the integration contract: "A relying party (or an SDK author)
+    certifies its own verifier in any language by making it pass this suite." Its opening
+    paragraph tells a reader how much the suite covers.
+
+    Measured 2026-09-19: it said "sixteen artifact types at v9.331" and `cases.json` held 25.
+    Nine artifact kinds had been added to the contract since anybody re-read the sentence
+    describing it, and nothing compared the two. The drift understates the suite, which is
+    the less dangerous direction and still wrong: an implementer sizing the work reads this
+    number, and a contract whose own description of its scope is nine short has stopped being
+    a description.
+
+    The version stamp went with it. "at v9.331" dated the count to a release eleven versions
+    back, and once the number is machine-held against the file the stamp is not doing work a
+    reader can rely on. What holds the count is this check, and SPEC.md now says so.
+    """
+    name = "conformance_spec_counts"
+    spec = _read_raw(root, "conformance/SPEC.md")
+    raw = _read(root, "conformance/cases.json")
+    if not spec or not raw:
+        return _fail(name, "conformance/SPEC.md or conformance/cases.json is missing")
+    try:
+        cases = json.loads(raw)["cases"]
+    except Exception as exc:
+        return _fail(name, "conformance/cases.json did not parse: %s" % exc)
+    kinds = {c.get("artifact", "authenticity-pack") for c in cases}
+    if len(kinds) < 10:
+        return _fail(name, "only %d artifact kind(s) parsed out of cases.json; the parse has "
+                           "broken and this check would pass by finding nothing" % len(kinds))
+    m = re.search(r"(\d+)\s+artifact types", spec)
+    if not m:
+        return _fail(name, "conformance/SPEC.md no longer states a numeral followed by "
+                           "'artifact types', so the contract's description of its own scope "
+                           "is not checkable; the suite certifies %d kinds" % len(kinds))
+    stated = int(m.group(1))
+    if stated != len(kinds):
+        return _fail(name, "conformance/SPEC.md says the suite certifies %d artifact types "
+                           "and cases.json holds %d; the published contract's description of "
+                           "its own scope is %d out" % (stated, len(kinds),
+                                                        abs(stated - len(kinds))))
+    return _ok(name, "conformance/SPEC.md states %d artifact types and cases.json holds "
+                     "exactly that many across %d published cases, so the contract's opening "
+                     "description of its scope is the scope" % (stated, len(cases)))
+
+
 def check_conformance_contract_distinguishes(root: pathlib.Path) -> list[Finding]:
     """No artifact's cases may all expect the same verdict (2026-09-19).
 
@@ -20978,6 +21025,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_no_upsert_without_an_arbiter,
     check_drill_plan_is_binding,
     check_conformance_contract_constrains,
+    check_conformance_spec_counts_its_artifacts,
     check_conformance_contract_distinguishes,
     check_procedure_refusals_are_mutation_tested,
     check_duress_is_indistinguishable,

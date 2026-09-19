@@ -14823,6 +14823,49 @@ def test_drill_plan_binding_check_discriminates(tmp_path):
     assert level() == "FAIL", "must FAIL when preflight is absent"
 
 
+def test_conformance_spec_count_check_discriminates(tmp_path):
+    """The contract's own statement of its scope, held to the manifest.
+
+    2026-09-19: SPEC.md said "sixteen artifact types at v9.331" while cases.json held 25.
+    Nine kinds had been added since anyone re-read the sentence describing the suite.
+    """
+    import json as _json
+    (tmp_path / "conformance").mkdir()
+
+    def write(spec, kinds):
+        (tmp_path / "conformance" / "SPEC.md").write_text(spec)
+        (tmp_path / "conformance" / "cases.json").write_text(_json.dumps({"cases": [
+            {"name": "k%d-%d" % (i, j), "artifact": "kind%d" % i, "expect": {"authentic": j == 0}}
+            for i in range(kinds) for j in range(2)]}))
+
+    fn = checks.check_conformance_spec_counts_its_artifacts
+    write("the suite certifies 12 artifact types, listed in `cases.json`\n", 12)
+    assert fn(tmp_path)[0].level == "OK", "must PASS when the stated count is the real one"
+
+    # THE defect: the manifest grew and the sentence did not.
+    write("the suite certifies 12 artifact types, listed in `cases.json`\n", 21)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "12" in out[0].message and "21" in out[0].message, \
+        "must FAIL when the contract overstates or understates its own scope"
+
+    # And the other direction, since a shrinking manifest is the more dangerous one.
+    write("the suite certifies 21 artifact types, listed in `cases.json`\n", 12)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL", "must FAIL when the contract claims more than it holds"
+
+    # A sentence with no numeral is not checkable and must not read as agreement.
+    write("the suite certifies many artifact types, listed in `cases.json`\n", 12)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "not checkable" in out[0].message, \
+        "must FAIL when the count is written in a form nothing can hold"
+
+    # Anti-vacuity: a manifest too small to be the real one is a broken parse.
+    write("the suite certifies 3 artifact types, listed in `cases.json`\n", 3)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "would pass by finding nothing" in out[0].message, \
+        "must FAIL rather than agree with itself on a manifest that cannot be the contract"
+
+
 def test_conformance_distinguishes_check_discriminates(tmp_path):
     """An artifact whose every case expects the same verdict is conformed to by a constant.
 

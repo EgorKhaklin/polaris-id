@@ -8,7 +8,9 @@ means (ROADMAP P3.5).
 The suite covers the **offline** checks over the protocol's signed artifacts, each
 specified normatively in [`docs/reference/WIRE-SPEC.md`](../docs/reference/WIRE-SPEC.md). It
 certifies the **authenticity** of the app-signed artifacts a relying party, a service or an
-auditor holds (sixteen artifact types at v9.331, listed in `cases.json`); among them:
+auditor holds (25 artifact types, listed in `cases.json` and held to that file by
+`check_conformance_spec_counts_its_artifacts`, because this sentence said sixteen for eleven
+releases after the suite had grown past it); among them:
 
 - the **authenticity pack** (is the ML-DSA signature genuine under the declared, accepted
   parameter set, and -- with a trusted issuer anchor set -- is the signing key trusted?);
