@@ -340,6 +340,97 @@ def decide(token, *, index, expected_uri, authority, now, credential_issuer=None
                               if stale else "")))
 
 
+# --------------------------------------------------------------------------- fetching
+#
+# THE THIRD INCREMENT, AND THE STATE THAT HAS TO STAY SEPARATE.
+#
+# Everything above decides a token somebody already has. Getting it means a network call,
+# and a network call fails in ways that are not answers. The failure mode this exists to
+# prevent is the obvious one: a verifier that cannot reach the list, shrugs, and reports the
+# credential as fine. It is obvious and it is what almost every implementation does, because
+# the alternative is refusing traffic when a third-party endpoint is down, and that pressure
+# is real. The answer is not to pick one; it is to report which happened and let the relying
+# party set the policy, because only they know what a refusal costs them.
+#
+# So there are five outcomes and no two of them may collapse:
+#
+#   checked, status VALID       the issuer published a status and it says valid
+#   checked, status INVALID     the issuer published a status and it says revoked
+#   no_authority                nobody is stated as entitled to say, so nothing was asked
+#   unreachable                 somebody is entitled, and we could not get the answer
+#   the refusals above          a token was obtained and is not usable as evidence
+#
+# `unreachable` is the new one and the whole point. "I could not reach the list" is not "not
+# revoked", and a verdict that cannot say which has thrown away the only fact the relying
+# party needed in order to decide whether to accept the risk.
+#
+# STILL NO SOCKET HERE. `fetch` is injected. Timeouts, retries, connection limits and
+# caching are the caller's, because they are policy and because polaris-verify promises it
+# opens none. What this function owns is the refusal to turn a failed fetch into a verdict.
+
+UNREACHABLE = "unreachable"
+
+
+def decide_by_fetching(*, index, expected_uri, authority, fetch, now,
+                       credential_issuer=None, issuer_key_verify=None, max_age_seconds=None):
+    """Fetch the status list named by a credential and decide it, or say why not.
+
+    fetch   callable(uri: str) -> bytes. May raise; anything it raises becomes `unreachable`
+            rather than an exception out of this function, because a verifier that dies on
+            one credential has failed open for every other credential in the queue.
+
+    Authority is established BEFORE the fetch, deliberately. If nobody is entitled to publish
+    status for this issuer, the answer is `no_authority` and no request is made: asking a URI
+    named inside an untrusted credential is how a verifier becomes a scanner pointed at
+    whatever an attacker writes into a `uri` field.
+    """
+    if not isinstance(expected_uri, str) or not expected_uri:
+        return _refuse("uri", "the credential names no status list uri to fetch")
+    try:
+        granted = authority(credential_issuer=credential_issuer, status_uri=expected_uri,
+                            header=None, issuer_key_verify=issuer_key_verify)
+    except Exception as exc:
+        return _refuse("authority_error",
+                       "establishing who may publish this status raised %s: %s"
+                       % (type(exc).__name__, exc))
+    if not granted:
+        return _refuse("no_authority",
+                       "no key is stated as entitled to publish status for issuer %r at %r, "
+                       "so nothing was fetched: a uri named inside an unvetted credential is "
+                       "not a place to send a request" % (credential_issuer, expected_uri))
+    try:
+        token = fetch(expected_uri)
+    except Exception as exc:
+        return _refuse(UNREACHABLE,
+                       "fetching %r raised %s: %s. This is NOT evidence that the credential "
+                       "is current; it is the absence of evidence either way"
+                       % (expected_uri, type(exc).__name__, exc))
+    # WHERE THE BOUNDARY BETWEEN "no answer" AND "a bad answer" SITS. The fetch layer
+    # classifies TRANSPORT and `decide` classifies the TOKEN, and a body that is not even
+    # shaped like a compact JWS belongs to the first. An error page, an empty body, a JSON
+    # `{"error": ...}` are all the endpoint failing to hand over the list, which is
+    # `unreachable`; they are not the issuer publishing something broken.
+    #
+    # The distinction was not here until the mutation drill found the attack too weak to
+    # notice its absence: a 404 page reported `malformed`, which reads as "the issuer's list
+    # is broken" when the truth is that nobody got a list at all. Both are refusals, so
+    # nothing was ACCEPTED either way, and that is exactly why it survived a test asserting
+    # only that the verdict was not checked.
+    shaped = token if isinstance(token, (bytes, bytearray)) else \
+        (token.encode("ascii", "replace") if isinstance(token, str) else None)
+    if not shaped or bytes(shaped).count(b".") != 2:
+        return _refuse(UNREACHABLE,
+                       "fetching %r returned %s, which is not shaped like a status list "
+                       "token, so no list was obtained. Whether the credential is revoked is "
+                       "unknown, not false"
+                       % (expected_uri,
+                          "nothing" if not shaped else "%d bytes that are not a compact JWS"
+                          % len(bytes(shaped))))
+    return decide(token, index=index, expected_uri=expected_uri, authority=authority,
+                  now=now, credential_issuer=credential_issuer,
+                  issuer_key_verify=issuer_key_verify, max_age_seconds=max_age_seconds)
+
+
 def encode_status_list(statuses, bits=1):
     """Build a `lst` value from a list of status integers. Fixtures and attacks only.
 

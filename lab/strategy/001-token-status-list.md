@@ -300,10 +300,49 @@ those. It is worth separating out precisely because it is the part that could ha
 indefinitely behind the interesting part, and it is the part a relying party needed first.
 
 *What did not:* the fetch, and with it the authority table this record's second increment
-built. The design question is unchanged and is the next increment. `polaris-oid4vp` may open a
-socket where `polaris-verify` may not, and a fetch has a timeout, a cache and a failure mode,
-so a fourth and fifth state appear that must not blur into the three that shipped: **"could
-not reach the list" is not "not revoked", and "nobody is entitled to say" is neither.**
+built.
+
+**2026-09-19, third increment: the fetch, still in LAB and still socket-free.** `fetch` is
+injected, so timeouts, retries, connection limits and caching stay with the caller where the
+policy belongs. What the function owns is the refusal to turn a failed fetch into a verdict.
+
+Five outcomes, none of which may collapse into another:
+
+| outcome | what it tells a relying party |
+|---|---|
+| checked, VALID or INVALID or SUSPENDED | the issuer published a status and it says so |
+| `no_authority` | nobody is stated as entitled to say, so nothing was asked and nothing was fetched |
+| `unreachable` | somebody is entitled, and we could not get the answer |
+| the token refusals | a list was obtained and is not usable as evidence |
+
+`unreachable` is the increment. "I could not reach the list" is not "not revoked", and it is
+the state almost every implementation loses, because refusing traffic when a third party's
+server is down is expensive and the pressure to shrug is real. The answer is not to pick one
+behaviour. It is to report which happened and let the relying party set the policy, because
+only they know what a refusal costs them.
+
+**Authority is established BEFORE the fetch**, which is a security property rather than an
+ordering preference: a `uri` named inside an unvetted credential is not a place to send a
+request, and a verifier that fetches first is a scanner pointed at whatever an attacker writes
+into that field, once per credential it is handed.
+
+Six more adversaries, twenty-two in total, all held. Four mutations, all caught: a failed
+fetch shrugging and reporting valid, the fetch moved ahead of the authority check, a failed
+fetch reusing the absent-uri code, and the transport boundary removed.
+
+**One of those four exposed a weak attack rather than a weak implementation, and that is the
+useful part.** `garbage_response_is_an_answer` asserted only that the verdict was not
+`checked`. A 404 page is not checked either way, so the attack could not see that it was being
+reported as `malformed`, which reads as *the issuer published a broken list* when the truth is
+that nobody got a list at all. Both are refusals, which is exactly why a test asserting "not
+accepted" slept through it. The boundary is explicit now: the fetch layer classifies
+TRANSPORT and `decide` classifies the TOKEN, and a body not even shaped like a compact JWS
+belongs to the first. The attack asserts the code, not just the refusal.
+
+*Still not promoted.* What ships next is a product decision about `polaris-oid4vp`: it may
+open a socket where `polaris-verify` may not, and the five states above have to reach the
+relying party's verdict intact rather than being flattened into the three that shipped in
+rc.4.
 
 *An unplanned finding, recorded because it is the reason the plan tool matters:* running
 `polaris-ship.py plan` for the promotion returned nothing for it. `packages/` was not in

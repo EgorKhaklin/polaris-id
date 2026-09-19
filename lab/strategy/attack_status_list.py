@@ -24,8 +24,8 @@ import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from status_list import (INVALID, MAX_DECOMPRESSED_BYTES, SAME_KEY, STATED,  # noqa: E402
-                         SUSPENDED, VALID, StatedAuthority, decide, encode_status_list,
-                         status_at)
+                         SUSPENDED, UNREACHABLE, VALID, StatedAuthority, decide,
+                         decide_by_fetching, encode_status_list, status_at)
 
 NOW = 1_800_000_000
 URI = "https://issuer.example/statuslists/1"
@@ -348,6 +348,132 @@ def a_empty_delegation_accepted():
     return False, "a delegation missing an issuer, a uri, a verifier or a reason is refused"
 
 
+
+# ------------------------------------------------------------------ the fetch, added third
+
+def _fetch_ok(uri):
+    return token(good_payload())
+
+
+def a_unreachable_list_reads_as_not_revoked():
+    """THE one this increment exists for, and what almost every implementation gets wrong.
+
+    The endpoint is down. The honest answer is "I do not know". The convenient answer is to
+    carry on, because refusing traffic when a third party's server is down is expensive and
+    the pressure to shrug is real. The attack SUCCEEDS if a failed fetch produces any verdict
+    a caller could read as "not revoked".
+    """
+    def dead(uri):
+        raise ConnectionError("connection refused")
+    v = decide_by_fetching(index=1, expected_uri=URI, credential_issuer=ISSUER,
+                           authority=AUTHORITY, issuer_key_verify=accept_all,
+                           fetch=dead, now=NOW)
+    if v["checked"]:
+        return True, "a failed fetch produced a checked verdict: %r" % (dict(v),)
+    if v["code"] != UNREACHABLE:
+        return True, ("a failed fetch was reported as %r, which does not distinguish it from "
+                      "a malformed list" % v["code"])
+    return False, ("a failed fetch is %r and carries no status, so it cannot be read as not "
+                   "revoked" % v["code"])
+
+
+def a_empty_or_garbage_response_is_an_answer():
+    """A 404 page, an empty body, a JSON error object. None of them is a status list."""
+    for label, body in (("empty bytes", b""), ("empty string", ""), ("None", None),
+                        ("a 404 page", b"<html><body>Not Found</body></html>"),
+                        ("a JSON error", b'{"error":"gone"}'), ("an int", 500)):
+        v = decide_by_fetching(index=1, expected_uri=URI, credential_issuer=ISSUER,
+                               authority=AUTHORITY, issuer_key_verify=accept_all,
+                               fetch=lambda uri, b=body: b, now=NOW)
+        if v["checked"]:
+            return True, "%s was accepted as a status list: %r" % (label, dict(v))
+        # Not accepted is not enough. The endpoint failing to hand over a list and the
+        # issuer publishing a broken one are different facts, and the weaker assertion
+        # above could not tell them apart: a 404 page reported `malformed`, which reads
+        # as the issuer's fault.
+        if v["code"] != UNREACHABLE:
+            return True, ("%s was refused as %r rather than %r, so a failing endpoint is "
+                          "indistinguishable from a broken list" % (label, v["code"],
+                                                                    UNREACHABLE))
+    return False, ("six non-token responses, every one reported %r rather than blamed on "
+                   "the issuer" % UNREACHABLE)
+
+
+def a_fetch_before_authority():
+    """A uri named inside an unvetted credential is not a place to send a request.
+
+    If the fetch happens before authority is established, a verifier becomes a scanner
+    pointed at whatever an attacker writes into `uri`, and it does that for every credential
+    it is handed. The attack SUCCEEDS if anything was requested.
+    """
+    asked = []
+
+    def spy(uri):
+        asked.append(uri)
+        return token(good_payload())
+    v = decide_by_fetching(index=1, expected_uri=URI, credential_issuer=OTHER_ISSUER,
+                           authority=AUTHORITY, fetch=spy, now=NOW)
+    if asked:
+        return True, ("a request went to %r for a credential no key is entitled to publish "
+                      "status for" % asked[0])
+    if v["code"] != "no_authority":
+        return True, "no request was made, but the verdict says %r" % v["code"]
+    return False, "nothing was requested; the verdict is no_authority before any network use"
+
+
+def a_fetch_failure_indistinguishable_from_no_list():
+    """`unreachable` and `no_status_claim` are different facts about the world.
+
+    A credential that names no status list has told you its issuer publishes none. A
+    credential whose list could not be fetched has told you nothing. A verifier that reports
+    the same thing for both has destroyed the distinction a relying party decides on.
+    """
+    def dead(uri):
+        raise TimeoutError("timed out")
+    unreachable = decide_by_fetching(index=1, expected_uri=URI, credential_issuer=ISSUER,
+                                     authority=AUTHORITY, issuer_key_verify=accept_all,
+                                     fetch=dead, now=NOW)
+    no_uri = decide_by_fetching(index=1, expected_uri="", credential_issuer=ISSUER,
+                                authority=AUTHORITY, issuer_key_verify=accept_all,
+                                fetch=dead, now=NOW)
+    if unreachable["code"] == no_uri["code"]:
+        return True, ("a failed fetch and an absent uri both report %r" % unreachable["code"])
+    return False, ("a failed fetch (%r) and an absent uri (%r) are distinguishable"
+                   % (unreachable["code"], no_uri["code"]))
+
+
+def a_fetched_list_skips_the_checks():
+    """Fetching must not be a shortcut past everything the decision function does.
+
+    The easy mistake is a fetch path that trusts what it just downloaded because it
+    downloaded it. Every refusal the offline path makes must still be made here.
+    """
+    for label, payload in (("another issuer's list", good_payload(sub="https://x.example/9")),
+                           ("an expired list", good_payload(exp=NOW - 1))):
+        v = decide_by_fetching(index=1, expected_uri=URI, credential_issuer=ISSUER,
+                               authority=AUTHORITY, issuer_key_verify=accept_all,
+                               fetch=lambda uri, p=payload: token(p), now=NOW)
+        if v["checked"]:
+            return True, "%s was accepted because it arrived over the fetch path" % label
+    v = decide_by_fetching(index=1, expected_uri=URI, credential_issuer=ISSUER,
+                           authority=AUTHORITY, issuer_key_verify=refuse_all,
+                           fetch=_fetch_ok, now=NOW)
+    if v["checked"]:
+        return True, "a fetched list whose signature does not verify was accepted"
+    return False, "the fetch path makes every refusal the offline path makes"
+
+
+def a_fetch_path_positive_control():
+    """Without this, the five above pass by the fetch path never working at all."""
+    v = decide_by_fetching(index=1, expected_uri=URI, credential_issuer=ISSUER,
+                           authority=AUTHORITY, issuer_key_verify=accept_all,
+                           fetch=_fetch_ok, now=NOW)
+    if not v["checked"] or v["status"] != INVALID:
+        return True, ("the fetch path cannot produce a verdict at all, so every refusal "
+                      "above is vacuous: %r" % (dict(v),))
+    return False, "a fetched list reads back its published INVALID, so the refusals mean something"
+
+
 ATTACKS = [
     ("bit_order_reversed", a_bit_order_reversed),
     ("index_past_the_end", a_index_past_the_end),
@@ -365,6 +491,12 @@ ATTACKS = [
     ("stated_delegation_reported_as_same_key", a_stated_delegation_is_reported_as_same_key),
     ("authority_that_raises", a_authority_that_raises),
     ("empty_delegation_accepted", a_empty_delegation_accepted),
+    ("fetch_path_positive_control", a_fetch_path_positive_control),
+    ("unreachable_reads_as_not_revoked", a_unreachable_list_reads_as_not_revoked),
+    ("garbage_response_is_an_answer", a_empty_or_garbage_response_is_an_answer),
+    ("fetch_before_authority", a_fetch_before_authority),
+    ("unreachable_same_as_no_list", a_fetch_failure_indistinguishable_from_no_list),
+    ("fetched_list_skips_the_checks", a_fetched_list_skips_the_checks),
 ]
 
 
