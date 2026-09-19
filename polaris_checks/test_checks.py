@@ -1618,10 +1618,15 @@ def test_coercion_evidence_retained_check_discriminates(tmp_path):
         "RETAINED on every disclosure level (unlike requestor_location).\n"
         "    requesting_purpose_text VARCHAR(280),\n")
 
-    def write(schema, app="SELECT requesting_purpose_text FROM VerificationEvent;\n"):
+    def write(schema, app="SELECT requesting_purpose_text FROM VerificationEvent;\n",
+              other_sql=None):
         (sql / "01_schema.sql").write_text(schema)
         (sql / "11_atlas.sql").write_text("atlas\n")
         (sql / "05_procedures.sql").write_text("procs\n")
+        # A file the guard did not used to read. Ten files in polaris_sql/ touch
+        # VerificationEvent and this check named two of them while claiming to cover "read
+        # paths", over a property the vocation depends on.
+        (sql / "15_ontology.sql").write_text(other_sql or "ontology\n")
         (web / "app.py").write_text(app)
 
     # 1. Column missing entirely -> FAIL.
@@ -1647,6 +1652,16 @@ def test_coercion_evidence_retained_check_discriminates(tmp_path):
     assert checks.check_coercion_evidence_retained(tmp_path)[0].level == "OK", \
         "must PASS when the evidence trail is retained and not falsely documented"
 
+
+    # A READ PATH IN A FILE THE GUARD DID NOT READ. Demonstrated against the real tree on
+    # 2026-09-19: the same redaction added to polaris_sql/15_ontology.sql was invisible to the
+    # old read set (app + 11_atlas + 05_procedures) and is caught by the new one.
+    write(GOOD_SCHEMA, other_sql=(
+        "CREATE OR REPLACE VIEW v_ontology_events AS SELECT CASE WHEN disclosure_level = "
+        "'ZERO_KNOWLEDGE' THEN NULL ELSE requesting_purpose_text END FROM VerificationEvent;\n"))
+    out = checks.check_coercion_evidence_retained(tmp_path)[0]
+    assert out.level == "FAIL", "a redaction in any schema file must be caught, not just two"
+    assert "anti-coercion" in out.message
 
 def test_zk_anti_replay_check_discriminates(tmp_path):
     sql = tmp_path / "polaris_sql"

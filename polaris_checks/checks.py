@@ -4173,9 +4173,16 @@ def check_coercion_evidence_retained(root: pathlib.Path) -> list[Finding]:
                      "01_schema.sql falsely documents requesting_purpose_text as ZK-redacted; it is "
                      "the deliberately-retained anti-coercion evidentiary trail (Vocation)")
     # No read path may redact the evidence trail to NULL for ZERO_KNOWLEDGE rows.
-    reads = (_read_app(root)
-             + _read(root, "polaris_sql/11_atlas.sql")
-             + _read(root, "polaris_sql/05_procedures.sql"))
+    #
+    # EVERY SQL FILE, not two of them. This named 11_atlas.sql and 05_procedures.sql while
+    # claiming to cover "read paths", and ten files in polaris_sql/ read VerificationEvent:
+    # 07_queries, 13_postgis, 14_foresight_helpers, 15_ontology and 16_athena among them. None
+    # mentions requesting_purpose_text today, so nothing was wrong; the guard was simply
+    # scoped to the two files somebody had in front of them, over a property the vocation
+    # depends on. A view added to any of the others could have nulled the evidence trail for
+    # zero-knowledge rows and this would have passed.
+    reads = _read_app(root) + "\n".join(
+        _read_path(sql) for sql in sorted((root / "polaris_sql").glob("*.sql")))
     if re.search(r"THEN\s+NULL\s+ELSE[^;]*requesting_purpose_text", reads, re.I | re.S) or \
        re.search(r"requesting_purpose_text[^;]*ZERO_KNOWLEDGE[^;]*THEN\s+NULL", reads, re.I | re.S):
         return _fail("vocation_coercion_evidence",
