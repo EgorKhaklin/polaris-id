@@ -100,10 +100,29 @@ VERIFICATION = [
       "python3 scripts/polaris-assurance-mapping-drill.py",
       "python3 scripts/polaris-review-packet-drill.py"],
      "a check moved: the drills that mutate it, and the documents that cite it, must hold"),
+    # The two artifacts a stranger actually installs. They were invisible here until
+    # 2026-09-19: `packages/` was not in PRODUCT_PREFIXES, so the plan did not consider a
+    # change to polaris-verify or polaris-oid4vp a product change at all and named nothing to
+    # run for it. `sdk/` and `conformance/` were both listed. This is the external door, and
+    # it had no row.
+    (r"^packages/polaris-oid4vp/",
+     ["cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_verifier test_jwe "
+      "test_serve test_cli test_conformance_capture",
+      "lab/interop/waltid/README.md end to end if the presentation path changed"],
+     "the OpenID4VP verifier moved: the one external wallet result rests on it"),
+    (r"^packages/polaris-verify/",
+     ["python3 scripts/polaris-compat-suite.py",
+      "python3 conformance/run_conformance.py --self",
+      "python3 scripts/polaris-product-boundary-drill.py"],
+     "the detached verifier moved: it promises no socket and no dependencies"),
     (r"^scripts/polaris-.*drill\.(py|sh)$", ["the changed drill itself"], "a drill moved"),
     (r"^deploy/|^polaris_web/Dockerfile|^\.github/workflows/", ["the deploy jobs in CI (helm, rolling, failover drills); nothing runs locally"], "deployment moved"),
 ]
-PRODUCT_PREFIXES = ("polaris_web/", "polaris_sql/", "polaris_cli/", "polaris_zk/", "polaris_checks/", "scripts/", "sdk/", "conformance/", "deploy/", ".github/")
+#: What counts as a product path. "packages/" was missing until 2026-09-19, which meant
+#: the two artifacts on PyPI, the ones docs/RELEASING.md calls "the four artifacts a
+#: stranger installs", were not product to the tool that decides what a change must run.
+PRODUCT_PREFIXES = ("polaris_web/", "polaris_sql/", "polaris_cli/", "polaris_zk/", "polaris_checks/",
+                    "scripts/", "sdk/", "conformance/", "packages/", "deploy/", ".github/")
 _ROUTE_DECORATOR = re.compile(r'@app\.route\(\s*["\']([^"\']+)["\']')
 
 

@@ -11,6 +11,61 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.4 — 2026-09-19 (a credential that might be revoked)
+
+Externally observable, so it is a version and not housekeeping. One package moved:
+`polaris-oid4vp`. Nothing else changed and nothing is published by this entry.
+
+**The verdict now says what it did not establish about revocation.** `polaris-oid4vp`
+verifies a presentation from a wallet that has never heard of Polaris: issuer signature,
+`vct`, disclosure digests, `exp`, `nbf`, holder key binding, nonce, audience. Its verdict
+was `{authentic, code, reason, claims}`, and there was no field about revocation anywhere
+in it.
+
+An SD-JWT VC's `status` claim is issuer-signed and, by the specification, MUST NOT be
+selectively disclosable. This verifier already knew that: `status` sits in the list of
+claim names a disclosure may never carry. So it parsed the claim, protected it, handed it
+back inside `claims`, and said nothing about it. A relying party reading `authentic: true`
+was being told the strongest thing this code can say, while the second question a relying
+party actually has went unasked and unmentioned.
+
+That is the principle rc.3 published, one surface over. rc.3 added `trust_evaluated` to
+the detached verifier so three states would be distinguishable rather than collapsed, and
+said of the two issuer fields that either is null when it cannot be established, "which is
+not the same as false". Revocation had no field at all, so it did not have two states to
+confuse: it had silence.
+
+The verdict carries `revocation` now, in one of three states, and a relying party that
+cannot tell them apart cannot make a decision about any of them:
+
+- `no_status_claim`: the credential names no revocation list, so there is none to read.
+- `not_evaluated`: it names a Token Status List at a URI and an index, and this verifier
+  did not fetch it. Whether the issuer has revoked this credential is UNKNOWN, not false.
+- `unsupported_status`: it carries a status claim in a form this verifier cannot read,
+  which is not evidence that the credential is current.
+
+**No status list is fetched, and that is the point of the change rather than a gap in it.**
+Fetching is an online operation with a timeout, a cache and its own failure semantics, and
+this package does not do it today. Saying so costs nothing. Claiming otherwise, or staying
+quiet and letting `authentic: true` carry the weight, is the overstatement being removed.
+
+`authentic` is unchanged and still means what it meant: the issuer signed this, the
+disclosures match what was signed, the holder proved possession, the credential is inside
+its own validity window. It was never a statement about revocation.
+
+Six tests pin the states apart, including one whose only job is to fail if an
+implementation returns a single constant, and one that fails if any path ever reports a
+revocation as checked while the package opens no socket. All three were confirmed by
+mutation: making the state constant, reporting the unfetched list as checked, and reading
+an unsupported claim as absent each turn tests red.
+
+The research behind it, the Token Status List decision function and the sixteen
+adversaries against it, stays in `lab/strategy/` and is not part of this version. See
+[lab/strategy/001-token-status-list.md](lab/strategy/001-token-status-list.md) for what is
+settled and what is not.
+
+---
+
 ## v1.0.0-rc.3 — 2026-09-17 (a genuine signature is not a trusted issuer)
 
 Two published-contract ambiguities, found by an outside design-intent review and

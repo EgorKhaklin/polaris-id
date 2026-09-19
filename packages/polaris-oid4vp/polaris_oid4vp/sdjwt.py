@@ -110,24 +110,82 @@ def _utcnow():
 
 
 class Verdict:
-    """Authentic or not, and if not, exactly which check said so."""
+    """Authentic or not, and if not, exactly which check said so.
 
-    __slots__ = ("authentic", "code", "reason", "claims")
+    `authentic` is a statement about the SIGNATURE and the presentation: the issuer signed
+    this, the disclosures match what was signed, the holder proved possession, it is inside
+    its own validity window. It has never been a statement about revocation and is not one
+    now.
 
-    def __init__(self, authentic, code="", reason="", claims=None):
+    `revocation` is that second question, added 2026-09-19 because until then the verdict did
+    not carry it in any form. An SD-JWT VC's `status` claim is issuer-signed and MUST NOT be
+    selectively disclosable, so a credential that carries one is telling every verifier where
+    its revocation list lives. This verifier parsed that claim, protected it, handed it back
+    inside `claims`, and said nothing about it, so a relying party reading `authentic: true`
+    was being told the strongest thing this code can say while the second question went
+    unasked and unmentioned.
+
+    Silence is the problem, not the absence of a fetch. Fetching a status list is an online
+    operation with a timeout, a cache and a failure mode, and it is not what this package does
+    today. Saying so costs nothing and is the difference between a bounded claim and an
+    overstated one.
+    """
+
+    __slots__ = ("authentic", "code", "reason", "claims", "revocation")
+
+    def __init__(self, authentic, code="", reason="", claims=None, revocation=None):
         self.authentic = authentic
         self.code = code
         self.reason = reason
         self.claims = claims or {}
+        self.revocation = revocation
 
     def __repr__(self):
         if self.authentic:
-            return "Verdict(authentic, %d claim(s))" % len(self.claims)
+            return "Verdict(authentic, %d claim(s), revocation=%s)" % (
+                len(self.claims), (self.revocation or {}).get("state", "n/a"))
         return "Verdict(refused, %s: %s)" % (self.code, self.reason)
 
     def as_dict(self):
         return {"authentic": self.authentic, "code": self.code, "reason": self.reason,
-                "claims": self.claims}
+                "claims": self.claims, "revocation": self.revocation}
+
+
+#: The three states a relying party has to be able to tell apart. A verifier that collapses
+#: any two of them is overstating one of them.
+NO_STATUS_CLAIM = "no_status_claim"        # the credential points at no revocation list
+NOT_EVALUATED = "not_evaluated"            # it points at one and this verifier did not read it
+UNSUPPORTED_STATUS = "unsupported_status"  # it points at one in a form this code cannot read
+
+
+def _revocation_state(payload):
+    """What this verifier can say about revocation, which is currently never "not revoked".
+
+    Reads only the credential's own issuer-signed `status` claim. Opens no socket, and the
+    state it returns says so, because a caller that cannot distinguish "the issuer published
+    no revocation list" from "there is one and nobody looked" cannot make a decision about
+    either.
+    """
+    status = payload.get("status")
+    if status is None:
+        return {"state": NO_STATUS_CLAIM, "checked": False, "uri": None, "idx": None,
+                "reason": "the credential names no revocation list, so there is none to read"}
+    if not isinstance(status, dict):
+        return {"state": UNSUPPORTED_STATUS, "checked": False, "uri": None, "idx": None,
+                "reason": "the credential's status claim is %r, which this verifier cannot "
+                          "read; it is not evidence that the credential is current"
+                          % type(status).__name__}
+    ref = status.get("status_list")
+    if isinstance(ref, dict) and isinstance(ref.get("uri"), str) \
+            and isinstance(ref.get("idx"), int) and not isinstance(ref.get("idx"), bool):
+        return {"state": NOT_EVALUATED, "checked": False,
+                "uri": ref["uri"], "idx": ref["idx"],
+                "reason": "the credential names a Token Status List at %s index %d. This "
+                          "verifier did not fetch it, so whether the issuer has revoked this "
+                          "credential is UNKNOWN, not false" % (ref["uri"], ref["idx"])}
+    return {"state": UNSUPPORTED_STATUS, "checked": False, "uri": None, "idx": None,
+            "reason": "the credential carries a status claim in a form this verifier does not "
+                      "recognise, so its revocation state is unknown"}
 
 
 def _refuse(code, reason):
@@ -668,7 +726,8 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         if require_key_binding:
             return _refuse("kb_missing", "the presentation carries no key binding JWT, so "
                                          "nothing ties it to the holder who presented it")
-        return Verdict(True, claims=claims)
+        return Verdict(True, claims=claims,
+                       revocation=_revocation_state(payload))
 
     cnf = payload.get("cnf")
     if not isinstance(cnf, dict) or not isinstance(cnf.get("jwk"), dict):
@@ -737,4 +796,4 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
                                      "in the credential" % len(orphans))
 
-    return Verdict(True, claims=claims)
+    return Verdict(True, claims=claims, revocation=_revocation_state(payload))

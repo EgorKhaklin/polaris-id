@@ -139,6 +139,74 @@ class PositiveControlTests(unittest.TestCase):
         self.assertNotIn("family_name", v.claims)
 
 
+class RevocationIsStatedTests(unittest.TestCase):
+    """The verdict must not be silent about a revocation list the credential names.
+
+    Until 2026-09-19 it was. `status` is issuer-signed and MUST NOT be selectively disclosed,
+    so this verifier parsed it, protected it against disclosure, handed it back inside
+    `claims`, and said nothing about it. A relying party reading `authentic: true` was told
+    the strongest thing this code can say while the second question went unmentioned.
+
+    Three states have to stay apart. Collapsing any two of them overstates one.
+    """
+
+    def setUp(self):
+        from polaris_oid4vp import sdjwt as S
+        self.S = S
+        self.w = Wallet()
+
+    def test_a_credential_with_no_status_claim_says_so(self):
+        v = self.w.verify(self.w.present())
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.revocation["state"], self.S.NO_STATUS_CLAIM)
+        self.assertFalse(v.revocation["checked"])
+
+    def test_a_named_status_list_is_reported_as_unknown_not_absent(self):
+        """THE one. An unfetched list must never read like a credential with no list."""
+        ref = {"status_list": {"uri": "https://issuer.example/sl/1", "idx": 42}}
+        v = self.w.verify(self.w.present(payload_extra={"status": ref}))
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.revocation["state"], self.S.NOT_EVALUATED)
+        self.assertFalse(v.revocation["checked"])
+        self.assertEqual(v.revocation["uri"], "https://issuer.example/sl/1")
+        self.assertEqual(v.revocation["idx"], 42)
+        self.assertIn("UNKNOWN", v.revocation["reason"])
+
+    def test_the_two_states_are_not_the_same_state(self):
+        """Written as its own test because the cheapest wrong implementation returns one
+        constant, and every other assertion here would still pass."""
+        bare = self.w.verify(self.w.present())
+        listed = self.w.verify(self.w.present(
+            payload_extra={"status": {"status_list": {"uri": "https://x.example/1", "idx": 0}}}))
+        self.assertNotEqual(bare.revocation["state"], listed.revocation["state"])
+
+    def test_an_unreadable_status_claim_is_not_read_as_absent(self):
+        for bad in ("revoked", 7, [], {"other_mechanism": {"u": 1}},
+                    {"status_list": {"uri": "https://x.example/1"}},
+                    {"status_list": {"uri": "https://x.example/1", "idx": True}},
+                    {"status_list": {"uri": 9, "idx": 0}}):
+            with self.subTest(bad=bad):
+                v = self.w.verify(self.w.present(payload_extra={"status": bad}))
+                self.assertTrue(v.authentic, v.reason)
+                self.assertEqual(v.revocation["state"], self.S.UNSUPPORTED_STATUS)
+                self.assertFalse(v.revocation["checked"])
+
+    def test_no_state_ever_claims_the_credential_is_current(self):
+        """This package fetches nothing, so no path may report a checked revocation."""
+        for extra in (None,
+                      {"status": {"status_list": {"uri": "https://x.example/1", "idx": 3}}},
+                      {"status": "nonsense"}):
+            with self.subTest(extra=extra):
+                v = self.w.verify(self.w.present(payload_extra=extra))
+                self.assertFalse(v.revocation["checked"],
+                                 "a verifier that opens no socket reported a checked "
+                                 "revocation state: %r" % (v.revocation,))
+
+    def test_the_field_survives_as_dict(self):
+        v = self.w.verify(self.w.present())
+        self.assertIn("revocation", v.as_dict())
+
+
 class TheSevenConformanceRefusalsTests(unittest.TestCase):
     """One test per negative module in oid4vp-1final-verifier-haip-test-plan."""
 

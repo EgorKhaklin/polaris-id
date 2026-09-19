@@ -20412,6 +20412,95 @@ def check_verification_plan_covers_the_check_layer(root: pathlib.Path) -> list[F
                % (len(readers), ", ".join(sorted(readers)), _CHECKS_REL))
 
 
+def check_verification_plan_covers_published_artifacts(root: pathlib.Path) -> list[Finding]:
+    """The things a stranger installs are product paths to the tool that plans a ship.
+
+    docs/RELEASING.md names "the four artifacts a stranger installs" and gives the directory
+    each is built from. scripts/polaris-ship.py decides what a change needs verified, and it
+    does that in two stages: PRODUCT_PREFIXES decides whether a changed path is product at
+    all, and VERIFICATION maps it to the suites and drills to run.
+
+    Measured 2026-09-19: `packages/` was in neither. `sdk/` and `conformance/` were both in
+    PRODUCT_PREFIXES; `packages/polaris-verify/` and `packages/polaris-oid4vp/` were not, so a
+    change to either PyPI artifact was not a product change to the tool, `plan` named nothing
+    to run for it, and `drills` scoped it out. Those two are the external door. One of them is
+    the verifier that the only external wallet result in lab/EXTERNAL-NOUNS.md rests on, and
+    the other promises it opens no socket.
+
+    This is the same shape as check_verification_plan_covers_the_check_layer one directory
+    over, which is why it is a second check rather than a widening: that one asks whether the
+    drills that read the check layer are scheduled, and this one asks whether the published
+    artifacts are visible to the scheduler at all. A path that is not product never reaches
+    the question the other check asks.
+    """
+    name = "verification_plan_covers_artifacts"
+    ship = _read_raw(root, "scripts/polaris-ship.py")
+    releasing = _read_raw(root, "docs/RELEASING.md")
+    if not ship or not releasing:
+        return _fail(name, "scripts/polaris-ship.py or docs/RELEASING.md is missing")
+    # The first column of the release ledger's table: the directory each artifact is built
+    # from. Read from the ledger rather than listed here, so a new artifact is covered by
+    # being published rather than by someone remembering this check.
+    artifacts = sorted(set(re.findall(r"^\|\s*`([A-Za-z0-9_./-]+/)`\s*\|", releasing, re.M)))
+    if len(artifacts) < 3:
+        return _fail(name, "only %d artifact director(y/ies) parsed out of docs/RELEASING.md; "
+                           "the parse has broken and this check would pass by finding nothing"
+                           % len(artifacts))
+    m = re.search(r"PRODUCT_PREFIXES\s*=\s*\(([^)]*)\)", ship, re.S)
+    if not m:
+        return _fail(name, "scripts/polaris-ship.py does not declare PRODUCT_PREFIXES; a "
+                           "check that cannot find its source of truth measures nothing")
+    prefixes = tuple(re.findall(r"[\"']([^\"']+)[\"']", m.group(1)))
+    if len(prefixes) < 5:
+        return _fail(name, "only %d product prefix(es) parsed; the parse has broken"
+                           % len(prefixes))
+    try:
+        tree = ast.parse(ship)
+    except SyntaxError as exc:
+        return _fail(name, "scripts/polaris-ship.py does not parse (%s)" % exc)
+    patterns = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "VERIFICATION" for t in node.targets):
+            if isinstance(node.value, ast.List):
+                for el in node.value.elts:
+                    try:
+                        patterns.append(ast.literal_eval(el)[0])
+                    except (ValueError, IndexError, TypeError):
+                        pass
+    if len(patterns) < 5:
+        return _fail(name, "only %d VERIFICATION row(s) parsed; the parse has broken"
+                           % len(patterns))
+    invisible, unplanned = [], []
+    for art in artifacts:
+        probe = art + "x.py"
+        if not probe.startswith(prefixes):
+            invisible.append(art)
+            continue
+        if not any(_safe_search(p, probe) for p in patterns):
+            unplanned.append(art)
+    if invisible:
+        return _fail(name, "%d published artifact(s) are not under any PRODUCT_PREFIXES entry, "
+                           "so the ship tool does not treat a change to them as a product "
+                           "change at all: %s" % (len(invisible), ", ".join(invisible)))
+    if unplanned:
+        return _fail(name, "%d published artifact(s) are product paths with no VERIFICATION "
+                           "row, so a change to them plans nothing to run: %s"
+                           % (len(unplanned), ", ".join(unplanned)))
+    return _ok(name, "all %d artifact director(y/ies) docs/RELEASING.md publishes (%s) are "
+                     "product paths to the ship tool and each matches a VERIFICATION row, so "
+                     "changing what a stranger installs plans the work that would notice"
+               % (len(artifacts), ", ".join(artifacts)))
+
+
+def _safe_search(pattern: str, text: str) -> bool:
+    """re.search that treats an unparseable pattern as no match rather than raising."""
+    try:
+        return bool(re.search(pattern, text))
+    except re.error:
+        return False
+
+
 def check_pre_commit_folded_entries_stay_one_line(root: pathlib.Path) -> list[Finding]:
     """A hook entry wrapped for readability must still be one command.
 
@@ -20601,6 +20690,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_precommit_config_wires_what_the_docs_claim,
     check_pre_commit_folded_entries_stay_one_line,
     check_verification_plan_covers_the_check_layer,
+    check_verification_plan_covers_published_artifacts,
     check_every_check_has_a_detection_test,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,

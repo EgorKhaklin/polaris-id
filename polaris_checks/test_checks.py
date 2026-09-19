@@ -17434,6 +17434,82 @@ def test_verification_plan_covers_the_check_layer_discriminates(tmp_path):
         "must FAIL rather than pass when no drill is found to read the layer at all"
 
 
+def test_verification_plan_covers_published_artifacts_discriminates(tmp_path):
+    """A published artifact must be a product path to the tool that plans a ship.
+
+    2026-09-19: `packages/` was in neither PRODUCT_PREFIXES nor VERIFICATION, so a change to
+    polaris-verify or polaris-oid4vp, the two things on PyPI, was not a product change to the
+    ship tool and planned nothing. `sdk/` and `conformance/` were both there.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "scripts").mkdir()
+    LEDGER = ("| Artifact | Registry | Name |\n|---|---|---|\n"
+              "| `packages/polaris-verify/` | PyPI | `polaris-verify` |\n"
+              "| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` |\n"
+              "| `sdk/python/` | PyPI | `polaris-sdk-python` |\n"
+              "| `sdk/typescript/` | npm | `polaris-sdk-ts` |\n")
+
+    def ship(prefixes, rows):
+        (tmp_path / "scripts" / "polaris-ship.py").write_text(
+            "VERIFICATION = [\n%s]\n\nPRODUCT_PREFIXES = (%s)\n"
+            % ("".join("    (%r, [%r], %r),\n" % r for r in rows),
+               ", ".join(repr(p) for p in prefixes)))
+
+    def write(prefixes, rows, ledger=LEDGER):
+        (tmp_path / "docs" / "RELEASING.md").write_text(ledger)
+        ship(prefixes, rows)
+
+    ALL_PREFIXES = ("polaris_web/", "polaris_sql/", "scripts/", "sdk/", "packages/", "deploy/")
+    ALL_ROWS = [(r"^polaris_web/", "run the app suite", "the app moved"),
+                (r"^polaris_sql/", "run everything", "the schema moved"),
+                (r"^sdk/", "run the sdk suites", "an sdk moved"),
+                (r"^packages/polaris-verify/", "run the compat suite", "the verifier moved"),
+                (r"^packages/polaris-oid4vp/", "run the oid4vp suites", "the profile moved"),
+                (r"^deploy/", "the deploy jobs", "deployment moved")]
+
+    fn = checks.check_verification_plan_covers_published_artifacts
+    write(ALL_PREFIXES, ALL_ROWS)
+    assert fn(tmp_path)[0].level == "OK", \
+        "must PASS when every published artifact is a product path with a row"
+
+    # THE defect exactly as it was: the prefix is absent, so the artifacts are not product.
+    write(tuple(p for p in ALL_PREFIXES if p != "packages/"), ALL_ROWS)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "PRODUCT_PREFIXES" in out[0].message \
+        and "packages/polaris-verify/" in out[0].message, \
+        "must FAIL when a published artifact is under no product prefix"
+
+    # The second stage: product, but nothing plans anything for it.
+    write(ALL_PREFIXES, [r for r in ALL_ROWS if not r[0].startswith(r"^packages/polaris-oid4vp")])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no VERIFICATION row" in out[0].message \
+        and "polaris-oid4vp" in out[0].message, \
+        "must FAIL when a product artifact matches no VERIFICATION row"
+
+    # A new artifact is covered by being published, not by anyone editing this check.
+    write(ALL_PREFIXES, ALL_ROWS,
+          ledger=LEDGER + "| `packages/polaris-future/` | PyPI | `polaris-future` |\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris-future" in out[0].message, \
+        "a newly published artifact with no row must fail without this check being edited"
+
+    # Anti-vacuity on all three parses.
+    write(ALL_PREFIXES, ALL_ROWS, ledger="nothing resembling a table here\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "would pass by finding nothing" in out[0].message, \
+        "must FAIL rather than pass when the ledger yields no artifacts"
+
+    write(("sdk/",), ALL_ROWS)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "parse has broken" in out[0].message, \
+        "must FAIL rather than pass when too few prefixes parse"
+
+    write(ALL_PREFIXES, ALL_ROWS[:2])
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "parse has broken" in out[0].message, \
+        "must FAIL rather than pass when too few VERIFICATION rows parse"
+
+
 def test_precommit_folded_entry_check_discriminates(tmp_path):
     """A hook entry wrapped across lines must still be the one command it reads as.
 
