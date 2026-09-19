@@ -17164,11 +17164,14 @@ def test_precommit_wiring_check_discriminates(tmp_path):
     describes the config and tells a contributor to install it; docs/CONVENTIONS.md
     describes the em-dash hook's exemptions. Remove a hook and all three keep describing it.
     """
+    WIRED = ("polaris-checks", "ruff", "polaris-link-check", "em-dash-block-new",
+             "polaris-detection-tests", "no-secret-in-prod-compose",
+             "polaris-script-tool-tests")
     CFG = "repos:\n  - repo: local\n    hooks:\n" + "".join(
-        "      - id: %s\n        name: %s\n" % (h, h)
-        for h in ("polaris-checks", "ruff", "polaris-link-check",
-                  "em-dash-block-new", "polaris-detection-tests", "no-secret-in-prod-compose"))
-    CONTRIB = "Install the safety net:\n\n    pip install pre-commit\n    pre-commit install\n"
+        "      - id: %s\n        name: %s\n" % (h, h) for h in WIRED)
+    CONTRIB = ("Install the safety net:\n\n    pip install pre-commit\n    pre-commit install\n"
+               "\n| Hook | What it does |\n|---|---|\n"
+               + "".join("| `%s` | does a thing |\n" % h for h in WIRED))
 
     def write(cfg=CFG, contrib=CONTRIB):
         (tmp_path / ".pre-commit-config.yaml").write_text(cfg)
@@ -17190,6 +17193,14 @@ def test_precommit_wiring_check_discriminates(tmp_path):
     assert out[0].level == "FAIL" and "polaris-detection-tests" in out[0].message, \
         "must FAIL when the detection-test hook is removed"
 
+    # The other direction, added 2026-09-19: a hook that runs on every commit and appears
+    # in no row of the table. CONTRIBUTING.md had drifted to four rows out of seven this
+    # way, and the loop above could not see it because it only walks the described set.
+    write(contrib=CONTRIB.replace("| `polaris-script-tool-tests` | does a thing |\n", ""))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris-script-tool-tests" in out[0].message, \
+        "must FAIL when a wired hook has no row in CONTRIBUTING.md"
+
     # A net nobody is told to turn on is not a net.
     write(contrib="Nothing about hooks here.\n")
     out = fn(tmp_path)
@@ -17207,6 +17218,59 @@ def test_precommit_wiring_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
         "must FAIL rather than report a wired net when no hooks can be parsed"
+
+
+def test_precommit_folded_entry_check_discriminates(tmp_path):
+    """A hook entry wrapped across lines must still be the one command it reads as.
+
+    2026-09-19: polaris-script-tool-tests was written as a folded scalar whose continuation
+    lines were indented further than its first line. YAML keeps the newlines in that case,
+    so bash got four lines: `python3 -m unittest` with no module named (bare discovery, 151
+    tests instead of the 134 the hook's comment chooses), then the module names as commands
+    of their own, then exit 127. The hook had never run what it said it ran.
+
+    The fixture is checked against a real YAML parse rather than asserted, so this test
+    fails if PyYAML's folding stops working the way the check assumes.
+    """
+    GOOD = ("repos:\n  - repo: local\n    hooks:\n"
+            "      - id: tool-tests\n"
+            "        entry: >-\n"
+            "          bash -c 'cd scripts && python3 -m unittest\n"
+            "          test_a test_b'\n")
+    BAD = GOOD.replace("          test_a test_b'", "            test_a test_b'")
+
+    yaml = pytest.importorskip("yaml")
+
+    def entry(text):
+        return yaml.safe_load(text)["repos"][0]["hooks"][0]["entry"]
+
+    assert "\n" not in entry(GOOD), \
+        "fixture is wrong: the aligned form must fold to one line"
+    bad_lines = entry(BAD).split("\n")
+    assert len(bad_lines) == 2 and bad_lines[1].strip() == "test_a test_b'", \
+        "fixture is wrong: the indented form must leave the module names on a line of their own"
+
+    fn = checks.check_pre_commit_folded_entries_stay_one_line
+    (tmp_path / ".pre-commit-config.yaml").write_text(GOOD)
+    assert fn(tmp_path)[0].level == "OK", \
+        "must PASS when continuation lines share the first line's indentation"
+
+    # THE defect, exactly as it was found.
+    (tmp_path / ".pre-commit-config.yaml").write_text(BAD)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "tool-tests" in out[0].message, \
+        "must FAIL when a continuation line is indented further and the newline survives"
+
+    # A literal block means the newlines on purpose; em-dash-block-new is one.
+    (tmp_path / ".pre-commit-config.yaml").write_text(
+        BAD.replace("entry: >-", "entry: |"))
+    assert fn(tmp_path)[0].level == "OK", \
+        "must not flag a `|` block, where preserved newlines are what the author asked for"
+
+    (tmp_path / ".pre-commit-config.yaml").unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "missing" in out[0].message, \
+        "must FAIL when the config is absent"
 
 
 def test_drill_case_counts_check_discriminates(tmp_path):

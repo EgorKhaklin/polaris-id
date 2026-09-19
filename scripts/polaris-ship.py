@@ -294,7 +294,7 @@ def run_unsharded(py, base_env, db, out):
     state = "/tmp/polaris-state-unsharded"
     os.makedirs(state, exist_ok=True)
     env = dict(base_env, POLARIS_DB_NAME=db, POLARIS_STATE_DIR=state, POLARIS_PORT="2299")
-    groups, ran, failures = 0, 0, []
+    groups, ran, failures, skipped = 0, 0, [], 0
     for group in sorted(UNSHARDED_SUITES):
         kind, per_suite = UNSHARDED_RUNNERS.get(group, ("unittest", None))
         if kind == "preflight":
@@ -327,11 +327,16 @@ def run_unsharded(py, base_env, db, out):
             m = re.search(r"Ran (\d+) tests?", text) or re.search(r"(\d+) passed", text)
             n = int(m.group(1)) if m else 0
             ran += n
+            # Both spellings: unittest prints `OK (skipped=18)`, pytest prints `3 skipped`.
+            sk = (sum(int(x) for x in re.findall(r"skipped=(\d+)", text))
+                  + sum(int(x) for x in re.findall(r"(\d+) skipped", text)))
+            skipped += sk
             ok = pr.returncode == 0
-            print("  %-34s %s %d tests" % (label[:34], "ok  " if ok else "FAIL", n), file=out)
+            print("  %-34s %s %d tests%s" % (label[:34], "ok  " if ok else "FAIL", n,
+                                             (", %d skipped" % sk) if sk else ""), file=out)
             if not ok:
                 failures.append((label, text[-2500:]))
-    return groups, ran, failures
+    return groups, ran, failures, skipped
 
 
 # A class that spawns processes, binds a port or runs gunicorn cannot share a machine slot with
@@ -558,15 +563,27 @@ def run(argv, out=None):
             text = _plain(open(logs[i], encoding="utf-8", errors="replace").read())
             m = re.search(r"Ran (\d+) tests? in ([\d.]+)s", text)
             ok = bool(re.search(r"^OK( \(.*\))?$", text, flags=re.M)) and pr.returncode == 0
-            results.append((i, int(m.group(1)) if m else 0, float(m.group(2)) if m else 0.0, ok, text))
+            # SKIPS ARE PART OF THE VERDICT. "PASS: 912 of 912 tests ran" said nothing about
+            # how many of those never executed, and on 2026-09-19 that was 46 of them: the
+            # real-ML-DSA paths skip without liboqs, which CLAUDE.md calls optional. A green
+            # line covering less than it claims is the thing this repository refuses
+            # everywhere else, and it was invisible here until an optional dependency was
+            # installed and the number moved.
+            sk = sum(int(x) for x in re.findall(r"skipped=(\d+)", text))
+            results.append((i, int(m.group(1)) if m else 0, float(m.group(2)) if m else 0.0,
+                            ok, text, sk))
             failed = failed or not ok
         wall = time.time() - t1
         ran = sum(r[1] for r in results)
+        skipped = sum(r[5] for r in results)
         test_time = sum(r[2] for r in results)
-        for i, n, secs, ok, _ in results:
+        for i, n, secs, ok, _, _sk in results:
             print("  shard %d: %s %d tests in %.0fs%s" % (i, "ok  " if ok else "FAIL", n, secs, " (serial)" if i == 0 else ""), file=out)
-        print("run: %s: %d of %d tests ran, %.0fs wall for %.0fs of test time (%.1fx)" % ("FAILED" if failed or ran != total else "PASS", ran, total, wall, test_time, (test_time / wall) if wall else 0), file=out)
-        for i, _, _, ok, text in results:
+        print("run: %s: %d of %d tests ran%s, %.0fs wall for %.0fs of test time (%.1fx)"
+              % ("FAILED" if failed or ran != total else "PASS", ran, total,
+                 (", %d SKIPPED" % skipped) if skipped else "",
+                 wall, test_time, (test_time / wall) if wall else 0), file=out)
+        for i, _, _, ok, text, _sk in results:
             if not ok:
                 blocks = _failure_blocks(text)
                 for b in blocks[:6]:
@@ -580,9 +597,10 @@ def run(argv, out=None):
         # gate said READY went red in CI on a file none of the sharded modules imports.
         if "--no-unsharded" not in argv:
             print("run: the unsharded suites CI also runs, against %s" % dbs[0], file=out)
-            u_groups, u_ran, u_failures = run_unsharded(py, base_env, dbs[0], out)
-            print("run: unsharded: %s: %d tests across %d command(s)"
-                  % ("FAILED" if u_failures else "PASS", u_ran, u_groups), file=out)
+            u_groups, u_ran, u_failures, u_skipped = run_unsharded(py, base_env, dbs[0], out)
+            print("run: unsharded: %s: %d tests across %d command(s)%s"
+                  % ("FAILED" if u_failures else "PASS", u_ran, u_groups,
+                     (", %d SKIPPED" % u_skipped) if u_skipped else ""), file=out)
             for label, text in u_failures:
                 print("\n    %s:\n%s" % (label, "\n".join("    " + x for x in text.splitlines()[-30:])), file=out)
                 failed = True

@@ -221,8 +221,7 @@ and the object change together.
 Local environment: Python **3.12** for the application suites (CI pins 3.12; there is no
 repository venv), `pip install -r polaris_web/requirements-dev.txt`, PostgreSQL on `:5432`
 with a `polaris_test` database loaded from `polaris_sql/00_load_all.sql` plus the migrations,
-Redis for the sharded runner, Docker for the paper and the container drills. Optional:
-`liboqs-python` for real ML-DSA-65.
+Redis for the sharded runner, Docker for the paper and the container drills. Optional but measurable: `liboqs-python` for real ML-DSA-65. Without it 46 tests SKIP and the crypto attack suite cannot run at all; with it the skip count falls to 18 (PKCS#11 and a cryptography build carrying ML-DSA are the rest) and `attacks/run_attacks.py --suite crypto` runs its nine adversaries. `polaris-ship.py run` prints the skip count in its verdict, so the difference is visible rather than assumed.
 
 ```bash
 # The invariant layer (no database): prints READY or BLOCKED, exits non-zero on any FAIL.

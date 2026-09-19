@@ -140,6 +140,9 @@ pre-commit install
 | Hook | What it does |
 |---|---|
 | `polaris-checks` | Runs the invariant layer; non-zero on any FAIL |
+| `ruff` | Unused imports and dead code, on the whole tree |
+| `polaris-script-tool-tests` | A changed tool under `scripts/` must still pass its own suite |
+| `polaris-detection-tests` | A changed check must still fail on a broken fixture |
 | `polaris-link-check` | Every Markdown link and code path must resolve |
 | `no-secret-in-prod-compose` | Refuses a literal secret value in the production compose file |
 | `em-dash-block-new` | Refuses a new em-dash on any human-facing surface ([docs/CONVENTIONS.md](docs/CONVENTIONS.md), section 10) |

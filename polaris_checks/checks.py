@@ -20119,6 +20119,10 @@ _PRECOMMIT_HOOKS = {
     "polaris-detection-tests": "a check and its detection test change together; the ship "
                                "plan says so and a commit went out on 2026-09-18 with this "
                                "suite red",
+    "polaris-script-tool-tests": "a tool under scripts/ is pinned by its own suite, which "
+                                 "the detection hook does not contain; two commits went red "
+                                 "in CI on 2026-09-19 for exactly that",
+    "no-secret-in-prod-compose": "CONTRIBUTING.md lists it in the safety net",
 }
 
 
@@ -20152,14 +20156,96 @@ def check_precommit_config_wires_what_the_docs_claim(root: pathlib.Path) -> list
                            "describes: %s"
                            % (", ".join(missing),
                               "; ".join("%s (%s)" % (m, _PRECOMMIT_HOOKS[m]) for m in missing)))
-    if "pre-commit install" not in _read_raw(root, "CONTRIBUTING.md"):
+    contributing = _read_raw(root, "CONTRIBUTING.md")
+    if "pre-commit install" not in contributing:
         return _fail(name, "CONTRIBUTING.md no longer tells a contributor to run "
                            "`pre-commit install`, so the safety net the other documents "
                            "describe is one nobody is told to turn on")
-    return _ok(name, "the local safety net wires all %d hooks the tree describes (%s), and "
-                     "CONTRIBUTING.md still says how to turn it on; whether a given clone "
-                     "has is per-clone state this cannot see"
-                     % (len(_PRECOMMIT_HOOKS), ", ".join(sorted(_PRECOMMIT_HOOKS))))
+    # The other direction, added 2026-09-19. The loop above asks whether every DESCRIBED
+    # hook is wired. Nothing asked whether every WIRED hook is described, and the table in
+    # CONTRIBUTING.md had drifted to four of seven rows: ruff, the detection hook and the
+    # tool-test hook all ran on every commit and appeared in no document. A contributor
+    # reading the table would not have known to keep them.
+    tabled = set(re.findall(r"^\|\s*`([a-z0-9-]+)`\s*\|", contributing, re.M))
+    undocumented = sorted(declared - tabled)
+    if undocumented:
+        return _fail(name, "%d hook(s) run on every commit and are in no row of "
+                           "CONTRIBUTING.md's table: %s"
+                           % (len(undocumented), ", ".join(undocumented)))
+    return _ok(name, "the local safety net wires all %d hooks the tree describes, and all "
+                     "%d wired hooks have a row in CONTRIBUTING.md (%s); it still says how "
+                     "to turn the net on, though whether a given clone has is per-clone "
+                     "state this cannot see"
+                     % (len(_PRECOMMIT_HOOKS), len(declared), ", ".join(sorted(declared))))
+
+
+def check_pre_commit_folded_entries_stay_one_line(root: pathlib.Path) -> list[Finding]:
+    """A hook entry wrapped for readability must still be one command.
+
+    YAML's folded scalar (`entry: >`) joins its lines with spaces, which is why a long
+    `bash -c '...'` is written across several lines here. It joins with spaces only while
+    those lines share one indentation: indent a line further and YAML keeps the newline
+    instead, and the entry becomes a multi-line shell script whose second line is a new
+    command.
+
+    Measured 2026-09-19 on polaris-script-tool-tests, which had been written as
+
+        entry: >
+          bash -c '
+            cd scripts && python3 -m unittest
+              test_ship_tool test_verify_conformance ...
+
+    Every line after the first was indented further, so bash received four lines. Line one
+    was `python3 -m unittest` with no module named, which is bare discovery: it ran all 151
+    tests under scripts/ including the live-verify suite the hook's own comment says is
+    deliberately excluded. Lines two and three were the module names, which bash tried to
+    run as commands, so the hook exited 127 and refused every commit touching scripts/.
+    That failure is loud, and the reason this check exists is the half that was not: the
+    first line still ran, still passed, and ran something nobody chose.
+
+    Only `>` is checked. A `|` block preserves newlines by definition, so a multi-line
+    script written that way is the author saying so; em-dash-block-new is one.
+    """
+    name = "precommit_folded_entries"
+    cfg = _read_raw(root, ".pre-commit-config.yaml")
+    if not cfg:
+        return _fail(name, ".pre-commit-config.yaml is missing")
+    lines = cfg.split("\n")
+    folded = [(i, ln) for i, ln in enumerate(lines)
+              if re.match(r"^\s*entry:\s*>[-+]?\s*$", ln)]
+    if not folded:
+        return _ok(name, "no hook entry uses a folded scalar, so none can be folded wrong")
+    broken = []
+    for i, opener in folded:
+        hook = "?"
+        for back in range(i, max(i - 40, -1), -1):
+            m = re.match(r"^\s*-\s*id:\s*(\S+)", lines[back])
+            if m:
+                hook = m.group(1)
+                break
+        body = []
+        for ln in lines[i + 1:]:
+            if not ln.strip():
+                break
+            ind = len(ln) - len(ln.lstrip())
+            if ind <= len(opener) - len(opener.lstrip()):
+                break
+            body.append((ind, ln.strip()))
+        if not body:
+            continue
+        base = body[0][0]
+        deeper = [text for ind, text in body[1:] if ind > base]
+        if deeper:
+            broken.append("%s keeps a newline before %r (indent %d vs %d), so what follows "
+                          "runs as a separate command"
+                          % (hook, deeper[0][:48], body[1][0], base))
+    if broken:
+        return _fail(name, "a folded hook entry is not one line: " + "; ".join(broken))
+    return _ok(name, "%s at one indentation, so each folds back into the single command it "
+                     "reads as"
+               % ("the 1 folded hook entry keeps its continuation lines"
+                  if len(folded) == 1 else
+                  "all %d folded hook entries keep their continuation lines" % len(folded)))
 
 
 def check_every_check_has_a_detection_test(root: pathlib.Path) -> list[Finding]:
@@ -20266,6 +20352,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_security_page_matches_the_release_ledger,
     check_stranger_path_was_walked_against_what_is_published,
     check_precommit_config_wires_what_the_docs_claim,
+    check_pre_commit_folded_entries_stay_one_line,
     check_every_check_has_a_detection_test,
     check_no_vacuous_checks,
     check_checks_do_not_grep_one_module,
