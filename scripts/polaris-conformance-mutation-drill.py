@@ -392,6 +392,39 @@ def main(argv=None) -> int:
     for x in controls_blind:
         print("      NOT CAUGHT  %s" % x)
 
+    # THE SAME CONTROL IN THE OTHER DIRECTION, added 2026-09-19.
+    #
+    # Everything above forces the PERMISSIVE answer, which catches a verifier that accepts
+    # what it should refuse. Nothing forced the refusing one, and a contract has to constrain
+    # both: if no published case requires an artifact to be accepted, then a verifier that
+    # refuses every artifact of that kind passes, and the conformance claim it earns is about
+    # nothing. That is the same defect as a test suite whose only green comes from assertions
+    # that something failed.
+    #
+    # It is true today by care rather than by measurement. Three artifact kinds are judged on
+    # a field other than `authentic` -- cross-authority on `decision`, holder-chain on
+    # `proved`, timestamp-anchor on `anchored` -- and check_conformance_contract_constrains
+    # exempts exactly those from the "must have a refusal case" rule, because they have no
+    # authenticity field to demand one of. Nothing was asking the reverse question of any
+    # artifact at all.
+    print("\n== negative control, mirrored: the same key forced REFUSING ==")
+    accept_ok, accept_blind = 0, []
+    for fn_name in verifiers:
+        for key in sorted(contract_keys.get(fn_name, ())):
+            original = _force(V, fn_name, key, False)
+            try:
+                red = _run_all(harness, cases)
+            finally:
+                setattr(V, fn_name, original)
+            if red:
+                accept_ok += 1
+            else:
+                accept_blind.append("%s.%s" % (fn_name, key))
+    print("   %d of %d artifact authenticity key(s) have a published case that requires a "
+          "SUCCESS" % (accept_ok, accept_ok + len(accept_blind)))
+    for x in accept_blind:
+        print("      NO SUCCESS CASE  %s" % x)
+
     # THE MEASUREMENT.
     print("\n== every other decision field, forced permissive ==")
     survivors = []
@@ -455,6 +488,11 @@ def main(argv=None) -> int:
         print("VERDICT: the negative control found %d artifact(s) whose cases do not even "
               "constrain authenticity; fix those first." % len(controls_blind))
         return 1
+    if accept_blind:
+        print("VERDICT: %d artifact(s) have no published case that requires a SUCCESS, so a "
+              "verifier that refuses every one of them conforms; write an accepting case "
+              "before anything else here means something." % len(accept_blind))
+        return 1
     found = {"%s.%s" % (fn, key) for fn, key in survivors}
     declared = set(SURVIVORS_EXPECTED)
     new_ones = sorted(found - declared)
@@ -470,8 +508,18 @@ def main(argv=None) -> int:
             print("   %s" % x)
     if new_ones or gone:
         return 1
-    print("VERDICT: all 19 artifact authenticity keys are constrained by a published case, "
-          "and the %d unconstrained field(s) are exactly the declared set." % len(found))
+    kinds = len({c.get("artifact", "authenticity-pack") for c in cases})
+    print("VERDICT: all %d artifact authenticity keys are constrained by a published case in "
+          "BOTH directions (one drives the key false, one requires it true), and the %d "
+          "unconstrained field(s) are exactly the declared set."
+          % (controls_ok, len(found)))
+    print("  Those %d keys are the entries of _SIGNED, which is %d of the %d artifact kinds "
+          "the contract publishes. The other %d are judged on a field of their own "
+          "(decision, proved, anchored) and are out of this drill's reach; what holds them "
+          "is check_conformance_contract_distinguishes, which requires every kind's verdict "
+          "to take more than one value. Saying '%d of %d' without that denominator is the "
+          "reason this line now carries it."
+          % (controls_ok, controls_ok, kinds, kinds - controls_ok, controls_ok, controls_ok))
     return 0
 
 

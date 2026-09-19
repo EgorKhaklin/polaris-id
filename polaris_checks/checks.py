@@ -8139,6 +8139,11 @@ def check_conformance_contract_constrains(root: pathlib.Path) -> list[Finding]:
                             "so the declaration can go stale without anyone noticing"),
         ("negative control", "the drill has no negative control, so '19 of 19 constrained' "
                              "could mean the harness ran nothing"),
+        ("forced REFUSING", "the drill forces every key PERMISSIVE and nothing forces one "
+                            "refusing, so a contract that never requires a verifier to "
+                            "SUCCEED would pass it (added 2026-09-19)"),
+        ("NO SUCCESS CASE", "the mirrored control cannot report what it finds, so an "
+                            "artifact with no accepting case would pass quietly"),
     ):
         if needle not in drill:
             findings.extend(_fail(name, why))
@@ -8155,6 +8160,75 @@ def check_conformance_contract_constrains(root: pathlib.Path) -> list[Finding]:
                      f"the signature is bad ({len(cases)} cases); the drill that measures what "
                      f"else the contract constrains declares the gaps exactly, fails in both "
                      f"directions, and runs in CI")
+
+
+def check_conformance_contract_distinguishes(root: pathlib.Path) -> list[Finding]:
+    """No artifact's cases may all expect the same verdict (2026-09-19).
+
+    The contract's other guards are strong and both leave the same hole. The check above
+    demands a case expecting authentic FALSE, which constrains the signature; it exempts any
+    artifact with no `authentic` key, and three have none: cross-authority is judged on
+    `decision`, holder-chain on `proved`, timestamp-anchor on `anchored`. The conformance
+    mutation drill forces each artifact's authenticity key PERMISSIVE and requires a case to
+    notice; its table `_SIGNED` holds 19 of the 25 artifact kinds, and it only ever pushed
+    toward acceptance. Between them, nothing asked whether the contract requires a verifier to
+    ever SUCCEED at anything.
+
+    It matters because the failure is silent in the direction that flatters. A verifier that
+    refuses every holder-chain is wrong in the way that looks safe, and if every published
+    holder-chain case expected a refusal it would conform. Deleting the one accepting case is
+    a one-line edit to a manifest that an integrator is invited to read.
+
+    The rule needs no vocabulary, which is why it reaches all 25 kinds rather than 19 or 22:
+    for each artifact there must be a key every one of its cases is judged on, and that key
+    must take at least two distinct values. A contract whose every case for an artifact
+    expects the same answer is satisfied by a verifier that always gives that answer,
+    whatever the answer happens to be called.
+    """
+    name = "conformance_distinguishes"
+    raw = _read(root, "conformance/cases.json")
+    if not raw:
+        return _fail(name, "conformance/cases.json could not be read")
+    try:
+        cases = json.loads(raw)["cases"]
+    except Exception as exc:
+        return _fail(name, "conformance/cases.json did not parse: %s" % exc)
+    if len(cases) < 50:
+        return _fail(name, "only %d conformance case(s); the contract has shrunk or the parse "
+                           "has broken and this check is asserting about nothing" % len(cases))
+    groups: dict = {}
+    for case in cases:
+        groups.setdefault(case.get("artifact", "authenticity-pack"), []).append(
+            case.get("expect", {}))
+    if len(groups) < 20:
+        return _fail(name, "only %d artifact kind(s) parsed out of the contract; the grouping "
+                           "has broken and this check would pass by finding nothing"
+                           % len(groups))
+    flat = []
+    for artifact, expects in sorted(groups.items()):
+        common = set(expects[0])
+        for e in expects[1:]:
+            common &= set(e)
+        if not common:
+            flat.append("%s has no key that every one of its %d cases is judged on, so there "
+                        "is no verdict to vary" % (artifact, len(expects)))
+            continue
+        varies = [k for k in sorted(common)
+                  if len({json.dumps(e[k], sort_keys=True) for e in expects}) > 1]
+        if not varies:
+            flat.append("every %s case expects %s, so a verifier that always answers that "
+                        "conforms for %s" % (artifact,
+                                             ", ".join("%s=%r" % (k, expects[0][k])
+                                                       for k in sorted(common)),
+                                             artifact))
+    if flat:
+        return _fail(name, "%d artifact kind(s) the contract does not distinguish: %s"
+                           % (len(flat), "; ".join(flat)))
+    return _ok(name, "all %d artifact kinds in the contract are judged on a key every one of "
+                     "their cases carries, and every one of those keys takes at least two "
+                     "distinct values across the %d published cases, so no kind can be "
+                     "conformed to by a constant answer"
+               % (len(groups), len(cases)))
 
 
 
@@ -20814,6 +20888,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_no_upsert_without_an_arbiter,
     check_drill_plan_is_binding,
     check_conformance_contract_constrains,
+    check_conformance_contract_distinguishes,
     check_procedure_refusals_are_mutation_tested,
     check_duress_is_indistinguishable,
     check_authority_creation_is_recorded,

@@ -14823,6 +14823,94 @@ def test_drill_plan_binding_check_discriminates(tmp_path):
     assert level() == "FAIL", "must FAIL when preflight is absent"
 
 
+def test_conformance_distinguishes_check_discriminates(tmp_path):
+    """An artifact whose every case expects the same verdict is conformed to by a constant.
+
+    2026-09-19: nothing asked whether the contract requires a verifier to ever SUCCEED.
+    check_conformance_contract_constrains demands a REFUSAL case and exempts artifacts with
+    no `authentic` key (cross-authority, holder-chain, timestamp-anchor have none). The
+    conformance mutation drill forced keys permissive only, over the 19 of 25 artifact kinds
+    in its `_SIGNED` table. Deleting holder-chain's one accepting case left both green.
+    """
+    import json as _json
+
+    def manifest(drop=()):
+        out = []
+        for art, key in (("alpha", "authentic"), ("beta", "authentic"), ("chain", "proved"),
+                         ("anchor", "anchored"), ("cross", "decision")):
+            good = True if key != "decision" else "accept"
+            bad = False if key != "decision" else "reject"
+            if (art, "good") not in drop:
+                out.append({"name": art + "-good", "artifact": art, "expect": {key: good}})
+            out.append({"name": art + "-bad", "artifact": art, "expect": {key: bad}})
+        while len(out) < 55:
+            n = len(out)
+            out.append({"name": "filler-%d" % n, "artifact": "alpha",
+                        "expect": {"authentic": n % 2 == 0}})
+        return {"cases": out}
+
+    def write(m):
+        (tmp_path / "conformance").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "conformance" / "cases.json").write_text(_json.dumps(m))
+
+    fn = checks.check_conformance_contract_distinguishes
+
+    # 20 kinds is the anti-vacuity floor, so the happy fixture has to clear it.
+    full = manifest()
+    full["cases"] += [{"name": "k%d-good" % i, "artifact": "k%d" % i,
+                       "expect": {"authentic": True}} for i in range(16)]
+    full["cases"] += [{"name": "k%d-bad" % i, "artifact": "k%d" % i,
+                       "expect": {"authentic": False}} for i in range(16)]
+    write(full)
+    assert fn(tmp_path)[0].level == "OK", \
+        "must PASS when every artifact kind has a key that varies, whatever the key is called"
+
+    # THE defect, on the kind judged by something other than authenticity, which is where
+    # the existing guards do not reach.
+    thin = manifest(drop=(("chain", "good"),))
+    thin["cases"] += full["cases"][len(manifest()["cases"]):]
+    write(thin)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "chain" in out[0].message and "proved" in out[0].message, \
+        "must FAIL when every case for a kind expects the same verdict"
+
+    # And on a kind judged on a string rather than a boolean, since the rule must not be
+    # reading truth values.
+    thin = manifest(drop=(("cross", "good"),))
+    thin["cases"] += full["cases"][len(manifest()["cases"]):]
+    write(thin)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "cross" in out[0].message, \
+        "must FAIL for a string-valued verdict too, not just booleans"
+
+    # An artifact with no key common to all its cases has no verdict to vary at all.
+    odd = manifest()
+    odd["cases"].append({"name": "alpha-odd", "artifact": "alpha", "expect": {"fresh": True}})
+    odd["cases"] = [c for c in odd["cases"] if c["artifact"] != "alpha"
+                    or c["name"] in ("alpha-good", "alpha-odd")]
+    odd["cases"] += full["cases"][len(manifest()["cases"]):]
+    while len(odd["cases"]) < 55:
+        odd["cases"].append({"name": "f%d" % len(odd["cases"]), "artifact": "k0",
+                             "expect": {"authentic": len(odd["cases"]) % 2 == 0}})
+    write(odd)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no key that every one of its" in out[0].message, \
+        "must FAIL when an artifact's cases share no judged key"
+
+    # Anti-vacuity, both floors.
+    write({"cases": manifest()["cases"][:6]})
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "asserting about nothing" in out[0].message, \
+        "must FAIL rather than pass when the contract has shrunk"
+
+    one_kind = {"cases": [{"name": "a%d" % i, "artifact": "alpha",
+                           "expect": {"authentic": i % 2 == 0}} for i in range(60)]}
+    write(one_kind)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "would pass by finding nothing" in out[0].message, \
+        "must FAIL rather than pass when the grouping collapses to too few kinds"
+
+
 def test_conformance_constrains_check_discriminates(tmp_path):
     """An artifact with no bad-signature case must fail, and so must a drill that cannot
     notice the contract weakening."""
@@ -14850,7 +14938,9 @@ def test_conformance_constrains_check_discriminates(tmp_path):
     DRILL = ("SURVIVORS_EXPECTED = ()\n"
              "print('== negative control ==')\n"
              "print('NEW survivor')\n"
-             "print('now CONSTRAINED')\n")
+             "print('now CONSTRAINED')\n"
+             "print('the same key forced REFUSING')\n"
+             "print('NO SUCCESS CASE')\n")
     CI = "      - run: python scripts/polaris-conformance-mutation-drill.py\n"
 
     def write(c=None, drill=None, ci=None):
