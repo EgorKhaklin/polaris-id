@@ -69,7 +69,7 @@ ledger should be keyed by (its scope, epoch) and should not outlive the epoch.
 ## The pairwise handle (P9.4)
 
 The login token's subject and the presentation handle are derived under the relying party's
-own scope: `SHA3-256("polaris-pairwise/1" || value || scope)`. Stable where an account needs
+own scope: `SHA3-256("polaris-pairwise/1|" || value || "|" || scope)`. Stable where an account needs
 it, unrecognisable at the next verifier. A handle with no scope is refused rather than
 derived from the holder key alone, which would be a global identifier wearing the word
 pairwise.

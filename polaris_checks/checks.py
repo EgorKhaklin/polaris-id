@@ -13539,7 +13539,7 @@ def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
     WRITES DOWN, and written-down values are the ones that get pooled, sold, subpoenaed and
     breached, so this was the correlation handle that mattered most in practice.
 
-    It is now `SHA3-256("polaris-pairwise/1" || token_value || client_id)`: stable at one
+    It is now `SHA3-256("polaris-pairwise/1|" || token_value || "|" || client_id)`: stable at one
     relying party, so an account still works, and unrecognisable at the next. The same
     derivation gives the presentation layer its handle, from the holder key rather than the
     token value.
@@ -13616,6 +13616,54 @@ def check_pairwise_presentation(root: pathlib.Path) -> list[Finding]:
                      "the drill must ASSERT the bound, not only the benefit: a plain presentation "
                      "reports EXPOSED, and a reader must not take the drill for a proof of "
                      "something stronger than what ships")
+
+    # THE SPECIFICATION MUST STATE THE DELIMITERS. Every implementation computes
+    # `polaris-pairwise/1|VALUE|SCOPE`; the pipes are what stop two different (value, scope)
+    # pairs whose concatenation matches producing one handle. On 2026-09-18 four places stated
+    # the construction WITHOUT them -- two design records, this check's own docstring and the
+    # roadmap row -- so a reader implementing from the design record would have produced
+    # handles that match nothing deployed and carried the ambiguity the pipes exist to remove.
+    # Nothing caught it: the code was right and only the specification was wrong.
+    #
+    # polaris_card is the declared exception. Its preimage genuinely is undelimited, it has no
+    # caller in this tree, and docs/design/card-profile.md now says it does not interoperate on
+    # this handle rather than implying it does. Measured in
+    # lab/linkability/pairwise_constructions.py.
+    BAD = 'polaris-pairwise/1" ||'
+    CARD_DOC = "docs/design/card-profile.md"
+    misspecified = []
+    for md in sorted(root.rglob("*.md")):
+        rel = md.relative_to(root).as_posix()
+        if "/.git/" in str(md) or rel == CARD_DOC:
+            continue
+        if any(rel.startswith(x) or rel == x for x in _POINT_IN_TIME_DOCS):
+            continue
+        if BAD in _read_path(md):
+            misspecified.append(rel)
+    # This function necessarily quotes the idiom it forbids, in order to find it, so its own
+    # body is excluded and every other check's is not: the docstring that was wrong on
+    # 2026-09-18 belonged to this very check, and a self-exclusion covering the whole file
+    # would have let it stay wrong.
+    layer = _read(root, "polaris_checks/checks.py")
+    here = "def check_pairwise_presentation"
+    if here in layer:
+        head, rest = layer.split(here, 1)
+        body, tail = rest.split("\ndef ", 1) if "\ndef " in rest else (rest, "")
+        if BAD in head or BAD in tail:
+            misspecified.append("polaris_checks/checks.py")
+    elif BAD in layer:
+        misspecified.append("polaris_checks/checks.py")
+    if misspecified:
+        return _fail(name,
+                     "%d place(s) state the pairwise construction WITHOUT its delimiters: %s. "
+                     "Every implementation computes `polaris-pairwise/1|VALUE|SCOPE`, and the "
+                     "pipes are the mechanism: without them two different (value, scope) pairs "
+                     "whose concatenation matches produce one handle. A reader implementing "
+                     "from the specification would match nothing deployed and inherit the "
+                     "ambiguity. %s is the declared exception, and says there that it does not "
+                     "interoperate on this handle"
+                     % (len(misspecified), ", ".join(misspecified), CARD_DOC))
+
     return _ok(name,
                "no value a relying party keys its records by is stable across relying parties: the "
                "login subject and the presentation handle are both derived under the relying "

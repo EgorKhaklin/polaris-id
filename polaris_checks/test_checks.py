@@ -9692,6 +9692,31 @@ def test_pairwise_presentation_check_discriminates(tmp_path):
     assert checks.check_pairwise_presentation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the subject is not scoped to the relying party's client_id"
 
+    # THE SPECIFICATION LOSES THE DELIMITERS, which is what happened on 2026-09-18 in four
+    # places at once: two design records, the roadmap row and this check's own docstring. The
+    # code was right throughout; only the specification was wrong, so nothing failed. A reader
+    # implementing from the design record would have produced handles matching nothing
+    # deployed, and carried the ambiguity the pipes exist to remove.
+    write({'docs/design/auth-broker.md':
+           'the subject is `SHA3-256("polaris-pairwise/1" || token_value || client_id)`\n'})
+    result = checks.check_pairwise_presentation(tmp_path)[0]
+    assert result.level == "FAIL", "an undelimited construction in a design record must FAIL"
+    assert "auth-broker.md" in result.message, "and the document must be named"
+    assert "delimiters" in result.message
+
+    # ...and the delimited form in the same place is fine.
+    write({'docs/design/auth-broker.md':
+           'the subject is `SHA3-256("polaris-pairwise/1|" || token_value || "|" || client_id)`\n'})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "OK", \
+        "the delimited construction is the one that ships and must PASS"
+
+    # polaris_card IS undelimited, has no caller, and its design record says so rather than
+    # implying it interoperates. Flagging it would make the check refuse the truth.
+    write({'docs/design/card-profile.md':
+           'the card computes `SHA3-256("polaris-pairwise/1" || card_secret || reader_scope)`\n'})
+    assert checks.check_pairwise_presentation(tmp_path)[0].level == "OK", \
+        "the card's own record is the declared exception"
+
     # A handle with no scope is quietly globalised instead of refused.
     write({'packages/polaris-verify/polaris_verify_cli/verifier.py': good_verify.replace(
         "    if not k or not scope:\n        return None\n", "")})
@@ -10748,22 +10773,24 @@ def test_review_packet_check_discriminates(tmp_path):
     # The fixed-limitation case is the one worth having. Every other rot here makes the packet
     # look BETTER than the system; that one makes it look WORSE, and nobody catches it because
     # an out-of-date limitation reads as modesty.
+    import re as _re
     import shutil
-    WITNESSED = ['polaris_web/kms_standin.py', 'polaris_web/capacity.py',
-                 'polaris_web/transparency.py', 'polaris_web/coexistence.py',
-                 'polaris_web/proofing.py', 'README.md', 'docs/RED-TEAM-SCOPE.md',
-                 'scripts/polaris-transparency-ledger.py', 'scripts/polaris-verify-load.py',
-                 'polaris_sql/01_schema.sql',
-                 # L-11's second and third witnesses: the two external checks that make its
-                 # "every guarantee is checked by machinery written by the same author"
-                 # clause false. Adding a witness means adding its file here, and forgetting
-                 # to is what turned this list red.
-                 '.github/workflows/ci.yml',
-                 'scripts/polaris-oid4vp-conformance-drill.py',
-                 # L-11's first witness since 2026-09-18: the design-intent review that made
-                 # "no external party has reviewed any of this" false while sitting in the
-                 # same tree as the sentence.
-                 'docs/DESIGN-INTENT-REVIEW.md']
+
+    # DERIVED from the packet, not listed. This was a hand-maintained mirror of the packet's
+    # witnesses, and its own comment said that forgetting to extend it is what turns the list
+    # red. On 2026-09-18 that happened: L-12 was added with a witness in polaris_web/rp_api.py,
+    # the file was not copied into the fixture, and the test failed on a packet that was
+    # correct. The commit that introduced it touched no file under polaris_checks/, so the
+    # pre-commit hook skipped this suite and the breakage waited for an unrelated change.
+    #
+    # Reading the witnesses off the packet removes the class: a witness added tomorrow is
+    # copied tomorrow.
+    PACKET_REL = "docs/REVIEW-PACKET.md"
+    WITNESSED = sorted({m.group(1) for m in
+                        _re.finditer(r"witness:([^:`\s]+)::", (REPO / PACKET_REL).read_text())})
+    assert len(WITNESSED) >= 8, (
+        "the packet's witnesses could not be read; a fixture that copies nothing would test "
+        "a packet whose every witness is missing, which fails for the wrong reason")
 
     def write(old=None, new=None):
         for rel in ['docs/REVIEW-PACKET.md',

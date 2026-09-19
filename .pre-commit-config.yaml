@@ -42,7 +42,11 @@ repos:
         entry: python3 -m pytest polaris_checks/test_checks.py -q
         language: system
         pass_filenames: false
-        files: '^polaris_checks/'
+        # Also the review packet: its detection test copies the REAL packet and the real files
+        # its witnesses name, so a commit touching only that document can break the suite. One
+        # did on 2026-09-18, and because it changed nothing under polaris_checks/ this hook
+        # skipped and the breakage waited for an unrelated change to surface it.
+        files: '^(polaris_checks/|docs/REVIEW-PACKET\.md$)'
 
       # Cross-reference integrity: every Markdown link + code path resolves.
       - id: polaris-link-check

@@ -162,6 +162,8 @@ what stops a reader relaying a response to a different reader and being believed
 Both are inside the signature, and both are length-prefixed so no concatenation
 trick can shift the boundary between them.
 
+That preimage is NOT delimited, and every other implementation of this tag is: the application, both SDKs and the detached verifier all compute `SHA3-256("polaris-pairwise/1|" || value || "|" || scope)`. So the card does not interoperate with them on this handle, and its own preimage is ambiguous, since two different `(card_secret, reader_scope)` pairs whose concatenation matches produce one handle. Measured in [lab/linkability/pairwise_constructions.py](../../lab/linkability/pairwise_constructions.py), which also records why it is not an exploit today: `pairwise_handle` has no caller in this tree and the collision needs a card secret of varying length, which no shipped path supplies. Adopting the delimited form is the obvious repair and is a wire decision for hardware that does not exist yet, so it is written down here rather than taken quietly.
+
 The reader challenge is **at least 16 bytes**. A challenge an attacker can wait
 to see again is not a challenge.
 

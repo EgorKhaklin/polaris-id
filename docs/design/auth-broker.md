@@ -23,7 +23,7 @@ verifies offline: signature, audience, nonce, freshness, issuer trust.
 ## The guards that make it not a login product
 
 - **The subject is derived per relying party.** `sub` is
-  `SHA3-256("polaris-pairwise/1" || token_value || client_id)`; never a person identifier,
+  `SHA3-256("polaris-pairwise/1|" || token_value || "|" || client_id)`; never a person identifier,
   never a token. Stable at one relying party, so an account works across visits, and
   unrecognisable at the next.
 
