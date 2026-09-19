@@ -5063,8 +5063,8 @@ class RouteModuleTests(PolarisTestCase):
     #: `check_modules_are_measured` reads to know a module has a measured suite at all, and a
     #: derived-only test would let one arrive with neither a line here nor any coverage.
     ROUTE_MODULES = {'atlas_routes', 'auth_routes', 'federation_routes', 'operator_routes',
-                     'rp_api', 'sql_console', 'transparency_routes', 'use_case_routes',
-                     'verification_routes'}
+                     'rp_api', 'sql_console', 'status_routes', 'transparency_routes',
+                     'use_case_routes', 'verification_routes'}
 
     @staticmethod
     def _derive():
@@ -5120,6 +5120,7 @@ class RouteModuleTests(PolarisTestCase):
         import operator_routes
         import transparency_routes
         import sql_console
+        import status_routes
         import use_case_routes
         import verification_routes
 
@@ -5137,7 +5138,8 @@ class RouteModuleTests(PolarisTestCase):
                 ('investigate_token', operator_routes, 'investigate_token'),
                 ('federation_viewer', federation_routes, 'federation_viewer'),
                 ('epochs_list', transparency_routes, 'epochs_list'),
-                ('login', auth_routes, 'login')):
+                ('login', auth_routes, 'login'),
+                ('api_health', status_routes, 'api_health')):
             view = flask_app.app.view_functions.get(endpoint)
             self.assertIsNotNone(view, '%s is not registered on the served application' % endpoint)
             self.assertIs(view, getattr(module, fn),
