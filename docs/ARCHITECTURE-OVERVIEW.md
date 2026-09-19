@@ -121,7 +121,12 @@ The full list, grouped, is in [DATA-MODEL.md](reference/DATA-MODEL.md).
 
 ### Layer 2: Application (`polaris_web/`)
 
-Python 3, Flask, gunicorn. `app.py` holds the routes; `security.py`
+Python 3, Flask, gunicorn. `app.py` holds the shared helpers, the request hooks, the
+configuration and the error handlers; the routes live in ten domain modules beside it
+(`rp_api.py`, `atlas_routes.py`, `operator_routes.py`, `use_case_routes.py`,
+`status_routes.py`, `transparency_routes.py`, `auth_routes.py`, `verification_routes.py`,
+`federation_routes.py`, `sql_console.py`), each registering by import at the end of app.py.
+`security.py`
 holds authentication, the session registry, CSRF, the security headers
 and the rate limiter; `webauthn_auth.py` the operator MFA;
 `pqc_signing.py` and `custody.py` the signing path and its key

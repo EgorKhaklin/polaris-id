@@ -54,7 +54,7 @@ the same members computes the same root, and it binds the bundle to the **exact*
 feeds it mirrors: adding, dropping, or swapping a member changes the root.
 
 As with every signed object in Polaris, the application builder
-(`polaris_web/app.py` `_status_bundle_statement`) and the standalone verifier
+(`polaris_web/rp_api.py` `_status_bundle_statement`) and the standalone verifier
 (`scripts/polaris-verify.py` `_status_bundle_canonical`) must produce byte-identical
 signed bytes. That equality is pinned by the canonical-equivalence oracle
 (`polaris_web/test_canonical_equivalence.py`), so a drift in either side fails CI.

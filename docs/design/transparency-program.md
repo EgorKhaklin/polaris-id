@@ -27,7 +27,9 @@ Eight routes called the helper that writes it. The warrant-audit route did not, 
 single most invasive read the system offers.
 
 **It escaped because the read was behind a function name.** Every other read of
-`VerificationEvent` is a `SELECT` in `app.py`, so anybody auditing the file by eye or by grep
+`VerificationEvent` is a `SELECT` somewhere in `polaris_web/` (app.py, atlas_routes.py,
+operator_routes.py and verification_routes.py since the 2026-09-18 split), so anybody auditing
+the package by eye or by grep
 finds it. UC-7 selects from `uc7_warrant_audit()`; the table appears only in
 `05_procedures.sql`; and the route reads as if it touched nothing. A reviewer looking for
 unlogged reads of a table would have had to already know which procedures return that table's

@@ -32,7 +32,7 @@ operator, and not asked of the read-only auditor role.
 | File | Role |
 |---|---|
 | `polaris_web/webauthn_auth.py` | The registration and assertion ceremonies, over the `webauthn` package (pinned in `requirements.txt`) |
-| `polaris_web/app.py` | Seven routes: the four ceremony endpoints, the assertion page, the settings page, and credential deletion |
+| `polaris_web/auth_routes.py` | Seven routes: the four ceremony endpoints, the assertion page, the settings page, and credential deletion |
 | `polaris_web/templates/webauthn_assert.html`, `webauthn_settings.html` | The two operator-facing pages |
 | `polaris_web/static/webauthn-register.js`, `webauthn-assert.js` | The browser half, calling `navigator.credentials.create` and `.get` |
 | `polaris_sql/migrations/2026-05-14-002-operator-webauthn` | `OperatorWebauthnCredential`, the `AppUser` deadline column, and five audit event types |

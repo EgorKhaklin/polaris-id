@@ -79,7 +79,7 @@ that work but violate the constitution.
 
 - **Explicit, non-transitive attestation.** `AgencyTrustAttestation` is the sixth
   append-only audit-of-record table (`polaris_sql/01_schema.sql`); the resolver
-  `_federation_trust_holds` (`polaris_web/app.py`) does a single non-recursive lookup;
+  `_federation_trust_holds` (`polaris_web/verification_routes.py`) does a single non-recursive lookup;
   writes go through `uc10_attest_trust` / `uc10_revoke_attestation`. See
   [federation.md](federation.md).
 - **Per-authority roots.** `Agency.signing_public_key_hex` and
