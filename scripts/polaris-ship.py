@@ -635,14 +635,27 @@ FLAKE_SIGNATURES = [
      r"connection reset|TLS handshake|no such host|50[023])|"
      r"xcaddy build.*(?:unexpected EOF|i/o timeout|connection reset)",
      "known network flake in the Caddy build (Go module proxy); rerun the failed jobs"),
-    # v9.377: the Alpine analogue of the apt-index flake. The postgres image installs Patroni
-    # over apk + pip, and that layer fails on the runner while building clean locally with
-    # --no-cache. Added after one was investigated by hand: the tool returning "investigate"
-    # for a signature somebody has already chased is the cost this table exists to avoid.
-    ("alpine-pip-layer",
-     r"process \"/bin/sh -c apk add[^\"]*pip3 install[^\"]*\" did not complete successfully",
-     "the postgres image's apk + pip layer failed on the runner (Alpine package index or "
-     "PyPI); confirm with a local `docker build --no-cache -f polaris_web/Dockerfile.postgres .` "
+    # v9.377: the Alpine analogue of the apt-index flake. An apk layer fails on the runner
+    # while building clean locally with --no-cache. Added after one was investigated by hand:
+    # the tool returning "investigate" for a signature somebody has already chased is the cost
+    # this table exists to avoid.
+    #
+    # 2026-09-19: and it happened again, for the same root cause in a different image. The
+    # pattern required `apk add ... pip3 install`, which is the POSTGRES image's layer; the
+    # pgbouncer image runs `apk upgrade && apk add pgbouncer netcat-openbsd`, no pip, so an
+    # identical package-index failure came back as "investigate" and cost another hand
+    # investigation. The signature was scoped to the image somebody was looking at.
+    #
+    # Both failure markers are required, never the bare step text: BuildKit ECHOES a RUN step
+    # when it starts, which is how the Caddy retry loop's own message made every container log
+    # look like a Caddy flake until 2026-09-16. `failed to solve: process "..."` and `process
+    # "..." did not complete successfully` are what a failure actually prints.
+    ("alpine-apk-layer",
+     r"(?:failed to solve: process \"/bin/sh -c apk"
+     r"|process \"/bin/sh -c apk[^\"]*\" did not complete successfully)",
+     "an Alpine apk layer failed on the runner (package index, or PyPI where the layer also "
+     "pip installs). Confirm with a local `docker build --no-cache` of the image the log names "
+     "-- polaris_web/Dockerfile.postgres and the pgbouncer target are the two that do this -- "
      "and rerun the failed jobs if it builds"),
     # v9.447: buildx resolving the `# syntax=docker/dockerfile:1` frontend from Docker Hub.
     # It fails BEFORE the Dockerfile is read, so the failure has nothing to do with what is

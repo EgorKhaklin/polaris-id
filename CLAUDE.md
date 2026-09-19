@@ -452,8 +452,9 @@ Each entry: symptom, likely cause, how to tell it from a real failure, action.
    `--dev-placeholder`), and a fenced example in any document must too, or a check fails.
 8. **CI is red.** Run `python3 scripts/polaris-ship.py triage RUN_ID` first. Six signatures
    are known flakes and the verdict prints the rerun command: the runner's apt index
-   (`Hash Sum mismatch`); the Go module proxy in the Caddy build; the postgres image's apk and
-   pip layer (confirm with `docker build --no-cache -f polaris_web/Dockerfile.postgres .`);
+   (`Hash Sum mismatch`); the Go module proxy in the Caddy build; an Alpine apk layer in any
+   image (the postgres one, which also pip installs Patroni, and the pgbouncer target; confirm
+   with a local `docker build --no-cache` of whichever the log names);
    a concurrency measurement that stalled mid-sample (`the measurement is UNUSABLE`); buildx
    failing to resolve the dockerfile frontend before reading the Dockerfile
    (`DeadlineExceeded`); and the rolling drill's preflight seeing an empty
