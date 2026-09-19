@@ -450,6 +450,21 @@ partial migration are unmeasured. `lab/crypto-migration/`.
 
 **And a third, measured 2026-09-17** (`lab/crypto-migration/algorithm_status.py`). `CryptographicAlgorithm` carries a `deprecation_date` and it reaches NO signed artifact: across the twenty signed formats the wire specification defines, none carries an algorithm's standing. An issuer can record that an algorithm is deprecated and no verifier will ever find out. The only lever a relying party has is its accepted-algorithm set, which is a hardcoded dict in the shipped verifier, so retiring an algorithm is a software release to every integrator rather than a migration. What that costs mid-migration is now measured against the verifier's own predicate: at 90 per cent re-signed, a relying party that drops the old algorithm turns away one holder in ten, and **no artifact tells it which fraction it is at**, so it cannot choose the moment. Rollback and the cost of re-signing at scale remain unmeasured.
 
+**And a fourth, measured 2026-09-18** (`lab/crypto-migration/rollback.py`). The 2026-09-13
+entry above lists rollback as unmeasured. It is not any more, and the answer is sharper than
+"unmeasured" suggested: there is no rollback at all.
+`one_signature_per_algorithm_per_token` means a token can never hold a second signature under an
+algorithm it has already used, so an authority that migrates a population A to B and then learns
+B is the problem cannot return it to A. Not by un-setting a `deprecation_date`, which the
+immutability trigger refuses, and not by calling the procedure again, which the unique constraint
+refuses whether or not anything was deprecated. The only move is sideways, to a third algorithm
+that must already exist, be keyed, and not itself be deprecated on the day. That is intended
+rather than a defect, because TokenSignature is the audit of record for migrations and a record
+you can walk back is not one, but it makes provisioning a spare algorithm a migration-planning
+prerequisite the schema cannot supply in the emergency. The mixed window during a partial
+migration remains unmeasured. Stated in [design/multi-sig-migration.md](design/multi-sig-migration.md)
+and carried as L-13 on the review packet.
+
 **And the measurement instruments were wrong three times in ways that flattered them.** The
 conformance drill counted 22 fields that were not fields and misclassified what fixing the rest
 would take, twice. Of a 45-point fall in its headline number, 18 was work and 27 was correcting
@@ -535,6 +550,7 @@ recorded as made for a named deployment.
 | **Retention schedule** | The engine: `RetentionPolicy` holds the decision per table class and jurisdiction with a 365-day CHECK floor, append-only with one-way supersession, and `uc_archive_purge` refuses a cutoff inside the window (v9.234, [retention.md](design/retention.md)). Ships at five years for every class. | The days each class is kept in this jurisdiction, and the counsel who says the number satisfies the statute. Polaris records the decision and its justification; it does not know the law. |
 | **Operator MFA enforcement** | The whole WebAuthn mechanism: registration, assertion bound to the partially-authenticated user, a per-account enrollment deadline, second-admin recovery pairing and a printed recovery code. Once an admin enrolls a credential, MFA is mandatory on every login and cannot be skipped. | Which recovery path a deployment will honour when an admin loses their key, and what it does about admins that predate the policy. This row said something false until 2026-09-17: that no provisioning path set `AppUser.webauthn_required_after`. `scripts/polaris-create-operator.sh --role admin` had always set it to thirty days; `polaris-id user-create NAME admin` had always left it NULL, which the design record reads as "the password is sufficient". Two documented doors onto the same account type, different second-factor defaults, and nothing saying so. Both now give thirty days and `check_admin_mfa_deadline` fails the build if they diverge again. An account created BEFORE that fix still carries no deadline; `scripts/polaris-set-webauthn-deadline.sh` sets one, and the query in OPERATIONS.md lists who is affected. |
 | **Independent penetration test and threat-model sign-off** | The readiness pack in [RED-TEAM-SCOPE.md](RED-TEAM-SCOPE.md); roadmap row P1.12. | The firm, the funding, and an accountable human signature. |
+| **What may leave the database, and what may be joined to it** | Nothing, and nothing here can. Every constraint in this repository binds THIS schema and THIS application: C1's append-only triggers, C2's CHECK that a zero-knowledge event carries no token id, C8's bounded aggregates, the audit of record. A verification event copied into a fraud-analytics store, a nightly extract, or a support tool is outside all of them. | A written rule on what may be exported and what may be joined to it, and an audit that checks. This is the decision most able to make the rest of the list pointless: an organisation can satisfy every constraint here, pass every check, and keep a parallel store next door that reconstructs exactly the correlation C2 exists to prevent, at which point the side system is the identity system and nothing in this repository fails. The constraints are strongest where the data is, and they say nothing about where it goes. |
 
 One engineering limit is carried openly, and since v9.243 only its edge half
 remains (every latency below is measured by the CI drills on an ephemeral single
