@@ -37,6 +37,27 @@ repos:
       # invariant layer above was green, because a check passing says nothing about
       # whether it can still FAIL. Scoped to polaris_checks/ so an ordinary commit does
       # not pay the 30 seconds.
+      - id: polaris-script-tool-tests
+        name: tool tests (a changed tool must still behave)
+        # The detection-tests hook runs polaris_checks/test_checks.py. The tools under scripts/
+        # are pinned by their OWN suites, which that file does not contain, so a change to a
+        # tool ran no test at all locally. On 2026-09-19 a flake signature in
+        # scripts/polaris-ship.py was renamed, scripts/test_ship_tool.py asserts its id, and CI
+        # was the first to know; two commits went red for it.
+        #
+        # These five need no database, no network and no ML-DSA, and cost about 1.7 seconds
+        # together. test_verify_load is deliberately left out: it is the slowest and it
+        # exercises a live verify path, which is a bad trade in a pre-commit hook. CI runs it.
+        entry: >
+          bash -c '
+            cd scripts && python3 -m unittest
+              test_ship_tool test_verify_conformance test_verify_p9
+              test_relying_party test_wallet
+          '
+        language: system
+        pass_filenames: false
+        files: '^scripts/'
+
       - id: polaris-detection-tests
         name: detection tests (a changed check must still discriminate)
         entry: python3 -m pytest polaris_checks/test_checks.py -q
