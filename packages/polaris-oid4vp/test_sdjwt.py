@@ -202,6 +202,73 @@ class RevocationIsStatedTests(unittest.TestCase):
                                  "a verifier that opens no socket reported a checked "
                                  "revocation state: %r" % (v.revocation,))
 
+    def test_a_resolver_is_asked_and_its_answer_carried(self):
+        asked = []
+
+        def resolver(*, uri, idx, issuer):
+            asked.append((uri, idx, issuer))
+            return {"checked": True, "status": 1, "meaning": "INVALID", "reason": "revoked"}
+
+        ref = {"status_list": {"uri": "https://issuer.example/sl/1", "idx": 7}}
+        v = self.w.verify(self.w.present(payload_extra={"status": ref}),
+                          status_resolver=resolver)
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(asked[0][0], "https://issuer.example/sl/1")
+        self.assertEqual(asked[0][1], 7)
+        self.assertTrue(v.revocation["checked"])
+        self.assertEqual(v.revocation["meaning"], "INVALID")
+        self.assertEqual(v.revocation["uri"], "https://issuer.example/sl/1")
+
+    def test_a_resolver_that_raises_is_unreachable_not_absent(self):
+        """The whole point of the resolver hook.
+
+        A resolver is ordinary application code reaching a third party's server, so it will
+        raise. The failure must reach the relying party as the ABSENCE of an answer, and must
+        not be confused with a credential whose issuer publishes no list at all.
+        """
+        def dead(*, uri, idx, issuer):
+            raise ConnectionError("connection refused")
+
+        ref = {"status_list": {"uri": "https://issuer.example/sl/1", "idx": 3}}
+        v = self.w.verify(self.w.present(payload_extra={"status": ref}), status_resolver=dead)
+        self.assertTrue(v.authentic, v.reason)
+        self.assertFalse(v.revocation["checked"])
+        self.assertEqual(v.revocation["state"], self.S.UNREACHABLE)
+        bare = self.w.verify(self.w.present())
+        self.assertNotEqual(v.revocation["state"], bare.revocation["state"])
+
+    def test_a_resolver_returning_nonsense_is_unreachable(self):
+        for junk in (None, "revoked", 42, [], {"no_checked_key": True}):
+            with self.subTest(junk=junk):
+                v = self.w.verify(
+                    self.w.present(payload_extra={
+                        "status": {"status_list": {"uri": "https://x.example/1", "idx": 0}}}),
+                    status_resolver=lambda *, uri, idx, issuer, j=junk: j)
+                self.assertTrue(v.authentic, v.reason)
+                self.assertFalse(v.revocation["checked"])
+                self.assertEqual(v.revocation["state"], self.S.UNREACHABLE)
+
+    def test_no_resolver_never_asks_and_never_claims(self):
+        """The default is unchanged, which is the other half of opt-in meaning anything."""
+        ref = {"status_list": {"uri": "https://issuer.example/sl/1", "idx": 1}}
+        v = self.w.verify(self.w.present(payload_extra={"status": ref}))
+        self.assertEqual(v.revocation["state"], self.S.NOT_EVALUATED)
+        self.assertFalse(v.revocation["checked"])
+
+    def test_a_resolver_is_not_asked_when_there_is_no_list(self):
+        """No uri, no request. A resolver must not be called for a credential that names
+        no list, or a verifier becomes a generator of requests to nowhere."""
+        asked = []
+
+        def resolver(*, uri, idx, issuer):
+            asked.append(uri)
+            return {"checked": True, "status": 0}
+
+        v = self.w.verify(self.w.present(), status_resolver=resolver)
+        self.assertEqual(asked, [])
+        self.assertEqual(v.revocation["state"], self.S.NO_STATUS_CLAIM)
+
     def test_the_field_survives_as_dict(self):
         v = self.w.verify(self.w.present())
         self.assertIn("revocation", v.as_dict())

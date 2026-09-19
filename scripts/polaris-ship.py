@@ -134,7 +134,7 @@ VERIFICATION = [
     # it had no row.
     (r"^packages/polaris-oid4vp/",
      ["cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_verifier test_jwe "
-      "test_serve test_cli test_conformance_capture",
+      "test_serve test_cli test_conformance_capture test_status",
       "lab/interop/waltid/README.md end to end if the presentation path changed"],
      "the OpenID4VP verifier moved: the one external wallet result rests on it"),
     (r"^packages/polaris-verify/",
@@ -313,7 +313,7 @@ UNSHARDED_SUITES = {
     # network and no ML-DSA, so there is no reason to learn about a break from CI.
     "sdk/python": ["test_sdk"],
     "packages/polaris-oid4vp": ["test_sdjwt", "test_jwe", "test_verifier", "test_serve",
-                                "test_cli", "test_conformance_capture"],
+                                "test_cli", "test_conformance_capture", "test_status"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],

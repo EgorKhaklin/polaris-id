@@ -11,6 +11,63 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.5 — 2026-09-19 (asking is opt-in, and the answer can be absent)
+
+Externally observable, so it is a version. One package moved: `polaris-oid4vp`. Nothing is
+published by this entry; `docs/RELEASING.md` still records rc.3 on the registry.
+
+rc.4 made the verdict say what it had NOT established about revocation. This adds the way to
+establish it, and keeps the default exactly where rc.4 left it.
+
+**`polaris_oid4vp.status` decides a Token Status List token.** `draft-ietf-oauth-status-list`
+is the mechanism SD-JWT VC, CWT and ISO mdoc all reference, so one implementation reaches all
+three. It is pure: `decide` is handed a token, `decide_by_fetching` is handed a `fetch`
+callable. Nothing in it opens a socket, because timeouts, retries, connection limits and
+caching are policy and belong to the caller.
+
+**Asking is opt-in.** `verify_presentation(..., status_resolver=...)` takes a callable the
+relying party supplies. With no resolver the verdict is `not_evaluated`, unchanged from rc.4,
+which is the honest thing to say about a list nobody read. It is opt-in rather than automatic
+because a status check couples your verification path to somebody else's uptime, and a library
+that made that choice silently would be deciding, on the relying party's behalf, that their
+traffic stops when a third party's endpoint does.
+
+**Two states that must not be confused, and the reason this is a version and not a
+refactor.** `not_evaluated` says nobody looked. `unreachable` says somebody looked and no
+answer came back. A verifier that reports them identically has decided, without being asked,
+that an unreachable status endpoint is as good as a credential whose issuer publishes none.
+"I could not reach the list" is not "not revoked", and it is the state implementations lose
+first, because refusing traffic when a third party is down is expensive and the pressure to
+shrug is real.
+
+**Who may publish status for whom is stated, not inferred.** The draft does not settle it:
+section 11.3 says the Status Issuer MAY reuse the credential issuer's key when they are the
+same entity and SHOULD share a Certificate Authority when they differ, both recommendations,
+and `iss` is not even a required claim of a Status List Token. So a fetched list is signed by
+a key the token often does not name, and the only binding it carries is `sub` equal to the
+`uri` the credential gave. Fetch that URI and believe whatever signed the response and you
+have asked DNS an authorization question. `StatedAuthority` requires an operator to record
+that a named key may publish status for a named issuer at a named URI, and why; anything else
+is `no_authority`. Authority is established BEFORE any fetch, so a URI inside an unvetted
+credential is never a place a request is sent.
+
+**What is refused, and what a refusal means.** A list published for another URI, a plain JWT
+offered as a status list, an expired list, an index past the end of the array, a signature
+that does not verify, a decompression bomb, an application-specific status value folded into
+VALID, and a stale-but-unexpired list used to roll a revocation back: that last one is only
+visible as age, so the verdict carries it and a caller can bound it. A 404 page is
+`unreachable`, not a malformed list, because the endpoint failing is not the issuer publishing
+something broken.
+
+22 tests in `test_status.py`, and five more in `test_sdjwt.py` for the resolver hook, each
+confirmed by mutation: a raising resolver reported as "nobody looked", a nonsense return
+trusted, and the resolver ignored entirely all turn tests red.
+
+The research, the twenty-two adversaries and the decision record that admitted this work are
+in [lab/strategy/001-token-status-list.md](lab/strategy/001-token-status-list.md).
+
+---
+
 ## v1.0.0-rc.4 — 2026-09-19 (a credential that might be revoked)
 
 Externally observable, so it is a version and not housekeeping. One package moved:

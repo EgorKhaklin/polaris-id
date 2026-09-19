@@ -125,10 +125,19 @@ class Verdict:
     was being told the strongest thing this code can say while the second question went
     unasked and unmentioned.
 
-    Silence is the problem, not the absence of a fetch. Fetching a status list is an online
-    operation with a timeout, a cache and a failure mode, and it is not what this package does
-    today. Saying so costs nothing and is the difference between a bounded claim and an
-    overstated one.
+    Silence is the problem, not the absence of a fetch. Saying what was not established costs
+    nothing and is the difference between a bounded claim and an overstated one.
+
+    Asking is opt-in, and stays that way. `verify_presentation(..., status_resolver=...)`
+    takes a callable the relying party supplies; `polaris_oid4vp.status` decides the token
+    once they have it. The default is unchanged and the default is honest: no resolver means
+    `not_evaluated`, which is what this package can say about a list it did not read.
+
+    Opt-in rather than automatic because a status check is a network call with a timeout, a
+    cache and an availability coupling to somebody else's server, and what a slow or failed
+    check should cost is a policy only the relying party can set. A verifier library that
+    made that call for them would be choosing, silently, that their traffic stops when a
+    third party's endpoint does.
     """
 
     __slots__ = ("authentic", "code", "reason", "claims", "revocation")
@@ -154,17 +163,34 @@ class Verdict:
 #: The three states a relying party has to be able to tell apart. A verifier that collapses
 #: any two of them is overstating one of them.
 NO_STATUS_CLAIM = "no_status_claim"        # the credential points at no revocation list
-NOT_EVALUATED = "not_evaluated"            # it points at one and this verifier did not read it
+NOT_EVALUATED = "not_evaluated"            # it points at one and nobody was asked to read it
 UNSUPPORTED_STATUS = "unsupported_status"  # it points at one in a form this code cannot read
+CHECKED = "checked"                        # a resolver answered; `status` carries what it said
+UNREACHABLE = "unreachable"                # a resolver was asked and could not answer
+
+#: NOT_EVALUATED and UNREACHABLE are the pair most worth keeping apart, and the easiest to
+#: merge by accident. The first says nobody looked. The second says somebody looked and the
+#: answer did not come back. A relying party that treats them the same has decided, without
+#: being asked, that an unreachable status endpoint is as good as a credential whose issuer
+#: publishes none.
 
 
-def _revocation_state(payload):
-    """What this verifier can say about revocation, which is currently never "not revoked".
+def _revocation_state(payload, resolver=None):
+    """What this verifier can say about revocation.
 
-    Reads only the credential's own issuer-signed `status` claim. Opens no socket, and the
-    state it returns says so, because a caller that cannot distinguish "the issuer published
-    no revocation list" from "there is one and nobody looked" cannot make a decision about
-    either.
+    Reads the credential's own issuer-signed `status` claim. With no resolver it opens no
+    socket and never answers "not revoked", and the state it returns says so, because a
+    caller that cannot distinguish "the issuer published no revocation list" from "there is
+    one and nobody looked" cannot make a decision about either.
+
+    A `resolver` is how a relying party opts in to actually asking. It is theirs, not this
+    package's, because checking status is a network call with a timeout, a cache and an
+    availability coupling, and what a slow or failed check should cost is a policy only they
+    can set. `polaris_oid4vp.status` decides the token once they have it.
+
+    The resolver's exceptions are caught and become `unreachable`. A verifier that dies on
+    one credential has failed open for every other credential in the queue, and a relying
+    party's resolver is ordinary application code reaching a third party's server.
     """
     status = payload.get("status")
     if status is None:
@@ -178,11 +204,31 @@ def _revocation_state(payload):
     ref = status.get("status_list")
     if isinstance(ref, dict) and isinstance(ref.get("uri"), str) \
             and isinstance(ref.get("idx"), int) and not isinstance(ref.get("idx"), bool):
-        return {"state": NOT_EVALUATED, "checked": False,
-                "uri": ref["uri"], "idx": ref["idx"],
-                "reason": "the credential names a Token Status List at %s index %d. This "
-                          "verifier did not fetch it, so whether the issuer has revoked this "
-                          "credential is UNKNOWN, not false" % (ref["uri"], ref["idx"])}
+        if resolver is None:
+            return {"state": NOT_EVALUATED, "checked": False,
+                    "uri": ref["uri"], "idx": ref["idx"],
+                    "reason": "the credential names a Token Status List at %s index %d. This "
+                              "verifier did not fetch it, so whether the issuer has revoked "
+                              "this credential is UNKNOWN, not false"
+                              % (ref["uri"], ref["idx"])}
+        try:
+            answer = resolver(uri=ref["uri"], idx=ref["idx"], issuer=payload.get("iss"))
+        except Exception as exc:
+            return {"state": UNREACHABLE, "checked": False,
+                    "uri": ref["uri"], "idx": ref["idx"],
+                    "reason": "resolving the status of %s index %d raised %s: %s. That is "
+                              "the ABSENCE of an answer, not a negative one"
+                              % (ref["uri"], ref["idx"], type(exc).__name__, exc)}
+        if not isinstance(answer, dict) or "checked" not in answer:
+            return {"state": UNREACHABLE, "checked": False,
+                    "uri": ref["uri"], "idx": ref["idx"],
+                    "reason": "the status resolver returned %s rather than a verdict, so "
+                              "nothing was established about revocation"
+                              % type(answer).__name__}
+        out = dict(answer)
+        out.setdefault("state", CHECKED if answer.get("checked") else UNREACHABLE)
+        out["uri"], out["idx"] = ref["uri"], ref["idx"]
+        return out
     return {"state": UNSUPPORTED_STATUS, "checked": False, "uri": None, "idx": None,
             "reason": "the credential carries a status claim in a form this verifier does not "
                       "recognise, so its revocation state is unknown"}
@@ -568,7 +614,8 @@ def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None):
 def verify_presentation(presentation, *, expected_nonce, expected_audience,
                         issuer_jwks=None, trust_anchors=None, now=None,
                         max_skew_seconds=DEFAULT_MAX_SKEW_SECONDS,
-                        require_key_binding=True, expected_vct=None):
+                        require_key_binding=True, expected_vct=None,
+                        status_resolver=None):
     """Verify one SD-JWT VC presentation. Returns a Verdict and never raises on bad input.
 
     `presentation` is the `~`-separated string a wallet sent. `expected_nonce` and
@@ -727,7 +774,7 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
             return _refuse("kb_missing", "the presentation carries no key binding JWT, so "
                                          "nothing ties it to the holder who presented it")
         return Verdict(True, claims=claims,
-                       revocation=_revocation_state(payload))
+                       revocation=_revocation_state(payload, status_resolver))
 
     cnf = payload.get("cnf")
     if not isinstance(cnf, dict) or not isinstance(cnf.get("jwk"), dict):
@@ -796,4 +843,4 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
                                      "in the credential" % len(orphans))
 
-    return Verdict(True, claims=claims, revocation=_revocation_state(payload))
+    return Verdict(True, claims=claims, revocation=_revocation_state(payload, status_resolver))

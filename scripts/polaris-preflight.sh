@@ -156,10 +156,14 @@ pkg_fail=0
 ( cd "${ROOT}/sdk/python" && python3 -m unittest test_sdk ) >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
 ( cd "${ROOT}/scripts" && python3 -m unittest test_verify_p9 ) >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
 ( cd "${ROOT}/packages/polaris-oid4vp" && python3 -m unittest \
-    test_sdjwt test_jwe test_verifier test_serve test_cli test_conformance_capture ) \
+    test_sdjwt test_jwe test_verifier test_serve test_cli test_conformance_capture \
+    test_status ) \
     >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
 if [ "${pkg_fail}" -eq 0 ]; then
-  echo "  ✓ packages: sdk-python, detached verifier (p9) and all six polaris-oid4vp suites pass"
+  # No count in this line. It said "all six" while the command above ran seven, which is
+  # the third stated count found drifting on 2026-09-19. A number nobody writes cannot go
+  # stale; which suites run is held by check_every_test_suite_is_run against this file.
+  echo "  ✓ packages: sdk-python, detached verifier (p9) and every polaris-oid4vp suite pass"
 else
   echo "  ✗ packages: failures —"
   tail -12 /tmp/_polaris_pkg.out | sed 's/^/    /'

@@ -2423,6 +2423,11 @@ jobs:
       # Everything else in this package is the package agreeing with itself.
       - name: A response the conformance suite produced, opened and verified
         run: cd packages/polaris-oid4vp && python -m unittest test_conformance_capture
+      # Revocation: a Token Status List decided, and the states a relying party has to
+      # be able to tell apart. `unreachable` is not `not revoked`, and a 404 page is the
+      # endpoint failing rather than the issuer publishing a broken list.
+      - name: Token Status List — what was established about revocation, and what was not
+        run: cd packages/polaris-oid4vp && python -m unittest test_status
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.

@@ -8162,6 +8162,71 @@ def check_conformance_contract_constrains(root: pathlib.Path) -> list[Finding]:
                      f"directions, and runs in CI")
 
 
+def check_package_readme_counts_its_tests(root: pathlib.Path) -> list[Finding]:
+    """The published package's README counts its own tests, and the count is held to them.
+
+    packages/polaris-oid4vp/README.md tells a reader how much is behind the package: "N tests
+    in M files at 99% line coverage", immediately before the paragraph explaining that
+    coverage is the weakest of the three instruments here. The number is the one a reader
+    weighs that argument against.
+
+    Measured 2026-09-19: it said 137 and the suites held 210, having drifted by 73 across
+    several ships with nothing comparing the two. That is the same defect
+    check_conformance_spec_counts_its_artifacts found in conformance/SPEC.md the same day,
+    one package over, and finding it twice is what makes it a class rather than an anecdote:
+    a number written into a published document by a person, describing something that grows
+    without them.
+
+    Both halves are derived, so neither can be satisfied by editing this check. The suite
+    list comes from the README's own `python3 -m unittest` line, so a suite added to the
+    command and not to the count fails, and so does the reverse. The count is `def test_`
+    across those files, which is exactly what unittest reports: a subTest does not add to the
+    total, and a table-driven case is one test however many rows it walks.
+    """
+    name = "package_readme_counts"
+    rel = "packages/polaris-oid4vp/README.md"
+    readme = _read_raw(root, rel)
+    if not readme:
+        return _fail(name, "%s is missing" % rel)
+    m = re.search(r"python3 -m unittest ((?:[\w\s\\]|\n)+?)\n```", readme)
+    if not m:
+        return _fail(name, "%s no longer shows a `python3 -m unittest` command, so the suites "
+                           "it counts cannot be read back and this check would pass by "
+                           "finding nothing" % rel)
+    suites = [s for s in m.group(1).replace("\\", " ").split() if s.startswith("test_")]
+    if len(suites) < 3:
+        return _fail(name, "only %d suite(s) parsed out of %s's run command; the parse has "
+                           "broken" % (len(suites), rel))
+    pkg = root / "packages" / "polaris-oid4vp"
+    total, missing = 0, []
+    for suite in suites:
+        path = pkg / (suite + ".py")
+        if not path.is_file():
+            missing.append(suite)
+            continue
+        total += len(re.findall(r"^    def test_", path.read_text(encoding="utf-8",
+                                                                  errors="replace"), re.M))
+    if missing:
+        return _fail(name, "%s names %d suite(s) that do not exist: %s"
+                           % (rel, len(missing), ", ".join(missing)))
+    if not total:
+        return _fail(name, "no test methods found across the %d suite(s) %s names; the count "
+                           "has broken and this check would pass by finding nothing"
+                           % (len(suites), rel))
+    stated = re.search(r"(\d+) tests in (\w+) files", readme)
+    if not stated:
+        return _fail(name, "%s no longer states 'N tests in M files', so what it claims about "
+                           "its own depth is not checkable" % rel)
+    said = int(stated.group(1))
+    if said != total:
+        return _fail(name, "%s says %d tests and the %d suite(s) it names hold %d; the "
+                           "package's account of its own depth is %d out"
+                           % (rel, said, len(suites), total, abs(said - total)))
+    return _ok(name, "%s states %d tests and the %d suites it names hold exactly that many, "
+                     "so the number a reader weighs the coverage argument against is the "
+                     "real one" % (rel, said, len(suites)))
+
+
 def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Finding]:
     """The published contract's own count of what it certifies, held to the manifest.
 
@@ -21096,6 +21161,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_no_upsert_without_an_arbiter,
     check_drill_plan_is_binding,
     check_conformance_contract_constrains,
+    check_package_readme_counts_its_tests,
     check_conformance_spec_counts_its_artifacts,
     check_conformance_contract_distinguishes,
     check_procedure_refusals_are_mutation_tested,

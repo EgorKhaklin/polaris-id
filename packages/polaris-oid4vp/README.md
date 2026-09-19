@@ -199,14 +199,50 @@ the corrected criterion `request-uri-method-post` turned out to be SKIPPING itse
 will not run unless the request carries `request_uri_method=post`. A skipped module has exactly
 as many failures as a passing one.
 
+## Revocation
+
+A genuine signature is not a current credential. `sdjwt.py` returns a `revocation` field
+alongside `authentic`, in one of five states, and a relying party that cannot tell them apart
+cannot make a decision about any of them:
+
+| state | what it means |
+|---|---|
+| `no_status_claim` | the credential names no revocation list, so there is none to read |
+| `not_evaluated` | it names one and no resolver was supplied, so nobody looked |
+| `unsupported_status` | it carries a status claim in a form this verifier cannot read |
+| `checked` | a resolver answered; `status` carries what the issuer published |
+| `unreachable` | a resolver was asked and no answer came back |
+
+**`not_evaluated` and `unreachable` are the pair worth keeping apart.** The first says nobody
+looked. The second says somebody looked and the list could not be reached. Reporting them
+identically decides, on the relying party's behalf, that an unreachable status endpoint is as
+good as a credential whose issuer publishes none.
+
+**Asking is opt-in.** Pass `status_resolver=` to `verify_presentation`; without one the
+verdict is `not_evaluated` and nothing is fetched. It is opt-in because a status check couples
+your verification path to somebody else's uptime, and what a slow or failed check should cost
+is a policy only you can set.
+
+[`polaris_oid4vp/status.py`](polaris_oid4vp/status.py) decides the token once you have it,
+per `draft-ietf-oauth-status-list`, the mechanism SD-JWT VC, CWT and ISO mdoc all reference.
+It opens no socket either: `decide` takes a token, `decide_by_fetching` takes a `fetch`
+callable that is yours.
+
+Who may publish status for whom is **stated, not inferred**. The draft does not settle it, and
+`iss` is not even a required claim of a Status List Token, so a fetched list is usually signed
+by a key it does not name. `StatedAuthority` requires an operator to record that a named key
+may publish status for a named issuer at a named URI, and why. Anything else is
+`no_authority`, and authority is established BEFORE any fetch, so a URI inside an unvetted
+credential is never somewhere a request is sent.
+
 ## Tests
 
 ```bash
 cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verifier \
-    test_serve test_cli test_conformance_capture
+    test_serve test_cli test_conformance_capture test_status
 ```
 
-137 tests in six files at 99% line coverage, and they are not equal in weight. Coverage is
+237 tests in seven files, and they are not equal in weight. Coverage is
 the weakest of the three instruments here: it says a line ran.
 
 **And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`

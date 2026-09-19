@@ -14823,6 +14823,68 @@ def test_drill_plan_binding_check_discriminates(tmp_path):
     assert level() == "FAIL", "must FAIL when preflight is absent"
 
 
+def test_package_readme_test_count_check_discriminates(tmp_path):
+    """The package's account of its own depth, held to the suites it names.
+
+    2026-09-19: packages/polaris-oid4vp/README.md said "137 tests in six files" and the
+    suites held 210. The number sits immediately before the paragraph arguing that coverage
+    is the weakest instrument in the package, so it is the figure a reader weighs that
+    argument against.
+    """
+    pkg = tmp_path / "packages" / "polaris-oid4vp"
+    pkg.mkdir(parents=True)
+
+    def write(suites, stated, present=None):
+        for s in (suites if present is None else present):
+            (pkg / (s + ".py")).write_text(
+                "import unittest\n\n\nclass T(unittest.TestCase):\n"
+                + "".join("    def test_%d(self):\n        pass\n\n" % i for i in range(4)))
+        (pkg / "README.md").write_text(
+            "## Tests\n\n```bash\ncd packages/polaris-oid4vp && python3 -m unittest %s\n```\n"
+            "\n%s tests in seven files, and they are not equal in weight.\n"
+            % (" ".join(suites), stated))
+
+    fn = checks.check_package_readme_counts_its_tests
+    SUITES = ["test_a", "test_b", "test_c"]
+    write(SUITES, 12)
+    assert fn(tmp_path)[0].level == "OK", "must PASS when the stated count is the real one"
+
+    # THE defect: suites grew, the sentence did not.
+    write(SUITES, 8)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "8" in out[0].message and "12" in out[0].message, \
+        "must FAIL when the README understates its own depth"
+
+    # And overstating, which is the direction that flatters.
+    write(SUITES, 40)
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL when the README claims more than it has"
+
+    # A suite named in the command but absent from disk: the command is the source of truth
+    # for WHICH suites, so naming a missing one is a broken run instruction, not a count.
+    write(SUITES + ["test_gone"], 12, present=SUITES)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "test_gone" in out[0].message, \
+        "must FAIL when the run command names a suite that does not exist"
+
+    # Anti-vacuity, three ways.
+    (pkg / "README.md").write_text("## Tests\n\nNo command here.\n\n12 tests in seven files\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "cannot be read back" in out[0].message, \
+        "must FAIL rather than pass when the run command is gone"
+
+    write(["test_a"], 4)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "parse has broken" in out[0].message, \
+        "must FAIL rather than pass when too few suites parse"
+
+    write(SUITES, 12)
+    (pkg / "README.md").write_text(
+        (pkg / "README.md").read_text().replace("12 tests in seven files", "many tests"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "not checkable" in out[0].message, \
+        "must FAIL when the count is written in a form nothing can hold"
+
+
 def test_conformance_spec_count_check_discriminates(tmp_path):
     """The contract's own statement of its scope, held to the manifest.
 
