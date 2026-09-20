@@ -1,11 +1,20 @@
 """
 poseidon_constants.py - Plonky2 Poseidon-Goldilocks constants (width 12).
 
-AUTO-GENERATED from the public plonky2 0.2.2 source
+TRANSCRIBED from the public plonky2 0.2.2 source
 (src/hash/poseidon.rs ALL_ROUND_CONSTANTS; src/hash/poseidon_goldilocks.rs
 MDS_MATRIX_CIRC / MDS_MATRIX_DIAG; #[test] test_vectors). These are public
-cryptographic constants, not Polaris or Glass code. Regenerate with
-tools/gen_poseidon_constants.py if the pinned plonky2 version changes.
+cryptographic constants, not Polaris or Glass code.
+
+To update them when the pinned plonky2 version changes, take the four symbols
+named above from that release and replace the tables below. There is no
+generator script. This said "regenerate with tools/gen_poseidon_constants.py"
+until 2026-09-20, and no such file has ever existed in this tree, so anybody
+following the instruction would have gone looking for a tool rather than at the
+source, on the one file where guessing is worst. What proves a transcription is
+test_poseidon_matches_plonky2_vectors, which runs the permutation against that
+release's own published vectors: a mistyped round constant or a transposed MDS
+row changes the output and fails it.
 
 The crate was bumped 0.2 to 1.x in v9.170; these constants remain VALID under
 1.x, proven bit-for-bit: the Rust and Python Merkle roots stayed identical
