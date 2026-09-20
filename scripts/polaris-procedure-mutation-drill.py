@@ -344,6 +344,16 @@ def main(argv=None) -> int:
             cases.append((name, idx, a, b, text))
     print("procedure mutation drill: %d refusal(s) across %d procedure(s)"
           % (len(cases), len({c[0] for c in cases})))
+    # Refuse to report from nothing. `_raise_spans` parsing no RAISE at all, or an `--only`
+    # naming a procedure that does not exist, both leave `cases` empty, and the verdict at
+    # the end would then read "OK: 0 refusal(s) mutated ... deleting any of the rest turns
+    # something red", which is a guarantee about an empty set. 2026-09-19.
+    _cases_recorded = len(cases)
+    if not _cases_recorded:
+        print("FAIL: no refusal was found to mutate, so this drill would report a guarantee "
+              "it never tested. Either 05_procedures.sql raises nowhere, the span parser has "
+              "broken, or --only named a procedure that does not exist.", file=sys.stderr)
+        return 1
     # Said before anything is mutated, because a killed run cannot say it afterwards.
     print("  if this run is interrupted, repair with:")
     print("    psql -d %s -f polaris_sql/05_procedures.sql" % env["POLARIS_DB_NAME"])

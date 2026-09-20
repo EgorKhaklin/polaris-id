@@ -15806,15 +15806,28 @@ def check_drills_count_their_cases(root: pathlib.Path) -> list[Finding]:
     missing, guarded = [], 0
     for d in drills:
         src = _read_path(d)
-        has_helper = re.search(r"(?m)^def (case|_row|row|_case)\(", src)
         has_verdict = re.search(r'print\("(PASS|OK)', src)
-        if not has_helper or not has_verdict:
-            continue                      # a different shape; nothing to pin here
+        if not has_verdict:
+            continue                      # announces no verdict; nothing to pin here
+        # Scoped on the VERDICT alone since 2026-09-19. It also required a `case()` helper,
+        # and three drills that announce a PASS/OK carry no such helper, so the check's
+        # reach was narrower than its own sentence. polaris-federation-drill.py was the one
+        # that mattered: `all_ok` started True and was narrowed only inside a loop, which is
+        # verbatim the shape described above, and it sat outside this check for that reason.
+        #
         # Both halves, not the name: an earlier draft looked for the identifier and was
         # satisfied by the references left behind when the declaration was renamed.
-        counts = "_cases_recorded += 1" in src
+        # `+= 1` where a drill tallies as it goes, plain `=` where it already has the
+        # collection and counts it once. Both are the drill saying how much it measured.
+        counts = re.search(r"_cases_recorded\s*\+=|_cases_recorded\s*=\s*len\(",
+                           src) is not None
         refuses = re.search(r"if not _cases_recorded\b", src) is not None
-        if not (counts and refuses):
+        # A numeric FLOOR is the stronger form of the same guard and is accepted instead of
+        # the convention: polaris-check-mutation-drill.py refuses below fifty mutated checks,
+        # which says more than "not zero". Requiring the weaker convention beside it would be
+        # cargo-culting a shape over a property.
+        floor = re.search(r"if \w+ < \d+:", src) is not None
+        if not ((counts and refuses) or floor):
             missing.append("%s (%s)" % (d.name, "no counter" if not counts else "no guard"))
         else:
             guarded += 1

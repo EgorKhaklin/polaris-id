@@ -93,11 +93,18 @@ def main():
         ]
         all_ok = True
         print("issuer  relying-party    signature_valid  issuer_trusted  verdict   expected")
+        # `all_ok` starts True and is only ever narrowed below, which is the shape
+        # check_drills_count_their_cases exists for: short-circuit the loop and the verdict
+        # paragraph prints in full over nothing. This drill was outside that check's reach
+        # because it has no `case()` helper, so the check has been widened and the counter
+        # added here. 2026-09-19.
+        _cases_recorded = 0
         for pack, party, want_accept in expect:
             v = V.verify_pack(pack, anchor_keys=anchors[party])
             accepted = bool(v["signature_valid"]) and v.get("issuer_trusted") is True
             ok = accepted == want_accept
             all_ok = all_ok and ok
+            _cases_recorded += 1
             print("  %-4s  %-15s  %-15s  %-14s  %-8s  %s%s"
                   % (pack["issuer"], party, v["signature_valid"], v.get("issuer_trusted"),
                      "ACCEPT" if accepted else "reject",
@@ -105,6 +112,10 @@ def main():
                      "" if ok else "   <-- WRONG"))
 
         print()
+        if not _cases_recorded:
+            print("FAIL: the drill evaluated no federation case, so the paragraph below would "
+                  "be a guarantee about nothing.", file=sys.stderr)
+            return 1
         if all_ok:
             print("OK: two issuers on one box, distinct roots; each relying party accepts its own "
                   "issuer, rejects a foreign issuer, and rejects the outsider — cryptographically.")
