@@ -5,6 +5,8 @@
 # Fetches a PINNED tla2tools into .tla/ (gitignored) and runs the drill. The
 # pin matters for the same reason the axe-core pin does: an unpinned checker is
 # one whose semantics can change under the claim it is being used to support.
+# Pinned by version AND by digest, because a release asset can be re-uploaded
+# under a fixed tag, and the digest is checked on a cached jar too.
 #
 #   scripts/polaris-tla-drill.sh
 #   POLARIS_JAVA=/path/to/java scripts/polaris-tla-drill.sh
@@ -12,6 +14,19 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TLA_VERSION="${POLARIS_TLA_VERSION:-v1.7.4}"
+# The bytes, not just the tag. A release asset can be re-uploaded under the same tag, so a
+# version pin alone leaves the checker that model-checks the formal specs trusted to TLS and
+# nothing else. Twenty images in this tree are pinned by @sha256: and check_prod_images_
+# digest_pinned enforces it; this was the one downloaded artifact outside that policy.
+#
+# Observed twice before it was pinned, which is the whole basis for the value: on this
+# machine (fetched 2026-09-10) and on a GitHub runner fetching fresh from the release page
+# on 2026-09-20, different networks, byte-identical. That is the same evidence a lockfile
+# rests on, not a claim about what upstream canonically publishes.
+#
+# Changing POLARIS_TLA_VERSION requires changing this too, and a mismatch is meant to stop
+# the run: an asset that changed under a fixed tag is exactly what this is here to notice.
+TLA_SHA256="${POLARIS_TLA_SHA256:-936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88}"
 JAR="${POLARIS_TLA_JAR:-$ROOT/.tla/tla2tools.jar}"
 JAVA="${POLARIS_JAVA:-java}"
 
@@ -38,6 +53,17 @@ fi
 #
 # So each attempt writes to a temporary file, is checked for the zip magic every jar starts
 # with, and is only moved into place once it is whole.
+_tla_digest() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    elif command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        echo "tla drill needs shasum or sha256sum to verify the checker it is about to run" >&2
+        exit 3
+    fi
+}
+
 if [[ ! -f "$JAR" ]]; then
     mkdir -p "$(dirname "$JAR")"
     _tla_url="https://github.com/tlaplus/tlaplus/releases/download/${TLA_VERSION}/tla2tools.jar"
@@ -47,6 +73,21 @@ if [[ ! -f "$JAR" ]]; then
         if curl -sSL --fail --connect-timeout 15 --max-time 300 -o "$_tla_tmp" "$_tla_url" \
            && [[ -s "$_tla_tmp" ]] \
            && [[ "$(head -c 2 "$_tla_tmp")" == "PK" ]]; then
+            _got="$(_tla_digest "$_tla_tmp")"
+            if [[ "$_got" != "$TLA_SHA256" ]]; then
+                # Not a retry case. A whole, well-formed archive whose bytes are not the
+                # pinned ones is either a re-released asset or something worse, and trying
+                # again gets the same answer more slowly.
+                rm -f "$_tla_tmp"
+                echo "tla drill: tla2tools ${TLA_VERSION} does not match its pinned digest" >&2
+                echo "  expected $TLA_SHA256" >&2
+                echo "  got      $_got" >&2
+                echo "  If the version was deliberately changed, set POLARIS_TLA_SHA256 to" >&2
+                echo "  the new digest in the same commit. If it was not, the release asset" >&2
+                echo "  changed under a fixed tag and that is worth understanding before" >&2
+                echo "  this runs again." >&2
+                exit 3
+            fi
             mv "$_tla_tmp" "$JAR"
             break
         fi
@@ -61,19 +102,18 @@ if [[ ! -f "$JAR" ]]; then
     done
 fi
 
-# Say which bytes are doing the checking. The VERSION is pinned (check_tla_specs holds it,
-# on the grounds that an unpinned checker is one whose semantics can change under the claim
-# it is being used to support) and the BYTES are not: a release asset can be re-uploaded
-# under the same tag. Printing the digest is what turns that into a decision somebody can
-# make, because the open question is whether a CI runner fetches the same artifact this
-# machine holds, and one run answers it. Printed, not enforced: pinning a hash that has only
-# ever been observed here would fail the build on the first legitimate difference, and there
-# would be no way to tell that from an attack.
-if command -v shasum >/dev/null 2>&1; then
-    echo "tla2tools ${TLA_VERSION}: sha256 $(shasum -a 256 "$JAR" | cut -d' ' -f1)"
-elif command -v sha256sum >/dev/null 2>&1; then
-    echo "tla2tools ${TLA_VERSION}: sha256 $(sha256sum "$JAR" | cut -d' ' -f1)"
+# Verified every run, not only on the run that downloaded it. A jar cached under .tla/ from
+# an earlier fetch is exactly as load-bearing as a fresh one and nothing else re-checks it.
+_have="$(_tla_digest "$JAR")"
+if [[ "$_have" != "$TLA_SHA256" ]]; then
+    echo "tla drill: the cached tla2tools does not match its pinned digest" >&2
+    echo "  expected $TLA_SHA256" >&2
+    echo "  got      $_have  ($JAR)" >&2
+    echo "  Remove it and let the drill fetch again, or set POLARIS_TLA_SHA256 if the" >&2
+    echo "  pinned version was changed deliberately." >&2
+    exit 3
 fi
+echo "tla2tools ${TLA_VERSION}: sha256 $_have (matches the pin)"
 
 POLARIS_TLA_JAR="$JAR" POLARIS_JAVA="$JAVA" \
     "${POLARIS_TEST_PYTHON:-$(command -v python3.12 || command -v python3)}" \
