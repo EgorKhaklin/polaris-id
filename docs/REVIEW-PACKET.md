@@ -93,7 +93,7 @@ who breaks any of these has found something worth the engagement.
 | A-9 | A published statistic does not disclose a small count | `check:transparency_program`, `drill:scripts/polaris-transparency-report-drill.py` | recovery of a withheld cell from a published report, or a series of reports whose combination recovers one |
 | A-10 | The system cannot reach a state where a holder has no verifiable credential | `check:quantum_event_readiness`, `drill:scripts/polaris-quantum-event-drill.py` | a window, however brief, in which an ACTIVE credential verifies under nothing |
 | A-11 | An offline verifier refuses a credential revoked before its epoch | `check:offline_verification`, `check:status_distribution` | acceptance of a credential whose revocation was published before the verifier's epoch |
-| A-12 | The check layer detects its own violations | `check:controls_as_attacks`, `check:attacks_run`, `drill:scripts/polaris-check-mutation-drill.py` | a check that passes against a tree where the property it names is false. Part of this is now machine-checked: the mutation drill comments out every line carrying a check's own search strings and re-runs it. 71 of 75 checks survived that when it was written; **none do now**, and the drill gates at zero |
+| A-12 | The check layer detects its own violations | `check:controls_as_attacks`, `check:attacks_run`, `drill:scripts/polaris-check-mutation-drill.py` | a check that passes against a tree where the property it names is false. Part of this is now machine-checked: the mutation drill runs three mutations, commenting out a check's own search strings, deleting the files it names, and deleting the sentences it greps for from the documents it reads. 71 of 75 checks survived the first when it was written; **none survive any of the three now**, and the drill gates at zero. What it cannot reach it names, every run |
 
 A-12 is still the one to start with. Every other guarantee on this page is believed because a
 check says so, and the checks are written by the same hand as the code. If a check can be made
@@ -106,13 +106,31 @@ the code did not. Stripping there fixed all 71, and the 58 detection-test fixtur
 their own property in a comment were repaired in the same ship -- a fixture that states its
 property in a comment is testing the thing the drill forbids.
 
-The drill now gates at zero on every push. **Its limits are where a reviewer should look
-next:** four checks read files the drill cannot enumerate, so they are skipped rather than
-counted; and a SECOND mutation deletes every file a check names and requires it to notice, which is what
-reaches the checks that compute rather than grep. That one found four more passing vacuously,
-two of them constitutional: C10's money-table prohibition and the canonical-version rule were
-both perfectly true of a schema and an `app.py` that did not exist.
+The drill now gates at zero on every push, across THREE mutations. The first comments out every
+line carrying a check's own search strings: 125 checks reached, none survive. The second deletes
+every file a check names and requires it to notice, which is what reaches the ones that compute
+rather than grep: 273 reached, none survive, and it found four passing vacuously when it was
+written, two of them constitutional. C10's money-table prohibition and the canonical-version
+rule were both perfectly true of a schema and an `app.py` that did not exist.
 
-What remains untested: a check that computes over a file that is PRESENT but wrong is caught by
-neither mutation, since one only removes lines it can name and the other removes the file
-entirely. A reviewer looking for the weakest thing on this page should start there.
+The third closed the gap this paragraph used to send a reviewer to. A check that computes over a
+file which is PRESENT but wrong was caught by neither of the first two, since one only removes
+lines it can name and the other removes the file entirely. For DOCUMENTS that is now covered:
+`#` in Markdown is a heading rather than a comment, so the first mutation had to skip every
+check that reads one, and the third deletes the matching sentences and leaves the file there. 84
+checks reach it and 79 notice.
+
+The 5 that do not are reported rather than failed, and they are worth a reviewer's attention for
+a different reason: each asserts that a document is PUBLISHED, not what it says. `conformance/SPEC.md`,
+`docs/design/transparency-log.md` and three others could have their wording replaced wholesale
+and no check on this page would notice.
+
+**Where the weakest ground actually is, in order.** 82 checks are not mutation-tested at all,
+and the drill names them in three groups on every run: 34 assert through no literal this harness
+can find; 44 read a file type no mutation here can express, 12 of them JSON, where deleting a
+line breaks the parse so the check would fail for a reason that is about the file rather than
+the property; and 4 have needles matching nothing in the files they name, which is correct for
+an absence check and worth confirming is true of all four. A further 21 read inputs the harness
+cannot enumerate. **Those 103 checks are the part of this page that rests on care rather than on
+a machine**, and the drill prints the list, so a reviewer does not have to take this paragraph's
+word for which ones they are.

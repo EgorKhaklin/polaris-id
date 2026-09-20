@@ -200,8 +200,15 @@ def main():
               "it is still true.")
         print("The second half is the one that matters. A limitations list that can only be "
               "appended to is a confession nobody maintains; this one fails the build when a "
-              "limitation is FIXED, so the page can only ever describe where the system "
-              "actually stands.")
+              "limitation is FIXED, because every row carries a witness that has to still "
+              "resolve.")
+        print("That covers the TABLE under '## 2. Known limitations', which is the whole "
+              "mechanism, and not the prose around it. Measured 2026-09-20: a paragraph under "
+              "A-12 told a reviewer that a check computing over a file which is present but "
+              "wrong was caught by no mutation, and sent them there first. The drill that "
+              "added the third mutation closed it that morning; this passed every run in "
+              "between, because a sentence with no witness is a sentence nothing holds. A "
+              "claim about the page would be wider than the check behind it.")
         return 0
     print("FAIL: at least one case did not hold", file=sys.stderr)
     return 1
