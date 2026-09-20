@@ -15,6 +15,16 @@ WHAT A ROUND TRIP DOES NOT PROVE. The tests here encrypt with this file and decr
 file, which shows the two halves agree and shows nothing about whether either agrees with
 anybody else. Two consistent mistakes pass a round trip. The evidence that matters is a JWE
 produced by the conformance suite's wallet, and `lab/interop/probe.py` is what obtains one.
+
+That evidence has been obtained once, and not for this build. The OpenID Foundation's hosted
+suite ran `response_mode direct_post.jwt` against 0.1.0 on 2026-09-15, eleven modules with
+zero failures, which means software this project did not write encrypted responses this file
+decrypted. No such JWE is kept in the tree, so nothing here re-runs it.
+
+This file changed on 2026-09-17, after that run. What was added refuses malformed input (a
+non-string coordinate, a point off the curve) rather than altering what a well-formed JWE
+decodes to, so there is reason to expect the result would hold. Reason to expect is not
+evidence, and no external party has exercised the current build.
 """
 import base64
 import json
