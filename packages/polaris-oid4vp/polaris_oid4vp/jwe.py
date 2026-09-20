@@ -16,15 +16,22 @@ file, which shows the two halves agree and shows nothing about whether either ag
 anybody else. Two consistent mistakes pass a round trip. The evidence that matters is a JWE
 produced by the conformance suite's wallet, and `lab/interop/probe.py` is what obtains one.
 
-That evidence has been obtained once, and not for this build. The OpenID Foundation's hosted
-suite ran `response_mode direct_post.jwt` against 0.1.0 on 2026-09-15, eleven modules with
-zero failures, which means software this project did not write encrypted responses this file
-decrypted. No such JWE is kept in the tree, so nothing here re-runs it.
+That evidence exists in two forms, and they are not equally strong.
 
-This file changed on 2026-09-17, after that run. What was added refuses malformed input (a
+One is in the tree and runs on every push. `testdata/conformance-suite-capture.json` holds a
+JWE the conformance suite's wallet produced during a real
+`oid4vp-1final-verifier-haip-test-plan` run, and `test_conformance_capture.py` decrypts it
+under this file's ECDH-ES and ConcatKDF. It was captured on 2026-09-14, three days before the
+hardening below, so what runs today opens material an independent implementation (Nimbus
+JOSE, in Java) built against the earlier contract. That is the half a round trip cannot
+supply, and it is machine-checked rather than remembered.
+
+The other is stronger and does not cover this build. The OpenID Foundation's HOSTED suite ran
+`response_mode direct_post.jwt` against 0.1.0 on 2026-09-15, eleven modules with zero
+failures. This file changed on 2026-09-17. What was added refuses malformed input (a
 non-string coordinate, a point off the curve) rather than altering what a well-formed JWE
-decodes to, so there is reason to expect the result would hold. Reason to expect is not
-evidence, and no external party has exercised the current build.
+decodes to, and the captured response still decrypts under it, so there is reason to expect a
+re-run would hold. Reason to expect is not a run.
 """
 import base64
 import json
