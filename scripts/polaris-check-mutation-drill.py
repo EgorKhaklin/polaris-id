@@ -33,20 +33,31 @@ once and broke 58 detection-test fixtures that carried their own property in a c
 fixtures were repaired in the same ship, since a fixture that states its property in a comment
 is testing the thing this drill exists to forbid.
 
-THERE ARE TWO MUTATIONS, because commenting out a check's search strings only tests a check that
-GREPS. The second is blunter and reaches the ones that compute: DELETE every file the check
-names and require it to fail. A check that passes when its input is gone is watching nothing,
-and the failure is quiet -- "the schema defines no monetary tables" is perfectly true of a
-schema that does not exist. That pass found four, two of them constitutional (C10's money-table
-prohibition and the canonical version), which had been vacuously true for as long as they had
-existed.
+THERE ARE THREE MUTATIONS, because commenting out a check's search strings only tests a check
+that GREPS, and only in a file where a comment marker hides a line.
 
-A check may legitimately survive this when the deleted file is one of several it reads and the
-others still carry the property; those are listed rather than failed, with the expectation that
-a reader checks the list is short and understood.
+The second is blunter and reaches the ones that compute: DELETE every file the check names and
+require it to fail. A check that passes when its input is gone is watching nothing, and the
+failure is quiet -- "the schema defines no monetary tables" is perfectly true of a schema that
+does not exist. That pass found four, two of them constitutional (C10's money-table prohibition
+and the canonical version), which had been vacuously true for as long as they had existed.
 
-Exits non-zero if any fully mutated check still passes, or if a check outside the known set
-survives having its inputs deleted. No database.
+The third reaches the documents. `#` in Markdown is a heading, not a comment, so the first
+mutation had to skip every check reading one: 94 of them, and they are the checks that hold the
+outward surfaces to what the evidence supports. There the matching lines are DELETED from the
+file instead, which is what removing a sentence from a document actually looks like.
+
+Not noticing that is not automatically a fault, and the drill distinguishes the two cases rather
+than leaving a reader to guess. Many checks name a document only to require that it is
+published. Deleting some lines leaves a file that still exists, so passing is correct, and the
+emptied-file property those checks do carry is already pinned by check_no_vacuous_checks. So
+every survivor is re-run against the same file EMPTIED: failing then means the check asserts the
+document exists, and is reported as such; passing even then means it cannot tell its named input
+from an empty file, and that is a failure.
+
+Exits non-zero if any fully mutated check still passes, if a check outside the declared set
+survives having its inputs deleted, if a declared exception has stopped being true, or if a
+check is blind to a document it names. No database.
 """
 from __future__ import annotations
 
@@ -199,6 +210,29 @@ def needles_of(fn):
                     if isinstance(el, ast.Constant):
                         take(el.value, 120)
     return out
+
+
+#: Files whose lines cannot be commented out in a way that removes them from what a check
+#: reads. Markdown's `#` is a heading and JSON has no comment syntax at all, so the
+#: comment-out mutation leaves the text exactly as readable as it was. These get their
+#: matching lines DELETED instead. JSON is deliberately not here: deleting a line from it
+#: breaks the parse, so the check would fail for a reason that is about the file being
+#: malformed rather than about the property being gone, and a mutation nobody can read a
+#: result from is worse than a declared gap.
+PROSE_SUFFIXES = (".md", ".txt")
+
+
+def _line_carries(line, needles, patterns):
+    """Does this line hold one of the strings the check looks for?"""
+    if any(n in line for n in needles):
+        return True
+    for pat in patterns:
+        try:
+            if re.search(pat, line):
+                return True
+        except re.error:
+            continue                          # a pattern this harness cannot compile alone
+    return False
 
 
 def _read_path_targets(fn):
@@ -376,15 +410,7 @@ def main():
             marker = "--" if rel.endswith(".sql") else "#"
             out = []
             for line in target.read_text(encoding="utf-8", errors="replace").split("\n"):
-                hit = any(n in line for n in needles)
-                if not hit:
-                    for pat in patterns:
-                        try:
-                            if re.search(pat, line):
-                                hit = True
-                                break
-                        except re.error:
-                            continue          # a pattern this harness cannot compile alone
+                hit = _line_carries(line, needles, patterns)
                 if hit and not line.lstrip().startswith(marker):
                     out.append(marker + " MUTATED-OUT: " + line.strip())
                     changed = True
@@ -425,6 +451,63 @@ def main():
                 deletion_exceptions_used.add(name)
         elif still_passes:
             deletion_survivors.append(name)
+
+    # THIRD MUTATION: DELETE the lines a check greps for, in files that cannot be commented.
+    #
+    # This is the one the comment-out pass could not reach. 94 of the checks it skips read a
+    # .md, and those are the ones holding the outward surfaces to what the evidence supports:
+    # the duress vocabulary, the readiness ledger, the posture audit, the public claims. A
+    # sentence is removed here rather than hidden behind a marker that Markdown renders.
+    #
+    # A check that does NOT notice is not automatically at fault, and the drill says which of
+    # the two it is rather than making a reader guess. Many checks name a document only to
+    # require that it is published: `if not _read(root, "...md"): return _fail(...)`. Deleting
+    # some lines leaves a file that still exists, so passing is the correct answer, and the
+    # emptied-file property those checks DO carry is already pinned by check_no_vacuous_checks.
+    # So each survivor is re-run against the same file emptied. Failing then means the check
+    # asserts the document EXISTS; passing even then means it is blind to a file it names, and
+    # that is the failure.
+    prose_tested, prose_blind, prose_existence_only = 0, [], []
+    for name, fn in sorted(fns.items()):
+        files = [f for f in sorted(set(reads_of(fn)))
+                 if f.endswith(PROSE_SUFFIXES) and (base / f).is_file()]
+        needles, patterns = needles_of(fn), regexes_of(fn)
+        if not files or not (needles or patterns) or opaque_inputs(fn):
+            continue
+
+        def _rebuild(transform):
+            shutil.rmtree(work, ignore_errors=True)
+            shutil.copytree(base, work)
+            touched = False
+            for rel in files:
+                t = work / rel
+                if not t.is_file():
+                    continue
+                before = t.read_text(encoding="utf-8", errors="replace")
+                after = transform(before)
+                if after != before:
+                    touched = True
+                t.write_text(after, encoding="utf-8")
+            return touched
+
+        def _drop_matching(text):
+            return "\n".join(ln for ln in text.split("\n")
+                             if not _line_carries(ln, needles, patterns))
+
+        if not _rebuild(_drop_matching):
+            continue                          # nothing in those files carried a needle
+        prose_tested += 1
+        try:
+            if any(f.level == "FAIL" for f in by_name[name](work)):
+                continue                      # noticed its sentences were gone
+        except Exception:                      # noqa: BLE001 - a crash is not a pass
+            continue
+        _rebuild(lambda text: "")  # noqa: ARG005 - the point is to discard it
+        try:
+            notices_empty = any(f.level == "FAIL" for f in by_name[name](work))
+        except Exception:                      # noqa: BLE001
+            notices_empty = True
+        (prose_existence_only if notices_empty else prose_blind).append(name)
 
     shutil.rmtree(work, ignore_errors=True)
     shutil.rmtree(base, ignore_errors=True)
@@ -476,6 +559,20 @@ def main():
     print("  ...of those, still passing with them gone    %4d  (%d declared, %d still needed)"
           % (len(deletion_survivors), len(DELETION_SURVIVORS_EXPECTED),
              len(deletion_exceptions_used)))
+    verified_content = prose_tested - len(prose_existence_only) - len(prose_blind)
+    print("  checks whose DOC SENTENCES were deleted      %4d" % prose_tested)
+    print("  ...that noticed: they verify what it SAYS    %4d" % verified_content)
+    print("  ...that name a document only to require it   %4d" % len(prose_existence_only))
+    print("  ...blind to a document they name             %4d" % len(prose_blind))
+    if prose_existence_only:
+        # Not a failure and worth seeing: these documents could be replaced with anything at
+        # all and the only check naming them would still pass, because what it asserts is
+        # that they are published. The emptied-file half is pinned by check_no_vacuous_checks.
+        print("      deleting every sentence they grep for changed nothing; they fail only")
+        print("      when the file is emptied. What each pins is that the document is")
+        print("      PUBLISHED, so its wording could be replaced wholesale and hold:")
+        for nm in sorted(prose_existence_only)[:8]:
+            print("        %s" % nm)
     print()
 
     if len(survived) > SPELLING_PINNED_BASELINE:
@@ -497,6 +594,14 @@ def main():
         for name in sorted(deletion_survivors):
             print("  %s" % name, file=sys.stderr)
         return 1
+    if prose_blind:
+        print("FAIL: these checks read a document, and passed both with every sentence they "
+              "grep for deleted AND with the file emptied. A check that cannot tell its own "
+              "named input from an empty file is reporting a property of nothing:",
+              file=sys.stderr)
+        for name in sorted(prose_blind):
+            print("  %s" % name, file=sys.stderr)
+        return 1
     if stale_exceptions:
         # A limitations list that can only be appended to is a confession nobody
         # maintains. polaris-review-packet-drill.py fails when one of ITS limitations is
@@ -516,7 +621,10 @@ def main():
               "layer it is supposed to attack." % mutated, file=sys.stderr)
         return 1
     print("PASS: %d of %d fully mutated checks survive, at or under the recorded baseline "
-          "of %d." % (len(survived), mutated, SPELLING_PINNED_BASELINE))
+          "of %d. %d of %d checks reading a document noticed its sentences being deleted, "
+          "and the %d that did not are the ones asserting only that it is published."
+          % (len(survived), mutated, SPELLING_PINNED_BASELINE,
+             verified_content, prose_tested, len(prose_existence_only)))
     print("The mutation leaves each check's search strings present IN A COMMENT, which is "
           "what `# temporarily disabled: <the thing>` looks like -- the ordinary way a "
           "guarantee disappears without anything turning red.")
