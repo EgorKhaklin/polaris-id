@@ -319,8 +319,8 @@ independent bugs masquerading as one:
   to 180s; added `visibilitychange` / `focus` / `pageshow`
   listeners to `heartbeat.js` so the first foreground-return
   produces a fresh beat. Regression-guarded by
-  `test_launcher_stale_threshold_at_least_120s` and
-  `test_heartbeat_js_has_foreground_return_listeners`.
+  `check_launcher_stale_threshold_survives_tab_throttling` and
+  `check_heartbeat_beats_on_foreground_return`.
 
 - **v8.55 (navigation fires quit beacon).** Pre-v8.55
   `heartbeat.js` wired `pagehide` + `beforeunload` listeners to
@@ -332,11 +332,26 @@ independent bugs masquerading as one:
   tab-close.** Fix: removed both listeners entirely; the launcher
   now relies on stale-heartbeat alone (about 3 minutes teardown
   latency on actual tab close). Regression-guarded by
-  `test_heartbeat_js_does_not_fire_quit_on_navigation`.
+  `check_heartbeat_does_not_quit_on_navigation`.
 
-If the symptom returns on a future build, run these three
-structural tests; one of them will tell you which root cause came
-back.
+- **2026-09-15 (the quit beacon was honoured unconditionally).**
+  The third instance, and the one that had no guard when it
+  landed. The beacon means "a tab went away", not "the last tab
+  went away", and every open tab writes the same `$QUIT_FILE`.
+  Closing the second of two tabs, a reload, or a stale tab from a
+  previous session firing as the new stack came up each tore down
+  a session somebody was using. Observed with a beacon 46 seconds
+  old beside a heartbeat 6 seconds old, the stack going down three
+  seconds after it came up; the report was that the launcher
+  "isn't launching when I hit it". **Fix:** the beacon is consumed
+  and ignored while the heartbeat is under 15 seconds old, and
+  staleness decides when the last tab is really gone.
+  Regression-guarded by
+  `check_launcher_quit_beacon_defers_to_fresh_heartbeat`.
+
+If the symptom returns on a future build, run
+`python3 -m polaris_checks.run` and read the launcher rows; one of
+them will tell you which root cause came back.
 
 ### Session cookie surviving relaunch had TWO root causes too
 
@@ -348,7 +363,9 @@ Same shape as above. Two regressions, sequential fixes.
   cookies on relaunch, dropping users straight into the
   dashboard. **Fix:** compose reads `${POLARIS_SECRET_KEY:-...}`
   from host env; launcher rotates the env var on every `up` via
-  `rotate_session_secret_if_unset`.
+  `rotate_session_secret_if_unset`. (Rotating on every `up` was
+  itself reversed in v8.100; see below. The compose passthrough
+  was not, and is guarded.)
 
 - **v8.58 (early-return bypass).** v8.56's rotation only worked
   when the launcher actually brought up a fresh stack. Both
@@ -362,11 +379,40 @@ Same shape as above. Two regressions, sequential fixes.
   rotation; `launch_native` already-running branch kills the
   gunicorn pid and falls through to the normal start path.
   Regression-guarded by
-  `test_launcher_already_running_paths_still_rotate`.
+  `check_launcher_applies_session_secret_when_already_running`.
 
-The combined regression-guard family (six tests across the
-launcher-watch-mode surface) is now the canonical guard against
-this whole class of failure.
+- **v8.100 (the rotation was the bug).** Rotating on every launch
+  did invalidate leaked cookies, and it also logged the operator
+  out of every tab they still had open. The report was "sometimes
+  I'm logged in, sometimes I'm at /login", with nothing on screen
+  connecting it to the launcher. **Fix:** the secret is persisted
+  to `$STATE_DIR/secret_key` and reused; the v8.56 defense is now
+  an explicit operator action (`rm` the file, then relaunch).
+  Reuse means the key is at rest in a file under `/tmp`, which is
+  multi-user on macOS, so the mode is part of the guarantee:
+  `umask 077` on create, `chmod 600` after. Regression-guarded by
+  `check_launcher_persists_session_secret_securely`, which also
+  pins the compose passthrough, because a hardcoded literal there
+  would give every install one published signing key and make the
+  rest of this moot.
+
+The combined regression-guard family (six checks across the
+launcher-watch-mode surface) is the canonical guard against this
+whole class of failure.
+
+It has been a family of *checks* only since 2026-09-20. The six
+tests that held it lived in `polaris_web/test_structural_invariants.py`,
+and v9.55 deleted that file whole: 16,646 lines, almost all of it
+apparatus being cut on purpose, with these guards inside it.
+Nothing failed. The citations above are bare names, so the link
+check had no path to resolve, and `check_documented_symbols_resolve`
+reads only citations that name a file and a symbol together, which
+these do not. This document went on naming six
+tests, and telling you to run three of them, for 104 days, at the
+end of which the class came back (the 2026-09-15 entry above) and
+its fix added no test either, because the surface no longer had a
+file to put one in. `check_documented_test_citations_resolve` is
+what now refuses a named guard that does not exist.
 
 ### CSP externalization (v8.46): inline JS is gone from templates
 

@@ -18043,3 +18043,334 @@ def test_checks_are_detection_tested_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
         "must FAIL rather than report coverage when CHECKS cannot be parsed"
+
+
+# ---------------------------------------------------------------------------
+# The launcher-watch surface. Six guards whose tests were deleted as collateral
+# in v9.55 and whose failure class came back 104 days later.
+# ---------------------------------------------------------------------------
+_GOOD_LAUNCHER = """#!/usr/bin/env bash
+#  WATCH MODE (default for `up` and `rebuild`)
+#      The launcher tears the stack down automatically when:
+#        - You close the Polaris browser tab/window
+#        - The heartbeat goes stale for >180 seconds (browser crash / network)
+
+rotate_session_secret_if_unset() {
+    if [ -n "${POLARIS_SECRET_KEY:-}" ]; then
+        return 0
+    fi
+    local secret_file="$state_dir/secret_key"
+    if [ -f "$secret_file" ] && [ -s "$secret_file" ]; then
+        POLARIS_SECRET_KEY="$(cat "$secret_file")"
+        export POLARIS_SECRET_KEY
+        return 0
+    fi
+    ( umask 077; printf '%s' "$POLARIS_SECRET_KEY" > "$secret_file" )
+    chmod 600 "$secret_file" 2>/dev/null || true
+}
+
+launch_docker() {
+    if docker_app_healthy; then
+        ok "Polaris stack already running and up-to-date"
+        rotate_session_secret_if_unset
+        docker compose up -d --force-recreate --no-deps app
+        return 0
+    fi
+    rotate_session_secret_if_unset
+    docker_compose_up_with_heal
+}
+
+launch_native() {
+    if native_running; then
+        log "Native Polaris already running (pid $prev_pid), restarting to apply session secret"
+        kill "$prev_pid" 2>/dev/null || true
+        rm -f "$PID_FILE"
+    fi
+    clear_stale_pid
+    rotate_session_secret_if_unset
+}
+
+watch_browser_presence() {
+    local stale_threshold="${POLARIS_WATCH_STALE:-180}"
+    while true; do
+        if [[ -f "$QUIT_FILE" ]]; then
+            rm -f "$QUIT_FILE"
+            hb_now=$(file_mtime "$HEARTBEAT_FILE")
+            if (( hb_now > 0 && now - hb_now < 15 )); then
+                continue
+            fi
+            _teardown_once
+            exit 0
+        fi
+        if (( hb_age > stale_threshold )); then
+            _teardown_once
+            exit 0
+        fi
+    done
+}
+"""
+
+_GOOD_HEARTBEAT = """/* heartbeat.js
+ * v8.51: visibility + focus + pageshow listeners added.
+ * v8.55: REMOVED the `pagehide` / `beforeunload` listeners and the
+ * `farewell()` function that called sendBeacon('/api/quit'). Both events
+ * fire on every navigation, so beforeunload made a click look like a close.
+ */
+function beat() { fetch('/api/heartbeat', {method: 'POST'}); }
+function beatOnReturn() { if (document.visibilityState === 'visible') { beat(); } }
+document.addEventListener('visibilitychange', beatOnReturn);
+window.addEventListener('focus', beat);
+window.addEventListener('pageshow', beat);
+// v8.55: pagehide / beforeunload listeners deliberately ABSENT.
+setInterval(beat, 10000);
+"""
+
+_GOOD_COMPOSE = """services:
+  app:
+    environment:
+      POLARIS_SECRET_KEY:  ${POLARIS_SECRET_KEY:-dev-secret-rotate-in-production}
+"""
+
+
+def _launcher_tree(tmp_path, launcher=None, heartbeat=None, compose=None):
+    (tmp_path / "polaris_web" / "static").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "polaris_mac_launch.sh").write_text(
+        _GOOD_LAUNCHER if launcher is None else launcher)
+    (tmp_path / "polaris_web" / "static" / "heartbeat.js").write_text(
+        _GOOD_HEARTBEAT if heartbeat is None else heartbeat)
+    (tmp_path / "polaris_web" / "docker-compose.yml").write_text(
+        _GOOD_COMPOSE if compose is None else compose)
+    return tmp_path
+
+
+def test_launcher_stale_threshold_check_detects_its_absence(tmp_path):
+    fn = checks.check_launcher_stale_threshold_survives_tab_throttling
+    _launcher_tree(tmp_path)
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    # Below the floor: 45s is the pre-v8.51 value a throttled tab trips.
+    _launcher_tree(tmp_path, launcher=_GOOD_LAUNCHER
+                   .replace("POLARIS_WATCH_STALE:-180", "POLARIS_WATCH_STALE:-45")
+                   .replace("stale for >180 seconds", "stale for >45 seconds"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "two missed beats" in out[0].message, \
+        "must FAIL when the threshold drops under the throttling floor"
+
+    # The drift this was written for: the header keeps the old number.
+    _launcher_tree(tmp_path, launcher=_GOOD_LAUNCHER.replace(
+        "stale for >180 seconds", "stale for >45 seconds"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "tells the reader" in out[0].message, \
+        "must FAIL when the documented threshold disagrees with the default"
+
+    # A header that stops stating the number stops being comparable.
+    _launcher_tree(tmp_path, launcher=_GOOD_LAUNCHER.replace(
+        "stale for >180 seconds", "stale eventually"))
+    assert fn(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the header no longer states a threshold"
+
+    # Vacuity: an empty launcher is not a passing door.
+    _launcher_tree(tmp_path, launcher="")
+    assert fn(tmp_path)[0].level == "FAIL", "an empty launcher must not read as OK"
+
+
+def test_heartbeat_foreground_check_detects_its_absence(tmp_path):
+    fn = checks.check_heartbeat_beats_on_foreground_return
+    _launcher_tree(tmp_path)
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    for ev in ("visibilitychange", "focus", "pageshow"):
+        _launcher_tree(tmp_path, heartbeat=_GOOD_HEARTBEAT.replace(
+            "addEventListener('%s'" % ev, "addEventListener('unused_%s'" % ev))
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL" and ev in out[0].message, \
+            "must FAIL and name the missing %s listener" % ev
+
+    # The defect the restored test had: listeners commented out still "appear".
+    commented = _GOOD_HEARTBEAT.replace(
+        "document.addEventListener('visibilitychange', beatOnReturn);",
+        "// document.addEventListener('visibilitychange', beatOnReturn);")
+    _launcher_tree(tmp_path, heartbeat=commented)
+    assert fn(tmp_path)[0].level == "FAIL", \
+        "a commented-out listener must not satisfy the check; the old test read it as present"
+
+    # Listening without reading visibilityState beats on the way out too.
+    _launcher_tree(tmp_path, heartbeat=_GOOD_HEARTBEAT.replace(
+        "if (document.visibilityState === 'visible') { beat(); }", "beat();"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "visibilityState" in out[0].message, \
+        "must FAIL when visibilitychange is wired without reading visibilityState"
+
+    _launcher_tree(tmp_path, heartbeat="")
+    assert fn(tmp_path)[0].level == "FAIL", "an empty heartbeat.js must not read as OK"
+
+
+def test_heartbeat_quit_on_navigation_check_detects_its_absence(tmp_path):
+    fn = checks.check_heartbeat_does_not_quit_on_navigation
+    _launcher_tree(tmp_path)
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    for ev in ("pagehide", "beforeunload"):
+        _launcher_tree(tmp_path, heartbeat=_GOOD_HEARTBEAT
+                       + "window.addEventListener('%s', farewell);\n" % ev)
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL" and ev in out[0].message, \
+            "must FAIL when %s is wired again" % ev
+
+    # The file NAMES both events in its rationale block; that must not trip it.
+    assert "pagehide" in _GOOD_HEARTBEAT and "beforeunload" in _GOOD_HEARTBEAT, \
+        "the good fixture must exercise the comment-stripping, or this proves nothing"
+
+    # Anti-vacuity: absence is the guarantee, so a file wiring nothing must FAIL.
+    _launcher_tree(tmp_path, heartbeat="function beat() {}\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no listeners at all" in out[0].message, \
+        "a heartbeat that registers nothing must not pass a check about what it registers"
+
+
+def test_launcher_secret_on_running_check_detects_its_absence(tmp_path):
+    fn = checks.check_launcher_applies_session_secret_when_already_running
+    _launcher_tree(tmp_path)
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    perturbations = (
+        # The v8.58 bug: the short-circuit branch stops establishing the secret. The
+        # fresh-start path below it still calls the helper, which is exactly why a
+        # function-scoped check stayed green here and the branch has to be the scope.
+        ('        ok "Polaris stack already running and up-to-date"\n'
+         "        rotate_session_secret_if_unset\n",
+         '        ok "Polaris stack already running and up-to-date"\n',
+         "returns without calling"),
+        ("--force-recreate --no-deps app", "app", "force-recreate"),
+        ("--force-recreate --no-deps app", "--force-recreate app", "--no-deps"),
+        # The native half of v8.58 was an early return, and is fixed by falling through.
+        ('        kill "$prev_pid" 2>/dev/null || true\n',
+         "        return 0\n", "returns early"),
+        ('        kill "$prev_pid" 2>/dev/null || true\n', "", "does not kill"),
+    )
+    for old, new, needle in perturbations:
+        _launcher_tree(tmp_path, launcher=_GOOD_LAUNCHER.replace(old, new, 1))
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL" and needle in out[0].message, \
+            "must FAIL and say %r when %r becomes %r" % (needle, old[:40], new[:40])
+
+    # Scoped to the BRANCH: the strings existing elsewhere is not the property.
+    elsewhere = _GOOD_LAUNCHER.replace(
+        "        docker compose up -d --force-recreate --no-deps app\n", "")
+    elsewhere += "\n# docs: we used to run docker compose up --force-recreate --no-deps app\n"
+    _launcher_tree(tmp_path, launcher=elsewhere)
+    assert fn(tmp_path)[0].level == "FAIL", \
+        "the old test passed on the string existing anywhere in the file; this must not"
+
+    _launcher_tree(tmp_path, launcher="")
+    assert fn(tmp_path)[0].level == "FAIL", "an empty launcher must not read as OK"
+
+
+def test_launcher_beacon_defers_to_heartbeat_check_detects_its_absence(tmp_path):
+    fn = checks.check_launcher_quit_beacon_defers_to_fresh_heartbeat
+    _launcher_tree(tmp_path)
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    # The 2026-09-15 bug exactly: honour the beacon without reading the heartbeat.
+    _launcher_tree(tmp_path, launcher=_GOOD_LAUNCHER.replace(
+        '            hb_now=$(file_mtime "$HEARTBEAT_FILE")\n'
+        "            if (( hb_now > 0 && now - hb_now < 15 )); then\n"
+        "                continue\n"
+        "            fi\n", ""))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "HEARTBEAT_FILE" in out[0].message, \
+        "must FAIL when the beacon branch tears down without reading the heartbeat"
+
+    # Reading the heartbeat and then ignoring it is the shape of a guard that is not one.
+    _launcher_tree(tmp_path, launcher=_GOOD_LAUNCHER.replace(
+        "                continue\n", "                log 'still beating'\n"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "never continues" in out[0].message, \
+        "must FAIL when a fresh beat is measured and then not acted on"
+
+    # No beacon branch at all means the shape has moved; that is a failure, not a pass.
+    _launcher_tree(tmp_path, launcher=_GOOD_LAUNCHER.replace('-f "$QUIT_FILE"', '-f "$OTHER"'))
+    assert fn(tmp_path)[0].level == "FAIL", "a missing beacon branch must not read as OK"
+
+    _launcher_tree(tmp_path, launcher="")
+    assert fn(tmp_path)[0].level == "FAIL", "an empty launcher must not read as OK"
+
+
+def test_launcher_secret_persistence_check_detects_its_absence(tmp_path):
+    fn = checks.check_launcher_persists_session_secret_securely
+    _launcher_tree(tmp_path)
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    perturbations = (
+        ('    if [ -f "$secret_file" ] && [ -s "$secret_file" ]; then',
+         "    if false; then", "never tests for an existing secret file"),
+        ('        POLARIS_SECRET_KEY="$(cat "$secret_file")"',
+         "        POLARIS_SECRET_KEY=generated", "does not read the persisted secret back"),
+        ("""    ( umask 077; printf '%s' "$POLARIS_SECRET_KEY" > "$secret_file" )""",
+         "    :", "never writes the generated secret"),
+    )
+    for old, new, needle in perturbations:
+        _launcher_tree(tmp_path, launcher=_GOOD_LAUNCHER.replace(old, new, 1))
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL" and needle in out[0].message, \
+            "must FAIL with %r when %r becomes %r" % (needle, old[:40], new[:30])
+
+    # The mode is part of the guarantee: /tmp is multi-user.
+    loose = _GOOD_LAUNCHER.replace("( umask 077; printf", "( printf").replace(
+        '    chmod 600 "$secret_file" 2>/dev/null || true\n', "")
+    _launcher_tree(tmp_path, launcher=loose)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "multi-user" in out[0].message, \
+        "must FAIL when the secret file is created world-readable"
+
+    # A hardcoded compose literal makes every install share one signing key.
+    _launcher_tree(tmp_path, compose=_GOOD_COMPOSE.replace(
+        "${POLARIS_SECRET_KEY:-dev-secret-rotate-in-production}", "dev-secret"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "environment" in out[0].message, \
+        "must FAIL when compose hardcodes the key instead of reading the environment"
+
+    _launcher_tree(tmp_path, launcher="")
+    assert fn(tmp_path)[0].level == "FAIL", "an empty launcher must not read as OK"
+
+
+def test_documented_test_citations_check_detects_its_absence(tmp_path):
+    fn = checks.check_documented_test_citations_resolve
+    (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+    suite = tmp_path / "polaris_web" / "test_thing.py"
+    suite.write_text("def test_a_real_guard():\n    assert True\n")
+    doc = tmp_path / "NOTES.md"
+    doc.write_text("Regression-guarded by `test_a_real_guard`.\n")
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    # A suite cited by module name resolves; the documents cite suites that way.
+    doc.write_text("Run `test_thing` before shipping.\n")
+    assert fn(tmp_path)[0].level == "OK", "a test MODULE name must resolve"
+
+    # The v9.55 case: the document keeps the name, the test is gone.
+    doc.write_text("Regression-guarded by `test_a_real_guard`.\n")
+    suite.write_text("def test_something_else():\n    assert True\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "test_a_real_guard" in out[0].message, \
+        "must FAIL and name the citation that resolves to nothing"
+
+    # Point-in-time documents record where something WAS.
+    suite.write_text("def test_a_real_guard():\n    assert True\n")
+    doc.unlink()
+    (tmp_path / "CHANGELOG.md").write_text("v1 removed `test_long_gone`.\n")
+    (tmp_path / "NOTES.md").write_text("Guarded by `test_a_real_guard`.\n")
+    assert fn(tmp_path)[0].level == "OK", "a changelog naming a deleted test is history, not a claim"
+
+    # Anti-vacuity: no citations anywhere means the parser has drifted.
+    (tmp_path / "NOTES.md").write_text("Nothing cited here.\n")
+    (tmp_path / "CHANGELOG.md").unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "drifted" in out[0].message, \
+        "finding no citation at all must FAIL rather than report everything resolves"
+
+    # Anti-vacuity: a tree that defines no tests cannot resolve anything.
+    suite.unlink()
+    (tmp_path / "NOTES.md").write_text("Guarded by `test_a_real_guard`.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no test function is defined" in out[0].message, \
+        "an empty tree must FAIL rather than pass by finding no evidence"

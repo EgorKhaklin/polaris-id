@@ -20004,6 +20004,443 @@ def check_seed_restart_resets_dependent_records(root: pathlib.Path) -> list[Find
                      "the same reload, so no record survives to describe the next life's ids" % reset)
 
 
+# ---------------------------------------------------------------------------
+# The launcher-watch surface. Four guards on it were deleted as collateral in
+# v9.55 and the failure class they covered reached the user again 104 days later.
+# ---------------------------------------------------------------------------
+#: The two files that decide whether a running stack is torn down. The browser half
+#: beats; the launcher half decides what a missing beat means. Neither is product code
+#: and both are read by a person on their first day, which is the whole reason the
+#: teardown bugs were reported as "it will not launch" rather than as a teardown.
+_LAUNCHER_REL = "polaris_mac_launch.sh"
+_HEARTBEAT_REL = "polaris_web/static/heartbeat.js"
+
+
+def _js_code(text: str) -> str:
+    """JavaScript with its comments blanked, line numbers preserved.
+
+    `_read` does not strip `.js`, because `_COMMENT_SYNTAX` has no entry for it and the
+    line-based stripper could not remove a `/* */` block anyway. heartbeat.js keeps the
+    reason its listeners are absent in exactly such a block, naming `pagehide` and
+    `beforeunload` five times, so a check that grepped the file as written would read the
+    explanation of the fix as the bug it describes.
+    """
+    out = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), text, flags=re.DOTALL)
+    # Only after block comments are gone, and never inside a `://`, so a URL survives.
+    return re.sub(r"(?<!:)//[^\n]*", "", out)
+
+
+def _sh_function_body(text: str, fname: str) -> str:
+    """The body of a shell function defined as `name() {` and closed by `}` at column 0.
+
+    Scoped rather than whole-file because the guard this serves is about WHICH branch
+    rotates the session secret, and every string it looks for appears somewhere in a
+    67KB script for some other reason.
+    """
+    m = re.search(r"^%s\s*\(\)\s*\{" % re.escape(fname), text, re.M)
+    if not m:
+        return ""
+    end = re.search(r"^\}", text[m.end():], re.M)
+    return text[m.end():m.end() + end.start()] if end else ""
+
+
+def check_launcher_stale_threshold_survives_tab_throttling(root: pathlib.Path) -> list[Finding]:
+    """The launcher's no-heartbeat teardown threshold is at least 120s, and its header says so.
+
+    Browsers throttle `setInterval` in a hidden tab to about one beat a minute. The default
+    was 45s until v8.51, so switching away from the tab for a minute tore the stack down
+    underneath a working session, which is the "localhost refused to connect" report in
+    DEVNOTES/known-gotchas.md. 120s is two missed beats at the worst-case throttled rate and
+    is the floor; the value is 180.
+
+    The second half is the one that had actually rotted. The script's own WATCH MODE header
+    told the reader the stack comes down when the heartbeat is stale for more than 45
+    seconds: the pre-v8.51 number, still being described to every reader as current four
+    months after the fix removed it. Nothing failed, because no check had ever read that
+    paragraph, and a stale comment is the one form of documentation that cannot be caught by
+    running the thing it documents. So the documented number is compared against the default
+    rather than trusted, and the two move together or this fails.
+    """
+    name = "launcher_stale_threshold"
+    raw = _read_raw(root, _LAUNCHER_REL)
+    if not raw:
+        return _fail(name, "%s is unreadable or empty, so the teardown threshold could not be "
+                           "measured" % _LAUNCHER_REL)
+    m = re.search(r"POLARIS_WATCH_STALE:-(\d+)", raw)
+    if not m:
+        return _fail(name, "%s defines no POLARIS_WATCH_STALE default. The watch loop needs one "
+                           "to decide when a missing heartbeat means the tab is gone"
+                     % _LAUNCHER_REL)
+    default = int(m.group(1))
+    if default < 120:
+        return _fail(name, "POLARIS_WATCH_STALE defaults to %ds. A hidden tab is throttled to "
+                           "about one beat a minute, so anything under 120s (two missed beats) "
+                           "tears the stack down under a session somebody is using, which is "
+                           "what the 45s default did before v8.51" % default)
+    documented = re.findall(r"stale for >(\d+) seconds", raw)
+    if not documented:
+        return _fail(name, "%s no longer states its staleness threshold in the WATCH MODE "
+                           "header. The header is where a reader learns when the stack comes "
+                           "down; if it stops saying, this check stops comparing and the number "
+                           "can drift again" % _LAUNCHER_REL)
+    wrong = [d for d in documented if int(d) != default]
+    if wrong:
+        return _fail(name, "%s tells the reader the heartbeat may be stale for >%ss while the "
+                           "default is %ds. The header said 45 for four months after v8.51 "
+                           "raised it, describing the exact value whose removal was the fix"
+                     % (_LAUNCHER_REL, "s, >".join(wrong), default))
+    return _ok(name, "the launcher tears down after %ds without a heartbeat, at or above the "
+                     "120s floor that survives background-tab throttling, and its WATCH MODE "
+                     "header states the same number rather than the pre-v8.51 45s it described "
+                     "for four months after the fix" % default)
+
+
+def check_heartbeat_beats_on_foreground_return(root: pathlib.Path) -> list[Finding]:
+    """heartbeat.js beats when a tab comes back to the foreground, in code and not in a comment.
+
+    The v8.51 fix is two-sided: the launcher raised its threshold and the page learned to beat
+    the moment it is looked at again, so returning to a throttled tab produces a fresh beat
+    immediately instead of up to a minute later.
+
+    The test this restores asserted `'focus' in body` against the file as written. That passes
+    on a file whose listeners have been commented out and whose rationale block mentions all
+    three event names, which is the state heartbeat.js is one edit away from at all times: its
+    own docstring names `pagehide` and `beforeunload` five times to explain their absence.
+    Comments are stripped and the listener has to be a real `addEventListener` call.
+    """
+    name = "heartbeat_foreground"
+    code = _js_code(_read_raw(root, _HEARTBEAT_REL))
+    if not code.strip():
+        return _fail(name, "%s is unreadable or has no code outside its comments"
+                     % _HEARTBEAT_REL)
+    missing = [ev for ev in ("visibilitychange", "focus", "pageshow")
+               if not re.search(r"addEventListener\s*\(\s*['\"]%s['\"]" % ev, code)]
+    if missing:
+        return _fail(name, "%s wires no addEventListener for %s. Without it a tab throttled to "
+                           "one beat a minute does not beat on return, and the launcher counts "
+                           "the gap toward teardown while the user is looking at the page"
+                     % (_HEARTBEAT_REL, ", ".join(missing)))
+    if "visibilityState" not in code:
+        return _fail(name, "%s listens for visibilitychange but never reads "
+                           "document.visibilityState, so it beats on the way out as well as the "
+                           "way in and the listener is not doing what it was added for"
+                     % _HEARTBEAT_REL)
+    return _ok(name, "heartbeat.js wires visibilitychange, focus and pageshow as real listeners "
+                     "with the comments stripped, and reads document.visibilityState, so a tab "
+                     "returning from background throttling beats at once")
+
+
+def check_heartbeat_does_not_quit_on_navigation(root: pathlib.Path) -> list[Finding]:
+    """heartbeat.js registers no `pagehide` or `beforeunload` listener.
+
+    Both fire on every navigation and not only on tab close, and there is no browser API that
+    separates the two. Until v8.55 they sent a quit beacon, so every click inside the site
+    wrote the quit file and the launcher took the stack down on its next poll: the second
+    "localhost refused to connect" root cause.
+
+    The absence is the guarantee, so this needs an anchor or it would pass against a heartbeat
+    that registers nothing at all. `addEventListener` must appear before the forbidden names
+    are judged absent, which is what makes it fail on an empty file rather than congratulate
+    it.
+    """
+    name = "heartbeat_no_quit_on_nav"
+    code = _js_code(_read_raw(root, _HEARTBEAT_REL))
+    if "addEventListener" not in code:
+        return _fail(name, "%s registers no listeners at all, so 'no quit-on-navigation "
+                           "listener' is true of a file that does nothing. The heartbeat is "
+                           "what keeps the stack up; if it stopped wiring events the teardown "
+                           "is on a timer nobody is resetting" % _HEARTBEAT_REL)
+    found = re.findall(r"addEventListener\s*\(\s*['\"](pagehide|beforeunload)['\"]", code)
+    if found:
+        return _fail(name, "%s registers %s again. Both fire on every in-site navigation, so "
+                           "the quit beacon they were wired to made one click indistinguishable "
+                           "from closing the tab, and the launcher tore the stack down under "
+                           "the click. v8.55 removed them and the file keeps the reason"
+                     % (_HEARTBEAT_REL, " and ".join(sorted(set(found)))))
+    return _ok(name, "heartbeat.js wires listeners and none of them is pagehide or beforeunload, "
+                     "so navigating inside the site cannot be read as closing the tab. Staleness "
+                     "is the sole teardown signal, which is what it was always for")
+
+
+def check_launcher_applies_session_secret_when_already_running(root: pathlib.Path) -> list[Finding]:
+    """Neither already-running branch of the launcher skips establishing the session secret.
+
+    v8.56 made the launcher establish POLARIS_SECRET_KEY per launch, and v8.58 found that both
+    launch paths returned early when the stack was already up, so the call the fix added never
+    ran in the case it was written for.
+
+    What the call MEANS was then reversed. v8.100 persists the secret to the state directory
+    and reuses it, because rotating on every double-click logged the operator out of tabs they
+    still had open. So this is not a guard on invalidation, which is now an explicit operator
+    action (remove the file, then relaunch), and restoring the old test as written would have
+    pinned a decision the tree has already made the other way.
+
+    What survived the reversal is that neither branch may SKIP the call. A container left up
+    from an earlier launch holds whatever key it started with, the state directory lives under
+    /tmp, which macOS reaps, and the compose file carries a literal fallback for anyone who
+    starts it directly: the launcher can hold one key while the container answers with another.
+    Force-recreating only `app` is what moves the established key into the process serving it.
+
+    The test this restores looked for `--force-recreate` anywhere in a 67KB script, true
+    whenever the string exists in any branch for any reason, and then required the literal
+    `v8.58` to appear at least twice: a check on the comments rather than on the code.
+
+    Scoping it to the two FUNCTIONS was not enough either, and the detection test is what said
+    so. launch_docker calls rotate_session_secret_if_unset twice, once in the short-circuit and
+    once on the fresh-start path below it, so deleting the call the fix added left the check
+    green on the strength of the other one. The branch is what has to carry the property: for
+    docker, the text from the already-running marker to the `return` it exits by; for native,
+    the `if native_running` branch, which passes by NOT returning, since falling through to the
+    start path is how that half of v8.58 was fixed.
+    """
+    name = "launcher_secret_on_running"
+    raw = _read_raw(root, _LAUNCHER_REL)
+    problems = []
+    docker = _sh_function_body(raw, "launch_docker")
+    native = _sh_function_body(raw, "launch_native")
+    if not docker:
+        problems.append("launch_docker() is not defined at column 0, so its already-running "
+                        "branch could not be read")
+    else:
+        m = re.search(r"already running", docker, re.I)
+        if not m:
+            problems.append("launch_docker has no already-running branch to check, so either "
+                            "the short-circuit is gone or this check has lost track of it")
+        else:
+            # The branch is the short-circuit: from the marker to the `return` it exits by.
+            tail = docker[m.start():]
+            cut = tail.find("return 0")
+            branch = tail[:cut] if cut != -1 else tail
+            if "rotate_session_secret_if_unset" not in branch:
+                problems.append("launch_docker's already-running branch returns without calling "
+                                "rotate_session_secret_if_unset, which is the v8.58 early return")
+            if "--force-recreate" not in branch:
+                problems.append("launch_docker's already-running branch does not force-recreate "
+                                "the app container, so the established secret never reaches a "
+                                "container still holding the one it started with")
+            if "--no-deps app" not in branch:
+                problems.append("launch_docker's recreate is not scoped to `app` with --no-deps, "
+                                "so a relaunch bounces the database with it")
+    if not native:
+        problems.append("launch_native() is not defined at column 0, so its already-running "
+                        "branch could not be read")
+    else:
+        branch = _sh_if_branch(native, r"if\s+native_running;\s*then")
+        if not branch:
+            problems.append("launch_native has no `if native_running; then` branch, so the path "
+                            "v8.58 fixed could not be read")
+        else:
+            if re.search(r"^\s*return\b", branch, re.M):
+                problems.append("launch_native's already-running branch returns early, which is "
+                                "the v8.58 bug itself: the process keeps the key it started "
+                                "with and the start path below never runs")
+            if "kill" not in branch:
+                problems.append("launch_native's already-running branch does not kill the prior "
+                                "process, so it falls through to a start path that cannot bind "
+                                "and the old process keeps serving")
+    if problems:
+        return _fail(name, "%s; the launcher then reports a session secret that the running "
+                           "container does not have" % "; ".join(problems))
+    return _ok(name, "both launch paths establish the session secret in the already-running "
+                     "branch and the docker path force-recreates only `app`, so a relaunch is "
+                     "not answered by a container holding a different key")
+
+
+def _sh_if_branch(body: str, cond: str) -> str:
+    """The body of a shell `if <cond>; then ... fi`, delimited by the `if`'s own indentation.
+
+    Matching the closing `fi` at a fixed column would make this a rule about formatting: a
+    refactor that moved the branch in or out a level would report the guarantee missing rather
+    than moved. The `fi` that closes an `if` is written at the `if`'s indentation, so that is
+    what ends the branch here.
+    """
+    m = re.search(cond, body)
+    if not m:
+        return ""
+    bol = body.rfind("\n", 0, m.start()) + 1
+    eol = body.find("\n", m.start())
+    line = body[bol:eol if eol != -1 else len(body)]
+    indent = len(line) - len(line.lstrip())
+    out = []
+    for ln in body[eol + 1:].split("\n"):
+        if ln.strip() == "fi" and (len(ln) - len(ln.lstrip())) == indent:
+            return "\n".join(out)
+        out.append(ln)
+    return ""
+
+
+def check_launcher_quit_beacon_defers_to_fresh_heartbeat(root: pathlib.Path) -> list[Finding]:
+    """A quit beacon does not tear the stack down while something is still beating.
+
+    The beacon means "a tab went away", not "the last tab went away", and every tab writes the
+    same file. On 2026-09-15 a beacon 46 seconds old sat beside a heartbeat 6 seconds old and
+    the launcher shut down three seconds after starting; the report was that it would not
+    launch. Closing the second of two tabs, a reload, or a stale tab from the previous session
+    firing as this one came up each did the same thing.
+
+    The fix reads the heartbeat before honouring the beacon. Its commit tested four branches by
+    hand, in isolation, and recorded none of them: the file that would have held the guard had
+    been deleted four months earlier and no replacement home was ever named. That is the
+    fourth bug in this family and the first with no test, which is what this is.
+    """
+    name = "launcher_beacon_vs_heartbeat"
+    raw = _read_raw(root, _LAUNCHER_REL)
+    body = _sh_function_body(raw, "watch_browser_presence")
+    if not body:
+        return _fail(name, "%s defines no watch_browser_presence() at column 0, so the teardown "
+                           "decision could not be read" % _LAUNCHER_REL)
+    branch = _sh_if_branch(body, r"if\s*\[\[\s*-f\s*\"\$QUIT_FILE\"\s*\]\]\s*;\s*then")
+    if not branch:
+        return _fail(name, "the watch loop has no `if [[ -f \"$QUIT_FILE\" ]]` branch, so either "
+                           "the beacon is no longer consulted or this check has lost track of "
+                           "the shape it is reading")
+    if "HEARTBEAT_FILE" not in branch:
+        return _fail(name, "the quit-beacon branch tears down without reading HEARTBEAT_FILE, "
+                           "so one closed tab kills a session another tab is using. That is the "
+                           "2026-09-15 report: a beacon 46s old beside a heartbeat 6s old, and "
+                           "the stack down three seconds after it came up")
+    if not re.search(r"\bcontinue\b", branch):
+        return _fail(name, "the quit-beacon branch reads the heartbeat but never continues the "
+                           "loop, so a fresh beat is measured and then ignored. Reading a value "
+                           "the decision does not use is the shape of a guard that is not one")
+    return _ok(name, "the quit-beacon branch reads HEARTBEAT_FILE and continues the watch loop "
+                     "when a tab is still beating, so the beacon means a tab went away and "
+                     "staleness is what decides the last one is gone")
+
+
+def check_launcher_persists_session_secret_securely(root: pathlib.Path) -> list[Finding]:
+    """The launcher's session secret is reused from disk, written owner-only, and reaches compose.
+
+    v8.100 replaced rotate-every-launch with persist-and-reuse, because a double-click that
+    generated a fresh key logged the operator out of every tab they still had open: the report
+    was "sometimes I'm logged in, sometimes I'm at /login", with nothing on screen connecting
+    it to the launcher. Reuse is the behaviour now and the rotation it replaced is an operator
+    action: remove the file, then relaunch.
+
+    Reuse means the key is at rest in a file, and the default state directory is under /tmp,
+    which is multi-user on macOS. So the mode is part of the guarantee and not a detail: a
+    world-readable Flask session key lets any local account mint a session cookie the
+    application will accept.
+
+    The last clause is the one that is invisible from the launcher. docker-compose.yml carries
+    a literal fallback so the stack can be started directly, and if that literal were the value
+    the service actually read, every install would share one published signing key and none of
+    the work above would matter. It has to arrive through the environment.
+    """
+    name = "launcher_secret_persistence"
+    raw = _read_raw(root, _LAUNCHER_REL)
+    body = _sh_function_body(raw, "rotate_session_secret_if_unset")
+    if not body:
+        return _fail(name, "%s defines no rotate_session_secret_if_unset() at column 0, so the "
+                           "session key's handling could not be read" % _LAUNCHER_REL)
+    problems = []
+    if not re.search(r'-f\s+"\$secret_file"', body):
+        problems.append("the helper never tests for an existing secret file, so it cannot be "
+                        "reusing one and every launch invalidates the operator's open tabs")
+    if not re.search(r'POLARIS_SECRET_KEY="\$\(cat\s+"\$secret_file"\)"', body):
+        problems.append("the helper does not read the persisted secret back, so the file is "
+                        "written and never used")
+    if not re.search(r'>\s*"\$secret_file"', body):
+        problems.append("the helper never writes the generated secret, so there is nothing to "
+                        "reuse on the next launch")
+    if "umask 077" not in body and "chmod 600" not in body:
+        problems.append("the secret file is created without umask 077 or chmod 600. The "
+                        "default state directory is under /tmp, which is multi-user on macOS, "
+                        "and a readable Flask session key is a forgeable session")
+    compose = _read_raw(root, "polaris_web/docker-compose.yml")
+    if not compose:
+        problems.append("polaris_web/docker-compose.yml is unreadable, so it could not be "
+                        "shown to take the secret from the environment")
+    elif "${POLARIS_SECRET_KEY" not in compose:
+        problems.append("docker-compose.yml does not read POLARIS_SECRET_KEY from the "
+                        "environment, so the container signs sessions with a literal committed "
+                        "to the repository and the launcher's key never reaches it")
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name, "the launcher reuses a persisted session secret, creates it owner-only "
+                     "(umask 077 or chmod 600, since the state directory is under multi-user "
+                     "/tmp), and docker-compose.yml takes the value from the environment rather "
+                     "than the literal it falls back to")
+
+
+#: Backticked `test_*` names in live documents that are NOT citations of a test.
+#: An entry here is a claim that the document is naming a PATTERN, and the reason has to
+#: say why a reader would not go looking for it.
+_TEST_NAMES_THAT_ARE_NOT_CITATIONS = {
+    "test_snake_case_descriptor":
+        "docs/CONVENTIONS.md gives it as the SHAPE a test name takes, in a sentence about "
+        "naming; no reader takes it for a test that exists",
+}
+
+
+def check_documented_test_citations_resolve(root: pathlib.Path) -> list[Finding]:
+    """Every backticked `test_*` name in a live document is a test or a suite that exists.
+
+    check_no_citations_to_deleted_apparatus exists because v9.55 deleted the apparatus and 46
+    references across 24 live files still cited it 397 versions later. It enforces that over
+    deleted DOCUMENTS. The same commit deleted test_structural_invariants.py, and four real
+    guards on the launcher-watch surface were living inside 16,646 lines of mythology and went
+    out with it.
+
+    DEVNOTES/known-gotchas.md still told an operator to run three of them by name, and called
+    the family the canonical guard against the whole class. Nothing failed: the link check
+    resolves paths and these are bare names, check_documented_symbols_resolve reads the
+    `file.py::symbol` form and these carry no file. The class recurred on 2026-09-15 and the
+    fix added no test, because the surface no longer had a home for one.
+
+    A name resolves if the tree defines it or if a test module is named for it, since the
+    documents cite suites that way throughout: CLAUDE.md lists test_pqc_signing and
+    test_custody as modules. Point-in-time documents are excluded for the same reason as the
+    sibling check, and the one name in the tree that is a pattern rather than a citation is
+    listed above with its reason.
+    """
+    name = "documented_test_citations"
+    defined: set = set()
+    modules: set = set()
+    for p in root.rglob("*.py"):
+        s = str(p)
+        if any(x in s for x in ("/.git/", "/venv/", "/node_modules/", "__pycache__", "/archive/")):
+            continue
+        if p.stem.startswith("test_"):
+            modules.add(p.stem)
+        defined.update(re.findall(r"def\s+(test_\w+)", _read_path(p)))
+    if not defined:
+        return _fail(name, "no test function is defined anywhere in the tree, so every citation "
+                           "would resolve against nothing and this check would pass by finding "
+                           "no evidence")
+
+    unresolved, cited = [], 0
+    for md in sorted(root.rglob("*.md")):
+        rel = md.relative_to(root).as_posix()
+        if any(x in str(md) for x in ("/.git/", "/archive/", "/node_modules/")):
+            continue
+        if any(rel.startswith(x) or rel == x for x in _POINT_IN_TIME_DOCS):
+            continue
+        text = _read_raw(root, rel)
+        for m in re.finditer(r"`(test_[a-z0-9_]+)`", text):
+            nm = m.group(1)
+            if nm in _TEST_NAMES_THAT_ARE_NOT_CITATIONS:
+                continue
+            cited += 1
+            if nm in defined or nm in modules:
+                continue
+            unresolved.append("%s:%d cites %s" % (rel, text[:m.start()].count("\n") + 1, nm))
+    if cited == 0:
+        return _fail(name, "no backticked test name was found in any live document. The README, "
+                           "CONTRIBUTING and CLAUDE.md all cite suites that way, so finding "
+                           "none means the parser has drifted and this measured nothing")
+    if unresolved:
+        return _fail(name, "%d document citation(s) name a test that does not exist: %s. A test "
+                           "cited by a name nothing defines reads exactly like a guard that is "
+                           "there, and sends the person checking after something that was "
+                           "deleted" % (len(unresolved), "; ".join(unresolved[:6])))
+    return _ok(name, "all %d backticked test names in the live documents resolve to a test the "
+                     "tree defines or a suite it is named for. The four that did not were guards "
+                     "on the launcher-watch surface, deleted as collateral with 16,646 lines of "
+                     "apparatus in v9.55 and still cited as the canonical guard 104 days after "
+                     "the class they covered came back" % cited)
+
+
 #: Checks that CORRECTLY pass when there is nothing to look at, each with the reason.
 #:
 #: Every other check must FAIL against a copy of the tree in which every file is present and
@@ -21294,6 +21731,13 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_duress_is_indistinguishable,
     check_authority_creation_is_recorded,
     check_operator_accounts_are_recorded,
+    check_launcher_stale_threshold_survives_tab_throttling,
+    check_heartbeat_beats_on_foreground_return,
+    check_heartbeat_does_not_quit_on_navigation,
+    check_launcher_applies_session_secret_when_already_running,
+    check_launcher_quit_beacon_defers_to_fresh_heartbeat,
+    check_launcher_persists_session_secret_securely,
+    check_documented_test_citations_resolve,
 ]
 
 

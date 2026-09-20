@@ -116,7 +116,7 @@ commitments (otherwise commitments themselves cluster events from a
 holder). If a buggy or coerced implementation produces deterministic
 per-holder commitments, the privacy claim degrades immediately.
 
-**Test:** `test_proof_commitments_are_unique_per_event`, across all
+**Test:** `test_proof_commitments_are_unique_per_zk_event`, across all
 sample data, no two ZK events share a commitment. A regression
 breaks this test.
 
@@ -177,7 +177,7 @@ on the population, given the row's observable non-holder columns.
 | Test | What it asserts | Ref |
 |---|---|---|
 | `test_zk_only_sequence_resists_reconstruction` | Adversary success rate on ZK-only events ≤ baseline + slack | §4 |
-| `test_proof_commitments_are_unique_per_event` | S4 mitigation in force in sample data | §3 S4 |
+| `test_proof_commitments_are_unique_per_zk_event` | S4 mitigation in force in sample data | §3 S4 |
 | `test_temporal_correlation_breaks_redaction` | CE-1 succeeds (documented limitation) | §5 |
 | `test_spatial_uniqueness_breaks_redaction` | CE-2 succeeds (documented limitation) | §5 |
 | `test_isolated_zk_event_has_no_holder_reference` | C2 + the absence of `individual_id` columns | §2 |

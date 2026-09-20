@@ -47,7 +47,7 @@
 #      tears the stack down automatically when:
 #        - You close the Polaris browser tab/window
 #        - You press Ctrl+C in this terminal
-#        - The heartbeat goes stale for >45 seconds (browser crash / network)
+#        - The heartbeat goes stale for >180 seconds (browser crash / network)
 #      Pass --detach to skip the watcher and run in the background as before.
 #
 #  DOUBLE-CLICK LAUNCH (no terminal commands)
