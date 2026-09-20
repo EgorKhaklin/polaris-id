@@ -176,6 +176,66 @@ class RefusalsTests(unittest.TestCase):
                 self.assertFalse(v["checked"])
 
 
+class HostileJsonTests(unittest.TestCase):
+    """`decide` says "Total on hostile input" on its first line. Hold it to that.
+
+    2026-09-19: this module was promoted out of lab/ into a published package without the
+    bounds `sdjwt.py` next door had carried since 2026-09-17, and a token nesting 20,000
+    objects deep raised RecursionError straight out of it. RecursionError is not a
+    ValueError, so the `except (ValueError, UnicodeDecodeError)` around the parse never saw
+    it. The body is fetched from a URI named in somebody else's credential, so it is exactly
+    the input an attacker controls.
+
+    Each case asserts the call RETURNED, not merely that it refused: a raise is the defect,
+    and a test that only checked the verdict would error out rather than fail informatively.
+    """
+
+    def _decide(self, payload_text):
+        tok = ".".join([b64u(json.dumps({"alg": "ES256", "typ": "statuslist+jwt"})),
+                        b64u(payload_text), b64u(b"sig")])
+        return decide(tok, issuer_key_verify=accept)
+
+    def test_deep_nesting_is_refused_rather_than_raised(self):
+        """Nested ARRAYS, two bytes a level, so this isolates the depth bound.
+
+        Written first with `{"a":` nesting, which costs six bytes a level: at 20,000 levels
+        that is 120 KB and the SIZE bound refused it, so removing the depth bound changed
+        nothing and the test did not notice. Third time in one day a test passed because a
+        different mechanism satisfied it. Two bytes a level keeps 30,000 levels inside the
+        64 KiB budget, where only the depth bound can refuse it.
+        """
+        for depth in (10_000, 30_000):
+            with self.subTest(depth=depth):
+                text = "[" * depth + "]" * depth
+                self.assertLess(len(text), S.MAX_JSON_BYTES,
+                                "the fixture must stay under the size bound or it tests that "
+                                "bound instead of this one")
+                try:
+                    v = self._decide(text)
+                except RecursionError:
+                    self.fail("nesting %d levels raised RecursionError out of a function "
+                              "documented never to raise" % depth)
+                self.assertFalse(v["checked"])
+
+    def test_the_bare_json_constants_are_refused_at_the_door(self):
+        """NaN and Infinity are floats, so they walk past isinstance(x, (int, float))."""
+        for literal in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(literal=literal):
+                v = self._decide('{"sub":"%s","iat":%s}' % (URI, literal))
+                self.assertFalse(v["checked"])
+                self.assertEqual(v["code"], "malformed")
+
+    def test_an_oversized_json_document_is_refused(self):
+        v = self._decide(json.dumps({"sub": URI, "pad": "A" * (200 * 1024)}))
+        self.assertFalse(v["checked"])
+        self.assertEqual(v["code"], "malformed")
+
+    def test_a_normal_token_is_not_caught_by_the_bounds(self):
+        """The positive control for this class: the bounds must not refuse real tokens."""
+        v = decide(token(payload()), issuer_key_verify=accept)
+        self.assertTrue(v["checked"], v["reason"])
+
+
 class RollbackTests(unittest.TestCase):
     """A stale but unexpired list un-revokes a credential, and only age can show it."""
 

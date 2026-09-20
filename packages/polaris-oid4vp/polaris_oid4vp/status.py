@@ -64,6 +64,71 @@ MAX_DECOMPRESSED_BYTES = 8 * 1024 * 1024
 #: The token itself is a JWT fetched from a URI. Same reasoning, smaller number.
 MAX_TOKEN_BYTES = 2 * 1024 * 1024
 
+#: The bounds `json.loads` has none of. `sdjwt.py` next door learned this on 2026-09-17:
+#: 2,780 bytes of `[[[[...]]]]` raised RecursionError straight out of a verifier documented
+#: never to raise, and RecursionError is not a ValueError, so every `except ValueError`
+#: missed it. This module was promoted out of lab/ on 2026-09-19 WITHOUT that lesson and had
+#: the same defect from its first minute in a published package: a status list token nesting
+#: 20,000 objects deep raised out of `decide`, which says "Total on hostile input" on its
+#: first line.
+#:
+#: Catching RecursionError would be the wrong repair, for the reason recorded beside the
+#: sibling: it fires at an arbitrary point depending on how much stack the caller already
+#: used, so the same input is accepted from one call site and raises from another, and an
+#: interpreter that has just unwound a stack overflow is not where security decisions should
+#: be made. Refusing the SHAPE before parsing is deterministic.
+#:
+#: A status list token is two small JSON documents and a compressed array. 64 KiB and 64
+#: levels are far past anything honest.
+MAX_JSON_BYTES = 64 * 1024
+MAX_JSON_DEPTH = 64
+
+
+def _nesting_depth(text):
+    """The deepest bracket nesting in a JSON document, ignoring brackets inside strings.
+
+    A linear scan, so it costs nothing next to the parse it guards.
+    """
+    depth = maximum = 0
+    in_string = escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+            if depth > maximum:
+                maximum = depth
+        elif ch in "]}":
+            depth -= 1
+    return maximum
+
+
+def _json_bounded(raw, what):
+    """`json.loads` with the three bounds it has none of: size, depth and bare constants."""
+    if len(raw) > MAX_JSON_BYTES:
+        raise ValueError("the %s is %d bytes, over the %d byte limit"
+                         % (what, len(raw), MAX_JSON_BYTES))
+    text = raw.decode("utf-8", "strict") if isinstance(raw, bytes) else raw
+    if _nesting_depth(text) > MAX_JSON_DEPTH:
+        raise ValueError("the %s nests deeper than %d levels" % (what, MAX_JSON_DEPTH))
+
+    # Python's json accepts the bare literals NaN, Infinity and -Infinity, and they are
+    # floats, so they walk past `isinstance(x, (int, float))` downstream. Every numeric
+    # field here requires a bare `int` and would refuse them anyway, which is exactly why
+    # they are refused at the door instead: a defence that depends on every downstream
+    # guard staying right is one field away from not being a defence.
+    def _no_constants(literal):
+        raise ValueError("the %s contains the non-JSON literal %s" % (what, literal))
+    return json.loads(text, parse_constant=_no_constants)
+
 
 class Verdict(dict):
     """A dict, so callers can treat it as data, with the two questions kept apart."""
@@ -234,8 +299,8 @@ def decide(token, *, index, expected_uri, authority, now, credential_issuer=None
     if len(parts) != 3:
         return _refuse("malformed", "the status list token is not a compact JWS of three parts")
     try:
-        header = json.loads(_b64u(parts[0], "the header"))
-        payload = json.loads(_b64u(parts[1], "the payload"))
+        header = _json_bounded(_b64u(parts[0], "the header"), "header")
+        payload = _json_bounded(_b64u(parts[1], "the payload"), "payload")
         signature = _b64u(parts[2], "the signature")
     except (ValueError, UnicodeDecodeError) as exc:
         return _refuse("malformed", "the status list token does not parse: %s" % exc)

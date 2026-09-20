@@ -60,8 +60,8 @@ rather than a wire format. So this means inventing a format, which drops ecosyst
 and raises maintenance and lock-in. It is not the credential-format mistake the mandate warns
 about, since such a policy is private between an issuer and its own verifiers and asks nobody
 to migrate, but the payoff estimate has to carry the invention cost honestly. Note that
-`lab/strategy/status_list.py` now holds the freshness, staleness and rollback machinery such
-an artifact needs, so the cost is lower than it was before record 001.
+`packages/polaris-oid4vp/polaris_oid4vp/status.py` now holds the freshness, staleness and
+rollback machinery such an artifact needs, so the cost is lower than it was before record 001.
 
 ## What a record does not do
 

@@ -22,10 +22,23 @@ import os
 import sys
 import zlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from status_list import (INVALID, MAX_DECOMPRESSED_BYTES, SAME_KEY, STATED,  # noqa: E402
-                         SUSPENDED, UNREACHABLE, VALID, StatedAuthority, decide,
-                         decide_by_fetching, encode_status_list, status_at)
+# THE ADVERSARIES ATTACK THE SHIPPED CODE, not a copy of it.
+#
+# This file was written against lab/strategy/status_list.py, which was then promoted into
+# packages/polaris-oid4vp as `status.py`. Two copies of a security decision function is how
+# the two stop agreeing, and it showed within hours: the promoted copy was given JSON size,
+# depth and bare-constant bounds after a 30,000-level nesting raised RecursionError out of a
+# function documented "Total on hostile input", and the lab copy would have kept the defect
+# while its own adversaries reported all clear.
+#
+# So the lab module is gone and this points at the package. The adversaries are stronger for
+# it: they now attack what a relying party installs rather than what the research used.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))), "packages", "polaris-oid4vp"))
+from polaris_oid4vp.status import (INVALID, MAX_DECOMPRESSED_BYTES,  # noqa: E402
+                                   SAME_KEY, STATED, SUSPENDED, UNREACHABLE, VALID,
+                                   StatedAuthority, decide, decide_by_fetching,
+                                   encode_status_list, status_at)
 
 NOW = 1_800_000_000
 URI = "https://issuer.example/statuslists/1"
@@ -474,6 +487,53 @@ def a_fetch_path_positive_control():
     return False, "a fetched list reads back its published INVALID, so the refusals mean something"
 
 
+
+def a_deep_json_raises_out_of_a_total_function():
+    """`decide` says "Total on hostile input". A raise is the defect, not a refusal.
+
+    Found 2026-09-19 by asking what the sibling module next door protects against that this
+    one does not. `sdjwt.py` bounds JSON size, nesting depth and the bare constants; this was
+    promoted into a published package without any of the three, and 30,000 nested arrays
+    raised RecursionError. RecursionError is not a ValueError, so the except around the parse
+    never saw it, and a verifier that dies on one credential has failed open for every other
+    credential in the queue.
+
+    Nested ARRAYS, two bytes a level, so this stays inside the size bound and can only be
+    refused by the DEPTH bound.
+    """
+    for depth in (10_000, 30_000):
+        text = "[" * depth + "]" * depth
+        tok = ".".join([b64u(json.dumps({"alg": "ES256", "typ": "statuslist+jwt"})),
+                        b64u(text), b64u(b"sig")])
+        try:
+            v = decide(tok, index=1, expected_uri=URI, credential_issuer=ISSUER,
+                       authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
+        except RecursionError:
+            return True, ("%d nested arrays raised RecursionError out of a function "
+                          "documented total on hostile input" % depth)
+        except Exception as exc:
+            return True, "%d nested arrays raised %s" % (depth, type(exc).__name__)
+        if v["checked"]:
+            return True, "%d nested arrays produced a status" % depth
+    return False, "10k and 30k nested arrays are refused by the depth bound, neither raises"
+
+
+def a_bare_json_constants_reach_a_numeric_field():
+    """NaN and Infinity are floats and walk past isinstance(x, (int, float))."""
+    for literal in ("NaN", "Infinity", "-Infinity"):
+        body = '{"sub":"%s","iat":%s,"exp":%s}' % (URI, literal, NOW + 3600)
+        tok = ".".join([b64u(json.dumps({"alg": "ES256", "typ": "statuslist+jwt"})),
+                        b64u(body), b64u(b"sig")])
+        try:
+            v = decide(tok, index=1, expected_uri=URI, credential_issuer=ISSUER,
+                       authority=AUTHORITY, issuer_key_verify=accept_all, now=NOW)
+        except Exception as exc:
+            return True, "%s raised %s" % (literal, type(exc).__name__)
+        if v["checked"]:
+            return True, "a token whose iat is %s produced a status" % literal
+    return False, "NaN, Infinity and -Infinity are refused before any numeric guard sees them"
+
+
 ATTACKS = [
     ("bit_order_reversed", a_bit_order_reversed),
     ("index_past_the_end", a_index_past_the_end),
@@ -497,6 +557,8 @@ ATTACKS = [
     ("fetch_before_authority", a_fetch_before_authority),
     ("unreachable_same_as_no_list", a_fetch_failure_indistinguishable_from_no_list),
     ("fetched_list_skips_the_checks", a_fetched_list_skips_the_checks),
+    ("deep_json_raises", a_deep_json_raises_out_of_a_total_function),
+    ("bare_json_constants", a_bare_json_constants_reach_a_numeric_field),
 ]
 
 

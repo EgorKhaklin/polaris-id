@@ -205,7 +205,10 @@ decide whether the semantics are worth having. Record what was learned here eith
 the `status` claim is protected and unread; the verdict has no revocation field.
 
 **2026-09-19, smallest useful version built and attacked.** `status_list.py`, about 200 lines,
-pure, socket-free, standard library only. `attack_status_list.py` holds eleven adversaries
+pure, socket-free, standard library only. (It was promoted into
+`packages/polaris-oid4vp/polaris_oid4vp/status.py` later the same day and the lab copy
+deleted; the adversaries now attack the shipped module, for the reason at the end of this
+record.) `attack_status_list.py` holds eleven adversaries
 behind a positive control, because a decision function that refuses everything satisfies every
 refusal test while establishing nothing.
 

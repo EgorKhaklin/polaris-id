@@ -11,6 +11,45 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.7 — 2026-09-19 (total on hostile input, this time actually)
+
+CORE-BUG against rc.5. Externally observable. One package: `polaris-oid4vp`. Nothing is
+published.
+
+`status.py`'s `decide` says "Total on hostile input" on its first line and raised
+`RecursionError` on a status list token nesting 30,000 arrays. `RecursionError` is not a
+`ValueError`, so the `except (ValueError, UnicodeDecodeError)` around the parse never saw it.
+The body is fetched from a URI named inside somebody else's credential, which is exactly the
+input an attacker controls, and a verifier that dies on one credential has failed open for
+every other credential in the queue.
+
+**`sdjwt.py`, in the same package, has bounded JSON size, nesting depth and the bare constants
+since 2026-09-17**, after 2,780 bytes of `[[[[...]]]]` raised out of it for the same reason.
+I promoted this module out of `lab/` into a published package without carrying that lesson
+across, so it shipped in rc.5 with a defect its sibling had already fixed. Found by asking
+what the file next door protects against that this one does not.
+
+`_json_bounded` now applies all three: 64 KiB, 64 levels, and `parse_constant` refusing NaN
+and Infinity. Refusing the shape before parsing rather than catching `RecursionError`, because
+that fires at a point depending on how much stack the caller already used, so the same input
+is accepted from one call site and raises from another.
+
+**Two copies of a security decision function is how they stop agreeing**, and it nearly
+happened inside a day: the lab original would have kept the defect while its own adversaries
+reported all clear. The lab copy is deleted and its 24 adversaries now import from the
+package, so they attack what a relying party installs.
+
+244 tests across seven suites; four mutations confirm each bound. One of those four found a
+weak test rather than weak code: the first depth fixture used `{"a":` nesting at six bytes a
+level, so 20,000 levels was 120 KB and the SIZE bound refused it. Removing the depth bound
+changed nothing and the test did not notice. Nested arrays at two bytes a level keep 30,000
+levels inside the size budget, where only the depth bound can refuse them.
+
+That is the third time in one day a test passed because a mechanism other than the one it
+named satisfied it.
+
+---
+
 ## v1.0.0-rc.6 — 2026-09-19 (the capability rc.5 shipped, reachable from the thing you use)
 
 A correction to rc.5, as a later entry rather than an edit to it. Externally observable. One
