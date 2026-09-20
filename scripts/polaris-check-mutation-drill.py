@@ -494,6 +494,7 @@ def main():
 
     survived, mutated, skipped_opaque, skipped_nothing = [], 0, 0, 0
     nothing_to_mutate: list[str] = []
+    no_named_input: list[str] = []
     unmutable_suffix: list = []
     no_line_matched: list[str] = []
     work = pathlib.Path("/tmp/polaris-mutation-run")
@@ -510,7 +511,17 @@ def main():
             if d.is_dir():
                 files += [str(f.relative_to(ROOT)) for f in sorted(d.glob(pattern))
                           if f.is_file()]
-        if not files or not (needles or patterns):
+        if not files:
+            # Has something to search for, and nowhere this harness can name to search it.
+            # Reported apart from the no-needle case because they are different problems:
+            # one is a check asserting through something unparseable, the other is a check
+            # whose inputs are a glob or a computed path. check_source_path_citations_resolve
+            # walks every .py file in the tree, so it is the second, and calling that "no
+            # literal needle and no literal pattern" would be false of a check that has one.
+            skipped_nothing += 1
+            no_named_input.append(fn.name)
+            continue
+        if not (needles or patterns):
             skipped_nothing += 1
             nothing_to_mutate.append(fn.name)
             continue
@@ -663,6 +674,12 @@ def main():
             print("      [%d] nothing to search for: no literal needle and no literal pattern."
                   % len(nothing_to_mutate))
             for nm in sorted(nothing_to_mutate)[:6]:
+                print("            %s" % nm)
+        if no_named_input:
+            print("      [%d] something to search for, and no file this harness can name to"
+                  % len(no_named_input))
+            print("            search it in: the inputs are a glob or a computed path.")
+            for nm in sorted(no_named_input)[:6]:
                 print("            %s" % nm)
         if unmutable_suffix:
             # Split by whether the DOCUMENT pass below reaches them. Printing one total here
