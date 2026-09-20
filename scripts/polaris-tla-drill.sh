@@ -61,6 +61,20 @@ if [[ ! -f "$JAR" ]]; then
     done
 fi
 
+# Say which bytes are doing the checking. The VERSION is pinned (check_tla_specs holds it,
+# on the grounds that an unpinned checker is one whose semantics can change under the claim
+# it is being used to support) and the BYTES are not: a release asset can be re-uploaded
+# under the same tag. Printing the digest is what turns that into a decision somebody can
+# make, because the open question is whether a CI runner fetches the same artifact this
+# machine holds, and one run answers it. Printed, not enforced: pinning a hash that has only
+# ever been observed here would fail the build on the first legitimate difference, and there
+# would be no way to tell that from an attack.
+if command -v shasum >/dev/null 2>&1; then
+    echo "tla2tools ${TLA_VERSION}: sha256 $(shasum -a 256 "$JAR" | cut -d' ' -f1)"
+elif command -v sha256sum >/dev/null 2>&1; then
+    echo "tla2tools ${TLA_VERSION}: sha256 $(sha256sum "$JAR" | cut -d' ' -f1)"
+fi
+
 POLARIS_TLA_JAR="$JAR" POLARIS_JAVA="$JAVA" \
     "${POLARIS_TEST_PYTHON:-$(command -v python3.12 || command -v python3)}" \
     "$ROOT/scripts/polaris-tla-drill.py"
