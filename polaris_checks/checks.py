@@ -3089,6 +3089,26 @@ def check_c4_atomic_failed_login(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # C8 — /api/atlas/* result sets are bounded by hard caps.
 # ---------------------------------------------------------------------------
+#: Atlas query parameters a caller can use to SIZE a response, which is what C8 bounds.
+#:
+#: This was a regex literal until 2026-09-20 and `grid` was not in it, so
+#: `float(request.args.get('grid', '5'))` on /api/atlas/clusters was read by nothing here.
+#: It is clamped, twice over (the route refuses a grid outside (0, 90] and the query carries
+#: LIMIT _ATLAS_MAX_CLUSTERS), so C8 held. What did not hold was the sentence this check
+#: prints, which counts "all N caller-controlled counts across the atlas routes" over
+#: whichever names somebody thought of.
+_ATLAS_COUNT_PARAMS = ("buckets", "limit", "n", "top", "max", "count", "size", "per_page",
+                       "grid")
+
+#: Numeric atlas parameters that do NOT size a response, each with the reason. An entry here
+#: is a claim that a caller cannot grow a result set with it, and it has to be defensible:
+#: the list above is the safe default and this one is the exception.
+_ATLAS_NOT_COUNTS = {
+    "individual_id": "an identifier. It selects the rows belonging to one person, and "
+                     "choosing a different value cannot make that set larger",
+}
+
+
 def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
     app = _read_app(root)
     # v9.248: the analytical console added a bounded categorical roll-up; its
@@ -3116,7 +3136,8 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
     if not starts:
         return _fail("c8_atlas_caps", "no /api/atlas routes found in polaris_web/, so C8 has "
                                       "nothing to be true of")
-    countish = re.compile(r"request\.args\.get\(\s*['\"](buckets|limit|n|top|max|count|size|per_page)['\"]")
+    countish = re.compile(r"request\.args\.get\(\s*['\"](%s)['\"]"
+                          % "|".join(_ATLAS_COUNT_PARAMS))
     unclamped = []
     checked = 0
     for n, (i, route) in enumerate(starts):
@@ -3164,6 +3185,25 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
                     % (v, cap, cap, v, v, cap), body))
             if not clamped:
                 unclamped.append("%s?%s=" % (route, param))
+
+    # A name list is a heuristic for "sizes a result set", and a heuristic that silently
+    # skips a name it was not told about reports coverage it does not have. So a numeric
+    # parameter on an atlas route that appears in NEITHER list fails this check until
+    # somebody classifies it. `grid` sat outside the list from the day it was added; the
+    # next one should not be found by reading the file.
+    atlas_src = "\n".join(
+        "\n".join(lines[i:(starts[n + 1][0] if n + 1 < len(starts) else min(i + 160, len(lines)))])
+        for n, (i, _route) in enumerate(starts))
+    numeric = set(re.findall(r"(?:int|float)\(\s*request\.args\.get\(\s*['\"](\w+)['\"]",
+                             atlas_src))
+    unclassified = sorted(numeric - set(_ATLAS_COUNT_PARAMS) - set(_ATLAS_NOT_COUNTS))
+    if unclassified:
+        return _fail("c8_atlas_caps",
+                     "atlas route(s) read a NUMERIC caller-controlled parameter this check "
+                     "has never been told about: %s. Add it to _ATLAS_COUNT_PARAMS if a "
+                     "caller can size a response with it, so C8 bounds it, or to "
+                     "_ATLAS_NOT_COUNTS with the reason it cannot"
+                     % ", ".join(unclassified))
     if unclamped:
         return _fail("c8_atlas_caps",
                      "atlas route(s) read a caller-controlled count and never clamp it: "

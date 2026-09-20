@@ -18456,3 +18456,51 @@ def test_package_readme_version_check_detects_its_absence(tmp_path):
             f.unlink()
     out = fn(tmp_path)
     assert out[0].level == "FAIL", "an empty tree must not read as four agreeing READMEs"
+
+
+def test_c8_refuses_a_numeric_parameter_it_was_never_told_about(tmp_path):
+    """The parameter list is a heuristic; one that silently skips an unknown name reports
+    coverage it does not have.
+
+    `grid` was read as a float on /api/atlas/clusters and matched by nothing in this check
+    until 2026-09-20. It was clamped, twice over, so C8 held. What did not hold was the
+    sentence the check prints, which counts every caller-controlled count across the atlas
+    routes over whichever names somebody had thought of. A new one now has to be classified.
+    """
+    fn = checks.check_c8_atlas_caps
+    CONSTS = ("_ATLAS_MAX_CLUSTERS=5000\n_ATLAS_MAX_POINTS=2000\n_ATLAS_MAX_EVENTS=500\n"
+              "_ATLAS_MAX_CATEGORIES=50\n_ATLAS_MAX_REGIONS=200\n")
+
+    def write(body):
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web" / "app.py").write_text(CONSTS + body)
+
+    CLAMPED = ("@app.route('/api/atlas/series')\n"
+               "def atlas_series():\n"
+               "    buckets = int(request.args.get('buckets', '60'))\n"
+               "    if buckets <= 0 or buckets > 240:\n"
+               "        raise ValueError('out of range')\n")
+    write(CLAMPED)
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    # A numeric parameter in neither list. Clamped or not is beside the point: the check
+    # cannot know which kind it is, and guessing is what this refuses.
+    write(CLAMPED + "    cells = int(request.args.get('cells', '10'))\n"
+                    "    cells = min(cells, 5000)\n")
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "cells" in out.message, \
+        "an unclassified numeric parameter must FAIL even when it happens to be clamped"
+
+    # A known count still behaves as before: read and unbounded is the C8 failure.
+    write("@app.route('/api/atlas/series')\n"
+          "def atlas_series():\n"
+          "    buckets = int(request.args.get('buckets', '60'))\n"
+          "    return buckets\n")
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "never clamp" in out.message, \
+        "the original unclamped-count failure must still fire"
+
+    # An identifier is numeric and does not size a response; the declared exception holds.
+    write(CLAMPED + "    who = int(request.args.get('individual_id', ''))\n")
+    assert fn(tmp_path)[0].level == "OK", \
+        "a parameter declared in _ATLAS_NOT_COUNTS must not be demanded a cap"
