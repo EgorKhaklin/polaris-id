@@ -799,6 +799,29 @@ FLAKE_SIGNATURES = [
      "(then `docker compose config` returned nothing transiently on the runner) and rerun "
      "the failed jobs. If the boot step did not list app-green, the overlay really is "
      "missing and POLARIS_COMPOSE_EXTRA is the thing to check"),
+    # 2026-09-20, run 35510591888: the Linux server install job died with exit 35 on a commit
+    # that touched one drill script and nothing that job runs. The line underneath was
+    # `curl: (35) OpenSSL SSL_connect: Connection reset by peer in connection to
+    # download.docker.com:443`, inside the Rocky Linux package stage. A third-party CDN reset
+    # a TLS connection mid-fetch; there is nothing in the tree to fix and the next run gets a
+    # different socket.
+    #
+    # Matched on curl's own error PREFIX plus a transient message, never on the host. Scoping
+    # this to download.docker.com would repeat the mistake the alpine-apk entry above records:
+    # that signature was written for the one image somebody was looking at, and an identical
+    # failure in a sibling image came back as "investigate" and cost a second hand
+    # investigation. Every package stage in this tree fetches over curl from somewhere.
+    #
+    # The transient codes only. `curl: (22)` is an HTTP 4xx with --fail, which is a URL that
+    # moved or a credential that expired: a real failure that reruns forever, and it does not
+    # print any of these messages.
+    ("package-cdn-network",
+     r"curl: \(\d+\) (?:OpenSSL SSL_connect|SSL connection timeout|Recv failure|"
+     r"Send failure|Failed to connect|Could not resolve host|Empty reply from server|"
+     r"Operation timed out|Connection timed out|Connection reset by peer)",
+     "a mirror or CDN dropped the connection mid-fetch (a transient curl network error, not "
+     "an HTTP status); rerun the failed jobs. If it repeats on the rerun, read the URL: a "
+     "host that has genuinely moved fails the same way every time"),
 ]
 
 #: Failures that are NOT flakes and that rerunning will never clear: something

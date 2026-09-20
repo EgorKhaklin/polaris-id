@@ -126,6 +126,37 @@ class FlakeClassifierTests(unittest.TestCase):
                             "step text rather than on a failure marker is how the Caddy "
                             "signature matched every container log until 2026-09-16")
 
+    def test_a_curl_network_error_in_a_package_stage_is_a_known_flake(self):
+        """Run 35510591888: the Linux server install job exited 35 on a commit that touched
+        one drill script and nothing that job runs. Underneath was a TLS reset from a CDN
+        during the Rocky Linux package stage."""
+        verdict, name, advice = ship.classify_failure_log(
+            "Importing GPG key 0x350D275D:\n"
+            "curl: (35) OpenSSL SSL_connect: Connection reset by peer in connection to "
+            "download.docker.com:443\n"
+            "##[error]Process completed with exit code 35.\n")
+        self.assertEqual((verdict, name), ("flake", "package-cdn-network"))
+        self.assertIn("rerun", advice)
+
+    def test_the_curl_signature_is_not_scoped_to_one_host(self):
+        """The alpine-apk entry above is here because a signature written for the image
+        somebody was looking at missed the identical failure in a sibling. Every package
+        stage in this tree fetches over curl from somewhere."""
+        verdict, name, _advice = ship.classify_failure_log(
+            "curl: (6) Could not resolve host: deb.debian.org\n")
+        self.assertEqual((verdict, name), ("flake", "package-cdn-network"))
+
+    def test_an_http_error_from_curl_is_not_a_flake(self):
+        """`curl: (22)` is a 4xx under --fail: a URL that moved or a credential that
+        expired. Rerunning that fails forever, which is the whole distinction this table
+        draws."""
+        for line in ("curl: (22) The requested URL returned error: 404\n",
+                     "curl: (22) The requested URL returned error: 403 Forbidden\n"):
+            with self.subTest(line=line):
+                _verdict, name, _advice = ship.classify_failure_log(line)
+                self.assertNotEqual(name, "package-cdn-network",
+                                    "an HTTP status is not a dropped connection")
+
     def test_a_registry_5xx_during_a_pull_is_a_known_flake(self):
         """Run 35473066452: `docker compose up` got a 502 and created nothing.
 
