@@ -69,10 +69,22 @@ def _finite(x):
     """True for a real, finite number. Not `math.isfinite` alone: a bool is an int in Python
     and `True` is not an epoch number, a use count or a spending limit.
 
-    Every numeric comparison in this file that decides something now goes through this.
     Three separate holes on 2026-09-17 were the same shape: a NaN walked past an
     `isinstance(x, (int, float))` test and then made every comparison against it False,
     which silently turned a refusal into an acceptance.
+
+    This used to claim that every numeric comparison in the file which decides something
+    goes through here. Four call sites carried that sentence, and a reviewer checking it
+    would have found the gap before being told about it, so the rule is stated at the width
+    it actually holds: what must come through here is a comparison that DECIDES something
+    against a number that arrived OFF THE WIRE. A length, a loop counter, a parsed datetime,
+    and an index this file already coerced with `int()` inside a try that catches
+    OverflowError cannot be NaN, and are deliberately left alone.
+
+    The bool half is the easier one to miss, because `isinstance(x, int)` is the obvious
+    guard and it admits `True`. `verify_log_consistency` read a signed `"tree_size": true`
+    as a tree of size 1 until 2026-09-20, and a log that rewrites its own history is exactly
+    the adversary that can sign one.
     """
     import math as _math
     return (isinstance(x, (int, float)) and not isinstance(x, bool)
@@ -2881,7 +2893,14 @@ def verify_log_consistency(old_sth, new_sth, proof, issuer_key=None):
     if (old_sth.get("log_id") != new_sth.get("log_id")):
         return {"consistent": False, "fork": False, "note": "the STHs are from different logs"}
     m, n = old_sth.get("tree_size"), new_sth.get("tree_size")
-    if not isinstance(m, int) or not isinstance(n, int) or m < 0 or n < 0:
+    # `isinstance(True, int)` is True in Python, so a bool walked past this guard and then
+    # behaved as 1. Signed heads are not out of reach of the adversary here: the whole point
+    # of a consistency proof is to catch a log that REWRITES its own history, so the log can
+    # sign. A head carrying `"tree_size": true`, offered with a real 1->5 consistency proof
+    # and the real one-entry root, satisfied every other part of this verdict and was
+    # reported as an append-only extension. This is the same reason `_finite` refuses bools.
+    if isinstance(m, bool) or isinstance(n, bool) \
+            or not isinstance(m, int) or not isinstance(n, int) or m < 0 or n < 0:
         return {"consistent": False, "fork": False, "note": "a tree_size is missing or invalid"}
     if n < m:
         return {"consistent": False, "fork": True,

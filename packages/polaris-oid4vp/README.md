@@ -4,12 +4,15 @@
 presentation produced by a wallet that has never heard of Polaris: an SD-JWT VC signed with
 ES256, with holder key binding, delivered over `direct_post.jwt`.
 
-**Status: 1.0.0-rc.1, a release candidate.** The OpenID Foundation's HOSTED conformance suite
-ran all eleven modules of `oid4vp-1final-verifier-haip-test-plan` against it across the open
-internet: zero failures, zero warnings, seven negative modules carrying the service's own
-`result: PASSED`, four positive modules in REVIEW, awaiting a Foundation reviewer. REVIEW is
-not PASSED, and nothing is yet certified. One unmodified external
-wallet, walt.id Wallet API v2, has presented to it and been accepted. No operator other than the
+**Status: 1.0.0-rc.7, a release candidate.** The OpenID Foundation's HOSTED conformance suite
+ran all eleven modules of `oid4vp-1final-verifier-haip-test-plan` across the open internet
+against **0.1.0**, the artifact published at the time (2026-09-15): zero failures, zero
+warnings, seven negative modules carrying the service's own `result: PASSED`, four positive
+modules in REVIEW, awaiting a Foundation reviewer. REVIEW is not PASSED, and nothing is yet
+certified. One unmodified external wallet, walt.id Wallet API v2, has presented and been
+accepted, most recently against the published **1.0.0-rc.3** (2026-09-18). Both results are
+recorded against the version that produced them because that is what they cover: no external
+party has exercised anything later. No operator other than the
 author has run it and no independent security review exists, which is what separates a
 candidate from 1.0.0. See
 [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md) for exactly how much that is and is not.

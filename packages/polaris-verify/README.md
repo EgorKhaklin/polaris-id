@@ -28,9 +28,10 @@ to judge against, so the run abstains (exit 2) instead of exiting 0 on a credent
 have been signed by anyone; `--signature-only` is how a caller says that is the question they
 meant to ask.
 
-This is 1.0.0-rc.1, published to PyPI by GitHub Actions trusted publishing over OIDC.
-It is a release candidate: `--pre` tells pip to consider it, and 0.1.0 remains as the prior
-release. What separates a candidate from 1.0.0 is one thing, an operator who is not the
+This is 1.0.0-rc.4. The artifact on PyPI is 1.0.0-rc.3, put there by GitHub Actions
+trusted publishing over OIDC; rc.4 refuses a signed transparency head whose `tree_size`
+is a bool, and goes out when the owner publishes it. Both are release candidates:
+`--pre` tells pip to consider them, and 0.1.0 remains as the prior release. What separates a candidate from 1.0.0 is one thing, an operator who is not the
 author reaching a verified result without help. Verified by installing from the live
 registry into a clean virtualenv and running the command there, not by a build that exited
 zero.
@@ -114,7 +115,7 @@ check gets read as a trust decision.
 
 ## Status
 
-1.0.0-rc.1, a release candidate. No named external implementation has exercised this
+1.0.0-rc.4, a release candidate. No named external implementation has exercised this
 command, and the scoreboard's row for an operator who is not the author is blank; that
 operator is what turns the candidate into 1.0.0. See
 [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md)

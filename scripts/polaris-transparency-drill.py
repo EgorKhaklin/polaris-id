@@ -71,9 +71,14 @@ def main():
     key_log, pub_log = keypair("logkey")
     key_stranger = keypair("stranger")[0]
 
-    def sign_sth(entries, key_file, ts="2026-09-08T00:00:00Z"):
+    def sign_sth(entries, key_file, ts="2026-09-08T00:00:00Z", tree_size=None):
+        # tree_size is overridable so a case can sign a head whose size is not a number.
+        # The adversary this engine exists to catch is a log that REWRITES history, which is
+        # an adversary that can sign, so a malformed size has to be refused on its merits
+        # rather than because nobody could have produced it.
         body = {"format": "polaris-transparency-sth/1", "log_id": "polaris-audit-anchor-log",
-                "tree_size": len(entries), "root_hash_hex": anchoring.log_tree_head(entries).hex(),
+                "tree_size": len(entries) if tree_size is None else tree_size,
+                "root_hash_hex": anchoring.log_tree_head(entries).hex(),
                 "timestamp": ts}
         os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_file
         sig, alg, pk = pqc_signing.signature_over_message(V._sth_canonical(body))
@@ -88,6 +93,13 @@ def main():
     rewritten = ["ff" + base_entries[0][2:]] + base_entries[1:5]
     sth5_fork = sign_sth(rewritten, key_log)               # size 5, different root
     sth5_stranger = sign_sth(base_entries[:5], key_stranger)
+    # A head the log signed whose tree_size is the JSON literal `true`. isinstance(True, int)
+    # is True in Python, so a bool walks past an int check and then behaves as 1. The proof
+    # offered alongside is a REAL 1->5 consistency proof and the root is the real 1-entry
+    # head, so every other part of the verdict lines up: if the size guard lets the bool
+    # through, the engine reports an append-only extension.
+    sth_bool_size = sign_sth(base_entries[:1], key_log, tree_size=True)
+    proof_1_5 = anchoring.log_consistency_proof(1, base_entries[:5])
 
     engine = [
         ("append-only 3->5 accepted",
@@ -100,6 +112,8 @@ def main():
          V.verify_log_consistency(sth5, sth3, proof_3_5, issuer_key=pub_log)["fork"], True),
         ("stranger-signed head rejected",
          V.verify_log_consistency(sth3, sth5_stranger, proof_3_5, issuer_key=pub_log)["consistent"], False),
+        ("signed head with a bool tree_size rejected",
+         V.verify_log_consistency(sth_bool_size, sth5, proof_1_5, issuer_key=pub_log)["consistent"], False),
     ]
 
     # ---- part 2: the actual monitor daemon, over HTTP, against a live log ------------

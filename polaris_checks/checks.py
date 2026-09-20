@@ -20445,6 +20445,84 @@ def check_documented_test_citations_resolve(root: pathlib.Path) -> list[Finding]
                      "the class they covered came back" % cited)
 
 
+#: The four independently versioned artifacts, and the manifest each takes its version from.
+#: Their READMEs are not repository documents: PyPI and npm render them as the project page,
+#: so a stale line there is the first thing a stranger reads about what they just installed.
+_VERSIONED_PACKAGES = (
+    ("packages/polaris-verify", "pyproject.toml"),
+    ("packages/polaris-oid4vp", "pyproject.toml"),
+    ("sdk/python", "pyproject.toml"),
+    ("sdk/typescript", "package.json"),
+)
+
+#: A version in the shipped series, in either spelling: PEP 440 writes 1.0.0rc3 and semver
+#: writes 1.0.0-rc.3, and the four packages use both.
+_VERSION_IN_README = re.compile(r"\b\d+\.\d+\.\d+-?(?:rc\.?\d+)?\b")
+
+
+def _same_version(a: str, b: str) -> bool:
+    return a.replace("-", "").replace(".", "").lower() == b.replace("-", "").replace(".", "").lower()
+
+
+def check_package_readmes_state_their_own_version(root: pathlib.Path) -> list[Finding]:
+    """A package README that names a version names the one it ships with.
+
+    Three of the four said `1.0.0-rc.1` while their manifests said rc3, rc7 and rc.3, and
+    rc3 was on PyPI and npm. The project page a stranger reads after
+    `pip install --pre polaris-verify` therefore announced a version two candidates older
+    than the artifact it was describing.
+
+    Nothing caught it. The count checks hold the README's invariant total and the SECURITY
+    and readiness stamps to `polaris_web/__version__.py`, which is the APPLICATION version
+    and moves for different reasons; the four packages carry their own semver and nothing
+    read theirs. `check_stranger_path_was_walked_against_what_is_published` holds one line
+    of one document to the release ledger, and these are four other documents.
+
+    The rule is deliberately "must include", not "must be the only one". A README may cite
+    an older version on purpose, and two of these do: polaris-oid4vp attributes its hosted
+    conformance run to 0.1.0 and the defects it found to 1.0.0rc1, because those are the
+    versions that produced them. Forbidding that would push the file toward claiming results
+    for an artifact that never produced them, which is the failure this check is against,
+    one level up. A README naming no version at all is left alone, since it claims nothing.
+    """
+    name = "package_readme_version"
+    problems, checked = [], 0
+    for rel, manifest in _VERSIONED_PACKAGES:
+        man = _read_raw(root, "%s/%s" % (rel, manifest))
+        if not man:
+            problems.append("%s/%s is missing, so the package version could not be read"
+                            % (rel, manifest))
+            continue
+        m = re.search(r'^\s*"?version"?\s*[:=]\s*"([^"]+)"', man, re.M)
+        if not m:
+            problems.append("%s/%s declares no version" % (rel, manifest))
+            continue
+        declared = m.group(1)
+        readme = _read_raw(root, "%s/README.md" % rel)
+        if not readme:
+            problems.append("%s/README.md is missing, and it is the page the registry renders"
+                            % rel)
+            continue
+        checked += 1
+        found = {v for v in _VERSION_IN_README.findall(readme) if "rc" in v.lower()}
+        if not found:
+            continue                          # names no version in the series; claims nothing
+        if not any(_same_version(v, declared) for v in found):
+            problems.append("%s/README.md names %s and ships %s, so the page a registry "
+                            "renders announces a version the artifact is not"
+                            % (rel, ", ".join(sorted(found)), declared))
+    if not checked:
+        return _fail(name, "no package README could be read against its manifest, so this "
+                           "measured nothing")
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name, "each of the %d packaged READMEs that names a version names the one its "
+                     "manifest declares, so the project page a registry renders describes the "
+                     "artifact it is attached to. Older versions may also appear, and do: two "
+                     "of these attribute an external result to the version that produced it "
+                     "rather than to the current one" % checked)
+
+
 #: Checks that CORRECTLY pass when there is nothing to look at, each with the reason.
 #:
 #: Every other check must FAIL against a copy of the tree in which every file is present and
@@ -21742,6 +21820,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_launcher_quit_beacon_defers_to_fresh_heartbeat,
     check_launcher_persists_session_secret_securely,
     check_documented_test_citations_resolve,
+    check_package_readmes_state_their_own_version,
 ]
 
 

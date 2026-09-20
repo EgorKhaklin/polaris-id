@@ -18404,3 +18404,55 @@ def test_launcher_checks_do_not_read_commented_out_code(tmp_path):
                        launcher=_GOOD_LAUNCHER.replace(line, "    # " + line.lstrip(), 1))
         assert fn(tmp_path)[0].level == "FAIL", \
             "%s passed with %r commented out" % (fn.__name__, line.strip()[:50])
+
+
+def test_package_readme_version_check_detects_its_absence(tmp_path):
+    """The drift that produced this: three of four READMEs said rc.1 while shipping rc3+.
+
+    The good fixture deliberately carries an OLDER version alongside the current one, because
+    two real READMEs attribute an external result to the version that produced it. A check
+    that refused that would push those pages toward claiming a conformance run for an
+    artifact which never had one.
+    """
+    fn = checks.check_package_readmes_state_their_own_version
+
+    def write(readme_version, extra=""):
+        for rel, manifest, body in (
+                ("packages/polaris-verify", "pyproject.toml", '[project]\nversion = "1.0.0rc3"\n'),
+                ("packages/polaris-oid4vp", "pyproject.toml", '[project]\nversion = "1.0.0rc3"\n'),
+                ("sdk/python", "pyproject.toml", '[project]\nversion = "1.0.0rc3"\n'),
+                ("sdk/typescript", "package.json", '{\n  "version": "1.0.0-rc.3"\n}\n')):
+            d = tmp_path / rel
+            d.mkdir(parents=True, exist_ok=True)
+            (d / manifest).write_text(body)
+            (d / "README.md").write_text("# pkg\n\nThis is %s, a release candidate.\n%s"
+                                         % (readme_version, extra))
+
+    write("1.0.0-rc.3")
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    # An older version cited ALONGSIDE the current one is the honest attribution, not drift.
+    write("1.0.0-rc.3", extra="The conformance suite ran against 1.0.0rc1, which produced it.\n")
+    assert fn(tmp_path)[0].level == "OK", "a historical attribution must not be refused"
+
+    # The real defect: the page names a version the artifact is not.
+    write("1.0.0-rc.1")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "1.0.0-rc.1" in out[0].message, \
+        "must FAIL and name the stale version a registry would render"
+
+    # PEP 440 and semver spellings of the same version are the same version.
+    write("1.0.0rc3")
+    assert fn(tmp_path)[0].level == "OK", "1.0.0rc3 and 1.0.0-rc.3 must compare equal"
+
+    # A README naming no version claims nothing and is left alone.
+    write("no version here")
+    assert fn(tmp_path)[0].level == "OK", "a README that names no version must not be forced to"
+
+    # Anti-vacuity: nothing readable must FAIL rather than report agreement.
+    for rel in ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python",
+                "sdk/typescript"):
+        for f in (tmp_path / rel).iterdir():
+            f.unlink()
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL", "an empty tree must not read as four agreeing READMEs"
