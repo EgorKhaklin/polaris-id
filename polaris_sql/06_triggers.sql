@@ -125,6 +125,31 @@ BEGIN
 END;
 $$;
 
+-- WHY THERE IS NO `BEFORE TRUNCATE` TRIGGER HERE, asked and answered 2026-09-20.
+--
+-- The triggers below are FOR EACH ROW, and PostgreSQL row-level triggers do not fire on
+-- TRUNCATE. Demonstrated, not assumed: with these triggers installed, `DELETE FROM
+-- TokenLifecycleEvent` is refused and `TRUNCATE TokenLifecycleEvent CASCADE` empties it
+-- silently. So the append-only guarantee for that one path is a PRIVILEGE boundary rather
+-- than a trigger, and that is deliberate:
+--
+--   * 09_grants.sql grants polaris_app SELECT, INSERT, UPDATE, DELETE and never TRUNCATE,
+--     and polaris_app does not own these tables. The application role therefore cannot take
+--     this path at all, which is the threat that matters: a compromised app, or injection.
+--
+--   * The schema OWNER legitimately needs it. 04_data.sql and 10_auth.sql TRUNCATE audit
+--     tables to seed, which is what makes `reload_sample_data()` idempotent and what the
+--     whole database-backed suite rests on.
+--
+-- A statement-level TRUNCATE trigger was built and tested against this schema. It works --
+-- it refuses the parent of a partitioned table, a partition directly, and a plain table --
+-- and it breaks seeding. Making it seed-aware would need a carve-out GUC, and
+-- check_aor_privilege_boundary already records why that is weak: ANY role can SET a custom
+-- GUC, which is precisely why the grant model had to back the DELETE carve-out.
+--
+-- So: do not add one. The reasoning lived only in a comment in scripts/polaris-test.sh,
+-- where nobody auditing the trigger layer would find it, which is why it is restated here.
+
 DROP TRIGGER IF EXISTS trg_lifecycle_append_only ON TokenLifecycleEvent;
 CREATE TRIGGER trg_lifecycle_append_only
     BEFORE UPDATE OR DELETE ON TokenLifecycleEvent
