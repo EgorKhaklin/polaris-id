@@ -10358,7 +10358,7 @@ class RealPqcDefaultBootTests(unittest.TestCase):
     A subprocess imports app so the guard is observable; POLARIS_DB_SSLMODE=require
     lets execution past the earlier SSL guard to reach this one."""
 
-    def _boot(self, extra_env):
+    def _boot(self, extra_env, preamble=None):
         import subprocess as _sp
         import sys as _sys
         import os as _os
@@ -10369,13 +10369,42 @@ class RealPqcDefaultBootTests(unittest.TestCase):
         env["POLARIS_DB_SSLMODE"] = "require"  # pass the production SSL guard to reach the PQC guard
         env.update(extra_env)
         cwd = _os.path.dirname(_os.path.abspath(flask_app.__file__))
-        return _sp.run([_sys.executable, "-c", "import app"], cwd=cwd,
+        return _sp.run([_sys.executable, "-c", (preamble or "") + "import app"], cwd=cwd,
                        capture_output=True, text=True, env=env)
 
     def test_production_refuses_boot_without_real_pqc(self):
         r = self._boot({"POLARIS_ENV": "production"})
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("real ML-DSA-65 signing is not available", r.stderr)
+
+    def test_production_refuses_boot_without_the_second_witness(self):
+        """The same refusal one witness over, at boot rather than at first issue.
+
+        Issuance already raises SigningError without the second witness, because the claim
+        that every stored signature was two-witnessed may only be made when two
+        implementations are present. That fires at FIRST ISSUANCE, which is the discovery
+        moment the boot guard exists to avoid: liboqs present, cryptography built against
+        OpenSSL below 3.5 so there is no ML-DSA second witness, and the deployment boots,
+        serves, and fails the first time anybody issues.
+
+        Driven by forcing pqc_signing to report a real primary and no second witness, so
+        reaching the branch does not need a broken OpenSSL.
+        """
+        r = self._boot({"POLARIS_ENV": "production"}, preamble=(
+            "import pqc_signing;"
+            "pqc_signing.is_enabled=lambda: True;"
+            "pqc_signing.second_witness_available=lambda: False;"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("SECOND WITNESS", r.stderr)
+
+    def test_production_boots_when_both_witnesses_are_present(self):
+        """The positive control: the new guard must not refuse a correct deployment."""
+        r = self._boot({"POLARIS_ENV": "production"}, preamble=(
+            "import pqc_signing;"
+            "pqc_signing.is_enabled=lambda: True;"
+            "pqc_signing.second_witness_available=lambda: True;"))
+        self.assertNotIn("SECOND WITNESS", r.stderr)
+        self.assertNotIn("real ML-DSA-65 signing is not available", r.stderr)
 
     def test_unnamed_placeholder_warns(self):
         # Non-production, placeholder in use, dev profile not named: boot, but loudly.

@@ -10763,6 +10763,23 @@ def check_real_pqc_default_boot(root: pathlib.Path) -> list[Finding]:
         return _fail("real_pqc_default_boot",
                      "the application must FAIL CLOSED in production when real ML-DSA-65 signing is unavailable, so a "
                      "deployment cannot silently issue placeholder-signed tokens (a sys.exit guard)")
+    # 2026-09-19: the same refusal one witness over. Issuance raises without the independent
+    # second witness, because "every stored signature was two-witnessed" may only be claimed
+    # when two implementations are present -- but that fires at FIRST ISSUANCE, which is the
+    # discovery moment the boot guard above exists to avoid. A production deployment with
+    # liboqs and a cryptography built against OpenSSL below 3.5 booted, served, and failed
+    # the first time anybody issued.
+    if not re.search(r"if _PRODUCTION and _pqc_real and not pqc_signing\.second_witness_available\(\)"
+                     r".{0,600}sys\.exit", app, re.S):
+        return _fail("real_pqc_default_boot",
+                     "production must also FAIL CLOSED at boot when the independent SECOND "
+                     "WITNESS is unavailable: issuance refuses without it, so the deployment "
+                     "would otherwise boot, serve, and fail at the first issue")
+    if "test_production_refuses_boot_without_the_second_witness" not in _read(
+            root, "polaris_web/test_app.py"):
+        return _fail("real_pqc_default_boot",
+                     "the second-witness boot refusal must be exercised "
+                     "(test_production_refuses_boot_without_the_second_witness)")
     # The placeholder is a NAMED dev profile that warns when used unnamed, and the
     # boot announces which signing profile is active.
     if "POLARIS_PQC_PROFILE" not in app or "DEVELOPMENT PLACEHOLDER" not in app:
@@ -10790,8 +10807,9 @@ def check_real_pqc_default_boot(root: pathlib.Path) -> list[Finding]:
                      "test_the application must exercise the production boot refusal (RealPqcDefaultBootTests)")
     return _ok("real_pqc_default_boot",
                "the default boot is the real motor: production fails closed at boot when real ML-DSA-65 signing "
-               "is unavailable, and the placeholder is a named dev profile the canonical paths declare, warning "
-               "loudly when used unnamed")
+               "is unavailable AND when its independent second witness is, so a broken install is found at boot "
+               "rather than at the first issuance, and the placeholder is a named dev profile the canonical paths "
+               "declare, warning loudly when used unnamed")
 
 
 # ---------------------------------------------------------------------------

@@ -7225,13 +7225,20 @@ def test_real_pqc_default_boot_check_discriminates(tmp_path):
         "if _PRODUCTION and not _pqc_real:\n"
         "    sys.stderr.write('real ML-DSA-65 signing is not available')\n"
         "    sys.exit(2)\n"
+        # Added 2026-09-19 with the rule. Issuance refuses without the second witness, so a
+        # deployment missing it boots, serves, and fails at the first issue; the guard moves
+        # that discovery to boot. The fixture has to carry it to be exercised for it.
+        "if _PRODUCTION and _pqc_real and not pqc_signing.second_witness_available():\n"
+        "    sys.stderr.write('SECOND WITNESS unavailable')\n"
+        "    sys.exit(2)\n"
         "if not _pqc_real and os.environ.get('POLARIS_PQC_PROFILE') != 'placeholder':\n"
         "    sys.stderr.write('WARNING: DEVELOPMENT PLACEHOLDER')\n"
         "observability.structured_log('boot.pqc_profile', profile='real')\n"
     )
     CI = "jobs:\n  test:\n    env:\n      POLARIS_PQC_PROFILE: placeholder\n"
     RUNNER = "#!/usr/bin/env bash\nPOLARIS_PQC_PROFILE=placeholder \"$PYVENV\" -m unittest\n"
-    TEST = "def test_production_refuses_boot_without_real_pqc(self):\n    pass\n"
+    TEST = ("def test_production_refuses_boot_without_real_pqc(self):\n    pass\n"
+            "def test_production_refuses_boot_without_the_second_witness(self):\n    pass\n")
     good = {
         "polaris_web/app.py": APP,
         ".github/workflows/ci.yml": CI,
@@ -7250,6 +7257,20 @@ def test_real_pqc_default_boot_check_discriminates(tmp_path):
     # 1. production no longer fails closed (the sys.exit guard is gone)
     write({"polaris_web/app.py": APP.replace("    sys.exit(2)\n", "")})
     assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", "must FAIL without the prod boot guard"
+    # 1b. production still fails closed on the primary, but boots with ONE witness. That
+    # deployment serves and then fails at the first issuance, which is the discovery moment
+    # the guard above exists to move.
+    write({"polaris_web/app.py": APP.replace(
+        "if _PRODUCTION and _pqc_real and not pqc_signing.second_witness_available():\n"
+        "    sys.stderr.write('SECOND WITNESS unavailable')\n"
+        "    sys.exit(2)\n", "")})
+    assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when production boots without the independent second witness"
+    # 1c. the guard exists but nothing exercises it.
+    write({"polaris_web/test_app.py":
+           "def test_production_refuses_boot_without_real_pqc(self):\n    pass\n"})
+    assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the second-witness boot refusal has no test"
     # 2. the placeholder is no longer a named profile that warns
     write({"polaris_web/app.py": APP.replace("DEVELOPMENT PLACEHOLDER", "quiet")})
     assert checks.check_real_pqc_default_boot(tmp_path)[0].level == "FAIL", "must FAIL without the named-profile warning"

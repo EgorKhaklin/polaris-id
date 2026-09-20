@@ -548,6 +548,26 @@ if _PRODUCTION and not _pqc_real:
         "         signed with the SHA3-256 development placeholder. See docs/operator/KEY-CEREMONY.md.\n\n"
     )
     sys.exit(2)
+# 2026-09-19: the SAME argument, one witness over. Real issuance refuses without the
+# independent second witness (pqc_signing raises SigningError), because the claim "every
+# stored production signature was independently verified by two implementations" may only be
+# made when two implementations are present. But that refusal fires at FIRST ISSUANCE, which
+# is the discovery moment the guard above exists to avoid: a hand-rolled deploy with liboqs
+# and a cryptography built against OpenSSL below 3.5 has no ML-DSA second witness, boots
+# cleanly, serves verification traffic, and fails the first time anybody issues.
+#
+# The supported paths already carry it (requirements.txt pins cryptography==50.0.1 and the
+# prod compose sets the flag), so this catches exactly the broken install the comment above
+# describes, at boot rather than in production use.
+if _PRODUCTION and _pqc_real and not pqc_signing.second_witness_available():
+    sys.stderr.write(
+        "\n  FATAL: POLARIS_ENV=production with real ML-DSA-65 signing, but the independent\n"
+        "         SECOND WITNESS (cryptography/OpenSSL MLDSA65) is unavailable. Issuance\n"
+        "         refuses without it, so this deployment would boot, serve, and fail at the\n"
+        "         first issue. Two-witnessed issuance is the premise verify-at-use relies on\n"
+        "         when it runs a single witness. Install cryptography>=48 on OpenSSL 3.5+.\n\n"
+    )
+    sys.exit(2)
 if not _pqc_real and _pqc_profile != 'placeholder':
     # Not production (the guard above would have exited); the placeholder is in use
     # without being named. Boot, but loudly — this is a dev/CI convenience only.
