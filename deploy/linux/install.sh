@@ -90,6 +90,30 @@ detect_family() {
     esac
 }
 
+# A single network fetch is a single point of failure in a stage that otherwise takes
+# minutes. 2026-09-20: `curl: (35) OpenSSL SSL_connect: Connection reset by peer in
+# connection to download.docker.com:443` failed the Rocky Linux package stage, and the CI job
+# with it, on a commit that touched neither this file nor anything that stage runs.
+# polaris_web/Dockerfile.caddy and scripts/polaris-tla-drill.sh both retry their fetches for
+# the same reason; this one did not.
+#
+# It weakens nothing. verify_docker_key runs on whatever this returns, so a key fetched on
+# the fourth attempt is held to the same pinned fingerprint as one fetched on the first, and
+# an empty or partial file fails the -s test and is retried rather than verified.
+fetch_retry() {  # $1 = url, $2 = destination; 0 on success, 1 when every attempt failed
+    local attempt
+    for attempt in 1 2 3 4; do
+        rm -f "$2"
+        if curl -fsSL --connect-timeout 15 --max-time 120 "$1" -o "$2" && [ -s "$2" ]; then
+            return 0
+        fi
+        rm -f "$2"
+        [ "$attempt" = 4 ] && return 1
+        echo "  fetch of $1 failed (attempt $attempt); retrying in $((attempt * 5))s" >&2
+        sleep $((attempt * 5))
+    done
+}
+
 verify_docker_key() {  # $1 = armored key file, $2 = expected fingerprint
     have gpg || die "gpg is required to verify Docker's signing key"
     local fpr
@@ -111,7 +135,8 @@ stage_packages() {
                 apt-get install -y -qq ca-certificates curl gnupg git >/dev/null
                 install -m 0755 -d /etc/apt/keyrings
                 local repo_os="$OS_ID"; [ "$OS_ID" = ubuntu ] || repo_os=debian
-                curl -fsSL "https://download.docker.com/linux/${repo_os}/gpg" -o /tmp/docker.asc
+                fetch_retry "https://download.docker.com/linux/${repo_os}/gpg" /tmp/docker.asc \
+                    || die "could not fetch Docker's signing key for ${repo_os}"
                 verify_docker_key /tmp/docker.asc "$DOCKER_KEY_FPR_DEB"
                 gpg --dearmor < /tmp/docker.asc > /etc/apt/keyrings/docker.gpg; rm -f /tmp/docker.asc
                 chmod a+r /etc/apt/keyrings/docker.gpg
@@ -126,7 +151,8 @@ stage_packages() {
                 # already provides the curl binary, so install curl only if absent.
                 dnf -y -q install gnupg2 git >/dev/null
                 have curl || dnf -y -q install --allowerasing curl >/dev/null
-                curl -fsSL https://download.docker.com/linux/centos/gpg -o /tmp/docker.asc
+                fetch_retry https://download.docker.com/linux/centos/gpg /tmp/docker.asc \
+                    || die "could not fetch Docker's signing key for centos"
                 verify_docker_key /tmp/docker.asc "$DOCKER_KEY_FPR_RPM"
                 rpm --import /tmp/docker.asc; rm -f /tmp/docker.asc
                 cat > /etc/yum.repos.d/docker-ce.repo <<'REPO'
