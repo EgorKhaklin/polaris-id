@@ -18504,3 +18504,78 @@ def test_c8_refuses_a_numeric_parameter_it_was_never_told_about(tmp_path):
     write(CLAMPED + "    who = int(request.args.get('individual_id', ''))\n")
     assert fn(tmp_path)[0].level == "OK", \
         "a parameter declared in _ATLAS_NOT_COUNTS must not be demanded a cap"
+
+
+def _write_outward(tmp_path, extra_readme=""):
+    """The five outward surfaces plus the four packaged ones, all clean."""
+    LEDGER = ("The claim is algorithm agility under an audited migration path.\n"
+              "ML-DSA-65 rests on Module-LWE hardness.\n"
+              "Migration runs through uc6_migrate on every push.\n"
+              "A credential's classical half is protected by nothing here.\n"
+              "The default writes DETERMINISTIC-PLACEHOLDER-SHA3-256.\n")
+    SURFACE = "Polaris signs with post-quantum ML-DSA-65. Limits: PRODUCTION-READINESS.md\n"
+    (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "site").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "lab" / "duress").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "docs" / "PRODUCTION-READINESS.md").write_text(LEDGER)
+    (tmp_path / "lab" / "duress" / "README.md").write_text(
+        "The casual coercer is resisted.\n"
+        "DuressEvent is append-only with no purge path, so lawful access is the case "
+        "the mechanism makes worse.\n"
+        "The word is duress-aware.\n")
+    for rel in ("README.md", "MISSION.md", "CITATION.cff", "NOTICE", "CLAUDE.md"):
+        (tmp_path / rel).write_text(SURFACE)
+    (tmp_path / "site" / "index.html").write_text(SURFACE)
+    for rel in checks._PUBLISHED_READMES:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("A verifier you can install.\n" + extra_readme)
+
+
+def test_overclaims_are_refused_on_the_pages_a_registry_renders(tmp_path):
+    """PyPI and npm render the packaged READMEs as the project page.
+
+    _OUTWARD_SURFACES names five files and none of them is one a stranger reads after
+    `pip install`. The flat assertion bans reach those pages now; the CONTEXTUAL rules
+    deliberately do not, because sdk/typescript/README.md names its dependency
+    `@noble/post-quantum` and would be asked for a readiness-ledger link for a package name.
+    """
+    _write_outward(tmp_path)
+    assert checks.check_post_quantum_claims_are_agility(tmp_path)[0].level == "OK", \
+        "must PASS on the good fixture"
+    assert checks.check_duress_claims_are_aware(tmp_path)[0].level == "OK", \
+        "must PASS on the good fixture"
+
+    _write_outward(tmp_path, extra_readme="Polaris is quantum-safe.\n")
+    out = checks.check_post_quantum_claims_are_agility(tmp_path)
+    assert any(f.level == "FAIL" and "quantum-safe" in f.message for f in out), \
+        "a settled-security claim on a packaged page must be refused"
+
+    _write_outward(tmp_path, extra_readme="Polaris is coercion-resistant.\n")
+    out = checks.check_duress_claims_are_aware(tmp_path)
+    assert any(f.level == "FAIL" for f in out), \
+        "a compulsion-resistance claim on a packaged page must be refused"
+
+    # A dependency NAME is not a claim, which is why the contextual rules stay off these pages.
+    _write_outward(tmp_path, extra_readme="Runtime-agnostic: only `@noble/post-quantum`.\n")
+    assert checks.check_post_quantum_claims_are_agility(tmp_path)[0].level == "OK", \
+        "naming @noble/post-quantum must not demand a readiness-ledger link"
+
+
+def test_the_compulsion_ban_covers_both_nouns_and_all_three_shapes(tmp_path):
+    """A denylist is only as good as the phrasings somebody thought of.
+
+    Until 2026-09-20 this banned "resists compulsion" and "resistant to compulsion" and
+    neither coercion form, so the identical claim written with the other noun passed. It
+    carried no "-proof" spelling either, while the post-quantum list next to it did.
+    """
+    for phrase in checks._COMPULSION_ASSERTIONS:
+        _write_outward(tmp_path, extra_readme="Polaris is %s.\n" % phrase)
+        out = checks.check_duress_claims_are_aware(tmp_path)
+        assert any(f.level == "FAIL" for f in out), \
+            "%r must be refused; the vocation is what this list protects" % phrase
+
+    for noun in ("compulsion", "coercion"):
+        for shape in ("%s-resistant", "resists %s", "%s-proof"):
+            assert shape % noun in checks._COMPULSION_ASSERTIONS, \
+                "the two nouns and three shapes must stay symmetric; %r is missing" % (shape % noun)

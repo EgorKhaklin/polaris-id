@@ -9613,6 +9613,7 @@ _OVERCLAIM_PHRASES = (
 #: implementation on notional data.
 _OUTWARD_SURFACES = ("README.md", "site/index.html", "MISSION.md", "CITATION.cff", "NOTICE")
 
+
 #: The readiness ledger is where the limitation lives, so a claim must point at it.
 _PQ_LIMITATION_REL = "docs/PRODUCTION-READINESS.md"
 
@@ -9646,9 +9647,19 @@ _APPARATUS_HISTORY = ("CHANGELOG.md", "docs/history/", "DEVNOTES/", "polaris_sql
 #: not resist lawful or institutional access at all -- against which it is net-negative,
 #: because DuressEvent is append-only with no purge path, so the mechanism manufactures
 #: indelible evidence that the holder resisted.
+#: 2026-09-20: this banned "resists compulsion" and "resistant to compulsion" and neither
+#: coercion form, so the identical claim written with the other noun passed. The sibling list
+#: _PQ_SECURITY_ASSERTIONS already carries its "-proof" spellings and this one carried none.
+#: Measured by trying them: "resists coercion", "resistant to coercion" and "compulsion-proof"
+#: were all accepted on an outward surface. A denylist is only as good as the phrasings
+#: somebody thought of, which is the argument for keeping the two nouns and the three shapes
+#: symmetric rather than adding whichever one was just seen.
 _COMPULSION_ASSERTIONS = ("compulsion-resistant", "compulsion resistant",
                           "coercion-resistant", "coercion resistant",
-                          "resists compulsion", "resistant to compulsion")
+                          "resists compulsion", "resistant to compulsion",
+                          "resists coercion", "resistant to coercion",
+                          "compulsion-proof", "compulsion proof",
+                          "coercion-proof", "coercion proof")
 
 #: Where the assessment lives, so a surface making the weaker claim has somewhere to point.
 _DURESS_LIMITATION_REL = "lab/duress/README.md"
@@ -9762,8 +9773,11 @@ def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
 
     findings: list[Finding] = []
     checked = 0
-    for rel in _OUTWARD_SURFACES + ("CLAUDE.md", "polaris_web/templates/base.html",
-                                    "docs/design/README.md", "docs/design/duress-codes.md"):
+    # The packaged READMEs are included because PyPI and npm render them as the project page,
+    # and a claim to resist compulsion is wrong there for the same reason it is wrong here.
+    for rel in _OUTWARD_SURFACES + _PUBLISHED_READMES + (
+            "CLAUDE.md", "polaris_web/templates/base.html",
+            "docs/design/README.md", "docs/design/duress-codes.md"):
         text = _read_raw(root, rel)
         if not text:
             continue
@@ -10240,6 +10254,24 @@ def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
                                         "PRODUCTION-READINESS.md, where what a break would cost "
                                         "and what the default signing path actually writes are "
                                         "stated" % rel))
+
+    # The packaged READMEs get the flat assertion ban and NOT the two contextual rules above,
+    # and the split is measured rather than cautious. "quantum-safe" is wrong on any page.
+    # The contextual rules are calibrated for a top-level surface and misfire here:
+    # sdk/typescript/README.md names its dependency `@noble/post-quantum` three times, which
+    # would demand a readiness-ledger link for a PACKAGE NAME, and the phrase
+    # "`@noble/post-quantum` plus the platform's fetch" matches the adjective-on-the-system
+    # rule where "platform" is the JavaScript runtime. Folding these into _OUTWARD_SURFACES
+    # would refuse two true sentences, which is how a check earns being routed around.
+    for rel in _PUBLISHED_READMES:
+        low = _read(root, rel).lower()
+        if not low:
+            continue
+        for phrase in _PQ_SECURITY_ASSERTIONS:
+            if phrase in low:
+                findings.extend(_fail(name, "%s says %r. A registry renders that page as the "
+                                            "project description, and it asserts the security "
+                                            "rather than the agility" % (rel, phrase)))
 
     if findings:
         return findings
