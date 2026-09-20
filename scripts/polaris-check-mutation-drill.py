@@ -72,7 +72,14 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
-MUTABLE_SUFFIXES = (".py", ".sql", ".sh", ".yml", ".yaml")
+MUTABLE_SUFFIXES = (".py", ".sql", ".sh", ".yml", ".yaml", ".ts", ".js")
+
+#: The marker that turns a line into something the file's own reader will not see. Per
+#: language, because getting this wrong is silent: prefixing a `.ts` line with `#` leaves it
+#: exactly as visible as it was, and the check would pass having proved nothing, which is the
+#: failure this drill is for. Markdown and JSON have no entry and no usable marker, so they
+#: are not in MUTABLE_SUFFIXES at all; the document pass deletes their lines instead.
+_COMMENT_MARKER = {".sql": "--", ".ts": "//", ".js": "//"}
 
 #: Checks that legitimately survive having their NAMED inputs deleted, with the reason.
 #: Empty is the right state, and it is now enforced in both directions: an entry whose
@@ -407,7 +414,7 @@ def main():
             target = work / rel
             if not target.is_file():
                 continue
-            marker = "--" if rel.endswith(".sql") else "#"
+            marker = _COMMENT_MARKER.get(os.path.splitext(rel)[1], "#")
             out = []
             for line in target.read_text(encoding="utf-8", errors="replace").split("\n"):
                 hit = _line_carries(line, needles, patterns)
@@ -468,6 +475,7 @@ def main():
     # asserts the document EXISTS; passing even then means it is blind to a file it names, and
     # that is the failure.
     prose_tested, prose_blind, prose_existence_only = 0, [], []
+    prose_names: set = set()
     for name, fn in sorted(fns.items()):
         files = [f for f in sorted(set(reads_of(fn)))
                  if f.endswith(PROSE_SUFFIXES) and (base / f).is_file()]
@@ -497,6 +505,7 @@ def main():
         if not _rebuild(_drop_matching):
             continue                          # nothing in those files carried a needle
         prose_tested += 1
+        prose_names.add(name)
         try:
             if any(f.level == "FAIL" for f in by_name[name](work)):
                 continue                      # noticed its sentences were gone
@@ -529,24 +538,36 @@ def main():
         # sample drawn from the smallest of the three, under a sentence that explained only
         # that one: a reader took the names as a sample of the whole and the explanation as
         # its cause. That is the shape of defect this drill exists to find.
-        print("      ...which means they are NOT mutation-tested, for three reasons:")
+        covered_elsewhere = len([nm for nm, _ in unmutable_suffix if nm in prose_names])
+        print("      %d of those ARE covered, by the document pass below. The remaining %d are"
+              % (covered_elsewhere, skipped_nothing - covered_elsewhere))
+        print("      NOT mutation-tested at all, in three groups:")
         if nothing_to_mutate:
             print("      [%d] nothing to search for: no literal needle and no literal pattern."
                   % len(nothing_to_mutate))
             for nm in sorted(nothing_to_mutate)[:6]:
                 print("            %s" % nm)
         if unmutable_suffix:
+            # Split by whether the DOCUMENT pass below reaches them. Printing one total here
+            # with "this drill does not do it yet" was true when the sentence was written and
+            # false one ship later, while the checks it described were being tested twenty
+            # lines further down under another heading. That is the same defect this drill
+            # exists to find, committed by the drill's own output.
+            reached = [nm for nm, _ in unmutable_suffix if nm in prose_names]
+            unreached = [(nm, sufs) for nm, sufs in unmutable_suffix if nm not in prose_names]
+            print("      [%d] read a file the COMMENT mutation cannot express: hiding a line "
+                  "needs a" % len(unmutable_suffix))
+            print("            syntax that hides it, and `#` in Markdown is a heading, so the "
+                  "sentence")
+            print("            stays readable and the check would pass having proved nothing.")
+            print("            %d of these ARE covered, by the document pass below, which "
+                  "deletes the" % len(reached))
+            print("            line instead. The remaining %d are genuinely unreached:"
+                  % len(unreached))
             by_suffix: dict = {}
-            for nm, sufs in unmutable_suffix:
+            for nm, sufs in unreached:
                 for sfx in sufs:
                     by_suffix.setdefault(sfx, []).append(nm)
-            print("      [%d] read a file this mutation cannot express. Commenting a line out "
-                  "needs a" % len(unmutable_suffix))
-            print("            comment syntax, and `#` in Markdown is a heading: the sentence "
-                  "stays readable,")
-            print("            so the check would pass and prove nothing. Deleting the line is "
-                  "the mutation")
-            print("            these want, and this drill does not do it yet.")
             for sfx, names in sorted(by_suffix.items(), key=lambda kv: -len(kv[1]))[:5]:
                 print("            %-7s %3d check(s), e.g. %s" % (sfx, len(names), names[0]))
         if no_line_matched:
