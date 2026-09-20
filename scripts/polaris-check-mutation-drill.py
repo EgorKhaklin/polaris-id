@@ -146,6 +146,74 @@ def _package_modules(rel_dir):
             if not p.name.startswith("test_")]
 
 
+_PATH_TUPLES = None
+
+
+def _module_path_tuples():
+    """Module-level `NAME = ("a/b", "c/d")` bindings in checks.py, as name -> [paths].
+
+    The single-path map above resolves `_read(root, _ATHENA_SQL_REL)`. It does not resolve
+    the other shape, which is a check looping over a tuple of documents:
+
+        for rel in _OUTWARD_SURFACES:
+            text = _read(root, rel)
+
+    There the argument is a LOOP VARIABLE, so there was nothing to resolve and the files
+    were invisible. Measured 2026-09-20: ten checks read files that way, 63 file-references
+    between them, including check_c1c10_objects_resolve over the documents that say where
+    each constitutional guarantee is enforced, and both vocabulary checks over every outward
+    surface.
+
+    The cost was not only coverage. check_schema_matches_its_migrations names its four
+    inputs as literals and says in a comment that it has to, because reading them through
+    _CANONICAL_OBJECT_FILES left this harness able to see one of them: it deleted that one,
+    the other comparisons carried on, and the check passed with a third of its input gone.
+    A check contorting its own shape to stay visible to the drill is the drill's bug.
+    """
+    out = {}
+    try:
+        tree = ast.parse((ROOT / "polaris_checks" / "checks.py").read_text(errors="replace"))
+    except Exception:
+        return out
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or not isinstance(node.value, (ast.Tuple, ast.List)):
+            continue
+        paths = [e.value for e in node.value.elts
+                 if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                 and (ROOT / e.value).is_file()]
+        if paths:
+            out[target.id] = paths
+    return out
+
+
+def _loop_bound_paths(fn):
+    """Loop variable -> the paths it takes, for `for VAR in <tuple of paths>`.
+
+    Walks the whole iterable, so `_OUTWARD_SURFACES + ("CLAUDE.md", ...)` contributes both
+    the constant's entries and the inline ones.
+    """
+    global _PATH_TUPLES
+    if _PATH_TUPLES is None:
+        _PATH_TUPLES = _module_path_tuples()
+    out = {}
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.For) or not isinstance(node.target, ast.Name):
+            continue
+        paths = []
+        for n in ast.walk(node.iter):
+            if isinstance(n, ast.Name) and n.id in _PATH_TUPLES:
+                paths.extend(_PATH_TUPLES[n.id])
+            elif isinstance(n, ast.Constant) and isinstance(n.value, str) \
+                    and (ROOT / n.value).is_file():
+                paths.append(n.value)
+        if paths:
+            out.setdefault(node.target.id, []).extend(paths)
+    return out
+
+
 def reads_of(fn):
     """Files the check names, through a path or through a PACKAGE door.
 
@@ -163,6 +231,7 @@ def reads_of(fn):
     global _PATH_CONSTANTS
     if _PATH_CONSTANTS is None:
         _PATH_CONSTANTS = _module_path_constants()
+    _looped = _loop_bound_paths(fn)
     out = []
     for node in ast.walk(fn):
         if not isinstance(node, ast.Call):
@@ -174,6 +243,8 @@ def reads_of(fn):
                 out.append(arg.value)
             elif isinstance(arg, ast.Name) and arg.id in _PATH_CONSTANTS:
                 out.append(_PATH_CONSTANTS[arg.id])
+            elif isinstance(arg, ast.Name) and arg.id in _looped:
+                out.extend(_looped[arg.id])
         elif fname in ("_read_app", "_app_modules"):
             out.extend(_package_modules("polaris_web"))
         elif fname == "_read_package" and len(node.args) >= 2:

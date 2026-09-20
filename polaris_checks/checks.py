@@ -19844,7 +19844,14 @@ _RUNNER_LAST_RELS = (
 
 
 def check_test_runners_are_last_in_their_file(root: pathlib.Path) -> list[Finding]:
-    checked = 0
+    # `checked` counts files READ and `with_runner` counts files that actually carry an
+    # `if __name__` block. Only the second is evidence. Until 2026-09-20 the floor below
+    # was on the first, so a tree where every guard had been commented out left all four
+    # files readable, every one of them skipped by `if not guards: continue`, and the
+    # verdict said "all 4 test files either put their runner last or delegate" over zero
+    # runners examined. polaris-check-mutation-drill found it the hour its reads_of learned
+    # to resolve _RUNNER_LAST_RELS, which is what made these files mutable at all.
+    checked = with_runner = 0
     for rel in _RUNNER_LAST_RELS:
         src = _read(root, rel)
         if not src:
@@ -19855,6 +19862,7 @@ def check_test_runners_are_last_in_their_file(root: pathlib.Path) -> list[Findin
                   if re.match(r"""^if __name__ == ['"]__main__['"]\s*:""", line)]
         if not guards:
             continue
+        with_runner += 1
         if len(guards) > 1:
             return _fail("runner_last",
                          "%s has %d `if __name__` blocks. Only the last one can be the "
@@ -19887,10 +19895,17 @@ def check_test_runners_are_last_in_their_file(root: pathlib.Path) -> list[Findin
         return _fail("runner_last",
                      "none of the %d test files this checks could be read, so a runner in "
                      "the wrong place would go unnoticed" % len(_RUNNER_LAST_RELS))
+    if not with_runner:
+        return _fail("runner_last",
+                     "%d of the %d test files were read and NONE carries an `if __name__` "
+                     "block. These four are listed because they run as scripts, so either "
+                     "they have stopped doing that or this check has stopped recognising "
+                     "the guard; both mean it is reporting a property it did not examine"
+                     % (checked, len(_RUNNER_LAST_RELS)))
     return _ok("runner_last",
-               "all %d test files either put their runner last or delegate to one that "
-               "re-imports the file, so running one as a script collects the whole file "
-               "rather than the part above the block" % checked)
+               "%d of %d test files carry a runner, and each puts it last or delegates to "
+               "one that re-imports the file, so running one as a script collects the whole "
+               "file rather than the part above the block" % (with_runner, checked))
 
 
 # ---------------------------------------------------------------------------

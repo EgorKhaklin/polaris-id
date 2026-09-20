@@ -18579,3 +18579,39 @@ def test_the_compulsion_ban_covers_both_nouns_and_all_three_shapes(tmp_path):
         for shape in ("%s-resistant", "resists %s", "%s-proof"):
             assert shape % noun in checks._COMPULSION_ASSERTIONS, \
                 "the two nouns and three shapes must stay symmetric; %r is missing" % (shape % noun)
+
+
+def test_runner_last_refuses_a_tree_where_no_file_has_a_runner(tmp_path):
+    """`checked` counted files READ; only files carrying a runner are evidence.
+
+    Found 2026-09-20 by polaris-check-mutation-drill, the hour its reads_of learned to
+    resolve a loop over _RUNNER_LAST_RELS and made these four files mutable at all. With
+    every `if __name__` guard commented out, all four were still readable, every one was
+    skipped by `if not guards: continue`, and the verdict claimed all four put their runner
+    last over zero runners examined.
+    """
+    fn = checks.check_test_runners_are_last_in_their_file
+
+    def write(body):
+        for rel in checks._RUNNER_LAST_RELS:
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(body)
+
+    write('import unittest\n\n\nclass T(unittest.TestCase):\n    pass\n\n\n'
+          'if __name__ == "__main__":\n    unittest.main()\n')
+    assert fn(tmp_path)[0].level == "OK", "must PASS when each runner is last"
+
+    # The mutation: the guard is commented out, so nothing is examined.
+    write('import unittest\n\n\nclass T(unittest.TestCase):\n    pass\n\n\n'
+          '# if __name__ == "__main__":\n    unittest.main()\n')
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "NONE carries" in out.message, \
+        "a tree where no file carries a runner must FAIL, not report the property"
+
+    # And the real defect the check exists for still fires.
+    write('import unittest\n\n\nif __name__ == "__main__":\n    unittest.main()\n\n\n'
+          'class TLate(unittest.TestCase):\n    pass\n')
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "TLate" in out.message, \
+        "a runner above later definitions must still be refused"
