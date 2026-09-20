@@ -342,6 +342,43 @@ def _read_path_targets(fn):
     return out
 
 
+_COMPILED_PATTERNS = None
+
+
+def _module_compiled_patterns():
+    """Module-level `NAME = re.compile("pattern")` bindings in checks.py, as name -> pattern.
+
+    `regexes_of` reads the pattern out of `re.search(...)` and friends called on the `re`
+    module. A check that compiles once at import and calls `_NAME.finditer(line)` has no
+    such call, so it asserted through something this harness could not see.
+
+    Four checks are in that shape, and the cost is not hypothetical: writing a check earlier
+    today I put its pattern behind `re.compile`, watched the drill report it as having
+    nothing to mutate, and inlined `re.match` to get the coverage back. Contorting a check
+    to suit the harness is the harness's bug, the same one _CANONICAL_OBJECT_FILES records
+    one level up.
+    """
+    out = {}
+    try:
+        tree = ast.parse((ROOT / "polaris_checks" / "checks.py").read_text(errors="replace"))
+    except Exception:
+        return out
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target, value = node.targets[0], node.value
+        if not isinstance(target, ast.Name) or not isinstance(value, ast.Call):
+            continue
+        if getattr(value.func, "attr", "") != "compile":
+            continue
+        if getattr(getattr(value.func, "value", None), "id", "") != "re":
+            continue
+        if value.args and isinstance(value.args[0], ast.Constant) \
+                and isinstance(value.args[0].value, str):
+            out[target.id] = value.args[0].value
+    return out
+
+
 def regexes_of(fn):
     """Patterns the check matches with `re.search` / `re.match` / `re.findall` / `re.finditer`.
 
@@ -354,6 +391,9 @@ def regexes_of(fn):
     without running it, and a check with only those still lands in the skipped bucket
     rather than being quietly half-mutated.
     """
+    global _COMPILED_PATTERNS
+    if _COMPILED_PATTERNS is None:
+        _COMPILED_PATTERNS = _module_compiled_patterns()
     out = set()
     for node in ast.walk(fn):
         if not isinstance(node, ast.Call):
@@ -361,6 +401,12 @@ def regexes_of(fn):
         f = node.func
         if not (isinstance(f, ast.Attribute) and f.attr in
                 ("search", "match", "findall", "finditer", "fullmatch")):
+            continue
+        # `_NAME.finditer(...)` where _NAME was compiled at module level.
+        if isinstance(f.value, ast.Name) and f.value.id in _COMPILED_PATTERNS:
+            pat = _COMPILED_PATTERNS[f.value.id]
+            if 3 <= len(pat) <= 400 and pat not in (".*", ".+", r"\s*"):
+                out.add(pat)
             continue
         if not (isinstance(f.value, ast.Name) and f.value.id == "re"):
             continue
