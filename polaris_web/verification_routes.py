@@ -226,7 +226,7 @@ def _federation_trust_holds(verifier_agency_id, token_id, context_id):
 
     NO transitive trust: this function looks for exactly one row in
     AgencyTrustAttestation; it does not recurse. R1 audit refinement from
-    proposals/R11-3-issuer-federation.md.
+    docs/design/federation-topology.md.
 
     Returns True for missing data (no token, ZK event) — federation only
     applies when there's a concrete (verifier, issuer, context) triple.

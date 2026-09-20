@@ -47,7 +47,7 @@ This module ships the integration. It does NOT migrate existing
 tokens. Pre-v9.24 tokens carry deterministic `token_value` strings;
 the verifier accepts them as a legacy class. The migration to
 all-real-signatures is a separate operator decision documented in
-docs/operator/PQC-MIGRATION.md.
+docs/design/multi-sig-migration.md.
 
 **If `oqs` is not importable**, `is_available()` returns False and
 `sign()` raises `PQCUnavailableError`. The flag-off default means

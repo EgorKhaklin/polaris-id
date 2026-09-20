@@ -292,8 +292,8 @@ def throughput(targets=None, benchmark=None):
 #: between requests, so nothing in the path obviously serialises. What is measured is
 #: one core. What is NOT measured is eight of them, or a fleet, or the network and the
 #: trust-list distribution that a real federated deployment puts in front of them.
-#: docs/reference/HA-VERIFICATION-REPORT.md carries what has actually been measured on
-#: a real multi-node topology, which is a two-member cluster and not a fleet.
+#: docs/design/capacity-model.md carries what has actually been measured on a real
+#: multi-node topology, which is a two-member cluster on CI hardware and not a fleet.
 LINEAR_FANOUT = (
     "verification fans out linearly across cores and replicas because it needs only a "
     "public key and shares no state between requests. Plausible, and measured on ONE "

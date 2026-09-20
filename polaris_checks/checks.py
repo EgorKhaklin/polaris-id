@@ -25,7 +25,9 @@ import os
 import pathlib
 import hashlib
 import json
+import io
 import re
+import tokenize
 import stat
 import subprocess
 import sys
@@ -20610,6 +20612,115 @@ def check_package_readmes_state_their_own_version(root: pathlib.Path) -> list[Fi
                      "rather than to the current one" % checked)
 
 
+#: Paths named in source prose that are NOT citations of a file in this tree, each with the
+#: reason. An entry here is a claim that no reader would go looking for the file.
+_SOURCE_PATHS_THAT_ARE_NOT_CITATIONS = {
+    "polaris_web/X.py":
+        "a placeholder in check_no_module_imports_an_unstable_name's own comment, standing "
+        "for any module: `import X` where polaris_web/X.py exists",
+    "lab/strategy/status_list.py":
+        "named by attack_status_list.py as the file it was written against, in the sentence "
+        "recording that the module was promoted out of lab/ into the package. Saying where "
+        "something went is the honest treatment, and check_no_citations_to_deleted_apparatus "
+        "makes the same exemption for the same reason",
+}
+
+#: A path rooted at a real top-level directory of this repository. That is the form which
+#: unambiguously points INTO the tree, and the restriction is what makes this checkable:
+#: `src/hash/poseidon.rs` is plonky2's upstream path and `./RELEASING.md` is fixture data in
+#: a test, and neither is a claim about a file here.
+_SOURCE_PATH_CITATION = re.compile(
+    r"(?<![\w/.\\])((?:[A-Za-z0-9_.\-]+/)+[A-Za-z0-9_.\-]+"
+    r"\.(?:py|sql|md|sh|yml|yaml|json|html|ts|rs|toml|cff))\b")
+
+
+def check_source_path_citations_resolve(root: pathlib.Path) -> list[Finding]:
+    """Every repo-rooted path named in a docstring or comment is a file that exists.
+
+    check_documented_test_citations_resolve and check_documented_symbols_resolve hold the
+    MARKDOWN. Source prose was unchecked, and it is where a reader who is already in the code
+    gets sent next. The module that writes personalization records opened by naming its
+    design record, which exists, and an operator guide beside it, which does not.
+
+    Five were dangling when this was written, found by sweeping rather than by reading. An
+    operator personalization guide and an HA verification report were cited and have never
+    existed. A migration guide was cited under an operator path when what carries it is
+    docs/design/multi-sig-migration.md. A federation refinement was cited out of a proposals
+    directory this repository does not have, and the non-transitive trust rule it was named
+    for is in docs/design/federation-topology.md. The fifth was a module whose docstring
+    opened by naming itself with a filename it does not have.
+
+    The four broken paths are described here rather than quoted, because quoting one would
+    be the thing this refuses. The first run of this check failed on this docstring, which
+    is the right behaviour and was the fastest possible confirmation that it works.
+
+    Scoped to paths rooted at a real top-level directory, deliberately. A citation in that
+    form is pointing at this tree and nothing else, which is what makes it checkable at all:
+    `src/hash/poseidon.rs` is a symbol's address in plonky2's source, `./RELEASING.md` is
+    fixture data inside a test, and `witness2/commitment.py` is an informal reference from a
+    sibling package. Holding those to this rule would refuse true sentences, and a check that
+    does that is one somebody turns off. 510 citations are in scope; two are exempt above.
+    """
+    name = "source_path_citations"
+    tops = {d.name for d in root.iterdir() if d.is_dir() and not d.name.startswith(".")}
+    if not tops:
+        return _fail(name, "no top-level directories were found, so nothing could be rooted "
+                           "against them and this measured nothing")
+    skip = ("/.git/", "/venv/", "/node_modules/", "__pycache__", "/build/", "/target/",
+            "/archive/", "/.tla/", "/.hypothesis/")
+    unresolved, cited = [], 0
+    for p in sorted(root.rglob("*.py")):
+        if any(x in str(p) for x in skip):
+            continue
+        src = _read_raw(root, str(p.relative_to(root)))
+        if not src:
+            continue
+        # tokenize, not a regex for `#`. A regex over raw source matches a `#` inside a
+        # STRING, and the first detection test written for this check contains exactly that:
+        # a fixture string that holds a commented-out citation of a file the fixture has
+        # deliberately not created. That is test data, not a citation, and refusing it would
+        # make this check unusable by its own suite. Three drafts of this docstring tripped
+        # the check by quoting a path it had just refused; describing beats quoting here.
+        prose = []
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+                if tok.type == tokenize.COMMENT:
+                    prose.append(tok.string)
+        except (tokenize.TokenError, IndentationError, SyntaxError):
+            continue
+        try:
+            for n in ast.walk(ast.parse(src)):
+                if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.ClassDef)):
+                    doc = ast.get_docstring(n)
+                    if doc:
+                        prose.append(doc)
+        except SyntaxError:
+            continue          # not this check's business; the suites catch that
+        for blob in prose:
+            for m in _SOURCE_PATH_CITATION.finditer(blob):
+                rel = m.group(1)
+                if rel.split("/")[0] not in tops:
+                    continue
+                if rel in _SOURCE_PATHS_THAT_ARE_NOT_CITATIONS:
+                    continue
+                cited += 1
+                if not (root / rel).exists():
+                    unresolved.append("%s names %s" % (p.relative_to(root), rel))
+    if cited == 0:
+        return _fail(name, "no repo-rooted path was found in any docstring or comment. The "
+                           "modules cite their design records throughout, so finding none "
+                           "means the parser has drifted and this measured nothing")
+    if unresolved:
+        return _fail(name, "%d path(s) named in source prose do not exist: %s. A reader "
+                           "already in the code follows these, and a dangling one sends them "
+                           "after something that is not there"
+                     % (len(unresolved), "; ".join(sorted(set(unresolved))[:6])))
+    return _ok(name, "all %d repo-rooted paths named in a docstring or comment resolve. Five "
+                     "did not when this was written, including two documents that have never "
+                     "existed and a module whose docstring opened with the wrong filename" % cited)
+
+
 #: Checks that CORRECTLY pass when there is nothing to look at, each with the reason.
 #:
 #: Every other check must FAIL against a copy of the tree in which every file is present and
@@ -21907,6 +22018,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_launcher_quit_beacon_defers_to_fresh_heartbeat,
     check_launcher_persists_session_secret_securely,
     check_documented_test_citations_resolve,
+    check_source_path_citations_resolve,
     check_package_readmes_state_their_own_version,
 ]
 

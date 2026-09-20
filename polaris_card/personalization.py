@@ -37,7 +37,8 @@ carrying something it should not:
   object does not verify would put a card in the field and an authoritative-looking row in the
   audit-of-record saying it was fine.
 
-See docs/design/card-profile.md and docs/operator/PERSONALIZATION.md.
+See docs/design/card-profile.md. There is no operator personalization guide; this
+module and that design record are what exist.
 """
 from __future__ import annotations
 

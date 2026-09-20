@@ -1,4 +1,4 @@
-"""polaris_card/profile.py - the on-card data model, normatively (roadmap P4.1).
+"""polaris_card/card_profile.py - the on-card data model, normatively (roadmap P4.1).
 
 The specification is docs/design/card-profile.md. This module is the same thing as code,
 because a card profile that exists only as prose is a profile two implementers read

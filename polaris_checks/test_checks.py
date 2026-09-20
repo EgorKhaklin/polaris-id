@@ -18615,3 +18615,42 @@ def test_runner_last_refuses_a_tree_where_no_file_has_a_runner(tmp_path):
     out = fn(tmp_path)[0]
     assert out.level == "FAIL" and "TLate" in out.message, \
         "a runner above later definitions must still be refused"
+
+
+def test_source_path_citations_check_detects_its_absence(tmp_path):
+    """Source prose sends a reader somewhere; the markdown checks do not cover it.
+
+    Five repo-rooted paths named in docstrings and comments were dangling when this was
+    written, including two documents that have never existed and a module whose docstring
+    opened with a filename it does not have.
+    """
+    fn = checks.check_source_path_citations_resolve
+    (tmp_path / "docs" / "design").mkdir(parents=True)
+    (tmp_path / "polaris_web").mkdir()
+    (tmp_path / "docs" / "design" / "real.md").write_text("a design record\n")
+
+    mod = tmp_path / "polaris_web" / "thing.py"
+    mod.write_text('"""thing.py - a module.\n\nSee docs/design/real.md.\n"""\n')
+    assert fn(tmp_path)[0].level == "OK", "must PASS when the cited file exists"
+
+    mod.write_text('"""thing.py - a module.\n\nSee docs/design/gone.md.\n"""\n')
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "docs/design/gone.md" in out.message, \
+        "a dangling citation in a docstring must be refused"
+
+    # A comment is prose too, and is where half of these live.
+    mod.write_text('"""thing.py"""\n# see docs/design/gone.md for why\nX = 1\n')
+    assert fn(tmp_path)[0].level == "FAIL", "a dangling citation in a comment must be refused"
+
+    # NOT rooted in this tree: an upstream address, not a claim about a file here. Paired
+    # with a real citation so the anti-vacuity floor is not what makes this pass.
+    mod.write_text('"""thing.py\n\nSee docs/design/real.md. Transcribed from '
+                   'src/hash/poseidon.rs upstream.\n"""\n')
+    assert fn(tmp_path)[0].level == "OK", \
+        "a path whose first segment is not a top-level directory is not a citation of this tree"
+
+    # Anti-vacuity: no citations anywhere means the parser has drifted.
+    mod.write_text('"""thing.py"""\nX = 1\n')
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "drifted" in out.message, \
+        "finding no citation at all must FAIL rather than report that all of them resolve"
