@@ -8227,6 +8227,72 @@ def check_package_readme_counts_its_tests(root: pathlib.Path) -> list[Finding]:
                      "real one" % (rel, said, len(suites)))
 
 
+def check_status_assertion_window_is_caller_policy(root: pathlib.Path) -> list[Finding]:
+    """The verifier must NOT honour the status assertion's own `max_window_seconds`.
+
+    This check asserts an ABSENCE, which is unusual here and is the point. A status assertion
+    carries `max_window_seconds` next to `signature_hex`, and it is NOT in the signed
+    statement: `_status_assertion_statement` signs exactly `format`, `token_value`, `status`,
+    `issued_at` and `expires_at`. Anyone who can touch the artifact in transit can rewrite the
+    window it advertises.
+
+    So a verifier that read it would be taking a security bound from unsigned data, which is
+    strictly worse than ignoring it. `verify_status_assertion` correctly takes
+    `max_window_seconds` as a CALLER argument only.
+
+    The reason this needs pinning rather than just being right: lab/EXTERNAL-NOUNS.md carried
+    a limitation note from 2026-09-15 to 2026-09-20 reading "the `max_window_seconds` the
+    artifact carries is never read by `verify_status_assertion`". That is a true sentence
+    phrased as a defect, and the obvious repair is the vulnerability. A reviewer or a future
+    session tidying the known-limitations list is exactly who would implement it.
+
+    What genuinely bounds staleness is `expires_at`, which is signed and enforced. The
+    caller's bound is a separate policy ceiling against a long-lived assertion, and it belongs
+    to the caller because only the caller knows what they will accept.
+    """
+    name = "status_window_caller_policy"
+    rel = "packages/polaris-verify/polaris_verify_cli/verifier.py"
+    ver = _read(root, rel)
+    issuer = _read(root, "polaris_web/rp_api.py")
+    if not ver or not issuer:
+        return _fail(name, "%s or polaris_web/rp_api.py is missing" % rel)
+
+    m = re.search(r"def _status_assertion_statement\(.*?\n(.*?)\n\ndef ", issuer, re.S)
+    if not m:
+        return _fail(name, "polaris_web/rp_api.py no longer defines _status_assertion_statement, "
+                           "so what the signature covers cannot be read and this check would "
+                           "pass by finding nothing")
+    signed = set(re.findall(r"'(\w+)':", m.group(1)))
+    if len(signed) < 4:
+        return _fail(name, "only %d field(s) parsed out of the canonical statement; the parse "
+                           "has broken" % len(signed))
+    if "max_window_seconds" in signed:
+        return _ok(name, "the canonical statement now signs max_window_seconds, so honouring "
+                         "it would be sound; this check has served its purpose and the "
+                         "verifier may read it")
+
+    body = re.search(r"def verify_status_assertion\(.*?\n(.*?)\ndef ", ver, re.S)
+    if not body:
+        return _fail(name, "%s no longer defines verify_status_assertion" % rel)
+    reads = re.search(r"assertion(?:\.get\(\s*[\"']max_window_seconds|\[\s*[\"']max_window_seconds)",
+                      body.group(1))
+    if reads:
+        return _fail(name, "verify_status_assertion reads the assertion's own "
+                           "max_window_seconds, which is NOT in the signed statement "
+                           "(%s are). A bound taken from unsigned data is one an attacker in "
+                           "transit sets; the caller's argument is the only honest source"
+                           % ", ".join(sorted(signed)))
+    if "max_window_seconds=None" not in body.group(1) and \
+            "max_window_seconds" not in body.group(1):
+        return _fail(name, "verify_status_assertion no longer takes max_window_seconds as a "
+                           "caller argument, so an RP has no way to bound how long a window "
+                           "it will accept")
+    return _ok(name, "the status assertion's advertised max_window_seconds is outside the "
+                     "signed statement (%s), and verify_status_assertion reads it only from "
+                     "its caller; staleness is bounded by the signed expires_at instead"
+               % ", ".join(sorted(signed)))
+
+
 def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Finding]:
     """The published contract's own count of what it certifies, held to the manifest.
 
@@ -21221,6 +21287,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_drill_plan_is_binding,
     check_conformance_contract_constrains,
     check_package_readme_counts_its_tests,
+    check_status_assertion_window_is_caller_policy,
     check_conformance_spec_counts_its_artifacts,
     check_conformance_contract_distinguishes,
     check_procedure_refusals_are_mutation_tested,

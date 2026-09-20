@@ -148,8 +148,26 @@ is what this board is for. Writing them down is not scheduling them.
   * **No native general `age_over_21` anonymous credential.** The benchmark's first scenario
     is satisfied by a disclosed attribute, not by an anonymous predicate.
   * **Offline status maximum lifetime rests partly on relying-party policy.** The issuer
-    mints a one-hour TTL; the verifier's own default bound is `None`, and the
-    `max_window_seconds` the artifact carries is never read by `verify_status_assertion`.
+    mints a one-hour TTL and the verifier's own default bound is `None`, so an RP that wants
+    a ceiling on how long a window may be must pass `max_window_seconds` itself.
+
+    *Corrected 2026-09-20.* This entry used to end "and the `max_window_seconds` the artifact
+    carries is never read by `verify_status_assertion`", which read as a verifier defect and
+    invited the opposite of a fix. **That field is NOT in the signed statement.**
+    `_status_assertion_statement` signs exactly five: `format`, `token_value`, `status`,
+    `issued_at`, `expires_at`, and the artifact's own `digest_construction` says so. Reading
+    the artifact's `max_window_seconds` would mean honouring a number anyone who can touch the
+    artifact in transit may rewrite, which is strictly worse than ignoring it. The verifier is
+    right as it stands.
+
+    What actually bounds staleness is `expires_at`, which IS signed and IS enforced
+    (`within = ia <= now < ea`). The caller's `max_window_seconds` is a different control, a
+    policy ceiling against an issuer minting a very long-lived assertion, and it belongs to
+    the caller because only the caller knows what they will accept. The residual limitation is
+    that the artifact ships an unsigned field that reads like a security bound; a hasty
+    integrator could trust it. Removing it is a wire change against the frozen v1 set, so it
+    waits for a format version. `check_status_assertion_window_is_caller_policy` pins both
+    halves so the tempting repair cannot land.
   * **Algorithm deprecation is not conveyed as signed runtime policy.** It lives in
     `CryptographicAlgorithm` rows, not in something a verifier is handed and can check.
   * **The physical token is an emulator and a specification, not certified silicon.**

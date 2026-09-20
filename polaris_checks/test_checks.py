@@ -14928,6 +14928,74 @@ def test_package_readme_test_count_check_discriminates(tmp_path):
         "must FAIL when the count is written in a form nothing can hold"
 
 
+def test_status_assertion_window_check_discriminates(tmp_path):
+    """The verifier must not take a security bound from an UNSIGNED field.
+
+    lab/EXTERNAL-NOUNS.md carried a limitation from 2026-09-15 to 2026-09-20 reading "the
+    `max_window_seconds` the artifact carries is never read by `verify_status_assertion`".
+    True, phrased as a defect, and the obvious repair is the vulnerability: that field is not
+    in the signed statement, so honouring it means honouring whatever an attacker in transit
+    wrote there. This check exists because a reviewer tidying that list is exactly who would
+    implement it.
+    """
+    (tmp_path / "packages" / "polaris-verify" / "polaris_verify_cli").mkdir(parents=True)
+    (tmp_path / "polaris_web").mkdir(parents=True)
+
+    SIGNS_FIVE = (
+        "def _status_assertion_statement(token_value, status, issued_at, expires_at):\n"
+        "    return json.dumps({\n"
+        "        'format': F, 'token_value': token_value,\n"
+        "        'status': status, 'issued_at': issued_at, 'expires_at': expires_at,\n"
+        "    }, sort_keys=True).encode()\n"
+        "\n"
+        "def _next():\n    pass\n")
+    GOOD_VERIFIER = (
+        "def verify_status_assertion(assertion, now=None, max_window_seconds=None):\n"
+        "    window_ok = True if max_window_seconds is None else window <= max_window_seconds\n"
+        "    return {'fresh': window_ok}\n"
+        "def _after():\n    pass\n")
+
+    def write(verifier=GOOD_VERIFIER, issuer=SIGNS_FIVE):
+        (tmp_path / "packages" / "polaris-verify" / "polaris_verify_cli"
+         / "verifier.py").write_text(verifier)
+        (tmp_path / "polaris_web" / "rp_api.py").write_text(issuer)
+
+    fn = checks.check_status_assertion_window_is_caller_policy
+    write()
+    assert fn(tmp_path)[0].level == "OK", \
+        "must PASS when the bound comes only from the caller"
+
+    # THE defect: the tempting repair. Reading the artifact's own advertised window.
+    for reader in ("assertion.get('max_window_seconds')", 'assertion["max_window_seconds"]'):
+        write(verifier=GOOD_VERIFIER.replace(
+            "    window_ok = True",
+            "    declared = %s\n    window_ok = True" % reader))
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL" and "unsigned" in out[0].message, \
+            "must FAIL when the verifier reads the assertion's own max_window_seconds (%s)" % reader
+
+    # If the field ever JOINS the signed statement, honouring it becomes sound and this
+    # check stands down rather than blocking the better design.
+    write(issuer=SIGNS_FIVE.replace(
+        "'status': status,", "'status': status, 'max_window_seconds': ttl,"))
+    out = fn(tmp_path)
+    assert out[0].level == "OK" and "served its purpose" in out[0].message, \
+        "must stand down once the field is signed, not block the fix that makes it sound"
+
+    # The caller must still be able to set a ceiling of its own.
+    write(verifier="def verify_status_assertion(assertion, now=None):\n    return {}\n"
+                   "def _after():\n    pass\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "caller argument" in out[0].message, \
+        "must FAIL when an RP loses the ability to bound the window it accepts"
+
+    # Anti-vacuity: the canonical statement cannot be read.
+    write(issuer="def _other():\n    pass\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "pass by finding nothing" in out[0].message, \
+        "must FAIL rather than pass when what the signature covers cannot be read"
+
+
 def test_conformance_spec_count_check_discriminates(tmp_path):
     """The contract's own statement of its scope, held to the manifest.
 
