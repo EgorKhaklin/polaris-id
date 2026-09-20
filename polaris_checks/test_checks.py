@@ -18374,3 +18374,33 @@ def test_documented_test_citations_check_detects_its_absence(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "no test function is defined" in out[0].message, \
         "an empty tree must FAIL rather than pass by finding no evidence"
+
+
+def test_launcher_checks_do_not_read_commented_out_code(tmp_path):
+    """Commenting the line out has to remove the property, not just hide it.
+
+    check_launcher_persists_session_secret_securely read the launcher through _read_raw and
+    survived exactly this in polaris-check-mutation-drill.py: every line carrying its search
+    strings commented out, and the check still green. That is the failure _read exists to
+    prevent, and the reason `# temporarily disabled: <the thing>` is the shape to test for.
+    The header sentence in the first case stays readable on purpose, since that check compares
+    prose against code and blanking the prose would remove the half it compares against.
+    """
+    cases = (
+        (checks.check_launcher_stale_threshold_survives_tab_throttling,
+         '    local stale_threshold="${POLARIS_WATCH_STALE:-180}"'),
+        (checks.check_launcher_applies_session_secret_when_already_running,
+         "        docker compose up -d --force-recreate --no-deps app"),
+        (checks.check_launcher_quit_beacon_defers_to_fresh_heartbeat,
+         '            hb_now=$(file_mtime "$HEARTBEAT_FILE")'),
+        (checks.check_launcher_persists_session_secret_securely,
+         """    ( umask 077; printf '%s' "$POLARIS_SECRET_KEY" > "$secret_file" )"""),
+    )
+    for fn, line in cases:
+        _launcher_tree(tmp_path)
+        assert fn(tmp_path)[0].level == "OK", "%s must PASS on the good fixture" % fn.__name__
+        assert _GOOD_LAUNCHER.count(line) == 1, "fixture line %r must be unique" % line[:40]
+        _launcher_tree(tmp_path,
+                       launcher=_GOOD_LAUNCHER.replace(line, "    # " + line.lstrip(), 1))
+        assert fn(tmp_path)[0].level == "FAIL", \
+            "%s passed with %r commented out" % (fn.__name__, line.strip()[:50])

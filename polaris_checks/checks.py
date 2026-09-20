@@ -20063,10 +20063,14 @@ def check_launcher_stale_threshold_survives_tab_throttling(root: pathlib.Path) -
     """
     name = "launcher_stale_threshold"
     raw = _read_raw(root, _LAUNCHER_REL)
+    # The default is CODE and the sentence describing it is PROSE, so they are read at
+    # different layers: commenting the assignment out has to remove it, and blanking the
+    # comment would remove the half this compares against.
+    code = _read(root, _LAUNCHER_REL)
     if not raw:
         return _fail(name, "%s is unreadable or empty, so the teardown threshold could not be "
                            "measured" % _LAUNCHER_REL)
-    m = re.search(r"POLARIS_WATCH_STALE:-(\d+)", raw)
+    m = re.search(r"POLARIS_WATCH_STALE:-(\d+)", code)
     if not m:
         return _fail(name, "%s defines no POLARIS_WATCH_STALE default. The watch loop needs one "
                            "to decide when a missing heartbeat means the tab is gone"
@@ -20194,7 +20198,7 @@ def check_launcher_applies_session_secret_when_already_running(root: pathlib.Pat
     start path is how that half of v8.58 was fixed.
     """
     name = "launcher_secret_on_running"
-    raw = _read_raw(root, _LAUNCHER_REL)
+    raw = _read(root, _LAUNCHER_REL)
     problems = []
     docker = _sh_function_body(raw, "launch_docker")
     native = _sh_function_body(raw, "launch_native")
@@ -20284,7 +20288,7 @@ def check_launcher_quit_beacon_defers_to_fresh_heartbeat(root: pathlib.Path) -> 
     fourth bug in this family and the first with no test, which is what this is.
     """
     name = "launcher_beacon_vs_heartbeat"
-    raw = _read_raw(root, _LAUNCHER_REL)
+    raw = _read(root, _LAUNCHER_REL)
     body = _sh_function_body(raw, "watch_browser_presence")
     if not body:
         return _fail(name, "%s defines no watch_browser_presence() at column 0, so the teardown "
@@ -20328,7 +20332,7 @@ def check_launcher_persists_session_secret_securely(root: pathlib.Path) -> list[
     the work above would matter. It has to arrive through the environment.
     """
     name = "launcher_secret_persistence"
-    raw = _read_raw(root, _LAUNCHER_REL)
+    raw = _read(root, _LAUNCHER_REL)
     body = _sh_function_body(raw, "rotate_session_secret_if_unset")
     if not body:
         return _fail(name, "%s defines no rotate_session_secret_if_unset() at column 0, so the "
@@ -20347,7 +20351,7 @@ def check_launcher_persists_session_secret_securely(root: pathlib.Path) -> list[
         problems.append("the secret file is created without umask 077 or chmod 600. The "
                         "default state directory is under /tmp, which is multi-user on macOS, "
                         "and a readable Flask session key is a forgeable session")
-    compose = _read_raw(root, "polaris_web/docker-compose.yml")
+    compose = _read(root, "polaris_web/docker-compose.yml")
     if not compose:
         problems.append("polaris_web/docker-compose.yml is unreadable, so it could not be "
                         "shown to take the secret from the environment")
