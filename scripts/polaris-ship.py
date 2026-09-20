@@ -1113,6 +1113,26 @@ def _receipt_path(cmd):
                         re.sub(r"[^a-z0-9]+", "-", cmd.lower()).strip("-") + ".txt")
 
 
+def _with_this_interpreter(cmd):
+    """Run a `python3 ...` drill under the interpreter running THIS tool.
+
+    The drill commands are written as `python3 scripts/...`, which is what a reader should
+    type, and `--run` used to hand that string to the shell unchanged. Three drills annotate
+    with `str | None`, which needs 3.10, and macOS still ships 3.9 as `python3`: on such a
+    machine polaris-contract-reach-drill, polaris-sdk-agreement-drill and
+    polaris-sdk-mutation-drill all died with `TypeError: unsupported operand type(s) for |`
+    before running a single case. They pass under the application interpreter, so the failure
+    was this tool's choice of python and not the drills.
+
+    That mattered more than a failed run, because `--run` is the only thing that writes a
+    receipt and preflight reads receipts. Three drills that cannot be run through the tool
+    are three drills preflight can never see, and the visible symptom is a gate that withholds
+    READY for a reason that has nothing to do with the change. Invoke this tool with the
+    interpreter the suites use and the drills get the same one.
+    """
+    return (sys.executable + cmd[len("python3"):]) if cmd.startswith("python3 ") else cmd
+
+
 def drills(argv):
     """List, run, or verify the drills this change needs."""
     check = "--check" in argv
@@ -1132,7 +1152,7 @@ def drills(argv):
         failed = []
         for cmd, paths in jobs:
             print("── %s" % cmd, flush=True)
-            rc = subprocess.call(cmd, shell=True, cwd=ROOT)
+            rc = subprocess.call(_with_this_interpreter(cmd), shell=True, cwd=ROOT)
             if rc != 0:
                 failed.append(cmd)
                 print("   FAILED (exit %d); no receipt written" % rc, flush=True)
