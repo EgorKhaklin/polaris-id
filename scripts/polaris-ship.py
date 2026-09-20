@@ -815,12 +815,19 @@ FLAKE_SIGNATURES = [
     # The transient codes only. `curl: (22)` is an HTTP 4xx with --fail, which is a URL that
     # moved or a credential that expired: a real failure that reruns forever, and it does not
     # print any of these messages.
-    ("package-cdn-network",
+    # 2026-09-20, hours later, run 35516415530: it happened again and NOT in a package stage.
+    # The formal-specs step fetches tla2tools from github.com, curl timed out after 135
+    # seconds, the step exited 3 and printed `tla drill could not fetch tla2tools v1.7.4`.
+    # A different host, a different step, a different curl code, and it classified, which is
+    # the whole return on not writing `download.docker.com` into the pattern. The name is
+    # about the failure and not about package stages for the same reason.
+    ("transient-fetch-network",
      r"curl: \(\d+\) (?:OpenSSL SSL_connect|SSL connection timeout|Recv failure|"
      r"Send failure|Failed to connect|Could not resolve host|Empty reply from server|"
      r"Operation timed out|Connection timed out|Connection reset by peer)",
-     "a mirror or CDN dropped the connection mid-fetch (a transient curl network error, not "
-     "an HTTP status); rerun the failed jobs. If it repeats on the rerun, read the URL: a "
+     "a fetch over the network failed transiently: a curl connect, reset or timeout "
+     "rather than an HTTP status, from whatever a step downloads (a package mirror, a "
+     "tool release). Rerun the failed jobs. If it repeats on the rerun, read the URL: a "
      "host that has genuinely moved fails the same way every time"),
 ]
 

@@ -135,8 +135,18 @@ class FlakeClassifierTests(unittest.TestCase):
             "curl: (35) OpenSSL SSL_connect: Connection reset by peer in connection to "
             "download.docker.com:443\n"
             "##[error]Process completed with exit code 35.\n")
-        self.assertEqual((verdict, name), ("flake", "package-cdn-network"))
+        self.assertEqual((verdict, name), ("flake", "transient-fetch-network"))
         self.assertIn("rerun", advice)
+
+    def test_a_tool_download_timeout_is_the_same_flake(self):
+        """Run 35516415530, hours after the signature was written: the formal-specs step
+        fetches tla2tools from github.com and curl timed out. Different host, different step,
+        different curl code. A signature naming download.docker.com would have missed it."""
+        verdict, name, _advice = ship.classify_failure_log(
+            "curl: (28) Failed to connect to github.com port 443 after 135276 ms: "
+            "Couldn't connect to server\ntla drill could not fetch tla2tools v1.7.4\n"
+            "##[error]Process completed with exit code 3.\n")
+        self.assertEqual((verdict, name), ("flake", "transient-fetch-network"))
 
     def test_the_curl_signature_is_not_scoped_to_one_host(self):
         """The alpine-apk entry above is here because a signature written for the image
@@ -144,7 +154,7 @@ class FlakeClassifierTests(unittest.TestCase):
         stage in this tree fetches over curl from somewhere."""
         verdict, name, _advice = ship.classify_failure_log(
             "curl: (6) Could not resolve host: deb.debian.org\n")
-        self.assertEqual((verdict, name), ("flake", "package-cdn-network"))
+        self.assertEqual((verdict, name), ("flake", "transient-fetch-network"))
 
     def test_an_http_error_from_curl_is_not_a_flake(self):
         """`curl: (22)` is a 4xx under --fail: a URL that moved or a credential that
@@ -154,7 +164,7 @@ class FlakeClassifierTests(unittest.TestCase):
                      "curl: (22) The requested URL returned error: 403 Forbidden\n"):
             with self.subTest(line=line):
                 _verdict, name, _advice = ship.classify_failure_log(line)
-                self.assertNotEqual(name, "package-cdn-network",
+                self.assertNotEqual(name, "transient-fetch-network",
                                     "an HTTP status is not a dropped connection")
 
     def test_a_registry_5xx_during_a_pull_is_a_known_flake(self):
