@@ -45,9 +45,17 @@ repos:
         # scripts/polaris-ship.py was renamed, scripts/test_ship_tool.py asserts its id, and CI
         # was the first to know; two commits went red for it.
         #
-        # These five need no database, no network and no ML-DSA, and cost about 1.7 seconds
-        # together. test_verify_load is deliberately left out: it is the slowest and it
-        # exercises a live verify path, which is a bad trade in a pre-commit hook. CI runs it.
+        # These five need no database and no network, and cost about 1.7 seconds together.
+        # test_verify_load is deliberately left out: it is the slowest and it exercises a
+        # live verify path, which is a bad trade in a pre-commit hook. CI runs it.
+        #
+        # "and no ML-DSA" used to be on that list and was wrong. test_verify_conformance
+        # drives real ML-DSA-65 and ML-DSA-87 vectors, so on an interpreter whose
+        # `cryptography` predates ML-DSA support it failed 76 subtests with a bare
+        # `False != True`, on every commit touching scripts/, for a reason that had nothing
+        # to do with the change. A gate that fires for the wrong reason is one people learn
+        # to pass with --no-verify. It now SKIPS with the cause named, and CI runs it for
+        # real on the pinned interpreter.
         # Continuation lines sit at the SAME indent as `bash -c`, so YAML folds them into
         # spaces and the script is one line. Indent one of them further and YAML keeps the
         # newline instead, which silently turns the module names into commands of their own:

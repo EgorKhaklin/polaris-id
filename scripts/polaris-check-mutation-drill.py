@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import os
 import re
 import shutil
 import sys
@@ -63,13 +64,14 @@ sys.path.insert(0, str(ROOT))
 MUTABLE_SUFFIXES = (".py", ".sql", ".sh", ".yml", ".yaml")
 
 #: Checks that legitimately survive having their NAMED inputs deleted, with the reason.
-#: Both read more than the files the harness can name: athena_no_person reads its SQL
-#: through a module constant the harness cannot resolve, and image_builds_are_retried
-#: iterates every workflow, so deleting one leaves the others carrying the property.
-DELETION_SURVIVORS_EXPECTED = {
-    "check_image_builds_are_retried":
-        "iterates every workflow; deleting one leaves the rest to carry the property",
-}
+#: Empty is the right state, and it is now enforced in both directions: an entry whose
+#: check has stopped surviving fails this drill, so the list cannot quietly outlive the
+#: limitation it records. check_image_builds_are_retried was the last entry. It was listed
+#: because its three needles live in scripts/polaris-image-build.sh, which the check opens
+#: through `_read_path(root / "...")`, a door `reads_of` did not resolve; the drill deleted
+#: the workflows instead and the check went on passing. Resolving that door (2026-09-20)
+#: made the entry untrue, and an untrue exception reads exactly like a load-bearing one.
+DELETION_SURVIVORS_EXPECTED: dict = {}
 
 #: Checks that pass on a tree where their own property has been commented out. It was
 #: 71 of 75 at v9.398, when `_read` still handed checks the comments along with the
@@ -90,6 +92,12 @@ def _module_path_constants():
     simply could not find the filename to delete. An exception declared for a harness
     limitation reads exactly like one declared for a real gap, which is why this is
     worth resolving rather than annotating.
+
+    2026-09-20: requiring a separator was the same limitation one level down. A file at the
+    repository root has none, so `_LAUNCHER_REL = "polaris_mac_launch.sh"` resolved to
+    nothing and the four checks reading through it were reported as having nothing to
+    mutate while carrying a dozen needles between them. A name is taken now if it holds a
+    separator OR names a file that exists, which is the question actually being asked.
     """
     out = {}
     try:
@@ -101,8 +109,10 @@ def _module_path_constants():
             continue
         target = node.targets[0]
         if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant) \
-                and isinstance(node.value.value, str) and "/" in node.value.value:
-            out[target.id] = node.value.value
+                and isinstance(node.value.value, str):
+            value = node.value.value
+            if "/" in value or (value and (ROOT / value).is_file()):
+                out[target.id] = value
     return out
 
 
@@ -152,18 +162,71 @@ def reads_of(fn):
             arg = node.args[1]
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 out.extend(_package_modules(arg.value))
+    out.extend(_read_path_targets(fn))
     return out
 
 
 def needles_of(fn):
-    """Strings the check tests for with `in` / `not in`: what it greps."""
+    """Strings the check tests for with `in` / `not in`: what it greps.
+
+    Two shapes, because checks.py writes the property two ways. A single phrase goes in the
+    comparison, `"phrase" in text`, and a LIST of phrases goes in a tuple the check walks:
+
+        for phrase, why in (("...", "..."), ("...", "...")):
+            if phrase not in low:
+
+    In the second the comparison's left operand is the loop variable, so collecting only
+    `ast.Constant` on the left took none of them. Measured 2026-09-20: 144 checks held
+    literals only in that shape, 1,579 strings in total, and `check_athena_no_person` had
+    none visible at all. Every one of those checks was still counted as fully mutated while
+    being mutated against a subset of what it greps for, which is the harness making the
+    same overstatement it exists to catch. Taking both shapes raised the mutated population
+    from 118 to 137.
+    """
     out = set()
+
+    def take(value, cap):
+        if isinstance(value, str) and 3 <= len(value) <= cap and "\n" not in value:
+            out.add(value)
+
     for node in ast.walk(fn):
         if isinstance(node, ast.Compare) and isinstance(node.ops[0], (ast.In, ast.NotIn)):
-            if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
-                value = node.left.value
-                if 3 <= len(value) <= 80 and "\n" not in value:
-                    out.add(value)
+            if isinstance(node.left, ast.Constant):
+                take(node.left.value, 80)
+        elif isinstance(node, (ast.For, ast.comprehension)):
+            if isinstance(node.iter, (ast.Tuple, ast.List, ast.Set)):
+                for el in ast.walk(node.iter):
+                    if isinstance(el, ast.Constant):
+                        take(el.value, 120)
+    return out
+
+
+def _read_path_targets(fn):
+    """Files reached through `_read_path`, where the path is a literal join off `root`.
+
+    `reads_of` resolved the `_read`/`_read_raw` doors and not this one, so a check whose
+    needles live in a file it opens as `helper = root / "scripts/..."` had that file left
+    untouched while the drill mutated whatever else it could name.
+    `check_image_builds_are_retried` surfaced as a survivor for exactly that reason: its
+    three needles are in polaris-image-build.sh and the drill was commenting out workflow
+    lines. A limitation of this harness reads identically to a real gap in a check, which is
+    why it is resolved here rather than recorded as an expected survivor.
+    """
+    local = {}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            rel = _dir_of(node.value)
+            if rel:
+                local[node.targets[0].id] = rel
+    out = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "_read_path" \
+                and node.args:
+            arg = node.args[0]
+            rel = _dir_of(arg) if isinstance(arg, ast.BinOp) else local.get(getattr(arg, "id", ""))
+            if rel:
+                out.append(rel)
     return out
 
 
@@ -273,6 +336,8 @@ def main():
 
     survived, mutated, skipped_opaque, skipped_nothing = [], 0, 0, 0
     nothing_to_mutate: list[str] = []
+    unmutable_suffix: list = []
+    no_line_matched: list[str] = []
     work = pathlib.Path("/tmp/polaris-mutation-run")
 
     print("can a check pass on a tree where its property is gone?")
@@ -293,6 +358,9 @@ def main():
             continue
         if not all(f.endswith(MUTABLE_SUFFIXES) for f in files):
             skipped_nothing += 1
+            unmutable_suffix.append(
+                (fn.name, sorted({os.path.splitext(f)[1] or "(none)" for f in files
+                                  if not f.endswith(MUTABLE_SUFFIXES)})))
             continue
         if opaque_inputs(fn):
             skipped_opaque += 1
@@ -325,6 +393,7 @@ def main():
             target.write_text("\n".join(out), encoding="utf-8")
         if not changed:
             skipped_nothing += 1
+            no_line_matched.append(fn.name)
             continue
 
         mutated += 1
@@ -337,6 +406,7 @@ def main():
 
     # SECOND MUTATION: delete what the check names and require it to notice.
     deletion_survivors, deletion_tested = [], 0
+    deletion_exceptions_used: set = set()
     for name, fn in sorted(fns.items()):
         named = [f for f in set(reads_of(fn)) if (base / f).is_file()]
         if not named:
@@ -350,7 +420,10 @@ def main():
             still_passes = all(f.level != "FAIL" for f in by_name[name](work))
         except Exception:                      # noqa: BLE001 - a crash is not a pass
             still_passes = False
-        if still_passes and name not in DELETION_SURVIVORS_EXPECTED:
+        if name in DELETION_SURVIVORS_EXPECTED:
+            if still_passes:
+                deletion_exceptions_used.add(name)
+        elif still_passes:
             deletion_survivors.append(name)
 
     shutil.rmtree(work, ignore_errors=True)
@@ -362,19 +435,47 @@ def main():
     print("  skipped: nothing to mutate                   %4d" % skipped_nothing)
     if skipped_nothing:
         # Naming them, not just counting them. This line used to read as a footnote, and
-        # it is the drill's blind spot: `needles_of` collects STRING LITERALS to comment
-        # out, so a check that asserts through a regex offers nothing to mutate and lands
-        # here. Measured on 2026-09-13: of six checks found to verify a proxy for their
-        # invariant rather than the invariant, FOUR were in this bucket. The population
-        # most likely to be pinned to a mechanism is the population this drill cannot
-        # reach, so "0 of N survive" is a statement about the reachable N.
-        print("      ...which means they are NOT mutation-tested. The drill mutates string")
-        print("      literals; a check asserting through a regex has none. First 12:")
-        for nm in sorted(nothing_to_mutate)[:12]:
-            print("        %s" % nm)
+        # it is the drill's blind spot: the population most likely to be pinned to a
+        # mechanism is the population this drill cannot reach, so "0 of N survive" is a
+        # statement about the reachable N. Measured on 2026-09-13: of six checks found to
+        # verify a proxy for their invariant rather than the invariant, FOUR were skipped
+        # here.
+        #
+        # The three causes are reported apart because they are different problems and only
+        # one of them is about the checks. Until 2026-09-20 one total was printed above a
+        # sample drawn from the smallest of the three, under a sentence that explained only
+        # that one: a reader took the names as a sample of the whole and the explanation as
+        # its cause. That is the shape of defect this drill exists to find.
+        print("      ...which means they are NOT mutation-tested, for three reasons:")
+        if nothing_to_mutate:
+            print("      [%d] nothing to search for: no literal needle and no literal pattern."
+                  % len(nothing_to_mutate))
+            for nm in sorted(nothing_to_mutate)[:6]:
+                print("            %s" % nm)
+        if unmutable_suffix:
+            by_suffix: dict = {}
+            for nm, sufs in unmutable_suffix:
+                for sfx in sufs:
+                    by_suffix.setdefault(sfx, []).append(nm)
+            print("      [%d] read a file this mutation cannot express. Commenting a line out "
+                  "needs a" % len(unmutable_suffix))
+            print("            comment syntax, and `#` in Markdown is a heading: the sentence "
+                  "stays readable,")
+            print("            so the check would pass and prove nothing. Deleting the line is "
+                  "the mutation")
+            print("            these want, and this drill does not do it yet.")
+            for sfx, names in sorted(by_suffix.items(), key=lambda kv: -len(kv[1]))[:5]:
+                print("            %-7s %3d check(s), e.g. %s" % (sfx, len(names), names[0]))
+        if no_line_matched:
+            print("      [%d] had needles, and no line in the named files carried one."
+                  % len(no_line_matched))
+            for nm in sorted(no_line_matched)[:6]:
+                print("            %s" % nm)
+    stale_exceptions = sorted(set(DELETION_SURVIVORS_EXPECTED) - deletion_exceptions_used)
     print("  checks whose named inputs were DELETED       %4d" % deletion_tested)
-    print("  ...of those, still passing with them gone    %4d  (%d known and listed)"
-          % (len(deletion_survivors), len(DELETION_SURVIVORS_EXPECTED)))
+    print("  ...of those, still passing with them gone    %4d  (%d declared, %d still needed)"
+          % (len(deletion_survivors), len(DELETION_SURVIVORS_EXPECTED),
+             len(deletion_exceptions_used)))
     print()
 
     if len(survived) > SPELLING_PINNED_BASELINE:
@@ -395,6 +496,20 @@ def main():
               "it reports is vacuously true:", file=sys.stderr)
         for name in sorted(deletion_survivors):
             print("  %s" % name, file=sys.stderr)
+        return 1
+    if stale_exceptions:
+        # A limitations list that can only be appended to is a confession nobody
+        # maintains. polaris-review-packet-drill.py fails when one of ITS limitations is
+        # fixed, for the same reason: an exception that has stopped being true reads
+        # exactly like one that is still load-bearing, and the next person to read it
+        # believes it. check_image_builds_are_retried was listed here from the day its
+        # needles lived in a file reads_of could not name, and stayed listed after that
+        # was resolved.
+        print("FAIL: %d declared deletion exception(s) are no longer true, so the list is "
+              "describing a limitation that has been fixed. Delete the entry:"
+              % len(stale_exceptions), file=sys.stderr)
+        for name in stale_exceptions:
+            print("  %s -- %s" % (name, DELETION_SURVIVORS_EXPECTED[name]), file=sys.stderr)
         return 1
     if mutated < 50:
         print("FAIL: only %d checks were mutated; the harness has stopped reaching the "

@@ -28,6 +28,20 @@ _spec = importlib.util.spec_from_file_location("polaris_verify_detached",
 V = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(V)
 
+#: Every case here is real ML-DSA material, so a machine whose crypto backend cannot do
+#: ML-DSA verifies none of it. That state is not a failing contract, and reporting it as one
+#: is worse than useless: 76 subtests fail with a bare `False != True` that names no cause,
+#: which is what a `cryptography` older than ML-DSA support produces (the import succeeds,
+#: so nothing obvious is missing). `test_every_refusal_case_is_actually_refused` is the
+#: reason this is a skip and not a tolerated failure: it PASSES on such a machine, because a
+#: verifier that refuses everything refuses the tampered cases too. That is the false
+#: reassurance conformance/run_conformance.py declares a run VOID over rather than scoring,
+#: and the same rule belongs on the suite that drives the other shipped verifier.
+#:
+#: The probe asks the environment, not the code under test. Using the verifier's own verdict
+#: as the guard would let a real regression skip itself.
+_CAN_VERIFY_MLDSA = any(V._provider_available(p) for p in ("cryptography", "oqs"))
+
 # artifact -> (verifier function, the key on its verdict that means "authentic").
 # The names differ per artifact by design: the verifier says `feed_authentic`, not a bare
 # `authentic`, so a caller cannot confuse "this feed is genuine" with "this credential is".
@@ -189,6 +203,11 @@ def _verdict_for(case):
     raise AssertionError("unknown artifact %r in case %r" % (artifact, case["name"]))
 
 
+@unittest.skipUnless(_CAN_VERIFY_MLDSA,
+                     "no ML-DSA-capable backend on this interpreter (a `cryptography` "
+                     "predating ML-DSA support imports fine and verifies nothing, and "
+                     "liboqs is absent), so every genuine case would report not-authentic "
+                     "and every refusal case would pass for the wrong reason")
 class ConformanceContractTests(unittest.TestCase):
     """One subtest per published case. A failure names the case, so it is actionable."""
 
