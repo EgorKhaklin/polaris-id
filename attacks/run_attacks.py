@@ -46,6 +46,31 @@ def _run_suite(name):
     if not ok:
         print("  [ERROR ] %s: suite cannot run (%s)" % (name, reason))
         return [], True
+
+    # THE POSITIVE CONTROL, added 2026-09-19. Everything below reports a defense holding by
+    # OBSERVING something: a verdict, an HTTP status, a database row. A harness that observes
+    # nothing reports every defense holding, and the final line of this run is the same either
+    # way: "all N attacks failed to break their defense".
+    #
+    # conformance/run_conformance.py has had a rule for this since it was written -- its run
+    # is VOID when no positive control passes -- and this runner, which is the tree's evidence
+    # that its DEFENSES hold, did not. Found by asking what the runner next door refuses to do
+    # that this one does not.
+    control = getattr(mod, "positive_control", None)
+    if control is None:
+        print("  [ERROR ] %s: the suite declares no positive_control, so a clean sweep from "
+              "it cannot be distinguished from a harness that attacked nothing" % name)
+        return [], True
+    try:
+        control_ok, control_note = control()
+    except Exception as e:
+        print("  [ERROR ] %s: the positive control raised %s: %s"
+              % (name, type(e).__name__, e))
+        return [], True
+    if not control_ok:
+        print("  [VOID  ] %s: %s" % (name, control_note))
+        return [], True
+    print("  [control] %s: %s" % (name, control_note))
     results = []
     hard_error = False
     for attack_name, fn in mod.ATTACKS:

@@ -10411,14 +10411,29 @@ def _attacks_runner_contract_holds(root: pathlib.Path):
     except Exception as e:
         return False, f"could not load the runner ({e})"
 
+    # Every fake carries a positive_control, because since 2026-09-19 the runner refuses a
+    # suite without one: a clean sweep from a harness that observed nothing is the failure
+    # that rule exists to prevent. `_nocontrol` is the fake that still lacks it, so the new
+    # rule is asserted rather than assumed.
     def fake_import(name):
+        control = lambda: (True, "canary control")  # noqa: E731
         if name.endswith("_succeed"):
             return types.SimpleNamespace(available=lambda: (True, "canary"),
+                                         positive_control=control,
                                          ATTACKS=[("c", lambda: (True, "broke"))])
         if name.endswith("_hold"):
             return types.SimpleNamespace(available=lambda: (True, "canary"),
+                                         positive_control=control,
                                          ATTACKS=[("c", lambda: (False, "held"))])
-        return types.SimpleNamespace(available=lambda: (False, "unavailable"), ATTACKS=[])
+        if name.endswith("_voidcontrol"):
+            return types.SimpleNamespace(available=lambda: (True, "canary"),
+                                         positive_control=lambda: (False, "observed nothing"),
+                                         ATTACKS=[("c", lambda: (False, "held"))])
+        if name.endswith("_nocontrol"):
+            return types.SimpleNamespace(available=lambda: (True, "canary"),
+                                         ATTACKS=[("c", lambda: (False, "held"))])
+        return types.SimpleNamespace(available=lambda: (False, "unavailable"), ATTACKS=[],
+                                     positive_control=control)
 
     orig = importlib.import_module
     try:
@@ -10430,6 +10445,10 @@ def _attacks_runner_contract_holds(root: pathlib.Path):
             rc_held = mod.main(["--suite", "hold"])
             setattr(mod, "_SUITES", ("blocked",))
             rc_blocked = mod.main(["--suite", "blocked"])
+            setattr(mod, "_SUITES", ("voidcontrol",))
+            rc_void = mod.main(["--suite", "voidcontrol"])
+            setattr(mod, "_SUITES", ("nocontrol",))
+            rc_nocontrol = mod.main(["--suite", "nocontrol"])
     except Exception as e:
         return False, f"executing the runner contract raised {type(e).__name__}: {e}"
     finally:
@@ -10441,7 +10460,16 @@ def _attacks_runner_contract_holds(root: pathlib.Path):
         return False, f"an all-held run produced exit {rc_held}, not 0"
     if rc_blocked != 3:
         return False, f"a non-runnable suite produced exit {rc_blocked}, not 3 (it must hard-error, not skip)"
-    return True, "red on a successful attack, hard-error on a non-runnable suite, green only when all held"
+    if rc_void != 3:
+        return False, (f"a suite whose POSITIVE CONTROL failed produced exit {rc_void}, not 3. "
+                       f"Its attacks all reported held, which is exactly the sweep a harness "
+                       f"that observed nothing produces")
+    if rc_nocontrol != 3:
+        return False, (f"a suite declaring NO positive_control produced exit {rc_nocontrol}, "
+                       f"not 3; a clean sweep from it cannot be told apart from a harness that "
+                       f"attacked nothing")
+    return True, ("red on a successful attack, hard-error on a non-runnable suite, on a failed "
+                  "positive control and on a suite that declares none, green only when all held")
 
 
 def check_attacks_run(root: pathlib.Path) -> list[Finding]:

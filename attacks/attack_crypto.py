@@ -205,6 +205,42 @@ def attack_witnesses_disagree_under_fuzz():
     return False, "%d fuzz rounds, liboqs and cryptography agreed on every one" % checked
 
 
+def positive_control():
+    """Defeat the defense on purpose, and require an attack to NOTICE.
+
+    Added 2026-09-19. Without this, "all 21 attacks failed to break their defense" is the
+    line a harness prints when it cannot mount an attack at all: every adversary here
+    reports success by observing a verdict, and a verifier that answers nothing, a fixture
+    that never loads, or a wrapper that swallows the call all produce the same clean sweep.
+    `conformance/run_conformance.py` has had a rule for this since it was written (its run is
+    VOID when no positive control passes) and this runner did not.
+
+    So: force `verify_pack` to call a tampered signature valid, and require
+    `attack_tamper_signature` to report BROKEN. If it does not, the harness cannot produce a
+    BROKEN verdict and nothing else it says this run is evidence.
+    """
+    st = _setup()
+    original = st["V"].verify_pack
+
+    def accepts_anything(*a, **kw):
+        v = original(*a, **kw)
+        if isinstance(v, dict):
+            v = dict(v)
+            v["signature_valid"] = True
+        return v
+
+    st["V"].verify_pack = accepts_anything
+    try:
+        succeeded, _note = attack_tamper_signature()
+    finally:
+        st["V"].verify_pack = original
+    if not succeeded:
+        return False, ("verify_pack was forced to accept a tampered signature and "
+                       "attack_tamper_signature still reported the defense holding")
+    return True, ("a deliberately defeated verify_pack is caught by attack_tamper_signature, "
+                  "so a BROKEN verdict is reachable and a clean sweep means something")
+
+
 ATTACKS = [
     ("forge_with_attacker_key", attack_forge_with_attacker_key),
     ("witnesses_disagree_under_fuzz", attack_witnesses_disagree_under_fuzz),

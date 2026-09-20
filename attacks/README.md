@@ -64,6 +64,27 @@ SC as attacks, not a control-mapping document):
 | `sc5_login_rate_limit_bypassed` | SC-5 | per-IP login attempts are rate-limited (a 429 after the limit) |
 | `sc23_csrf_protected_write_without_token` | SC-23 | a state-changing POST without a valid CSRF token is rejected (403) |
 
+## The positive control
+
+Every adversary here reports a defense holding by OBSERVING something: a verdict, an HTTP
+status, a database row. A harness that observes nothing reports every defense holding, and the
+last line of the run is the same either way:
+
+    OK: all 21 attacks failed to break their defense.
+
+So each suite declares a `positive_control()` and the runner refuses to read anything else
+until it passes. The crypto one forces `verify_pack` to accept a tampered signature and
+requires `attack_tamper_signature` to report BROKEN; the db one requires the database to
+answer a trivial query; the controls one requires the app to answer 404 to a route that does
+not exist. A suite with no `positive_control` is a hard error, and a control that fails prints
+`[VOID]` and exits 3 rather than a clean sweep.
+
+Added 2026-09-19, by asking what `conformance/run_conformance.py` refuses to do that this
+runner did not. That file has voided its own run since it was written when no positive control
+passes; this one, which is the tree's evidence that its DEFENSES hold, had no such rule.
+Demonstrated rather than asserted: an `attack_tamper_signature` that always reports the
+defense holding takes the run to `[VOID]` and exit 3.
+
 ## Adding an attack
 
 Add an `attack_*` function to the right module returning `(succeeded, note)` where
@@ -72,3 +93,7 @@ Add an `attack_*` function to the right module returning `(succeeded, note)` whe
 weaker verify would accept, an authorization a stale read would grant. Keep them
 fast and hermetic (the crypto suite generates its own keys; the db suite reloads
 sample data through the test harness).
+
+A NEW SUITE needs a `positive_control()` too, or the runner refuses it. The bar is that the
+control must FAIL when the suite can no longer observe what its attacks read: prove that by
+breaking one attack and watching the run go `[VOID]`, rather than by asserting it.

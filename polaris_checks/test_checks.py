@@ -6945,6 +6945,15 @@ def test_attacks_run_check_discriminates(tmp_path):
         "        ok, _ = m.available()\n"
         "        if not ok:\n"
         "            hard = True; continue\n"
+        # The positive-control leg, added 2026-09-19 with the rule itself. A stand-in runner
+        # that does not implement the property cannot be exercised for it, and this fixture
+        # broke the moment the real runner gained the rule.
+        "        c = getattr(m, 'positive_control', None)\n"
+        "        if c is None:\n"
+        "            hard = True; continue\n"
+        "        cok, _ = c()\n"
+        "        if not cok:\n"
+        "            hard = True; continue\n"
         "        for name, fn in m.ATTACKS:\n"
         "            succeeded, _ = fn()\n"
         "            if succeeded: broken = True\n"
@@ -6955,10 +6964,12 @@ def test_attacks_run_check_discriminates(tmp_path):
         "    sys.exit(main())\n"
     )
     CRYPTO = ("def available(): return (True, 'x')\n"
+              "def positive_control(): return (True, 'control')\n"
               "def _forge(): return (False, 'held')\n"
               "def _tamper(): return (False, 'held')\n"
               "ATTACKS = [('forge_with_key', _forge), ('tamper_signature', _tamper)]\n")
     DB = ("def available(): return (True, 'x')\n"
+          "def positive_control(): return (True, 'control')\n"
           "def _revoked(): return (False, 'held')\n"
           "ATTACKS = [('revoked_token_treated_as_authoritative', _revoked)]\n")
     CI = ("jobs:\n  pqc-real:\n    steps:\n"
@@ -6983,6 +6994,17 @@ def test_attacks_run_check_discriminates(tmp_path):
 
     write()
     assert checks.check_attacks_run(tmp_path)[0].level == "OK", "must PASS on the full fixture"
+    # 1b. the runner does not honour a positive control: a suite whose control FAILS, and a
+    # suite that declares none, both sweep clean. That is the exact line a harness which
+    # observed nothing prints, which is why the rule exists.
+    write({"attacks/run_attacks.py": RUNNER
+           .replace("        c = getattr(m, 'positive_control', None)\n", "")
+           .replace("        if c is None:\n", "")
+           .replace("            hard = True; continue\n"
+                    "        cok, _ = c()\n", "        cok = True\n")
+           .replace("        if not cok:\n            hard = True; continue\n", "")})
+    assert checks.check_attacks_run(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the runner does not hard-error on a failed or absent positive control"
     # 1. the runner is NOT fail-closed — it never returns 1 on a successful attack
     write({"attacks/run_attacks.py": RUNNER.replace("    if broken: return 1\n", "")})
     assert checks.check_attacks_run(tmp_path)[0].level == "FAIL", "must FAIL when the runner is not red-on-break"

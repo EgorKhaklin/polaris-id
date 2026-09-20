@@ -310,6 +310,22 @@ def attack_ac6_rp_verdict_leaks_personal_data():
                           "the RP verdict carried no personal data (a verdict, never a person)")
 
 
+def positive_control():
+    """The controls suite's proof that a BROKEN verdict is reachable.
+
+    Every attack here reads an HTTP status from the app. A client that returns nothing, or a
+    fixture whose app never boots, makes each of them report the control holding. So: ask the
+    app for a route that does not exist and require a 404. If that does not come back, the
+    suite observed nothing and its clean sweep is not evidence.
+    """
+    ta = _setup()
+    r = _fresh_client(ta).get("/__no_such_route_for_the_positive_control__")
+    if r.status_code != 404:
+        return False, ("the app answered %s to a route that does not exist, so these attacks "
+                       "are not reading real responses" % r.status_code)
+    return True, "the app answers 404 to an unknown route, so the attacks below read real responses"
+
+
 ATTACKS = [
     ("ac3_unauthenticated_reaches_protected_data", attack_ac3_unauthenticated_reaches_protected_data),
     ("ac3_operator_reaches_admin_auditor_route", attack_ac3_operator_reaches_admin_auditor_route),

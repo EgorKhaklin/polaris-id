@@ -117,6 +117,21 @@ def attack_revoked_token_treated_as_authoritative():
                        % (v.get('signature_valid'), v.get('currently_authoritative'), v.get('usable')))
 
 
+def positive_control():
+    """The db suite's proof that a BROKEN verdict is reachable. See attack_crypto."""
+    _harness()
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 AS one")
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row or row["one"] != 1:
+        return False, "the database answers nothing, so no attack here observed anything"
+    return True, "the database answers a trivial query, so the attacks below read real state"
+
+
 ATTACKS = [
     ("revoked_token_treated_as_authoritative", attack_revoked_token_treated_as_authoritative),
 ]
