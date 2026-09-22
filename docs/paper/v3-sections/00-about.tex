@@ -9,8 +9,10 @@ post-quantum from the first day. Version 2 (\code{polaris\_project\_report\_v2.p
 described the system as it stood at tag \code{v9.345}, thirty-six tables, a federation protocol, a
 transparency layer and an institutional exchange fabric, and was revised at \code{v9.355} when the
 holder-side work it had recorded as missing was built. Version 3 describes the system at version
-\code{1.0.0-rc.1} (commit \code{7019bcf}, 16 September 2026), re-measured whole rather than patched,
-and it is written for a reader who has never opened the repository.
+\code{1.0.0-rc.7} (commit \code{4e74376}, 20 September 2026), re-measured whole rather than patched,
+and it is written for a reader who has never opened the repository. It was first written at
+\code{1.0.0-rc.1} four days earlier and re-measured in place; fourteen of the twenty-six counts in
+Appendix~\ref{app:counts} did not move, and the ones that did are marked there.
 
 \textbf{What changed, in one paragraph.} Between Version 2 and this one the repository stopped
 counting its own progress and started counting witnesses. The four standalone packages a relying
@@ -28,7 +30,7 @@ version withdraws or narrows.
 
 \textbf{Three dates, stated plainly.} Version 2's body was measured at \code{v9.345}; its
 holder-side sections at \code{v9.355}. Everything in this version, every count, every mark and every
-figure, was measured at \code{1.0.0-rc.1} by the methods in Appendix~\ref{app:counts}. Where a number
+figure, was measured at \code{1.0.0-rc.7} by the methods in Appendix~\ref{app:counts}. Where a number
 is older than that, because the repository has not re-run the instrument that produced it, the paper
 says so beside the number. Nothing that ran at \code{v9.355} stopped running.
 
@@ -43,7 +45,7 @@ intention, and so that a thing the author has tested is never confused with a th
 has.
 
 \begin{description}
-  \item[\sImpl] A path that runs at \code{1.0.0-rc.1}, exercised by a test or a drill in continuous
+  \item[\sImpl] A path that runs at \code{1.0.0-rc.7}, exercised by a test or a drill in continuous
     integration, and pinned by an invariant check that fails the build if it stops being true.
   \item[\sExp] A path that runs but is limited in a way the repository itself names: not covered by
     CI, notional in scale, or dependent on a backend that CI simulates.
@@ -60,7 +62,7 @@ has.
 A row carrying two marks runs today and still requires external validation for the stronger claim,
 or has been exercised from outside on one path and not on the others.
 
-Numbers were measured on the tree at \code{1.0.0-rc.1} by the methods in
+Numbers were measured on the tree at \code{1.0.0-rc.7} by the methods in
 Appendix~\ref{app:counts}, not copied from earlier documents. Where the repository's own documents
 disagree with its code, the code wins and the disagreement is recorded in the author's notes that
 accompany this version.

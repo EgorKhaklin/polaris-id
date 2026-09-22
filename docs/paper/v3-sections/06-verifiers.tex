@@ -6,7 +6,7 @@
 
 \code{polaris-verify} verifies a credential's authenticity pack with only a standard ML-DSA
 library: no Polaris code, no database, no network unless asked to fetch status. Version 2 described
-it as a script in the repository. It is now a package on a public registry, at \code{1.0.0-rc.1}, a
+it as a script in the repository. It is now a package on a public registry, at \code{1.0.0-rc.3}, a
 release candidate, with \code{0.1.0} beneath it since 15 September 2026, published by the
 repository's own workflow under trusted publishing so that no long-lived credential exists anywhere,
 and the script that Version 2 named is a shim onto it. It refuses to start until the run says what
@@ -49,7 +49,7 @@ package directory, where stripping is allowed, and never noticed. It compiles to
 and the drill installs the packed tarball into a bare project. \sImpl
 
 Both are held to a language-agnostic conformance suite: a runner drives any verifier over standard
-input and output through the published cases, 118 at \code{1.0.0-rc.1} across twenty-five artifact
+input and output through the published cases, 118 at \code{1.0.0-rc.7} across twenty-five artifact
 types, including the composite federation trust decision, the holder proof, the agent grant and its
 revocation. Passing the suite is what \emph{conformant} means, and the normative wire specification
 (RFC 2119 language, twenty-seven format strings, the exact signed-field list of every artifact) is

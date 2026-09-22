@@ -7,7 +7,7 @@ rendered from them, and the stamp that proves each PDF still matches its source.
 Three versions live here. Version 1 is the historical database-design report and
 is never edited. Version 2 is the map of the system at `v9.345` (revised at `v9.355`)
 and is preserved unchanged. Version 3 is the current map of the whole system,
-re-measured whole at `1.0.0-rc.1`, and is the document to cite for the system as it
+re-measured whole at `1.0.0-rc.7`, and is the document to cite for the system as it
 stands.
 [CITATION.cff](../../CITATION.cff) carries the citation metadata, and provenance
 is in [NOTICE](../../NOTICE).

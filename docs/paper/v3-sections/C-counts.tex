@@ -1,11 +1,16 @@
 % C-counts.tex: the numbers, and how each was measured.
-\section{Counts at 1.0.0-rc.1, and how they were measured}
+\section{Counts at 1.0.0-rc.7, and how they were measured}
 \label{app:counts}
 
-Every count in this paper was taken from the tree at version \code{1.0.0-rc.1} (commit
-\code{7019bcf}, 16 September 2026) by the command beside it, not copied from an earlier document.
+Every count in this paper was taken from the tree at version \code{1.0.0-rc.7} (commit
+\code{4e74376}, 20 September 2026) by the command beside it, not copied from an earlier document.
 Where the repository's own stamped number was measured at an earlier version, the version is
 stated. Where a number is external, the row says whose it is.
+
+Version~3 of this paper was written at \code{1.0.0-rc.1} and re-measured here. Fourteen of the
+twenty-six quantities below are unchanged; the rows that moved are marked in the text where they
+matter. One method changed rather than one number: the route count is the same and the command
+that produced it no longer is.
 
 {\footnotesize
 \setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
@@ -27,22 +32,22 @@ stated. Where a number is external, the row says whose it is.
 Canonical tables in \code{01\_schema.sql} & 45 & The file declares 50 \code{CREATE TABLE} statements, of which five are the default partition children of the partitioned event tables. A migrated deployment holds 52 tables. \\
 Triggers in \code{06\_triggers.sql} & 42 & \code{grep -c 'CREATE TRIGGER'} \\
 Tables under an append-only trigger & 31 & The \code{BEFORE UPDATE OR DELETE} triggers of \code{06\_triggers.sql} and the migrations, by table; the design record names fourteen audit-of-record instances among them \\
-Invariant checks & 272 & \code{grep -c '\^{}def check\_' polaris\_checks/checks.py}, equal to the registered list; each has a detection test with a positive control in \code{test\_checks.py} \\
-Mutation drills & 8 & Files matching \code{scripts/polaris-*mutation-drill*}: checks, constraints, triggers, procedures, the zero-knowledge witnesses, the conformance contract, the two SDKs, the OpenID4VP verifier \\
-Application routes & 124 & \code{grep -c '\^{}@app.route(' polaris\_web/app.py} \\
+Invariant checks & 313 & \code{grep -c '\^{}def check\_' polaris\_checks/checks.py}, equal to the registered list; each has a detection test with a positive control in \code{test\_checks.py} \\
+Mutation drills & 12 & Files matching \code{scripts/polaris-*mutation-drill*}: checks, constraints, triggers, procedures, the zero-knowledge witnesses, the conformance contract, the two SDKs, the OpenID4VP verifier, the application, coverage, the constitution, and moves between modules \\
+Application routes & 124 & \code{grep -c '\^{}@app.route('} across \code{polaris\_web/*.py}. The count is unchanged from \code{1.0.0-rc.1}; the METHOD is not. On 18 September 2026 \code{app.py} was decomposed into ten route modules, and the old method, which read that one file, now returns 13 \\
 CI jobs in \code{ci.yml} & 20 & The job keys of the workflow; two more workflows run monthly and weekly, and a manual one publishes \\
 Signed wire formats in the specification & 27 & Distinct \code{polaris-*/1} strings in \code{docs/reference/WIRE-SPEC.md} \\
 Conformance cases & 118 & The cases of \code{conformance/cases.json}, across twenty-five artifact types; the frozen version-1 set holds 44 \\
 Formal models checked in CI & 4 & \code{meta/tla/*.tla}; three carry a counterpart configuration they must fail \\
-Drill scripts & 76 & Files matching \code{scripts/polaris-*drill.*}, the eight mutation drills among them \\
-Migrations & 43 & Files matching \code{polaris\_sql/migrations/*.up.sql}, each with a revert \\
+Drill scripts & 80 & Files matching \code{scripts/polaris-*drill.*}, the twelve mutation drills among them \\
+Migrations & 45 & Files matching \code{polaris\_sql/migrations/*.up.sql}, each with a revert \\
 Operator runbooks and ledgers & 21 & Markdown files in \code{docs/operator/}, the index included \\
-Tagged versions & 295 & \code{git tag}, from \code{v9.30} (16 May 2026) to \code{v9.466} (15 September 2026); the tree version then stopped counting ships, and \code{v1.0.0-rc.1} is the first tag under the new rule \\
-Test functions defined & 1,755 & \code{grep -c 'def test\_'} across the product, CLI, check-layer, script, card, simulation, SDK and package suites; a definition count, not a run count \\
-Product tests passing, as stamped by the README & 992 & Measured at \code{1.0.0-rc.1} on the reference machine, \code{pytest -q} per suite; three skip without real ML-DSA \\
-Crypto witness tests, as stamped & 107 of 112 & Measured at \code{1.0.0-rc.1}; five need a PKCS\#11 module or a real KMS key, and CI runs all but the KMS one \\
-OpenID4VP verifier package tests & 143 & \code{pytest} in \code{packages/polaris-oid4vp}; three are the positive control without which the refusals are vacuous \\
-Packages on public registries & 4 & \code{polaris-verify}, \code{polaris-oid4vp}, \code{polaris-sdk-python} on PyPI; \code{polaris-sdk-ts} on npm; each verified by installing from the live registry \\
+Tagged versions & 3 & \code{git tag}. At \code{1.0.0-rc.1} this was 295, one per ship from \code{v9.30} (16 May 2026) to \code{v9.466} (15 September 2026). A tag marks a RELEASE and not a ship, so those were removed; what remains is \code{v1.0.0-rc.1}, \code{-rc.2} and \code{-rc.3}, the three published candidates \\
+Test functions defined & 2,189 & \code{grep -c 'def test\_'} across the product, CLI, check-layer, script, card, simulation, SDK and package suites; a definition count, not a run count \\
+Product tests passing, as stamped by the README & 1,030 & Measured at \code{1.0.0-rc.7} on the reference machine, \code{pytest -q} per suite; three skip without real ML-DSA \\
+Crypto witness tests, as stamped & 107 of 112 & Measured at \code{1.0.0-rc.7}, unchanged from \code{1.0.0-rc.1}; five need a PKCS\#11 module or a real KMS key, and CI runs all but the KMS one \\
+OpenID4VP verifier package tests & 244 & \code{pytest} in \code{packages/polaris-oid4vp}; three are the positive control without which the refusals are vacuous \\
+Packages on public registries & 4 & \code{polaris-verify}, \code{polaris-oid4vp}, \code{polaris-sdk-python} on PyPI; \code{polaris-sdk-ts} on npm; each verified by installing from the live registry. All four served \code{1.0.0-rc.1} when Version~3 was written and serve \code{1.0.0-rc.3} now, published 18 September 2026 \\
 Hosted conformance modules & 11 & The OpenID Foundation's service, 15 September 2026: 7 \code{PASSED}, 4 \code{REVIEW}, 0 failures, 0 warnings; the service's own signed exports \\
 External test vectors for ML-DSA-65 & 58 of 58 & Project Wycheproof, pinned to a commit, under both witnesses on every push \\
 Named outside implementations that have presented & 1 & walt.id Wallet API v2 at a pinned image digest, 15 September 2026; one path, one format \\

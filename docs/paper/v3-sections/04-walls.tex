@@ -29,7 +29,7 @@ and the constitution states that no deeper apparatus governs them.
 
 \begin{table}[H]
 \centering\footnotesize
-\caption{The ten constraints at \code{1.0.0-rc.1}, their tier, and the object that enforces each. The table is kept honest against the code by \code{check\_c1c10\_objects\_resolve}, which fails the build if a named object no longer exists.}
+\caption{The ten constraints at \code{1.0.0-rc.7}, their tier, and the object that enforces each. The table is kept honest against the code by \code{check\_c1c10\_objects\_resolve}, which fails the build if a named object no longer exists.}
 \label{tab:constraints}
 \setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.1}
 \rowcolors{2}{tabstripe}{white}
@@ -62,7 +62,7 @@ the build if a mechanism drifts. Three of the ten now also have a formal model c
 C1's purge coverage, C2's unlinkability across two pooling relying parties, and C3 under concurrent
 issue and revoke, each with a counterpart configuration it must fail, so none of the three is vacuous.
 
-\figfit{0.635}{districts}{The 45 canonical tables of \code{01\_schema.sql} at \code{1.0.0-rc.1}, as rings
+\figfit{0.635}{districts}{The 45 canonical tables of \code{01\_schema.sql} at \code{1.0.0-rc.7}, as rings
 around the Version 1 nucleus. The faint lattice at the centre is the nucleus geometry of
 Figure~\ref{fig:nucleus} at the same proportions. Ring two is the credential machinery: signatures,
 permissions, epochs, recovery, duress, the holder's key, the card. Ring three is authority, trust and
@@ -82,7 +82,7 @@ locked. Mutation is either forbidden outright or bounded to one field that moves
 signature's deprecation date or an attestation's revocation date. Every one of the fourteen is
 enforced by a trigger that raises \code{insufficient\_privilege}, and a check fails the build if any
 trigger stops doing so. Beyond the fourteen the design record names, thirty-one tables in all carry
-an append-only trigger at \code{1.0.0-rc.1}, the new ones being the records that decisions about
+an append-only trigger at \code{1.0.0-rc.7}, the new ones being the records that decisions about
 authorities, operators, relying parties and enrolments now leave behind, and since \code{v9.412} C1 is
 tested once per table that claims it: a table-driven suite reads the append-only triggers out of the
 catalogue rather than out of a list somebody wrote, so a new append-only table cannot simply go
@@ -100,7 +100,7 @@ the lifecycle events of a deleted token vanish with it. Every reference defaults
 ACTION}, so a principal referenced by any audit row is effectively undeletable, and a check scans
 every SQL file for both cascade forms with no allowlist. The one record that deliberately carries no
 foreign key at all, so that ending a relying party's contract cannot erase its history, taught the
-repository something about its own test database at \code{1.0.0-rc.1}: the seed that reloads the
+repository something about its own test database at \code{1.0.0-rc.7}: the seed that reloads the
 sample world restarted the party's identifiers from one and reached that record with neither, so
 the first party of each reload inherited a dead party's events. The seed names the record now, and a
 check computes from the schema's own foreign keys which records a reload would leave behind.
@@ -116,7 +116,7 @@ vocation refuses unbounded retention; it equally refuses retention short enough 
 
 \subsection{The check layer, and the drills that attack it}
 
-Above the schema sits a flat layer of 272 plain functions, each of the form
+Above the schema sits a flat layer of 313 plain functions, each of the form
 \code{check\_*(repo\_root)}, that read the repository and return a finding. They gate continuous
 integration: any failure fails the build. Each check is paired with a detection test that breaks a
 fixture in the specific way the check claims to catch and asserts that the check turns red, and,
@@ -141,9 +141,10 @@ concentrated exactly where a trigger cannot see: the four-eyes rule, the cool-do
 and the third-person witness of the recovery ceremony, the preconditions on an irreversible erasure.
 Every one of these is now covered, and every one of these measurements is now a drill that runs on
 every push with a negative control, so that a result of zero survivors is distinguishable from a
-harness that ran nothing. Eight such drills exist at \code{1.0.0-rc.1}: over the checks, the
+harness that ran nothing. Twelve such drills exist at \code{1.0.0-rc.7}: over the checks, the
 constraints, the triggers, the procedures, the zero-knowledge witnesses, the conformance contract, the
-two reference verifiers and the OpenID4VP verifier. Section~\ref{sec:senses} carries the record.
+two reference verifiers, the OpenID4VP verifier, the application, the constitutional constraints, the
+surfaces a check quantifies over, and the moves of code between modules. Section~\ref{sec:senses} carries the record.
 \sImpl
 
 \begin{layercard}{Layer card: the walls}

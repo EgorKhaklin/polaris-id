@@ -7242,19 +7242,41 @@ def check_paper_pdf_is_current(root: pathlib.Path) -> list[Finding]:
         parts = line.split()
         if len(parts) == 2:
             recorded[parts[1].lstrip("*")] = parts[0].lower()
-    for source in tex:
+
+    # EVERY source, not the three at the top. rendered-from.txt records 93 files because the
+    # paper's content is in v3-sections/ and v3-figures/; this compared the 3 top-level .tex
+    # and reported "the rendered report matches the source it was rendered from", which was a
+    # claim about the paper made from a twentieth of it. Rewriting a section and leaving the
+    # PDF alone passed. Found 2026-09-22 while re-measuring the paper, by reading the check
+    # before editing the sections it was supposed to be guarding.
+    #
+    # The remediation line was worse than the gap. It said to restamp with
+    # `shasum -a 256 *.tex`, which does not match how the file is built and would have cut it
+    # from 93 entries to 3, leaving every section unrecorded and the check permanently green.
+    restamp = ("cd docs/paper && shasum -a 256 *.tex v2-sections/*.tex v2-figures/*.tex "
+               "v3-sections/*.tex v3-figures/*.tex > rendered-from.txt")
+    sources = sorted(set(tex) | set(paper.glob("*-sections/*.tex"))
+                     | set(paper.glob("*-figures/*.tex")))
+    if not sources:
+        return _fail("paper_current", "docs/paper/ ships no LaTeX source to compare")
+    for source in sources:
+        rel = source.relative_to(paper).as_posix()
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
-        want = recorded.get(source.name)
+        want = recorded.get(rel, recorded.get(source.name))
         if want is None:
             return _fail("paper_current",
-                         f"docs/paper/rendered-from.txt does not record {source.name}")
+                         f"docs/paper/rendered-from.txt does not record {rel}. A source the "
+                         "PDF was built from that nothing hashes is a source that can change "
+                         f"without the PDF being rebuilt. Restamp: {restamp}")
         if want != digest:
             return _fail("paper_current",
-                         f"{source.name} has changed since the PDF was rendered. Rebuild it "
-                         "(cd docs/paper && pdflatex polaris_project_report.tex, twice) and "
-                         "restamp: shasum -a 256 *.tex > rendered-from.txt")
+                         f"{rel} has changed since the PDF was rendered. Rebuild it (the "
+                         "recipe is in docs/paper/README.md, three pdflatex passes) and "
+                         f"restamp: {restamp}")
     return _ok("paper_current",
-               f"the rendered report matches the source it was rendered from ({len(tex)} file)")
+               f"the rendered report matches all {len(sources)} sources it was rendered from, "
+               "the sections and figures included, so a rewritten section cannot leave a stale "
+               "PDF behind")
 
 
 # ---------------------------------------------------------------------------

@@ -18654,3 +18654,45 @@ def test_source_path_citations_check_detects_its_absence(tmp_path):
     out = fn(tmp_path)[0]
     assert out.level == "FAIL" and "drifted" in out.message, \
         "finding no citation at all must FAIL rather than report that all of them resolve"
+
+
+def test_paper_check_covers_sections_not_only_the_top_level_tex(tmp_path):
+    """rendered-from.txt records 93 sources; this compared 3.
+
+    The paper's content is in v3-sections/ and v3-figures/. Comparing only the top-level
+    .tex reported "the rendered report matches the source it was rendered from" from a
+    twentieth of it, so rewriting a section and leaving the PDF alone passed. Found
+    2026-09-22 while re-measuring the paper, by reading the check before editing the
+    sections it was supposed to be guarding.
+    """
+    import hashlib
+    fn = checks.check_paper_pdf_is_current
+    paper = tmp_path / "docs" / "paper"
+    (paper / "v3-sections").mkdir(parents=True)
+    top = paper / "report.tex"
+    sec = paper / "v3-sections" / "01-body.tex"
+    top.write_text("\\documentclass{article}\\input{v3-sections/01-body}\n")
+    sec.write_text("A section.\n")
+    (paper / "report.pdf").write_bytes(b"%PDF-1.4 rendered\n")
+
+    def stamp():
+        lines = []
+        for p, name in ((top, "report.tex"), (sec, "v3-sections/01-body.tex")):
+            lines.append("%s  %s" % (hashlib.sha256(p.read_bytes()).hexdigest(), name))
+        (paper / "rendered-from.txt").write_text("\n".join(lines) + "\n")
+
+    stamp()
+    assert fn(tmp_path)[0].level == "OK", "must PASS when every source matches the stamp"
+
+    # The defect: a section rewritten, the PDF untouched, the stamp not refreshed.
+    sec.write_text("A section, rewritten after the PDF was built.\n")
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "01-body.tex" in out.message, \
+        "a changed SECTION must be caught, not only a changed top-level .tex"
+
+    # A source the PDF was built from that nothing hashes is the same hole one step earlier.
+    stamp()
+    (paper / "v3-sections" / "02-extra.tex").write_text("Added and never stamped.\n")
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "02-extra.tex" in out.message, \
+        "an unrecorded source must FAIL; otherwise it can change with nothing noticing"

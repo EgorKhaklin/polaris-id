@@ -409,7 +409,7 @@ than that.
 | Why the constraints are shaped as they are; the formal models | [meta/](meta/README.md), `meta/tla/` |
 | The stranger's path: clean machine to an accepted presentation | [docs/STRANGER-PATH.md](docs/STRANGER-PATH.md) |
 | Publishing the packages | [docs/RELEASING.md](docs/RELEASING.md) |
-| The paper (Version 3, the system at 1.0.0-rc.1) | [docs/paper/](docs/paper/README.md) |
+| The paper (Version 3, the system at 1.0.0-rc.7) | [docs/paper/](docs/paper/README.md) |
 | Scripts, drills and their callers | [scripts/README.md](scripts/README.md) |
 | Conventions, style, the older gotcha record | [docs/CONVENTIONS.md](docs/CONVENTIONS.md), [DEVNOTES/style.md](DEVNOTES/style.md), [DEVNOTES/known-gotchas.md](DEVNOTES/known-gotchas.md) |
 
