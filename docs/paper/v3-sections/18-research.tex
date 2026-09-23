@@ -23,18 +23,48 @@ invariant.}{fig:stigmergy}
 
 \subsection{Gates that are not the repository's to pass}
 
-The contract's ninety-day objective names them, and the scoreboard records each as filled or blank:
-an operator who is not the author reaching a verified result without help, which is the one thing
-that separates the release candidate from \code{1.0.0}; a relying party that is not the author; a
-second wallet, and a wallet on the native rather than the OpenID4VP path; a certification submission
-that would put the four modules in \code{REVIEW} in front of a Foundation reviewer; an independent
-security review, penetration test or cryptographic audit; a pilot with consenting users; and
-institutionally independent witnesses. The contract also names the other end. If, at 180 days, the
-external rows remain effectively empty while internal versions, invariants and architecture keep
-growing, the core is to be frozen, the national-scale architecture stops expanding, the verifier is
-kept only if external use exists, and the project is archived as a reference implementation. This
-paper's subject may be archived by its author's own rule, and the paper records the rule rather than
-arguing with it. \sExt
+The contract was adopted on 13 September 2026, and it dates itself. Its ninety-day objective falls
+due on 12 December 2026 and names seven things; the scoreboard (\code{lab/EXTERNAL-NOUNS.md}) says
+which hold. Read on 23 September 2026, day ten:
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash\hspace{0pt}}X >{\RaggedRight\arraybackslash\hspace{0pt}}p{0.9in} >{\RaggedRight\arraybackslash\hspace{0pt}}p{2.6in}}
+\caption{The operating contract's ninety-day objective, item by item, against the scoreboard on day ten.}\label{tab:ninety-day}\\
+\toprule
+\rowcolor{tabheader}\thead{The contract asks for} & \thead{Holds} & \thead{The evidence, or what is missing} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{tabheader}\thead{The contract asks for} & \thead{Holds} & \thead{The evidence, or what is missing} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\code{polaris-verify} independently installable & yes & on PyPI since 15 September 2026; the boundary drill installs it where no Polaris code exists \\
+Real cryptographic behaviour explicit & yes & the verifier refuses to start without a declared crypto mode (Section~\ref{sec:verifiers}) \\
+A named external wallet completes a presentation & yes & walt.id Wallet API v2, 15 September 2026 \\
+An external OpenID conformance suite running & yes & the Foundation's hosted suite, 15 September 2026: seven \code{PASSED}, four \code{REVIEW} \\
+A relying party or operator who is not the author has used the verifier & no & none; this is also the one condition between the release candidate and \code{1.0.0} \\
+Repeated outside presentations & no & presentations outside CI: zero \\
+External failures entering the development loop & yes & two fixes caused by outside findings (Section~\ref{sec:verifiers}) \\
+\end{xltabular}
+}
+
+Five of seven held by day ten, and the two that do not both need a person who is not the author,
+which is the point of the contract: nothing left on the list can be done by writing more code. Past
+the objective lie the rows no deadline governs: a second wallet, and one on the native rather than
+the OpenID4VP path; a certification submission that would put the four modules in \code{REVIEW} in
+front of a Foundation reviewer; an independent security review, penetration test or cryptographic
+audit; a pilot with consenting users; and institutionally independent witnesses.
+
+The contract also names the other end. On 12 March 2027, day 180, the external fields are read. If
+they remain effectively empty while internal versions, invariants and architecture keep growing, the
+core is to be frozen, the national-scale architecture stops expanding, the verifier is kept only if
+external use exists, and the project is archived as a reference implementation. This paper's subject
+may be archived by its author's own rule, and the paper records the rule rather than arguing with
+it. \sExt
 
 \subsection{Questions the lab still owes an answer}
 
