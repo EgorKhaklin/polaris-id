@@ -111,6 +111,7 @@ CHECKS = {
     "check_pqc_second_witness": "проверка_пкк_второй_свидетель",
     "check_pqc_signing_wired": "проверка_пкк_подписание_подключено",
     "check_procedure_refusals_are_mutation_tested": "проверка_отказы_процедур_проверены_мутацией",
+    "check_token_core_triggers_are_bound": "проверка_триггеры_ядра_токена_привязаны",
     "check_protocol_versioning": "проверка_версионирование_протокола",
     "check_qr_resource_bounds": "проверка_ресурсные_границы_куар",
     "check_quantum_event_readiness": "проверка_готовность_к_квантовому_событию",

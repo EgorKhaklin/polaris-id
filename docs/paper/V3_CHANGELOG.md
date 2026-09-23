@@ -172,4 +172,13 @@ in the same commit.
     not measure fail, and `check_dyno_published` requires it of every CI run. Table 12's
     signature rows moved a few per cent; the proof fell from 35 ms to 25 ms (a different
     statement since `v9.354`, so not like for like).
+  - Appendix E said a check fails the build if the token state machine's trigger stops being.
+    Deleting each of the 42 triggers in turn, seven left every check green, the state machine
+    and the active-signature guard among them, and one check was satisfied by a trigger's comment.
+    `check_token_core_triggers_are_bound` now pins both core triggers and the six legal
+    transitions; the section 4 card states the measured split (a check notices 38 of 42, the
+    trigger drill all 42), and Table 16 gains the row.
+  - Two layer cards said a person reference in Athena "fails five checks"; measured, it fails
+    one, `check_athena_no_person`.
+  - The Atlas returns at most 5,000 cluster summaries, not "a few hundred".
 

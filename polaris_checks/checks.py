@@ -548,6 +548,56 @@ _AOR_TABLES = (
 )
 
 
+#: The token state machine's legal transitions (06_triggers.sql, enforce_token_state_machine).
+_TOKEN_LEGAL_TRANSITIONS = (("RESERVE", "ACTIVE"), ("RESERVE", "REVOKED"), ("ACTIVE", "DORMANT"),
+                            ("ACTIVE", "REVOKED"), ("ACTIVE", "LOST"), ("ACTIVE", "EXPIRED"))
+
+
+def check_token_core_triggers_are_bound(root: pathlib.Path) -> list[Finding]:
+    """The two triggers the credential core rests on are defined AND bound (2026-09-23).
+
+    Appendix E of the paper says the token state machine is enforced by a trigger "and a
+    check fails the build if either stops being". Measured on 2026-09-23 by deleting each of
+    the 42 CREATE TRIGGER statements in 06_triggers.sql in turn: seven left every check
+    green, among them trg_token_state_machine and trg_token_must_have_active_signature.
+    Their only guard was the trigger mutation drill, which runs the database suites.
+
+    This reads the comment-stripped SQL, so a COMMENT ON or a prose mention cannot stand in
+    for the statement, and requires: the state-machine function lists exactly the six legal
+    transitions and refuses the rest; the trigger binds it BEFORE UPDATE OF status ON
+    IdentityToken; and the signature guard runs AFTER INSERT OR UPDATE OR DELETE ON
+    TokenSignature, so a token can never be left with no active signature.
+    """
+    name = "token_core_triggers"
+    sql = _strip_sql_comments(_read(root, "polaris_sql/06_triggers.sql"))
+    if not sql.strip():
+        return _fail(name, "polaris_sql/06_triggers.sql could not be read")
+    m = re.search(r"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+enforce_token_state_machine\s*\(\s*\)"
+                  r".*?\$\$(.*?)\$\$", sql, re.S | re.I)
+    if not m:
+        return _fail(name, "enforce_token_state_machine() is not defined in 06_triggers.sql")
+    body = m.group(1)
+    pairs = set(re.findall(r"OLD\.status\s*=\s*'([A-Z]+)'\s+AND\s+NEW\.status\s*=\s*'([A-Z]+)'", body))
+    if pairs != set(_TOKEN_LEGAL_TRANSITIONS):
+        return _fail(name, "the token state machine's legal transitions changed: missing %s, added %s"
+                     % (sorted(set(_TOKEN_LEGAL_TRANSITIONS) - pairs) or "none",
+                        sorted(pairs - set(_TOKEN_LEGAL_TRANSITIONS)) or "none"))
+    if not re.search(r"IF\s+NOT\s*\(.*?\)\s*THEN\s*RAISE\s+EXCEPTION", body, re.S | re.I):
+        return _fail(name, "enforce_token_state_machine() no longer refuses a transition outside the legal set")
+    if not re.search(r"CREATE\s+TRIGGER\s+trg_token_state_machine\s+BEFORE\s+UPDATE\s+OF\s+status\s+ON\s+"
+                     r"IdentityToken\s+FOR\s+EACH\s+ROW\s+EXECUTE\s+FUNCTION\s+enforce_token_state_machine\s*\(",
+                     sql, re.I):
+        return _fail(name, "trg_token_state_machine is not bound BEFORE UPDATE OF status ON IdentityToken to "
+                           "enforce_token_state_machine(); the lifecycle would accept any transition")
+    if not re.search(r"CREATE\s+TRIGGER\s+trg_token_must_have_active_signature\s+AFTER\s+INSERT\s+OR\s+UPDATE\s+"
+                     r"OR\s+DELETE\s+ON\s+TokenSignature\s+FOR\s+EACH\s+ROW\s+EXECUTE\s+FUNCTION\s+"
+                     r"enforce_token_has_active_signature\s*\(", sql, re.I):
+        return _fail(name, "trg_token_must_have_active_signature is not bound AFTER INSERT OR UPDATE OR DELETE "
+                           "ON TokenSignature; a token could be left with no active signature")
+    return _ok(name, "the token state machine (six legal transitions, the rest refused) is bound BEFORE UPDATE "
+                     "OF status, and the active-signature guard AFTER every TokenSignature write")
+
+
 def check_aor_append_only_triggers(root: pathlib.Path) -> list[Finding]:
     # Every SQL source, not 06_triggers.sql alone. schema_version's append-only guard is
     # defined in 00_migrations_table.sql, so reading one file made a real, live trigger
@@ -12100,7 +12150,11 @@ def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
     schema = _read(root, "polaris_sql/01_schema.sql")
     if "CREATE TABLE TimestampLog" not in schema or "chk_timestamp_log_hash" not in schema:
         return _fail("timestamp_transparency", "01_schema.sql must define the append-only TimestampLog of anchored-timestamp hashes")
-    if "trg_timestamp_log_append_only" not in _read(root, "polaris_sql/06_triggers.sql") or "'timestamplog'" not in _read(root, "polaris_sql/09_grants.sql"):
+    # The CREATE statement, comments stripped: until 2026-09-23 this read the bare name, and
+    # the COMMENT ON TRIGGER beside it kept the check green with the trigger deleted.
+    if not re.search(r"CREATE\s+TRIGGER\s+trg_timestamp_log_append_only\s+BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+TimestampLog\b",
+                     _strip_sql_comments(_read(root, "polaris_sql/06_triggers.sql")), re.I) \
+            or "'timestamplog'" not in _read(root, "polaris_sql/09_grants.sql"):
         return _fail("timestamp_transparency", "the timestamp log must be append-only by trigger and by privilege")
     if not (root / "polaris_sql" / "migrations" / "2026-09-09-007-timestamp-log.up.sql").is_file() \
             or not (root / "polaris_sql" / "migrations" / "2026-09-09-007-timestamp-log.down.sql").is_file():
@@ -22028,6 +22082,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_json_body_must_be_an_object,
     check_rate_limits_are_enforced,
     check_one_active_token_index,
+    check_token_core_triggers_are_bound,
     check_aor_append_only_triggers,
     check_aor_privilege_boundary,
     check_crypto_algorithm_is_data,

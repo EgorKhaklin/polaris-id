@@ -9469,6 +9469,74 @@ def test_ship_tool_check_discriminates(tmp_path):
     assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if a vanished image registry is not called an upstream change"
 
 
+def test_token_core_triggers_check_discriminates(tmp_path):
+    # 2026-09-23: deleting trg_token_state_machine or trg_token_must_have_active_signature
+    # from 06_triggers.sql left every check green. Each perturbation removes one leg.
+    SQL = """
+CREATE OR REPLACE FUNCTION enforce_token_state_machine()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.status = NEW.status THEN RETURN NEW; END IF;
+    IF NOT (
+           (OLD.status = 'RESERVE' AND NEW.status = 'ACTIVE')
+        OR (OLD.status = 'RESERVE' AND NEW.status = 'REVOKED')
+        OR (OLD.status = 'ACTIVE'  AND NEW.status = 'DORMANT')
+        OR (OLD.status = 'ACTIVE'  AND NEW.status = 'REVOKED')
+        OR (OLD.status = 'ACTIVE'  AND NEW.status = 'LOST')
+        OR (OLD.status = 'ACTIVE'  AND NEW.status = 'EXPIRED')
+    ) THEN
+        RAISE EXCEPTION 'Illegal token state transition';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER trg_token_state_machine
+    BEFORE UPDATE OF status ON IdentityToken
+    FOR EACH ROW
+    EXECUTE FUNCTION enforce_token_state_machine();
+CREATE TRIGGER trg_token_must_have_active_signature
+    AFTER INSERT OR UPDATE OR DELETE ON TokenSignature
+    FOR EACH ROW EXECUTE FUNCTION enforce_token_has_active_signature();
+"""
+
+    def write(body):
+        f = tmp_path / "polaris_sql" / "06_triggers.sql"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body)
+
+    def level():
+        return checks.check_token_core_triggers_are_bound(tmp_path)[0].level
+
+    write(SQL)
+    assert level() == "OK", "must PASS on the full fixture"
+    # 1. the state-machine trigger deleted, its name left in a comment
+    write(SQL.replace("CREATE TRIGGER trg_token_state_machine",
+                      "-- CREATE TRIGGER trg_token_state_machine").replace(
+          "    BEFORE UPDATE OF status ON IdentityToken", "--"))
+    assert level() == "FAIL", "must FAIL when the state machine is not bound"
+    # 2. bound to the wrong moment (after the write it should refuse)
+    write(SQL.replace("BEFORE UPDATE OF status ON IdentityToken", "AFTER UPDATE OF status ON IdentityToken"))
+    assert level() == "FAIL", "must FAIL when the state machine runs after the write"
+    # 3. an illegal transition admitted
+    write(SQL.replace("(OLD.status = 'ACTIVE'  AND NEW.status = 'EXPIRED')",
+                      "(OLD.status = 'ACTIVE'  AND NEW.status = 'EXPIRED')\n"
+                      "        OR (OLD.status = 'REVOKED' AND NEW.status = 'ACTIVE')"))
+    assert level() == "FAIL", "must FAIL when a revoked token may become active again"
+    # 4. a legal transition removed
+    write(SQL.replace("        OR (OLD.status = 'ACTIVE'  AND NEW.status = 'LOST')\n", ""))
+    assert level() == "FAIL", "must FAIL when a legal transition disappears"
+    # 5. the refusal removed
+    write(SQL.replace("RAISE EXCEPTION 'Illegal token state transition';", "NULL;"))
+    assert level() == "FAIL", "must FAIL when an illegal transition is no longer refused"
+    # 6. the signature guard deleted
+    write(SQL.replace("CREATE TRIGGER trg_token_must_have_active_signature",
+                      "-- CREATE TRIGGER trg_token_must_have_active_signature"))
+    assert level() == "FAIL", "must FAIL when a token may be left with no active signature"
+    # 7. the signature guard no longer fires on DELETE
+    write(SQL.replace("AFTER INSERT OR UPDATE OR DELETE ON TokenSignature", "AFTER INSERT OR UPDATE ON TokenSignature"))
+    assert level() == "FAIL", "must FAIL when deleting a signature is not re-checked"
+
+
 def test_timestamp_transparency_check_discriminates(tmp_path):
     # v9.341 (P8.5b): anchored timestamps in an append-only log; each perturbation removes one leg.
     APP = ("_TIMESTAMP_LOG_ID = 'polaris-timestamp-log'\ndef _anchor_timestamp(ts): pass\n    if body.get('anchor') is True:\n"
@@ -9479,7 +9547,10 @@ def test_timestamp_transparency_check_discriminates(tmp_path):
            "L = {\"timestamp_authority_key_status_per_trust_list\": None, \"independent_timestamps\": 0}\ndef attach_ltv(doc, timestamps=None): pass\n")
     good = {
         'polaris_sql/01_schema.sql': "CREATE TABLE TimestampLog (chk_timestamp_log_hash)\n",
-        'polaris_sql/06_triggers.sql': "trg_timestamp_log_append_only\n",
+        'polaris_sql/06_triggers.sql': ("CREATE TRIGGER trg_timestamp_log_append_only\n"
+                                        "    BEFORE UPDATE OR DELETE ON TimestampLog\n"
+                                        "    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n"
+                                        "COMMENT ON TRIGGER trg_timestamp_log_append_only ON TimestampLog IS 'x';\n"),
         'polaris_sql/09_grants.sql': "'timestamplog'\n",
         'polaris_sql/migrations/2026-09-09-007-timestamp-log.up.sql': "CREATE TABLE IF NOT EXISTS TimestampLog ();\n",
         'polaris_sql/migrations/2026-09-09-007-timestamp-log.down.sql': "DROP TABLE IF EXISTS TimestampLog;\n",
@@ -9506,6 +9577,11 @@ def test_timestamp_transparency_check_discriminates(tmp_path):
     assert first.level == "OK", "must PASS on the full fixture: " + first.message
     write({'polaris_sql/06_triggers.sql': "-- rewritable\n"})
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp log is not append-only"
+    # the trigger deleted, its COMMENT ON left behind: the bare-name read passed this until 2026-09-23
+    write({'polaris_sql/06_triggers.sql': "COMMENT ON TRIGGER trg_timestamp_log_append_only ON TimestampLog IS 'x';\n"
+                                          "-- CREATE TRIGGER trg_timestamp_log_append_only BEFORE UPDATE OR DELETE ON TimestampLog\n"})
+    assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only a comment names the trigger"
     write({'polaris_web/app.py': APP.replace("if body.get('anchor') is True:", "always_anchor()")})
     assert checks.check_timestamp_transparency(tmp_path)[0].level == "FAIL", "must FAIL if anchoring is not the caller's choice"
     write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VER.replace("def verify_timestamp_anchor", "def verify_something_else")})
