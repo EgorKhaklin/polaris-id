@@ -181,7 +181,9 @@ in the same commit.
   - Two layer cards said a person reference in Athena "fails five checks"; measured, it fails
     one, `check_athena_no_person`.
   - The Atlas returns at most 5,000 cluster summaries, not "a few hundred".
-  - The checks behind C1, C3 and C10 each accepted a mention for the mechanism: C1's the
+  - Each constraint's mechanism was then broken in turn on the real tree; seven of the ten checks
+    let a break through (C1, C3, C5, C6, C7, C8, C10), all closed; C2, C4 and C9 held. First, the
+    checks behind C1, C3 and C10 each accepted a mention for the mechanism: C1's the
     append-only error code anywhere in the schema, C3's (through the two drift checks) a
     deleted index by its `COMMENT ON`, C10's six words in table names, so a money column on
     the credential passed. Each now requires the defining statement and was shown red on the
