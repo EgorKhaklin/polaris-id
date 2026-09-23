@@ -59,6 +59,11 @@ Independent security reviews, pilots, non-author operators & 0 & The scoreboard'
 }
 
 The paper's performance numbers are those of Table~\ref{tab:perf}, each with the version that
-measured it; the dyno and the application baseline have not been re-run since \code{v9.278} and
-\code{v9.191} and are cited with those stamps. The reference machine throughout the repository is an
+measured it. The application baseline has not been re-run since \code{v9.191} and is cited with
+that stamp. The dyno was re-run on 23 September 2026 against the tree at \code{1.0.0-rc.7}, with the
+prover rebuilt from it, and the re-run found that its proof measurement had measured nothing since
+\code{v9.354}: it still sent the prover an input the prover no longer accepted, printed \emph{not
+measured here}, and exited cleanly, so its CI step stayed green. The signature rows moved by a few
+per cent; the proof row fell from 35~ms to 25~ms, and is not like for like, because the statement
+proved changed at \code{v9.354}. A half that does not measure now fails the step. The reference machine throughout the repository is an
 Apple Silicon laptop with eight cores and sixteen gigabytes of memory.

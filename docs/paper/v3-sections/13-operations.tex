@@ -89,10 +89,10 @@ production cluster has been measured.
 \endfoot
 \bottomrule
 \endlastfoot
-ML-DSA-65 sign, one core & about 2,110 per second & measured & dyno, \code{v9.278} \\
-ML-DSA-65 verify, single witness, one core & about 7,840 per second & measured & dyno, \code{v9.278} \\
-ML-DSA-65 verify, two witnesses, one core & about 740 per second & measured & dyno, \code{v9.278} \\
-Membership proof, depth 14 & about 35 ms to prove, 13 ms to verify, 76 KB & measured & dyno and the soundness ledger \\
+ML-DSA-65 sign, one core & about 2,080 per second & measured & dyno, \code{1.0.0-rc.7} \\
+ML-DSA-65 verify, single witness, one core & about 7,950 per second & measured & dyno, \code{1.0.0-rc.7} \\
+ML-DSA-65 verify, two witnesses, one core & about 740 per second & measured & dyno, \code{1.0.0-rc.7} \\
+Membership proof, depth 14 & about 25 ms to prove, 12 ms to verify, 76 KB & measured & dyno, \code{1.0.0-rc.7}; the soundness ledger \\
 Closing an epoch at depth 24, one million members & 2.1 s, tens of megabytes (was 10.8 s and 2.9 GB for a thousand) & measured & epoch cadence, \code{v9.357} \\
 Re-signing a population under ML-DSA-87, one runner & about 345 credentials per second, 91 percent of it signing & measured & quantum-event drill, \code{v9.365} \\
 Issuance through the application & 40 per second sustained, p95 28 ms & measured & baseline, \code{v9.191} \\

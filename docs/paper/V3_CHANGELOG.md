@@ -166,4 +166,10 @@ in the same commit.
     the count after the fix (`dbb66f4`).
   - 44 verdict fields are unconstrained at `1.0.0-rc.7`, not 43, which was the count at `v9.433`;
     Appendix C now carries the number with its method (`8470f9e`, `68d9f49`).
+  - The dyno, cited at `v9.278`, was re-run at `1.0.0-rc.7`. Its proof half had sent the
+    prover a pre-`v9.354` input since that version, printed "not measured here" and exited 0,
+    so its CI step was green while measuring nothing. Fixed; `--require` makes a half that does
+    not measure fail, and `check_dyno_published` requires it of every CI run. Table 12's
+    signature rows moved a few per cent; the proof fell from 35 ms to 25 ms (a different
+    statement since `v9.354`, so not like for like).
 

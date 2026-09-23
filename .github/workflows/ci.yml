@@ -517,7 +517,7 @@ jobs:
       # time at the configured tree depth, from the binary this job builds. The
       # ML-DSA half is measured in the pqc-real job (which has liboqs).
       - name: Dyno — ZK prove/verify (real numbers from this box)
-        run: python3 scripts/polaris-dyno.py --zk-iters 2
+        run: python3 scripts/polaris-dyno.py --zk-iters 2 --require zk
 
       # v9.190 (roadmap P1.8) — abuse controls, exercised: promtool unit tests
       # of the velocity + quota alerts, then a per-agency verification quota
@@ -2252,7 +2252,7 @@ jobs:
       # every release so the published dyno (docs/reference/DYNO.md) cannot rot; the
       # ZK half is measured in the test job, which builds the polaris-zk binary.
       - name: Dyno — ML-DSA-65 primitives (real numbers from this box)
-        run: python scripts/polaris-dyno.py --ml-dsa-samples 500
+        run: python scripts/polaris-dyno.py --ml-dsa-samples 500 --require ml-dsa
 
       # v9.282 — ML-DSA-65 conformance against Project Wycheproof's known-answer
       # verify vectors. The published vectors/ show three implementations agreeing

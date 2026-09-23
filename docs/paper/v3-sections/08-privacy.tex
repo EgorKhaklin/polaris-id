@@ -53,7 +53,7 @@ epoch, a context and a nonce, without revealing which leaf. The verifier sees th
 public inputs and cannot recover the leaf; that is the proof system's property, not an API rule. The
 setup is transparent, with no ceremony, and the commitments are hash-based. The default tree depth
 of fourteen covers the schema's ten-thousand-leaf epoch cap, so the anonymity set is a full epoch.
-On the reference machine a proof takes about 35~ms to make and about 13~ms to check, and the verdict
+On the reference machine a proof takes about 25~ms to make and about 12~ms to check, and the verdict
 is two-witnessed at the statement level. The proof carries a per-verifier nullifier,
 \code{Poseidon(secret\,||\,scope\,||\,epoch)}, so a relying party can enforce \emph{one human, once}
 within its own scope while another cannot correlate its nullifiers. \sImpl

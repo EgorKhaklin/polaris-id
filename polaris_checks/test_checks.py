@@ -7186,7 +7186,10 @@ def test_dyno_published_check_discriminates(tmp_path):
     )
     MD = ("# Dyno\n\n- Box: 8 cores, Apple Silicon\n- Version v9.279\n\n"
           "Reproduce: `python3 scripts/polaris-dyno.py`\n\nMeasured, not extrapolated.\n")
-    CI = "jobs:\n  pqc-real:\n    steps:\n      - run: python scripts/polaris-dyno.py --ml-dsa-samples 500\n"
+    CI = ("jobs:\n  pqc-real:\n    steps:\n"
+          "      - run: python scripts/polaris-dyno.py --ml-dsa-samples 500 --require ml-dsa\n"
+          "  test:\n    steps:\n"
+          "      - run: python3 scripts/polaris-dyno.py --zk-iters 2 --require zk\n")
     good = {
         "scripts/polaris-dyno.py": DYNO,
         "docs/reference/DYNO.md": MD,
@@ -7213,6 +7216,19 @@ def test_dyno_published_check_discriminates(tmp_path):
     # 4. CI does not re-measure
     write({".github/workflows/ci.yml": "jobs:\n  test:\n    steps: []\n"})
     assert checks.check_dyno_published(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the dyno"
+    # 5. CI runs the dyno but a failed measurement cannot turn it red (the P9-to-2026-09-23
+    #    state: the ZK half measured nothing and its step stayed green)
+    write({".github/workflows/ci.yml": CI.replace(" --require zk", "")})
+    assert checks.check_dyno_published(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a CI dyno run has no --require"
+    # 6. every run carries --require, but no run requires the ZK half
+    write({".github/workflows/ci.yml": CI.replace("--require zk", "--require ml-dsa")})
+    assert checks.check_dyno_published(tmp_path)[0].level == "FAIL", \
+        "must FAIL when no CI run requires the ZK half"
+    # 7. DYNO.md may be stamped with a release candidate, not only a v9 ship
+    write({"docs/reference/DYNO.md": MD.replace("v9.279", "1.0.0-rc.7")})
+    assert checks.check_dyno_published(tmp_path)[0].level == "OK", \
+        "must PASS on a run stamped with a release candidate"
 
 
 def test_real_pqc_default_boot_check_discriminates(tmp_path):

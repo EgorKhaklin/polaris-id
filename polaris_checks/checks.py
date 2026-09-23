@@ -10889,7 +10889,7 @@ def check_dyno_published(root: pathlib.Path) -> list[Finding]:
         return _fail("dyno_published", "docs/reference/DYNO.md (the published run) is missing")
     if "polaris-dyno.py" not in published:
         return _fail("dyno_published", "DYNO.md must give the reproduction command (scripts/polaris-dyno.py)")
-    if not re.search(r"\bcores?\b", published) or not re.search(r"v9\.\d+", published):
+    if not re.search(r"\bcores?\b", published) or not re.search(r"v9\.\d+|1\.0\.0-rc\.\d+", published):
         return _fail("dyno_published",
                      "DYNO.md must name the box (cores) and stamp the version the numbers were measured at")
     if "extrapolat" not in published.lower():
@@ -10901,9 +10901,26 @@ def check_dyno_published(root: pathlib.Path) -> list[Finding]:
     if "polaris-dyno.py" not in ci:
         return _fail("dyno_published",
                      "ci.yml must run scripts/polaris-dyno.py so the published numbers are re-measured every release")
+    # ...and a re-measurement that measured nothing must be red. The dyno prints "not
+    # measured here" and exits 0 when a half cannot run, which is right on a partial box
+    # and wrong in CI: from P9 (v9.354) to 2026-09-23 the ZK half sent the prover an input
+    # it no longer accepted and its CI step stayed green. So every CI invocation must name
+    # the half it is there for with --require, and between them both halves are required.
+    runs = [ln for ln in ci.splitlines() if "polaris-dyno.py" in ln and "run:" in ln]
+    bare = [ln.strip() for ln in runs if "--require" not in ln]
+    if bare:
+        return _fail("dyno_published",
+                     "ci.yml runs the dyno without --require, so a measurement that fails prints "
+                     "'not measured here' and the step stays green: " + "; ".join(bare))
+    for half in ("zk", "ml-dsa"):
+        if not any(re.search(r"--require[ =]%s\b" % re.escape(half), ln) for ln in runs):
+            return _fail("dyno_published",
+                         f"no CI step runs the dyno with --require {half}, so nothing fails when "
+                         f"that half stops measuring")
     return _ok("dyno_published",
                "the dyno measures the real ML-DSA-65 and ZK primitives with the box spec and version, DYNO.md "
-               "publishes a measured (not extrapolated) run, and CI re-measures every release")
+               "publishes a measured (not extrapolated) run, and CI re-measures every release with each half "
+               "required, so a half that stops measuring turns CI red")
 
 
 # ---------------------------------------------------------------------------

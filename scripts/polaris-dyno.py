@@ -131,8 +131,17 @@ def _measure_zk(iters, binary):
     depth = int(os.environ.get("POLARIS_ZK_TREE_DEPTH", "14"))
     # A modest real leaf set (a full epoch is the depth's cap; a few leaves is enough
     # to measure per-proof cost, which is dominated by the circuit at `depth`).
-    leaves = [hashlib.sha3_256(("dyno|%d|1" % i).encode()).hexdigest() for i in range(8)]
-    payload = {"leaf_seed_hex": leaves[3], "leaf_index": 3, "all_leaves_hex": leaves,
+    # Since P9 (v9.354) a leaf is Poseidon(secret || context_id) and the prover takes the
+    # holder's SECRET, not the leaf. The dyno derives its leaves exactly as a holder and an
+    # issuer do, through the binary's own `leaf` command. Until 2026-09-23 it still sent the
+    # pre-P9 input and every run since had printed "not measured here" for ZK.
+    secrets = [hashlib.sha3_256(("dyno|%d|1" % i).encode()).hexdigest() for i in range(8)]
+    try:
+        leaves = [_zk_run(binary, "leaf", {"secret_hex": s, "context_id": 1})["leaf_hex"]
+                  for s in secrets]
+    except Exception as e:
+        return {"measured": False, "reason": str(e)}
+    payload = {"secret_hex": secrets[3], "leaf_index": 3, "all_leaves_hex": leaves,
                "epoch_id": 1, "context_id": 1, "nonce": 0}
     try:
         prove_ms, verify_ms, bundle = [], [], None
@@ -161,6 +170,11 @@ def main(argv=None):
     ap.add_argument("--zk-iters", type=int, default=3)
     ap.add_argument("--zk-binary")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--require", action="append", choices=("ml-dsa", "zk"), default=[],
+                    help="exit 1 unless this half measured (repeatable). CI names the half "
+                         "its job is there to measure: without it a broken measurement prints "
+                         "'not measured here' and exits 0, which is how the ZK half measured "
+                         "nothing from P9 (v9.354) to 2026-09-23 with its CI step green")
     args = ap.parse_args(argv)
 
     report = {
@@ -172,9 +186,21 @@ def main(argv=None):
         "zk_membership": _measure_zk(args.zk_iters, _zk_binary(args.zk_binary)),
         "disclaimer": "measured on this box, single process/core; NOT extrapolated. Any fleet number is a separate labelled projection.",
     }
+    missing = []
+    if "ml-dsa" in args.require:
+        m = report["ml_dsa_65"]
+        if not m.get("measured"):
+            missing.append("ML-DSA-65 was required and not measured (%s)" % m.get("reason"))
+        elif not m.get("all_verified"):
+            missing.append("ML-DSA-65 was required and a sampled signature did not verify")
+    if "zk" in args.require and not report["zk_membership"].get("measured"):
+        missing.append("ZK membership was required and not measured (%s)"
+                       % report["zk_membership"].get("reason"))
     if args.json:
         print(json.dumps(report, indent=2))
-        return 0
+        for msg in missing:
+            print("polaris-dyno: " + msg, file=sys.stderr)
+        return 1 if missing else 0
     b = report["box"]
     print("Polaris dyno — v%s — %s" % (report["version"], report["measured_at"]))
     print("box: %s | %s | %s cores | python %s | liboqs %s"
@@ -194,7 +220,9 @@ def main(argv=None):
     else:
         print("ZK membership: not measured here (%s)" % z["reason"])
     print(report["disclaimer"])
-    return 0
+    for msg in missing:
+        print("polaris-dyno: " + msg, file=sys.stderr)
+    return 1 if missing else 0
 
 
 if __name__ == "__main__":

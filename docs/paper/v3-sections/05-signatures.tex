@@ -57,7 +57,7 @@ accept it; a missing witness at issuance is a refusal, not a downgrade. \sImpl
 
 Verification at use runs one witness, because a stored signature is already known to verify under
 both, and one witness detects tampering at about ten times the rate: on the reference machine
-roughly 7,800 verifications per second per core against roughly 740 two-witness. The fast path
+roughly 7,950 verifications per second per core against roughly 740 two-witness. The fast path
 earns its speed by being continuously checked: a mandatory random fraction of successful checks is
 replayed through the second witness, a disagreement increments a counter and pages at the highest
 severity, and every response names which witness set ran. \sImpl
