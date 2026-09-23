@@ -14,20 +14,20 @@
   \draw[classmark, line width=0.8pt, dash pattern=on 2pt off 2pt] (6.2,-0.28) rectangle (9.0,0.28);
   % events
   \foreach \x in {1.0, 3.0, 4.6, 6.2, 9.0, 11.4} { \draw[navydark, line width=1pt] (\x,-0.15) -- (\x,0.15); }
-  \node[font=\scriptsize, anchor=south, align=center] at (1.0,1.1) {эмитент подписывает\\\code{status = ACTIVE}};
+  \node[font=\scriptsize, anchor=south, align=center] at (1.0,1.1) {эмитент подписывает\\\code{состояние = ДЕЙСТВУЮЩИЙ}};
   \node[font=\scriptsize, anchor=north, align=center] at (3.0,-0.45) {держатель подшивает его\\к предъявлению};
-  \node[font=\scriptsize, anchor=south, align=center] at (4.6,1.1) {доверяющая сторона A,\\автономно: принять};
+  \node[font=\scriptsize, anchor=south, align=center] at (4.6,1.1) {доверяющая сторона А,\\автономно: принять};
   \node[font=\scriptsize\bfseries\color{classmark}, anchor=north, align=center] at (6.2,-0.45) {эмитент отзывает\\токен};
-  \node[font=\scriptsize, anchor=south, align=center] at (9.0,1.1) {утверждение истекает;\\теперь можно вычеканить\\только \code{REVOKED}};
-  \node[font=\scriptsize, anchor=north, align=center] at (11.4,-0.45) {доверяющая сторона B,\\автономно: отвергнуть};
+  \node[font=\scriptsize, anchor=south, align=center] at (9.0,1.1) {утверждение истекает;\\теперь можно вычеканить\\только \code{ОТОЗВАН}};
+  \node[font=\scriptsize, anchor=north, align=center] at (11.4,-0.45) {доверяющая сторона Б,\\автономно: отвергнуть};
   \foreach \x/\y in {1.0/1.05, 4.6/1.05, 9.0/1.05} { \draw[steelgray, line width=0.4pt, opacity=0.6] (\x,0.3) -- (\x,\y); }
-  \node[font=\scriptsize\color{navydark}, anchor=south, fill=white, inner sep=1.5pt] at (5.0,0.32) {утверждение действительно: от \code{issued\_at} до \code{expires\_at} (срок жизни, по умолчанию 3600 с; верификатор ограничивает его через \code{max\_window})};
+  \node[font=\scriptsize\color{navydark}, anchor=south, fill=white, inner sep=1.5pt] at (5.0,0.32) {утверждение действительно: от \code{выдано\_в} до \code{истекает\_в} (срок жизни, по умолчанию 3600 с; верификатор ограничивает его через \code{макс\_окно})};
   % the window's meaning, below the event labels
   \draw[classmark, line width=0.6pt, dash pattern=on 2pt off 2pt] (6.2,-1.35) -- (6.2,-1.9);
   \draw[classmark, line width=0.6pt, dash pattern=on 2pt off 2pt] (9.0,-0.32) -- (9.0,-1.9);
   \draw[classmark, line width=0.6pt, <->, >={Stealth[length=1.8mm]}] (6.2,-1.9) -- (9.0,-1.9);
   \node[font=\scriptsize\bfseries\color{classmark}, anchor=north, text width=6.8cm, align=center] at (7.6,-2.0) {отозван, а утверждение ещё действительно: автономный верификатор внутри этого окна знать не может};
   % the two remedies
-  \node[softbox, anchor=west, text width=5.8cm] at (0,-4.2) {\textbf{Как сузить:} верификатор навязывает собственный более короткий \code{max\_age}; сторона с высоким риском требует секунд либо выходит в сеть.};
+  \node[softbox, anchor=west, text width=5.8cm] at (0,-4.2) {\textbf{Как сузить:} верификатор навязывает собственный более короткий \code{макс\_возраст}; сторона с высоким риском требует секунд либо выходит в сеть.};
   \node[softbox, anchor=west, text width=7.0cm] at (6.6,-4.2) {\textbf{Размен:} ненаблюдаемость эмитентом, автономную доступность и свежесть отзыва нельзя довести до предела разом. Окно есть число политики, а не закон.};
 \end{tikzpicture}

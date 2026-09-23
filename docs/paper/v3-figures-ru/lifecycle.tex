@@ -4,11 +4,11 @@
 % (trg_token_state_machine), which Version 1 recommended and Version 2 confirms.
 \begin{tikzpicture}[
   scale=0.78, font=\small,
-  state/.style={draw=navymid, line width=1pt, rounded corners=2pt, minimum width=1.7cm, minimum height=0.85cm,
+  state/.style={draw=navymid, line width=1pt, rounded corners=2pt, minimum width=2.3cm, minimum height=0.9cm,
     fill=navydark, text=white, font=\bfseries\small, align=center},
-  centerstate/.style={draw=accent, line width=1.2pt, rounded corners=2pt, minimum width=2.0cm, minimum height=0.85cm,
+  centerstate/.style={draw=accent, line width=1.2pt, rounded corners=2pt, minimum width=3.1cm, minimum height=0.9cm,
     fill=accent, text=white, font=\bfseries\small, align=center},
-  termstate/.style={draw=steelgray, line width=1pt, rounded corners=2pt, minimum width=1.7cm, minimum height=0.85cm,
+  termstate/.style={draw=steelgray, line width=1pt, rounded corners=2pt, minimum width=2.3cm, minimum height=0.9cm,
     fill=steelgray!85, text=white, font=\bfseries\small, align=center},
   trans/.style={->, draw=navymid, line width=1pt, >={Stealth[length=2.5mm]}},
   termtrans/.style={->, draw=accent, line width=1pt, >={Stealth[length=2.5mm]}, dash pattern=on 4pt off 2.5pt},
@@ -16,43 +16,43 @@
   leader/.style={draw=steelgray, line width=0.4pt, opacity=0.55, shorten >=1pt, shorten <=1pt},
 ]
 \begin{scope}[on background layer]
-  \coordinate (P1) at (90:4);
-  \coordinate (P2) at (162:4);
-  \coordinate (P3) at (234:4);
-  \coordinate (P4) at (306:4);
-  \coordinate (P5) at (18:4);
+  \coordinate (P1) at (90:4.8);
+  \coordinate (P2) at (162:4.8);
+  \coordinate (P3) at (234:4.8);
+  \coordinate (P4) at (306:4.8);
+  \coordinate (P5) at (18:4.8);
   \draw[steelgray, line width=0.4pt, opacity=0.06] (P1) -- (P2) -- (P3) -- (P4) -- (P5) -- cycle;
   \draw[steelgray, line width=0.3pt, opacity=0.04] (P1) -- (P3) -- (P5) -- (P2) -- (P4) -- cycle;
-  \draw[steelgray, line width=0.4pt, opacity=0.05] (0,0) circle (4);
-  \draw[steelgray, line width=0.3pt, opacity=0.04] (0,0) circle (1.53);
+  \draw[steelgray, line width=0.4pt, opacity=0.05] (0,0) circle (4.8);
+  \draw[steelgray, line width=0.3pt, opacity=0.04] (0,0) circle (1.85);
 \end{scope}
-\node[state] (reserve)  at (90:4)  {RESERVE};
-\node[termstate] (expired) at (162:4) {EXPIRED};
-\node[termstate] (lost)    at (234:4) {LOST};
-\node[termstate] (revoked) at (306:4) {REVOKED};
-\node[state] (dormant)  at (18:4)  {DORMANT};
-\node[centerstate] (active) at (0,0) {ACTIVE};
+\node[state] (reserve)  at (90:4.8)  {РЕЗЕРВ};
+\node[termstate] (expired) at (162:4.8) {ИСТЁК};
+\node[termstate] (lost)    at (234:4.8) {УТРАЧЕН};
+\node[termstate] (revoked) at (306:4.8) {ОТОЗВАН};
+\node[state] (dormant)  at (18:4.8)  {СПЯЩИЙ};
+\node[centerstate] (active) at (0,0) {ДЕЙСТВУЮЩИЙ};
 \draw[trans] (reserve) -- (active);
 \draw[trans] (active)  -- (dormant);
 \draw[termtrans] (active) -- (revoked);
 \draw[termtrans] (active) -- (lost);
 \draw[termtrans] (active) -- (expired);
-\draw[trans] ($(reserve)+(0,1.2)$) -- (reserve) node[lbl, midway, right=2pt] {ISSUED};
-\coordinate (lblActivated)    at (54:2.6);
-\coordinate (lblDeactivated)  at (342:2.6);
-\coordinate (lblRevoked)      at (270:2.4);
-\coordinate (lblLost)         at (198:2.6);
-\coordinate (lblExpired)      at (126:2.6);
-\coordinate (midActivated)    at (90:2.0);
-\coordinate (midDeactivated)  at (18:2.0);
-\coordinate (midRevoked)      at (306:2.0);
-\coordinate (midLost)         at (234:2.0);
-\coordinate (midExpired)      at (162:2.0);
-\node[lbl] (nodeActivated)   at (lblActivated)   {ACTIVATED};
-\node[lbl] (nodeDeactivated) at (lblDeactivated) {DEACTIVATED};
-\node[lbl] (nodeRevoked)     at (lblRevoked)     {REVOKED};
-\node[lbl] (nodeLost)        at (lblLost)        {LOST};
-\node[lbl] (nodeExpired)     at (lblExpired)     {EXPIRED};
+\draw[trans] ($(reserve)+(0,1.2)$) -- (reserve) node[lbl, midway, right=2pt] {ВЫДАН};
+\coordinate (lblActivated)    at (54:3.35);
+\coordinate (lblDeactivated)  at (342:3.35);
+\coordinate (lblRevoked)      at (270:3.1);
+\coordinate (lblLost)         at (198:3.35);
+\coordinate (lblExpired)      at (126:3.35);
+\coordinate (midActivated)    at (90:2.45);
+\coordinate (midDeactivated)  at (18:2.45);
+\coordinate (midRevoked)      at (306:2.45);
+\coordinate (midLost)         at (234:2.45);
+\coordinate (midExpired)      at (162:2.45);
+\node[lbl] (nodeActivated)   at (lblActivated)   {АКТИВИРОВАН};
+\node[lbl] (nodeDeactivated) at (lblDeactivated) {ДЕАКТИВИРОВАН};
+\node[lbl] (nodeRevoked)     at (lblRevoked)     {ОТОЗВАН};
+\node[lbl] (nodeLost)        at (lblLost)        {УТРАЧЕН};
+\node[lbl] (nodeExpired)     at (lblExpired)     {ИСТЁК};
 \begin{scope}[on background layer]
   \draw[leader] (nodeActivated.west)   -- (midActivated);
   \draw[leader] (nodeDeactivated.west) -- (midDeactivated);

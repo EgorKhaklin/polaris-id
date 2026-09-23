@@ -14,7 +14,7 @@
   \node[futbox, minimum width=2.3cm] (conc)   at (3.6,-2.4){одновременность};
   \node[futbox, minimum width=2.3cm] (proto)  at (7.2,-2.4){протокол};
   \node[futbox, minimum width=2.3cm] (adv)    at (10.8,-2.4){опровержение};
-  \foreach \a in {scout,trust,crypto,priv,state,conc,proto,adv} { \draw[flowfut, <->] (\a) -- (land); }
+  \foreach \a in {scout,trust,крипто,priv,state,conc,proto,adv} { \draw[flowfut, <->] (\a) -- (land); }
   % The orchestrator, deliberately not omniscient.
   \node[futbox, minimum width=2.6cm] (queen) at (13.6,0) {распорядитель\\[-1pt]{\scriptsize раздаёт работу,}\\{\scriptsize собирает свидетельства,}\\{\scriptsize не решает ничего}};
   \draw[flowfut, <->] (queen) -- (land);
@@ -23,6 +23,6 @@
     {Уверенность приходит лишь от внешних свидетельств: падающего теста, трассы выполнения, случая из фаззера, находки статического анализа, формального контрпримера, независимого воспроизведения. Согласие между моделями свидетельством не является.};
   \draw[flow] (ext) -- (land);
   % Into Polaris's own loop.
-  \node[corebox, minimum width=3.2cm, text width=3.0cm] (pol) at (13.6,-4.6) {Polaris\\[-1pt]{\mdseries\scriptsize воспроизводимый отказ, тест, инвариант, новое чувство}};
+  \node[corebox, minimum width=3.2cm, text width=3.0cm] (pol) at (13.6,-4.6) {Полярис\\[-1pt]{\mdseries\scriptsize воспроизводимый отказ, тест, инвариант, новое чувство}};
   \draw[flow] (ext) -- node[faint, above] {воспроизведено} (pol);
 \end{tikzpicture}

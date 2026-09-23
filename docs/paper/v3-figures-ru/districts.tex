@@ -5,9 +5,10 @@
 % name is a real table. The ring numbers at the bottom match the caption.
 \begin{tikzpicture}[scale=1.0,
   tbl/.style={draw=navymid, line width=0.6pt, rounded corners=1.5pt, fill=white, text=navydark,
-              font=\tiny\ttfamily, inner sep=2.2pt, minimum width=1.85cm, minimum height=0.4cm, align=center},
+              font=\tiny\ttfamily, inner sep=2.2pt, minimum width=2.5cm, minimum height=0.36cm, align=center},
   tblcore/.style={tbl, fill=navydark, text=white, font=\tiny\bfseries\sffamily},
   tblhub/.style={tbl, fill=accent, draw=accent, text=white, font=\scriptsize\bfseries\sffamily, minimum width=2.4cm, minimum height=0.55cm},
+  tbladd/.style={tbl, dash pattern=on 1.6pt off 1.1pt, fill=tabstripe},
   ringnum/.style={font=\bfseries\scriptsize, text=gold, fill=white, draw=gold, line width=0.5pt, circle, inner sep=1.4pt},
 ]
 \def\R{2.35}
@@ -19,39 +20,55 @@
   \draw[steelgray, line width=0.3pt, opacity=0.07] (90:{\R/2}) -- (150:{\R/2}) -- (210:{\R/2}) -- (270:{\R/2}) -- (330:{\R/2}) -- (30:{\R/2}) -- cycle;
   \draw[steelgray, line width=0.3pt, opacity=0.06] (90:\R) -- (210:\R) -- (330:\R) -- cycle;
   \draw[steelgray, line width=0.3pt, opacity=0.06] (270:\R) -- (30:\R) -- (150:\R) -- cycle;
-  \draw[ring, opacity=0.55] (0,0) circle (4.95);
-  \draw[ring, opacity=0.55] (0,0) circle (7.25);
-  \draw[ring, opacity=0.55] (0,0) circle (10.0);
+  \draw[ring, opacity=0.55] (0,0) circle (5.2);
+  \draw[ring, opacity=0.55] (0,0) circle (8.1);
+  \draw[ring, opacity=0.55] (0,0) circle (11.0);
+  \draw[ring, opacity=0.35, dash pattern=on 3pt off 2pt] (0,0) circle (13.9);
 \end{scope}
 % --- ring 1: the nucleus (Version 1's seven entities)
-\node[tblhub] at (0,0) {IdentityToken};
-\node[tblcore] at (90:\R)  {Individual};
-\node[tblcore] at (150:\R) {TokenLifecycleEvent};
-\node[tblcore] at (30:\R)  {VerificationContext};
-\node[tblcore] at (210:\R) {Agency};
-\node[tblcore] at (330:\R) {CryptographicAlgorithm};
-\node[tblcore] at (270:\R) {VerificationEvent};
+\node[tblhub] at (0,0) {ТокенЛичности};
+\node[tblcore] at (90:\R)  {ФизическоеЛицо};
+\node[tblcore] at (150:\R) {СобытиеЦиклаТокена};
+\node[tblcore] at (30:\R)  {КонтекстПроверки};
+\node[tblcore] at (210:\R) {Ведомство};
+\node[tblcore] at (330:\R) {КриптоАлгоритм};
+\node[tblcore] at (270:\R) {СобытиеПроверки};
 % --- ring 2: the credential machinery (13)
-\foreach \a/\n in {90/TokenSignature, 117.7/TokenPermission, 145.4/DeviceBinding, 173.1/RevocationList, 200.8/RecoveryRequest,
-                   228.5/DuressEvent, 256.2/EnrollmentStatusEvent, 283.8/TokenStateEpoch, 311.5/TokenStateEpochLeaf, 339.2/ZkVerificationNonce,
-                   6.9/BlockchainAnchor, 34.6/HolderKeyEvent, 62.3/CardPersonalization} {
-  \node[tbl] at ({4.95*cos(\a)},{4.95*sin(\a)}) {\n};
+\foreach \a/\n in {90/ПодписьТокена, 117.7/РазрешениеТокена, 145.4/ПривязкаУстройства, 173.1/СписокОтзывов, 200.8/ЗапросВосстановления,
+                   228.5/СобытиеПринуждения, 256.2/СостояниеРегистрации, 283.8/ЭпохаТокенов, 311.5/ЛистЭпохиТокенов, 339.2/ЧислоДоказательства,
+                   6.9/ЯкорьЦепиБлоков, 34.6/СобытиеКлючаДержателя, 62.3/ПерсонализацияКарты} {
+  \pgfmathsetmacro{\rot}{ifthenelse(cos(\a)<-0.001,\a+180,\a)}
+  \node[tbl, rotate=\rot] at (\a:5.2) {\n};
 }
 % --- ring 3: authority, trust, policy, and the people at the counter (13)
-\foreach \a/\n in {90/AgencyAlgorithmAuth, 117.7/AgencyTrustAttestation, 145.4/AuthorityKeyEvent, 173.1/IssuerDiscretionPolicy, 200.8/AgencyQuota,
-                   228.5/RelyingParty, 256.2/AuthCodeConsumed, 283.8/ExchangeNonce, 311.5/AppUser, 339.2/EnrollmentProofing,
-                   6.9/EnrollmentEvidence, 34.6/RefereeVouching, 62.3/EnrollmentCode} {
-  \node[tbl] at ({7.25*cos(\a)},{7.25*sin(\a)}) {\n};
+\foreach \a/\n in {90/ДопускКАлгоритму, 117.7/АттестацияДоверия, 145.4/СобытиеКлючаОргана, 173.1/ПолитикаУсмотрения, 200.8/КвотаВедомства,
+                   228.5/ДоверяющаяСторона, 256.2/КодВходаПоглощён, 283.8/ЧислоОбмена, 311.5/ПользовательПриложения, 339.2/ПодтверждениеРегистрации,
+                   6.9/ОснованияРегистрации, 34.6/Поручительство, 62.3/КодРегистрации} {
+  \pgfmathsetmacro{\rot}{ifthenelse(cos(\a)<-0.001,\a+180,\a)}
+  \node[tbl, rotate=\rot] at (\a:8.1) {\n};
 }
-% --- ring 4: archives, logs, and decisions kept as records (12)
-\foreach \a/\n in {105/AnchorBatch, 135/ExchangeReceiptLog, 165/TimestampLog, 195/AuthAuditLog, 225/IndividualErasureEvent,
-                   255/LifecycleArchiveCheckpoint, 285/RetentionPolicy, 315/BulkEnrollmentBatch, 345/BulkEnrollmentStaging,
-                   15/AgencyEvent, 45/AppUserEvent, 75/RelyingPartyEvent} {
-  \node[tbl] at ({10.0*cos(\a)},{10.0*sin(\a)}) {\n};
+% --- ring 4: archives, logs, and decisions kept as records. Twelve canonical tables and
+%     the migration registry, which is the record of every schema change, so that this
+%     ring has the same thirteen spokes as rings 2 and 3 and every spoke runs straight out.
+\foreach \a/\n in {117.7/ПакетЯкорей, 145.4/ЖурналРасписок, 173.1/ЖурналОтметокВремени, 200.8/ЖурналВходов,
+                   228.5/СобытиеСтиранияЛица, 256.2/КонтрольнаяТочкаАрхива, 283.8/ПолитикаХранения,
+                   311.5/ПакетРегистраций, 339.2/БуферРегистраций, 6.9/СобытиеВедомства,
+                   34.6/СобытиеПользователя, 62.3/СобытиеСтороны} {
+  \pgfmathsetmacro{\rot}{ifthenelse(cos(\a)<-0.001,\a+180,\a)}
+  \node[tbl, rotate=\rot] at (\a:11.0) {\n};
+}
+\node[tbladd, rotate=90] at (90:11.0) {ВерсияСхемы};
+% --- ring 5: the rest of what a migrated deployment adds around the canonical schema,
+%     six tables on a hexagon that echoes the nucleus, turned so the bottom axis stays free
+\foreach \a/\n in {0/СессияОператора, 60/АппаратныйКлючОператора, 120/ЖурналДоступаАудита,
+                   180/афина\_основное\_правило, 240/афина\_хранение\_ключей, 300/афина\_исполнение\_правил} {
+  \pgfmathsetmacro{\rot}{ifthenelse(cos(\a)<-0.001,\a+180,\a)}
+  \node[tbladd, rotate=\rot] at (\a:13.9) {\n};
 }
 % --- ring numbers on the bottom axis, in the gaps between boxes
 \node[ringnum] at (0,-3.15) {1};
-\node[ringnum] at (0,-5.37) {2};
-\node[ringnum] at (0,-7.67) {3};
-\node[ringnum] at (0,-10.42) {4};
+\node[ringnum] at (0,-5.2) {2};
+\node[ringnum] at (0,-8.1) {3};
+\node[ringnum] at (0,-11.0) {4};
+\node[ringnum] at (0,-13.9) {5};
 \end{tikzpicture}

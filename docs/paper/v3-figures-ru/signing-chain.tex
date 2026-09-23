@@ -1,29 +1,29 @@
 % v2-figures/signing-chain.tex: a signed document, the evidence fixed at the
 % instant of signing, and how a verifier decides validity after the key is gone.
 \begin{tikzpicture}
-  \node[extbox, minimum width=2.6cm] (doc) at (0,5.6) {документ\\[-1pt]{\scriptsize никогда не покидает своего держателя}};
-  \node[softbox, minimum width=2.6cm] (dig) at (3.6,5.6) {дайджест SHA3-256};
+  \node[extbox, minimum width=2.6cm, text width=2.7cm] (doc) at (-0.4,5.6) {документ\\[-1pt]{\scriptsize никогда не покидает своего держателя}};
+  \node[softbox, minimum width=2.6cm] (dig) at (3.6,5.6) {дайджест ША3-256};
   \draw[flow] (doc) -- (dig);
   \node[layerbox, minimum width=6.4cm, text width=6.1cm] (sig) at (9.2,5.6) {подписанный контейнер\\[-1pt]{\mdseries\scriptsize учреждение подписывает собственный дайджест; либо выдавший орган держателя подписывает от имени держателя, доказавшего владение, с записью по хешу удостоверения}};
   \draw[flow] (dig) -- (sig);
   % LTV evidence, fed from the container through one horizontal bus
-  \node[softbox, minimum width=2.9cm, text width=2.6cm] (ts) at (1.6,1.9) {отметка времени\\[-1pt]{\scriptsize от второго органа, ключом, отличным от ключа подписанта; над утверждением и подписью}};
-  \node[softbox, minimum width=2.9cm, text width=2.6cm] (man) at (5.0,1.9) {опись\\[-1pt]{\scriptsize якоря подписанта и их состояния на тот момент}};
-  \node[softbox, minimum width=2.9cm, text width=2.6cm] (chk) at (8.4,1.9) {контрольная точка эпохи\\[-1pt]{\scriptsize цепь подписанта на тот момент}};
-  \node[softbox, minimum width=2.9cm, text width=2.6cm] (feed) at (11.8,1.9) {лента отзывов\\[-1pt]{\scriptsize для подписи держателя хеш удостоверения обязан отсутствовать}};
+  \node[softbox, minimum width=2.9cm, text width=2.6cm, minimum height=2.95cm] (ts) at (1.6,1.9) {отметка времени\\[-1pt]{\scriptsize от второго органа, ключом, отличным от ключа подписанта; над утверждением и подписью}};
+  \node[softbox, minimum width=2.9cm, text width=2.6cm, minimum height=2.95cm] (man) at (5.0,1.9) {опись\\[-1pt]{\scriptsize якоря подписанта и их состояния на тот момент}};
+  \node[softbox, minimum width=2.9cm, text width=2.6cm, minimum height=2.95cm] (chk) at (8.4,1.9) {контрольная точка эпохи\\[-1pt]{\scriptsize цепь подписанта на тот момент}};
+  \node[softbox, minimum width=2.9cm, text width=2.6cm, minimum height=2.95cm] (feed) at (11.8,1.9) {лента отзывов\\[-1pt]{\scriptsize для подписи держателя хеш удостоверения обязан отсутствовать}};
   \draw[flowfaint, -] (sig.south) -- (9.2,3.55);
   \draw[flowfaint, -] (1.6,3.55) -- (11.8,3.55);
   \foreach \n in {ts,man,chk,feed} { \draw[flowfaint] (\n.north |- 0,3.55) -- (\n.north); }
-  \node[kicker, anchor=south west] at (0.2,3.65) {свидетельства, приложенные при подписании, вне подписанного утверждения};
+  \node[kicker, anchor=south west, fill=white, inner sep=1.5pt] at (0.2,3.65) {свидетельства, приложенные при подписании, вне подписанного утверждения};
   % Trust list and the decision
   \node[extbox, minimum width=3.0cm, text width=2.7cm] (tl) at (1.6,-1.9) {список доверия\\[-1pt]{\scriptsize собственный список верификатора; состояние ключа на любой момент}};
-  \node[corebox, minimum width=8.6cm, text width=8.3cm] (dec) at (8.4,-1.9) {\texttt{verify\_signed\_document}\\[-1pt]{\mdseries\scriptsize действителен долгосрочно тогда и только тогда, когда: отметка времени подлинна, доверена и поставлена ключом, отличным от ключа подписанта; ключ подписанта был действующим на тот момент и по описи, и по списку доверия; ключ отметки времени был действующим по списку доверия; лента на тот момент держателя не перечисляет; необязательно, отметка времени заякорена в журнале со свидетелями, и кворум независимых служб отметок времени согласен}};
+  \node[corebox, minimum width=8.6cm, text width=8.3cm] (dec) at (8.4,-1.9) {\texttt{проверить\_подписанный\_документ}\\[-1pt]{\mdseries\scriptsize действителен долгосрочно тогда и только тогда, когда: отметка времени подлинна, доверена и поставлена ключом, отличным от ключа подписанта; ключ подписанта был действующим на тот момент и по описи, и по списку доверия; ключ отметки времени был действующим по списку доверия; лента на тот момент держателя не перечисляет; необязательно, отметка времени заякорена в журнале со свидетелями, и кворум независимых служб отметок времени согласен}};
   \draw[flow] (tl.east) -- (dec.west);
   \foreach \n in {man,chk,feed} { \draw[flowfaint] (\n.south) -- (dec.north -| \n.south); }
   \draw[flowfaint] (ts.south) -- (tl.north);
   % Timeline of key events
   \draw[flow, line width=1.1pt] (0,-5.6) -- (13.8,-5.6) node[anchor=west, font=\scriptsize\color{steelgray}] {время};
   \foreach \x/\l in {2.0/{подписано и помечено временем}, 6.6/{ключ выведен из обращения}, 10.6/{ключ скомпрометирован (действует с более раннего момента)}} { \draw[navydark, line width=1pt] (\x,-5.45) -- (\x,-5.75); \node[font=\scriptsize, anchor=north, align=center, text width=3.2cm] at (\x,-5.85) {\l}; }
-  \node[font=\scriptsize\bfseries\color{navydark}, anchor=south] at (4.3,-5.4) {по-прежнему действителен после вывода из обращения};
+  \node[font=\scriptsize\bfseries\color{navydark}, anchor=south, text width=4.0cm, align=center] at (4.3,-5.4) {по-прежнему действителен после вывода из обращения};
   \node[font=\scriptsize\bfseries\color{classmark}, anchor=south, text width=4.2cm, align=center] at (11.6,-5.4) {недействителен, если момент приходится на время после компрометации};
 \end{tikzpicture}

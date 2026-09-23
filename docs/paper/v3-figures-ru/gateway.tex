@@ -10,8 +10,8 @@
   \draw[flow] ([yshift=4mm]gw.east) -- node[faint, above] {тело} ([yshift=4mm]up.west);
   \draw[flowfaint] ([yshift=-4mm]up.west) -- node[faint, below] {ответ} ([yshift=-4mm]gw.east);
   % what is written
-  \node[softbox, minimum width=3.4cm, text width=3.1cm] (nonce) at (4.6,0.3) {\code{ExchangeNonce}\\[-1pt]{\scriptsize (хеш ключа, одноразовое число): повтор отвергается (409)}};
-  \node[softbox, minimum width=3.4cm, text width=3.1cm] (rlog) at (9.4,0.3) {\code{ExchangeReceiptLog}\\[-1pt]{\scriptsize SHA3-256 расписки, публикуемый как журнал прозрачности}};
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (nonce) at (4.6,0.3) {\code{ЧислоОбмена}\\[-1pt]{\scriptsize (хеш ключа, одноразовое число): повтор отвергается (409)}};
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (rlog) at (9.4,0.3) {\code{ЖурналРасписок}\\[-1pt]{\scriptsize ША3-256 расписки, публикуемый как журнал прозрачности}};
   \draw[flowfaint] (gw.south -| nonce.north) -- (nonce.north);
   \draw[flowfaint] (gw.south -| rlog.north) -- (rlog.north);
   \node[font=\scriptsize\bfseries\color{classmark}, text width=9.0cm, align=center, anchor=north] at (7.0,-0.75) {больше не пишется ничего: ни тела, ни строки журнала с телом, ни записи о том, кто о ком что спрашивал};

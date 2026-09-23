@@ -3,21 +3,21 @@
 % trust the model refuses: an attestation is never a closure.
 \begin{tikzpicture}
   % Authorities in one row: A, B and the third party C that only A trusts.
-  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (A) at (0,3.0) {Орган A\\[-1pt]{\mdseries\scriptsize своя база данных, свой корень ML-DSA-87; публикует опись, контрольную точку эпохи, ленту отзывов}};
-  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (B) at (7.4,3.0) {Орган B\\[-1pt]{\mdseries\scriptsize своя база данных, свой корень ML-DSA-65; публикует те же три объекта}};
-  \node[layerbox, minimum width=3.0cm, text width=2.7cm, fill=steelgray!85, draw=steelgray] (C) at (13.6,3.0) {Орган C\\[-1pt]{\mdseries\scriptsize доверенный для A, но не для B}};
+  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (A) at (0,3.0) {Орган А\\[-1pt]{\mdseries\scriptsize своя база данных, свой корень МЛ-ДСА-87; публикует опись, контрольную точку эпохи, ленту отзывов}};
+  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (B) at (7.4,3.0) {Орган Б\\[-1pt]{\mdseries\scriptsize своя база данных, свой корень МЛ-ДСА-65; публикует те же три объекта}};
+  \node[layerbox, minimum width=3.0cm, text width=2.7cm, fill=steelgray!85, draw=steelgray] (C) at (13.6,3.0) {Орган В\\[-1pt]{\mdseries\scriptsize доверенный для А, но не для Б}};
   % The attestation edge (B accepts A in context 3)
-  \draw[flow, line width=1.4pt] (B.west) -- node[lbl, above=3pt, text width=3.6cm] {B аттестует ключ A в контексте 3, до такой-то даты (\code{AgencyTrustAttestation})} (A.east);
+  \draw[flow, line width=1.4pt] (B.west) -- node[lbl, above=3pt, text width=3.6cm] {Б аттестует ключ А в контексте 3, до такой-то даты (\code{АттестацияДоверия})} (A.east);
   % A trusts C, drawn over the top so that it visibly bypasses B
-  \draw[flowfaint] (A.north) to[out=60, in=120, looseness=0.5] node[faint, above, pos=0.5] {A аттестует C в каком-то контексте} (C.north);
+  \draw[flowfaint] (A.north) to[out=60, in=120, looseness=0.5] node[faint, above, pos=0.5] {А аттестует В в каком-то контексте} (C.north);
   % The refused transitive edge
   \draw[refuse, dash pattern=on 4pt off 3pt] (B.east) -- (C.west);
-  \node[font=\scriptsize\bfseries\color{classmark}, anchor=north, text width=2.6cm, align=center] at (10.6,2.7) {никакого замыкания: доверие B к A никогда не влечёт доверия B к C};
+  \node[font=\scriptsize\bfseries\color{classmark}, anchor=north, text width=2.6cm, align=center] at (10.6,2.7) {никакого замыкания: доверие Б к А никогда не влечёт доверия Б к В};
   % The holder and the relying party
-  \node[humanbox, minimum width=2.8cm] (h) at (0,0.0) {держатель удостоверения A};
+  \node[humanbox, minimum width=2.8cm] (h) at (0,0.0) {держатель удостоверения А};
   \draw[flowfaint] (A.south) -- (h.north);
-  \node[extbox, minimum width=4.0cm, text width=3.7cm] (rp) at (0,-3.4) {Доверяющая сторона, доверяющая B\\[-1pt]{\scriptsize решает автономно: удостоверение A подлинно, опись B подлинна, свежа и доверена, она аттестует ключ A в контексте 3, а лента A удостоверения не перечисляет}};
+  \node[extbox, minimum width=4.0cm, text width=3.7cm] (rp) at (0,-3.4) {Доверяющая сторона, доверяющая Б\\[-1pt]{\scriptsize решает автономно: удостоверение А подлинно, опись Б подлинна, свежа и доверена, она аттестует ключ А в контексте 3, а лента А удостоверения не перечисляет}};
   \draw[flow] (h.south) -- node[faint, right] {предъявляет в контексте 3} (rp.north);
-  \draw[flowfaint] (B.south) to[out=270, in=0] node[faint, below, sloped, pos=0.55] {забирает опись B} (rp.east);
-  \node[faint, text width=8.6cm, anchor=north] at (5.2,-5.5) {В CI это выполняется как два независимых экземпляра поверх HTTP, у каждого своя база данных и настоящий ключ, при смешанной паре наборов параметров. Два экземпляра одной кодовой базы, запущенные одним автором, доказывают протокол; институциональной независимости они не доказывают.};
+  \draw[flowfaint] (B.south) to[out=270, in=0] node[faint, below, sloped, pos=0.55] {забирает опись Б} (rp.east);
+  \node[faint, text width=8.6cm, anchor=north] at (5.2,-5.5) {В НИ это выполняется как два независимых экземпляра поверх ХТТП, у каждого своя база данных и настоящий ключ, при смешанной паре наборов параметров. Два экземпляра одной кодовой базы, запущенные одним автором, доказывают протокол; институциональной независимости они не доказывают.};
 \end{tikzpicture}
