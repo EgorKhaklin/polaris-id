@@ -10334,6 +10334,20 @@ def check_sdk_refusals_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
         findings.extend(_fail(name, "the TypeScript suite does not exercise the length guard in "
                                     "its constant-time comparison; inverted, a 32-byte root "
                                     "matches a five-byte value"))
+    # 2026-09-23: AND the detached verifier, the package a stranger installs first. It was
+    # the one verifier no drill inverted, and 32 of its 45 refusals survived every instrument CI
+    # runs on it, the transparency log's consistency and inclusion checks among them.
+    if "packages/polaris-verify/polaris_verify_cli/verifier.py" not in drill \
+            or "test_verify_refusals" not in drill:
+        findings.extend(_fail(name, "the drill does not invert the detached verifier's refusals "
+                                    "(packages/polaris-verify, driven by test_verify_refusals); it is "
+                                    "the verifier a stranger installs, and 32 of its 45 refusals once "
+                                    "survived every instrument CI ran on it"))
+    vr = _read(root, "scripts/test_verify_refusals.py")
+    if not vr or "class ConsistencyRefusals" not in vr or "def test_cryptography_witness_alone" not in vr:
+        findings.extend(_fail(name, "scripts/test_verify_refusals.py no longer drives the log's "
+                                    "consistency refusals or the cryptography witness on its own, "
+                                    "the two the drill found hidden"))
     if findings:
         return findings
     return _ok(name, "every refusal in the reference SDK is inverted on each push and both the "

@@ -303,7 +303,8 @@ UNSHARDED_SUITES = {
                     "test_canonical_equivalence"],
     "polaris_cli": ["test_cli"],
     "scripts": ["test_verify_load", "test_wallet", "test_relying_party",
-                "test_verify_conformance", "test_verify_p9", "test_ship_tool"],
+                "test_verify_conformance", "test_verify_p9", "test_verify_refusals",
+                "test_ship_tool"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
@@ -336,7 +337,8 @@ UNSHARDED_SUITES = {
 UNSHARDED_RUNNERS = {
     "polaris_web":              ("unittest", None),
     "polaris_cli":              ("unittest", None),
-    "scripts":                  ("unittest", {"test_verify_p9": "preflight"}),
+    "scripts":                  ("unittest", {"test_verify_p9": "preflight",
+                                              "test_verify_refusals": "preflight"}),
     "sdk/python":               ("preflight", None),
     "packages/polaris-oid4vp":  ("preflight", None),
     "polaris_zk/witness2":      ("pytest-file", None),

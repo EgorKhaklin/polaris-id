@@ -16674,7 +16674,8 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
     """The property that cost a re-measurement: the mutation must INVERT, not delete."""
     DRILL = ('"""the sdk mutation drill"""\n'
              'SDKS = {"python": "sdk/python/polaris_verify/__init__.py",\n'
-             '        "typescript": "sdk/typescript/src/index.ts"}\n'
+             '        "typescript": "sdk/typescript/src/index.ts",\n'
+             '        "verify": ("packages/polaris-verify/polaris_verify_cli/verifier.py", "test_verify_refusals")}\n'
              'DECLARED_SURVIVORS = {}\n'
              'def invert(line):\n'
              '    return line.replace("return False", "return True") + "  # MUTATED"\n'
@@ -16688,7 +16689,12 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
     TESTS = "class RefusalsAreTestedTests(unittest.TestCase):\n    pass\n"
     TS_TESTS = 'test("a root of the wrong length does not match (sameBytes length guard)", ok);\n'
 
-    def write(drill=DRILL, ci=CI, tests=TESTS, ts_tests=TS_TESTS, drill_present=True):
+    VERIFY_TESTS = ("class ConsistencyRefusals(unittest.TestCase):\n    pass\n"
+                    "class Witnesses(unittest.TestCase):\n"
+                    "    def test_cryptography_witness_alone(self):\n        pass\n")
+
+    def write(drill=DRILL, ci=CI, tests=TESTS, ts_tests=TS_TESTS, drill_present=True,
+              verify_tests=VERIFY_TESTS):
         (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
         (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
         (tmp_path / "sdk" / "python").mkdir(parents=True, exist_ok=True)
@@ -16701,6 +16707,7 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
             f.unlink()
         (tmp_path / ".github" / "workflows" / "ci.yml").write_text(ci)
         (tmp_path / "sdk" / "python" / "test_sdk.py").write_text(tests)
+        (tmp_path / "scripts" / "test_verify_refusals.py").write_text(verify_tests)
 
     def level(msg_contains=None):
         out = checks.check_sdk_refusals_are_mutation_tested(tmp_path)
@@ -16713,6 +16720,14 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
     good = checks.check_sdk_refusals_are_mutation_tested(tmp_path)[0]
     assert good.level == "OK", "must PASS when the drill inverts, controls, runs in CI and " \
                                "the SDK has refusal tests"
+
+    # 2026-09-23: the detached verifier dropped from the drill, or its refusal suite hollowed
+    write(drill=DRILL.replace(',\n        "verify": ("packages/polaris-verify/polaris_verify_cli/verifier.py", "test_verify_refusals")', ''))
+    assert level("detached verifier") == "FAIL", "must FAIL when the drill stops inverting the detached verifier"
+    write(verify_tests="class Witnesses(unittest.TestCase):\n    pass\n")
+    assert level("consistency refusals") == "FAIL", \
+        "must FAIL when the refusal suite stops driving the log's consistency check"
+    write()
 
     write(drill_present=False)
     bad = checks.check_sdk_refusals_are_mutation_tested(tmp_path)[0]
@@ -16732,7 +16747,7 @@ def test_sdk_refusals_mutation_tested_check_discriminates(tmp_path):
 
     # v9.456: the drill that covers one of two shipped reference implementations. This
     # was the real state of the tree -- 14 TypeScript refusals unscanned, 9 unprotected.
-    write(drill=DRILL.replace('        "typescript": "sdk/typescript/src/index.ts"}\n', '}\n'))
+    write(drill=DRILL.replace('        "typescript": "sdk/typescript/src/index.ts",\n', ''))
     assert level("covers only one SDK") == "FAIL", \
         "must FAIL when a shipped reference implementation is outside the drill's reach"
 

@@ -181,6 +181,10 @@ in the same commit.
   - Two layer cards said a person reference in Athena "fails five checks"; measured, it fails
     one, `check_athena_no_person`.
   - The Atlas returns at most 5,000 cluster summaries, not "a few hundred".
+  - The detached verifier, the package a stranger installs first, was the one verifier no drill
+    inverted. 32 of its 45 refusals survived every instrument CI runs on it; each is now driven
+    by scripts/test_verify_refusals.py, seven are declared, and the SDK mutation drill inverts
+    it on every change. Section 6 says so, and Table 16 gains the row.
   - Each constraint's mechanism was then broken in turn on the real tree; seven of the ten checks
     let a break through (C1, C3, C5, C6, C7, C8, C10), all closed; C2, C4 and C9 held. First, the
     checks behind C1, C3 and C10 each accepted a mention for the mechanism: C1's the

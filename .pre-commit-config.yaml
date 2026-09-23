@@ -62,7 +62,7 @@ repos:
         # check_pre_commit_scripts_are_one_command_per_line exists because that happened.
         entry: >-
           bash -c 'cd scripts && python3 -m unittest
-          test_ship_tool test_verify_conformance test_verify_p9
+          test_ship_tool test_verify_conformance test_verify_p9 test_verify_refusals
           test_relying_party test_wallet'
         language: system
         pass_filenames: false

@@ -70,6 +70,22 @@ verifier being unable.
 Under `--dev-placeholder` every verdict carries `"crypto": "DEV-PLACEHOLDER"` and a banner
 goes to stderr. Development crypto is never mistaken for production crypto.
 
+## Exit codes
+
+What a script built on this command can rely on, measured on 2026-09-23 against the package on
+PyPI:
+
+| exit | meaning |
+|---|---|
+| 0 | accepted: the signature is genuine, and with `--issuer-anchor` the key is one you trust |
+| 2 | not accepted: a signature that does not verify, a JSON file that is not an authenticity pack, or an abstention because no trust anchor was given |
+| 3 | the check could not run: the input could not be read or is not JSON, or `--selftest` without liboqs |
+| 4 | refused to start: no cryptography declared, or the declared backend is not usable here; your files are not read |
+| 1 | `--qr-frames` that do not decode into a presentation |
+
+The last row is the one inconsistency: every other unreadable input exits 3. It is recorded
+rather than changed, because a script may already depend on it.
+
 ## Offline means it cannot reach a network
 
 Not "does not today". The verifier contains no networking code at all: zero references to

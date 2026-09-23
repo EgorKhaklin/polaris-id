@@ -55,6 +55,20 @@ SDKS = {
         "tests": (["node", "--test"], "sdk/typescript"),
         "conformance": ["--verifier", "node sdk/typescript/src/conformance.ts"],
     },
+    # 2026-09-23. The detached verifier, the `polaris-verify` package a stranger installs
+    # first, was the one verifier no drill inverted. Measured that day against every
+    # instrument CI runs on it (its unit suites, --selftest, --verify-dir, the crypto attack
+    # suite, the fuzzer and 24 drills): 32 of 45 refusals survived, among them the RFC 6962
+    # consistency and inclusion checks and the cryptography witness's refusal of a forged
+    # signature. scripts/test_verify_refusals.py drives each one; seven remain, declared below.
+    # Its conformance runs inside test_verify_conformance, so there is no separate runner.
+    "verify": {
+        "lang": "python",
+        "source": "packages/polaris-verify/polaris_verify_cli/verifier.py",
+        "tests": ([sys.executable, "-m", "unittest", "test_verify_p9", "test_verify_conformance",
+                   "test_verify_refusals"], "scripts"),
+        "conformance": "none",
+    },
 }
 
 #: Refusals allowed to survive, each with the reason, keyed "sdk:function:line". Checked
@@ -75,6 +89,23 @@ SDKS = {
 #: refusal that also survives, which reports nothing and leaves the declaration describing a
 #: site it was never about. Content cannot drift.
 DECLARED_SURVIVORS: dict[str, str] = {
+    # --- The detached verifier (polaris-verify), 2026-09-23 ------------------------------
+    "verify:verify_consistency:e706fa#3":
+        "unreachable: the `if not proof` guard above means the first next() always yields a node",
+    "verify:_cbor_load:7dde06":
+        "belt and braces: a truncated string ends past the buffer, and the trailing-bytes or "
+        "truncated-CBOR refusal fires on the same input; the document is refused either way",
+    "verify:_cbor_load:152837":
+        "unreachable: major types 0 to 7 are each handled above, and a 3-bit field has no eighth",
+    "verify:grant_within_limits:f070af":
+        "downstream of the _finite guard, which already refuses every value int() could raise on",
+    "verify:grant_within_limits:012e80":
+        "downstream of the _finite guard, which already refuses every value float() could raise on",
+    "verify:_provider_available:e706fa":
+        "the liboqs import failing: dead on a machine that has it, which the drill requires",
+    "verify:_provider_available:e706fa#2":
+        "the cryptography import failing: dead on any machine that can run the verifier's tests",
+
     "typescript:hexToBytes:56b25d":
         "removing the throw yields garbage bytes and the same not-authentic verdict",
     "typescript:hexToBytes:7c7d1e":
@@ -306,6 +337,11 @@ def _liboqs_present() -> bool:
 def _suites_pass(work: pathlib.Path, sdk: dict) -> bool:
     """What CI runs against this SDK: its own tests, and the conformance suite."""
     cmd, cwd = sdk["tests"]
+    if sdk["conformance"] == "none":
+        try:
+            return subprocess.run(cmd, cwd=work / cwd, capture_output=True, timeout=300).returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
     conf = [sys.executable, "conformance/run_conformance.py"]
     conf += sdk["conformance"] if sdk["conformance"] else ["--self"]
     try:
@@ -331,6 +367,9 @@ def _suites_pass(work: pathlib.Path, sdk: dict) -> bool:
 _SDK_PATHS = ("sdk/python/polaris_verify", "sdk/python/test_sdk.py",
               "sdk/typescript/src", "sdk/typescript/test",
               "conformance",
+              "packages/polaris-verify/polaris_verify_cli", "scripts/polaris-verify.py",
+              "scripts/test_verify_p9.py", "scripts/test_verify_conformance.py",
+              "scripts/test_verify_refusals.py",
               "scripts/polaris-sdk-mutation-drill.py")
 
 
@@ -338,7 +377,7 @@ def _sdks_moved():
     """Did this ship touch an SDK, its suite, or this drill? None if that cannot be known.
 
     Deliberately coarse, for the same reason the procedure drill is: if anything in reach
-    moved, run all 87. Under-selecting silently skips the thing that moved, which is the
+    moved, run all 138. Under-selecting silently skips the thing that moved, which is the
     failure this drill exists to prevent.
 
     None rather than False when no baseline is reachable -- a shallow checkout, say --
@@ -374,11 +413,11 @@ def main() -> int:
             # not (bcbf0eb). The saving is 20 minutes, which is the whole reason this flag
             # exists and is now a number rather than an expectation.
             print("  this ship did not touch an SDK, its suite or this drill: nothing to "
-                  "mutate. Run without --changed for the full 87.")
+                  "mutate. Run without --changed for the full 138.")
             return 0
         print("  an SDK, a suite or this drill moved in this ship: inverting every refusal")
 
-    for lang, sdk in SDKS.items():
+    for name, sdk in SDKS.items():
         if not (ROOT / sdk["source"]).is_file():
             print("sdk-mutation drill: %s is missing" % sdk["source"], file=sys.stderr)
             return 3
@@ -388,7 +427,8 @@ def main() -> int:
     survivors: list[str] = []
     total = 0
     try:
-        for lang, sdk in SDKS.items():
+        for name, sdk in SDKS.items():
+            lang = sdk.get("lang", name)
             src = (ROOT / sdk["source"]).read_text()
             lines = src.splitlines(keepends=True)
             sites = [(i, m) for i, m in
@@ -400,7 +440,7 @@ def main() -> int:
                 return 1
             total += len(sites)
             target = work / sdk["source"]
-            print("== %s: %d refusals in %s ==" % (lang, len(sites), sdk["source"]))
+            print("== %s: %d refusals in %s ==" % (name, len(sites), sdk["source"]))
 
             if not _suites_pass(work, sdk):
                 print("sdk-mutation drill: the UNMUTATED %s tree does not pass both suites, so "
@@ -428,7 +468,8 @@ def main() -> int:
                 m[i] = mutated
                 target.write_text("".join(m))
                 if _suites_pass(work, sdk):
-                    survivors.append(_label(lines, i, lang))
+                    label = _label(lines, i, lang)
+                    survivors.append(label if name == lang else name + label[len(lang):])
                 target.write_text(src)
     finally:
         shutil.rmtree(work.parent, ignore_errors=True)
@@ -437,8 +478,8 @@ def main() -> int:
     stale = [s for s in DECLARED_SURVIVORS if s not in survivors]
 
     print()
-    print("  refusals inverted across both SDKs       %4d" % total)
-    print("  ...of those, accepted by both suites     %4d  (%d declared)"
+    print("  refusals inverted across all verifiers   %4d" % total)
+    print("  ...of those, accepted by every suite     %4d  (%d declared)"
           % (len(survivors), len(DECLARED_SURVIVORS)))
 
     # The declared list is calibrated against an environment with liboqs, because liboqs
@@ -472,8 +513,8 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    print("\n== SDK MUTATION DRILL PASSED: every one of the %d refusals across both reference "
-          "SDKs is caught when inverted, except %d declared with reasons, and the negative "
+    print("\n== SDK MUTATION DRILL PASSED: every one of the %d refusals across the reference "
+          "SDKs and the detached verifier is caught when inverted, except %d declared with reasons, and the negative "
           "control proves the harness can produce a survivor ==" % (total, len(DECLARED_SURVIVORS)))
     return 0
 
