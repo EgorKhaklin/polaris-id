@@ -4,7 +4,7 @@
 asking anyone a question.** If you cannot, that is the bug and we want to hear it.
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-09-18 against `polaris-oid4vp`
+package on PyPI rather than a working copy. Last walked 2026-09-23 against `polaris-oid4vp`
 1.0.0-rc.3 installed from the registry, on macOS with Docker Desktop. Nothing here is from memory.
 
 ## 0. Prerequisites
@@ -122,6 +122,12 @@ From the verifier's terminal, which is the line that matters:
 
 That is a credential presented by software written by someone else, signed with a key that
 never left their wallet, and accepted. **You are done.**
+
+If you are not this repository's author, one more step is worth more to the project than
+anything in it: open an issue at <https://github.com/EgorKhaklin/polaris-id/issues> saying it
+worked, on what platform, and on what date. A stranger's accepted presentation is the evidence
+the project's scoreboard ([lab/EXTERNAL-NOUNS.md](../lab/EXTERNAL-NOUNS.md)) is still missing,
+and it records a row only with a name and a date, so say whether you are willing to be named.
 
 ## 8. If anything failed
 
