@@ -18723,3 +18723,33 @@ def test_paper_check_citations_check_detects_its_absence(tmp_path):
     # anti-vacuity: no citations at all means the parser drifted
     (sec / "a.tex").write_text("nothing cited.\n"); (ru / "a.tex").write_text("ничего.\n")
     assert fn(tmp_path)[0].level == "FAIL", "must FAIL rather than pass on a paper that cites nothing"
+
+
+def test_append_only_guards_classified_check_detects_its_absence(tmp_path):
+    fn = checks.check_append_only_guards_are_classified
+    sql = tmp_path / "polaris_sql"; (sql / "migrations").mkdir(parents=True)
+    (tmp_path / "polaris_web").mkdir()
+    (tmp_path / "polaris_web" / "test_check_constraints.py").write_text(
+        "APPEND_ONLY_GUARDS = (\n    'reject_audit_modification',\n)\n")
+    bounded = sorted(checks._BOUNDED_MUTATION_GUARDS)
+    body = "CREATE TRIGGER a BEFORE UPDATE OR DELETE ON Log FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();\n"
+    body += "".join("CREATE TRIGGER b%d BEFORE UPDATE OR DELETE ON T%d FOR EACH ROW EXECUTE FUNCTION %s();\n" % (i, i, g)
+                    for i, g in enumerate(bounded))
+    (sql / "06_triggers.sql").write_text(body)
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    # the gap this closes: a new table guarded by a new, unlisted function
+    (sql / "migrations" / "x.up.sql").write_text(
+        "CREATE TRIGGER c BEFORE UPDATE OR DELETE ON NewLog FOR EACH ROW EXECUTE FUNCTION reject_newlog_modification();\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "reject_newlog_modification" in out[0].message
+
+    # a guard declared strict that no trigger uses is stale
+    (sql / "migrations" / "x.up.sql").unlink()
+    (tmp_path / "polaris_web" / "test_check_constraints.py").write_text(
+        "APPEND_ONLY_GUARDS = (\n    'reject_audit_modification',\n    'reject_gone',\n)\n")
+    assert fn(tmp_path)[0].level == "FAIL"
+
+    # anti-vacuity
+    (sql / "06_triggers.sql").write_text("-- nothing\n")
+    assert fn(tmp_path)[0].level == "FAIL"

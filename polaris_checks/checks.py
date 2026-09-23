@@ -21781,6 +21781,81 @@ def check_paper_check_citations_resolve(root: pathlib.Path) -> list[Finding]:
                      "tree defines, the Russian ones back through ru-glossary.py" % cited)
 
 
+#: Guards on a BEFORE UPDATE OR DELETE trigger that permit bounded mutation, one field
+#: moving one way (a deprecation date, a revocation date, an expiry), rather than refusing
+#: every edit. Their tables are not append-only in the strict sense, so the table-driven
+#: C1 suite does not list them; the trigger mutation drill is what covers them.
+_BOUNDED_MUTATION_GUARDS = {
+    "enforce_agency_quota_immutability",
+    "enforce_attestation_immutability",
+    "enforce_discretion_policy_immutability",
+    "enforce_recovery_request_immutability",
+    "enforce_retention_policy_immutability",
+    "enforce_token_signature_immutability",
+    "enforce_epoch_immutability",
+}
+
+
+def check_append_only_guards_are_classified(root: pathlib.Path) -> list[Finding]:
+    """Every update-or-delete guard is declared strict or bounded, so none escapes C1's suite.
+
+    check_append_only_tables_are_tested_exhaustively holds the suite in
+    polaris_web/test_check_constraints.py to a catalogue cross-check, and the paper said
+    that made it impossible to add an append-only table without covering it. The
+    cross-check finds tables by guard FUNCTION, and the function list (APPEND_ONLY_GUARDS)
+    is written by hand: a new table guarded by a new function was invisible to it, and
+    would have gone untested with every gate green.
+
+    This closes that. Every function named by a BEFORE UPDATE OR DELETE trigger anywhere in
+    the SQL must appear either in APPEND_ONLY_GUARDS, where the suite tests its tables, or
+    in _BOUNDED_MUTATION_GUARDS above, where the trigger mutation drill does. A new guard
+    has to be classified, and classifying it is deciding which instrument answers for it.
+    Found 2026-09-23 while re-deriving the paper's "thirty-one tables": 31 carry a guard,
+    24 are strict, and seven permit bounded mutation.
+    """
+    name = "append_only_guards_classified"
+    sql_files = [root / "polaris_sql/00_migrations_table.sql", root / "polaris_sql/01_schema.sql",
+                 root / "polaris_sql/06_triggers.sql"] + sorted((root / "polaris_sql/migrations").glob("*.up.sql"))
+    trig = re.compile(r"CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+\w+\s+BEFORE\s+(?:UPDATE\s+OR\s+DELETE|"
+                      r"DELETE\s+OR\s+UPDATE)(?:\s+OR\s+TRUNCATE)?\s+ON\s+\"?(\w+)\"?\s+FOR\s+EACH\s+"
+                      r"(?:ROW|STATEMENT)\s+EXECUTE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)", re.I)
+    guards: dict[str, set[str]] = {}
+    for f in sql_files:
+        if f.is_file():
+            for table, fn_name in trig.findall(_read_path(f)):
+                guards.setdefault(fn_name, set()).add(table)
+    if not guards:
+        return _fail(name, "no BEFORE UPDATE OR DELETE trigger was found in the SQL; the schema "
+                           "has thirty-one, so the parse has drifted and this measured nothing")
+    suite = _read(root, "polaris_web/test_check_constraints.py")
+    m = re.search(r"APPEND_ONLY_GUARDS\s*=\s*\((.*?)\)", suite, re.S)
+    if not m:
+        return _fail(name, "APPEND_ONLY_GUARDS is gone from polaris_web/test_check_constraints.py, "
+                           "so no guard can be shown to be tested")
+    strict = set(re.findall(r"'(\w+)'", m.group(1)))
+    both = strict & _BOUNDED_MUTATION_GUARDS
+    if both:
+        return _fail(name, "guard(s) %s are declared both strict and bounded; each is one or the other"
+                     % ", ".join(sorted(both)))
+    unclassified = {g: t for g, t in guards.items() if g not in strict and g not in _BOUNDED_MUTATION_GUARDS}
+    if unclassified:
+        return _fail(name, "%d update-or-delete guard(s) are classified as neither strict nor bounded: %s. "
+                           "The C1 suite finds tables by guard, so their tables are tested by nothing "
+                           "that says so; add the guard to APPEND_ONLY_GUARDS or to "
+                           "_BOUNDED_MUTATION_GUARDS"
+                     % (len(unclassified), "; ".join("%s on %s" % (g, ", ".join(sorted(t)))
+                                                     for g, t in sorted(unclassified.items()))))
+    stale = sorted((strict | _BOUNDED_MUTATION_GUARDS) - set(guards))
+    if stale:
+        return _fail(name, "guard(s) %s are declared but no trigger uses them" % ", ".join(stale))
+    n_strict = sum(len(t) for g, t in guards.items() if g in strict)
+    n_bounded = sum(len(t) for g, t in guards.items() if g in _BOUNDED_MUTATION_GUARDS)
+    return _ok(name, "all %d update-or-delete guards are classified: %d tables strictly append-only, "
+                     "tested by the table-driven C1 suite, and %d under bounded mutation, covered by the "
+                     "trigger mutation drill; a new guard cannot be added without deciding which"
+               % (len(guards), n_strict, n_bounded))
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
@@ -22096,6 +22171,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_source_path_citations_resolve,
     check_package_readmes_state_their_own_version,
     check_paper_check_citations_resolve,
+    check_append_only_guards_are_classified,
 ]
 
 
