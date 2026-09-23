@@ -63,8 +63,10 @@ between the shipped reference verifiers: neither bounded a holder proof's age, s
 following one got no replay protection on presentations, and neither could report whether an
 artifact's issuer was trusted at all, so a genuine signature by a stranger passed. All are fixed and
 the three verifiers agree on every case. What the contract still does not prove is stated where an
-integrator will read it: 43 verdict fields are unconstrained by any published case, and none can be
+integrator will read it: 44 verdict fields are unconstrained by any published case, and none can be
 closed by writing one, because each needs a conforming verifier to compute something it does not.
+One of them is not a decision at all: the window a trust attestation carries, echoed back beside the
+\code{expired} verdict that is the decision.
 The contract constrains what its weakest conforming implementation computes. Then the reference
 verifiers themselves were mutated: every refusal in each was inverted in turn, and eighteen of
 eighteen in the Python implementation and nine of fourteen in the TypeScript one accepted what they
@@ -170,7 +172,7 @@ per-verifier handle or absent. Both are formats, not trust models. \sImpl
 \qa{What it trusts}{The published issuer keys the relying party chose to trust (its anchor set); a standard ML-DSA library, or for the OpenID4VP path, a registered X.509 trust anchor and ES256.}
 \qa{What it refuses}{Any Polaris code or database; any input it cannot parse; any object presented to the wrong type's verifier; any version it was not told about; to start without a declared crypto mode; a nonce or audience it did not itself ask for.}
 \qa{What it can see}{The artifact and the anchor set. For an SD-JWT VC, exactly the disclosed claims. Nothing else.}
-\qa{What it cannot see}{Whether the credential is still authorized, unless a status artifact is presented with it; the 43 verdict fields the published cases do not constrain.}
+\qa{What it cannot see}{Whether the credential is still authorized, unless a status artifact is presented with it; the 44 verdict fields the published cases do not constrain.}
 \qa{If it fails}{A wrongly accepted mutation fails the fuzzer; a refusal that stops refusing fails the SDK mutation drill; a drift between specification and signer fails \code{check\_wire\_spec\_matches\_code}; a package that cannot be installed by a stranger fails the boundary drill; a defect every internal instrument missed is what the outside is for.}
 \qa{Checked by}{\code{check\_detached\_verifier}, \code{check\_conformance\_suite}, \code{check\_typescript\_sdk}, \code{check\_verifier\_fuzz}, \code{check\_attacks\_run}, \code{check\_protocol\_versioning}, \code{check\_sdk\_refusals\_are\_mutation\_tested}, \code{check\_conformance\_asks\_the\_relying\_party\_question}, \code{check\_oid4vp\_verifier\_boundary}, \code{check\_documented\_verifier\_commands\_run}.}
 \qa{Now or later}{Now, for the software and for one outside wallet on one path. Certification, a second wallet and an implementation of the native protocol by someone else are later and not ours to do.}

@@ -201,6 +201,7 @@ CODE = {
     "algorithm": "алгоритм",
     "audience": "аудитория",
     "authentic": "подлинно",
+    "expired": "просрочено",
     "decision": "решение",
     "exports": "экспорты",
     "bounded": "ограничено",
