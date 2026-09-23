@@ -39,6 +39,7 @@ Application routes & 124 & \code{grep -c '\^{}@app.route('} across \code{polaris
 CI jobs in \code{ci.yml} & 20 & The job keys of the workflow; two more workflows run monthly and weekly, and a manual one publishes \\
 Signed wire formats in the specification & 27 & Distinct \code{polaris-*/1} strings in \code{docs/reference/WIRE-SPEC.md} \\
 Conformance cases & 118 & The cases of \code{conformance/cases.json}, across twenty-five artifact types; the frozen version-1 set holds 44 \\
+Verdict fields no published case constrains & 44 & \code{SURVIVORS\_EXPECTED} of \code{scripts/polaris-conformance-mutation-drill.py}, which the drill holds to its own measurement in both directions: of 89 decision fields across the 27 verifiers the cases reach, 44 survive being forced permissive, and none of them could be constrained by writing a case \\
 Formal models checked in CI & 4 & \code{meta/tla/*.tla}; three carry a counterpart configuration they must fail \\
 Drill scripts & 80 & Files matching \code{scripts/polaris-*drill.*}, the twelve mutation drills among them \\
 Migrations & 45 & Files matching \code{polaris\_sql/migrations/*.up.sql}, each with a revert \\

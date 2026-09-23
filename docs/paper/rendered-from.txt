@@ -51,7 +51,7 @@ bdd72599e250016b74ea81a83bd1e3d158899466bc4ff0e9d8b36f0ffc54d131  v3-sections-ru
 2f73d1cf951353b3b4ca736a77829845fe2bc5a5b3271a2115c653788c0613c0  v3-sections-ru/20-conclusion.tex
 3db31772280ce4b508fa099db0bebedc6ff54ace496b845bc58a7431c8ff0e12  v3-sections-ru/A-status.tex
 057deee6c0020c53693db55fb2f4c14b1b7199e8dd51801372d89734335c0181  v3-sections-ru/B-layers.tex
-16c23e79859194c116095c2b63c1dc3233f9f063329e1027996073a7cde1adc1  v3-sections-ru/C-counts.tex
+b64340e5630b7d9981c9e79c2dd9c99bfaed64045097d6e54fb4ca04d420c731  v3-sections-ru/C-counts.tex
 674c4388fd2525eb8b14abb0a9feea9947cb96941cd972159a94530513140295  v3-sections-ru/D-glossary.tex
 81b4264d20336870b4a4d4d912d9ab4e2c1dc4df2dd5189ffed03cbbeb2fbc90  v3-sections-ru/E-from-v1.tex
 1243ebbd4a7d23804b9a0559ad2cd2d36bb8f5485934ba96ea0c9f29eef17f95  v3-sections-ru/F-from-v2.tex
@@ -78,7 +78,7 @@ dd45416e3a141e0ab77af4d4358baa1353ceb154d2ab917fecc42d86de32328c  v3-sections/19
 efc0f75eb198d5ae6847bf74f55f84a5ea57a1bb961e7242a32facf8e0b0047c  v3-sections/20-conclusion.tex
 2ed871a7c09a6ac359aa2b1bc9187f33f6f6682d90c0b2c695b810df78742db9  v3-sections/A-status.tex
 c68480f6ef69a6f9f038eb18d6448ed0f80f53eecf60067346ef417f98f19f2a  v3-sections/B-layers.tex
-b45a121d436dea934b9eb2cc4dbe556920c567c03ffb9a57bc844a17dd5fa3e8  v3-sections/C-counts.tex
+2dbc6396ffcd48848ebfee518ba708df3f3b0a8c2878b22d35a7caf56f524000  v3-sections/C-counts.tex
 b91e5313622a25f62aac41df3f3ac3879e30a6ade19728b09e37fce024af2b5c  v3-sections/D-glossary.tex
 2c5b62af8b5e17e0ece7e3c0d442835dccf9012820890d3eeabc0c9eaf5a87d5  v3-sections/E-from-v1.tex
 ab2801ea80263e6c06a4e881172b1cc2dc5da7d6da9363f8085a35bc9fa003b4  v3-sections/F-from-v2.tex
