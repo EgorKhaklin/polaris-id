@@ -66,7 +66,7 @@ Capacity and cost models & \sImpl\newline\sExp & Core counts extrapolated under 
 Post-quantum TLS edge and application-to-pooler hop & \sImpl & The pooler-to-database hop is classical, gated on a PostgreSQL release & \code{check\_edge\_pq\_kex}, \code{check\_internal\_kex\_measured} \\
 Abuse controls, session and origin hardening, WebAuthn MFA, logs without PII & \sImpl & Authenticators classical until hardware ships & \code{check\_abuse\_controls}, \code{check\_session\_origin\_hardening}, \code{check\_logs\_exclude\_pii} \\
 Atlas & \sImpl & Every aggregate graded against its data's growth & \code{check\_atlas\_console}, \code{check\_benchmark\_measures\_growth}, the C8 caps \\
-Athena & \sImpl & Read-only; no person node by five checks & \code{check\_athena\_no\_person} \\
+Athena & \sImpl & Read-only; no person node, which one check refuses & \code{check\_athena\_no\_person} \\
 Card profile, software token, personalization, verifier device, duress timing & \sImpl\newline\sFut & No card manufactured, no silicon certified & \code{check\_card\_profile}, \code{check\_card\_emulator}, \code{check\_verifier\_device}, \code{check\_duress\_on\_card} \\
 Duress code, in the application and on the card & \sImpl\newline\sExt & Duress-aware, not compulsion-resistant: resists the casual coercer only, and its record is indelible & \code{check\_duress\_alertable}, \code{check\_duress\_claims\_are\_aware} \\
 Pilot wind-down; coexistence and sunset plan & \sImpl\newline\sExt & No pilot has run; the sunset verdict rests on operator attestations & \code{check\_coexistence\_plan}, the wind-down drill \\

@@ -143,8 +143,8 @@ many rows came back, and it is append-only. The authority's most invasive power,
 person's whole verification history under a warrant, left no record of its own use for as long as it
 existed, because the read sat behind a stored procedure and nothing looking for a \code{SELECT}
 found it; since \code{v9.382} it writes the same row, and a structural rule extends that to any read
-hidden behind a procedure or a view. The authority-structure layer, Athena, is forbidden by five
-checks from referencing any natural-person table or column (Section~\ref{sec:cognition}). And
+hidden behind a procedure or a view. The authority-structure layer, Athena, is forbidden by
+\code{check\_athena\_no\_person} from referencing any natural-person table or column (Section~\ref{sec:cognition}). And
 timestamps, the timestamp authority and the exchange gateway are built to learn nothing about what
 they touch, which Section~\ref{sec:institutions} describes. \sImpl
 
