@@ -289,14 +289,17 @@
 % page counts as page 1 and carries no number.
 \pagenumbering{arabic}
 \setcounter{page}{2}
-\input{v3-sections-ru/00-about}
-\newpage
+% Russian practice puts the contents directly after the title page. The preface then
+% runs straight into section 1, so however long the preface grows, no page is left
+% holding a few lines and nothing else.
 {\color{navydark}\Large\bfseries Содержание}\\[2pt]
 {\color{navymid}\rule{\textwidth}{0.8pt}}
 \vspace{4pt}
 \renewcommand{\contentsname}{}
 \tableofcontents
 \newpage
+\input{v3-sections-ru/00-about}
+\bigskip
 
 % ---------------------------------------------------------------- BODY
 \input{v3-sections-ru/01-problem}
