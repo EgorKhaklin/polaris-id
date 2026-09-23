@@ -301,5 +301,72 @@ def test_check_claim_without_a_secret_abstains_on_the_commitment():
     assert res["opens"] is None and res["nullifier_derived"] is None
 
 
+# ---------------------------------------------------------------------------
+# 2026-09-23: a held-out round of ten semantic mutations, written after the ZK mutation drill
+# was green, found six this file and the cross-language differential both passed with. The
+# worst two were masked by redundancy: the test above that hands in a stranger's secret also
+# commits a nullifier, so the NULLIFIER check refused it and the opening check could be
+# deleted with every test green. Each test below isolates one mechanism.
+
+
+def test_a_secret_that_does_not_open_the_leaf_is_refused_on_its_own():
+    """No committed nullifier, so the opening is the only thing that can refuse."""
+    leaf = commitment.leaf_commitment(_ANCHOR_SECRET, 1)
+    path = ["00" * 32] * merkle.TREE_DEPTH
+    root = merkle.root_from_path(leaf, 0, path)
+    committed = {"epoch_root_hex": root, "epoch_id": 5, "context_id": 1, "nonce": 9}
+    good = {"leaf_hash": leaf, "leaf_index": 0, "proof_path": path, "secret_hex": _ANCHOR_SECRET}
+    assert verifier.check_claim(good, committed, dict(committed))["verdict"] == "ACCEPT"
+    res = verifier.check_claim(dict(good, secret_hex="ab" * 32), committed, dict(committed))
+    assert res["opens"] is False
+    assert res["nullifier_derived"] is None, "the nullifier must not be what refuses here"
+    assert res["verdict"] == "REJECT"
+
+
+def test_a_claimed_nullifier_other_than_the_committed_one_breaks_the_binding():
+    """No secret, so only the public-input binding can see a swapped nullifier."""
+    leaf = commitment.leaf_commitment(_ANCHOR_SECRET, 1)
+    path = ["00" * 32] * merkle.TREE_DEPTH
+    root = merkle.root_from_path(leaf, 0, path)
+    committed = {"epoch_root_hex": root, "epoch_id": 5, "context_id": 1, "nonce": 9,
+                 "scope": 11, "nullifier_hex": commitment.nullifier(_ANCHOR_SECRET, 11, 5)}
+    res = verifier.check_claim({"leaf_hash": leaf, "leaf_index": 0, "proof_path": path},
+                               committed, dict(committed, nullifier_hex="ab" * 32))
+    assert res["binding"] is False
+    assert res["verdict"] == "REJECT"
+    same = dict(committed, nullifier_hex=committed["nullifier_hex"].upper())
+    assert verifier.check_claim({"leaf_hash": leaf, "leaf_index": 0, "proof_path": path},
+                                committed, same)["binding"] is True, "hex case is not a different nullifier"
+
+
+def test_membership_reads_the_claimed_root_case_insensitively():
+    path = list(_ANCHOR_PATH0)
+    assert merkle.membership_holds(_ANCHOR_LEAVES[0], 0, path, _ANCHOR_ROOT.upper())
+
+
+def test_an_inclusion_path_for_an_index_past_the_population_is_refused():
+    with pytest.raises(ValueError):
+        merkle.inclusion_path(_ANCHOR_LEAVES, len(_ANCHOR_LEAVES))
+    assert len(merkle.inclusion_path(_ANCHOR_LEAVES, len(_ANCHOR_LEAVES) - 1)) == merkle.TREE_DEPTH
+
+
+def test_the_population_bound_admits_capacity_and_refuses_one_more(monkeypatch):
+    monkeypatch.setattr(merkle, "TREE_DEPTH", 4)
+    full = ["%064x" % (i + 1) for i in range(16)]
+    assert merkle._check_population(full) == 16
+    with pytest.raises(ValueError):
+        merkle._check_population(full + ["%064x" % 17])
+
+
+def test_the_tree_depth_setting_is_bounded_at_both_ends(monkeypatch):
+    for good in ("4", "32"):
+        monkeypatch.setenv("POLARIS_ZK_TREE_DEPTH", good)
+        assert merkle._tree_depth() == int(good)
+    for bad in ("3", "33", "1"):
+        monkeypatch.setenv("POLARIS_ZK_TREE_DEPTH", bad)
+        with pytest.raises(ValueError):
+            merkle._tree_depth()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
