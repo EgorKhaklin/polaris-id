@@ -1330,7 +1330,8 @@ def test_c6_atlas_zk_check_fails_when_zk_location_not_redacted(tmp_path):
     HEX = ("CREATE OR REPLACE FUNCTION atlas_hexbin(p_x DOUBLE PRECISION) RETURNS TABLE (lat DOUBLE PRECISION)\n"
            "AS $$ SELECT 1 FROM VerificationEvent ve WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE' $$;\n")
     GEO = ("CREATE OR REPLACE FUNCTION atlas_geo_jurisdictions(p_x TIMESTAMP) RETURNS TABLE (n_zk BIGINT)\n"
-           "AS $$ SELECT avg(ve.latitude) FILTER (WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE'), count(*) AS n_zk $$;\n")
+           "AS $$ SELECT avg(ve.latitude) FILTER (WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE'), "
+           "avg(ve.longitude) FILTER (WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE'), count(*) AS n_zk $$;\n")
     good_atlas = (
         "SELECT 1 WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE';  -- clusters\n"
         "SELECT 1 WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE';  -- points\n"
@@ -1351,6 +1352,11 @@ def test_c6_atlas_zk_check_fails_when_zk_location_not_redacted(tmp_path):
         good_atlas.replace("avg(ve.latitude) FILTER (WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE')", "avg(ve.latitude)"))
     assert checks.check_c6_atlas_redacts_zk_location(tmp_path)[0].level == "FAIL", \
         "must FAIL when atlas_geo_jurisdictions centroid includes ZERO_KNOWLEDGE events"
+    # 2026-09-23: only the longitude loses its filter, half a location; the check read latitude alone
+    (tmp_path / "polaris_sql" / "11_atlas.sql").write_text(
+        good_atlas.replace("avg(ve.longitude) FILTER (WHERE ve.disclosure_level <> 'ZERO_KNOWLEDGE')", "avg(ve.longitude)"))
+    assert checks.check_c6_atlas_redacts_zk_location(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only the centroid's longitude includes ZERO_KNOWLEDGE events"
 
 
 def test_holder_side_prover_check_discriminates(tmp_path):

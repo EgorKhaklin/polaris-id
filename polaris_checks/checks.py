@@ -4417,7 +4417,10 @@ def check_c6_atlas_redacts_zk_location(root: pathlib.Path) -> list[Finding]:
         body = geojur.group(0)
         if "n_zk" not in body:
             return _fail("c6_atlas_zk", "atlas_geo_jurisdictions must count ZK (n_zk)")
-        if not re.search(r"avg\(ve\.latitude\)\s+FILTER[^)]*<>\s*'ZERO_KNOWLEDGE'", body, re.S):
+        # BOTH coordinates. Until 2026-09-23 only the latitude average was read, and dropping
+        # the ZK filter from avg(ve.longitude) alone, half a location, passed.
+        if not all(re.search(r"avg\(ve\.%s\)\s+FILTER[^)]*<>\s*'ZERO_KNOWLEDGE'" % axis, body, re.S)
+                   for axis in ("latitude", "longitude")):
             return _fail("c6_atlas_zk",
                          "atlas_geo_jurisdictions centroid must be built from located, non-ZK events "
                          "only (a ZK-only jurisdiction is counted but unplaceable) (C6)")
