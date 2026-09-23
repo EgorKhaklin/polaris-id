@@ -50,8 +50,9 @@ it does not know the law. \sExt
     No holder-side panic signal exists and none is proposed.
   \item Document authenticity at enrolment is taken on the operator's word; the assurance level is
     derived from what evidence was presented, not from whether it was genuine.
-  \item Two identifier columns remain 32-bit, with about twenty-nine years of headroom at the stated
-    enrolment rate; the interim credential during a recovery cool-down is not built; a sunset verdict
+  \item Of the identifier columns that grow at the enrolment rate, two remain 32-bit,
+    \code{Individual.individual\_id} and \code{IdentityToken.token\_id}: about twenty-nine years of
+    headroom at the stated surge of 200,000 a day, past the capacity model's horizon; the interim credential during a recovery cool-down is not built; a sunset verdict
     rests on operator attestations the system cannot verify.
 \end{itemize}
 

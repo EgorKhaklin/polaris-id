@@ -184,6 +184,8 @@ CHECKS = {
 
 # Database objects, columns, enum values, SQL keywords.
 CODE = {
+    "individual_id": "физ_лицо_ид",
+    "token_id": "токен_ид",
     "uq_one_active_per_person": "ун_один_действующий_на_человека",
     "chk_disclosure_token_consistency": "пр_согласованность_раскрытия_и_токена",
     "trg_token_state_machine": "тр_автомат_состояний_токена",
