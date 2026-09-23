@@ -206,7 +206,7 @@ where each one really is.
 | C7 | No hardcoded cryptography | Engineering | Schema: algorithm metadata is rows in `CryptographicAlgorithm`, joined by the application; the accepted-signer allowlist in `pqc_signing.py` is deliberately code, a security decision rather than a fact | `check_crypto_algorithm_is_data`, `check_algorithm_agility` |
 | C8 | Every Atlas aggregate is bounded | Engineering | Application, into SQL: route-level clamps against the `_ATLAS_MAX_*` constants in `atlas_routes.py`, passed as the limit the SQL functions apply. The SQL alone bounds nothing; the clamp is the guarantee | `check_c8_atlas_caps` (every caller-controlled count on every Atlas route) |
 | C9 | Concurrency is proven with real threads | Engineering | Tests: `ConcurrencyTests` in `polaris_web/test_app.py`, real threads against a live database, no mocked scheduler | `check_c9_concurrency_threading` (scoped to the class body, so it cannot be hollowed out) |
-| C10 | Identity is not money | Constitutional | Structural absence: no monetary table exists in the schema | `check_c10_no_money_tables`, which also fails on an empty schema |
+| C10 | Identity is not money | Constitutional | Structural absence: no monetary table or column exists in the schema or the migrations | `check_c10_no_money_tables`, which reads table and column names in every SQL source and also fails on an empty schema |
 
 Two altitude corrections to carry with you: C5 is a response header, not a schema object, and
 C8's caps are application constants that the SQL receives. Both are machine-checked; neither

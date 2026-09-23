@@ -1153,6 +1153,27 @@ def test_c10_no_money_check_fails_on_money_table(tmp_path):
     schema.write_text("CREATE TABLE MonetaryClaim (id SERIAL, balance NUMERIC);\n")
     out = checks.check_c10_no_money_tables(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when the schema defines a monetary table"
+    # 2026-09-23: the check read table NAMES in one file. Each of these passed it.
+    good = ("CREATE TABLE Individual (individual_id SERIAL, legal_name VARCHAR(200));\n"
+            "CREATE TABLE IdentityToken (token_id SERIAL, token_value VARCHAR(64), "
+            "CONSTRAINT chk_x CHECK (token_id > 0));\n"
+            "CREATE TABLE BlockchainAnchor (anchor_id SERIAL, ledger_network VARCHAR(40));\n")
+    schema.write_text(good)
+    assert checks.check_c10_no_money_tables(tmp_path)[0].level == "OK", \
+        "must PASS on names that exist today (token_value, ledger_network, a CHECK line)"
+    schema.write_text(good + "CREATE TABLE TokenCredit (credit_id SERIAL, amount_cents BIGINT, currency CHAR(3));\n")
+    assert checks.check_c10_no_money_tables(tmp_path)[0].level == "FAIL", "must FAIL on a money table by columns"
+    schema.write_text(good + "ALTER TABLE IdentityToken ADD COLUMN stored_value NUMERIC(12,2);\n")
+    out = checks.check_c10_no_money_tables(tmp_path)
+    assert out[0].level == "FAIL" and "stored_value" in out[0].message, \
+        "must FAIL, naming it, when the credential itself gains a money column"
+    schema.write_text(good)
+    mig = tmp_path / "polaris_sql" / "migrations"
+    mig.mkdir()
+    (mig / "2026-01-01-001-x.up.sql").write_text("ALTER TABLE Individual ADD COLUMN IF NOT EXISTS fee_balance NUMERIC;\n")
+    assert checks.check_c10_no_money_tables(tmp_path)[0].level == "FAIL", "must FAIL when a migration adds the money"
+    (mig / "2026-01-01-001-x.up.sql").write_text("-- a comment may say balance NUMERIC without counting\n")
+    assert checks.check_c10_no_money_tables(tmp_path)[0].level == "OK", "a comment is not a column"
 
 
 def test_open_redirect_guard_fails_on_naive_guard(tmp_path):

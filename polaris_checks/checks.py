@@ -3394,18 +3394,86 @@ def check_c9_concurrency_threading(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # C10 — identity is not money: the schema carries no monetary primitives.
 # ---------------------------------------------------------------------------
+#: Whole name tokens that make a table or a column a monetary primitive (C10). Matched against
+#: the tokens of a name split on underscores and case, so `amount_cents` and `TokenCredit` hit
+#: while `token_value`, `ledger_network` and `new_value`, which exist, do not. Checked against
+#: every table and column in the schema on 2026-09-23: zero collisions.
+_C10_MONEY_TOKENS = frozenset({
+    "balance", "balances", "amount", "amounts", "currency", "currencies", "price", "prices",
+    "pricing", "fee", "fees", "payment", "payments", "payee", "payer", "cents", "credit",
+    "credits", "debit", "debits", "spend", "spending", "merchant", "merchants", "wallet",
+    "wallets", "money", "monetary", "refund", "refunds", "tariff", "tariffs", "invoice",
+    "invoices", "purchase", "purchases",
+})
+_C10_NOT_COLUMNS = frozenset({"constraint", "primary", "unique", "check", "foreign", "exclude", "like"})
+#: Money named by two words neither of which is money alone ("stored" and "value" both occur).
+_C10_MONEY_COMPOUNDS = ("stored_value", "e_money", "emoney", "top_up", "topup", "cash_back", "cashback")
+
+
+def _c10_money_tokens(name: str) -> set:
+    split = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower()
+    hits = set(re.findall(r"[a-z]+", split)) & _C10_MONEY_TOKENS
+    hits |= {c for c in _C10_MONEY_COMPOUNDS if c in split}
+    return hits
+
+
+def _split_top_level(body: str) -> list:
+    parts, depth, cur = [], 0, []
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
 def check_c10_no_money_tables(root: pathlib.Path) -> list[Finding]:
-    schema = _read(root, "polaris_sql/01_schema.sql")
+    """C10, identity is not money, as structural absence: no table and no column is a monetary
+    primitive, anywhere a database is built from (the load files and the migrations).
+
+    Until 2026-09-23 this matched six words against TABLE names in 01_schema.sql alone.
+    Measured that day: `CREATE TABLE TokenCredit (..., amount_cents BIGINT, currency CHAR(3))`
+    and `ALTER TABLE IdentityToken ADD COLUMN stored_value ...` beside the credential passed
+    it; only incidental count checks noticed the first, and nothing noticed a money column
+    on the token itself, which is the exact accretion C10 exists to prevent.
+    """
+    files = sorted((root / "polaris_sql").glob("*.sql")) + sorted((root / "polaris_sql" / "migrations").glob("*.up.sql"))
+    sql = _strip_sql_comments("\n".join(_read_path(f) for f in files))
     # A missing schema defines no monetary tables, and a constitutional prohibition that
     # holds because there is nothing to prohibit is not holding anything (v9.401).
-    if "CREATE TABLE" not in schema:
+    if "CREATE TABLE" not in sql.upper():
         return _fail("c10_no_money",
-                     "polaris_sql/01_schema.sql defines no tables at all; C10 has nothing to "
-                     "be true of")
-    bad = re.findall(r"CREATE TABLE\s+(\w*(?:Monetary|Balance|Payment|Wallet|Merchant|Spending)\w*)", schema, re.I)
-    if bad:
-        return _fail("c10_no_money", "schema defines monetary table(s): " + ", ".join(bad[:5]) + " (C10)")
-    return _ok("c10_no_money", "schema carries no monetary primitives; identity is not money (C10)")
+                     "polaris_sql/ defines no tables at all; C10 has nothing to be true of")
+    found = []
+    for m in re.finditer(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)\"?\s*\(", sql, re.I):
+        table = m.group(1)
+        if _c10_money_tokens(table):
+            found.append("table %s" % table)
+        depth, i = 1, m.end()
+        while i < len(sql) and depth:
+            depth += {"(": 1, ")": -1}.get(sql[i], 0)
+            i += 1
+        for item in _split_top_level(sql[m.end():i - 1]):
+            words = item.split()
+            if not words or words[0].lower().strip('"') in _C10_NOT_COLUMNS:
+                continue
+            col = words[0].strip('"')
+            if _c10_money_tokens(col):
+                found.append("column %s.%s" % (table, col))
+    for m in re.finditer(r"ALTER\s+TABLE\s+(?:ONLY\s+)?(?:IF\s+EXISTS\s+)?\"?(\w+)\"?\s+ADD\s+(?:COLUMN\s+)?"
+                         r"(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)\"?", sql, re.I):
+        if m.group(2).lower() not in _C10_NOT_COLUMNS and _c10_money_tokens(m.group(2)):
+            found.append("column %s.%s" % (m.group(1), m.group(2)))
+    if found:
+        return _fail("c10_no_money", "the schema carries monetary primitive(s): " + ", ".join(sorted(set(found))[:8])
+                     + " (C10: identity is not money)")
+    return _ok("c10_no_money", "no table and no column in the load files or the migrations is a monetary "
+                               "primitive; identity is not money (C10)")
 
 
 # ---------------------------------------------------------------------------
