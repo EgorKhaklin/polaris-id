@@ -337,5 +337,54 @@ class MdocTag24Refusals(unittest.TestCase):
         self.assertIn("tag 24", json.dumps(v))
 
 
+
+# --------------------------------------------------------------------------- held-out round
+
+class HeldOutSemanticMutations(unittest.TestCase):
+    """2026-09-23: ten semantic mutations written after the refusal tests above (half a
+    comparison dropped, an off-by-one, a lookup made case-sensitive) were run against every
+    instrument CI runs on this verifier. Six survived. Each test here is aimed at one of them."""
+
+    def test_an_inclusion_proof_for_a_smaller_tree_is_refused_at_a_larger_size(self):
+        small = ["e%d" % i for i in range(5)]
+        root_small = V.merkle_tree_head(small)
+        proof = V.inclusion_proof(2, small)
+        self.assertTrue(V.verify_inclusion(2, 5, V._lh(small[2]), root_small, proof))
+        self.assertFalse(V.verify_inclusion(2, 11, V._lh(small[2]), root_small, proof))
+
+    def test_an_index_equal_to_the_tree_size_is_refused(self):
+        entries = ["only"]
+        root = V.merkle_tree_head(entries)
+        self.assertTrue(V.verify_inclusion(0, 1, V._lh(entries[0]), root, []))
+        self.assertFalse(V.verify_inclusion(1, 1, V._lh(entries[0]), root, []))
+
+    def test_a_window_that_ends_before_it_starts_is_refused(self):
+        t = datetime(2026, 9, 23, tzinfo=timezone.utc)
+        self.assertIs(V._window_within(t, t - timedelta(seconds=60), 3600), False)
+        self.assertIs(V._window_within(t, t, 3600), False)
+
+    def test_a_revoked_leaf_is_found_whatever_case_the_feed_uses(self):
+        leaf = V.revocation_leaf("TOK-UPPER")
+        self.assertTrue(V.is_revoked({"revoked_leaves": [leaf.upper()]}, "TOK-UPPER"))
+
+    def test_an_amount_over_the_limit_by_any_margin_is_refused(self):
+        grant = {"limits": {"max_amount": 100}}
+        self.assertEqual(V.grant_within_limits(grant, amount=100), (True, None))
+        self.assertIs(V.grant_within_limits(grant, amount=101)[0], False)
+        self.assertIs(V.grant_within_limits(grant, amount=150)[0], False)
+
+    def test_two_witnesses_that_disagree_are_a_refusal(self):
+        pack = json.loads((ROOT / "vectors" / "ml-dsa-65-valid.json").read_text())
+        saved = (V._verify_liboqs, V._verify_cryptography)
+        try:
+            for a, b in ((True, False), (False, True)):
+                V._verify_liboqs = lambda *args, _a=a, **kw: _a
+                V._verify_cryptography = lambda *args, _b=b, **kw: _b
+                v = V.verify_pack(pack)
+                self.assertIs(v["signature_valid"], False, (a, b))
+                self.assertEqual(v.get("authenticity"), "witness-disagreement")
+        finally:
+            V._verify_liboqs, V._verify_cryptography = saved
+
 if __name__ == "__main__":
     unittest.main()
