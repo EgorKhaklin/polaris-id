@@ -308,5 +308,105 @@ class FetchTests(unittest.TestCase):
                 self.assertFalse(v["checked"])
 
 
+
+class PrimitiveRefusalsTests(unittest.TestCase):
+    """Each primitive refusal driven directly (2026-09-23). Inverting any of these left the
+    whole package suite green, because every caller also refuses the malformed list for some
+    later reason; the primitive's own promise was never asserted."""
+
+    def test_a_status_value_at_an_unknown_width_is_refused(self):
+        self.assertEqual(S.status_at(b"\xb9", 0, 1), 1)
+        for bits in (0, 3, 16, None, "1"):
+            with self.assertRaises(ValueError, msg=bits):
+                S.status_at(b"\xb9", 0, bits)
+
+    def test_base64url_that_does_not_decode_is_refused(self):
+        self.assertEqual(S._b64u("AQI", "list"), b"\x01\x02")
+        for bad in ("a", "ab$c"):
+            with self.assertRaises(ValueError, msg=bad):
+                S._b64u(bad, "list")
+
+    def test_a_bomb_is_refused_at_the_primitive(self):
+        # Both sites in _inflate_bounded refuse the same input, so either one alone holds;
+        # the mutation drill records the pair as redundant rather than untested.
+        raw = zlib.compress(b"\x00" * 150, 9)
+        with self.assertRaises(ValueError):
+            S._inflate_bounded(raw, limit=100)
+        self.assertEqual(len(S._inflate_bounded(raw, limit=150)), 150)
+
+    def test_the_encoder_refuses_what_it_cannot_represent(self):
+        self.assertIsInstance(S.encode_status_list([0, 1, 1], bits=1), str)
+        with self.assertRaises(ValueError):
+            S.encode_status_list([0, 1], bits=3)
+        with self.assertRaises(ValueError):
+            S.encode_status_list([0, 2], bits=1)
+
+
+class EveryDecisionRefusalIsAssertedTests(unittest.TestCase):
+    """Each of these branches, turned into a checked VALID answer, left the whole package
+    green (2026-09-23): nothing asserted the refusal, only that nothing raised. A status
+    decision that answers VALID where it should refuse is a revoked credential accepted, so
+    each is pinned by its own code, never by checked alone."""
+
+    def refused(self, v, code):
+        self.assertIs(v["checked"], False)
+        self.assertEqual(v["code"], code)
+
+    def test_a_token_that_is_not_text(self):
+        self.refused(decide(12345, issuer_key_verify=accept), "malformed")
+
+    def test_a_token_over_the_size_limit(self):
+        self.refused(decide("a" * (S.MAX_TOKEN_BYTES + 1), issuer_key_verify=accept), "malformed")
+
+    def test_a_clock_that_is_not_an_integer(self):
+        for now in ("1800000000", 1.8e9, True, None):
+            self.refused(S.decide(token(payload()), index=1, expected_uri=URI, authority=AUTHORITY,
+                                  credential_issuer=ISSUER, now=now), "misconfigured")
+
+    def test_a_header_or_payload_that_is_not_an_object(self):
+        tok = ".".join([b64u(json.dumps(["not", "an", "object"])), b64u(json.dumps(payload())), b64u(b"sig")])
+        self.refused(decide(tok, issuer_key_verify=accept), "malformed")
+
+    def test_an_authority_that_crashes_is_not_a_grant(self):
+        def boom(**_):
+            raise RuntimeError("resolver down")
+        v = S.decide(token(payload()), index=1, expected_uri=URI, authority=boom,
+                     credential_issuer=ISSUER, now=NOW)
+        self.refused(v, "authority_error")
+
+    def test_a_signature_check_that_crashes_is_not_a_pass(self):
+        def crash(signing_input, signature, header):
+            raise ValueError("bad key")
+        crashing = S.StatedAuthority().state(credential_issuer=ISSUER, status_uri=URI, verify=crash,
+                                             why="a key that throws")
+        v = S.decide(token(payload()), index=1, expected_uri=URI, authority=crashing,
+                     credential_issuer=ISSUER, now=NOW)
+        self.refused(v, "signature_error")
+
+    def test_a_list_with_no_issue_time_has_no_age(self):
+        p = payload()
+        del p["iat"]
+        self.refused(decide(token(p), issuer_key_verify=accept), "iat")
+
+    def test_a_list_with_no_list_is_not_a_status(self):
+        p = payload()
+        del p["status_list"]["lst"]
+        self.refused(decide(token(p), issuer_key_verify=accept), "lst")
+
+    def test_fetching_needs_a_uri(self):
+        for uri in ("", None, 7):
+            v = S.decide_by_fetching(index=1, expected_uri=uri, authority=AUTHORITY,
+                                     fetch=lambda u: b"", now=NOW, credential_issuer=ISSUER)
+            self.refused(v, "uri")
+
+    def test_fetching_with_a_crashing_authority_asks_nothing(self):
+        asked = []
+        def boom(**_):
+            raise RuntimeError("resolver down")
+        v = S.decide_by_fetching(index=1, expected_uri=URI, authority=boom,
+                                 fetch=lambda u: asked.append(u) or b"", now=NOW, credential_issuer=ISSUER)
+        self.refused(v, "authority_error")
+        self.assertEqual(asked, [], "nothing may be fetched when authority cannot be established")
+
 if __name__ == "__main__":
     unittest.main()

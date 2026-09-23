@@ -40,14 +40,18 @@ PKG = ROOT / "packages" / "polaris-oid4vp"
 #: The three files that decide. `serve.py` is transport: it has no refusal of its own, it
 #: relays the verdict, and inverting a status code there is tested by `test_serve.py`
 #: directly rather than through mutation.
-SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py")
+#: `status.py` joined on 2026-09-23. It decides whether a credential is revoked, it refuses
+#: through the same `_refuse`, and it was absent from this tuple and its suite from SUITES:
+#: measured that day, 6 of its 12 raise-refusals could be inverted with the package green.
+SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py",
+           "polaris_oid4vp/status.py")
 
 #: Every suite in the package. A new test file that is not listed here is invisible to this
 #: drill, which is a silent way to lose coverage of a refusal: the file exists, the refusal
 #: is tested, and the drill still calls it unprotected or, worse, calls it protected by
 #: something else.
 SUITES = ("test_sdjwt", "test_jwe", "test_verifier", "test_serve", "test_cli",
-          "test_conformance_capture")
+          "test_conformance_capture", "test_status")
 
 #: Refusals a passing suite cannot reach, with the reason. Every one is the same shape: the
 #: guard fires only when `cryptography` is ABSENT, and a suite that runs has it installed,
@@ -70,6 +74,14 @@ DECLARED_SURVIVORS = {
     # resolver's is the innermost. It is kept because it is the guard that holds if either
     # outer bound is ever loosened, and tested directly against `_resolve` in
     # TheBoundsThemselvesAreAssertedTests rather than through `verify_presentation`.
+    # 2026-09-23. The two bounds in _inflate_bounded refuse the same input: any input that
+    # decompresses past the limit leaves unconsumed input behind, so the first fires; remove it
+    # and the length check after the flush fires instead. Each is redundant with the other, and
+    # the bomb is refused either way (TestStatusPrimitiveRefusals drives the primitive directly).
+    "status:_inflate_bounded:135276":
+        "redundant with its twin: removing either, the other refuses the same decompression bomb",
+    "status:_inflate_bounded:135276#2":
+        "redundant with its twin: removing either, the other refuses the same decompression bomb",
     "sdjwt:verify_presentation:3f535a":
         "the resolver depth cap; two outer bounds refuse first, so no presentation can reach "
         "it. Tested directly against _resolve",
@@ -91,8 +103,28 @@ _PATTERNS = (
 )
 
 
-def _invert(line: str):
+#: status.py's refusals, 2026-09-23. Its Verdict is a dict, so the SD-JWT operator above
+#: (`Verdict(True)`) raises TypeError there, `decide` turns the exception into a refusal, and
+#: the mutant is inert: the first run reported nine false survivors that way. Here a refusal
+#: becomes what an ACCEPTANCE looks like, the same fields as the verdict at the end of `decide`:
+#: checked, VALID, fresh. A single-line `raise ValueError(...)` becomes `pass`; a multi-line one
+#: is left alone rather than cut in half.
+_STATUS_PATTERNS = (
+    (re.compile(r"^(\s*)return _refuse\("),
+     r"\1return Verdict(checked=True, status=VALID, meaning='VALID', fresh=True, stale=False, "
+     r"age_seconds=0, authority=SAME_KEY, code=None, reason=None)  # MUTANT\n\1return _refuse("),
+    (re.compile(r"^(\s*)raise ValueError\(.*\)\s*$"), r"\1pass  # MUTANT"),
+)
+
+
+def _invert(line: str, source: str = ""):
     """The mutated form of a refusal line, or None if this line does not refuse."""
+    if source.endswith("status.py"):
+        for pattern, replacement in _STATUS_PATTERNS:
+            if pattern.match(line):
+                out = pattern.sub(replacement, line.rstrip("\n"), count=1)
+                return out + "\n"
+        return None
     for pattern, replacement in _PATTERNS:
         if pattern.match(line):
             return pattern.sub(replacement, line, count=1)
@@ -169,7 +201,7 @@ def main() -> int:
             originals[source] = text
             lines = text.splitlines(keepends=True)
             for i, line in enumerate(lines):
-                mutated = _invert(line)
+                mutated = _invert(line, source)
                 if mutated is not None:
                     sites.append((source, i, mutated, _label(lines, i, source)))
         if not sites:
