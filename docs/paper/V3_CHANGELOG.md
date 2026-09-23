@@ -15,6 +15,10 @@ Appendix C. Nothing was carried forward from Version 2's measurements except the
 rows the repository has not re-run (the dyno at `v9.278`, the application baseline at `v9.191`),
 which carry their original stamps.
 
+**Re-pinned.** On 22 September 2026 the paper was re-measured whole at `1.0.0-rc.7` (commit
+`4e74376`) by re-running each method Appendix C states; that commit is now its source of truth, and
+what moved is listed under "Revisions after publication" below.
+
 ## Why a whole re-measurement rather than a revision
 
 Version 2 was written at `v9.345` and revised at `v9.355` for the holder-side sections only,
@@ -94,10 +98,14 @@ Version 2's table of stronger wordings avoided still applies, with these rows ch
 cd docs/paper
 docker run --rm -v "$(pwd)/../..:/polaris" -w /polaris/docs/paper texlive/texlive:latest \
   pdflatex -interaction=nonstopmode -halt-on-error polaris_project_report_v3.tex   # three times
-shasum -a 256 *.tex v2-sections/*.tex v2-figures/*.tex v3-sections/*.tex v3-figures/*.tex > rendered-from.txt
+docker run --rm -v "$(pwd)/../..:/polaris" -w /polaris/docs/paper texlive/texlive:latest \
+  pdflatex -interaction=nonstopmode -halt-on-error polaris_project_report_v3_ru.tex   # three times
+rm -f *.aux *.out *.log *.toc
+shasum -a 256 *.tex *sections*/*.tex *figures*/*.tex > rendered-from.txt
 ```
 
-85 pages, zero overfull boxes, zero undefined references at the stamp above.
+85 pages, zero overfull boxes, zero undefined references at the stamp above. At the corrections of
+23 September 2026: English 91 pages, Russian 107, zero overfull boxes in either.
 
 ## Layout, 16 September 2026: readability over page count
 
@@ -127,3 +135,35 @@ The rule is now the opposite, and the build grew from 79 pages to 85 for it.
   the space a heading and its figure need together is reserved before the heading, so a page that
   cannot hold both breaks before the heading rather than between them.
 - Figure and table numbering, cross-references, section order and every sentence are unchanged.
+
+## Revisions after publication
+
+Each revision re-ran the measurement behind the sentence it changed; each was made to both editions
+in the same commit.
+
+- **22 September 2026: re-measured at `1.0.0-rc.7`** (`7ec156f`). Fourteen of twenty-six counts did
+  not move. Checks 272 to 313, mutation drills 8 to 12, test functions 1,755 to 2,189, tags 295 to 3
+  (a tag marks a release, not a ship). The same day the Russian edition began (`d33ec6f`).
+- **23 September 2026: the English edition took everything the Russian one added** (`d6e1613`):
+  the redrawn radial figures with text set along their curves, the closing owl, the abbreviations
+  list, the layout fixes.
+- **23 September 2026: corrections.** Each is a sentence the evidence did not support.
+  - Every check the paper cites must exist, and a check now fails the build if one does not
+    (`ca56814`); two drill counts were stale.
+  - What a plain install from the registries resolves: `0.1.0`, because `1.0.0-rc.3` is a
+    pre-release (`95afa90`).
+  - The ninety-day objective, item by item and dated; two fixes caused by outside findings, not one
+    (`975d34c`).
+  - The 32-bit limitation names its two columns and the arithmetic at the planning rate
+    (`6179fff`).
+  - Thirty-one append-only tables are 24 strict and 7 bounded, and every guard must be classified
+    (`0f942b6`).
+  - The procedure drill measured procedures only; the use-case functions' eleven refusals were
+    measured by nothing. Nine are covered now, one by a test that forces the lock interleaving
+    (`ceb1f30`, `3a85a7e`, and a row in Table 16, `8174a65`).
+  - The schema has 46 triggers; 42 is the trigger file's own count (`796fa42`).
+  - 142 package tests passed over the certificate the outside wallet refused, not 143, which is
+    the count after the fix (`dbb66f4`).
+  - 44 verdict fields are unconstrained at `1.0.0-rc.7`, not 43, which was the count at `v9.433`;
+    Appendix C now carries the number with its method (`8470f9e`, `68d9f49`).
+
