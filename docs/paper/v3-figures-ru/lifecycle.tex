@@ -1,63 +1,38 @@
-% v2-figures/lifecycle.tex: the token lifecycle state machine, carried over from
-% Version 1 UNCHANGED. ACTIVE at the centre; the five other states on the
-% pentagon. At HEAD the transitions are enforced by a database trigger
-% (trg_token_state_machine), which Version 1 recommended and Version 2 confirms.
+% v3-figures-ru/lifecycle.tex: автомат жизненного цикла токена, нарисованный по триггеру,
+% который его закрепляет (06_triggers.sql, enforce_token_state_machine): шесть законных
+% переходов, каждый подписан на своей стрелке событием, которое записывает
+% audit_token_state_change, включая административный отзыв никогда не активированного
+% резервного токена, который рисунок версии 1 опускал.
 \begin{tikzpicture}[
   scale=0.78, font=\small,
   state/.style={draw=navymid, line width=1pt, rounded corners=2pt, minimum width=2.3cm, minimum height=0.9cm,
     fill=navydark, text=white, font=\bfseries\small, align=center},
-  centerstate/.style={draw=accent, line width=1.2pt, rounded corners=2pt, minimum width=3.1cm, minimum height=0.9cm,
+  centerstate/.style={draw=accent, line width=1.2pt, rounded corners=2pt, minimum width=3.6cm, minimum height=0.9cm,
     fill=accent, text=white, font=\bfseries\small, align=center},
   termstate/.style={draw=steelgray, line width=1pt, rounded corners=2pt, minimum width=2.3cm, minimum height=0.9cm,
     fill=steelgray!85, text=white, font=\bfseries\small, align=center},
   trans/.style={->, draw=navymid, line width=1pt, >={Stealth[length=2.5mm]}},
   termtrans/.style={->, draw=accent, line width=1pt, >={Stealth[length=2.5mm]}, dash pattern=on 4pt off 2.5pt},
-  lbl/.style={font=\scriptsize\itshape\color{navydark}, inner sep=1pt},
-  leader/.style={draw=steelgray, line width=0.4pt, opacity=0.55, shorten >=1pt, shorten <=1pt},
+  lbl/.style={font=\scriptsize\itshape, text=navydark, inner sep=2pt, fill=white, fill opacity=0.9, text opacity=1},
 ]
-\begin{scope}[on background layer]
-  \coordinate (P1) at (90:4.8);
-  \coordinate (P2) at (162:4.8);
-  \coordinate (P3) at (234:4.8);
-  \coordinate (P4) at (306:4.8);
-  \coordinate (P5) at (18:4.8);
-  \draw[steelgray, line width=0.4pt, opacity=0.06] (P1) -- (P2) -- (P3) -- (P4) -- (P5) -- cycle;
-  \draw[steelgray, line width=0.3pt, opacity=0.04] (P1) -- (P3) -- (P5) -- (P2) -- (P4) -- cycle;
-  \draw[steelgray, line width=0.4pt, opacity=0.05] (0,0) circle (4.8);
-  \draw[steelgray, line width=0.3pt, opacity=0.04] (0,0) circle (1.85);
-\end{scope}
-\node[state] (reserve)  at (90:4.8)  {РЕЗЕРВ};
-\node[termstate] (expired) at (162:4.8) {ИСТЁК};
-\node[termstate] (lost)    at (234:4.8) {УТРАЧЕН};
-\node[termstate] (revoked) at (306:4.8) {ОТОЗВАН};
-\node[state] (dormant)  at (18:4.8)  {СПЯЩИЙ};
-\node[centerstate] (active) at (0,0) {ДЕЙСТВУЮЩИЙ};
-\draw[trans] (reserve) -- (active);
-\draw[trans] (active)  -- (dormant);
-\draw[termtrans] (active) -- (revoked);
-\draw[termtrans] (active) -- (lost);
-\draw[termtrans] (active) -- (expired);
-\draw[trans] ($(reserve)+(0,1.2)$) -- (reserve) node[lbl, midway, right=2pt] {ВЫДАН};
-\coordinate (lblActivated)    at (54:3.35);
-\coordinate (lblDeactivated)  at (342:3.35);
-\coordinate (lblRevoked)      at (270:3.1);
-\coordinate (lblLost)         at (198:3.35);
-\coordinate (lblExpired)      at (126:3.35);
-\coordinate (midActivated)    at (90:2.45);
-\coordinate (midDeactivated)  at (18:2.45);
-\coordinate (midRevoked)      at (306:2.45);
-\coordinate (midLost)         at (234:2.45);
-\coordinate (midExpired)      at (162:2.45);
-\node[lbl] (nodeActivated)   at (lblActivated)   {АКТИВИРОВАН};
-\node[lbl] (nodeDeactivated) at (lblDeactivated) {ДЕАКТИВИРОВАН};
-\node[lbl] (nodeRevoked)     at (lblRevoked)     {ОТОЗВАН};
-\node[lbl] (nodeLost)        at (lblLost)        {УТРАЧЕН};
-\node[lbl] (nodeExpired)     at (lblExpired)     {ИСТЁК};
-\begin{scope}[on background layer]
-  \draw[leader] (nodeActivated.west)   -- (midActivated);
-  \draw[leader] (nodeDeactivated.west) -- (midDeactivated);
-  \draw[leader] (nodeRevoked.north)    -- (midRevoked);
-  \draw[leader] (nodeLost.east)        -- (midLost);
-  \draw[leader] (nodeExpired.east)     -- (midExpired);
-\end{scope}
+\node[state]       (reserve) at (0,4.3)     {РЕЗЕРВ};
+\node[centerstate] (active)  at (0,1.3)     {ДЕЙСТВУЮЩИЙ};
+\node[state]       (dormant) at (8.4,1.3)   {СПЯЩИЙ};
+\node[termstate]   (expired) at (-5.6,-2.1) {ИСТЁК};
+\node[termstate]   (lost)    at (0,-2.1)    {УТРАЧЕН};
+\node[termstate]   (revoked) at (5.6,-2.1)  {ОТОЗВАН};
+
+\draw[trans] ($(reserve.north)+(0,1.1)$) -- (reserve.north) node[lbl, midway, right=1pt] {ВЫДАН};
+\draw[trans] (reserve) -- (active) node[lbl, midway, right=1pt] {АКТИВИРОВАН};
+\draw[trans] (active) -- (dormant) node[lbl, midway, above=1pt] {ДЕАКТИВИРОВАН};
+\draw[termtrans] (active) -- (expired) node[lbl, midway, sloped, above=1pt] {ИСТЁК};
+\draw[termtrans] (active) -- (lost) node[lbl, midway, right=1pt] {УТРАЧЕН};
+\draw[termtrans] (active) -- (revoked) node[lbl, midway, sloped, above=1pt] {ОТОЗВАН};
+\draw[termtrans, rounded corners=10pt] (reserve.east) -- (11.2,4.3) -- (11.2,-2.1) -- (revoked.east);
+\node[lbl, above=1pt] at (6.8,4.3) {ОТОЗВАН, не будучи активирован};
+
+\draw[trans] (-3.9,-3.55) -- (-2.9,-3.55);
+\node[lbl, anchor=west] at (-2.8,-3.55) {в рабочее состояние};
+\draw[termtrans] (1.4,-3.55) -- (2.4,-3.55);
+\node[lbl, anchor=west] at (2.5,-3.55) {в конечное состояние};
 \end{tikzpicture}

@@ -73,11 +73,12 @@ C3 turned out to be violating it, committing a second active token before failin
 
 \subsection{The lifecycle}
 
-\figfile{lifecycle}{The token lifecycle machine, unchanged from Version 1. \code{ACTIVE} is the only
-operational state. A token enters at \code{RESERVE}, is activated, and leaves through one of three
-terminal states or into \code{DORMANT} when a successor takes over. The legal transitions are
-enforced by the trigger \code{trg\_token\_state\_machine}, and every transition writes a lifecycle
-event automatically.}{fig:lifecycle}
+\figfile{lifecycle}{The token lifecycle machine as the trigger \code{trg\_token\_state\_machine}
+enforces it: six legal transitions, each labelled with the lifecycle event it writes automatically.
+\code{ACTIVE} is the only operational state. A token enters at \code{RESERVE} and is activated, or
+is revoked before it ever is; an active token leaves through one of three terminal states or into
+\code{DORMANT} when a successor takes over. Version 1's figure left out the revocation of a reserve
+token, which the trigger has always allowed.}{fig:lifecycle}
 
 Version 1 recommended enforcing the transitions in a trigger and left it as future work. The
 trigger exists, and a second trigger writes a \entity{TokenLifecycleEvent} row for every status
