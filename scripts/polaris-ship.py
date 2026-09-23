@@ -1006,8 +1006,22 @@ def _ship_baseline():
     A ship in this repo is one commit. So the baseline is the working tree against HEAD
     when there is anything uncommitted, and HEAD against its parent when there is not:
     either way, the change under consideration and not the quarter's worth around it.
+
+    Except when HEAD is ahead of its upstream, and then the baseline is the upstream:
+    what the gate must answer for is what the next push carries. 2026-09-23: a commit made
+    before its drills had run, in a tree holding one unrelated untracked file, read as
+    "dirty", so the baseline became HEAD, the diff was the untracked file alone, and the
+    gate said READY with every drill the commit needed unrun. Any stray file hid any
+    unpushed commit from the drill requirement.
     """
     try:
+        upstream = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "@{u}"], cwd=ROOT,
+                                  capture_output=True, text=True).stdout.strip()
+        if upstream:
+            ahead = subprocess.check_output(["git", "rev-list", "--count", "%s..HEAD" % upstream],
+                                            cwd=ROOT, text=True, stderr=subprocess.DEVNULL).strip()
+            if ahead.isdigit() and int(ahead) > 0:
+                return upstream
         dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT,
                                         text=True, stderr=subprocess.DEVNULL).strip()
         if dirty:

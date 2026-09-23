@@ -328,6 +328,48 @@ class TriageHonestyTests(unittest.TestCase):
                         "classifier runs over a refusal string and reports on it")
 
 
+class ShipBaselineTests(unittest.TestCase):
+    """What the drill gate diffs against. 2026-09-23: a committed, unpushed change in a tree
+    holding one unrelated untracked file read as "dirty", the baseline became HEAD, and the
+    gate reported READY with the commit's drills unrun."""
+
+    def _repo(self):
+        import subprocess
+        import tempfile
+        root = tempfile.mkdtemp(prefix="polaris-ship-baseline-")
+        remote, work = os.path.join(root, "remote.git"), os.path.join(root, "work")
+        git = lambda *a, cwd=work: subprocess.run(["git", *a], cwd=cwd, check=True,  # noqa: E731
+                                                  capture_output=True, text=True).stdout.strip()
+        subprocess.run(["git", "init", "--bare", "-q", remote], check=True)
+        subprocess.run(["git", "clone", "-q", remote, work], check=True, capture_output=True)
+        git("config", "user.email", "t@example.invalid"); git("config", "user.name", "t")
+        open(os.path.join(work, "a.txt"), "w").write("1")
+        git("add", "a.txt"); git("commit", "-q", "-m", "base"); git("push", "-q", "origin", "HEAD")
+        git("branch", "--set-upstream-to=origin/%s" % git("rev-parse", "--abbrev-ref", "HEAD"))
+        return work, git
+
+    def _baseline(self, work):
+        saved = ship.ROOT
+        ship.ROOT = work
+        try:
+            return ship._ship_baseline()
+        finally:
+            ship.ROOT = saved
+
+    def test_an_unpushed_commit_is_measured_against_the_upstream_even_with_a_stray_file(self):
+        work, git = self._repo()
+        upstream = git("rev-parse", "HEAD")
+        open(os.path.join(work, "a.txt"), "w").write("2")
+        git("commit", "-q", "-am", "the change the gate must see")
+        open(os.path.join(work, "stray.png"), "w").write("x")
+        self.assertEqual(self._baseline(work), upstream)
+
+    def test_uncommitted_work_on_a_pushed_head_is_measured_against_head(self):
+        work, git = self._repo()
+        open(os.path.join(work, "a.txt"), "w").write("2")
+        self.assertEqual(self._baseline(work), "HEAD")
+
+
 if __name__ == "__main__":
     unittest.main()
 
