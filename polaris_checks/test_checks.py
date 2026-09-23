@@ -15224,6 +15224,7 @@ def test_procedure_mutation_check_discriminates(tmp_path):
     DRILL = ("SURVIVORS_EXPECTED: dict[str, str] = {}\n"
              "CONTROL = ('uc8_revoke_token', 'Co-signer must differ from actor')\n"
              "def _left_mutated(conn):\n    return []\n"
+             "ROUTINES = \"(p.prokind = 'p' OR (p.prokind = 'f' AND p.proname LIKE 'uc%'))\"\n"
              "def mutate(body, a, b):\n"
              # Needles live in STRINGS, never comments: _read strips comments before the
              # check sees the file, which is right (it grades code) and has caught three
@@ -15257,6 +15258,11 @@ def test_procedure_mutation_check_discriminates(tmp_path):
 
     write()
     assert level() == "OK", "must PASS on a drill that measures something"
+
+    # Reverting to procedures only reopens the gap closed on 2026-09-23.
+    write(drill=DRILL.replace("OR (p.prokind = 'f' AND p.proname LIKE 'uc%')", ""))
+    assert level("use-case FUNCTIONS") == "FAIL", "a drill that skips the use-case functions must fail"
+    write()
 
     for needle, expect in (
         ("RAISE EXCEPTION", "does not target the refusals"),

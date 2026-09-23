@@ -8531,6 +8531,9 @@ def check_procedure_refusals_are_mutation_tested(root: pathlib.Path) -> list[Fin
         ("byte for byte", "the drill does not verify the catalog came back intact"),
         ("05_procedures.sql", "the drill does not name the one-line repair for a killed run"),
         ("_left_mutated", "the drill would start on a catalog a previous run left mutated"),
+        ("p.prokind = 'f'", "the drill selects procedures only, so the use-case FUNCTIONS "
+                            "(uc1_issue_and_activate, uc4_activate_reserve, uc5_bind_device) and "
+                            "their refusals are measured by nothing, as they were until 2026-09-23"),
     ):
         if needle not in drill:
             findings.extend(_fail(name, why))

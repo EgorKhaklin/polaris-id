@@ -142,7 +142,13 @@ inserted and committed a second active token for one person and the index could 
 Deleting each of the 59 refusals the sixteen stored procedures make found 27 that no test would miss,
 concentrated exactly where a trigger cannot see: the four-eyes rule, the cool-down, the three channels
 and the third-person witness of the recovery ceremony, the preconditions on an irreversible erasure.
-Every one of these is now covered, and every one of these measurements is now a drill that runs on
+Every one of these is now covered. The drill selected procedures only, and three of the use cases,
+issuance, reserve activation and device binding, are functions, because they return the id they
+create; their eleven refusals sat outside it until 23 September 2026. Among the ones no test
+noticed were the check that an agency is authorized for the algorithm it issues under and the check that a reserve token belongs
+to the same person as the credential it replaces. Eight are covered now; the three that remain are one routine's checks made twice, before and after
+it takes its lock, and one of them is a real guarantee no test yet drives. Every one of these
+measurements is now a drill that runs on
 every push with a negative control, so that a result of zero survivors is distinguishable from a
 harness that ran nothing. Twelve such drills exist at \code{1.0.0-rc.7}: over the checks, the
 constraints, the triggers, the procedures, the zero-knowledge witnesses, the conformance contract, the
@@ -151,7 +157,7 @@ surfaces a check quantifies over, and the moves of code between modules. Section
 \sImpl
 
 \begin{layercard}{Layer card: the walls}
-\qa{What it is}{PostgreSQL 16: 45 tables, 42 triggers, sixteen stored procedures that implement every state-changing use case, the append-only audit tables, the retention policy as data.}
+\qa{What it is}{PostgreSQL 16: 45 tables, 42 triggers, sixteen stored procedures and four use-case functions that implement every state-changing use case, the append-only audit tables, the retention policy as data.}
 \qa{Why it exists}{A promise enforced only by the people who run the system is not a promise. The schema binds every client, every restore and every insider with a database connection short of the owner.}
 \qa{What it trusts}{The database engine and its owner; the correctness of the constraints as written, which is why each is now mutation-tested.}
 \qa{What it refuses}{Application code, review process and operator discipline as the last line: the application never enforces a constitutional guarantee on its own. A test that has never been shown to fail.}

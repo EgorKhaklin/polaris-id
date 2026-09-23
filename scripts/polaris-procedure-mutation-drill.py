@@ -92,8 +92,10 @@ def _classes_exercising(name: str) -> list:
 #: because it is plainly tested: the co-signer rule is the subject of its own test.
 CONTROL = ("uc8_revoke_token", "Co-signer must differ from actor")
 
-#: Refusals nothing covers, each with the reason. EMPTY as of v9.437: every one of the
-#: 59 refusals these 16 procedures make now turns something red when it is deleted.
+#: Refusals nothing covers, each with the reason. Empty as of v9.437: every one of the
+#: 59 refusals the 16 procedures make turns something red when it is deleted. On
+#: 2026-09-23 the drill was extended to the use-case FUNCTIONS (see USE_CASE_ROUTINES),
+#: which added eleven refusals; tests now catch eight of them, and the three below remain.
 #:
 #: The first measurement (v9.434) found 27 that nothing noticed, concentrated where the
 #: invariants are multi-step and a trigger cannot see them. v9.435 covered the ten closest
@@ -103,7 +105,21 @@ CONTROL = ("uc8_revoke_token", "Co-signer must differ from actor")
 #:
 #: An entry here is a guarantee a procedure makes and the tests do not check. The list is
 #: checked in BOTH directions, so it cannot grow silently and a stale entry fails too.
-SURVIVORS_EXPECTED: dict[str, str] = {}
+SURVIVORS_EXPECTED: dict[str, str] = {
+    # uc4_activate_reserve reads both tokens, takes a row lock on the holder, then re-reads
+    # both under the lock (the fix for a stale second caller writing a duplicate revocation).
+    # Each status check therefore exists twice, and on a single connection the two copies are
+    # indistinguishable: delete either and its twin refuses with the same message.
+    "uc4_activate_reserve#1": "pre-lock copy of the ACTIVE check; its twin #5, under the lock, "
+                              "is the guarantee and the concurrent-uc4 test catches its loss",
+    "uc4_activate_reserve#3": "pre-lock copy of the RESERVE check; its twin #6 refuses with the "
+                              "same message on a single connection",
+    "uc4_activate_reserve#6": "the RESERVE re-check under the lock. It fires only if another "
+                              "procedure moves the reserve out of RESERVE between uc4's first "
+                              "read and its lock; the pre-lock copy #3 catches every single-"
+                              "connection case first, and no deterministic test drives that "
+                              "interleaving yet. A real guarantee the tests do not check",
+}
 
 
 def _env() -> dict:
@@ -128,9 +144,9 @@ def _definitions(conn) -> dict:
         cur.execute("""
             SELECT p.proname, pg_get_functiondef(p.oid)
               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-             WHERE n.nspname = 'public' AND p.prokind = 'p'
+             WHERE n.nspname = 'public' AND """ + USE_CASE_ROUTINES + """
              ORDER BY p.proname
-        """)
+        """, ())
         return {name: body for name, body in cur.fetchall()}
 
 
@@ -211,6 +227,15 @@ def _procedures_moved() -> bool:
     return bool(out.strip())
 
 
+#: Which routines count. Stored PROCEDURES, and also the use-case FUNCTIONS: uc1_issue_and_activate,
+#: uc4_activate_reserve and uc5_bind_device return the id they create, so they are declared
+#: FUNCTION, and selecting prokind = 'p' alone left their eleven refusals (issuance,
+#: activation, device binding) outside every mutation drill. Trigger functions are excluded:
+#: the trigger drill answers for those. Found 2026-09-23 re-deriving the paper's claim that
+#: the procedures "implement every state-changing use case".
+USE_CASE_ROUTINES = ("(p.prokind = 'p' OR (p.prokind = 'f' AND p.proname LIKE 'uc%%' "
+                     "AND p.prorettype <> 'trigger'::regtype))")
+
 MUTATION_MARK = "mutation: this refusal deleted"
 
 
@@ -219,7 +244,7 @@ def _left_mutated(conn) -> list:
     with conn.cursor() as cur:
         cur.execute("""
             SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-             WHERE n.nspname = 'public' AND p.prokind = 'p' AND p.prosrc LIKE %s
+             WHERE n.nspname = 'public' AND """ + USE_CASE_ROUTINES + """ AND p.prosrc LIKE %s
              ORDER BY 1
         """, ("%" + MUTATION_MARK + "%",))
         return [r[0] for r in cur.fetchall()]

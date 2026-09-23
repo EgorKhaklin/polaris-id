@@ -976,6 +976,110 @@ class TestUC1Issuance(_CheckBase):
             self.assertIsNotNone(cur.fetchone()['token_id'])
 
 
+class TestUseCaseFunctionRefusals(_CheckBase):
+    """The refusals the use-case FUNCTIONS make, each driven and each named by its message.
+
+    uc1_issue_and_activate, uc4_activate_reserve and uc5_bind_device are declared FUNCTION
+    because they return the id they create, and the procedure mutation drill selected
+    prokind = 'p' only, so their refusals sat outside every mutation drill. Measured on
+    2026-09-23 once the drill was extended: of the nine it could measure, seven could be
+    deleted with every test still green, and uc5 had no test at all.
+
+    Two of the uc4 refusals are sharper than they look. With 'Reserve token % does not
+    exist' deleted, a missing reserve id leaves v_reserve_status NULL, and NULL <> 'RESERVE'
+    is NULL rather than true, so every later check passes too: the function would mark the
+    holder's lost token LOST and activate nothing, leaving them with no credential. The same
+    NULL trap sits behind 'Lost token % does not exist'. Each test below asserts the
+    refusal's own message, so a different error firing instead does not read as a pass.
+    Each runs in the per-test transaction and rolls back."""
+
+    def _active(self, cur):
+        cur.execute("SELECT individual_id, token_id FROM IdentityToken "
+                    "WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
+        row = cur.fetchone()
+        self.assertIsNotNone(row, "sample data has no ACTIVE token")
+        return row['individual_id'], row['token_id']
+
+    def _reserve_for(self, cur, individual_id, tag):
+        cur.execute(
+            "INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type, "
+            " individual_id, issuing_agency_id, algorithm_id, status) "
+            "VALUES (%s, %s, 'FINGERPRINT', %s, 3, 1, 'RESERVE') RETURNING token_id",
+            ('UCFN-%s-%s' % (tag, individual_id), 'UCFNSER-%s-%s' % (tag, individual_id), individual_id))
+        return cur.fetchone()['token_id']
+
+    def _refused(self, cur, sql, args, message, errtype):
+        with self.assertRaises(errtype) as ctx:
+            cur.execute(sql, args)
+        self.assertIn(message, str(ctx.exception),
+                      "refused, but by a different rule than the one under test")
+
+    UC4 = "SELECT uc4_activate_reserve(%s, 3, 'LOST', %s, 'https://crl.idtoken.gov/test/ucfn.crl')"
+
+    def test_uc4_refuses_a_lost_token_that_does_not_exist(self):
+        with self.conn.cursor() as cur:
+            ind, _ = self._active(cur)
+            reserve = self._reserve_for(cur, ind, 'NOLOST')
+            self._refused(cur, self.UC4, (2147483000, reserve), "Lost token 2147483000 does not exist",
+                          pg_errors.NoDataFound)
+
+    def test_uc4_refuses_a_reserve_that_does_not_exist(self):
+        with self.conn.cursor() as cur:
+            _, lost = self._active(cur)
+            self._refused(cur, self.UC4, (lost, 2147483000), "Reserve token 2147483000 does not exist",
+                          pg_errors.NoDataFound)
+
+    def test_uc4_refuses_a_reserve_that_belongs_to_someone_else(self):
+        with self.conn.cursor() as cur:
+            ind, lost = self._active(cur)
+            cur.execute("SELECT individual_id FROM Individual WHERE individual_id <> %s "
+                        "ORDER BY individual_id LIMIT 1", (ind,))
+            other = cur.fetchone()['individual_id']
+            reserve = self._reserve_for(cur, other, 'OTHER')
+            self._refused(cur, self.UC4, (lost, reserve),
+                          "belongs to a different individual than lost token",
+                          pg_errors.IntegrityConstraintViolation)
+
+    def test_uc4_positive_control(self):
+        with self.conn.cursor() as cur:
+            ind, lost = self._active(cur)
+            reserve = self._reserve_for(cur, ind, 'OK')
+            cur.execute(self.UC4 + " AS promoted", (lost, reserve))
+            self.assertEqual(cur.fetchone()['promoted'], reserve)
+
+    UC1 = ("SELECT uc1_issue_and_activate('Auth Test','1990-01-01','US-CA',1,%s,"
+           "'FINGERPRINT',1,'MULTI_MODAL','TKN-AUTHTEST','SN-AUTHTEST',NULL,ARRAY[1])")
+
+    def test_uc1_refuses_an_agency_not_authorized_for_the_algorithm(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT algorithm_id FROM CryptographicAlgorithm WHERE algorithm_id NOT IN "
+                        "(SELECT algorithm_id FROM AgencyAlgorithmAuth WHERE agency_id = 1 "
+                        " AND authorization_type IN ('ISSUE','BOTH')) ORDER BY algorithm_id LIMIT 1")
+            row = cur.fetchone()
+            self.assertIsNotNone(row, "every algorithm is authorized for agency 1; the fixture needs one that is not")
+            self._refused(cur, self.UC1, (row['algorithm_id'],),
+                          "is not authorized to issue under algorithm", pg_errors.InsufficientPrivilege)
+
+    UC5 = "SELECT uc5_bind_device(%s, 'PHONE', %s, 'SECURE_ENCLAVE', 12)"
+
+    def test_uc5_refuses_a_token_that_does_not_exist(self):
+        with self.conn.cursor() as cur:
+            self._refused(cur, self.UC5, (2147483000, 'fp-none'), "Token 2147483000 does not exist",
+                          pg_errors.NoDataFound)
+
+    def test_uc5_refuses_a_token_that_is_not_active(self):
+        with self.conn.cursor() as cur:
+            ind, _ = self._active(cur)
+            reserve = self._reserve_for(cur, ind, 'UC5')
+            self._refused(cur, self.UC5, (reserve, 'fp-reserve'), "is not ACTIVE", pg_errors.InvalidParameterValue)
+
+    def test_uc5_positive_control(self):
+        with self.conn.cursor() as cur:
+            _, token = self._active(cur)
+            cur.execute(self.UC5 + " AS binding_id", (token, 'fp-control'))
+            self.assertIsNotNone(cur.fetchone()['binding_id'])
+
+
 class TestC1PrivilegeBoundary(unittest.TestCase):
     """C1 append-only is a PRIVILEGE boundary, not only a trigger.
 
