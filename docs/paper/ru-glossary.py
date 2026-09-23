@@ -285,6 +285,7 @@ PATHS = {
     "/api/v1/exchange": "/апи/в1/обмен",
     "/api/v1/verify": "/апи/в1/проверка",
     "01_schema.sql": "01_схема.скл",
+    "12_v7_constraints.sql": "12_в7_ограничения.скл",
     "emulator.py": "эмулятор.пи",
     "MISSION.md": "МИССИЯ.мд",
     "README": "ЧИТАЙМЕНЯ",

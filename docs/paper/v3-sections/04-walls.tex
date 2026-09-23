@@ -160,7 +160,7 @@ surfaces a check quantifies over, and the moves of code between modules. Section
 \sImpl
 
 \begin{layercard}{Layer card: the walls}
-\qa{What it is}{PostgreSQL 16: 45 tables, 42 triggers, sixteen stored procedures and four use-case functions that implement every state-changing use case, the append-only audit tables, the retention policy as data.}
+\qa{What it is}{PostgreSQL 16: 45 tables, 46 triggers (42 of them in the trigger file), sixteen stored procedures and four use-case functions that implement every state-changing use case, the append-only audit tables, the retention policy as data.}
 \qa{Why it exists}{A promise enforced only by the people who run the system is not a promise. The schema binds every client, every restore and every insider with a database connection short of the owner.}
 \qa{What it trusts}{The database engine and its owner; the correctness of the constraints as written, which is why each is now mutation-tested.}
 \qa{What it refuses}{Application code, review process and operator discipline as the last line: the application never enforces a constitutional guarantee on its own. A test that has never been shown to fail.}

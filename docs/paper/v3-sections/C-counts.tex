@@ -31,6 +31,7 @@ that produced it no longer is.
 \endlastfoot
 Canonical tables in \code{01\_schema.sql} & 45 & The file declares 50 \code{CREATE TABLE} statements, of which five are the default partition children of the partitioned event tables. A migrated deployment holds 52 tables. \\
 Triggers in \code{06\_triggers.sql} & 42 & \code{grep -c 'CREATE TRIGGER'} \\
+Triggers in the loaded schema & 46 & The file's 42, and four declared beside what they guard: one in the migration registry's file, one in \code{01\_schema.sql}, two in \code{12\_v7\_constraints.sql}. Read from \code{pg\_trigger} on a loaded and migrated database, excluding internal triggers and the 25 copies PostgreSQL makes on the partitions of partitioned tables \\
 Tables under an append-only trigger & 31 & The \code{BEFORE UPDATE OR DELETE} triggers of \code{06\_triggers.sql} and the migrations, by table; the design record names fourteen audit-of-record instances among them \\
 Invariant checks & 313 & \code{grep -c '\^{}def check\_' polaris\_checks/checks.py}, equal to the registered list; each has a detection test with a positive control in \code{test\_checks.py} \\
 Mutation drills & 12 & Files matching \code{scripts/polaris-*mutation-drill*}: checks, constraints, triggers, procedures, the zero-knowledge witnesses, the conformance contract, the two SDKs, the OpenID4VP verifier, the application, coverage, the constitution, and moves between modules \\

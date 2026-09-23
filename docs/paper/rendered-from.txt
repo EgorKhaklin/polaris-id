@@ -32,7 +32,7 @@ da789e87b4623a9ffc977c8157197e567512598d73f517501f67478bbfa5bedd  v2-sections/A-
 a0fa064b3f1c38de4a86c0dbcc64a3d5b440cd3c41f3f2102316f84f7ee754b9  v3-sections-ru/01-problem.tex
 53e593f5d1df75ebe2ef3c798f56aea310cb6be31b40142936bcba6794ff121b  v3-sections-ru/02-reading.tex
 072f5fc15cb107efaf06a14a7a8b3a2b0f4f77c9a8c949d65e21bf956a2b618b  v3-sections-ru/03-core.tex
-e1d886012ea5c00e2738362669cd5affce91c2323445fdc2463bf0e56e83286b  v3-sections-ru/04-walls.tex
+4b5d9fac295e3f1336b7fd0a1a06468f8a7a97b3ec39bfeab8624078db425dbf  v3-sections-ru/04-walls.tex
 26730df0d69a70cc3d68732fc393f310289bb8d74f0a755e29c49fb7e4ff1c27  v3-sections-ru/05-signatures.tex
 d460a4665b69f07592fbdd9e84899c98b28b6864b062e959c2445be4482bea8b  v3-sections-ru/06-verifiers.tex
 c5b6e583be8f96e15f4be5bacb5d98dab44cd16f0e393294cad2bf7380678a2c  v3-sections-ru/07-authorization.tex
@@ -51,7 +51,7 @@ bdd72599e250016b74ea81a83bd1e3d158899466bc4ff0e9d8b36f0ffc54d131  v3-sections-ru
 2f73d1cf951353b3b4ca736a77829845fe2bc5a5b3271a2115c653788c0613c0  v3-sections-ru/20-conclusion.tex
 20b93f1dcbf7eb403e0da9a65a708fe2ce3b2403e2bb5152b40297cf4a997ac6  v3-sections-ru/A-status.tex
 057deee6c0020c53693db55fb2f4c14b1b7199e8dd51801372d89734335c0181  v3-sections-ru/B-layers.tex
-a2815667102ca82c60c7471b32cb7b89e130e568083af0c6d72bcae2873fc93a  v3-sections-ru/C-counts.tex
+16c23e79859194c116095c2b63c1dc3233f9f063329e1027996073a7cde1adc1  v3-sections-ru/C-counts.tex
 674c4388fd2525eb8b14abb0a9feea9947cb96941cd972159a94530513140295  v3-sections-ru/D-glossary.tex
 81b4264d20336870b4a4d4d912d9ab4e2c1dc4df2dd5189ffed03cbbeb2fbc90  v3-sections-ru/E-from-v1.tex
 1243ebbd4a7d23804b9a0559ad2cd2d36bb8f5485934ba96ea0c9f29eef17f95  v3-sections-ru/F-from-v2.tex
@@ -59,7 +59,7 @@ db5176cd9f0acd66a0ce8316f6ce416f4d85f5ffce2057e5a321703af2f0c378  v3-sections/00
 d1ec337b66fc6bc4608c70258bb671887d7bc0df4b98831bf7cb48c6096f1e22  v3-sections/01-problem.tex
 130c7cbc94f4e09c388247a5e08babd1aceca9837a2ce5f11da5c44b53857c42  v3-sections/02-reading.tex
 c0bb6ac9e53ef1b6630724b590b14da271115b1dd168dfa49963187d1a07a396  v3-sections/03-core.tex
-a7ca829d6fc4166bb3deaeb57ebc1c0a084f480bc033691b60a633e8c2023fb4  v3-sections/04-walls.tex
+7060ed2f436677c3837dadeec960f53f72239b93ef529bb21a62aba147ff45f7  v3-sections/04-walls.tex
 de22e23cffa9ddc73a417742feb4835bc2b3c951834a7ae34fb9ba917e8e6681  v3-sections/05-signatures.tex
 c21ebc2b3919045d69a4c3fbb1494c6f4e6401c48c699645ff0c62926723a1c1  v3-sections/06-verifiers.tex
 b14e08ffbd754988bc7d636a21bdaa22cb3c53634ee958e780f90ed015cc6943  v3-sections/07-authorization.tex
@@ -78,7 +78,7 @@ dd45416e3a141e0ab77af4d4358baa1353ceb154d2ab917fecc42d86de32328c  v3-sections/19
 efc0f75eb198d5ae6847bf74f55f84a5ea57a1bb961e7242a32facf8e0b0047c  v3-sections/20-conclusion.tex
 16a9da31726bc1e0ce2f6feed7884dfb8946f0a6e7a233fd64b1d2b234501f0c  v3-sections/A-status.tex
 c68480f6ef69a6f9f038eb18d6448ed0f80f53eecf60067346ef417f98f19f2a  v3-sections/B-layers.tex
-71de9f01d4c7134a71c6ecb7472f1f62bbcc987f824ecc0a99ebb16d9aa22fbb  v3-sections/C-counts.tex
+b45a121d436dea934b9eb2cc4dbe556920c567c03ffb9a57bc844a17dd5fa3e8  v3-sections/C-counts.tex
 b91e5313622a25f62aac41df3f3ac3879e30a6ade19728b09e37fce024af2b5c  v3-sections/D-glossary.tex
 2c5b62af8b5e17e0ece7e3c0d442835dccf9012820890d3eeabc0c9eaf5a87d5  v3-sections/E-from-v1.tex
 ab2801ea80263e6c06a4e881172b1cc2dc5da7d6da9363f8085a35bc9fa003b4  v3-sections/F-from-v2.tex
