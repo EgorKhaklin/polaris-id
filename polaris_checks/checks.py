@@ -3808,8 +3808,12 @@ def _object_defined(corpus: str, name: str) -> bool:
     return re.search(
         r"(?im)^\s*(?:def|class)\s+" + name + r"\b"            # python def/class
         r"|^" + name + r"\s*=[^=]"                                # python module constant
-        r"|\b(?:FUNCTION|PROCEDURE|TABLE|INDEX|CONSTRAINT|TRIGGER)\s+(?:IF NOT EXISTS\s+)?"
-        + name + r"\b",                                           # SQL object
+        # SQL object: its DEFINING statement. Until 2026-09-23 any `INDEX name` counted, so
+        # `COMMENT ON INDEX uq_one_active_per_person` resolved MISSION.md's C3 row with the
+        # index deleted; the same held for a COMMENT ON FUNCTION, TRIGGER or CONSTRAINT.
+        r"|\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+)?(?:FUNCTION|PROCEDURE|TABLE|INDEX|TRIGGER|VIEW)\s+"
+        r"(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?" + name + r"\b"
+        r"|\bCONSTRAINT\s+" + name + r"\s+(?:CHECK|UNIQUE|EXCLUDE|FOREIGN|PRIMARY)\b",
         corpus) is not None
 
 
@@ -9368,23 +9372,35 @@ def _athena_insert_block(sql: str, table: str) -> str:
     return m.group(1) if m else ""
 
 
+def _all_sql(root: pathlib.Path) -> str:
+    """Every SQL source a database is built from, comments stripped: the load files and the
+    forward migrations."""
+    files = sorted((root / "polaris_sql").glob("*.sql")) + sorted((root / "polaris_sql" / "migrations").glob("*.up.sql"))
+    return _strip_sql_comments("\n".join(_read_path(f) for f in files))
+
+
 def _athena_mechanism_exists(root: pathlib.Path, kind: str, name: str) -> bool:
+    """True when the tree DEFINES the named mechanism. Each kind requires its defining
+    statement. Until 2026-09-23 a mention sufficed: `COMMENT ON INDEX uq_one_active_per_person`
+    resolved C3's row with the index deleted, a trigger row resolved on its function alone, and
+    a COMMENT ON PROCEDURE would have resolved a procedure."""
+    n = re.escape(name)
     if kind == "CHECK_FUNCTION":
-        return re.search(r"\bdef\s+" + re.escape(name) + r"\s*\(",
-                         _read(root, "polaris_checks/checks.py")) is not None
+        return re.search(r"(?m)^def\s+" + n + r"\s*\(", _read(root, "polaris_checks/checks.py")) is not None
+    sql = _all_sql(root)
     if kind == "INDEX":
-        sql = _read(root, "polaris_sql/02_indexes.sql") + _read(root, "polaris_sql/01_schema.sql")
-        return re.search(r"\bINDEX\s+" + re.escape(name) + r"\b", sql, re.I) is not None
+        return re.search(r"\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"
+                         + n + r"\b", sql, re.I) is not None
     if kind == "CHECK_CONSTRAINT":
-        return re.search(r"\bCONSTRAINT\s+" + re.escape(name) + r"\b",
-                         _read(root, "polaris_sql/01_schema.sql"), re.I) is not None
+        return re.search(r"\bCONSTRAINT\s+" + n + r"\s+(?:CHECK|UNIQUE|EXCLUDE|FOREIGN|PRIMARY)\b",
+                         sql, re.I) is not None
     if kind == "TRIGGER":
-        sql = _read(root, "polaris_sql/06_triggers.sql") + _read(root, "polaris_sql/01_schema.sql")
-        return (re.search(r"\bCREATE\s+TRIGGER\s+" + re.escape(name) + r"\b", sql, re.I) is not None
-                or re.search(r"\bFUNCTION\s+" + re.escape(name) + r"\b", sql, re.I) is not None)
+        # A row may name the trigger or the function it runs (C1 names reject_audit_modification).
+        return (_trigger_created(sql, name)
+                or re.search(r"\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+" + n + r"\s*\(", sql, re.I) is not None)
     if kind == "PROCEDURE":
-        return re.search(r"\b(?:FUNCTION|PROCEDURE)\s+" + re.escape(name) + r"\b",
-                         _read(root, "polaris_sql/05_procedures.sql"), re.I) is not None
+        return re.search(r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+" + n + r"\s*\(",
+                         sql, re.I) is not None
     return False
 
 

@@ -5992,6 +5992,14 @@ def test_c1c10_objects_check_resolves_names_against_the_code(tmp_path):
         "must FAIL when a sibling summary cites a phantom trigger"
     write({"docs/operator/PRIVACY.md": "plain prose\n"})
 
+    # 2026-09-23: the index deleted, its COMMENT ON left behind, still resolved the citation
+    write({"polaris_sql/01_schema.sql": "DROP INDEX IF EXISTS uq_one;\nCOMMENT ON INDEX uq_one IS 'x';\n",
+           "docs/operator/PRIVACY.md": "The `uq_one` index.\n"})
+    assert checks.check_c1c10_objects_resolve(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only a COMMENT ON names a cited index"
+    write({"polaris_sql/01_schema.sql": "CREATE UNIQUE INDEX uq_one ON t (a);\n",
+           "docs/operator/PRIVACY.md": "plain prose\n"})
+
     write({"MISSION.md": mission.replace("`06_triggers.sql::reject_audit_modification()`", "a trigger", 5)})
     assert checks.check_c1c10_objects_resolve(tmp_path)[0].level == "FAIL", \
         "must FAIL when the table stops naming concrete file::object anchors"
@@ -6643,6 +6651,23 @@ def test_athena_rule_enforcement_resolves_check_discriminates(tmp_path):
                                "  ('C1','Audit','append only','CONSTRAINT','MISSION.md C1'),\n"
                                "  ('C2','ZK','zero knowledge','CONSTRAINT','MISSION.md C2')\n"))
     assert checks.check_athena_rule_enforcement_resolves(tmp_path)[0].level == "FAIL", "must FAIL on an unenforced rule"
+    # 2026-09-23: a mention is not a definition. With the index deleted, its COMMENT ON
+    # resolved C3's row; with the trigger deleted, the row resolved on nothing but prose.
+    _athena_write(tmp_path, "polaris_sql/16_athena.sql",
+                  GOOD.replace("  ('C1','TRIGGER','trg_demo_append_only','note')\n",
+                               "  ('C1','TRIGGER','trg_demo_append_only','note'),\n"
+                               "  ('C1','INDEX','uq_demo','note')\n"))
+    _athena_write(tmp_path, "polaris_sql/02_indexes.sql", "CREATE UNIQUE INDEX uq_demo ON t (a) WHERE b;\n")
+    assert checks.check_athena_rule_enforcement_resolves(tmp_path)[0].level == "OK", "must PASS with the index defined"
+    _athena_write(tmp_path, "polaris_sql/02_indexes.sql",
+                  "DROP INDEX IF EXISTS uq_demo;\nCOMMENT ON INDEX uq_demo IS 'one active';\n")
+    assert checks.check_athena_rule_enforcement_resolves(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only a COMMENT ON names the index"
+    _athena_write(tmp_path, "polaris_sql/02_indexes.sql", "CREATE UNIQUE INDEX uq_demo ON t (a) WHERE b;\n")
+    _athena_write(tmp_path, "polaris_sql/06_triggers.sql",
+                  "COMMENT ON TRIGGER trg_demo_append_only ON X IS 'append only';\n")
+    assert checks.check_athena_rule_enforcement_resolves(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only a COMMENT ON names the trigger"
 
 
 def test_athena_console_check_discriminates(tmp_path):
