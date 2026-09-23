@@ -110,10 +110,9 @@ DECLARED_SURVIVORS: dict[str, str] = {
         "removing the throw yields garbage bytes and the same not-authentic verdict",
     "typescript:hexToBytes:7c7d1e":
         "removing the throw yields garbage bytes and the same not-authentic verdict",
-    "typescript:accessToken:a4b2f8":
-        "an HTTP status guard on the online path; no offline suite reaches it",
-    "typescript:onlineStatus:0192d7":
-        "an HTTP status guard on the online path; no offline suite reaches it",
+    # typescript:accessToken and typescript:onlineStatus, the two HTTP status guards on the
+    # online path, were declared here until 2026-09-23 as "no offline suite reaches it". A
+    # stubbed fetch reaches both; sdk.test.ts now drives each with a non-OK answer.
 
     # --- Reached only when the CRYPTO BACKEND IS ABSENT OR DISAGREES ------------------
     # `ok is None` means the verification could not run at all. A suite that runs has a

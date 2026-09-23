@@ -246,5 +246,62 @@ class ResponseBindingTests(unittest.TestCase):
                          cp.response_body(p["challenge"], p["scope"], p["handle"]))
 
 
+class TheAcceptingPathTests(unittest.TestCase):
+    """2026-09-23: a held-out round found that no test here had ever reached `accepted: True`.
+    Every presentation carried no card object, so every one was refused by "never saw a signed
+    card object" before the status, the freshness or the card's own verdict was consulted, and
+    four mutations survived behind that one refusal: a card object that fails verification
+    ignored, a status assertion that does not verify accepted, a stale one accepted, and any
+    status but REVOKED accepted. Each test here starts from a presentation that IS accepted,
+    the positive control, and changes one thing."""
+
+    NOW = 1_800_000_000
+
+    def setUp(self):
+        self.device = vd.VerifierDevice("counter-1")
+        self.ok = lambda b, s: True
+        self.card = cp.build_card(
+            token_value="TOK", issuing_authority=1, activation_sequence=1,
+            issued_at=1_757_000_000, expires_at=1_914_766_400,
+            card_key_classical=bytes(cp.CLASSICAL_KEY_LEN),
+            sign_classical=lambda d: b"\x01" * 71)
+
+    def _decide(self, card_signature_ok=True, **kw):
+        return self.device.decide(_presentation(self.device, card_object=self.card),
+                                  verify_response=self.ok,
+                                  verify_card_signature=lambda d, s: card_signature_ok,
+                                  now=self.NOW, **kw)
+
+    def _assertion(self, authentic=True, fresh=True, status="ACTIVE"):
+        return lambda a, now=None, max_window_seconds=None: {
+            "status_authentic": authentic, "fresh": fresh, "status": status}
+
+    def test_online_active_with_a_genuine_card_is_accepted(self):
+        self.assertTrue(self._decide(online_status={"status": "ACTIVE"})["accepted"])
+
+    def test_offline_active_fresh_and_genuine_is_accepted(self):
+        v = self._decide(status_assertion={}, verify_status_assertion=self._assertion())
+        self.assertTrue(v["accepted"], v["note"])
+
+    def test_a_card_object_that_does_not_verify_is_refused(self):
+        v = self._decide(card_signature_ok=False, online_status={"status": "ACTIVE"})
+        self.assertFalse(v["accepted"])
+        self.assertIs(v["card_authentic"], False)
+
+    def test_every_status_but_active_is_refused_with_a_genuine_card(self):
+        for status in ("SUSPENDED", "EXPIRED", "PENDING", None):
+            with self.subTest(status=status):
+                self.assertFalse(self._decide(online_status={"status": status})["accepted"])
+
+    def test_a_status_assertion_that_does_not_verify_is_refused(self):
+        v = self._decide(status_assertion={}, verify_status_assertion=self._assertion(authentic=False))
+        self.assertFalse(v["accepted"])
+
+    def test_a_stale_status_assertion_is_refused(self):
+        v = self._decide(status_assertion={}, verify_status_assertion=self._assertion(fresh=False))
+        self.assertFalse(v["accepted"])
+        self.assertIs(v["authorization_fresh"], False)
+
+
 if __name__ == "__main__":
     unittest.main()

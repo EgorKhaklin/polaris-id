@@ -203,6 +203,17 @@ class VerdictTests(unittest.TestCase):
         self.assertFalse(v["authentic"])
         self.assertFalse(v["unexpired"])
 
+    def test_a_card_is_expired_at_its_expiry_instant(self):
+        """The window is half-open, as every other window in the tree is. 2026-09-23: a
+        held-out mutation made the card valid AT expires_at and every test stayed green,
+        because the only expiry test sat eighty-five million seconds past it."""
+        expires = cp.decode(self._card())["expires_at"]
+        ok = lambda d, s: True  # noqa: E731
+        self.assertTrue(cp.verify_card(self._card(), verify_classical=ok, now=expires - 1)["authentic"])
+        at = cp.verify_card(self._card(), verify_classical=ok, now=expires)
+        self.assertFalse(at["unexpired"])
+        self.assertFalse(at["authentic"])
+
     def test_a_tampered_body_changes_the_digest(self):
         blob = self._card()
         fields = cp.decode(blob)

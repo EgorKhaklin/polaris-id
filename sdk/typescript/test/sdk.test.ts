@@ -512,3 +512,87 @@ test("held-out: a grant amount is bounded at its limit", () => {
   assert.equal(grantWithinLimits(g, 0, 100.01)[0], false);
   assert.equal(grantWithinLimits(g, 0, 150)[0], false);
 });
+
+
+// 2026-09-23: a held-out round on the online half of verifyPresentation. Five of six
+// mutations survived: a status check that FAILED returned accept; the untrusted-issuer
+// refusal deleted (the test above made the status call throw, so the failed call rejected
+// instead); `current` read from the status string; an expired bearer reused; a non-OK
+// answer from the verify endpoint parsed as a status. Each test below gives every other
+// check a passing answer, so only the mechanism named can refuse.
+const PRES = () => ({ credential: vec("ml-dsa-65-valid.json") });
+
+test("held-out: a status check that fails rejects", async () => {
+  const v = new PolarisVerifier({ issuerUrl: "http://x" });
+  (v as any).onlineStatus = async () => { throw new Error("connection refused"); };
+  const out = await v.verifyPresentation(PRES());
+  assert.equal(out.decision, "reject");
+  assert.equal(out.authentic, true);
+});
+
+test("held-out: an untrusted issuer is rejected even when the status says current", async () => {
+  const v = new PolarisVerifier({ issuerUrl: "http://x", anchors: ["00"] });
+  (v as any).onlineStatus = async () => ({ currently_authoritative: true, status: "ACTIVE" });
+  assert.equal((await v.verifyPresentation(PRES())).decision, "reject");
+});
+
+test("held-out: only the authoritative flag makes a credential current", async () => {
+  for (const status of [{ currently_authoritative: false, status: "SUSPENDED" },
+                        { currently_authoritative: false, status: "ACTIVE" },
+                        { status: "ACTIVE" }, {}]) {
+    const v = new PolarisVerifier({ issuerUrl: "http://x" });
+    (v as any).onlineStatus = async () => status;
+    assert.equal((await v.verifyPresentation(PRES())).decision, "reject", JSON.stringify(status));
+  }
+});
+
+test("held-out: a bearer is reused until five seconds before expiry and no later", async () => {
+  const saved = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return { ok: true, status: 200, json: async () => ({ access_token: "new", expires_in: 300 }) };
+  }) as any;
+  try {
+    const v = new PolarisVerifier({ issuerUrl: "http://x", clientId: "c", clientSecret: "s" });
+    (v as any).bearer = "old";
+    (v as any).bearerExp = Date.now() + 60_000;
+    assert.equal(await (v as any).accessToken(), "old");
+    assert.equal(calls, 0);
+    (v as any).bearerExp = Date.now() + 4_000;
+    assert.equal(await (v as any).accessToken(), "new", "a token about to expire is replaced");
+    (v as any).bearer = "old";
+    (v as any).bearerExp = Date.now() - 1;
+    assert.equal(await (v as any).accessToken(), "new", "an expired token is never reused");
+  } finally {
+    globalThis.fetch = saved;
+  }
+});
+
+test("held-out: a non-OK answer from the verify endpoint is a failed check, not a status", async () => {
+  const saved = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => String(url).endsWith("/oauth/token")
+    ? { ok: true, status: 200, json: async () => ({ access_token: "t", expires_in: 300 }) }
+    : { ok: false, status: 500, json: async () => ({ currently_authoritative: true, status: "ACTIVE" }) }) as any;
+  try {
+    const v = new PolarisVerifier({ issuerUrl: "http://x", clientId: "c", clientSecret: "s" });
+    assert.equal((await v.verifyPresentation(PRES())).decision, "reject");
+  } finally {
+    globalThis.fetch = saved;
+  }
+});
+
+test("held-out: a non-OK answer from the token endpoint is a failed check, not a token", async () => {
+  // The SDK drill declared this guard and its sibling in onlineStatus unreachable, "no offline
+  // suite reaches it". A stubbed fetch reaches both.
+  const saved = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => String(url).endsWith("/oauth/token")
+    ? { ok: false, status: 401, json: async () => ({ access_token: "t", expires_in: 300 }) }
+    : { ok: true, status: 200, json: async () => ({ currently_authoritative: true, status: "ACTIVE" }) }) as any;
+  try {
+    const v = new PolarisVerifier({ issuerUrl: "http://x", clientId: "c", clientSecret: "s" });
+    assert.equal((await v.verifyPresentation(PRES())).decision, "reject");
+  } finally {
+    globalThis.fetch = saved;
+  }
+});

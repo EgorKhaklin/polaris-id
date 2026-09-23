@@ -427,6 +427,59 @@ class TamperedMaterialIsRefusedTests(unittest.TestCase):
                     "the verifier returned %r" % (name, authentic))
 
 
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class OnlineDecisionHeldOutTests(unittest.TestCase):
+    """2026-09-23: a held-out round on the online half of verify_presentation, which the
+    tests above reach only through an injected status of the cleanest shape. Four of six
+    mutations survived: a status check that FAILED returned accept; `current` read from the
+    status string; a missing `currently_authoritative` read as true; an expired bearer token
+    reused for an hour. Each test gives every other check a passing answer."""
+
+    def _pres(self):
+        return {"credential": _vector("ml-dsa-65-valid.json")}
+
+    def _with(self, status):
+        v = pv.PolarisVerifier(issuer_url="http://x")
+        v._online_status = status if callable(status) else (lambda cred: status)
+        return v
+
+    def test_a_status_check_that_fails_rejects(self):
+        def down(cred):
+            raise OSError("connection refused")
+        out = self._with(down).verify_presentation(self._pres())
+        self.assertEqual(out.decision, "reject")
+        self.assertTrue(out.authentic)
+
+    def test_only_the_authoritative_flag_makes_a_credential_current(self):
+        for status in ({"currently_authoritative": False, "status": "SUSPENDED"},
+                       {"currently_authoritative": False, "status": "ACTIVE"},
+                       {"status": "ACTIVE"}, {}):
+            with self.subTest(status=status):
+                self.assertEqual(self._with(status).verify_presentation(self._pres()).decision,
+                                 "reject")
+
+    def _token_answer(self, token):
+        from unittest import mock
+        answer = mock.MagicMock()
+        answer.__enter__.return_value.read.return_value = json.dumps(
+            {"access_token": token, "expires_in": 300}).encode()
+        return answer
+
+    def test_a_bearer_token_is_reused_until_five_seconds_before_expiry_and_no_later(self):
+        import time
+        from unittest import mock
+        v = pv.PolarisVerifier(issuer_url="http://x", client_id="c", client_secret="s")
+        v._bearer = "old"
+        with mock.patch("urllib.request.urlopen", return_value=self._token_answer("new")) as call:
+            v._bearer_exp = time.time() + 60
+            self.assertEqual(v._access_token(), "old")
+            self.assertEqual(call.call_count, 0)
+            v._bearer_exp = time.time() + 4
+            self.assertEqual(v._access_token(), "new", "a token about to expire is replaced")
+            v._bearer, v._bearer_exp = "old", time.time() - 1
+            self.assertEqual(v._access_token(), "new", "an expired token is never reused")
+
+
 class TheTokenCacheLifetimeIsBoundedTests(unittest.TestCase):
     """The issuer says how long its access token lives. The client believed it without
     reading it.

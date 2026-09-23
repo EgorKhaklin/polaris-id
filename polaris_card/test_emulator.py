@@ -142,6 +142,23 @@ class PinTests(TokenTestCase):
         self.assertFalse(self.token.blocked)
         self.assertTrue(em.is_ok(self._pin("1234")))
 
+    def test_a_right_puk_restores_the_puk_counter_too(self):
+        """2026-09-23, a held-out mutation: a right PUK reset the PIN counter and left the
+        PUK counter where the wrong guesses had put it, so the card came nearer to permanent
+        blocking with every lawful unblock. Nothing noticed, because no test made more than
+        one wrong PUK guess."""
+        self._select()
+        for _ in range(em.MAX_PIN_TRIES):
+            self._pin("0000")
+        for _ in range(em.MAX_PUK_TRIES - 1):
+            self.token.transmit(em.unblock("00000000"))
+        self.assertTrue(em.is_ok(self.token.transmit(em.unblock("12345678"))))
+        for _ in range(em.MAX_PIN_TRIES):
+            self._pin("0000")
+        self.assertEqual(em.status_word(self.token.transmit(em.unblock("00000000"))),
+                         em.SW_WRONG_PIN | (em.MAX_PUK_TRIES - 1),
+                         "the PUK counter must be full again after a right PUK")
+
     def test_a_card_refuses_a_duress_pin_equal_to_the_normal_one(self):
         with self.assertRaises(ValueError):
             em.SoftwareToken(card_object=self.detail["card_object"], normal_pin="1234",

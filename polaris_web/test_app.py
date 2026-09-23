@@ -13971,6 +13971,89 @@ class CardPersonalizationTests(PolarisTestCase):
             self.assertEqual(second.state, em.STATE_BLANK,
                              "a refused personalization must not have touched the card")
 
+    # 2026-09-23: a held-out round of seven mutations of personalize() against this class and
+    # the personalization drill. Five survived: every check the DATABASE also makes was
+    # tested, and none of the checks only the application makes. Each test below hands in a
+    # card or a verifier that misbehaves in exactly one way, and asserts nothing was recorded.
+
+    def _recorded(self, conn, token_id):
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM CardPersonalization WHERE token_id = %s",
+                        (token_id,))
+            return cur.fetchone()["n"]
+
+    class _Card:
+        """A real blank card behind a wrapper that can lie about one thing."""
+        def __init__(self, inner, state=None, refuse_ins=None):
+            self.inner, self._refuse = inner, refuse_ins
+            self.state = inner.state if state is None else state
+        def transmit(self, apdu):
+            if self._refuse is not None and len(apdu) > 1 and apdu[1] == self._refuse:
+                return bytes([0x6A, 0x80])
+            return self.inner.transmit(apdu)
+
+    def test_a_card_that_says_it_is_not_blank_is_refused_before_it_is_asked(self):
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            inner, _ = em.new_blank_token(); inner.transmit(em.select())
+            card = self._Card(inner, state=em.STATE_PERSONALIZED)
+            with self.assertRaises(pz.PersonalizationRefused) as caught:
+                pz.personalize(conn, token_id, card, issuer_sign=issuer_sign)
+            self.assertIn("not blank", str(caught.exception))
+            self.assertEqual(inner.state, em.STATE_BLANK, "the card was asked anyway")
+            self.assertEqual(self._recorded(conn, token_id), 0)
+
+    def test_one_key_for_both_slots_is_refused(self):
+        from unittest import mock
+        em, pz, issuer_sign = self._card_bits()
+        real = em.parse_generated_keys
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            card, _ = em.new_blank_token(); card.transmit(em.select())
+            with mock.patch.object(pz.em, "parse_generated_keys",
+                                   side_effect=lambda r: (real(r)[0], real(r)[0])):
+                with self.assertRaises(pz.PersonalizationRefused) as caught:
+                    pz.personalize(conn, token_id, card, issuer_sign=issuer_sign)
+            self.assertIn("same key for both slots", str(caught.exception))
+            self.assertEqual(self._recorded(conn, token_id), 0)
+
+    def test_an_object_that_does_not_verify_is_not_recorded(self):
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            card, _ = em.new_blank_token(); card.transmit(em.select())
+            with self.assertRaises(pz.PersonalizationRefused) as caught:
+                pz.personalize(conn, token_id, card, issuer_sign=issuer_sign,
+                               issuer_verify=lambda d, sig: False)
+            self.assertIn("did not verify", str(caught.exception))
+            self.assertEqual(self._recorded(conn, token_id), 0)
+
+    def test_a_card_that_refuses_the_object_is_not_recorded(self):
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            inner, _ = em.new_blank_token(); inner.transmit(em.select())
+            card = self._Card(inner, refuse_ins=em.INS_PUT_CARD_OBJECT)
+            with self.assertRaises(pz.PersonalizationRefused) as caught:
+                pz.personalize(conn, token_id, card, issuer_sign=issuer_sign)
+            self.assertIn("refused the object", str(caught.exception))
+            self.assertEqual(self._recorded(conn, token_id), 0)
+
+    def test_the_default_lifetime_is_ten_years(self):
+        em, pz, issuer_sign = self._card_bits()
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from polaris_card import card_profile as cp
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            card, _ = em.new_blank_token(); card.transmit(em.select())
+            done = pz.personalize(conn, token_id, card, issuer_sign=issuer_sign,
+                                  issued_at=1_800_000_000)
+            fields = cp.decode(done["card_object"])
+            self.assertEqual(fields["expires_at"] - fields["issued_at"], 10 * 365 * 24 * 3600)
+
     def test_a_withdrawn_credential_is_refused(self):
         em, pz, issuer_sign = self._card_bits()
         with self._new_conn() as conn:
