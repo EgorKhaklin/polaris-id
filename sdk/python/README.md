@@ -35,6 +35,22 @@ print(verdict.decision)                              # "accept" | "reject" | "pr
 Offline only (no `issuer_url`) yields a `provisional` verdict from authenticity
 alone. `verify_authenticity(pack, anchors)` exposes the offline check directly.
 
+A first run needs no issuer and no credential of your own: the repository publishes test
+vectors.
+
+```bash
+base=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/vectors
+curl -sO $base/ml-dsa-65-valid.json && curl -sO $base/ml-dsa-65-tampered-signature.json
+python3 -c "
+import json
+from polaris_verify import verify_authenticity
+for f in ('ml-dsa-65-valid.json', 'ml-dsa-65-tampered-signature.json'):
+    print(f, verify_authenticity(json.load(open(f)), None).authentic)"
+```
+
+The first prints `True`, the second `False`. Walked on 2026-09-23 from a clean virtualenv
+against the package on PyPI.
+
 ## What it verifies
 
 Everything below is offline and self-contained. Signatures are accepted under two FIPS 204
@@ -51,7 +67,7 @@ refused (wire spec section 6).
   commitment or self-consistency).
 - `verify_cross_authority(...)`: the federation trust decision (accept / reject).
 
-The SDK passes every case of the conformance suite (48 at v9.331) and every case of the frozen
+The SDK passes every case of the conformance suite (118 cases, measured against the repository on 2026-09-23) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py`, which runs on every CI push.
 
 ## Conformance

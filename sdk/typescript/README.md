@@ -46,7 +46,7 @@ refused (wire spec section 6).
   commitment or self-consistency).
 - `verifyCrossAuthority(...)`: the federation trust decision (accept / reject).
 
-The SDK passes every case of the conformance suite (48 at v9.331) and every case of the frozen
+The SDK passes every case of the conformance suite (118 cases, measured against the repository on 2026-09-23) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building
