@@ -1,0 +1,30 @@
+% v2-figures/transparency.tex: the log, the monitor, the witnesses, the gossip
+% pool and the equivocation proof. Left to right: what the authority publishes,
+% who watches it, and what catches a split view.
+\begin{tikzpicture}
+  % The authority's log
+  \node[layerbox, minimum width=3.4cm, text width=3.1cm] (log) at (0,4.2) {Журнал\\[-1pt]{\mdseries\scriptsize таблица корней только на добавление (пакеты якорей, хеши расписок или заякоренные отметки времени), хешируемая в дерево Меркла}};
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (sth) at (0,1.0) {Подписанная вершина дерева\\[-1pt]{\scriptsize идентификатор журнала, размер дерева, хеш корня, время; подписано ключом журнала}};
+  \draw[flow] (log) -- (sth);
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (proofs) at (0,-2.4) {Доказательства\\[-1pt]{\scriptsize согласованность: размер $m$ есть префикс размера $n$; включение: запись $i$ есть в дереве}};
+  \draw[flowfaint] (sth) -- (proofs);
+  % The monitor
+  \node[extbox, minimum width=3.6cm, text width=3.3cm] (mon) at (5.6,4.0) {Наблюдатель\\[-1pt]{\scriptsize запускает всякий; держит одно: последнюю принятую вершину. Тревожит при переписывании, ответвлении, усыхании, неверном ключе, времени, идущем вспять.}\\[2pt]{\scriptsize\bfseries\color{classmark}не видит, показали ли другому наблюдателю иную вершину}};
+  \draw[flow] (sth.north east) to[out=60, in=180] node[faint, sloped, above, pos=0.5] {вершина + доказательство согласованности} (mon.west);
+  % Witnesses
+  \node[extbox, minimum width=2.4cm] (w1) at (10.4,2.0) {свидетель 1};
+  \node[extbox, minimum width=2.4cm] (w2) at (10.4,1.0) {свидетель 2};
+  \node[extbox, minimum width=2.4cm] (w3) at (10.4,0.0) {свидетель 3};
+  \foreach \w in {w1,w2,w3} { \draw[flowfaint] (sth.east) -- (\w.west); }
+  \node[softbox, minimum width=2.6cm, text width=2.4cm] (cosig) at (14.2,1.0) {соподписи\\[-1pt]{\scriptsize доверяющая сторона требует $K$ различных доверенных свидетелей на точно этой вершине}};
+  \foreach \w in {w1,w2,w3} { \draw[flow] (\w.east) -- (cosig.west); }
+  % Gossip and equivocation
+  \node[softbox, minimum width=2.6cm, text width=2.4cm] (pool) at (10.4,-2.4) {общий котёл слухов\\[-1pt]{\scriptsize каждый свидетель выкладывает вершину, которую ему показали}};
+  \draw[flowfaint] (w3.south) -- (pool.north);
+  \node[corebox, minimum width=2.8cm, text width=2.6cm] (eq) at (14.2,-2.4) {доказательство двоесказательства\\[-1pt]{\mdseries\scriptsize две вершины, один размер, разные корни, обе подписаны журналом: неотрицаемо}};
+  \draw[flow] (pool.east) -- (eq.west);
+  % External ledger
+  \node[extbox, minimum width=3.6cm, text width=3.3cm] (ledger) at (5.6,-3.2) {Внешняя книга\\[-1pt]{\scriptsize журнал вершин только на добавление; возвращает расписку с собственной вершиной и доказательством включения (сегодня файловая подсистема; драйверы цепей объявлены)}};
+  \draw[flow] (sth.south east) to[out=-30, in=180] node[faint, below, sloped, pos=0.5] {публикует каждую вершину} (ledger.west);
+  \node[faint, text width=6.6cm, anchor=north] at (12.3,-4.2) {Протокол независимых свидетелей построен и отработан в учениях под настоящими подписями. Институционально независимые свидетели, банк, общественная организация, другой орган, появятся лишь после развёртывания системы; сегодня свидетели суть три процесса в учении.};
+\end{tikzpicture}

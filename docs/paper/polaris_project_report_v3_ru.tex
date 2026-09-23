@@ -187,7 +187,7 @@
 % The town analogy, always returned from. An unbreakable box: it is a few lines long, and a
 % few lines split across a page break read worse than the space a whole box leaves behind
 % when it moves to the next page. Readability over page count.
-\newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[enhanced, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt]\small{\scshape\color{gold}in the town}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
+\newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[enhanced, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt]\small{\scshape\color{gold}в городе}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
 % Why the next layer exists: the causal step.
 \newcommand{\nextlayer}[1]{\par\vspace{4pt}\noindent{\color{accent}\rule[-3pt]{2.5pt}{13pt}}\hspace{7pt}\parbox[t]{\dimexpr\textwidth-12pt}{\small\itshape #1}\par\vspace{4pt}}
 % A layer card: the same questions asked of every component. A card is one object: it
@@ -219,20 +219,20 @@
 % paragraph that ran on to the next page. Readability over page count: neither placement
 % shares a page break with a paragraph.
 \newcommand{\figfile}[3]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
-  \adjustbox{max width=\textwidth,max totalheight=0.88\textheight,center}{\input{v3-figures/#1}}%
+  \adjustbox{max width=\textwidth,max totalheight=0.88\textheight,center}{\input{v3-figures-ru/#1}}%
   \caption{#2}\label{#3}\end{figure}}
 % \figfit: the same, with a height cap for the one figure that missed the page of its paragraph
 % by fifteen points; the cap is a three per cent reduction, within reading comfort.
 \newcommand{\figfit}[4]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
-  \adjustbox{max width=\textwidth,max totalheight=#1\textheight,center}{\input{v3-figures/#2}}%
+  \adjustbox{max width=\textwidth,max totalheight=#1\textheight,center}{\input{v3-figures-ru/#2}}%
   \caption{#3}\label{#4}\end{figure}}
 \newcommand{\figpage}[3]{\begin{figure}[p]\centering
-  \adjustbox{max width=\textwidth,max totalheight=0.84\textheight,center}{\input{v3-figures/#1}}%
+  \adjustbox{max width=\textwidth,max totalheight=0.84\textheight,center}{\input{v3-figures-ru/#1}}%
   \caption{#2}\label{#3}\end{figure}}
 % \figside: a page turned on its side for a figure much wider than it is tall, so that it
 % is read at its natural size rather than at the three quarters the upright page allows.
 \newcommand{\figside}[3]{\begin{sidewaysfigure}\centering
-  \adjustbox{max width=\textheight,max totalheight=0.8\textwidth,center}{\input{v3-figures/#1}}%
+  \adjustbox{max width=\textheight,max totalheight=0.8\textwidth,center}{\input{v3-figures-ru/#1}}%
   \caption{#2}\label{#3}\end{sidewaysfigure}}
 \newcommand{\thead}[1]{\textbf{\color{white}\small #1}}
 

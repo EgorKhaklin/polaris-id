@@ -1,0 +1,18 @@
+% v2-figures/cognition.tex: the cognitive layers. Two exist (Atlas, Athena),
+% two are named in the roadmap or this paper as future (Metis, Myrmex), and the
+% constitution constrains all of them. The horizontal red rule is the
+% person-prohibition: nothing above it may model a natural person.
+\begin{tikzpicture}
+  \node[softbox, minimum width=15.6cm, text width=15.0cm] (themis) at (6.6,3.3)
+    {\textbf{Конституция стесняет их все}: призвание и C1--C10, закреплённые в схеме и удерживаемые инвариантными проверками (умозрительный слой <<Фемида>>; имя принадлежит настоящему документу, а не репозиторию)};
+  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (atlas)  at (0.6,1.0)  {Атлас\\[-1pt]{\mdseries\scriptsize видит, что система делает: ограниченные сводки событий, но никогда местоположение при нулевом разглашении}};
+  \node[layerbox, minimum width=3.6cm, text width=3.3cm] (athena) at (4.6,1.0)  {Афина\\[-1pt]{\mdseries\scriptsize понимает устройство власти: ведомства, ключи, контексты, доверие, правила и то, что закрепляет каждое}};
+  \node[futbox,   minimum width=3.6cm, text width=3.3cm] (metis)  at (8.6,1.0)  {Метида (предложено)\\[-1pt]{\scriptsize изучает поведение самого Polaris: отклонения, ёмкость, регрессии, риск выпуска}};
+  \node[futbox,   minimum width=3.6cm, text width=3.3cm] (myrmex) at (12.6,1.0) {Мирмекс (предложено)\\[-1pt]{\scriptsize нападает на Polaris снаружи как независимый наблюдатель}};
+  \foreach \n in {atlas,athena,metis,myrmex} { \draw[flowfaint] (themis.south -| \n) -- (\n.north); }
+  % The person prohibition.
+  \node[font=\scriptsize\bfseries, text=classmark, anchor=north west, inner sep=0pt] (prohibition) at (-1.4,-1.12) {ниже этой черты не моделируется ничто: ни узла-человека, ни суррогата субъекта, ни поведенческого профиля, ни оценки};
+  \draw[refuse] ([yshift=3.5pt]prohibition.north west) -- ([yshift=3.5pt]prohibition.north east);
+  \node[humanbox, minimum width=3.2cm] (person) at (6.6,-2.3) {физическое лицо};
+  \node[faint, text width=8.5cm, anchor=north] at (6.6,-3.0) {Атлас и Афина читают события и устройство власти; инвариантные проверки роняют сборку, если появится поле или обход на уровне человека. Делать читаемой власть, а не людей.};
+\end{tikzpicture}

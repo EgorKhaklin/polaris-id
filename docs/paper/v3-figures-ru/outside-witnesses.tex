@@ -1,0 +1,35 @@
+% v3-figures/outside-witnesses.tex: the three things outside the repository that
+% have exercised it, and the two controls that make the first one mean anything.
+% Three columns of equal width, nothing beside an arrow, notes below the chains,
+% so the adjustbox scaling keeps every label readable.
+\begin{tikzpicture}[
+  col/.style={minimum width=5.4cm, text width=5.0cm, minimum height=0.95cm},
+]
+  % --- column 1: the wallet
+  \node[kicker, anchor=west] at (-2.7,3.95) {кошелёк, написанный здесь никем};
+  \node[extbox, col] (wal) at (0,2.9) {walt.id Wallet API v2\\[-1pt]{\scriptsize без изменений, по закреплённому дайджесту образа}};
+  \node[corebox, col] (oid) at (0,1.1) {polaris-oid4vp\\[-1pt]{\mdseries\scriptsize верификатор OpenID4VP 1.0 + HAIP}};
+  \node[softbox, col] (acc) at (0,-0.7) {\code{200 authentic}, шесть утверждений\\[-1pt]{\scriptsize SD-JWT VC, привязка к ключу подписана ключом, выработанным самим кошельком}};
+  \node[softbox, col, draw=classmark] (c1) at (0,-2.5) {контроль: другой ключ эмитента\\[-1pt]{\scriptsize \code{400 refused: issuer\_signature}}};
+  \node[softbox, col, draw=classmark] (c2) at (0,-4.3) {контроль: предъявлено дважды\\[-1pt]{\scriptsize отказ на стадии запроса}};
+  \draw[flow] (wal) -- (oid); \draw[flow] (oid) -- (acc); \draw[refuse] (acc) -- (c1); \draw[refuse] (c1) -- (c2);
+  \node[faint, text width=5.2cm, anchor=north] at (0,-5.1) {сперва он отверг Polaris: сертификат для подписи запросов без назначения ключа \code{digitalSignature}};
+  % --- column 2: the hosted suite
+  \node[kicker, anchor=west] at (3.6,3.95) {служба, которую запускает кто-то другой};
+  \node[extbox, col] (oidf) at (6.3,2.9) {размещённый пакет проверок соответствия OpenID Foundation\\[-1pt]{\scriptsize через открытый интернет, 15 сентября 2026}};
+  \node[corebox, col] (oid2) at (6.3,1.1) {polaris-oid4vp\\[-1pt]{\mdseries\scriptsize одиннадцать модулей плана верификатора HAIP}};
+  \node[softbox, col] (pass) at (6.3,-0.7) {семь отрицательных модулей \code{PASSED}\\[-1pt]{\scriptsize засчитано службой по каждому отказу}};
+  \node[softbox, col, draw=gold] (rev) at (6.3,-2.5) {четыре положительных модуля \code{REVIEW}\\[-1pt]{\scriptsize снимки экрана приложены; ждут рецензента Фонда}};
+  \node[futbox, col] (cert) at (6.3,-4.3) {сертификация\\[-1pt]{\scriptsize не запрашивалась; REVIEW не есть PASSED}};
+  \draw[flow] (oidf) -- (oid2); \draw[flow] (oid2) -- (pass); \draw[flow] (pass) -- (rev); \draw[flowfut] (rev) -- (cert);
+  \node[faint, text width=5.2cm, anchor=north] at (6.3,-5.1) {ноль отказов, ноль предупреждений; два контроля, по одному на направление};
+  % --- column 3: the corpus
+  \node[kicker, anchor=west] at (9.9,3.95) {набор векторов, написанный кем-то другим};
+  \node[extbox, col] (wy) at (12.6,2.9) {Project Wycheproof\\[-1pt]{\scriptsize векторы проверки ML-DSA-65, закреплённый коммит}};
+  \node[layerbox, col] (wit) at (12.6,1.1) {оба свидетеля подписи\\[-1pt]{\mdseries\scriptsize liboqs и OpenSSL, при каждой отправке}};
+  \node[softbox, col] (agree) at (12.6,-0.7) {58 из 58 совпадают\\[-1pt]{\scriptsize принятие недействительного вектора есть отказ}};
+  \draw[flow] (wy) -- (wit); \draw[flow] (wit) -- (agree);
+  \node[faint, text width=5.2cm, anchor=north] at (12.6,-1.5) {примитив, а не протокол: ни одного предъявления ни с кем не обменивались};
+  % --- the line under all three
+  \node[faint, text width=17.5cm, anchor=north] at (6.3,-6.3) {ни одна из трёх не есть аудит, сертификация, пилотное внедрение или оператор; сводная таблица держит каждую строку с её датой и с тем, чего она не устанавливает};
+\end{tikzpicture}

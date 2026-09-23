@@ -1,0 +1,21 @@
+% v2-figures/gateway.tex: an institutional exchange through the gateway, and
+% what is left behind. The bodies exist for the life of the request; the
+% evidence is the signed envelope and the signed receipt.
+\begin{tikzpicture}
+  \node[extbox, minimum width=3.2cm, text width=2.9cm] (req) at (-0.4,3.6) {Запрашивающее учреждение\\[-1pt]{\scriptsize подписывает конверт своим зарегистрированным ключом: хеш тела, адресат, род, контекст, одноразовое число, время}};
+  \node[layerbox, minimum width=6.8cm, text width=6.5cm] (gw) at (7.0,3.6) {Шлюз (собственный экземпляр отвечающего)\\[-1pt]{\mdseries\scriptsize 1 отказывает без настоящего подписания. 2 проверяет форму, адрес, свежесть, привязку. 3 опознаёт по известному ключу, при двух свидетелях. 4 дозволяет: сам отвечающий аттестует запрашивающего в этом контексте. 5 поглощает одноразовое число. 6 передаёт наверх, куда настроил оператор. 7 подписывает расписку. 8 возвращает ответ + расписку.}};
+  \node[extbox, minimum width=2.8cm, text width=2.5cm] (up) at (14.2,3.6) {Вышестоящая служба\\[-1pt]{\scriptsize настраивается оператором; запрос её не называет никогда}};
+  \draw[flow] ([yshift=4mm]req.east) -- node[faint, above=1.5pt, text width=2.2cm] {конверт + тело} ([yshift=4mm]gw.west);
+  \draw[flowfaint] ([yshift=-4mm]gw.west) -- node[faint, below, text width=2.2cm] {ответ + расписка} ([yshift=-4mm]req.east);
+  \draw[flow] ([yshift=4mm]gw.east) -- node[faint, above] {тело} ([yshift=4mm]up.west);
+  \draw[flowfaint] ([yshift=-4mm]up.west) -- node[faint, below] {ответ} ([yshift=-4mm]gw.east);
+  % what is written
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (nonce) at (4.6,0.3) {\code{ExchangeNonce}\\[-1pt]{\scriptsize (хеш ключа, одноразовое число): повтор отвергается (409)}};
+  \node[softbox, minimum width=3.4cm, text width=3.1cm] (rlog) at (9.4,0.3) {\code{ExchangeReceiptLog}\\[-1pt]{\scriptsize SHA3-256 расписки, публикуемый как журнал прозрачности}};
+  \draw[flowfaint] (gw.south -| nonce.north) -- (nonce.north);
+  \draw[flowfaint] (gw.south -| rlog.north) -- (rlog.north);
+  \node[font=\scriptsize\bfseries\color{classmark}, text width=9.0cm, align=center, anchor=north] at (7.0,-0.75) {больше не пишется ничего: ни тела, ни строки журнала с телом, ни записи о том, кто о ком что спрашивал};
+  % the evidence
+  \node[corebox, minimum width=6.4cm, text width=6.1cm, anchor=north] (ev) at (4.6,-2.1) {Свидетельство: (конверт, расписка)\\[-1pt]{\mdseries\scriptsize подписанное намерение запрашивающего и подписанный отчёт отвечающего сходятся в ключе, контексте, хеше запроса и моменте; третья сторона проверяет оба автономно и без тела; сторона, держащая тело, подтверждает, что хеш его связывает}};
+  \node[faint, text width=4.6cm, anchor=north west] at (8.4,-2.1) {Одна расписка доказывает отчёт отвечающего; участие запрашивающего доказывается конвертом. Свидетельством является пара.};
+\end{tikzpicture}

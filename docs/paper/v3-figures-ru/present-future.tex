@@ -1,0 +1,35 @@
+% v3-figures/present-future.tex: the present system beside the future
+% ecosystem it is preparation for. Solid navy is what runs at 1.0.0-rc.1; dashed
+% gold is what does not. At v9.354 the holder-side row moved from gold to navy.
+% At 1.0.0-rc.1 one outside wallet has spoken on one path; the institutions that
+% are not the author are still dashed. The two panels share the same core.
+\begin{tikzpicture}
+  % Left panel: present.
+  \node[kicker, anchor=west] at (-0.6,4.3) {настоящее (выполняется в CI)};
+  \node[corebox, minimum width=2.6cm] (c1) at (2.4,2.8) {удостоверение};
+  \node[layerbox, minimum width=2.6cm] (iss) at (0.0,1.0) {выдающий орган};
+  \node[layerbox, minimum width=2.6cm] (rp)  at (4.8,1.0) {доверяющая сторона};
+  \node[layerbox, minimum width=2.7cm, text width=2.4cm] (fed) at (0.0,-1.0) {второй орган\\[-1pt]{\mdseries\scriptsize другой экземпляр Polaris}};
+  \node[layerbox, minimum width=2.7cm, text width=2.4cm] (wit) at (4.8,-1.0) {свидетели, наблюдатель\\[-1pt]{\mdseries\scriptsize процессы в учении}};
+  \node[layerbox, minimum width=5.6cm, text width=5.3cm] (inst) at (2.4,-3.1) {реестр, шлюз, расписки, отметки времени, подписанные документы};
+  \draw[flow] (iss) -- (c1); \draw[flow] (c1) -- (rp);
+  \draw[flow] (iss) -- node[faint, left] {аттестует} (fed);
+  \draw[flow] (rp) -- node[faint, right] {сверяет вершины} (wit);
+  \draw[flow] (fed.south) -- (inst.north -| fed.south); \draw[flow] (wit.south) -- (inst.north -| wit.south);
+  % Divider.
+  \draw[steelgray, line width=0.4pt, dash pattern=on 2pt off 2pt] (7.6,4.4) -- (7.6,-4.6);
+  % Right panel: future.
+  \node[kicker, anchor=west] at (8.4,4.3) {будущая среда (строки на стороне держателя работают; один сторонний кошелёк заговорил)};
+  \node[corebox, minimum width=2.6cm] (c2) at (11.6,2.8) {удостоверение};
+  \node[humanbox, minimum width=2.6cm] (hum) at (9.2,1.0) {человек};
+  \node[corebox, minimum width=2.7cm, text width=2.4cm] (agent) at (14.0,1.0) {программный агент\\[-1pt]{\scriptsize полномочие, подписанное держателем}};
+  \node[corebox, minimum width=2.7cm, text width=2.4cm] (pp) at (9.2,-1.0) {один человек, однажды, здесь\\[-1pt]{\scriptsize нуллификатор с областью}};
+  \node[futbox, minimum width=2.7cm, text width=2.4cm] (svc) at (14.0,-1.0) {службы, сети\\[-1pt]{\scriptsize проверяют, не узнавая лишнего}};
+  \node[futbox, minimum width=5.6cm, text width=5.3cm] (inst2) at (11.6,-3.1) {независимо эксплуатируемые органы, свидетели и реализации\\[-1pt]{\scriptsize пока один кошелёк и один размещённый пакет проверок; ни учреждения, ни оператора}};
+  \draw[flow] (hum) -- (c2);
+  \draw[flowfut] (c2) -- (agent);
+  \draw[flowfut] (hum) -- (pp);
+  \draw[flowfut] (agent) -- (svc);
+  \draw[flowfut] (pp.south) -- (inst2.north -| pp.south); \draw[flowfut] (svc.south) -- (inst2.north -| svc.south);
+  \node[faint, text width=5.6cm, anchor=north] at (11.6,-4.1) {ещё требуется: ослеплённые или одноразовые предъявления, чтобы обыкновенное удостоверение не показывало верификатору ничего устойчивого; оператор, который не есть автор; учреждения, которые не есть автор};
+\end{tikzpicture}

@@ -1,0 +1,57 @@
+% 191 was the Version 2 count and survived into the Version 3 figure; the re-measurement
+% at 1.0.0-rc.7 swept the sections and not the figures. 313 at 1.0.0-rc.7, per C-counts.
+% v2-figures/town-map.tex: the walled-town plan, with the real component beside
+% every civic name. The analogy describes structure, not political centralism:
+% the second town to the right is another authority with its own hall and its
+% own wall, joined by a road that runs one way.
+\begin{tikzpicture}[
+  wall/.style={draw=navydark, line width=2.2pt, fill=tabstripe},
+  district/.style={draw=navymid, line width=0.7pt, rounded corners=2pt, fill=white, font=\scriptsize, align=center, inner sep=3pt, text width=2.8cm},
+  hall/.style={draw=accent, line width=1.4pt, rounded corners=2pt, fill=accent, text=white, font=\bfseries\scriptsize, align=center, inner sep=4pt},
+  gate/.style={draw=navydark, line width=1pt, fill=gold, font=\tiny\bfseries, align=center, inner sep=2pt},
+  tower/.style={draw=navydark, line width=1pt, fill=navydark, text=white, font=\tiny\bfseries, align=center, inner sep=2.5pt, circle},
+  law/.style={draw=classmark, line width=0.8pt, fill=white, text=classmark, font=\scriptsize\bfseries, align=center, inner sep=4pt, text width=10.4cm},
+  road/.style={draw=steelgray, line width=3pt, double=white, double distance=1pt},
+  civic/.style={font=\tiny\scshape\color{gold}, inner sep=1pt},
+]
+% The laws above the town.
+\node[law] (law) at (0,6.6) {Законы над городом: призвание и C1--C10 \mbox{(MISSION.md)}, закреплённые в схеме и удерживаемые 313 инвариантными проверками};
+\draw[flowfaint] (law.south) -- (0,5.5);
+% The wall (schema constraints).
+\draw[wall] (-5.4,-4.8) rectangle (5.4,5.0);
+\node[civic, anchor=south west, align=left] at (-5.12,5.18) {стена: триггеры, проверки,\\уникальные индексы};
+% Districts.
+\node[hall, minimum width=3.2cm] (hall) at (0,1.2) {запись городской ратуши\\IdentityToken + TokenSignature};
+\node[district] (work) at (-3.3,3.3) {мастерские\\эпохи, разрешения,\\восстановление, принуждение};
+\node[district] (council) at (3.3,3.3) {зал совета\\{\tiny AgencyAlgorithmAuth,}\\{\tiny IssuerDiscretionPolicy, квоты}};
+\node[district] (arch) at (-3.3,-1.5) {архивы\\{\tiny журналы событий только на добавление,}\\{\tiny RetentionPolicy}};
+\node[district] (reg) at (3.3,-1.5) {реестровая палата\\представления Афины,\\подписанный реестр,\\список доверия};
+\node[district, text width=3.4cm] (court) at (0,-3.5) {судебные записи\\{\tiny AuditAccessLog, DuressEvent,}\\{\tiny LifecycleArchiveCheckpoint}};
+% Gates on the wall.
+\node[gate] (g1) at (0,5.0) {ворота выдачи\\\texttt{uc1\_issue}, подписание};
+\node[gate] (g2) at (5.4,1.2) {ворота проверки\\\texttt{/api/v1/verify}};
+\node[gate] (g3) at (0,-4.8) {ворота обмена\\\texttt{/api/v1/exchange}};
+\node[gate, anchor=west] (g4) at (-5.4,1.2) {ворота входа\\брокер входа, PKCE};
+% Watchtowers at the corners.
+\node[tower] (t1) at (-5.4,5.0) {Б};
+\node[tower] (t2) at (5.4,5.0) {Б};
+\node[tower] (t3) at (-5.4,-4.8) {Б};
+\node[tower] (t4) at (5.4,-4.8) {Б};
+\node[civic, anchor=north west] at (-5.4,-5.2) {Б: сторожевые башни, журналы прозрачности};
+% Watchers outside the wall.
+\node[extbox, minimum width=2.6cm] (wit) at (-9.4,-3.4) {независимые свидетели\\[-1pt]{\tiny соподписывают вершины, слухи,}\\{\tiny отвергают ответвление}};
+\draw[sees] (wit.east) -- (t3.west);
+\draw[sees] (wit.north east) -- (t1.south west);
+\node[extbox, minimum width=2.6cm] (rp) at (8.5,1.2) {доверяющая сторона\\[-1pt]{\tiny проверяет автономно}\\{\tiny отделяемым верификатором}};
+\draw[flow] (g2.east) -- (rp.west);
+% The second town: another authority, joined by a one-way road.
+\draw[wall, fill=white] (7.2,-4.6) rectangle (10.8,-2.2);
+\node[hall, minimum width=2.4cm, font=\bfseries\tiny] at (9.0,-3.4) {другой орган\\своя ратуша, свой ключ};
+\draw[road] (5.4,-3.4) -- (7.2,-3.4);
+\node[civic, anchor=south, align=center] at (6.3,-3.1) {дорога:\\аттестация};
+\node[font=\tiny\itshape\color{steelgray}, anchor=north, align=center, text width=2.3cm] at (5.9,-3.75) {в одну сторону,\\один контекст};
+% The holder outside.
+\node[humanbox, minimum width=2.4cm] (holder) at (-9.4,1.2) {держатель\\[-1pt]{\tiny файл кошелька, предъявление}};
+\draw[flow] (holder.east) -- (g4.west);
+\node[font=\tiny\itshape\color{steelgray}, anchor=north, text width=3.0cm, align=center] at (-9.4,0.3) {входит по владению; код принуждения выглядит для принуждающего как согласие};
+\end{tikzpicture}

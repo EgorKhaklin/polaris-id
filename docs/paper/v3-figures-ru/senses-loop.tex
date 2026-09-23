@@ -1,0 +1,14 @@
+% v2-figures/senses-loop.tex: how an error becomes a permanent new sense.
+\begin{tikzpicture}
+  \node[layerbox, minimum width=3.2cm, text width=2.9cm] (obs)  at (0,0)    {Наблюдение\\[-1pt]{\mdseries\scriptsize запусти систему, а не читай её}};
+  \node[layerbox, minimum width=3.2cm, text width=2.9cm] (fail) at (4.6,0)  {Отказ\\[-1pt]{\mdseries\scriptsize зелёная проверка доказала не то}};
+  \node[layerbox, minimum width=3.2cm, text width=2.9cm] (mod)  at (9.2,0)  {Поправка модели\\[-1pt]{\mdseries\scriptsize что механизм доказывает на деле}};
+  \node[corebox,  minimum width=3.2cm, text width=2.9cm] (inv)  at (13.8,0) {Новый инвариант\\[-1pt]{\mdseries\scriptsize проверка с тестом обнаружения}};
+  \node[softbox,  minimum width=7.6cm, text width=7.3cm] (sense) at (6.9,-2.6) {Новое постоянное чувство: этот класс отказов не способен повториться незамеченным. Непрерывная интеграция несёт его при каждой отправке.};
+  \draw[flow] (obs) -- (fail);
+  \draw[flow] (fail) -- (mod);
+  \draw[flow] (mod) -- (inv);
+  \draw[flow] (inv.south) |- (sense.east);
+  \draw[flow] (sense.west) -| (obs.south);
+  \node[faint, text width=9cm] at (6.9,-3.9) {на следующем наблюдении петля проходит снова; инварианты накапливаются и никогда не удаляются};
+\end{tikzpicture}
