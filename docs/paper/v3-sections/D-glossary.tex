@@ -36,8 +36,6 @@
     explicit attestations, with no central service.
   \item[Gossip.] Witnesses sharing the log heads they were shown so that a split view is detected by
     comparison.
-  \item[HAIP.] The High Assurance Interoperability Profile of OpenID4VP, which pins the credential
-    format, the signature algorithm and the response mode a wallet and a verifier must use.
   \item[High availability.] A database that survives the loss of its leader by promoting a replica
     under a lease, drilled and measured.
   \item[Inclusion proof.] A short proof that one entry is in a Merkle tree with a given root.
@@ -111,23 +109,27 @@ Every abbreviation the text uses, spelled out, with what each standard or body i
   \item[ES256.] The classical ECDSA signature over curve P-256 that the HAIP profile pins.
   \item[FIPS.] US Federal Information Processing Standards; FIPS 202 defines SHA-3, FIPS 204 ML-DSA and FIPS 205 SLH-DSA.
   \item[HA.] High availability.
-  \item[HAIP.] The High Assurance Interoperability Profile of OpenID4VP.
+  \item[HAIP.] The High Assurance Interoperability Profile of OpenID4VP, which pins the credential format, the signature algorithm and the response mode a wallet and a verifier must use.
   \item[HTTP.] Hypertext Transfer Protocol, over which web services exchange requests.
   \item[ISO/IEC 18013-5.] The international standard for the mobile driving licence.
   \item[JSON.] JavaScript Object Notation, the text format every signed Polaris statement is written in.
   \item[KMS.] Key management service: a cloud service that holds keys.
   \item[NFC.] Near-field communication: the short-range radio a card answers a reader over.
   \item[NIST SP 800-63.] The US National Institute of Standards and Technology's digital identity guidelines, which define assurance levels.
+  \item[npm.] The public package registry for JavaScript and TypeScript.
   \item[PIN, PUK.] The personal code that unlocks a card, and the unblocking key that clears a card locked by too many wrong PINs.
   \item[PKCS\#11.] The standard programming interface to hardware security modules and tokens that generate and hold keys inside themselves.
+  \item[PyPI.] The Python Package Index, the public registry for Python packages.
   \item[QR.] A two-dimensional barcode read by a camera; one way a presentation is transferred.
   \item[RFC.] Request for Comments: the series in which internet standards are published; RFC 6962 describes Certificate Transparency.
   \item[SDK.] Software development kit: a library a relying party builds into its own program.
+  \item[SHA3-256.] A cryptographic hash function of the SHA-3 family (FIPS 202) giving a 256-bit digest; Polaris signs the SHA3-256 digest of a token value.
   \item[SLH-DSA.] The hash-based signature scheme standardised as FIPS 205, registered as the fallback should the lattice assumptions fall.
   \item[SQL.] The query language of relational databases, in which the Polaris schema, triggers and procedures are written.
   \item[TLA+.] A formal specification language whose model checker explores every interleaving of events to show a property holds.
   \item[TLS.] Transport Layer Security, the protocol of the encrypted connection; the Polaris edge negotiates a hybrid post-quantum key exchange.
   \item[W3C.] The World Wide Web Consortium, which publishes the Verifiable Credentials data model.
+  \item[WebAuthn.] The standard for proving possession of a hardware key or a device's built-in authenticator; operators use it as a second factor after the password.
   \item[X.509.] The standard format of a public-key certificate.
   \item[ZK.] Zero knowledge.
 \end{description}
