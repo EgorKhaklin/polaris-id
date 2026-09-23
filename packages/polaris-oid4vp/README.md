@@ -17,6 +17,13 @@ author has run it and no independent security review exists, which is what separ
 candidate from 1.0.0. See
 [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md) for exactly how much that is and is not.
 
+**Try it in about ten minutes, without cloning anything:**
+[the stranger's path](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md)
+takes a clean machine with Docker, this package from PyPI and an unmodified walt.id wallet to
+an accepted presentation. It is walked end to end before it is changed, and says when it last
+was. If you are not this repository's author and it works for you, or does not, an
+issue saying so is the most useful thing anyone can give this project.
+
 ---
 
 ## Why this is a separate package
