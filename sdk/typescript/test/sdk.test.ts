@@ -441,3 +441,74 @@ test("the cached token lifetime is bounded, and matches the Python kit", () => {
   assert.equal(expiresIn(3599.9), 3599, "a fractional lifetime truncates, never rounds up");
   assert.equal(expiresIn(24 * 3600), 24 * 3600, "the cap itself is admissible");
 });
+
+
+// 2026-09-23: ten semantic mutations written AFTER the refusal drill was green. Eight
+// survived this suite and the conformance runner (a not-yet-valid window, a doubled replay
+// window, a future-dated proof, an inclusion bound off by one, the exhausted-tree test
+// skipped, a case-sensitive revocation lookup, a doubled amount limit, a cosignature from
+// the wrong witness). The drill inverts refusals; none of these is an inverted refusal, it
+// is a boundary moved. Each test pins one boundary where the mutation changes the answer.
+// The Python SDK carries the same tests, against the same fixtures.
+const conf = (n: string) => JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", n), "utf8"));
+
+test("held-out: a status assertion is not fresh before its window opens", () => {
+  const a = conf("status-assertion-valid.json");   // [2026-01-01, 2027-01-01)
+  assert.equal(verifyStatusAssertion(a, "2026-01-01T00:00:00Z").fresh, true);
+  assert.equal(verifyStatusAssertion(a, "2025-12-31T23:59:59Z").fresh, false,
+    "an assertion is not fresh one second before it was issued");
+  assert.equal(verifyStatusAssertion(a, "2027-01-01T00:00:00Z").fresh, false,
+    "the window is half-open: expires_at itself is outside it");
+});
+
+test("held-out: a holder proof is fresh for exactly its replay window", () => {
+  const p = conf("holder-proof-valid.json");       // issued 2026-05-01T00:00:00Z
+  assert.equal(verifySignedArtifact(p, "2026-05-01T00:05:00Z").fresh, true);
+  assert.equal(verifySignedArtifact(p, "2026-05-01T00:05:01Z").fresh, false,
+    "a holder proof 301 seconds old is a replay");
+});
+
+test("held-out: a holder proof from the future is fresh only within the skew", () => {
+  const p = conf("holder-proof-valid.json");
+  assert.equal(verifySignedArtifact(p, "2026-04-30T23:59:00Z").fresh, true);
+  assert.equal(verifySignedArtifact(p, "2026-04-30T23:58:59Z").fresh, false,
+    "a proof 61 seconds ahead of the verifier's clock is not fresh");
+});
+
+test("held-out: an index equal to the tree size does not verify", () => {
+  // A one-leaf tree whose root is the leaf: at idx == treeSize an empty path walks nothing
+  // and the comparison alone would say yes.
+  const leaf = new Uint8Array(32).fill(0x11);
+  assert.equal(verifyInclusion(0, 1, leaf, leaf, []), true);
+  assert.equal(verifyInclusion(1, 1, leaf, leaf, []), false);
+});
+
+test("held-out: a path too short for the tree does not verify", () => {
+  const leaf = new Uint8Array(32).fill(0x11);
+  assert.equal(verifyInclusion(0, 2, leaf, leaf, []), false,
+    "a two-leaf tree needs one sibling; an empty path proves nothing");
+});
+
+test("held-out: an upper-case leaf in a genuine feed still revokes", () => {
+  const fx = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "revocation-uppercase-leaf.json"), "utf8"));
+  const { now, context_id } = fx._fixture;
+  assert.equal(verifySignedArtifact(fx.feed, now).authentic, true);
+  const v = verifyCrossAuthority(fx.pack, context_id, [fx.manifest], null, fx.feed, now);
+  assert.equal(v.decision, "reject", String(v.reason));
+  assert.match(String(v.reason), /revoked/);
+  assert.equal(verifyCrossAuthority(fx.pack, context_id, [fx.manifest], null, null, now).decision,
+    "accept", "without the feed the same inputs are accepted");
+});
+
+test("held-out: a cosignature from another witness is refused", () => {
+  const cos = conf("timestamp-anchor-witnessed.json").anchor.cosignatures;
+  assert.equal(verifyCosignature(cos[0], cos[0].public_key_hex).authentic, true);
+  assert.equal(verifyCosignature(cos[0], cos[1].public_key_hex).authentic, false);
+});
+
+test("held-out: a grant amount is bounded at its limit", () => {
+  const g = { limits: { max_amount: 100 } };
+  assert.equal(grantWithinLimits(g, 0, 100)[0], true);
+  assert.equal(grantWithinLimits(g, 0, 100.01)[0], false);
+  assert.equal(grantWithinLimits(g, 0, 150)[0], false);
+});

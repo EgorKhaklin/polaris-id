@@ -257,23 +257,32 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-258 tests in seven files, and they are not equal in weight. Coverage is
+266 tests in seven files, and they are not equal in weight. Coverage is
 the weakest of the three instruments here: it says a line ran.
 
 **And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`
-takes each of the 51 refusals in turn, makes it ACCEPT what it refuses, and runs the whole
-suite: a refusal the suite still passes with is one no test asserts on. 48 are caught, and
-the 3 that survive are the `cryptography is not installed` guards, which a suite that runs
-cannot reach without removing the thing it needs in order to run. It found one real gap the
+takes each of the 103 refusals in turn, makes it ACCEPT what it refuses, and runs the whole
+suite: a refusal the suite still passes with is one no test asserts on. 97 are caught. The 6
+that survive are declared in the drill with their reasons: three `cryptography is not
+installed` guards, which a suite that runs cannot reach without removing the thing it needs in
+order to run; the resolver's depth cap, behind two outer bounds that refuse first and tested
+directly; and a redundant pair in the status list's decompression bound, where either check
+alone refuses the same bomb. It found one real gap the
 99% figure had hidden, described below.
 
-`test_sdjwt` (23) and `test_jwe` (22) are this package agreeing with itself: the material is
+The drill has a blind spot of its own: it inverts refusals, and a boundary moved by one (a skew
+allowance doubled, `>=` written as `>`) inverts nothing. Ten such mutations written after the
+drill was green on 2026-09-23 found eight the suite passed with; `HeldOutBoundaryTests` in
+`test_sdjwt` and `test_status` sit on each boundary, and a re-run caught all ten.
+
+`test_sdjwt` (100) and `test_jwe` (28) are this package agreeing with itself: the material is
 built here and checked here. Each carries a positive control, because a verifier that refuses
 everything passes every refusal test ever written, and both directions were checked by
-patching the verifier rather than assumed. A verifier that always accepts fails 19 of the 23;
-one that always refuses fails 4.
+patching the verifier rather than assumed. Measured 2026-09-23: a verifier that always accepts
+fails 80 of the 100; one that always refuses, under a code of its own, fails 91, because most
+tests pin the refusal's code and not only that it refused.
 
-`test_conformance_capture` (9) is the one that is evidence of something. It holds a real
+`test_conformance_capture` (11) is the one that is evidence of something. It holds a real
 `direct_post.jwt` response produced by the **OpenID Foundation conformance suite's wallet**,
 committed as a fixture so it runs with no Docker and no network. The JWE was built by Nimbus
 JOSE in Java and the SD-JWT by the suite's own code: if this package's ECDH-ES, its Concat
@@ -285,13 +294,13 @@ The same fixture proves the refusals: a year later it is stale, under another no
 another audience it is not ours, with `given_name` rewritten from Jean to Jeanne the digest no
 longer matches what the issuer signed.
 
-`test_verifier` (31) drives the whole exchange in process, with a wallet that READS the
+`test_verifier` (40) drives the whole exchange in process, with a wallet that READS the
 request object rather than being told what is in it: if the request object were malformed, that
 wallet could not answer it. Seven of its tests assert each conformance refusal arrives as an
 HTTP 400 rather than merely being noticed, because a 400 is the whole of what those modules
 measure.
 
-`test_serve` (18) asserts the decision becomes an HTTP response: status codes, content types,
+`test_serve` (29) asserts the decision becomes an HTTP response: status codes, content types,
 routing, form parsing, TLS. It exists because `serve.py` was at **0% coverage** and nothing in
 CI touched the file that turns a verdict into a status code.
 

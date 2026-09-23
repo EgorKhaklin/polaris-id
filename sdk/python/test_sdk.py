@@ -464,3 +464,86 @@ class TheTokenCacheLifetimeIsBoundedTests(unittest.TestCase):
         self.assertEqual(pv._expires_in(3599.9), 3599)
         self.assertEqual(pv._expires_in(pv._MAX_TOKEN_CACHE_SECONDS),
                          pv._MAX_TOKEN_CACHE_SECONDS)
+
+
+@unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
+class HeldOutSemanticMutationsTests(unittest.TestCase):
+    """2026-09-23: ten semantic mutations written AFTER the refusal drill was green (a
+    not-yet-valid window accepted, a replay window doubled, a future-dated proof accepted,
+    an inclusion bound off by one, the exhausted-tree test skipped, a case-sensitive
+    revocation lookup, the two-witness disagreement ignored at either site). Eight survived
+    this suite and the conformance runner: the drill inverts refusals, and none of these is
+    an inverted refusal, it is a boundary moved. Each test below pins one boundary at the
+    exact instant or index where the mutation changes the answer."""
+
+    T0 = "2026-05-01T00:00:00Z"   # the conformance holder proof's issued_at
+
+    def test_a_status_assertion_is_not_fresh_before_its_window_opens(self):
+        a = _conformance_vector("status-assertion-valid.json")   # [2026-01-01, 2027-01-01)
+        self.assertIs(pv.verify_status_assertion(a, "2026-01-01T00:00:00Z").fresh, True)
+        self.assertIs(pv.verify_status_assertion(a, "2025-12-31T23:59:59Z").fresh, False,
+                      "an assertion is not fresh one second before it was issued")
+        self.assertIs(pv.verify_status_assertion(a, "2027-01-01T00:00:00Z").fresh, False,
+                      "the window is half-open: expires_at itself is outside it")
+
+    def test_a_holder_proof_is_fresh_for_exactly_its_replay_window(self):
+        p = _conformance_vector("holder-proof-valid.json")
+        self.assertIs(pv.verify_signed_artifact(p, "2026-05-01T00:05:00Z").fresh, True)
+        self.assertIs(pv.verify_signed_artifact(p, "2026-05-01T00:05:01Z").fresh, False,
+                      "a holder proof 301 seconds old is a replay")
+
+    def test_a_holder_proof_from_the_future_is_fresh_only_within_the_skew(self):
+        p = _conformance_vector("holder-proof-valid.json")
+        self.assertIs(pv.verify_signed_artifact(p, "2026-04-30T23:59:00Z").fresh, True)
+        self.assertIs(pv.verify_signed_artifact(p, "2026-04-30T23:58:59Z").fresh, False,
+                      "a proof 61 seconds ahead of the verifier's clock is not fresh")
+
+    def test_an_index_equal_to_the_tree_size_does_not_verify(self):
+        # A one-leaf tree whose root is the leaf: at idx == tree_size an empty path walks
+        # nothing and the comparison alone would say yes.
+        leaf = bytes([0x11]) * 32
+        self.assertTrue(pv.verify_inclusion(0, 1, leaf, leaf, []))
+        self.assertFalse(pv.verify_inclusion(1, 1, leaf, leaf, []))
+
+    def test_a_path_too_short_for_the_tree_does_not_verify(self):
+        leaf = bytes([0x11]) * 32
+        self.assertFalse(pv.verify_inclusion(0, 2, leaf, leaf, []),
+                         "a two-leaf tree needs one sibling; an empty path proves nothing")
+
+    def test_an_upper_case_leaf_in_a_genuine_feed_still_revokes(self):
+        with open(os.path.join(_ROOT, "sdk", "testdata", "revocation-uppercase-leaf.json")) as f:
+            fx = json.load(f)
+        meta = fx["_fixture"]
+        self.assertTrue(pv.verify_signed_artifact(fx["feed"], meta["now"]).authentic)
+        v = pv.verify_cross_authority(fx["pack"], meta["context_id"], [fx["manifest"]],
+                                      None, fx["feed"], now=meta["now"])
+        self.assertEqual(v.decision, "reject", v.reason)
+        self.assertIn("revoked", v.reason)
+        v = pv.verify_cross_authority(fx["pack"], meta["context_id"], [fx["manifest"]],
+                                      None, None, now=meta["now"])
+        self.assertEqual(v.decision, "accept", "without the feed the same inputs are accepted")
+
+    def test_a_cosignature_from_another_witness_is_refused(self):
+        cos = _conformance_vector("timestamp-anchor-witnessed.json")["anchor"]["cosignatures"]
+        self.assertTrue(pv.verify_cosignature(cos[0], cos[0]["public_key_hex"]).authentic)
+        self.assertFalse(pv.verify_cosignature(cos[0], cos[1]["public_key_hex"]).authentic)
+
+    def test_a_grant_amount_is_bounded_at_its_limit(self):
+        g = {"limits": {"max_amount": 100}}
+        self.assertEqual(pv.grant_within_limits(g, 0, 100)[0], True)
+        self.assertEqual(pv.grant_within_limits(g, 0, 100.01)[0], False)
+        self.assertEqual(pv.grant_within_limits(g, 0, 150)[0], False)
+
+    def test_two_witnesses_that_disagree_are_not_a_verdict(self):
+        from unittest import mock
+        pack = _vector("ml-dsa-65-valid.json")
+        art = _conformance_vector("holder-proof-valid.json")
+        for primary, witness in ((True, False), (False, True)):
+            with mock.patch.object(pv, "_verify_cryptography", return_value=primary), \
+                 mock.patch.object(pv, "_verify_liboqs", return_value=witness):
+                v = pv.verify_authenticity(pack)
+                self.assertFalse(v.authentic, (primary, witness))
+                self.assertIn("DISAGREE", v.note or "")
+                a = pv.verify_signed_artifact(art, "2026-05-01T00:00:00Z")
+                self.assertFalse(a.authentic, (primary, witness))
+                self.assertIn("DISAGREE", a.note or "")

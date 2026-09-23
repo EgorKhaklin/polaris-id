@@ -122,11 +122,7 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # without removing the thing the tests need in order to run.
     "python:verify_authenticity:a78e3f":
         "the no-backend-available branch; a suite with cryptography installed cannot reach it",
-    "python:verify_authenticity:a78e3f#2":
-        "the two witnesses DISAGREE; inducing it needs one backend patched to lie",
     "python:verify_status_assertion:4a55a6":
-        "ok is None: the verification could not run, which needs no backend installed",
-    "python:verify_signed_artifact:930d0e":
         "ok is None: the verification could not run, which needs no backend installed",
     "python:verify_cosignature:930d0e":
         "ok is None: the verification could not run, which needs no backend installed",
@@ -141,17 +137,15 @@ DECLARED_SURVIVORS: dict[str, str] = {
     "typescript:verifyAttestation:b96e23":
         "the catch-all arm: reachable only by making the crypto library throw",
 
-    # --- Reached only AFTER a signature genuinely verifies ---------------------------
-    # `if ok and witness_key is not None and <mismatch>`. The guard is downstream of a
-    # real cryptographic success, so a fabricated signature never gets there: covering it
-    # needs a genuinely valid cosignature presented under a different expected key, which
-    # is a signing fixture this suite does not carry. The distinction it draws -- authentic
-    # versus authoritative -- is real, and it is asserted in the detached verifier's own
-    # tests rather than here.
-    "python:verify_cosignature:b4e432":
-        "downstream of a real signature verifying; needs a genuine cosignature fixture",
-    "typescript:verifyCosignature:c2f6c1":
-        "downstream of a real signature verifying; needs a genuine cosignature fixture",
+    # --- Reached only AFTER a signature genuinely verifies: none left ----------------
+    # `if ok and witness_key is not None and <mismatch>` in both SDKs was declared here
+    # until 2026-09-23, "needs a genuine cosignature fixture". The fixture existed all along:
+    # conformance/vectors/timestamp-anchor-witnessed.json carries two real cosignatures, and
+    # presenting the first under the second's key reaches the guard. A held-out round of
+    # semantic mutations found it by mutating the guard and watching nothing fail; both
+    # suites now assert it. The same round closed the Python SDK's witness-disagreement arms
+    # (verify_authenticity, and verify_signed_artifact's `ok is None`), with one backend
+    # patched to lie, which is all "inducing it" ever needed.
 
     # --- Unreachable because a guard ABOVE it already refused -------------------------
     # 2026-09-19. `grant_within_limits` walks max_uses, the use count, max_amount and the

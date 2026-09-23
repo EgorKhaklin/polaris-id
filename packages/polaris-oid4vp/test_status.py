@@ -408,5 +408,40 @@ class EveryDecisionRefusalIsAssertedTests(unittest.TestCase):
         self.refused(v, "authority_error")
         self.assertEqual(asked, [], "nothing may be fetched when authority cannot be established")
 
+
+class HeldOutBoundaryTests(unittest.TestCase):
+    """2026-09-23: ten semantic mutations written after the drill was green, each moving a
+    boundary rather than inverting a refusal. Four of them here survived the whole package:
+    `now >= exp` as `now > exp`, a future `iat` tolerated by a minute, the staleness bound
+    doubled, and the depth bound computed wrongly (which disabled it: the deep-nesting tests
+    above are refused by a different layer, so they passed). Each test sits on the boundary."""
+
+    def test_a_list_is_expired_at_its_exp_instant(self):
+        v = decide(token(payload(exp=NOW)), issuer_key_verify=accept)
+        self.assertIs(v["checked"], False)
+        self.assertEqual(v["code"], "expired")
+        self.assertTrue(decide(token(payload(exp=NOW + 1)), issuer_key_verify=accept)["checked"])
+
+    def test_a_list_dated_one_second_ahead_is_refused(self):
+        v = decide(token(payload(iat=NOW + 1)), issuer_key_verify=accept)
+        self.assertIs(v["checked"], False)
+        self.assertEqual(v["code"], "iat_future")
+        self.assertTrue(decide(token(payload(iat=NOW)), issuer_key_verify=accept)["checked"])
+
+    def test_a_list_is_stale_one_second_past_its_ttl(self):
+        at = decide(token(payload(iat=NOW - 600, ttl=600)), issuer_key_verify=accept)
+        past = decide(token(payload(iat=NOW - 601, ttl=600)), issuer_key_verify=accept)
+        self.assertEqual((at["checked"], at["stale"]), (True, False))
+        self.assertEqual((past["checked"], past["stale"], past["fresh"]), (True, True, False))
+
+    def test_the_depth_bound_is_measured_and_enforced_at_its_limit(self):
+        self.assertEqual(S._nesting_depth('[{"a":[1]}]'), 3)
+        self.assertEqual(S._nesting_depth('["[[[", {}]'), 2, "brackets inside a string are text")
+        at = "[" * S.MAX_JSON_DEPTH + "]" * S.MAX_JSON_DEPTH
+        self.assertIsInstance(S._json_bounded(at, "payload"), list)
+        with self.assertRaises(ValueError) as caught:
+            S._json_bounded("[" + at + "]", "payload")
+        self.assertIn("deeper", str(caught.exception))
+
 if __name__ == "__main__":
     unittest.main()

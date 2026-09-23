@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  #
 from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.sdjwt import (  # noqa: E402
-    MAX_DISCLOSURES, MAX_PRESENTATION_BYTES, MAX_RESOLVE_DEPTH, Verdict,
+    DEFAULT_MAX_SKEW_SECONDS, MAX_DISCLOSURES, MAX_PRESENTATION_BYTES, MAX_RESOLVE_DEPTH, Verdict,
     b64u_encode, verify_presentation)
 
 NONCE = "vJ3xQ2kZ8fLpN1sT7wRm5bYc0aHdEgUi"
@@ -708,6 +708,7 @@ def b64u_decode_for_test(value):
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
@@ -1293,5 +1294,51 @@ class TheBoundsThemselvesAreAssertedTests(unittest.TestCase):
                   {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
                    "sd_hash": computed})
         v = self.w.verify(presented + kb)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+
+
+class HeldOutBoundaryTests(unittest.TestCase):
+    """2026-09-23: ten semantic mutations written after the drill was green, each moving a
+    boundary rather than inverting a refusal. Four here survived the whole package: the skew
+    allowance on `exp`, on `nbf` and on the key binding's `iat` each doubled, and the
+    disclosure cap moved one past its limit. The existing tests sat years or hundreds of
+    disclosures away from each boundary; these sit on it, one side each. `now` is pinned so
+    the edge is exact rather than a race with the clock."""
+
+    SKEW = DEFAULT_MAX_SKEW_SECONDS
+
+    def setUp(self):
+        self.w = Wallet()
+        self.now = int(time.time())
+
+    def _verify(self, **present):
+        present.setdefault("iat", self.now)
+        return self.w.verify(self.w.present(**present), now=self.now)
+
+    def test_exp_is_allowed_exactly_the_skew(self):
+        self.assertTrue(self._verify(payload_extra={"exp": self.now - self.SKEW}).authentic)
+        v = self._verify(payload_extra={"exp": self.now - self.SKEW - 1})
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "credential_validity")
+
+    def test_nbf_is_allowed_exactly_the_skew(self):
+        self.assertTrue(self._verify(payload_extra={"nbf": self.now + self.SKEW}).authentic)
+        v = self._verify(payload_extra={"nbf": self.now + self.SKEW + 1})
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "credential_validity")
+
+    def test_the_key_binding_iat_is_allowed_exactly_the_skew_either_way(self):
+        for sign in (-1, 1):
+            with self.subTest(direction=sign):
+                self.assertTrue(self._verify(iat=self.now + sign * self.SKEW).authentic)
+                v = self._verify(iat=self.now + sign * (self.SKEW + 1))
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "kb_freshness")
+
+    def test_the_disclosure_cap_admits_its_limit_and_refuses_one_more(self):
+        at = tuple(("c%d" % i, "v") for i in range(MAX_DISCLOSURES))
+        self.assertTrue(self._verify(claims=at).authentic)
+        v = self._verify(claims=at + (("one_more", "v"),))
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "disclosure")
