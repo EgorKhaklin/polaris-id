@@ -95,7 +95,9 @@ CONTROL = ("uc8_revoke_token", "Co-signer must differ from actor")
 #: Refusals nothing covers, each with the reason. Empty as of v9.437: every one of the
 #: 59 refusals the 16 procedures make turns something red when it is deleted. On
 #: 2026-09-23 the drill was extended to the use-case FUNCTIONS (see USE_CASE_ROUTINES),
-#: which added eleven refusals; tests now catch eight of them, and the three below remain.
+#: which added eleven refusals; tests now catch nine of them, and the two below remain. The
+#: ninth, #6 (the RESERVE re-check under the lock), is caught by a test that forces the
+#: interleaving: ConcurrencyTests.test_uc4_reserve_recheck_under_lock_refuses_a_reserve_moved_meanwhile.
 #:
 #: The first measurement (v9.434) found 27 that nothing noticed, concentrated where the
 #: invariants are multi-step and a trigger cannot see them. v9.435 covered the ten closest
@@ -114,11 +116,6 @@ SURVIVORS_EXPECTED: dict[str, str] = {
                               "is the guarantee and the concurrent-uc4 test catches its loss",
     "uc4_activate_reserve#3": "pre-lock copy of the RESERVE check; its twin #6 refuses with the "
                               "same message on a single connection",
-    "uc4_activate_reserve#6": "the RESERVE re-check under the lock. It fires only if another "
-                              "procedure moves the reserve out of RESERVE between uc4's first "
-                              "read and its lock; the pre-lock copy #3 catches every single-"
-                              "connection case first, and no deterministic test drives that "
-                              "interleaving yet. A real guarantee the tests do not check",
 }
 
 

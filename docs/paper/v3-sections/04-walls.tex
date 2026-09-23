@@ -146,8 +146,11 @@ Every one of these is now covered. The drill selected procedures only, and three
 issuance, reserve activation and device binding, are functions, because they return the id they
 create; their eleven refusals sat outside it until 23 September 2026. Among the ones no test
 noticed were the check that an agency is authorized for the algorithm it issues under and the check that a reserve token belongs
-to the same person as the credential it replaces. Eight are covered now; the three that remain are one routine's checks made twice, before and after
-it takes its lock, and one of them is a real guarantee no test yet drives. Every one of these
+to the same person as the credential it replaces. Nine are covered now. One of them, the reserve check the routine repeats under its lock, can
+fire only if another transaction moves the reserve while the routine waits, so its test holds the
+lock itself, waits until the routine is seen blocked on it, revokes the reserve and lets go. The
+two that remain are the copies of its two status checks made before the lock, which on one connection
+refuse exactly when their twins do. Every one of these
 measurements is now a drill that runs on
 every push with a negative control, so that a result of zero survivors is distinguishable from a
 harness that ran nothing. Twelve such drills exist at \code{1.0.0-rc.7}: over the checks, the

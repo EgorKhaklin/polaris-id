@@ -6760,6 +6760,100 @@ class ConcurrencyTests(PolarisTestCase):
             self.assertEqual(cur.fetchone()['c'], 1,
                 'the lost token must be on the RevocationList exactly once (no duplicate)')
 
+    def test_uc4_reserve_recheck_under_lock_refuses_a_reserve_moved_meanwhile(self):
+        """uc4 reads the reserve as RESERVE, then waits for the holder's row lock; while it
+        waits, another transaction revokes the reserve and commits. The re-check under the
+        lock must refuse with 'not in RESERVE state'. The interleaving is forced, not raced:
+        the test holds the lock itself and releases it only once uc4 is seen waiting on it,
+        so the pre-lock copy of the check has already passed and only the under-lock copy
+        can catch it. The reserve is revoked through uc8, the only sanctioned path,
+        with a co-signer so the issuer's revocation bound cannot refuse it first.
+        Before 2026-09-23 no test drove this and the procedure mutation drill
+        recorded the under-lock check as a survivor."""
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO Individual (legal_name, date_of_birth, jurisdiction)
+                VALUES ('UC4 Recheck Holder', '1990-01-01', 'US-PA')
+                RETURNING individual_id
+            """)
+            ind_id = cur.fetchone()['individual_id']
+            cur.execute("""
+                INSERT INTO IdentityToken
+                    (token_value, physical_serial, biometric_binding_type,
+                     individual_id, issuing_agency_id, algorithm_id, status,
+                     activated_date)
+                VALUES ('UC4RECHK-ACT', 'SN-UC4RECHK-ACT', 'NONE', %s, 2, 1,
+                        'ACTIVE', CURRENT_TIMESTAMP)
+                RETURNING token_id
+            """, (ind_id,))
+            active_id = cur.fetchone()['token_id']
+            cur.execute("""
+                INSERT INTO IdentityToken
+                    (token_value, physical_serial, biometric_binding_type,
+                     individual_id, issuing_agency_id, algorithm_id, status)
+                VALUES ('UC4RECHK-RES', 'SN-UC4RECHK-RES', 'NONE', %s, 2, 1, 'RESERVE')
+                RETURNING token_id
+            """, (ind_id,))
+            reserve_id = cur.fetchone()['token_id']
+            conn.commit()
+
+        holder = self._new_conn()
+        caller = self._new_conn()
+        outcome = {}
+        try:
+            with holder.cursor() as hcur:
+                hcur.execute("SELECT 1 FROM Individual WHERE individual_id=%s FOR UPDATE",
+                             (ind_id,))
+            caller_pid = caller.get_backend_pid()
+
+            def call_uc4():
+                try:
+                    with caller.cursor() as ccur:
+                        ccur.execute(
+                            "SELECT uc4_activate_reserve(%s, 3, 'LOST', %s, %s)",
+                            (active_id, reserve_id,
+                             'https://crl.idtoken.gov/uc4recheck/1'))
+                    caller.commit()
+                    outcome['ok'] = True
+                except psycopg2.Error as e:
+                    caller.rollback()
+                    outcome['error'] = str(e)
+
+            t = threading.Thread(target=call_uc4)
+            t.start()
+            waiting = False
+            with self._new_conn() as probe, probe.cursor() as pcur:
+                for _ in range(200):
+                    pcur.execute("SELECT wait_event_type FROM pg_stat_activity WHERE pid=%s",
+                                 (caller_pid,))
+                    row = pcur.fetchone()
+                    probe.rollback()
+                    if row and row['wait_event_type'] == 'Lock':
+                        waiting = True
+                        break
+                    _rl_time.sleep(0.025)
+            self.assertTrue(waiting, 'uc4 never blocked on the holder lock; the '
+                                     'interleaving this test forces did not happen')
+
+            with holder.cursor() as hcur:
+                hcur.execute("CALL uc8_revoke_token(%s, 2, 'ADMINISTRATIVE', %s, 1)",
+                             (reserve_id, 'https://crl.idtoken.gov/uc4recheck/reserve'))
+            holder.commit()
+            t.join(timeout=30)
+            self.assertFalse(t.is_alive(), 'uc4 did not return after the lock was released')
+        finally:
+            holder.close()
+            caller.close()
+
+        self.assertNotIn('ok', outcome, 'uc4 activated a reserve that was revoked while '
+                                        'it waited for the lock')
+        self.assertIn('not in RESERVE state', outcome.get('error', ''),
+                      f'the under-lock re-check must be what refuses: {outcome}')
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT status FROM IdentityToken WHERE token_id=%s", (active_id,))
+            self.assertEqual(cur.fetchone()['status'], 'ACTIVE',
+                             "the holder's credential must be left ACTIVE by the refusal")
+
     # -------------------------------------------------------------------
     # R11-6 / M2-11 — pg_advisory_xact_lock prevents two concurrent
     # boundary-tripping revocations from both succeeding. Each thread
