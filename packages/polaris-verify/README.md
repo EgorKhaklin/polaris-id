@@ -23,6 +23,21 @@ polaris-verify --pqc-provider auto --signature-only --pack credential.json
 polaris-verify --pqc-provider auto --issuer-anchor trusted-keys.json --pack credential.json
 ```
 
+No credential of your own yet? The repository publishes test vectors, and a first run needs
+nothing but the install above and `curl`:
+
+```bash
+base=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/vectors
+curl -sO $base/ml-dsa-65-valid.json
+curl -sO $base/ml-dsa-65-tampered-signature.json
+polaris-verify --pqc-provider auto --signature-only --pack ml-dsa-65-valid.json               # exit 0
+polaris-verify --pqc-provider auto --signature-only --pack ml-dsa-65-tampered-signature.json  # exit 2
+```
+
+The first reports `signature_valid: True`, the second `False`. Walked on 2026-09-23 from a clean
+virtualenv against the package on PyPI, with the `cryptography` backend only. What each vector
+is: [vectors/README.md](https://github.com/EgorKhaklin/polaris-id/blob/main/vectors/README.md).
+
 A genuine signature is not a trusted issuer. Without `--issuer-anchor` there is no trust root
 to judge against, so the run abstains (exit 2) instead of exiting 0 on a credential that could
 have been signed by anyone; `--signature-only` is how a caller says that is the question they
@@ -72,7 +87,10 @@ manifests and status bundles, trust lists and attestations, registries, timestam
 their transparency anchors, signed documents, exchange requests, receipts and mints, holder
 bindings and proofs, agent grants with their revocations and proofs, and cross-authority
 decisions. `--verify-dir` re-verifies a directory of published vectors; `--selftest` checks
-the verifier against material it generates.
+the verifier against material it generates. It signs that material, so it needs liboqs
+(`pip install liboqs-python`, which also needs the liboqs C library) and exits 3 without it,
+deliberately, so a runner meant to exercise real cryptography cannot skip in silence; with the
+`cryptography` extra alone, verify the published vectors above instead.
 
 ## Trust
 
