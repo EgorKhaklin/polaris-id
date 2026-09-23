@@ -154,7 +154,7 @@ fi
 pkg_fail=0
 : > /tmp/_polaris_pkg.out
 ( cd "${ROOT}/sdk/python" && python3 -m unittest test_sdk ) >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
-( cd "${ROOT}/scripts" && python3 -m unittest test_verify_p9 test_verify_refusals ) >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
+( cd "${ROOT}/scripts" && python3 -m unittest test_verify_p9 test_verify_refusals test_conformance_runner ) >> /tmp/_polaris_pkg.out 2>&1 || pkg_fail=1
 ( cd "${ROOT}/packages/polaris-oid4vp" && python3 -m unittest \
     test_sdjwt test_jwe test_verifier test_serve test_cli test_conformance_capture \
     test_status ) \
