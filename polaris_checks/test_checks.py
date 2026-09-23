@@ -18661,6 +18661,44 @@ def test_package_readme_version_check_detects_its_absence(tmp_path):
     assert out[0].level == "FAIL", "an empty tree must not read as four agreeing READMEs"
 
 
+def test_c8_bounds_the_rows_at_the_query_not_only_the_parameters(tmp_path):
+    # 2026-09-23: the cluster grid is "clamped" at 90 degrees, but a coarser grid is FEWER
+    # cells; the route is bounded only by the cap it passes to the SQL. Replacing that cap
+    # with 10**9 left C8 green. Every atlas_* call must carry a cap unless its shape bounds it.
+    CONSTS = ("_ATLAS_MAX_CLUSTERS = 5000\n_ATLAS_MAX_POINTS = 2000\n_ATLAS_MAX_EVENTS = 500\n"
+              "_ATLAS_MAX_CATEGORIES = 50\n_ATLAS_MAX_REGIONS = 500\n")
+    ROUTE = ("@app.route('/api/atlas/points')\n"
+             "def api_atlas_points():\n"
+             "    limit = min(int(request.args.get('limit', '500')), _ATLAS_MAX_POINTS)\n"
+             "    rows = query(\"SELECT * FROM atlas_points_verifications(%s) LIMIT %s\", (1, limit))\n"
+             "@app.route('/api/atlas/clusters')\n"
+             "def api_atlas_clusters():\n"
+             "    rows = query(\"SELECT * FROM atlas_clusters_verifications(%s) LIMIT %s\", (1, _ATLAS_MAX_CLUSTERS))\n"
+             "@app.route('/api/atlas/heatmap')\n"
+             "def api_atlas_heatmap():\n"
+             "    rows = query(\"SELECT * FROM atlas_heatmap(%s)\", (1,))\n")
+    f = tmp_path / "polaris_web" / "app.py"
+    f.parent.mkdir(parents=True, exist_ok=True)
+
+    def level(body):
+        f.write_text(CONSTS + body)
+        return checks.check_c8_atlas_caps(tmp_path)[0].level
+
+    f.write_text(CONSTS + ROUTE)
+    assert checks.check_c8_atlas_caps(tmp_path)[0].level == "OK", \
+        "must PASS: capped calls, and a declared fixed-shape one"
+    out_body = ROUTE.replace("(1, _ATLAS_MAX_CLUSTERS)", "(1, 10**9)")
+    f.write_text(CONSTS + out_body)
+    out = checks.check_c8_atlas_caps(tmp_path)
+    assert out[0].level == "FAIL" and "atlas_clusters_verifications" in out[0].message, \
+        "must FAIL, naming the function, when a query's cap is replaced by a literal"
+    assert level(ROUTE + "@app.route('/api/atlas/new')\ndef api_atlas_new():\n"
+                         "    rows = query(\"SELECT * FROM atlas_new_rows(%s)\", (1,))\n") == "FAIL", \
+        "must FAIL on a new uncapped call nobody declared"
+    assert level(ROUTE.replace("atlas_heatmap(%s)\", (1,))", "atlas_heatmap(%s) LIMIT %s\", (1, _ATLAS_MAX_EVENTS))")) \
+        == "FAIL", "must FAIL when a declared fixed-shape function is now capped (a stale entry)"
+
+
 def test_c8_refuses_a_numeric_parameter_it_was_never_told_about(tmp_path):
     """The parameter list is a heuristic; one that silently skips an unknown name reports
     coverage it does not have.

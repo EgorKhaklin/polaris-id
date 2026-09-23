@@ -3225,6 +3225,17 @@ def check_c4_atomic_failed_login(root: pathlib.Path) -> list[Finding]:
 _ATLAS_COUNT_PARAMS = ("buckets", "limit", "n", "top", "max", "count", "size", "per_page",
                        "grid")
 
+#: Atlas SQL functions called with no row cap because their SHAPE bounds them, each with the
+#: reason. Held both ways by check_c8_atlas_caps: a new uncapped call fails until declared here,
+#: and an entry whose calls all carry a cap fails as stale.
+_ATLAS_FIXED_SHAPE = {
+    "atlas_stats": "one summary row",
+    "atlas_heatmap": "a 7 x 24 grid, 168 cells at most",
+    "atlas_timeline": "one row per bucket, and the route refuses more than 240 buckets",
+    "atlas_volume_series": "one row per bucket, and the route refuses more than 240 buckets",
+    "atlas_series_stacked": "buckets (240 at most) by the top 6 categories plus Other; the route passes no limit, so the function default of 6 holds",
+}
+
 #: Numeric atlas parameters that do NOT size a response, each with the reason. An entry here
 #: is a claim that a caller cannot grow a result set with it, and it has to be defensible:
 #: the list above is the safe default and this one is the exception.
@@ -3329,6 +3340,42 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
                      "caller can size a response with it, so C8 bounds it, or to "
                      "_ATLAS_NOT_COUNTS with the reason it cannot"
                      % ", ".join(unclassified))
+    # The RESULT SET, at the query. Clamping the parameters is not enough by itself: the
+    # cluster grid is "clamped" at 90 degrees, but a coarser grid means FEWER cells, so that
+    # bound limits nothing, and the clusters route is bounded only by the cap it passes to
+    # the SQL. On 2026-09-23 replacing that cap, or the regions cap, with 10**9 left this
+    # check green. So every atlas_* set-returning call must carry a cap constant or the
+    # clamped `limit`, except the functions whose shape bounds them, declared below and
+    # held to exactly the uncapped set so the list cannot go stale.
+    uncapped, called = set(), set()
+    for n, (i, _route) in enumerate(starts):
+        end = starts[n + 1][0] if n + 1 < len(starts) else min(i + 160, len(lines))
+        body = "\n".join(lines[i:end])
+        for m in re.finditer(r"\bquery(?:_one)?\(", body):
+            depth, j = 0, m.end() - 1
+            while j < len(body):
+                depth += (body[j] == "(") - (body[j] == ")")
+                j += 1
+                if depth == 0:
+                    break
+            stmt = body[m.start():j]
+            fns = re.findall(r"FROM\s+(atlas_\w+)", stmt)
+            called.update(fns)
+            if fns and not re.search(r"_ATLAS_MAX_\w+|\blimit\b", stmt):
+                uncapped.update(fns)
+    stray = sorted(uncapped - set(_ATLAS_FIXED_SHAPE))
+    # Stale: still called, and every call now carries a cap. A declared function no route
+    # calls any more hides nothing, since there is no uncapped call behind it.
+    stale = sorted((set(_ATLAS_FIXED_SHAPE) & called) - uncapped)
+    if stray:
+        return _fail("c8_atlas_caps",
+                     "atlas route(s) call %s with no cap on the rows it returns; pass a "
+                     "_ATLAS_MAX_* constant or the clamped limit, or declare the function in "
+                     "_ATLAS_FIXED_SHAPE with the reason its shape bounds it (C8)" % ", ".join(stray))
+    if stale:
+        return _fail("c8_atlas_caps",
+                     "_ATLAS_FIXED_SHAPE declares %s uncapped by shape, but every call now passes a "
+                     "cap; strike the entry so the list keeps describing the code" % ", ".join(stale))
     if unclamped:
         return _fail("c8_atlas_caps",
                      "atlas route(s) read a caller-controlled count and never clamp it: "
