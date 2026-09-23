@@ -27,3 +27,21 @@ Two observations that are not contradictions but are worth a maintainer's eye:
 - The linkability measurement's harness was made reproducible (a seeded generator) after its
   first numbers were recorded; the numbers in the record were not re-run afterwards. The paper
   reports them as the record does, with the lab's own caveat that the effect is small.
+
+## Status on 23 September 2026
+
+Every row above was re-read against the tree at `537f1ac`.
+
+| Row | Status |
+|---|---|
+| `ROADMAP.md`, "Do not have" and the inventory heading | Closed: the inventory is restated at `1.0.0-rc.3` and the list no longer names what has since been built |
+| `docs/design/audit-of-record.md`, "the fourteen instances" | Closed: the record now says why it said fourteen and what the count is |
+| `meta/README.md`, the `tla/` row | Closed: it says the four specifications are model-checked in CI on every push since `v9.374` |
+| `README.md`, the documentation table | Closed at Version 3, and again today: it said "the system at 1.0.0-rc.1" after the paper was re-pinned to `1.0.0-rc.7`, and did not link the Russian edition. Both fixed |
+| `NOTICE` | Closed at Version 3; today it also names the Russian edition |
+| `docs/paper/README.md` | Closed; today it also lists the Russian edition and restamps both editions |
+| `docs/PRODUCTION-READINESS.md`, "certified in two SDKs" | Closed: the word is gone |
+| `DYNO.md`, `PERFORMANCE-BASELINE.md` | Open by design: not re-run, cited with their stamps |
+| `V2_AUTHOR_NOTES.md` row 1, `docs/ARCHITECTURE-OVERVIEW.md` "30 in `01_schema.sql`, 37 migrated" | Closed today, open since Version 2: it now says 45 and 52, the counts Appendix C measures |
+| The scoreboard's package versions | Unchanged and correct: the scoreboard records what a plain install resolves, `0.1.0`, because `1.0.0-rc.3` is a pre-release |
+| The linkability numbers from before the seeded harness | Open: not re-run |

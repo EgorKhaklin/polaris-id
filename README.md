@@ -315,7 +315,7 @@ The first two columns are the honest ones: every other row is deployed to real p
 | Integrating against it | [API](docs/reference/API.md) · [DATA-MODEL](docs/reference/DATA-MODEL.md) · [GLOSSARY](docs/reference/GLOSSARY.md) |
 | Running an instance | [docs/operator/](docs/operator/README.md), the operator runbooks and ledgers, from install to disaster recovery |
 | Asking why a mechanism is built this way | [docs/design/](docs/design/README.md), one record per mechanism plus the cross-cutting notes |
-| Reading it as an academic artifact | [The project report, Version 3](docs/paper/polaris_project_report_v3.pdf) (PDF, same license; the system at 1.0.0-rc.1) · [CITATION.cff](CITATION.cff) |
+| Reading it as an academic artifact | [The project report, Version 3](docs/paper/polaris_project_report_v3.pdf) (PDF, same license; the system at 1.0.0-rc.7) · [the same in Russian](docs/paper/polaris_project_report_v3_ru.pdf) · [CITATION.cff](CITATION.cff) |
 | Working on the code, human or AI agent | [CONTRIBUTING.md](CONTRIBUTING.md) · [CLAUDE.md](CLAUDE.md) · [CHANGELOG.md](CHANGELOG.md) |
 
 ---

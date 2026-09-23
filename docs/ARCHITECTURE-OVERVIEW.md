@@ -99,7 +99,7 @@ of the schema. The schema can be operated via raw SQL (the
 `/sql` route is an authenticated, read-only console) and the
 constraints still hold; they are not mediated by the application.
 
-Key tables (30 in `01_schema.sql`, 37 in a migrated deployment; partial list):
+Key tables (45 in `01_schema.sql`, 52 in a migrated deployment; partial list):
 - `IdentityToken`: the central object
 - `Individual`: the person an identity is bound to
 - `Agency`: the issuer of an identity
