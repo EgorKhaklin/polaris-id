@@ -21734,6 +21734,53 @@ def check_no_vacuous_checks(root: pathlib.Path) -> list[Finding]:
                              len(VACUOUS_IS_CORRECT)))
 
 
+def check_paper_check_citations_resolve(root: pathlib.Path) -> list[Finding]:
+    """Every invariant check the paper names is a function this tree defines.
+
+    The report's layer cards and tables cite 109 checks by name as the thing that "fails the
+    build if" a property stops holding. A renamed or deleted check left its citation behind
+    with every gate green, because the citation checks read Markdown and Python and the paper
+    is LaTeX. The Russian edition renders each name in Russian; docs/paper/ru-glossary.py is
+    the written correspondence, and a Russian citation must map back through it to a real
+    function, which makes the glossary load-bearing rather than decorative.
+    """
+    name = "paper_check_citations"
+    paper = root / "docs/paper"
+    checks_py = _read(root, "polaris_checks/checks.py")
+    defined = set(re.findall(r"^def (check_\w+)", checks_py, re.M))
+    if not defined:
+        return _fail(name, "no check functions were found in polaris_checks/checks.py, so nothing "
+                           "could be resolved and this measured nothing")
+    back: dict[str, str] = {}
+    glossary = paper / "ru-glossary.py"
+    if glossary.is_file():
+        for en, ru in re.findall(r'"(check_\w+)":\s*"([^"]+)"', glossary.read_text(encoding="utf-8")):
+            back[ru] = en
+    cited, unresolved = 0, []
+    for d, lang in (("v3-sections", "en"), ("v3-figures", "en"), ("v3-sections-ru", "ru"), ("v3-figures-ru", "ru")):
+        for f in sorted((paper / d).glob("*.tex")):
+            text = f.read_text(encoding="utf-8")
+            if lang == "en":
+                names = [m.replace("\\_", "_") for m in re.findall(r"\\code\{(check\\_[a-z0-9\\_]+)\}", text)]
+            else:
+                names = [m.replace("\\_", "_") for m in re.findall(r"\\code\{(проверка\\_[а-яё0-9\\_]+)\}", text)]
+                names = [back.get(n, "?" + n) for n in names]
+            for n in names:
+                cited += 1
+                if n not in defined:
+                    unresolved.append("%s/%s cites %s" % (d, f.name, n.lstrip("?")))
+    if cited == 0:
+        return _fail(name, "the paper cites no check by name. Its layer cards cite over a hundred, so "
+                           "finding none means the parser has drifted and this measured nothing")
+    if unresolved:
+        return _fail(name, "%d check citation(s) in the paper resolve to nothing: %s. A reader told a "
+                           "check guards a property is being told something the tree does not do; a "
+                           "Russian name that is not in ru-glossary.py cannot be traced at all"
+                     % (len(unresolved), "; ".join(sorted(set(unresolved))[:6])))
+    return _ok(name, "all %d check citations in both editions of the paper resolve to a function the "
+                     "tree defines, the Russian ones back through ru-glossary.py" % cited)
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
@@ -22048,6 +22095,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_documented_test_citations_resolve,
     check_source_path_citations_resolve,
     check_package_readmes_state_their_own_version,
+    check_paper_check_citations_resolve,
 ]
 
 

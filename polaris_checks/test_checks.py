@@ -18696,3 +18696,30 @@ def test_paper_check_covers_sections_not_only_the_top_level_tex(tmp_path):
     out = fn(tmp_path)[0]
     assert out.level == "FAIL" and "02-extra.tex" in out.message, \
         "an unrecorded source must FAIL; otherwise it can change with nothing noticing"
+
+
+def test_paper_check_citations_check_detects_its_absence(tmp_path):
+    fn = checks.check_paper_check_citations_resolve
+    (tmp_path / "polaris_checks").mkdir()
+    (tmp_path / "polaris_checks" / "checks.py").write_text("def check_real_thing(root):\n    return []\n")
+    sec = tmp_path / "docs/paper/v3-sections"; sec.mkdir(parents=True)
+    ru = tmp_path / "docs/paper/v3-sections-ru"; ru.mkdir(parents=True)
+    (tmp_path / "docs/paper/ru-glossary.py").write_text('CHECKS = {\n    "check_real_thing": "проверка_настоящая_вещь",\n}\n')
+    (sec / "a.tex").write_text("pinned by \\code{check\\_real\\_thing}.\n")
+    (ru / "a.tex").write_text("закреплено \\code{проверка\\_настоящая\\_вещь}.\n")
+    assert fn(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    # the check is renamed and the English citation is left behind
+    (sec / "a.tex").write_text("pinned by \\code{check\\_gone\\_thing}.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "check_gone_thing" in out[0].message
+
+    # a Russian citation the glossary cannot trace back is refused, not ignored
+    (sec / "a.tex").write_text("pinned by \\code{check\\_real\\_thing}.\n")
+    (ru / "a.tex").write_text("закреплено \\code{проверка\\_неизвестная}.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "проверка_неизвестная" in out[0].message
+
+    # anti-vacuity: no citations at all means the parser drifted
+    (sec / "a.tex").write_text("nothing cited.\n"); (ru / "a.tex").write_text("ничего.\n")
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL rather than pass on a paper that cites nothing"
