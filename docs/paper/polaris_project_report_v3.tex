@@ -22,6 +22,8 @@
 
 % === ENCODING & TYPOGRAPHY ===
 \usepackage[T1]{fontenc}
+% A line with no acceptable break may loosen slightly rather than overflow its margin.
+\setlength{\emergencystretch}{3em}
 \usepackage[utf8]{inputenc}
 \usepackage{textcomp}
 \renewcommand{\ttdefault}{lmtt}
@@ -108,7 +110,7 @@
 
 % === TIKZ ===
 \usepackage{tikz}
-\usetikzlibrary{positioning,arrows.meta,calc,backgrounds,fit,shapes.geometric,shapes.misc,decorations.pathreplacing}
+\usetikzlibrary{positioning,arrows.meta,calc,backgrounds,fit,shapes.geometric,shapes.misc,decorations.pathreplacing,decorations.markings}
 \input{v3-figures/styles}
 \usepackage[most]{tcolorbox}
 

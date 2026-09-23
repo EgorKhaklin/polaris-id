@@ -27,20 +27,28 @@ STYLES = {
     "kk": r"\scriptsize\scshape",
 }
 ALPHABET = ("абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
-            "0123456789 .,;:-_+()«»")
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "0123456789 .,;:-_+()«»'/")
+
+#: The preamble each edition typesets with. Widths are measured in the edition's own
+#: encoding and hyphenation language, so a label is spaced for the font that sets it.
+PREAMBLES = {
+    "ru": r"\documentclass{article}\usepackage[T2A,T1]{fontenc}\usepackage[utf8]{inputenc}"
+          r"\usepackage[english,russian]{babel}",
+    "en": r"\documentclass{article}\usepackage[T1]{fontenc}\usepackage[utf8]{inputenc}",
+}
 
 def _tex(c):
     return {"_": r"\_", " ": r"\ "}.get(c, c)
 
-def measure():
-    lines = [r"\documentclass{article}\usepackage[T2A,T1]{fontenc}\usepackage[utf8]{inputenc}"
-             r"\usepackage[english,russian]{babel}", r"\newlength{\w}\begin{document}"]
-    chars = list(ALPHABET)
+def measure(lang):
+    chars = [c for c in ALPHABET if lang == "ru" or not ("\u0400" <= c <= "\u04ff" or c in "«»")]
+    lines = [PREAMBLES[lang], r"\newlength{\w}\begin{document}"]
     for key, font in STYLES.items():
         for i, c in enumerate(chars):
-            lines.append(r"\settowidth{\w}{{%s %s}}\typeout{W|%s|%d|\the\w}" % (font, _tex(c), key, i)
-                         if c == " " else
-                         r"\settowidth{\w}{{%s%s}}\typeout{W|%s|%d|\the\w}" % (font, _tex(c), key, i))
+            # the empty group ends the font command, so a Latin letter is not read as
+            # part of its name (\itshapea)
+            lines.append(r"\settowidth{\w}{{%s{}%s}}\typeout{W|%s|%d|\the\w}" % (font, _tex(c), key, i))
     lines.append(r"x\end{document}")
     with tempfile.TemporaryDirectory() as d:
         pathlib.Path(d, "w.tex").write_text("\n".join(lines))
@@ -52,21 +60,29 @@ def measure():
         if line.startswith("W|"):
             _, key, i, w = line.split("|")
             out[key][chars[int(i)]] = float(w.replace("pt", ""))
-    # a space measured as "\ " inside a group includes nothing else; keep it as measured
-    WIDTHS.write_text(json.dumps(out, ensure_ascii=False, indent=0))
+    table = json.loads(WIDTHS.read_text()) if WIDTHS.exists() else {}
+    if table and "ru" not in table:          # the first format kept one language, Russian
+        table = {"ru": table}
+    table[lang] = out
+    WIDTHS.write_text(json.dumps(table, ensure_ascii=False, indent=0))
     return out
 
-def width(text, style):
-    table = json.loads(WIDTHS.read_text())[style]
+LANG = "ru"
+
+def _table(style, lang=None):
+    return json.loads(WIDTHS.read_text())[lang or LANG][style]
+
+def width(text, style, lang=None):
+    table = _table(style, lang)
     return sum(table[c] for c in text)
 
-def along(text, style, color="navydark", lift="0pt"):
+def along(text, style, color="navydark", lift="0pt", lang=None):
     """A `decorate, decoration={markings, ...}` option that sets `text` centred on the path.
 
     Letters are placed at their measured widths from the path's midpoint and turned to
     the tangent there, so the text follows any curve. `lift` moves it off the path
     (positive is to the left of the direction of travel)."""
-    table = json.loads(WIDTHS.read_text())[style]
+    table = _table(style, lang)
     font = STYLES[style] + (r"\color{%s}" % color if color else "")
     widths = [table[c] for c in text]
     x = -sum(widths) / 2
@@ -81,20 +97,21 @@ def along(text, style, color="navydark", lift="0pt"):
                      % (mid, lift, font, _tex(c)))
     return "decorate, decoration={markings, " + ", ".join(marks) + "}"
 
-def arc_label(text, style, angle, radius_cm, color="navydark", lift="-1.6pt", pad_pt=0.0):
+def arc_label(text, style, angle, radius_cm, color="navydark", lift="-1.6pt", pad_pt=0.0, lang=None):
     """A \\path that sets `text` along a circle of `radius_cm`, centred on `angle` degrees,
     reading upright: clockwise over the top half, counter-clockwise under it.
     Returns (tikz, half_angle_degrees) so callers can leave a gap of the right size."""
     import math
     r_pt = radius_cm * 28.4527
-    half = math.degrees((width(text, style) / 2 + pad_pt) / r_pt) + 0.6
+    half = math.degrees((width(text, style, lang) / 2 + pad_pt) / r_pt) + 0.6
     top = 0 <= (angle % 360) <= 180
     a0, a1 = (angle + half, angle - half) if top else (angle - half, angle + half)
     tikz = (r"\path[%s] (%.2f:%s) arc[start angle=%.2f, end angle=%.2f, radius=%s];"
-            % (along(text, style, color, lift if top else lift), a0, radius_cm, a0, a1, radius_cm))
+            % (along(text, style, color, lift, lang), a0, radius_cm, a0, a1, radius_cm))
     return tikz, half
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["measure"]:
-        w = measure()
-        print({k: len(v) for k, v in w.items()})
+    if sys.argv[1:2] == ["measure"]:
+        for lang in (sys.argv[2:] or ["ru", "en"]):
+            w = measure(lang)
+            print(lang, {k: len(v) for k, v in w.items()})

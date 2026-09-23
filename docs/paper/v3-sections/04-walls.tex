@@ -33,7 +33,7 @@ and the constitution states that no deeper apparatus governs them.
 \label{tab:constraints}
 \setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.1}
 \rowcolors{2}{tabstripe}{white}
-\begin{tabularx}{\textwidth}{>{\bfseries}p{0.3in} >{\RaggedRight\arraybackslash}X >{\RaggedRight\arraybackslash}p{0.95in} >{\RaggedRight\arraybackslash}p{2.0in}}
+\begin{tabularx}{\textwidth}{>{\bfseries\hspace{0pt}}p{0.3in} >{\RaggedRight\arraybackslash\hspace{0pt}}X >{\RaggedRight\arraybackslash\hspace{0pt}}p{0.95in} >{\RaggedRight\arraybackslash\hspace{0pt}}p{2.0in}}
 \toprule
 \rowcolor{tabheader}\thead{\#} & \thead{Constraint} & \thead{Tier} & \thead{Enforced by} \\
 \midrule
@@ -62,7 +62,7 @@ the build if a mechanism drifts. Three of the ten now also have a formal model c
 C1's purge coverage, C2's unlinkability across two pooling relying parties, and C3 under concurrent
 issue and revoke, each with a counterpart configuration it must fail, so none of the three is vacuous.
 
-\figfit{0.635}{districts}{The 45 canonical tables of \code{01\_schema.sql} at \code{1.0.0-rc.7}, as rings
+\figpage{districts}{The 45 canonical tables of \code{01\_schema.sql} at \code{1.0.0-rc.7}, as rings
 around the Version 1 nucleus. The faint lattice at the centre is the nucleus geometry of
 Figure~\ref{fig:nucleus} at the same proportions. Ring two is the credential machinery: signatures,
 permissions, epochs, recovery, duress, the holder's key, the card. Ring three is authority, trust and
@@ -70,9 +70,7 @@ the people at the counter: who may sign under which algorithm, who trusts whom, 
 quotas, relying parties, the replay registers, and what an enrolment rested on. Ring four is the
 archives, watchtowers and decisions kept as records: append-only logs, anchors, the retention decision
 as data, and the events that record every change to an authority, an operator account or a relying
-party. A migrated deployment holds seven more tables (the migration registry, operator sessions and
-credentials, the audit-access log, and Athena's three curated tables) and five partition
-children.}{fig:districts}
+party. A migrated deployment holds seven more tables, drawn dashed: the migration registry closes the fourth ring, so rings two, three and four have the same thirteen spokes, and the other six (operator sessions, their hardware keys, the audit-access log and Athena's three curated tables) form a fifth, hexagonal ring that echoes the nucleus. Its arrows all turn one way: migrations applied one after another, round the canonical schema. The five partition children are not drawn.}{fig:districts}
 
 \subsection{The audit of record}
 
@@ -88,7 +86,7 @@ tested once per table that claims it: a table-driven suite reads the append-only
 catalogue rather than out of a list somebody wrote, so a new append-only table cannot simply go
 untested. \sImpl
 
-\figside{town-map}{The walled town, with the real component beside every civic name. The register
+\figpage{town-map}{The walled town, with the real component beside every civic name. The register
 in the hall is the credential core; the wall is the schema; the four gates are the routes through
 which a claim enters or leaves; the watchtowers are the transparency logs and the witnesses outside
 the wall watch them; the road to the second town is a directional, per-context attestation; the laws
