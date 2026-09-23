@@ -137,7 +137,9 @@ policy applies. Creating an operator account left no record that it had happened
 \code{v9.422}, and six of the twenty-one audit event types the schema named had no writer anywhere
 in the tree; every one has a writer now, pinned by a check, and the first version of that check was
 wrong about three of them and says so. Secrets are file-mounted, sealed and rotated through one
-lifecycle; the application refuses to boot in production on a default key, and the application log
+lifecycle, and a database password reaches the database before its file changes, or is not rotated at
+all: until 23 September 2026 the file changed first, and a live stack the script took for stopped
+was left presenting a password the database had never been told; the application refuses to boot in production on a default key, and the application log
 records no form body, cookie value or token value, which was a documented promise kept by discipline
 alone until a check began reading the logging calls. Every release ships bills of materials with
 signed provenance, and CVE scans of the dependency surface and of every self-built image gate the
