@@ -30,6 +30,26 @@ console.log(verdict.decision);                              // "accept" | "rejec
 
 `verifyAuthenticity(pack, anchors?)` exposes the offline check directly.
 
+A first run needs no issuer and no credential of your own: the repository publishes test
+vectors. In an empty directory:
+
+```bash
+npm install polaris-sdk-ts@next
+base=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/vectors
+curl -sO $base/ml-dsa-65-valid.json && curl -sO $base/ml-dsa-65-tampered-signature.json
+cat > first-run.mjs <<'JS'
+import { readFileSync } from "node:fs";
+import { verifyAuthenticity } from "polaris-sdk-ts";
+for (const f of ["ml-dsa-65-valid.json", "ml-dsa-65-tampered-signature.json"]) {
+  console.log(f, (await verifyAuthenticity(JSON.parse(readFileSync(f, "utf8")))).authentic);
+}
+JS
+node first-run.mjs
+```
+
+The first prints `true`, the second `false`. Walked on 2026-09-23 in an empty directory against
+the package on npm, with Node 24.
+
 ## What it verifies
 
 Everything below is offline and self-contained. Signatures are accepted under two FIPS 204
