@@ -80,6 +80,7 @@ CHECKS = {
     "check_auth_broker": "проверка_брокер_входа",
     "check_broker_policy_bound": "проверка_политика_брокера_связана",
     "check_c1c10_objects_resolve": "проверка_объекты_с1с10_разрешаются",
+    "check_one_active_token_index": "проверка_индекс_одного_действующего_токена",
     "check_c10_no_money_tables": "проверка_с10_нет_денежных_таблиц",
     "check_c6_atlas_redacts_zk_location": "проверка_с6_атлас_скрывает_местоположение_нр",
     "check_csp_forbids_unsafe_inline": "проверка_пбк_запрещает_встроенные_сценарии",
