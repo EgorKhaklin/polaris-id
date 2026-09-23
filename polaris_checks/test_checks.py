@@ -9469,6 +9469,33 @@ def test_ship_tool_check_discriminates(tmp_path):
     assert checks.check_ship_tool(tmp_path)[0].level == "FAIL", "must FAIL if a vanished image registry is not called an upstream change"
 
 
+def test_trigger_presence_reads_the_statement_check_discriminates(tmp_path):
+    # 2026-09-23: a check that finds a trigger's NAME is satisfied by its COMMENT ON after the
+    # CREATE is gone. Every trigger-presence test must require the statement.
+    GOOD = (
+        'def check_a(root):\n'
+        '    if not _trigger_created(_read(root, "polaris_sql/06_triggers.sql"), "trg_x_append_only"):\n'
+        '        return _fail("a", "x")\n'
+        '    # a comment may say "trg_x_append_only" in sql without counting\n'
+        '    for t in ("trg_a", "trg_b"):\n'
+        '        pass\n'
+    )
+    f = tmp_path / "polaris_checks" / "checks.py"
+    f.parent.mkdir(parents=True, exist_ok=True)
+
+    def level(body):
+        f.write_text(body)
+        return checks.check_trigger_presence_reads_the_statement(tmp_path)[0].level
+
+    assert level(GOOD) == "OK", "must PASS when every presence test goes through _trigger_created"
+    assert level(GOOD + '    if "trg_x_append_only" not in sql:\n        pass\n') == "FAIL", \
+        "must FAIL on a bare-name read"
+    assert level(GOOD + "    if 'trg_y' in _read(root, 'polaris_sql/06_triggers.sql'):\n        pass\n") == "FAIL", \
+        "must FAIL on a single-quoted bare-name read"
+    assert level(GOOD + "    for trig in NAMES:\n        if trig not in triggers:\n            pass\n") == "FAIL", \
+        "must FAIL on the loop form"
+
+
 def test_token_core_triggers_check_discriminates(tmp_path):
     # 2026-09-23: deleting trg_token_state_machine or trg_token_must_have_active_signature
     # from 06_triggers.sql left every check green. Each perturbation removes one leg.

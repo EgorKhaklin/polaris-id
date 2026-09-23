@@ -553,6 +553,33 @@ _TOKEN_LEGAL_TRANSITIONS = (("RESERVE", "ACTIVE"), ("RESERVE", "REVOKED"), ("ACT
                             ("ACTIVE", "REVOKED"), ("ACTIVE", "LOST"), ("ACTIVE", "EXPIRED"))
 
 
+def check_trigger_presence_reads_the_statement(root: pathlib.Path) -> list[Finding]:
+    """No check decides a trigger exists by finding its NAME in a file (2026-09-23).
+
+    A name survives its statement: a COMMENT ON TRIGGER, a DROP TRIGGER IF EXISTS or a line
+    of prose keeps a substring test for the name true after `CREATE TRIGGER trg_x` is deleted. That is how
+    check_timestamp_transparency passed with its trigger gone. Nine checks read a trigger
+    that way; all now go through _trigger_created, which requires the statement in
+    comment-stripped SQL. This keeps a tenth from reading the name again.
+    """
+    name = "trigger_presence_reads_statement"
+    src = _read(root, "polaris_checks/checks.py")
+    if not src:
+        return _fail(name, "polaris_checks/checks.py could not be read")
+    bare = []
+    for i, line in enumerate(src.splitlines(), 1):
+        code = line.split("#", 1)[0]
+        if re.search(r"""["']trg_[a-z0-9_]+["']\s+(?:not\s+)?in\s+(?!\()""", code) or \
+           re.search(r"\bif\s+trig\s+not\s+in\s+triggers\b", code):
+            bare.append(i)
+    if bare:
+        return _fail(name, "checks.py decides a trigger exists by its name, which a comment satisfies after "
+                           "the statement is deleted; use _trigger_created (lines %s)"
+                           % ", ".join(map(str, bare[:10])))
+    return _ok(name, "every check that asks whether a trigger exists requires its CREATE TRIGGER statement "
+                     "in comment-stripped SQL")
+
+
 def check_token_core_triggers_are_bound(root: pathlib.Path) -> list[Finding]:
     """The two triggers the credential core rests on are defined AND bound (2026-09-23).
 
@@ -2539,7 +2566,7 @@ def check_erasure_procedure(root: pathlib.Path) -> list[Finding]:
                      "deletion path around C1 (erasure pseudonymizes, it does not delete)")
     if "must be admin" not in body:
         return _fail("erasure", "uc_pseudonymize_individual must be admin-gated (actor role check)")
-    if "trg_erasure_append_only" not in triggers:
+    if not _trigger_created(triggers, "trg_erasure_append_only"):
         return _fail("erasure",
                      "06_triggers.sql must attach the append-only trigger to IndividualErasureEvent")
     # The PRIVACY doc must point at the real procedure, not just describe a policy.
@@ -5575,6 +5602,15 @@ def _fk_targets(root: pathlib.Path) -> set:
 def _strip_sql_comments(sql: str) -> str:
     sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
     return "\n".join(l.split("--", 1)[0] for l in sql.splitlines())
+
+
+def _trigger_created(sql: str, name: str) -> bool:
+    """True when the SQL carries `CREATE TRIGGER name`, comments stripped. A bare-name
+    read is satisfied by a COMMENT ON TRIGGER or a prose mention after the statement is
+    gone, which is how check_timestamp_transparency passed with its trigger deleted
+    until 2026-09-23."""
+    return re.search(r"CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+" + re.escape(name) + r"\b",
+                     _strip_sql_comments(sql), re.I) is not None
 
 
 def check_migrations_expand_contract(root: pathlib.Path) -> list[Finding]:
@@ -11933,7 +11969,7 @@ def check_holder_key_binding(root: pathlib.Path) -> list[Finding]:
         return _fail("holder_key", "HolderKeyEvent (the append-only holder key register) is missing from the schema")
     if "HolderKeyCurrent" not in schema:
         return _fail("holder_key", "HolderKeyCurrent must derive the key in force per credential")
-    if "trg_holder_key_append_only" not in _read(root, "polaris_sql/06_triggers.sql"):
+    if not _trigger_created(_read(root, "polaris_sql/06_triggers.sql"), "trg_holder_key_append_only"):
         return _fail("holder_key",
                      "the holder key register must be append-only by trigger; a binding that could be updated "
                      "would let an operator replace the holder's key")
@@ -12547,7 +12583,7 @@ def check_trust_lifecycle(root: pathlib.Path) -> list[Finding]:
         return _fail("trust_lifecycle", "01_schema.sql must define the append-only AuthorityKeyEvent register with a one-way event vocabulary")
     if "CREATE OR REPLACE VIEW AuthorityKeyCurrent" not in _read(root, "polaris_sql/03_view.sql"):
         return _fail("trust_lifecycle", "03_view.sql must derive AuthorityKeyCurrent (compromised over retired over active)")
-    if "trg_authority_key_event_append_only" not in _read(root, "polaris_sql/06_triggers.sql") or "authoritykeyevent" not in _read(root, "polaris_sql/09_grants.sql").lower():
+    if not _trigger_created(_read(root, "polaris_sql/06_triggers.sql"), "trg_authority_key_event_append_only") or "authoritykeyevent" not in _read(root, "polaris_sql/09_grants.sql").lower():
         return _fail("trust_lifecycle", "the key register must be append-only by trigger and by privilege")
     app = _read_app(root)
     for sym, why in (("/api/v1/trust-list/<int:agency_id>", "the trust-list route"),
@@ -12676,7 +12712,7 @@ def check_auth_broker(root: pathlib.Path) -> list[Finding]:
     m = re.search(r"CREATE TABLE AuthCodeConsumed \((.*?)\);", schema, re.S)
     if not m or re.search(r"\b(rp_id|client_id|sub|subject|token|individual)\b", m.group(1)):
         return _fail("auth_broker", "AuthCodeConsumed must hold only the code hash and instant -- never a subject or relying party")
-    if "trg_auth_code_append_only" not in _read(root, "polaris_sql/06_triggers.sql") or "authcodeconsumed" not in _read(root, "polaris_sql/09_grants.sql").lower():
+    if not _trigger_created(_read(root, "polaris_sql/06_triggers.sql"), "trg_auth_code_append_only") or "authcodeconsumed" not in _read(root, "polaris_sql/09_grants.sql").lower():
         return _fail("auth_broker", "the consumed-code register must be strictly append-only by trigger and by privilege")
     rpa = _read(root, "polaris_web/rp_auth.py")
     if "def issue_auth_code" not in rpa or "def validate_auth_code" not in rpa or "_CODE_SALT" not in rpa:
@@ -12816,7 +12852,7 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
         return _fail("exchange_gateway", "the gateway must authorize the requester (trust graph, in-context) BEFORE forwarding to the upstream")
     if re.search(r"INSERT INTO \w+ \([^)]*\bbody\b", app, re.I):
         return _fail("exchange_gateway", "no persistence path may take a request or response body (evidence without retention)")
-    if "CREATE TABLE ExchangeNonce" not in _read(root, "polaris_sql/01_schema.sql") or "trg_exchange_nonce_append_only" not in _read(root, "polaris_sql/06_triggers.sql"):
+    if "CREATE TABLE ExchangeNonce" not in _read(root, "polaris_sql/01_schema.sql") or not _trigger_created(_read(root, "polaris_sql/06_triggers.sql"), "trg_exchange_nonce_append_only"):
         return _fail("exchange_gateway", "the replay register ExchangeNonce must exist and be strictly append-only")
     if "exchangenonce" not in _read(root, "polaris_sql/09_grants.sql").lower():
         return _fail("exchange_gateway", "09_grants.sql must REVOKE UPDATE, DELETE on ExchangeNonce from polaris_app")
@@ -12922,7 +12958,7 @@ def check_receipt_transparency(root: pathlib.Path) -> list[Finding]:
     if "CREATE TABLE ExchangeReceiptLog" not in schema or "chk_receipt_log_hash" not in schema:
         return _fail("receipt_transparency", "01_schema.sql must define ExchangeReceiptLog holding ONLY a SHA3-256 hex (chk_receipt_log_hash)")
     trig = _read(root, "polaris_sql/06_triggers.sql")
-    if "trg_receipt_log_append_only" not in trig or "reject_receipt_log_modification" not in trig:
+    if not _trigger_created(trig, "trg_receipt_log_append_only") or "reject_receipt_log_modification" not in trig:
         return _fail("receipt_transparency", "06_triggers.sql must make ExchangeReceiptLog strictly append-only (trg_receipt_log_append_only)")
     if "exchangereceiptlog" not in _read(root, "polaris_sql/09_grants.sql").lower():
         return _fail("receipt_transparency", "09_grants.sql must REVOKE UPDATE, DELETE on ExchangeReceiptLog from polaris_app (C1 is a privilege boundary too)")
@@ -18357,7 +18393,7 @@ def check_enrollment_proofing(root: pathlib.Path) -> list[Finding]:
                      "liveness result would let an enrollment count a photograph")
     triggers = _read(root, "polaris_sql/06_triggers.sql")
     for trig in ("trg_enrollment_proofing_append_only", "trg_enrollment_evidence_append_only"):
-        if trig not in triggers:
+        if not _trigger_created(triggers, trig):
             return _fail(name,
                          f"{trig} is missing: an assurance level rests on the evidence recorded "
                          "beside it, and a record of that evidence which can be edited "
@@ -18779,7 +18815,7 @@ def check_card_personalization(root: pathlib.Path) -> list[Finding]:
                      "application code: two live cards for one credential is a revocation that "
                      "only half works")
     triggers = _read(root, "polaris_sql/06_triggers.sql")
-    if "trg_card_personalization_append_only" not in triggers:
+    if not _trigger_created(triggers, "trg_card_personalization_append_only"):
         return _fail(name,
                      "the personalization record must be append-only. It is the one step where "
                      "the authority's signature goes onto something that then leaves its "
@@ -22083,6 +22119,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_rate_limits_are_enforced,
     check_one_active_token_index,
     check_token_core_triggers_are_bound,
+    check_trigger_presence_reads_the_statement,
     check_aor_append_only_triggers,
     check_aor_privilege_boundary,
     check_crypto_algorithm_is_data,
