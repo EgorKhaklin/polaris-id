@@ -291,6 +291,9 @@
 \appendix
 \renewcommand{\thesection}{\Alph{section}}
 \titleformat{\section}{\Large\bfseries\color{navydark}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{Appendix \thesection}{1em}{\polarisTitleStrut}[\vspace{0.5pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
+% Appendix A opens on a fresh page: it began in the last few lines of the conclusion's page
+% with its table pushed to the next, which read as a stray heading.
+\clearpage
 \input{v3-sections/A-status}
 \input{v3-sections/B-layers}
 \input{v3-sections/C-counts}
