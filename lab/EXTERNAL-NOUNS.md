@@ -115,7 +115,7 @@ asserted four separate properties of the same leaf without asserting this one. T
 certificate whose entire job is signing request objects was not marked usable for signing.
 Classified EXT-INTEROP and fixed in v9.465, with a test that is red on a leaf missing it.
 
-That is the point of this board. The local conformance suite, 143 package tests, a mutation
+That is the point of this board. The local conformance suite, 142 package tests, a mutation
 drill over every refusal and 270 invariant checks all passed over a defect that the first
 outside implementation refused on sight.
 

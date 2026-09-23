@@ -138,7 +138,7 @@ a key-binding token with a P-256 key it generated and this repository has never 
 response, and \code{polaris-oid4vp} verified the chain. It refused Polaris first, and it was right.
 The verifier's own key generator had produced a request-signing certificate with no key-usage
 extension at all, so the certificate whose entire job is signing request objects was not marked as
-usable for signing; eleven conformance modules, 143 package tests, a mutation drill over every
+usable for signing; eleven conformance modules, 142 package tests, a mutation drill over every
 refusal and every check in the invariant layer had passed over it, and the first implementation from
 outside declined to proceed. Fixed the same day, with a test that is red on a leaf missing it, and
 counted on the scoreboard as the first of the fixes caused by an external finding; the second, two days later, was an outside reviewer's. The exchange stands on the
