@@ -286,16 +286,30 @@ def _fail(name: str, msg: str) -> list[Finding]:
 # C5 — Content-Security-Policy forbids inline scripts.
 # ---------------------------------------------------------------------------
 def check_csp_forbids_unsafe_inline(root: pathlib.Path) -> list[Finding]:
+    """C5: scripts come from the application's own origin and nowhere else.
+
+    Every script directive the policy can emit (script-src, script-src-elem, script-src-attr,
+    in the list or appended later) must have exactly one source, 'self'. Until 2026-09-23 this
+    asked only that the text `script-src 'self'` appear and that no script line carry
+    'unsafe-inline': measured that day, `script-src 'self' https:` (any script from any HTTPS
+    host) and `script-src 'self' 'unsafe-eval'` both passed it. style-src 'unsafe-inline'
+    stays acceptable; the property is about scripts.
+    """
     src = _read(root, "polaris_web/security.py")
-    if "script-src 'self'" not in src:
+    # Every double-quoted literal that starts a script directive (the policy is built from
+    # Python string literals; a single-quoted one could not hold 'self').
+    directives = [lit.split() for lit in re.findall(r'"(script-src(?:-elem|-attr)?(?:\s[^"]*)?)"', src)]
+    if not any(d[0] == "script-src" for d in directives):
         return _fail("csp", "security.py CSP must pin script-src 'self'")
-    # C5 is violated only if the script-src directive ITSELF enables
-    # 'unsafe-inline'. style-src 'unsafe-inline' is acceptable, so check per
-    # directive line, not across the whole file.
-    for line in src.splitlines():
-        if "script-src" in line and "'unsafe-inline'" in line:
-            return _fail("csp", "script-src enables 'unsafe-inline' (C5 violation)")
-    return _ok("csp", "CSP pins script-src 'self'; no unsafe-inline on scripts (C5)")
+    for d in directives:
+        name, srcs = d[0], d[1:]
+        if "'unsafe-inline'" in srcs:
+            return _fail("csp", f"{name} enables 'unsafe-inline' (C5 violation)")
+        if srcs != ["'self'"]:
+            return _fail("csp", f"{name} allows {' '.join(srcs) or 'nothing'}; C5 pins scripts to 'self' "
+                                "alone, and every extra source is somewhere a script can come from")
+    return _ok("csp", "every script directive in the CSP is exactly 'self'; no inline, eval or foreign "
+                      "script source (C5)")
 
 
 #: Every rate limiter the application installs, as (the key prefix it uses, the route it

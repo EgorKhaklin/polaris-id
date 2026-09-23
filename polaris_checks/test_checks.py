@@ -45,6 +45,19 @@ def test_csp_check_fails_on_unsafe_inline(tmp_path):
     sec.write_text("CSP = \"script-src 'self' 'unsafe-inline'\"\n")
     out = checks.check_csp_forbids_unsafe_inline(tmp_path)
     assert out[0].level == "FAIL", "must FAIL when CSP enables 'unsafe-inline' for scripts"
+    # 2026-09-23: the check asked only for the text "script-src 'self'" and no unsafe-inline.
+    good = ('csp_parts = [\n    "default-src \'self\'",\n    "script-src \'self\'",\n'
+            '    "style-src \'self\' \'unsafe-inline\'",\n]\n')
+    sec.write_text(good)
+    assert checks.check_csp_forbids_unsafe_inline(tmp_path)[0].level == "OK", \
+        "must PASS with style-src 'unsafe-inline', which C5 allows"
+    for weak in ("'self' https:", "'self' 'unsafe-eval'", "*", "'self' https://cdn.example"):
+        sec.write_text(good.replace('"script-src \'self\'"', '"script-src %s"' % weak))
+        assert checks.check_csp_forbids_unsafe_inline(tmp_path)[0].level == "FAIL", \
+            "must FAIL when script-src allows %s" % weak
+    sec.write_text(good + 'csp_parts.append("script-src-elem https://cdn.example")\n')
+    assert checks.check_csp_forbids_unsafe_inline(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a later script-src-elem widens the policy"
 
 
 def test_c6_app_read_paths_check_discriminates(tmp_path):
