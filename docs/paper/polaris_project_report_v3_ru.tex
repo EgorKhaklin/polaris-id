@@ -1,0 +1,305 @@
+% ============================================================================
+% POLARIS, VERSION 3: THE MAP OF THE SYSTEM
+% A human-readable account of the reference implementation, re-measured whole
+% at 1.0.0-rc.7 (commit 4e74376, 20 September 2026). Version 2 was written at
+% v9.345 and revised at v9.355; it is preserved unchanged beside this file, as
+% Version 1 is beside it.
+% Author: Egor Khaklin
+%
+% What changed since Version 2 is the subject of Appendix F: the four standalone
+% packages are on public registries, an unmodified wallet written by someone else
+% presented a credential and was accepted, the OpenID Foundation's hosted
+% conformance suite ran the verifier profile, the verification layer was
+% mutation-tested end to end, the physical layer became an object somebody else
+% can implement, and two front-door words were weakened because the evidence did
+% not support them.
+%
+% Build: cd docs/paper && pdflatex polaris_project_report_v3.tex (three passes
+% for the table of contents), then restamp rendered-from.txt.
+% ============================================================================
+\RequirePackage{fix-cm}
+\documentclass[11pt,letterpaper]{article}
+
+% === ENCODING & TYPOGRAPHY ===
+\usepackage[T2A,T1]{fontenc}
+\usepackage[utf8]{inputenc}
+% No lmodern: Latin Modern ships no T2A small caps, so \scshape in the five marks
+% fell back to upright Cyrillic. Computer Modern via cm-super has T2A/cmr/m/sc,
+% and it is also what the English edition sets, so the two now match.
+\usepackage[english,russian]{babel}
+\usepackage{textcomp}
+% cmtt, not the English edition's lmtt: there is no T2A/lmtt, so under babel-russian
+% every \code{...} silently fell back to the roman face and stopped reading as code.
+\renewcommand{\ttdefault}{cmtt}
+\usepackage[expansion=false]{microtype}
+
+% === MATH ===
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% === PAGE GEOMETRY ===
+\usepackage[letterpaper, top=0.85in, bottom=0.85in, left=1.05in, right=1.05in,
+  headheight=13pt, headsep=16pt, footskip=28pt]{geometry}
+
+% === COLORS (the Version 1 palette, unchanged) ===
+\usepackage[dvipsnames,svgnames,table]{xcolor}
+\definecolor{navydark}{HTML}{0C1B2E}
+\definecolor{navymid}{HTML}{1B3A5C}
+\definecolor{navylight}{HTML}{2D5F8A}
+\definecolor{accent}{HTML}{C45B28}
+\definecolor{accentlight}{HTML}{E8793F}
+\definecolor{steelgray}{HTML}{4A5568}
+\definecolor{tabheader}{HTML}{0F1F33}
+\definecolor{tabstripe}{HTML}{F0F4F8}
+\definecolor{classmark}{HTML}{8B0000}
+\definecolor{gold}{HTML}{B8860B}
+\definecolor{goldlight}{HTML}{D4AF37}
+\definecolor{futfill}{HTML}{FBF6E8}
+\definecolor{witfill}{HTML}{EAF1F7}
+
+% === HEADERS & FOOTERS ===
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.2pt}
+\fancyhead[L]{\small\color{steelgray}\textsc{Хаклин\,|\,Polaris, версия 3}}
+\fancyhead[R]{\small\color{steelgray}\textsc{1.0.0-rc.7}}
+\fancyfoot[C]{\small\color{steelgray}Стр. \thepage}
+
+% === SECTION STYLING ===
+\usepackage{titlesec}
+\newcommand{\polarisTitleStrut}[1]{#1\strut}
+\titleformat{\section}{\Large\bfseries\color{navydark}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{\thesection}{1em}{\polarisTitleStrut}[\vspace{0.5pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
+\titleformat{\subsection}{\large\bfseries\color{navymid}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{navymid}}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{13pt}{4pt}
+\titlespacing*{\subsection}{0pt}{8pt}{5pt}
+\titlespacing*{\subsubsection}{0pt}{6pt}{3pt}
+
+% === TABLES, LISTS, FLOATS ===
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xltabular}
+% (no float barrier: it flushed a pending figure and ended the page early)
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage{float}
+% Floats go to the top or bottom of a text page, never to a float page of their own.
+\renewcommand{\topfraction}{0.9}\renewcommand{\bottomfraction}{0.85}
+\usepackage{placeins}  % \FloatBarrier at every section: a float page never leaves its section
+\renewcommand{\textfraction}{0.07}\renewcommand{\floatpagefraction}{0.4}
+\usepackage{ragged2e}
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.6em, itemsep=2pt, parsep=1pt, topsep=4pt}
+\setlist[itemize,1]{label=\color{accent}\textbullet}
+\setlist[enumerate]{leftmargin=1.8em, itemsep=2pt, parsep=1pt, topsep=4pt}
+\setlist[description]{itemsep=2pt, parsep=1pt, topsep=4pt, style=unboxed, font=\normalfont\bfseries\color{navymid}}
+\usepackage{needspace}
+% A heading never sits alone at the foot of a page: require room for it and a few lines.
+\let\polarisSectionRaw\section
+\renewcommand{\section}{\FloatBarrier\Needspace{14\baselineskip}\polarisSectionRaw}
+\let\polarisSubsectionRaw\subsection
+\renewcommand{\subsection}{\FloatBarrier\Needspace{7\baselineskip}\polarisSubsectionRaw}
+\usepackage{adjustbox}
+
+% === LINE- AND PAGE-BREAKING QUALITY ===
+\tolerance=2500
+\setlength{\emergencystretch}{3em}
+\hbadness=2500
+\clubpenalty=10000
+\widowpenalty=10000
+\displaywidowpenalty=10000
+\raggedbottom
+
+% === TIKZ ===
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,backgrounds,fit,shapes.geometric,shapes.misc,decorations.pathreplacing}
+\input{v3-figures/styles}
+\usepackage[most]{tcolorbox}
+
+% === HYPERLINKS ===
+\usepackage[colorlinks=true, linkcolor=navymid, urlcolor=navylight, linktoc=all, hypertexnames=false,
+  pdfauthor={Egor Khaklin},
+  pdftitle={Polaris, версия 3: карта системы},
+  pdfsubject={A reference implementation of an issuer-unlinkable, duress-aware identity-token system, signed with ML-DSA-65 under an audited algorithm-migration path, described layer by layer at 1.0.0-rc.7},
+  pdfkeywords={identity, post-quantum cryptography, algorithm agility, zero-knowledge, federation, transparency logs, database constraints, OpenID4VP, conformance, interoperability, AI agents, proof of personhood}]{hyperref}
+
+% === CAPTIONS ===
+\usepackage{caption}
+\captionsetup{font={small}, labelfont={bf,color=navymid}, textfont={color=steelgray}, skip=6pt}
+
+% === CODE LISTINGS ===
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{rotating}  % a figure wider than the page is tall gets a page turned on its side, at full size
+\lstset{basicstyle=\ttfamily\footnotesize, columns=fullflexible, keepspaces=true, upquote=true, breaklines=true,
+  breakatwhitespace=true, postbreak=\mbox{{\color{steelgray}\scriptsize$\hookrightarrow$}\enspace}, frame=single,
+  rulecolor=\color{navylight}, framesep=4pt, backgroundcolor=\color{tabstripe}, keywordstyle=\color{navymid}\bfseries,
+  commentstyle=\color{steelgray}\itshape, stringstyle=\color{accent}, showstringspaces=false, tabsize=2,
+  aboveskip=8pt plus 2pt, belowskip=8pt plus 2pt}
+
+% === TABLE OF CONTENTS ===
+\usepackage{tocloft}
+\renewcommand{\cftsecfont}{\bfseries\color{navydark}}
+\renewcommand{\cftsubsecfont}{\color{navymid}}
+\renewcommand{\cftsecpagefont}{\bfseries\color{navymid}}
+\renewcommand{\cftsubsecpagefont}{\color{steelgray}}
+\setlength{\cftbeforesecskip}{1pt}
+\setlength{\cftbeforesubsecskip}{0pt}
+\setcounter{tocdepth}{1}
+\setlength{\cftbeforetoctitleskip}{-\baselineskip}
+\setlength{\cftaftertoctitleskip}{2pt}
+
+% === THE VERSION 3 VOCABULARY ===
+% Status marks. Every capability in this paper carries one of the five, so a
+% reader never has to guess whether a sentence describes code that runs today,
+% and whether anybody outside the repository has exercised it.
+\DeclareRobustCommand{\marktie}{\ifdim\lastskip>0pt \unskip\nobreakspace\fi}
+\newcommand{\statusmark}[3]{{\fboxsep=1.5pt\fboxrule=0.5pt\fcolorbox{#1}{#2}{\scriptsize\scshape\color{#3}\strut}}}
+\newcommand{\sImpl}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navydark}{navydark}{\scriptsize\scshape\color{white}реализовано}}}
+\newcommand{\sExp}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{accent}{accent}{\scriptsize\scshape\color{white}экспериментально}}}
+\newcommand{\sExt}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{white}{\scriptsize\scshape\color{gold}требуется внешняя проверка}}}
+\newcommand{\sFut}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{futfill}{\scriptsize\scshape\color{navydark}предложено}}}
+\newcommand{\sWit}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navylight}{witfill}{\scriptsize\scshape\color{navylight}проверено извне}}}
+% A name in the code.
+% Code names may break after an underscore, so a long check name never overflows a narrow column.
+\DeclareRobustCommand{\code}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
+\DeclareRobustCommand{\entity}[1]{{\let\ushold\_\def\_{\ushold\allowbreak}\texttt{\color{navydark}#1}}}
+% The town analogy, always returned from. An unbreakable box: it is a few lines long, and a
+% few lines split across a page break read worse than the space a whole box leaves behind
+% when it moves to the next page. Readability over page count.
+\newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[enhanced, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt]\small{\scshape\color{gold}in the town}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
+% Why the next layer exists: the causal step.
+\newcommand{\nextlayer}[1]{\par\vspace{4pt}\noindent{\color{accent}\rule[-3pt]{2.5pt}{13pt}}\hspace{7pt}\parbox[t]{\dimexpr\textwidth-12pt}{\small\itshape #1}\par\vspace{4pt}}
+% A layer card: the same questions asked of every component. A card is one object: it
+% never splits across a page, so a card that does not fit moves whole to the next page
+% and the space it leaves stays empty. Any figure the section still has pending is
+% flushed before the card, so a figure never lands after the card that closes its section.
+% The card steps the table counter without a caption, as the longtable it used to be did,
+% so that every captioned table keeps the number it has carried since Version 3 was published.
+\newcounter{qarow}
+\newenvironment{layercard}[1]{%
+  \par\FloatBarrier\refstepcounter{table}\vspace{3pt}%
+  \noindent\begin{minipage}{\textwidth}%
+  \noindent{\color{navydark}\bfseries\small #1}\par\vspace{2pt}%
+  \setcounter{qarow}{0}%
+  \footnotesize\rowcolors{1}{tabstripe}{white}%
+  \noindent\begin{tabular}{>{\bfseries\RaggedRight\arraybackslash}p{1.35in} >{\RaggedRight\arraybackslash}p{\dimexpr\textwidth-1.35in-4\tabcolsep-2pt}}
+  \toprule}{\bottomrule\end{tabular}\end{minipage}\par\vspace{5pt}\normalsize}
+\newcommand{\qaStar}{\\*}
+\newcommand{\qaPlain}{\\}
+\newcommand{\qa}[2]{\stepcounter{qarow}\textcolor{navymid}{#1} & #2 \ifnum\numexpr(\value{qarow}-3)*(\value{qarow}-6)\relax>0 \expandafter\qaStar\else\expandafter\qaPlain\fi}
+% A figure from the v3-figures directory, never wider than the text and never scaled
+% smaller than the width demands. Two placements, and only two. \figfile puts the figure
+% exactly where the text introduces it, after the paragraph that names it; when it does
+% not fit the rest of the page it moves whole to the next, and the space it leaves is the
+% price of never sitting between the lines of a paragraph. \figpage gives a tall figure a
+% page of its own, the page after the paragraph that introduces it; the text fills its
+% page, the figure has the next, and the discussion continues after. Version 3 first
+% placed figures at the foot of text pages, which kept the page count down and cut every
+% paragraph that ran on to the next page. Readability over page count: neither placement
+% shares a page break with a paragraph.
+\newcommand{\figfile}[3]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.88\textheight,center}{\input{v3-figures/#1}}%
+  \caption{#2}\label{#3}\end{figure}}
+% \figfit: the same, with a height cap for the one figure that missed the page of its paragraph
+% by fifteen points; the cap is a three per cent reduction, within reading comfort.
+\newcommand{\figfit}[4]{\setlength{\intextsep}{6pt plus 2pt minus 2pt}\begin{figure}[H]\centering
+  \adjustbox{max width=\textwidth,max totalheight=#1\textheight,center}{\input{v3-figures/#2}}%
+  \caption{#3}\label{#4}\end{figure}}
+\newcommand{\figpage}[3]{\begin{figure}[p]\centering
+  \adjustbox{max width=\textwidth,max totalheight=0.84\textheight,center}{\input{v3-figures/#1}}%
+  \caption{#2}\label{#3}\end{figure}}
+% \figside: a page turned on its side for a figure much wider than it is tall, so that it
+% is read at its natural size rather than at the three quarters the upright page allows.
+\newcommand{\figside}[3]{\begin{sidewaysfigure}\centering
+  \adjustbox{max width=\textheight,max totalheight=0.8\textwidth,center}{\input{v3-figures/#1}}%
+  \caption{#2}\label{#3}\end{sidewaysfigure}}
+\newcommand{\thead}[1]{\textbf{\color{white}\small #1}}
+
+% ============================================================================
+\begin{document}
+
+% ---------------------------------------------------------------- TITLE PAGE
+\begin{titlepage}
+\thispagestyle{empty}
+\begin{center}
+\vspace*{0.8in}
+{\footnotesize\scshape\color{steelgray} Система идентификационных токенов \enspace$\cdot$\enspace версия 3}
+\vspace{0.55in}
+
+\includegraphics[height=7.2cm]{../../site/polaris_logo_clean.png}
+\vspace{0.55in}
+
+{\fontsize{56}{60}\selectfont\scshape\color{navydark} Polaris}
+\vspace{0.18in}
+
+{\fontsize{12}{16}\selectfont\itshape\color{navymid} Fixus inter mutabilia}
+\vspace{0.35in}
+
+{\fontsize{13}{17}\selectfont\color{navydark} Карта системы}
+\vspace{0.12in}
+
+{\small\color{steelgray} Справочная реализация системы идентификационных токенов,\\ несвязываемой со стороны эмитента и учитывающей принуждение, подписанной\\ ML-DSA-65 по проверяемому пути миграции алгоритмов; читается от центра\\ наружу, в версии 1.0.0-rc.7}
+\vspace{0.5in}
+
+{\color{gold}\rule{0.85in}{0.5pt}}
+\vspace{0.28in}
+
+{\fontsize{16}{19}\selectfont\color{navydark} Егор Хаклин}
+\vfill
+{\footnotesize\scshape\color{steelgray} Университет Сетон-Хилл \enspace$\cdot$\enspace сентябрь 2026}
+\vspace{0.6in}
+\end{center}
+\end{titlepage}
+
+% ---------------------------------------------------------------- FRONT MATTER
+\pagenumbering{roman}
+\setcounter{page}{1}
+\input{v3-sections-ru/00-about}
+\newpage
+{\color{navydark}\Large\bfseries Содержание}\\[2pt]
+{\color{navymid}\rule{\textwidth}{0.8pt}}
+\vspace{4pt}
+\renewcommand{\contentsname}{}
+\tableofcontents
+\newpage
+
+% ---------------------------------------------------------------- BODY
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{v3-sections-ru/01-problem}
+\input{v3-sections-ru/02-reading}
+\input{v3-sections-ru/03-core}
+\input{v3-sections-ru/04-walls}
+\input{v3-sections-ru/05-signatures}
+\input{v3-sections-ru/06-verifiers}
+\input{v3-sections-ru/07-authorization}
+\input{v3-sections-ru/08-privacy}
+\input{v3-sections-ru/09-use}
+\input{v3-sections-ru/10-federation}
+\input{v3-sections-ru/11-transparency}
+\input{v3-sections-ru/12-institutions}
+\input{v3-sections-ru/13-operations}
+\input{v3-sections-ru/14-cognition}
+\input{v3-sections-ru/15-senses}
+\input{v3-sections-ru/16-boundaries}
+\input{v3-sections-ru/17-agents}
+\input{v3-sections-ru/18-research}
+\input{v3-sections-ru/19-limitations}
+\input{v3-sections-ru/20-conclusion}
+
+% ---------------------------------------------------------------- APPENDICES
+\appendix
+\renewcommand{\thesection}{\Alph{section}}
+\titleformat{\section}{\Large\bfseries\color{navydark}\filright\hyphenpenalty=10000\exhyphenpenalty=10000}{Appendix \thesection}{1em}{\polarisTitleStrut}[\vspace{0.5pt}{\color{navymid}\titlerule[0.8pt]}\nobreak]
+\input{v3-sections-ru/A-status}
+\input{v3-sections-ru/B-layers}
+\input{v3-sections-ru/C-counts}
+\input{v3-sections-ru/D-glossary}
+\input{v3-sections-ru/E-from-v1}
+\input{v3-sections-ru/F-from-v2}
+
+\end{document}

@@ -7253,10 +7253,16 @@ def check_paper_pdf_is_current(root: pathlib.Path) -> list[Finding]:
     # The remediation line was worse than the gap. It said to restamp with
     # `shasum -a 256 *.tex`, which does not match how the file is built and would have cut it
     # from 93 entries to 3, leaving every section unrecorded and the check permanently green.
-    restamp = ("cd docs/paper && shasum -a 256 *.tex v2-sections/*.tex v2-figures/*.tex "
-               "v3-sections/*.tex v3-figures/*.tex > rendered-from.txt")
-    sources = sorted(set(tex) | set(paper.glob("*-sections/*.tex"))
-                     | set(paper.glob("*-figures/*.tex")))
+    restamp = ("cd docs/paper && shasum -a 256 *.tex *sections*/*.tex "
+               "*figures*/*.tex > rendered-from.txt")
+    # `*-sections/` and not `*sections*/` was the same defect this check exists to
+    # catch, one level up: a rule stated over every source, enforced over the two
+    # directories that existed when the pattern was written. v3-sections-ru/ does
+    # not end in "-sections", so the Russian edition's 27 sections were outside the
+    # comparison entirely and could have drifted from the PDF built from them
+    # without anything going red. Found 2026-09-22, on the commit that added them.
+    sources = sorted(set(tex) | set(paper.glob("*sections*/*.tex"))
+                     | set(paper.glob("*figures*/*.tex")))
     if not sources:
         return _fail("paper_current", "docs/paper/ ships no LaTeX source to compare")
     for source in sources:
