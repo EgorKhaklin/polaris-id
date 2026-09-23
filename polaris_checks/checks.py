@@ -5082,6 +5082,45 @@ def check_db_secret_rotation_changes_both_or_neither(root: pathlib.Path) -> list
                      "before the file changes, and the running probe is retried")
 
 
+_RAW_PREFIX = "https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/"
+_STRANGER_PAGES = ("packages/polaris-verify/README.md", "packages/polaris-oid4vp/README.md",
+                   "sdk/python/README.md", "sdk/typescript/README.md", "docs/STRANGER-PATH.md")
+
+
+def check_stranger_pages_fetch_files_that_exist(root: pathlib.Path) -> list[Finding]:
+    """Every file a stranger's page tells them to fetch from the repository exists in it.
+
+    The registry pages and the stranger's path give first runs that fetch files raw from
+    GitHub (the published vectors, the wallet setup script), so a stranger never clones the
+    repository. The link check follows relative links only; a moved or renamed vector would
+    break every one of those pages, on PyPI and npm, with the tree green. Both spellings are
+    resolved: a full raw URL, and `base=<raw dir>` followed by `$base/<file>` (2026-09-23).
+    """
+    name = "stranger_raw_files"
+    missing, seen = [], 0
+    for rel in _STRANGER_PAGES:
+        text = _read_raw(root, rel)
+        if not text:
+            continue
+        refs = [u[len(_RAW_PREFIX):] for u in re.findall(re.escape(_RAW_PREFIX) + r"[^\s)\"'`]+", text)]
+        for base in re.findall(r"\b(\w+)=" + re.escape(_RAW_PREFIX) + r"([^\s)\"'`]+)", text):
+            var, d = base
+            refs = [r for r in refs if r != d]                 # the directory itself is not a file
+            refs += ["%s/%s" % (d.rstrip("/"), f) for f in re.findall(r"\$%s/([\w.\-/]+)" % var, text)]
+        for ref in refs:
+            seen += 1
+            if not (root / ref).is_file():
+                missing.append("%s -> %s" % (rel, ref))
+    if missing:
+        return _fail(name, "a stranger's page fetches files the repository does not have: "
+                           + "; ".join(sorted(set(missing))[:6]))
+    if not seen:
+        return _fail(name, "no stranger's page fetches anything from the repository, so this check "
+                           "measured nothing; the first-run blocks may have been removed")
+    return _ok(name, "all %d raw-GitHub fetches on the registry pages and the stranger's path name "
+                     "files that exist in the tree" % seen)
+
+
 def check_rotate_secret_preserves_mode(root: pathlib.Path) -> list[Finding]:
     sh = _read(root, "scripts/polaris-rotate-secret.sh")
     if not sh:
@@ -22436,6 +22475,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_chaos_probe_reaches_wrapper,
     check_ct_monitor_testable_and_guarded,
     check_rotate_secret_preserves_mode,
+    check_stranger_pages_fetch_files_that_exist,
     check_db_secret_rotation_changes_both_or_neither,
     check_sbom_workflow,
     check_sbom_trivy_matches_scan,

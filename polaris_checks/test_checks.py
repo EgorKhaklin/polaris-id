@@ -9693,6 +9693,33 @@ def test_db_secret_rotation_changes_both_or_neither_check_discriminates(tmp_path
         "must FAIL when the root password is no longer altered"
 
 
+def test_stranger_pages_fetch_files_that_exist_check_discriminates(tmp_path):
+    # 2026-09-23: the registry pages fetch published vectors raw from GitHub; a renamed file
+    # would break every page with the tree green, because the link check reads relative links.
+    raw = checks._RAW_PREFIX
+    (tmp_path / "vectors").mkdir()
+    (tmp_path / "vectors" / "valid.json").write_text("{}")
+    (tmp_path / "lab").mkdir()
+    (tmp_path / "lab" / "setup.sh").write_text("#!/bin/sh\n")
+    page = tmp_path / "sdk" / "python" / "README.md"
+    page.parent.mkdir(parents=True)
+    good = ("base=%svectors\ncurl -sO $base/valid.json\n"
+            "curl -O %slab/setup.sh\n" % (raw, raw))
+    page.write_text(good)
+    assert checks.check_stranger_pages_fetch_files_that_exist(tmp_path)[0].level == "OK", \
+        "must PASS when every fetched file exists"
+    page.write_text(good.replace("$base/valid.json", "$base/renamed.json"))
+    out = checks.check_stranger_pages_fetch_files_that_exist(tmp_path)[0]
+    assert out.level == "FAIL" and "vectors/renamed.json" in out.message, \
+        "must FAIL, naming it, when a $base fetch points at a file that is gone"
+    page.write_text(good.replace("lab/setup.sh", "lab/moved.sh"))
+    assert checks.check_stranger_pages_fetch_files_that_exist(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a full raw URL points at a file that is gone"
+    page.write_text("no fetches here\n")
+    assert checks.check_stranger_pages_fetch_files_that_exist(tmp_path)[0].level == "FAIL", \
+        "must FAIL when no page fetches anything, since it would then measure nothing"
+
+
 def test_timestamp_transparency_check_discriminates(tmp_path):
     # v9.341 (P8.5b): anchored timestamps in an append-only log; each perturbation removes one leg.
     APP = ("_TIMESTAMP_LOG_ID = 'polaris-timestamp-log'\ndef _anchor_timestamp(ts): pass\n    if body.get('anchor') is True:\n"
