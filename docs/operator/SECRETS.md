@@ -133,35 +133,44 @@ Common steps, in order:
 1. Copies the current file to `<secrets dir>/.archive/<name>.<UTC timestamp>`
    (mode 0600) so a broken rotation can be undone by hand.
 2. Generates 32 random bytes as 64 hex chars.
-3. Writes the replacement atomically, preserving the existing file's mode
+3. Asks whether the stack is running, before anything changes, and asks up to five times: a
+   single empty answer from `docker compose ps` is not taken as a stopped stack. For
+   `polaris_db_password` and `polaris_db_root_password` a stopped stack is a refusal: the
+   password lives in the database as well as in the file, the two must change together, and
+   the script exits non-zero having changed nothing. For those two it then runs the `ALTER
+   USER`; if that fails, it stops there, and the old password still works everywhere.
+4. Writes the replacement atomically, preserving the existing file's mode
    (`check_rotate_secret_preserves_mode` in
    [`polaris_checks/checks.py`](../../polaris_checks/checks.py) pins this).
-4. With a sealed backend, seals the new value through to the store
+5. With a sealed backend, seals the new value through to the store
    (`polaris-secrets.sh seal --only <name>`), keeping the previous blob as
    `.prev`.
-5. Applies the change to the running stack. If docker is absent or the stack
-   is not running, it stops here and the new value takes effect at the next
-   `polaris-deploy.sh prod`.
-6. Prints the health-check command to run; it does not run a smoke test and
+6. Applies the change to the running stack. Only `polaris_secret_key` can arrive here with
+   the stack stopped; its new value takes effect when the stack next starts.
+7. Prints the health-check command to run; it does not run a smoke test and
    it does not roll back.
 
-Per-secret step 5:
+Per-secret step 6:
 
 - `polaris_secret_key`: recreates the app container(s) one at a time,
   waiting for each to report healthy. Every user session is invalidated;
   schedule the rotation for a low-traffic window.
-- `polaris_db_password`: `ALTER USER polaris_app`, then recreates pgbouncer
+- `polaris_db_password`: (the `ALTER USER polaris_app` ran at step 3) recreates pgbouncer
   BEFORE the app. pgbouncer builds its `userlist.txt` from the secret at
   container start, so recreating only the app leaves every connection
   failing with `SASL authentication failed`; `check_secrets_lifecycle_sealed`
   pins the order. If you rotate by hand, do the same.
-- `polaris_db_root_password`: `ALTER USER postgres`, then recreates the
+- `polaris_db_root_password`: (the `ALTER USER postgres` ran at step 3) recreates the
   postgres container.
 
-The file is rewritten before the database role is altered. If the `ALTER
-USER` fails, the file already holds the new value: restore it from
-`.archive/` (and re-seal with `polaris-secrets.sh seal --only <name>` when a
-sealed backend is in use) before retrying.
+The database role is altered before the file is rewritten. Until 2026-09-23 it was the other
+way round, and a stack the script mistook for stopped (one empty `compose ps`, CI run
+35885214888) had its password file rotated with the database never told: the next app
+restart failed every connection with `SASL authentication failed`. If the file write fails
+after the `ALTER USER` has succeeded (a full disk, a read-only mount), the database holds the
+new value and the file the old one. The script never prints a secret, so recover with the
+archived one: `ALTER USER` the role back to the value in `.archive/<name>.<timestamp>`, then
+retry.
 
 Secrets the script does not cover: the signing key follows the ceremony in
 [KEY-CEREMONY.md](KEY-CEREMONY.md#rotation); the replicator password and the

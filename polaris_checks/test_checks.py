@@ -9657,6 +9657,42 @@ CREATE TRIGGER trg_token_must_have_active_signature
     assert level() == "FAIL", "must FAIL when deleting a signature is not re-checked"
 
 
+def test_db_secret_rotation_changes_both_or_neither_check_discriminates(tmp_path):
+    # 2026-09-23, CI run 35885214888: one empty `compose ps` and the password file changed
+    # while the database kept the old value.
+    GOOD = (
+        "stack_running() {\n    local _\n    for _ in 1 2 3; do\n"
+        "        compose ps --status running --quiet | grep -q . && return 0\n        sleep 2\n    done\n"
+        "    return 1\n}\n"
+        "case \"${SECRET}\" in\n    polaris_db_password|polaris_db_root_password)\n"
+        "        if [[ \"${RUNNING}\" != 1 ]]; then\n            exit 1\n        fi\n"
+        "        psql -c \"ALTER USER polaris_app WITH PASSWORD 'x';\"\n"
+        "        psql -c \"ALTER USER postgres WITH PASSWORD 'x';\"\n        ;;\nesac\n"
+        "mv \"${TARGET}.new\" \"${TARGET}\"\n"
+    )
+    f = tmp_path / "scripts" / "polaris-rotate-secret.sh"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(GOOD)
+    assert checks.check_db_secret_rotation_changes_both_or_neither(tmp_path)[0].level == "OK", \
+        "must PASS: retried probe, refusal when stopped, ALTER before the file"
+
+    def level(body):
+        f.write_text(body)
+        return checks.check_db_secret_rotation_changes_both_or_neither(tmp_path)[0].level
+
+    # the old order: the file first, the database after
+    old = GOOD.replace("        psql -c \"ALTER USER polaris_app WITH PASSWORD 'x';\"\n", "") \
+        + "psql -c \"ALTER USER polaris_app WITH PASSWORD 'x';\"\n"
+    assert level(old) == "FAIL", "must FAIL when the database is told after the file changes"
+    assert level(GOOD.replace("            exit 1\n", "            exit 0\n")) == "FAIL", \
+        "must FAIL when a stopped stack exits 0 with nothing applied"
+    assert level(GOOD.replace("    for _ in 1 2 3; do\n", "    for _ in 1; do\n").replace("        sleep 2\n", "")) == "FAIL", \
+        "must FAIL when the running probe is asked once"
+    assert level(GOOD.replace("# x\n", "") .replace("ALTER USER postgres", "-- ALTER USER postgres")
+                 .replace("        psql -c \"-- ALTER", "        # psql -c \"-- ALTER")) == "FAIL", \
+        "must FAIL when the root password is no longer altered"
+
+
 def test_timestamp_transparency_check_discriminates(tmp_path):
     # v9.341 (P8.5b): anchored timestamps in an append-only log; each perturbation removes one leg.
     APP = ("_TIMESTAMP_LOG_ID = 'polaris-timestamp-log'\ndef _anchor_timestamp(ts): pass\n    if body.get('anchor') is True:\n"

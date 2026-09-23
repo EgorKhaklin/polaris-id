@@ -86,6 +86,49 @@ gen_hex() {
 }
 NEW_VALUE=$(gen_hex)
 
+# Is the stack up? Asked BEFORE anything changes, and asked more than once: on 2026-09-23
+# `compose ps` answered empty seconds after the stack had served a request (CI run
+# 35885214888), the script took the stack for stopped, rotated polaris_db_password in the
+# FILE only, and exited 0. The next app restart read the new password against a database
+# still holding the old one, and every connection failed SASL authentication.
+stack_running() {
+    command -v docker >/dev/null 2>&1 || return 1
+    local _
+    for _ in 1 2 3 4 5; do
+        compose ps --status running --quiet 2>/dev/null | grep -q . && return 0
+        sleep 2
+    done
+    return 1
+}
+RUNNING=0
+stack_running && RUNNING=1
+
+# A database password lives in two places, the secret file and the database, and they must
+# change together. So for those two secrets the stack must be running, and the database
+# learns the new value FIRST: if that fails, nothing has changed and the old password still
+# works everywhere. "Takes effect on the next deploy" was never true for them: the database
+# volume survives a stop, and the next deploy would present a password it had never been told.
+case "${SECRET}" in
+    polaris_db_password|polaris_db_root_password)
+        if [[ "${RUNNING}" != 1 ]]; then
+            rm -f "${ARCHIVE_PATH}"
+            echo "error: ${SECRET} is held by the database as well as by ${TARGET}, and the stack is" >&2
+            echo "       not running, so the database cannot learn the new value in the same step." >&2
+            echo "       Nothing was changed. Start the stack and run this again." >&2
+            exit 1
+        fi
+        if [[ "${SECRET}" == polaris_db_password ]]; then
+            echo "  → updating polaris_app password in DB…"
+            compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 \
+                -c "ALTER USER polaris_app WITH PASSWORD '${NEW_VALUE}';"
+        else
+            echo "  → updating postgres superuser password…"
+            compose exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 \
+                -c "ALTER USER postgres WITH PASSWORD '${NEW_VALUE}';"
+        fi
+        ;;
+esac
+
 # Write replacement atomically, PRESERVING the existing file's mode. The
 # original hardcoded 0600, which silently regressed the perms that
 # polaris-generate-secrets.sh sets deliberately: polaris_db_password (and the
@@ -118,15 +161,12 @@ if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
 fi
 
 # Apply the rotation to the running stack.
-if ! command -v docker >/dev/null 2>&1; then
-    echo "  ! docker not on PATH — secret file rotated but stack not reloaded" >&2
+if [[ "${RUNNING}" != 1 ]]; then
+    # Only polaris_secret_key reaches here: it lives in the file alone.
+    echo "  • stack not running; ${SECRET} takes effect when the stack next starts"
     exit 0
 fi
 
-if ! compose ps --status running --quiet 2>/dev/null | grep -q .; then
-    echo "  • stack not running; secret will take effect on next 'polaris-deploy.sh prod'"
-    exit 0
-fi
 
 case "${SECRET}" in
     polaris_secret_key)
@@ -135,9 +175,7 @@ case "${SECRET}" in
         ;;
 
     polaris_db_password)
-        echo "  → updating polaris_app password in DB…"
-        compose exec -T postgres psql -U postgres -d polaris \
-            -c "ALTER USER polaris_app WITH PASSWORD '${NEW_VALUE}';"
+        # The database already has the new value (above, before the file was written).
         # pgbouncer (v8.83+) authenticates to postgres as polaris_app with a
         # userlist.txt it generates from the secret AT CONTAINER START, so it
         # must be recreated too, and BEFORE the app, or every app connection
@@ -150,9 +188,7 @@ case "${SECRET}" in
         ;;
 
     polaris_db_root_password)
-        echo "  → updating postgres superuser password…"
-        compose exec -T postgres psql -U postgres -d polaris \
-            -c "ALTER USER postgres WITH PASSWORD '${NEW_VALUE}';"
+        # The database already has the new value (above, before the file was written).
         echo "  → recreating postgres container…"
         compose up -d --no-deps --force-recreate postgres
         ;;

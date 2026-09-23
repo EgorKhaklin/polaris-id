@@ -5038,6 +5038,50 @@ def check_ct_monitor_testable_and_guarded(root: pathlib.Path) -> list[Finding]:
 # (the v9.140 fix). A rotation that hardcoded 0600 silently regressed that and
 # would crash-loop the prod stack on next deploy. Pin: no bare `chmod 0600` on
 # the rotated target, and the current mode must be captured.
+def check_db_secret_rotation_changes_both_or_neither(root: pathlib.Path) -> list[Finding]:
+    """A database password is rotated in the database and the file together, or not at all.
+
+    Until 2026-09-23 polaris-rotate-secret.sh wrote the new password FILE first, then asked
+    once whether the stack was running and, if `compose ps` answered empty, printed "takes
+    effect on next deploy" and exited 0. CI run 35885214888 got that empty answer from a live
+    stack: the file changed, the database was never told, and the next app restart failed
+    every connection with SASL authentication failed. It was also wrong for a stack genuinely
+    stopped, since the database volume keeps the old password across the stop.
+
+    Pinned, in the comment-stripped script: the running probe is retried; for the database
+    secrets a stopped stack exits NON-ZERO before anything is written; and each ALTER USER
+    comes before the line that replaces the file.
+    """
+    name = "db_secret_rotation"
+    raw = _read(root, "scripts/polaris-rotate-secret.sh")
+    if not raw:
+        return _fail(name, "scripts/polaris-rotate-secret.sh is missing")
+    sh = "\n".join(l for l in raw.splitlines() if not l.lstrip().startswith("#"))
+    probe = re.search(r"stack_running\(\)\s*\{(.*?)\n\}", sh, re.S)
+    if not probe or not re.search(r"\bfor\b.*\bsleep\b", probe.group(1), re.S):
+        return _fail(name, "the stack-running probe is not retried; one empty `compose ps` answer "
+                           "is taken for a stopped stack, which is how a live database was left "
+                           "holding the old password")
+    replace = sh.find('mv "${TARGET}.new" "${TARGET}"')
+    if replace < 0:
+        return _fail(name, "could not find the line that replaces the secret file")
+    for role in ("polaris_app", "postgres"):
+        at = sh.find("ALTER USER %s WITH PASSWORD" % role)
+        if at < 0:
+            return _fail(name, "the script no longer alters the %s role at all" % role)
+        if at > replace:
+            return _fail(name, "ALTER USER %s comes after the file is replaced, so a failure between "
+                               "them leaves the file and the database disagreeing" % role)
+    # Any branch naming both database secrets (the name-validation case at the top names them
+    # too, with an empty body) that refuses a stopped stack with exit 1, before the file moves.
+    branches = re.findall(r"polaris_db_password\|polaris_db_root_password\)(.*?);;", sh[:replace], re.S)
+    if not any(re.search(r"RUNNING[^\n]*!=\s*1", b) and re.search(r"\bexit\s+1\b", b) for b in branches):
+        return _fail(name, "a database secret is not refused (exit 1, nothing written) when the stack is "
+                           "not running; its file would change while the database kept the old value")
+    return _ok(name, "a database password is refused when the stack is down, told to the database "
+                     "before the file changes, and the running probe is retried")
+
+
 def check_rotate_secret_preserves_mode(root: pathlib.Path) -> list[Finding]:
     sh = _read(root, "scripts/polaris-rotate-secret.sh")
     if not sh:
@@ -22392,6 +22436,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_chaos_probe_reaches_wrapper,
     check_ct_monitor_testable_and_guarded,
     check_rotate_secret_preserves_mode,
+    check_db_secret_rotation_changes_both_or_neither,
     check_sbom_workflow,
     check_sbom_trivy_matches_scan,
     check_release_provenance,
