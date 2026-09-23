@@ -18,7 +18,7 @@ The Atlas is the operator's investigation surface: an analytical console that op
 non-geographic overview, a volume time-series with failures overlaid, top-K breakdowns by context,
 agency, disclosure and outcome, a two-dimensional pivot, a records grid, and a map kept as a tab for
 what a map is good at, one region's drill or one subject's journey. Every view is a bounded
-server-side aggregate, never the raw events: at most a few hundred cluster summaries for a viewport,
+server-side aggregate, never the raw events: at most five thousand cluster summaries for a viewport, however fine a grid the client asks for,
 at most 240 time buckets, at most fifty categories, keyset pagination so that a deep page stays
 cheap. A zero-knowledge verification is counted in volume and in the disclosure tallies and is never
 located, because it carries no token to attribute it by. The single-entity investigation pages are

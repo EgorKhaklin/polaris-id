@@ -9,8 +9,9 @@ The short version. The measured numbers and the full treatment are in
 
 At a million events the map cannot be sent to the browser: the payload is
 gigabytes. So the aggregation happens in the database. The browser sends the
-visible bounding box, the server returns at most a few hundred cluster
-summaries, each a centroid and its counts, and the browser draws those instead
+visible bounding box and a grid size, the server returns one cluster summary
+per occupied grid cell, each a centroid and its counts, and never more than
+`_ATLAS_MAX_CLUSTERS` (5,000) however fine a grid the client asks for, and the browser draws those instead
 of the events. When a zoom brings the count in view down to a handful, the
 client fetches the individual events instead.
 
