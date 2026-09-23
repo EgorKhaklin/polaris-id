@@ -386,5 +386,100 @@ class HeldOutSemanticMutations(unittest.TestCase):
         finally:
             V._verify_liboqs, V._verify_cryptography = saved
 
+
+# --------------------------------------------------------------------------- the exit codes
+
+@unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
+                     "no real ML-DSA backend; the exit-code contract is about real verdicts")
+class CommandLineExitCodes(unittest.TestCase):
+    """The README's exit-code table is what a script built on this command relies on, and
+    held-out mutations of `main` (2026-09-23) moved codes with every suite green: nothing
+    ran `main` and read its return value. Each test asserts one row of that table.
+
+    Where a row depends on a verdict no published fixture produces (a stapled pair that is
+    genuine but whose trust was not evaluated, an unusable presentation, an abstaining ZK
+    decision), the verdict function is replaced for the one call and only `main`'s mapping
+    from verdict to exit code is under test. That is the mechanism the rows describe."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-cli-exit-"))
+        valid = json.loads((ROOT / "vectors" / "ml-dsa-65-valid.json").read_text())
+        cls.pack = cls.tmp / "pack.json"
+        cls.pack.write_text(json.dumps(valid))
+        cls.good_anchor = cls.tmp / "good.json"
+        cls.good_anchor.write_text(json.dumps([valid["public_key_hex"]]))
+        cls.other_anchor = cls.tmp / "other.json"
+        cls.other_anchor.write_text(json.dumps(["ab" * 1952]))
+        cls.blob = cls.tmp / "blob.json"
+        cls.blob.write_text("{}")
+
+    def main(self, *argv):
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return V.main(list(argv))
+
+    def test_a_run_that_declares_no_cryptography_refuses_to_start(self):
+        """For the RIGHT reason. With this refusal deleted the run still exits 4, because the
+        next check finds backend `None` unusable, and tells the caller that a backend called
+        None is not installed instead of that no mode was declared. The exit code alone is
+        satisfied by the wrong mechanism, so the message is asserted too."""
+        import contextlib
+        import io
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = V.main(["--pack", str(self.pack)])
+        self.assertEqual(code, 4)
+        self.assertIn("say what cryptography this run uses", err.getvalue())
+
+    def test_a_run_that_declares_both_modes_refuses_to_start(self):
+        self.assertEqual(self.main("--pqc-provider", "auto", "--dev-placeholder",
+                                   "--pack", str(self.pack)), 4)
+
+    def test_a_named_backend_that_is_not_usable_refuses_to_start(self):
+        from unittest import mock
+        with mock.patch.object(V, "_provider_available", return_value=False):
+            for provider in ("oqs", "cryptography", "auto"):
+                with self.subTest(provider=provider):
+                    self.assertEqual(self.main("--pqc-provider", provider, "--pack", str(self.pack)), 4)
+
+    def test_a_genuine_signature_with_no_anchor_abstains(self):
+        self.assertEqual(self.main("--pqc-provider", "auto", "--pack", str(self.pack)), 2)
+        self.assertEqual(self.main("--pqc-provider", "auto", "--signature-only",
+                                   "--pack", str(self.pack)), 0)
+
+    def test_the_anchor_decides_the_exit(self):
+        self.assertEqual(self.main("--pqc-provider", "auto", "--pack", str(self.pack),
+                                   "--issuer-anchor", str(self.good_anchor)), 0)
+        self.assertEqual(self.main("--pqc-provider", "auto", "--pack", str(self.pack),
+                                   "--issuer-anchor", str(self.other_anchor)), 2)
+
+    def test_a_stapled_accept_without_evaluated_trust_abstains(self):
+        from unittest import mock
+        accepted = {"decision": "accept", "authentic": True, "status": "ACTIVE", "fresh": True,
+                    "bound": True, "reasons": [], "credential": {"trust_evaluated": False},
+                    "status_assertion": {"trust_evaluated": False}}
+        with mock.patch.object(V, "verify_stapled", return_value=accepted):
+            self.assertEqual(self.main("--pqc-provider", "auto", "--pack", str(self.pack),
+                                       "--status-assertion", str(self.blob)), 2)
+            self.assertEqual(self.main("--pqc-provider", "auto", "--signature-only",
+                                       "--pack", str(self.pack),
+                                       "--status-assertion", str(self.blob)), 0)
+
+    def test_an_unusable_presentation_exits_non_zero(self):
+        from unittest import mock
+        with mock.patch.object(V, "verify_presentation",
+                               return_value={"usable_offline": False, "note": "x"}):
+            self.assertEqual(self.main("--pqc-provider", "auto", "--presentation", str(self.blob)), 1)
+
+    def test_an_abstaining_zero_knowledge_decision_exits_2(self):
+        from unittest import mock
+        for decision, code in (("abstain", 2), ("reject", 1), ("accept", 0)):
+            with self.subTest(decision=decision), \
+                    mock.patch.object(V, "verify_cross_authority_zk",
+                                      return_value={"decision": decision, "reasons": []}):
+                self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", str(self.blob)), code)
+
 if __name__ == "__main__":
     unittest.main()

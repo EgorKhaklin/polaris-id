@@ -257,7 +257,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-266 tests in seven files, and they are not equal in weight. Coverage is
+271 tests in seven files, and they are not equal in weight. Coverage is
 the weakest of the three instruments here: it says a line ran.
 
 **And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`
@@ -294,7 +294,7 @@ The same fixture proves the refusals: a year later it is stale, under another no
 another audience it is not ours, with `given_name` rewritten from Jean to Jeanne the digest no
 longer matches what the issuer signed.
 
-`test_verifier` (40) drives the whole exchange in process, with a wallet that READS the
+`test_verifier` (45) drives the whole exchange in process, with a wallet that READS the
 request object rather than being told what is in it: if the request object were malformed, that
 wallet could not answer it. Seven of its tests assert each conformance refusal arrives as an
 HTTP 400 rather than merely being noticed, because a 400 is the whole of what those modules

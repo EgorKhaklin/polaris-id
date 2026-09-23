@@ -141,7 +141,7 @@ What it does guarantee, and what you can script on:
 | correct anchor | `true` | `true` | 0 |
 | a different, well-formed key | `true` | **`false`** | **2** |
 | empty anchor list | `true` | **`false`** | **2** |
-| no anchor given | `true` | `null` | 0 |
+| no anchor given | `true` | `null` | **2** (abstains; 0 only with `--signature-only`) |
 
 A genuine signature by a key you did not anchor is reported authentic and untrusted, and
 exits non-zero. The two questions stay separate because collapsing them is how a format

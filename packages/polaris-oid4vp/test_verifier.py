@@ -498,6 +498,77 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         self.assertIn("already been answered", loser.reason)
 
 
+
+class HeldOutTransportTests(VerifierTestCase):
+    """2026-09-23: a held-out round of ten mutations of this module, written after its drill
+    was green. Four survived, and three of them were masked by a different refusal: the
+    two-credential test sent presentations that were not genuine, so the verification refused
+    them and the one-presentation rule could be deleted; the sequential replay was refused by
+    the `answered` flag once the session was no longer removed; and the only lifetime test
+    used a lifetime of zero, which doubling does not change. Each test here makes every other
+    check pass, so only the mechanism named can refuse."""
+
+    def _genuine(self):
+        """A genuine presentation for a request, extracted from the wallet's own response."""
+        _, jar = self.verifier.new_request()
+        _, claims = self.wallet.read_request(jar)
+        return jar, self.wallet._presentation(
+            nonce=claims["nonce"], audience=claims["client_id"], iat=None, sd_hash=None,
+            corrupt_issuer_sig=False, corrupt_kb_sig=False, extra_disclosure=None, vct=None,
+            status=None)
+
+    def test_a_genuine_presentation_beside_a_second_credential_is_refused_for_that(self):
+        jar, genuine = self._genuine()
+        form = self.wallet.respond(jar, vp_token={"pid": [genuine], "other": [genuine]})
+        status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertIn("not one presentation", verdict.reason)
+
+    def test_two_genuine_presentations_for_one_credential_are_refused_for_that(self):
+        jar, genuine = self._genuine()
+        form = self.wallet.respond(jar, vp_token={"pid": [genuine, genuine]})
+        status, _, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 400)
+        self.assertIn("not one presentation", verdict.reason)
+
+    def test_one_genuine_presentation_is_accepted_through_the_same_path(self):
+        """The positive control for the two above."""
+        jar, genuine = self._genuine()
+        form = self.wallet.respond(jar, vp_token={"pid": [genuine]})
+        self.assertEqual(self.verifier.handle_direct_post(form)[0], 200)
+
+    def test_an_answered_request_is_forgotten_not_merely_flagged(self):
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        self.assertEqual(self.verifier.handle_direct_post(form)[0], 200)
+        self.assertNotIn(session.state, self.verifier._sessions)
+        self.assertNotIn(session.state, self.verifier._by_request)
+        _, _, replay = self.verifier.handle_direct_post(form)
+        self.assertIn("did not decrypt", replay.reason,
+                      "a sequential replay finds no session at all; the answered flag is "
+                      "for the concurrent case")
+
+    def test_a_request_expires_at_its_lifetime_not_later(self):
+        from unittest import mock
+        from polaris_oid4vp import verifier as verifier_module
+        verifier = Verifier(client_cert_pem=_client_chain()[0],
+                            client_key_pem=_client_chain()[1],
+                            request_uri="https://verifier.test/request.jwt",
+                            response_uri="https://verifier.test/response",
+                            issuer_jwks=[self.wallet.issuer_jwk], request_ttl_seconds=100)
+        t0 = time.time()
+        with mock.patch.object(verifier_module.time, "time", return_value=t0):
+            _, jar = verifier.new_request()
+        form = self.wallet.respond(jar)
+        with mock.patch.object(verifier_module.time, "time", return_value=t0 + 101):
+            status, _, verdict = verifier.handle_direct_post(form)
+        self.assertEqual(status, 400)
+        self.assertIn("expired", verdict.reason)
+        with mock.patch.object(verifier_module.time, "time", return_value=t0):
+            _, jar = verifier.new_request()
+        with mock.patch.object(verifier_module.time, "time", return_value=t0 + 99):
+            self.assertEqual(verifier.handle_direct_post(self.wallet.respond(jar))[0], 200)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
