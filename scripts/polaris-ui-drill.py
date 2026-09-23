@@ -182,6 +182,17 @@ def main():
         if tab:
             tab.click()
             page.wait_for_selector('.trends-hm-cell', timeout=5000)
+            # The heatmap and the stacked chart come from two independent fetches
+            # (loadTrends in atlas-console.js), so the heatmap being drawn says nothing
+            # about the chart. Counting bands straight after the heatmap appeared failed
+            # CI run 35839675719 on 2026-09-23 with the chart still in flight. Wait for
+            # the chart's own outcome: bands, or its empty state, which then fails below.
+            try:
+                page.wait_for_selector('[data-trends-stacked] .trends-band, '
+                                       '[data-trends-stacked] .ov-empty', timeout=10000)
+            except Exception:
+                fail("the Trends composition chart never rendered (no bands and no "
+                     "empty state in 10 s)")
             cells = len(page.query_selector_all('.trends-hm-cell'))
             bands = len(page.query_selector_all('.trends-band'))
             if cells != 168:
