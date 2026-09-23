@@ -1481,7 +1481,8 @@ def test_aor_append_only_triggers_check_discriminates(tmp_path):
     # the LIST had been wrong, not because the check had. A detection test holding a
     # private copy of the data under test has the same defect it is checking for.
     tables = list(checks._AOR_TABLES)
-    body = "RAISE EXCEPTION 'no' USING ERRCODE = 'insufficient_privilege';\n" + "".join(
+    body = ("CREATE OR REPLACE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n"
+            "    RAISE EXCEPTION 'no; append-only' USING ERRCODE = 'insufficient_privilege';\nEND;\n$$;\n") + "".join(
         "CREATE TRIGGER trg_%s BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION f();\n" % (t.lower(), t)
         for t in tables)
 
@@ -1507,6 +1508,24 @@ def test_aor_append_only_triggers_check_discriminates(tmp_path):
     # 3. a trigger that no longer refuses the write
     write(body.replace("insufficient_privilege", "notice"))
     assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "FAIL", "must FAIL without insufficient_privilege"
+    # 3b. (2026-09-23) the function loses its RAISE while the code still appears elsewhere,
+    #     in a comment: the substring read passed exactly this
+    write(body.replace("    RAISE EXCEPTION 'no; append-only' USING ERRCODE = 'insufficient_privilege';\n",
+                       "    RETURN OLD;  -- was: ERRCODE = 'insufficient_privilege'\n"))
+    assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the trigger function returns instead of refusing"
+    # 3c. one table's trigger runs a second function that refuses with another code
+    write(body.replace("ON DuressEvent FOR EACH ROW EXECUTE FUNCTION f()", "ON DuressEvent FOR EACH ROW EXECUTE FUNCTION g()")
+          + "CREATE OR REPLACE FUNCTION g() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n"
+            "    RAISE EXCEPTION 'no' USING ERRCODE = 'raise_exception';\nEND;\n$$;\n")
+    out = checks.check_aor_append_only_triggers(tmp_path)
+    assert out[0].level == "FAIL" and "DuressEvent" in out[0].message, \
+        "must FAIL, naming the table, when one guard refuses with another code"
+    # 3d. a migration redefines the function without the refusal
+    write(body, migration="CREATE OR REPLACE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n"
+                          "    RETURN OLD;\nEND;\n$$;\n")
+    assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a migration's redefinition drops the refusal"
     # 4. a trigger added by a migration counts, since that is how later tables arrive
     write(body.replace("CREATE TRIGGER trg_auditaccesslog BEFORE UPDATE OR DELETE ON AuditAccessLog FOR EACH ROW EXECUTE FUNCTION f();\n", ""),
           migration="CREATE TRIGGER trg_audit_access_append_only BEFORE UPDATE OR DELETE ON AuditAccessLog FOR EACH ROW EXECUTE FUNCTION f();\n")

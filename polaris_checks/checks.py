@@ -635,8 +635,6 @@ def check_aor_append_only_triggers(root: pathlib.Path) -> list[Finding]:
                     for f in sorted((root / "polaris_sql").glob("*.sql")))
     for f in sorted((root / "polaris_sql" / "migrations").glob("*.up.sql")):
         sql += "\n" + _read_path(f)
-    if "insufficient_privilege" not in sql:
-        return _fail("c1_aor", "06_triggers.sql must raise insufficient_privilege on AoR UPDATE/DELETE (C1)")
     guarded = {m.lower() for m in re.findall(r"BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+(\w+)", sql, re.I)}
     missing = [t for t in _AOR_TABLES if t.lower() not in guarded]
     if missing:
@@ -644,10 +642,44 @@ def check_aor_append_only_triggers(root: pathlib.Path) -> list[Finding]:
                      "these audit-of-record tables have no BEFORE UPDATE OR DELETE trigger, so their history rests "
                      "on the discipline of whoever holds a database session rather than on the schema (C1): "
                      + ", ".join(missing))
+    # ...and the function each of those triggers runs must REFUSE, with insufficient_privilege,
+    # in every definition the load and the migrations leave. Until 2026-09-23 this was
+    # `"insufficient_privilege" in sql`, true of any one of forty-odd occurrences, comments
+    # included: reject_audit_modification could lose its RAISE, or raise another code, and the
+    # check stayed green while its OK line said "each raising insufficient_privilege".
+    code = _strip_sql_comments(sql)
+    aor = {t.lower() for t in _AOR_TABLES}
+    fns: dict = {}
+    for table, fn in re.findall(r"CREATE\s+TRIGGER\s+\w+\s+BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+(\w+)\s+"
+                                r"FOR\s+EACH\s+ROW\s+EXECUTE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(", code, re.I):
+        if table.lower() in aor:
+            fns.setdefault(fn, []).append(table)
+    if not fns:
+        return _fail("c1_aor", "no audit-of-record trigger could be resolved to the function it runs; the parser "
+                               "has broken and this check would pass by reading nothing")
+
+    def _refuses(body: str) -> bool:
+        b = re.sub(r"(ERRCODE\s*=\s*)'(\w+)'", r"\1__ERR_\2__", body, flags=re.I)
+        b = re.sub(r"'(?:[^']|'')*'", "''", b)
+        return re.search(r"RAISE\s+EXCEPTION[^;]*ERRCODE\s*=\s*__ERR_insufficient_privilege__", b, re.S | re.I) is not None
+
+    silent = []
+    for fn, tables in sorted(fns.items()):
+        defs = re.findall(r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+" + re.escape(fn) + r"\s*\([^)]*\).*?(\$\w*\$)(.*?)\1",
+                          code, re.S | re.I)
+        if not defs or not all(_refuses(body) for _, body in defs):
+            silent.append("%s (%s)" % (fn, ", ".join(sorted(set(tables)))))
+    if silent:
+        return _fail("c1_aor",
+                     "these audit-of-record triggers run a function that does not refuse with "
+                     "insufficient_privilege in every definition, so the trigger fires and the write "
+                     "either goes through or fails as something a caller cannot tell from an ordinary "
+                     "error (C1): " + "; ".join(silent))
     n = len(re.findall(r"BEFORE\s+UPDATE\s+OR\s+DELETE", sql, re.I))
     return _ok("c1_aor",
                f"all {len(_AOR_TABLES)} audit-of-record tables are guarded at the schema, RecoveryRequest included "
-               f"since v9.347; {n} append-only trigger(s) in all, each raising insufficient_privilege (C1)")
+               f"since v9.347; {n} append-only trigger(s) in all, and each of the {len(fns)} functions they run "
+               f"refuses with insufficient_privilege in every definition (C1)")
 
 
 # ---------------------------------------------------------------------------
