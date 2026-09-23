@@ -520,12 +520,18 @@ def check_one_active_token_index(root: pathlib.Path) -> list[Finding]:
     "Per person" is the invariant. The column is the person.
     """
     sql = _read(root, "polaris_sql/02_indexes.sql") + _read(root, "polaris_sql/01_schema.sql")
-    m = re.search(r"UNIQUE\s+INDEX[^;]*?IdentityToken\s*\(([^)]*)\)[^;]*?WHERE\s+status\s*=\s*'ACTIVE'",
-                  sql, re.I | re.S)
-    if not m:
-        return _fail("c3_one_active", "missing partial-unique index for one-active-token (C3)")
+    m = re.search(r"UNIQUE\s+INDEX[^;]*?IdentityToken\s*\(([^)]*)\)[^;]*?WHERE\s+([^;]*);",
+                  _strip_sql_comments(sql), re.I | re.S)
+    if not m or not re.fullmatch(r"\(?\s*status\s*=\s*'ACTIVE'\s*\)?", m.group(2).strip(), re.I):
+        # EXACTLY that predicate (2026-09-23). A held-out mutation after the repairs of that day
+        # appended `AND FALSE`: the index then covers no row and enforces nothing, and the check,
+        # which matched the predicate as a prefix, stayed green.
+        return _fail("c3_one_active", "missing partial-unique index for one-active-token, or its "
+                                      "predicate is not exactly status = 'ACTIVE' (C3)")
     keyed_on = re.sub(r"\s+", " ", m.group(1)).strip()
-    if not re.search(r"\bindividual_id\b", keyed_on, re.I):
+    # EXACTLY individual_id: a composite key such as (individual_id, token_id) is unique on
+    # every row already, so the index would enforce nothing while still naming the person.
+    if not re.fullmatch(r"individual_id", keyed_on, re.I):
         return _fail("c3_one_active",
                      "the one-active-token index is keyed on %r, not individual_id. C3 is one "
                      "ACTIVE token PER PERSON; keyed on anything else the index is unique over "
@@ -675,7 +681,20 @@ def check_aor_append_only_triggers(root: pathlib.Path) -> list[Finding]:
     def _refuses(body: str) -> bool:
         b = re.sub(r"(ERRCODE\s*=\s*)'(\w+)'", r"\1__ERR_\2__", body, flags=re.I)
         b = re.sub(r"'(?:[^']|'')*'", "''", b)
-        return re.search(r"RAISE\s+EXCEPTION[^;]*ERRCODE\s*=\s*__ERR_insufficient_privilege__", b, re.S | re.I) is not None
+        m = re.search(r"RAISE\s+EXCEPTION[^;]*ERRCODE\s*=\s*__ERR_insufficient_privilege__", b, re.S | re.I)
+        if m is None:
+            return False
+        # ...and nothing RETURNs unconditionally before it (2026-09-23). A held-out mutation after
+        # that day's repairs put `RETURN OLD;` ahead of the refusal: the RAISE was still in the
+        # body, so the check passed, and every UPDATE and DELETE went through. A RETURN inside an
+        # IF block (the purge carve-out, the bounded-mutation arms) is a branch, not a bypass.
+        head = b[:m.start()]
+        while True:
+            flat = re.sub(r"\bIF\b(?:(?!\bIF\b).)*?\bEND\s+IF\s*;", " ", head, flags=re.S | re.I)
+            if flat == head:
+                break
+            head = flat
+        return re.search(r"\bRETURN\b", head, re.I) is None
 
     silent = []
     for fn, tables in sorted(fns.items()):
@@ -813,9 +832,17 @@ def check_crypto_algorithm_is_data(root: pathlib.Path) -> list[Finding]:
     # application is a read of a SQL row, so a literal assigned to one is the drift C7 forbids.
     hard = sorted(set(m.group(1) for m in re.finditer(
         r"""['"]?\b(quantum_resistant|security_level_bits)\b['"]?\s*(?::|=(?!=))\s*(True|False|\d+)\b""", app)))
+    # A copy need not use the column's name (2026-09-23: a held-out mutation after that day's
+    # repairs added `ALGORITHM_IS_PQ = {'ML-DSA-65': True, ...}` and passed). An algorithm NAME
+    # mapped to a bare True, False or number is metadata written down in code, whatever the
+    # variable is called; the accepted-signer allowlist maps names to classes, not literals.
+    keyed = sorted(set(m.group(1) for m in re.finditer(
+        r"""['"](ML-DSA-\d+|SLH-DSA-[\w-]+|ECDSA[\w-]*|Ed25519|RSA[\w-]*)['"]\s*:\s*(?:True|False|-?\d+)\b""", app)))
+    if keyed:
+        hard = sorted(set(hard) | {"a name keyed by %s" % k for k in keyed})
     if hard:
         return _fail("c7_crypto_data",
-                     "the application assigns a literal to %s; algorithm metadata must come from "
+                     "the application writes algorithm metadata as a literal (%s); it must come from "
                      "CryptographicAlgorithm, and a hardcoded copy beside the table is what C7 "
                      "forbids" % ", ".join(hard))
     return _ok("c7_crypto_data", "algorithm metadata is data and flows through it (C7): the "
@@ -3372,7 +3399,10 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
             stmt = body[m.start():j]
             fns = re.findall(r"FROM\s+(atlas_\w+)", stmt)
             called.update(fns)
-            if fns and not re.search(r"_ATLAS_MAX_\w+|\blimit\b", stmt):
+            # A cap multiplied or added to is not the cap (2026-09-23: a held-out mutation after
+            # that day's repairs passed `_ATLAS_MAX_CLUSTERS * 1000` and the check read the name).
+            inflated = re.search(r"_ATLAS_MAX_\w+\s*[*+]|[*+]\s*_ATLAS_MAX_\w+", stmt)
+            if fns and (inflated or not re.search(r"_ATLAS_MAX_\w+|\blimit\b", stmt)):
                 uncapped.update(fns)
     stray = sorted(uncapped - set(_ATLAS_FIXED_SHAPE))
     # Stale: still called, and every call now carries a cap. A declared function no route

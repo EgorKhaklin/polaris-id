@@ -834,6 +834,9 @@ def test_c7_requires_the_metadata_to_actually_flow(tmp_path):
     out = checks.check_crypto_algorithm_is_data(tmp_path)[0]
     assert out.level == "FAIL" and "hardcoded copy" in out.message, \
         "must FAIL when a literal copy of the metadata sits beside the table"
+    write(app=APP + "ALGORITHM_IS_PQ = {'ML-DSA-65': True, 'ECDSA-P256': False}\n")
+    assert checks.check_crypto_algorithm_is_data(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an algorithm name is mapped to a literal under any variable name"
     write(app=APP + "pq = [r for r in rows if r['quantum_resistant'] == True]\n")
     assert checks.check_crypto_algorithm_is_data(tmp_path)[0].level == "OK", \
         "comparing a value read from the table is a read, not a copy"
@@ -925,6 +928,17 @@ def test_c3_index_must_be_keyed_on_the_person(tmp_path):
     write("CREATE INDEX ix_plain ON IdentityToken (individual_id);\n")
     assert checks.check_one_active_token_index(tmp_path)[0].level == "FAIL", \
         "must FAIL when there is no partial UNIQUE index at all"
+
+    # 2026-09-23, held-out mutations after that day's repairs: an impossible predicate, and a
+    # composite key that is unique on every row. Each index names the person and enforces nothing.
+    write("CREATE UNIQUE INDEX uq_one_active_per_person ON IdentityToken (individual_id)\n"
+          "    WHERE status = 'ACTIVE' AND FALSE;\n")
+    assert checks.check_one_active_token_index(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the predicate is made impossible"
+    write("CREATE UNIQUE INDEX uq_one_active_per_person ON IdentityToken (individual_id, token_id)\n"
+          "    WHERE status = 'ACTIVE';\n")
+    assert checks.check_one_active_token_index(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the key is widened past the person"
 
 
 def test_c6_atlas_walk_catches_a_new_leaking_surface(tmp_path):
@@ -1575,6 +1589,16 @@ def test_aor_append_only_triggers_check_discriminates(tmp_path):
                           "    RETURN OLD;\nEND;\n$$;\n")
     assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "FAIL", \
         "must FAIL when a migration's redefinition drops the refusal"
+    # 3e. (held-out, 2026-09-23) an unconditional RETURN ahead of a refusal still in the body
+    write(body.replace("    RAISE EXCEPTION 'no; append-only'", "    RETURN OLD;\n    RAISE EXCEPTION 'no; append-only'"))
+    assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the function returns before it refuses"
+    # 3f. a RETURN inside an IF is a branch (the purge carve-out), not a bypass
+    write(body.replace("    RAISE EXCEPTION 'no; append-only'",
+                       "    IF current_setting('x', true) = 'on' THEN\n        RETURN OLD;\n    END IF;\n"
+                       "    RAISE EXCEPTION 'no; append-only'"))
+    assert checks.check_aor_append_only_triggers(tmp_path)[0].level == "OK", \
+        "a guarded early RETURN is a documented branch and must PASS"
     # 4. a trigger added by a migration counts, since that is how later tables arrive
     write(body.replace("CREATE TRIGGER trg_auditaccesslog BEFORE UPDATE OR DELETE ON AuditAccessLog FOR EACH ROW EXECUTE FUNCTION f();\n", ""),
           migration="CREATE TRIGGER trg_audit_access_append_only BEFORE UPDATE OR DELETE ON AuditAccessLog FOR EACH ROW EXECUTE FUNCTION f();\n")
@@ -18785,6 +18809,8 @@ def test_c8_bounds_the_rows_at_the_query_not_only_the_parameters(tmp_path):
     out = checks.check_c8_atlas_caps(tmp_path)
     assert out[0].level == "FAIL" and "atlas_clusters_verifications" in out[0].message, \
         "must FAIL, naming the function, when a query's cap is replaced by a literal"
+    assert level(ROUTE.replace("(1, _ATLAS_MAX_CLUSTERS)", "(1, _ATLAS_MAX_CLUSTERS * 1000)")) == "FAIL", \
+        "must FAIL when a cap is inflated by arithmetic in the call"
     assert level(ROUTE + "@app.route('/api/atlas/new')\ndef api_atlas_new():\n"
                          "    rows = query(\"SELECT * FROM atlas_new_rows(%s)\", (1,))\n") == "FAIL", \
         "must FAIL on a new uncapped call nobody declared"
