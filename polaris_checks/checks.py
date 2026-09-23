@@ -807,8 +807,19 @@ def check_crypto_algorithm_is_data(root: pathlib.Path) -> list[Finding]:
                      "the app joins CryptographicAlgorithm but reads none of its metadata "
                      "columns (%s); joining a table without using what it holds is not the "
                      "metadata flowing through it (C7)" % ", ".join(declared))
+    # ...and nowhere BESIDE it. Reading the table proves the metadata flows through it; it does
+    # not stop a second, hardcoded copy (`{"quantum_resistant": True}`, `security_level_bits =
+    # 192`) that a route consults instead. Measured 2026-09-23: every use of these columns in the
+    # application is a read of a SQL row, so a literal assigned to one is the drift C7 forbids.
+    hard = sorted(set(m.group(1) for m in re.finditer(
+        r"""['"]?\b(quantum_resistant|security_level_bits)\b['"]?\s*(?::|=(?!=))\s*(True|False|\d+)\b""", app)))
+    if hard:
+        return _fail("c7_crypto_data",
+                     "the application assigns a literal to %s; algorithm metadata must come from "
+                     "CryptographicAlgorithm, and a hardcoded copy beside the table is what C7 "
+                     "forbids" % ", ".join(hard))
     return _ok("c7_crypto_data", "algorithm metadata is data and flows through it (C7): the "
-               "table declares %s and the app reads %s from it"
+               "table declares %s, the app reads %s from it, and no code hardcodes a copy"
                % (", ".join(declared), ", ".join(read_cols)))
 
 

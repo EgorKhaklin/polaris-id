@@ -829,6 +829,15 @@ def test_c7_requires_the_metadata_to_actually_flow(tmp_path):
     assert out.level == "FAIL" and "reads none of its metadata" in out.message, \
         "must FAIL when the app joins the table but reads no metadata from it"
 
+    # 2026-09-23: the table read AND a hardcoded copy beside it, which a route consults instead.
+    write(app=APP + "ALG_META = {'ML-DSA-65': {'quantum_resistant': True, 'security_level_bits': 192}}\n")
+    out = checks.check_crypto_algorithm_is_data(tmp_path)[0]
+    assert out.level == "FAIL" and "hardcoded copy" in out.message, \
+        "must FAIL when a literal copy of the metadata sits beside the table"
+    write(app=APP + "pq = [r for r in rows if r['quantum_resistant'] == True]\n")
+    assert checks.check_crypto_algorithm_is_data(tmp_path)[0].level == "OK", \
+        "comparing a value read from the table is a read, not a copy"
+
 
 def test_cli_help_refuses_an_empty_registry(tmp_path):
     """"lists all 0 commands" is not a pass.
