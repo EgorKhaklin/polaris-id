@@ -1,28 +1,35 @@
-% v2-figures/stigmergy.tex: the PROPOSED stigmergic debugging colony ("Myrmex",
-% a provisional name). Not a Polaris component; a separate observer that
-% would attack the repository from outside.
-\begin{tikzpicture}[scale=0.9, every node/.append style={transform shape}]
-  % The evidence landscape.
-  \node[futbox, minimum width=6.2cm, minimum height=1.6cm, text width=5.8cm] (land) at (5.4,0)
-    {Ландшафт свидетельств (долговечный, машиночитаемый)\\[-1pt]{\scriptsize феромоны: подозрение, отклонения на границах доверия, странные переходы состояний, криптографические допущения, отсутствующие рёбра; они крепнут под независимым свидетельством и выветриваются без подтверждения}};
-  % Agents around it.
-  \node[futbox, minimum width=2.3cm] (scout)  at (0,2.4)   {разведчик};
-  \node[futbox, minimum width=2.3cm] (trust)  at (3.6,2.4) {граница доверия};
-  \node[futbox, minimum width=2.3cm] (crypto) at (7.2,2.4) {криптография};
-  \node[futbox, minimum width=2.3cm] (priv)   at (10.8,2.4){приватность};
-  \node[futbox, minimum width=2.3cm] (state)  at (0,-2.4)  {переход состояния};
-  \node[futbox, minimum width=2.3cm] (conc)   at (3.6,-2.4){одновременность};
-  \node[futbox, minimum width=2.3cm] (proto)  at (7.2,-2.4){протокол};
-  \node[futbox, minimum width=2.3cm] (adv)    at (10.8,-2.4){опровержение};
-  \foreach \a in {scout,trust,crypto,priv,state,conc,proto,adv} { \draw[flowfut, <->] (\a) -- (land); }
-  % The orchestrator, deliberately not omniscient.
-  \node[futbox, minimum width=2.6cm] (queen) at (13.6,0) {распорядитель\\[-1pt]{\scriptsize раздаёт работу,}\\{\scriptsize собирает свидетельства,}\\{\scriptsize не решает ничего}};
-  \draw[flowfut, <->] (queen) -- (land);
-  % External evidence: the only source of confidence.
-  \node[extbox, minimum width=6.2cm, text width=5.8cm] (ext) at (5.4,-4.6)
-    {Уверенность приходит лишь от внешних свидетельств: падающего теста, трассы выполнения, случая из фаззера, находки статического анализа, формального контрпримера, независимого воспроизведения. Согласие между моделями свидетельством не является.};
-  \draw[flow] (ext) -- (land);
-  % Into Polaris's own loop.
-  \node[corebox, minimum width=3.2cm, text width=3.0cm] (pol) at (13.6,-4.6) {Полярис\\[-1pt]{\mdseries\scriptsize воспроизводимый отказ, тест, инвариант, новое чувство}};
-  \draw[flow] (ext) -- node[faint, above] {воспроизведено} (pol);
+% v3-figures-ru/stigmergy.tex: the proposed colony as an octagon.
+% Eight specialised agents on a regular octagon round the evidence landscape they mark,
+% the orchestrator above, and below it the only road to confidence: external evidence,
+% reproduced, entering Polaris's own loop. Mirror-symmetric about the vertical axis.
+\begin{tikzpicture}[
+  agent/.style={futbox, text width=2.5cm, minimum height=1.0cm, align=center, font=\scriptsize},
+]
+\begin{scope}[on background layer]
+  \draw[gold, line width=0.5pt, opacity=0.6] (22.5:4.90) -- (67.5:4.90) -- (112.5:4.90) -- (157.5:4.90) -- (202.5:4.90) -- (247.5:4.90) -- (292.5:4.90) -- (337.5:4.90) -- cycle;
+  \draw[gold, line width=0.4pt, opacity=0.35, dash pattern=on 2pt off 2pt] (0,0) circle (3.35);
+\end{scope}
+\node[futbox, circle, text width=3.6cm, align=center, font=\scriptsize, inner sep=3pt] (land) at (0,0) {\textbf{Ландшафт свидетельств}\\{\tiny долговечный, машиночитаемый}\\[2pt]{\tiny феромоны: подозрение, отклонения на границах доверия, странные переходы состояний, криптографические допущения, отсутствующие рёбра; крепнут под независимым свидетельством и выветриваются без подтверждения}};
+\node[agent] (a0) at (22.5:4.90) {разведчик};
+\draw[flowfut, <->] (a0) -- (land);
+\node[agent] (a1) at (67.5:4.90) {граница доверия};
+\draw[flowfut, <->] (a1) -- (land);
+\node[agent] (a2) at (112.5:4.90) {криптография};
+\draw[flowfut, <->] (a2) -- (land);
+\node[agent] (a3) at (157.5:4.90) {приватность};
+\draw[flowfut, <->] (a3) -- (land);
+\node[agent] (a4) at (202.5:4.90) {опровержение};
+\draw[flowfut, <->] (a4) -- (land);
+\node[agent] (a5) at (247.5:4.90) {протокол};
+\draw[flowfut, <->] (a5) -- (land);
+\node[agent] (a6) at (292.5:4.90) {одновременность};
+\draw[flowfut, <->] (a6) -- (land);
+\node[agent] (a7) at (337.5:4.90) {переход состояния};
+\draw[flowfut, <->] (a7) -- (land);
+\node[futbox, text width=3.3cm, align=center, font=\scriptsize] (queen) at (0,6.80) {\textbf{распорядитель}\\раздаёт работу, собирает свидетельства, не решает ничего};
+\draw[flowfut, <->] (queen.south) -- ++(0,-0.9);
+\node[extbox, text width=7.2cm, align=center, font=\scriptsize] (ext) at (0,-6.95) {Уверенность приходит лишь от внешних свидетельств: падающего теста, трассы выполнения, случая из фаззера, находки статического анализа, формального контрпримера, независимого воспроизведения. \textbf{Согласие между моделями свидетельством не является.}};
+\draw[flow] (ext.north) -- (land.south);
+\node[corebox, text width=4.2cm, align=center] (pol) at (0,-9.75) {Полярис\\[-1pt]{\mdseries\scriptsize воспроизводимый отказ, тест, инвариант, новое чувство}};
+\draw[flow] (ext) -- node[right=3pt, font=\tiny\itshape, text=steelgray] {воспроизведено} (pol);
 \end{tikzpicture}
