@@ -76,6 +76,13 @@ Credentials are revoked first, then participants pseudonymized. That order matte
 pseudonymizing first would leave live credentials belonging to a holder nobody can name any
 more, which is worse than either state on its own.
 
+**A participant another authority still serves is not erased.** On a shared instance, somebody
+the pilot enrolled may since have been enrolled by a second authority and hold a live
+credential from it. Pseudonymizing them would leave that authority's credential with a holder
+nobody can name, so the wind-down keeps them and reports how many it kept, in
+`participants_kept_for_another_authority` (the dry run reports it too). Their pilot credential
+is still revoked. Until 1.0.0-rc.12 a scoped wind-down erased them.
+
 **It is idempotent.** A wind-down that could not be re-run is one nobody dares run the first
 time.
 

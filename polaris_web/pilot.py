@@ -140,6 +140,13 @@ def wind_down(conn, actor_user_id, *, agency_id=None, cosigner_agency_id=None,
             "already_pseudonymized": pseudonymized_count(conn),
             "cosigner_agency_id": cosigner_agency_id, "agency_id": agency_id}
     if dry_run:
+        live_ids = {t["token_id"] for t in live}
+        with conn.cursor() as cur:
+            cur.execute("SELECT token_id, individual_id FROM IdentityToken WHERE status = 'ACTIVE'")
+            served = {r["individual_id"] for r in _rows(cur) if r["token_id"] not in live_ids}
+        plan["participants_kept_for_another_authority"] = sum(
+            1 for p in people if p["individual_id"] in served
+            and not str(p["legal_name"]).startswith(PSEUDONYM_PREFIX))
         plan["residue_after"] = residue(conn)
         plan["dry_run"] = True
         return plan
@@ -189,10 +196,23 @@ def wind_down(conn, actor_user_id, *, agency_id=None, cosigner_agency_id=None,
                          None, cosigner_agency_id))
         revoked += 1
 
+    # Somebody the pilot enrolled may hold a live credential from ANOTHER authority on the same
+    # instance: their pilot credential was revoked and they were re-enrolled elsewhere. Erasing
+    # them would leave that authority's live credential belonging to a holder nobody can name,
+    # the state this function's docstring rules out. Read after the revocations above, in the
+    # same transaction, so only credentials outside the pilot can keep somebody. Found
+    # 2026-09-24: a scoped wind-down erased a person another authority still served.
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT individual_id FROM IdentityToken WHERE status = 'ACTIVE'")
+        still_served = {r["individual_id"] for r in _rows(cur)}
+    kept = 0
     erased = 0
     for person in people:
         if str(person["legal_name"]).startswith(PSEUDONYM_PREFIX):
             continue        # already erased; re-running must not fail on it
+        if person["individual_id"] in still_served:
+            kept += 1
+            continue
         with conn.cursor() as cur:
             cur.execute("CALL uc_pseudonymize_individual(%s, %s, %s)",
                         (person["individual_id"], actor_user_id, reason[:200]))
@@ -200,6 +220,7 @@ def wind_down(conn, actor_user_id, *, agency_id=None, cosigner_agency_id=None,
     conn.commit()
 
     plan.update({"credentials_revoked": revoked, "participants_pseudonymized": erased,
+                 "participants_kept_for_another_authority": kept,
                  "residue_after": residue(conn), "dry_run": False})
     return plan
 

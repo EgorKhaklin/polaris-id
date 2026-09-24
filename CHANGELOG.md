@@ -11,6 +11,32 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.12 — 2026-09-24 (ending a pilot does not erase somebody another authority serves)
+
+CORE-BUG against rc.11. Externally observable: what `scripts/polaris-pilot.sh winddown`
+pseudonymizes. Nothing is published.
+
+`wind_down` promises to revoke first and pseudonymize second, "because pseudonymizing first would
+leave live credentials belonging to a holder nobody can name any more" (`polaris_web/pilot.py`,
+`docs/operator/PILOT.md`). A wind-down scoped to one authority pseudonymized every person who had
+ever held any credential from it. On a shared instance that includes somebody whose pilot
+credential was revoked and who was since enrolled by a second authority. They were erased, and
+the second authority's live credential was left belonging to a holder nobody can name.
+Measured before the fix: `Maria Santos`, served by agency 3, became `PSEUDONYMIZED-2` when
+agency 1's pilot was wound down.
+
+Now a participant who still holds an ACTIVE credential after the pilot's own revocations is
+kept. The result reports `participants_kept_for_another_authority`, and so does the dry run. The
+pilot credential is still revoked. `PILOT.md` states the rule.
+
+Counterexample, failing on rc.11:
+`PilotWindDownTests.test_a_scoped_wind_down_does_not_erase_someone_another_authority_still_serves`.
+
+Found by reading the scoped path of a module whose only drill winds down a single authority on
+an instance that serves nobody else.
+
+---
+
 ## v1.0.0-rc.11 — 2026-09-24 (a range check that NaN cannot pass)
 
 CORE-BUG against rc.10. Externally observable: what `/api/atlas/clusters` and

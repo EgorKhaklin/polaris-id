@@ -14657,6 +14657,57 @@ class PilotWindDownTests(PolarisTestCase):
         self.assertGreater(len(tables), 10,
                            "the report must walk the foreign keys, not name two tables")
 
+    def test_a_scoped_wind_down_does_not_erase_someone_another_authority_still_serves(self):
+        """2026-09-24. A wind-down scoped to one authority pseudonymized everyone who had ever
+        held ANY credential from it. A person whose pilot credential was revoked and who now
+        holds an ACTIVE credential from a second authority on the same instance lost their
+        name, and that authority's live credential was left belonging to a holder nobody can
+        name, which the wind-down's own docstring calls worse than either state alone."""
+        pilot = self._pilot()
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
+                            "ORDER BY user_id LIMIT 1")
+                admin = cur.fetchone()["user_id"]
+                # Individual 2 is served by agency 3. Give them an old, revoked credential from
+                # agency 1, the pilot authority.
+                cur.execute("""
+                    INSERT INTO IdentityToken (token_value, physical_serial, hardware_model,
+                        biometric_binding_type, individual_id, issuing_agency_id, algorithm_id,
+                        activation_sequence, status, issued_date, activated_date, expiration_date)
+                    VALUES ('TKN-WIND-OLD-0002', 'SN-WIND-OLD-0002', 'TitanQ-3', 'NONE', 2, 1, 1,
+                            9, 'REVOKED', CURRENT_DATE - 400, CURRENT_DATE - 399, CURRENT_DATE + 3000)
+                    RETURNING token_id""")
+                old = cur.fetchone()["token_id"]
+                cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes) "
+                            "VALUES (%s, 1, %s)", (old, psycopg2.Binary(b"old")))
+                cur.execute("SELECT DISTINCT algorithm_id FROM IdentityToken "
+                            "WHERE status = 'ACTIVE' AND issuing_agency_id = 1")
+                for r in cur.fetchall():
+                    cur.execute("INSERT INTO AgencyAlgorithmAuth (agency_id, algorithm_id, "
+                                "authorization_type) VALUES (2, %s, 'BOTH') ON CONFLICT "
+                                "(agency_id, algorithm_id) DO UPDATE SET authorization_type = 'BOTH'",
+                                (r["algorithm_id"],))
+                cur.execute("SELECT legal_name FROM Individual WHERE individual_id = 2")
+                name = cur.fetchone()["legal_name"]
+            conn.commit()
+            self.assertIn(2, [p["individual_id"] for p in pilot.participants(conn, 1)],
+                          "control: the pilot did enrol this person")
+            self.assertEqual(pilot.wind_down(conn, admin, agency_id=1, cosigner_agency_id=2,
+                                             dry_run=True)["participants_kept_for_another_authority"],
+                             1, "the dry run says so before anything happens")
+            result = pilot.wind_down(conn, admin, agency_id=1, cosigner_agency_id=2)
+            with conn.cursor() as cur:
+                cur.execute("SELECT legal_name FROM Individual WHERE individual_id = 2")
+                self.assertEqual(cur.fetchone()["legal_name"], name,
+                                 "a person another authority still serves was erased")
+                cur.execute("SELECT status FROM IdentityToken WHERE individual_id = 2 "
+                            "AND issuing_agency_id = 3")
+                self.assertEqual(cur.fetchone()["status"], "ACTIVE")
+            self.assertEqual(result["participants_kept_for_another_authority"], 1)
+            self.assertGreater(result["participants_pseudonymized"], 0,
+                               "the pilot's own participants are still erased")
+
     def test_participants_can_be_scoped_to_one_authority(self):
         pilot = self._pilot()
         with self._conn() as conn:
