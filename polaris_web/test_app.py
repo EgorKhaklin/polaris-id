@@ -14722,6 +14722,75 @@ class CoexistenceSunsetTests(PolarisTestCase):
 #
 # A local runner that silently skips a fifth of the file is worse than one that
 # fails, because it is the one a person checks a change against before pushing.
+class RpAuthHeldOutTests(unittest.TestCase):
+    """A held-out round on rp_auth.py, 2026-09-24. Twelve mutations; ten survived
+    RelyingPartyApiTests, AuthBrokerTests, CrossSiteDefenceMatrixTests, JsonRouteTotalityTests
+    and the check layer. Every route test presented a token or a code that was fresh, well-formed
+    and carried the right scope, so nothing separated the functions that judge one from functions
+    that accept anything they can decode. These are pure functions and are tested as such, one
+    boundary each. Two mutations are equivalent. Deriving the code key from the secret without its
+    salt changes nothing today, because no other key is derived from the secret that way. And
+    returning an empty bearer token cannot happen: `split(None, 1)` drops trailing whitespace,
+    so "Bearer   " has one part and is refused before the strip."""
+
+    SECRET = "held-out-secret"
+
+    def setUp(self):
+        import rp_auth
+        self.rp = rp_auth
+
+    def test_an_access_token_carries_the_verify_scope_or_is_refused(self):
+        rp = self.rp
+        good = rp.issue_access_token(self.SECRET, 7, "cid", scope="verify authenticate")
+        self.assertIsNotNone(rp.validate_access_token(self.SECRET, good), "control")
+        only_auth = rp.issue_access_token(self.SECRET, 7, "cid", scope="authenticate")
+        self.assertIsNone(rp.validate_access_token(self.SECRET, only_auth))
+
+    def test_a_scope_is_a_whole_word(self):
+        rp = self.rp
+        self.assertTrue(rp.has_scope("authenticate verify", "verify"))
+        for scope in ("unverify", "verifyx", "verify-all", "", None):
+            with self.subTest(scope=scope):
+                self.assertFalse(rp.has_scope(scope, "verify"))
+
+    def test_an_access_token_expires_at_its_ttl(self):
+        import time as _t
+        rp = self.rp
+        token = rp.issue_access_token(self.SECRET, 7, "cid")
+        now = _t.time()
+        with patch("itsdangerous.timed.time.time", return_value=now + rp.TOKEN_TTL - 2):
+            self.assertIsNotNone(rp.validate_access_token(self.SECRET, token))
+        with patch("itsdangerous.timed.time.time", return_value=now + rp.TOKEN_TTL + 2):
+            self.assertIsNone(rp.validate_access_token(self.SECRET, token))
+        self.assertLessEqual(rp.TOKEN_TTL, 300)
+
+    def test_an_authorization_code_expires_at_a_minute(self):
+        import time as _t
+        rp = self.rp
+        code = rp.issue_auth_code(self.SECRET, {"rp": 7})
+        now = _t.time()
+        with patch("cryptography.fernet.time.time", return_value=now + 58):
+            self.assertEqual(rp.validate_auth_code(self.SECRET, code), {"rp": 7})
+        with patch("cryptography.fernet.time.time", return_value=now + 62):
+            self.assertIsNone(rp.validate_auth_code(self.SECRET, code))
+
+    def test_a_code_whose_payload_is_not_an_object_is_refused(self):
+        rp = self.rp
+        for raw in (b"[1,2]", b"\"rp\"", b"7"):
+            with self.subTest(raw=raw):
+                code = rp._code_fernet(self.SECRET).encrypt(raw).decode("ascii")
+                self.assertIsNone(rp.validate_auth_code(self.SECRET, code))
+
+    def test_the_bearer_scheme_is_case_insensitive_and_the_only_one(self):
+        rp = self.rp
+        for header in ("Bearer tok", "bearer tok", "BEARER tok", "Bearer   tok  "):
+            with self.subTest(header=header):
+                self.assertEqual(rp.parse_bearer(header), "tok")
+        for header in ("Basic tok", "Token tok", "tok", "Bearer", "Bearer    ", ""):
+            with self.subTest(header=header):
+                self.assertIsNone(rp.parse_bearer(header))
+
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py
