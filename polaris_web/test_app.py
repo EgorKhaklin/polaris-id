@@ -15971,6 +15971,59 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
 
 
+    def test_a_bound_admin_cannot_decide_another_authoritys_recovery(self):
+        """1.0.0-rc.30. A recovery belongs to the authority that requested it, and approving one
+        issues the new credential under that authority. Rejecting is the decision tested here,
+        because it needs no cooldown; approval takes the same path. The route never asked whose recovery it was: before rc.19 the insert was
+        refused by the row-level policy for an admin bound elsewhere, and rc.19 made
+        uc9_complete_recovery SECURITY DEFINER, which the policy does not bind."""
+        op = _sql("SELECT user_id FROM AppUser WHERE role = 'operator' ORDER BY user_id LIMIT 1",
+                  fetch='one')['user_id']
+        _sql("CALL uc9_initiate_recovery(1, 2, %s)", (op,), fetch='none')
+        rid = _sql("SELECT max(recovery_id) AS r FROM RecoveryRequest", fetch='one')['r']
+        before = _sql("SELECT count(*) AS n FROM IdentityToken WHERE individual_id = 1 "
+                      "AND issuing_agency_id = 2 AND status = 'ACTIVE'", fetch='one')['n']
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+        csrf = self._csrf_token_from('/verifications/new')
+        r = self.client.post('/uc9/decide/%d' % rid, data={
+            'decision': 'REJECTED', 'reason': 'bound admin, another authority',
+            'new_token_value': 'TKN-REC-CROSS-0001', 'new_serial': 'SN-REC-CROSS-0001',
+            'algorithm_id': '1', 'biometric_binding': 'IRIS', 'liveness_check': 'PASSED',
+            'published_location': 'https://crl.example/x', 'csrf_token': csrf},
+            follow_redirects=False)
+        self.assertEqual(r.status_code, 403, 'the refusal must be the binding, not some other failure')
+        after = _sql("SELECT count(*) AS n FROM IdentityToken WHERE individual_id = 1 "
+                     "AND issuing_agency_id = 2 AND status = 'ACTIVE'", fetch='one')['n']
+        status = _sql("SELECT status FROM RecoveryRequest WHERE recovery_id = %s", (rid,),
+                      fetch='one')['status']
+        self.assertEqual(after, before,
+                         'an admin bound to authority 1 issued a credential under authority 2')
+        self.assertEqual(status, 'PENDING', 'the recovery was decided by the wrong authority')
+
+    def test_device_binding_and_migration_stay_within_the_binding(self):
+        """uc5 and uc6 name a token, not an authority, and have no binding check of their own:
+        the row-level policy on the token lookup is what refuses another authority's token.
+        Pinned, because rc.19 showed a protection that rests on the policy disappears the day
+        the path moves out from under it."""
+        token = 2   # issued by authority 3
+        self.assertEqual(_sql("SELECT issuing_agency_id AS a FROM IdentityToken WHERE token_id = 2",
+                              fetch='one')['a'], 3)
+        before_b = _sql("SELECT count(*) AS n FROM DeviceBinding WHERE token_id = 2", fetch='one')['n']
+        before_s = _sql("SELECT count(*) AS n FROM TokenSignature WHERE token_id = 2", fetch='one')['n']
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+        csrf = self._csrf_token_from('/verifications/new')
+        self.client.post('/uc5/bind-device', data={
+            'token_id': str(token), 'device_type': 'PHONE', 'device_fingerprint': 'ab' * 16,
+            'binding_method': 'NFC', 'validity_months': '12', 'csrf_token': csrf})
+        self.client.post('/uc6/migrate', data={
+            'token_id': str(token), 'new_algorithm': '2', 'csrf_token': csrf})
+        self.assertEqual(_sql("SELECT count(*) AS n FROM DeviceBinding WHERE token_id = 2",
+                              fetch='one')['n'], before_b, 'a device was bound to another authority\'s token')
+        self.assertEqual(_sql("SELECT count(*) AS n FROM TokenSignature WHERE token_id = 2",
+                              fetch='one')['n'], before_s, 'another authority\'s token was re-signed')
+
 class DeactivatedAdminHoldsNoAuthorityTests(PolarisTestCase):
     """2026-09-24. Five admin-gated procedures checked AppUser.role and not is_active, so a
     DEACTIVATED admin's user id still authorized a federation attestation, its revocation, an

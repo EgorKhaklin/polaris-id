@@ -310,6 +310,12 @@ cannot bound a query the operator writes. Before 1.0.0-rc.18 a bound admin or au
 clear the setting in their own console query and read every authority's rows. The console is
 now for instance-wide accounts only.
 
+**Whether a route that names a token or a request, not an authority, is bound** is answered
+yes, since 1.0.0-rc.30. The binding is checked against the authority the named thing belongs to:
+the token's issuer for `/uc5/bind-device` and `/uc6/migrate`, and the requesting authority for
+`/uc9/decide`. None of them may rest on the row-level policy, which binds the application role
+and no procedure that runs as its owner.
+
 **Whether a session setting may authorize anything** is answered no, since 1.0.0-rc.19.
 A setting says what the session says about itself. `trg_enforce_revocation_velocity` used one
 (`polaris.revoke_check_done`) as the only door into `REVOKED`, and `uc8_revoke_token` read its

@@ -41,6 +41,20 @@ from app import (
 # UC-1: NEW TOKEN ISSUANCE (uses stored procedure)
 # ============================================================================
 
+def _token_authority_denied(token_id):
+    """The binding check for a route that names a TOKEN rather than an authority (1.0.0-rc.30).
+
+    uc5 and uc6 act on another authority's credential if nothing stops them, and uc6 then signs
+    under that authority's key. They relied on the row-level policy hiding the token from the
+    lookup, which holds for the application role and for no path that runs as the owner, the
+    way rc.19 moved uc9_complete_recovery out from under it. The binding is asked explicitly."""
+    row = query("SELECT issuing_agency_id FROM IdentityToken WHERE token_id = %s",
+                (token_id,), fetch='one')
+    if row is None:
+        return None          # the route's own "not found" handles it
+    return _operator_authority_permits(row['issuing_agency_id'])
+
+
 @app.route('/uc1/issue', methods=['GET', 'POST'])
 @security.login_required
 @security.require_role('admin', 'operator')
@@ -182,6 +196,9 @@ def uc5_bind_device():
     """Wraps the uc5_bind_device stored procedure."""
     if request.method == 'POST':
         try:
+            _denied = _token_authority_denied(int(request.form['token_id']))
+            if _denied:
+                return _denied
             binding_id = query("""
                 SELECT uc5_bind_device(%s, %s, %s, %s, %s) AS binding_id
             """, (
@@ -430,6 +447,18 @@ def uc9_decide(recovery_id):
     request. Admin-only — operator can initiate but not complete; auditor
     can view the queue but not act."""
     if request.method == 'POST':
+        # 1.0.0-rc.30: a recovery belongs to the authority that requested it, and approving one
+        # issues the new credential under that authority. An admin bound to another authority
+        # decided it anyway: rejections were never checked, and approvals had been refused only
+        # by the row-level policy on the insert, which rc.19 (uc9_complete_recovery as SECURITY
+        # DEFINER) no longer applies. The binding is asked here, the way the attestation
+        # revocation asks for the attestation's owner.
+        owner = query("SELECT requesting_agency_id FROM RecoveryRequest WHERE recovery_id = %s",
+                      (recovery_id,), fetch='one')
+        if owner is not None:
+            _denied = _operator_authority_permits(owner['requesting_agency_id'])
+            if _denied:
+                return _denied
         try:
             decision = request.form['decision']
             reason = (request.form.get('reason') or '').strip()
@@ -513,6 +542,9 @@ def uc6_migrate():
             token_id = int(request.form['token_id'])
             new_algorithm = int(request.form['new_algorithm'])
             deprecate_old = bool(request.form.get('deprecate_old'))
+            _denied = _token_authority_denied(token_id)
+            if _denied:
+                return _denied
 
             # v9.119: the migration signature now routes through the signing
             # module (real ML-DSA-65 when POLARIS_USE_REAL_PQC=1 + liboqs, else

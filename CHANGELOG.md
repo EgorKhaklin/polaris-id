@@ -11,6 +11,36 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.30 — 2026-09-24 (a bound admin decided another authority's recovery)
+
+CORE-BUG against rc.29 (EXT-SECURITY), partly a regression from rc.19. Externally observable:
+`/uc9/decide/<id>` refuses an account bound to an authority other than the one that requested
+the recovery, and `/uc5/bind-device` and `/uc6/migrate` refuse an account bound to an
+authority other than the token's issuer. No schema change. Nothing is published.
+
+rc.15 made every route that names an authority check the operator's binding. Three state-
+changing routes name something else, and asked nothing:
+- **`/uc9/decide/<id>`** names a recovery request. It belongs to the authority that requested
+  it, and approving it issues the new credential under that authority. A rejection was never
+  refused. An approval had been refused only by the row-level policy on the credential insert,
+  and rc.19 made `uc9_complete_recovery` `SECURITY DEFINER`, which the policy does not bind.
+  Measured: an admin bound to authority 1 rejected authority 2's recovery request.
+- **`/uc6/migrate`** names a token, and signs it under its issuer's key.
+- **`/uc5/bind-device`** names a token.
+
+The last two relied on the row-level policy hiding another authority's token from their
+lookup. That holds for the application role and for nothing that runs as the owner. The test
+suite, which connects as a superuser, measured `/uc6/migrate` re-signing authority 3's token for
+an operator bound to authority 1.
+
+`/uc9/decide` now checks the binding against the request's requesting authority, as the
+attestation revocation checks the attestation's owner. `/uc5` and `/uc6` check it against the
+token's issuer through `_token_authority_denied`.
+
+Counterexamples, failing on a worktree of rc.29 (`BoundOperatorActsOnlyAsItsAuthorityTests`):
+- `test_a_bound_admin_cannot_decide_another_authoritys_recovery`;
+- `test_device_binding_and_migration_stay_within_the_binding`.
+
 ## v1.0.0-rc.29 — 2026-09-24 (rc.28 moved one clock, and two comparisons assumed it had not)
 
 CORE-BUG against rc.28, and a regression it introduced. Externally observable: on an app host
