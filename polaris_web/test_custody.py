@@ -60,7 +60,7 @@ class _EnvSnapshot:
             "POLARIS_CUSTODY_PKCS11_TOKEN_LABEL", "POLARIS_CUSTODY_PKCS11_PIN_FILE", "POLARIS_CUSTODY_PKCS11_PIN",
             "POLARIS_CUSTODY_PKCS11_KEY_LABEL", "POLARIS_CUSTODY_AWSKMS_KEY_ID", "POLARIS_CUSTODY_AWSKMS_REGION",
             "POLARIS_CUSTODY_AWSKMS_ENDPOINT_URL", "POLARIS_PQC_TRUST_ANCHORS_FILE", "POLARIS_USE_REAL_PQC",
-            "POLARIS_AGENCY_KEYS_DIR",
+            "POLARIS_AGENCY_KEYS_DIR", "POLARIS_MIGRATION_SIGNING_KEY_FILE",
             "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")
 
     def __enter__(self):
@@ -477,6 +477,19 @@ class HeldOutCustodyTests(unittest.TestCase):
     def test_an_unaccepted_parameter_set_is_refused_before_any_key_is_looked_at(self):
         with self.assertRaises(custody.CustodyError):
             custody.get_custody_for_algorithm("ML-DSA-44")
+
+    def test_a_named_migration_key_file_that_is_absent_is_refused(self):
+        """Set but missing is a misconfiguration: the running key must not answer for a
+        migration the operator pointed at a different key, whichever set is targeted."""
+        self._key(os.path.join(self.dir, "global.json"))
+        os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = os.path.join(self.dir, "global.json")
+        os.environ["POLARIS_MIGRATION_SIGNING_KEY_FILE"] = os.path.join(self.dir, "absent.json")
+        custody.reset()
+        for algorithm in ("ML-DSA-65", "ML-DSA-87"):
+            with self.assertRaises(custody.CustodyError) as ctx:
+                custody.get_custody_for_algorithm(algorithm)
+            self.assertNotIsInstance(ctx.exception, custody.AlgorithmUnavailableError)
+            self.assertIn("names no file", str(ctx.exception))
 
     def test_the_driver_name_is_not_case_sensitive(self):
         self._key(os.path.join(self.dir, "global.json"))

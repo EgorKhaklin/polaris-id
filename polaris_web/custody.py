@@ -485,7 +485,13 @@ def get_custody_for_algorithm(algorithm: str):
         raise CustodyError(f"{algorithm!r} is not an accepted algorithm "
                            f"({', '.join(ACCEPTED_ALGORITHMS)})")
     path = os.environ.get(_MIGRATION_KEY_ENV)
-    if path and os.path.isfile(path):
+    if path and not os.path.isfile(path):
+        # Named but absent is a misconfiguration, not an absence: falling through would sign
+        # with the process key when the operator named a different one, and when the sets
+        # differ it would blame the environment for a variable that is in fact set.
+        raise CustodyError(f"{_MIGRATION_KEY_ENV}={path!r} names no file; refusing to fall "
+                           "back to the process key")
+    if path:
         with _lock:
             cached = _migration_custody.get(path)
             if cached is None or cached[0] != os.path.getmtime(path):
