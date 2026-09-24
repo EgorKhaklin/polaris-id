@@ -16056,6 +16056,24 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         self.assertEqual(_sql("SELECT status FROM IdentityToken WHERE token_id = 2",
                               fetch='one')['status'], 'ACTIVE')
 
+    def test_revoking_asks_about_the_tokens_issuer_not_only_the_actor(self):
+        """1.0.0-rc.33. /uc8/revoke asked the binding about the ACTOR it was told to act as, and
+        never about whose token it was. Before rc.19 the procedure could not see another
+        authority's token for a bound operator (the row-level policy); rc.19 made it SECURITY
+        DEFINER, so naming yourself as the actor revoked another authority's credential."""
+        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            set_discretion_bound(cur, 3, 100.0, 30, 'test fixture: no rate bound in the way')
+            conn.commit()
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+        csrf = self._csrf_token_from('/verifications/new')
+        r = self.client.post('/uc8/revoke', data={
+            'token_id': '2', 'actor_agency_id': '1', 'reason_code': 'ADMINISTRATIVE',
+            'published_location': 'https://crl.example/x', 'csrf_token': csrf})
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True)[:300])
+        self.assertEqual(_sql("SELECT status FROM IdentityToken WHERE token_id = 2",
+                              fetch='one')['status'], 'ACTIVE')
+
 class DeactivatedAdminHoldsNoAuthorityTests(PolarisTestCase):
     """2026-09-24. Five admin-gated procedures checked AppUser.role and not is_active, so a
     DEACTIVATED admin's user id still authorized a federation attestation, its revocation, an

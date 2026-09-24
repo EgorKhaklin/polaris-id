@@ -19348,6 +19348,13 @@ def test_state_changing_routes_ask_the_binding_check_discriminates(tmp_path):
           "    if actor_id:\n        denied = _operator_authority_permits(int(actor_id))\n")
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
         "must FAIL when a token route never asks about the token's issuer"
+    # rc.33's revoke: the token is in the form and only the actor is asked.
+    write(GOOD + "\n" + OTHERS + "@app.route('/uc8/revoke', methods=['POST'])\n"
+          "@security.require_role('admin', 'operator')\ndef uc8_revoke():\n"
+          "    token_id = int(request.form['token_id'])\n"
+          "    _denied = _operator_authority_permits(int(request.form['actor_agency_id']))\n")
+    assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a form names a token and only the actor is asked"
     # A declaration with no route behind it is refused, so the list cannot rot.
     write(GOOD)
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \

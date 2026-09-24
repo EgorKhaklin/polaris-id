@@ -11,6 +11,31 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.33 — 2026-09-24 (naming yourself as the actor revoked another authority's credential)
+
+CORE-BUG against rc.32 (EXT-SECURITY), a regression from rc.19. Externally observable:
+`/uc8/revoke` and `/uc4/activate-reserve` refuse an operator bound to an authority other than
+the token's issuer. No schema change. Nothing is published.
+
+Both routes checked the operator's binding against the `actor_agency_id` they were told to act
+as, and never asked whose token it was. `/uc4` also skipped even that check when the actor
+field was missing or malformed. Before rc.19 the procedures could not see another authority's
+token for a bound operator, because the row-level policy hid it. rc.19 made
+`uc8_revoke_token` and `uc4_activate_reserve` `SECURITY DEFINER`, which the policy does not
+bind. Measured: an operator bound to authority 1, naming authority 1 as the actor, revoked
+authority 3's token 2.
+
+Both routes now ask about the token's own issuer before the actor. The same kind of regression
+rc.30 fixed for `/uc9/decide`; the memory note from that round is what prompted this search.
+
+`check_state_changing_routes_ask_the_binding` now also requires a route that takes a token ID
+from its form or body to ask about that token's issuer. Two routes are declared as naming
+another authority's credential by design: a verifier recording a verification, and a verifier
+recording a duress signal. Run against the rc.32 routes, the check fails.
+
+Counterexample, failing on rc.32:
+`BoundOperatorActsOnlyAsItsAuthorityTests.test_revoking_asks_about_the_tokens_issuer_not_only_the_actor`.
+
 ## v1.0.0-rc.32 — 2026-09-24 (the transition route asked about an optional field)
 
 CORE-BUG against rc.31 (EXT-SECURITY). Externally observable: `/tokens/<id>/transition` refuses

@@ -144,6 +144,15 @@ def uc1_issue():
 def uc4_activate_reserve():
     """Wraps the uc4_activate_reserve stored procedure."""
     if request.method == 'POST':
+        # 1.0.0-rc.33: the lost token's own issuer is asked, always. The actor alone was asked,
+        # and a missing or malformed actor skipped even that; uc4_activate_reserve runs as its
+        # owner since rc.19, so nothing below this line refuses another authority's token.
+        try:
+            _denied = _token_authority_denied(int(request.form['lost_token_id']))
+        except (KeyError, ValueError):
+            _denied = None
+        if _denied:
+            return _denied
         try:
             _denied = _operator_authority_permits(int(request.form['actor_agency_id']))
             if _denied:
@@ -292,7 +301,11 @@ def uc8_revoke():
         try:
             token_id = int(request.form['token_id'])
             actor_agency_id = int(request.form['actor_agency_id'])
-            _denied = _operator_authority_permits(actor_agency_id)
+            # 1.0.0-rc.33: whose token it is, not only who the request says is acting.
+            # uc8_revoke_token runs as its owner since rc.19, so naming yourself as the actor
+            # revoked another authority's credential.
+            _denied = (_token_authority_denied(token_id)
+                       or _operator_authority_permits(actor_agency_id))
             if _denied:
                 return _denied
             cosigner_raw = (request.form.get('cosigner_agency_id') or '').strip()

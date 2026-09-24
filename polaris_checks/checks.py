@@ -22522,6 +22522,14 @@ _INSTANCE_WIDE_ROUTES = {
     "/uc7/warrant-audit": "a read, posted as a form; it changes nothing",
     "/sql": "refuses a bound account outright (1.0.0-rc.18)",
 }
+# Routes that name another authority's token BY DESIGN: a verifier records what happened when a
+# credential another authority issued was presented to it. The binding is asked about the
+# verifier they act as, which these routes do; the token's issuer is legitimately someone else.
+_CROSS_AUTHORITY_TOKEN_ROUTES = {
+    "/verifications/new": "a verifier records a verification of another authority's credential",
+    "/api/duress/record": "a verifier records the duress signal a presented credential carried",
+}
+_TOKEN_IN_REQUEST = re.compile(r"""(form|payload|body|_json_object\(\))\s*(\.get\()?\[?\(?['"]\w*token_id['"]""")
 _BINDING_ASKED = re.compile(r"_operator_authority_permits|_token_authority_denied|"
                             r"operator_agency_id")
 
@@ -22562,8 +22570,11 @@ def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Find
                 # 1.0.0-rc.32: a route that names a TOKEN must ask about that token's own
                 # issuer. The transition route asked only about an optional actor field and was
                 # counted as bound here while a request that omitted the field was not.
-                elif "<int:tok_id>" in route and not re.search(
-                        r"issuing_agency_id|_token_authority_denied", body):
+                elif ("<int:tok_id>" in route or (_TOKEN_IN_REQUEST.search(body) and
+                                                 route not in _CROSS_AUTHORITY_TOKEN_ROUTES)) \
+                        and not re.search(r"issuing_agency_id|_token_authority_denied", body):
+                    # 1.0.0-rc.33: the same for a token named in the FORM. /uc8/revoke asked
+                    # only about the actor it was told to act as, never whose token it was.
                     unbound.append(f"{f.name}: {route} (names a token, never asks its issuer)")
             i = k
     if not seen:
