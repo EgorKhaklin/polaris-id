@@ -19267,3 +19267,46 @@ def test_append_only_guards_classified_check_detects_its_absence(tmp_path):
     # anti-vacuity
     (sql / "06_triggers.sql").write_text("-- nothing\n")
     assert fn(tmp_path)[0].level == "FAIL"
+
+
+
+def test_liveness_asks_about_expiry_check_discriminates(tmp_path):
+    # 1.0.0-rc.26: the two shapes rc.22 to rc.25 fixed, each on its own.
+    GOOD = ("def _effective_status(row):\n    return row['status']\n\n"
+            "def api_v1_auth_authorize():\n"
+            "    row = _possession_authenticated(tv, sig)\n"
+            "    if _effective_status(row) != 'ACTIVE':\n"
+            "        return 403\n"
+            "\n"
+            "def verify_token(token_id):\n"
+            "    currently_authoritative = (status == 'ACTIVE' and _not_expired(row['expiration_date']))\n"
+            "\n"
+            "def api_v1_vc():\n"
+            "    subject = {'credentialStatus': _effective_status(row)}\n")
+
+    def write(body):
+        f = tmp_path / "polaris_web" / "rp_api.py"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body)
+
+    write(GOOD)
+    assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+    # rc.24's login: status alone, in a function that never asks about the date. Note the
+    # function mentions expires_in, which must not count as asking.
+    write(GOOD + "\ndef api_v1_sign_in():\n    body = {'expires_in': 60}\n"
+                 "    if row['status'] != 'ACTIVE':\n        return 403\n")
+    assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a status-only liveness decision"
+    # rc.24's verifiable credential and mdoc: a signed field set from the stored status.
+    write(GOOD + "\ndef api_v1_mdoc():\n    elements = {'credential_status': row['status']}\n")
+    assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a signed field carries the stored status"
+    # And the one answer must exist.
+    write(GOOD.replace("def _effective_status(row):", "def _status_of(row):"))
+    assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "FAIL", \
+        "must FAIL when _effective_status is gone"
+    # A comment explaining the old defect must not trip it.
+    write(GOOD + "\n# before rc.24: if row['status'] != 'ACTIVE' was the whole test\n")
+    assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "OK", \
+        "a comment is not a decision"

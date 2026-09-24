@@ -22444,6 +22444,68 @@ def check_append_only_guards_are_classified(root: pathlib.Path) -> list[Finding]
                % (len(guards), n_strict, n_bounded))
 
 
+
+# 1.0.0-rc.26. Four ships in one afternoon (rc.22 to rc.25) fixed the same defect in six places:
+# a route decided whether a credential is live by its stored status alone, and nothing moves
+# ACTIVE to EXPIRED when expiration_date passes, so an expired credential signed its holder in,
+# was attested usable, bound a key, authorized holder signing and got a card. The fix was one
+# function, rp_api._effective_status. This keeps the next route from writing its own answer.
+_LIVENESS_FILES = ("polaris_web/rp_api.py", "polaris_web/operator_routes.py",
+                   "polaris_web/verification_routes.py", "polaris_web/app.py",
+                   "polaris_card/personalization.py")
+_STATUS_IS_ACTIVE = re.compile(r"""(\[['"]status['"]\]|\bstatus)\s*[!=]=\s*['"]ACTIVE['"]""")
+_STATUS_EMITTED = re.compile(r"""['"]\w*[sS]tatus['"]\s*:\s*row\[['"]status['"]\]""")
+_ASKS_EXPIRY = re.compile(r"_not_expired|\bnot_expired\b|_effective_status|expiration_date")
+
+
+def check_liveness_asks_about_expiry(root: pathlib.Path) -> list[Finding]:
+    """A credential's liveness is its status AND its expiry date, asked in one place.
+
+    Two shapes are refused in the relying-party, operator and card code. A comparison of a
+    credential's status with ACTIVE inside a function that never looks at expiry (through
+    _effective_status, _not_expired or expiration_date), and a signed field set straight from
+    the stored status. The first is how login, holder signing and key binding let an expired
+    credential through; the second is how the verifiable credential and the mdoc attested one
+    ACTIVE. Scoped to functions, because the check is whether the DECISION considered the date,
+    and that is a property of the function making it."""
+    name = "liveness_asks_about_expiry"
+    # Not vacuous: the one answer must exist, or a tree with the routes moved away would pass.
+    rp = _read(root, "polaris_web/rp_api.py")
+    if "def _effective_status(" not in rp:
+        return _fail(name, "polaris_web/rp_api.py must define _effective_status, the one answer "
+                           "to whether a credential is live (status AND expiry)")
+    offenders = []
+    for rel in _LIVENESS_FILES:
+        text = _read(root, rel)
+        if not text:
+            continue
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            if line.lstrip().startswith("#"):
+                continue
+            if _STATUS_EMITTED.search(line):
+                offenders.append(f"{rel}:{i + 1} signs the stored status: {line.strip()[:70]}")
+                continue
+            if not _STATUS_IS_ACTIVE.search(line):
+                continue
+            start = i
+            while start > 0 and not re.match(r"\s*def ", lines[start]):
+                start -= 1
+            end = i + 1
+            while end < len(lines) and not re.match(r"(def |@app\.route|class )", lines[end]):
+                end += 1
+            if not _ASKS_EXPIRY.search("\n".join(lines[start:end])):
+                offenders.append(f"{rel}:{i + 1} in {lines[start].strip()[:50]}")
+    if offenders:
+        return _fail(name,
+                     "a credential's liveness is decided from its stored status alone, and an "
+                     "expired credential still reads ACTIVE: " + "; ".join(offenders[:6]) +
+                     ". Ask rp_api._effective_status (or test _not_expired beside the status)")
+    return _ok(name,
+               "every liveness decision in the relying-party, operator and card code considers "
+               "the expiry date as well as the status, and no signed field is set from the stored "
+               "status, because nothing moves ACTIVE to EXPIRED when the date passes")
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
@@ -22766,6 +22828,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_package_readmes_state_their_own_version,
     check_paper_check_citations_resolve,
     check_append_only_guards_are_classified,
+    check_liveness_asks_about_expiry,
 ]
 
 
