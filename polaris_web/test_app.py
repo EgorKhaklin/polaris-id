@@ -14590,6 +14590,22 @@ class CardPersonalizationTests(PolarisTestCase):
                             cur.execute(sql, (token_id,))
                     conn.rollback()
 
+    def test_an_expired_credential_gets_no_card(self):
+        """1.0.0-rc.25. The status check read ACTIVE, and an expired credential still does."""
+        em, pz, issuer_sign = self._card_bits()
+        with self._new_conn() as conn:
+            token_id = self._active_token(conn)
+            with conn.cursor() as cur:
+                cur.execute("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 "
+                            "WHERE token_id = %s", (token_id,))
+            conn.commit()
+            card, _ = em.new_blank_token()
+            card.transmit(em.select())
+            with self.assertRaises(pz.PersonalizationRefused) as ctx:
+                pz.personalize(conn, token_id, card, issuer_sign=issuer_sign)
+            self.assertIn("expired", str(ctx.exception))
+            self.assertFalse(pz.already_personalized(conn, token_id))
+
     def test_a_credential_gets_one_card(self):
         # Two live cards answering for one credential is a revocation that only half works.
         em, pz, issuer_sign = self._card_bits()

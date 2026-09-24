@@ -11,6 +11,24 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.25 — 2026-09-24 (a card could be made for an expired credential)
+
+CORE-BUG against rc.24. Externally observable: `polaris_card.personalization.personalize`
+refuses a credential past its `expiration_date`. No schema change. Nothing is published.
+
+The last site in the sweep rc.23 began. Personalization refused a credential that was not
+`ACTIVE`, so that a card, a signed object that then leaves the authority's control, is never
+made for a credential the authority withdrew. It fetched `expiration_date` and never read it,
+and an expired credential still reads `ACTIVE`. A card was personalized for it.
+
+It now refuses one past its date, with the inclusive rule `rp_api._effective_status` applies.
+`polaris_card` cannot import the web app, so the rule is stated again there, and the comment
+names the function it must agree with. The device verifier needed nothing: its status comes
+from a status assertion or the online check, and both honour the date.
+
+Counterexample, failing on a worktree of rc.24:
+`CardPersonalizationTests.test_an_expired_credential_gets_no_card`.
+
 ## v1.0.0-rc.24 — 2026-09-24 (an expired credential still signed its holder in)
 
 CORE-BUG against rc.23 (EXT-SECURITY). Externally observable: an expired credential can no

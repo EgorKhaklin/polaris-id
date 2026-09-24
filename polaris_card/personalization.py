@@ -84,6 +84,20 @@ def personalize(conn, token_id, card, *, issuer_sign, issuer_verify=None, operat
         raise PersonalizationRefused(
             f"credential {token_id} is {row['status']}, not ACTIVE. Personalizing it would put "
             "a signed object in the world for something the authority has withdrawn")
+    # 1.0.0-rc.25: nor past its expiration_date. Nothing moves ACTIVE to EXPIRED when the
+    # date passes, so the status above still reads ACTIVE for a credential that has run out,
+    # and a card made for it is a signed object for a credential that is no longer valid. The
+    # date is inclusive, the rule rp_api._effective_status applies (this package cannot import
+    # it, so it states the same test).
+    expiry = row["expiration_date"]
+    if expiry is not None:
+        import datetime as _dt
+        expiry = expiry.date() if isinstance(expiry, _dt.datetime) else expiry
+        if expiry < _dt.date.today():
+            raise PersonalizationRefused(
+                f"credential {token_id} expired on {expiry}. It still reads ACTIVE because "
+                "nothing moves a credential to EXPIRED when its date passes; a card for it would "
+                "be a signed object for a credential that is no longer valid")
     if already_personalized(conn, token_id):
         raise PersonalizationRefused(
             f"credential {token_id} already has a card. A replacement is a SUCCESSION, a new "
