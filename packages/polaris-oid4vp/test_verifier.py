@@ -666,3 +666,48 @@ class CredentialTypeOnTheWireTests(VerifierTestCase):
         form = self.wallet.respond(jar)
         status, _, verdict = self.verifier.handle_direct_post(form)
         self.assertEqual(status, 200, verdict.reason if verdict else "")
+
+
+class HeldOutRequestTests(VerifierTestCase):
+    """A held-out round on 2026-09-24: of twelve mutations of verifier.py, three survived.
+    Each is a property of what the verifier ASKS for or where it sends the wallet, and every
+    test of the request had read the claims the suite checks and not these."""
+
+    def test_the_request_expires_after_the_configured_lifetime_not_later(self):
+        """`exp` is the wallet's deadline for this request. Ten times the TTL survived: the
+        verifier's own expiry is enforced on its side, so nothing read the one it tells the
+        wallet, and a wallet honouring it would answer after the session is gone."""
+        _, jar = self.verifier.new_request()
+        _, claims = Wallet.read_request(jar)
+        self.assertEqual(claims["exp"] - claims["iat"], self.verifier.request_ttl_seconds)
+
+    def test_the_query_asks_for_every_configured_claim(self):
+        """Asking for only the first survived, because the test wallet discloses everything
+        it has whatever the query says. A real wallet discloses what is asked."""
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="https://verifier.test/request.jwt",
+                            response_uri="https://verifier.test/response",
+                            claims=("given_name", "family_name", "birthdate"))
+        _, jar = verifier.new_request()
+        _, claims = Wallet.read_request(jar)
+        (credential,) = claims["dcql_query"]["credentials"]
+        self.assertEqual([c["path"] for c in credential["claims"]],
+                         [["given_name"], ["family_name"], ["birthdate"]])
+
+    def test_the_default_redirect_is_beside_the_response_uri_not_under_it(self):
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="https://v.test/oid4vp/request.jwt",
+                            response_uri="https://v.test/oid4vp/response")
+        self.assertEqual(verifier.redirect_uri, "https://v.test/oid4vp/done")
+        explicit = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="https://v.test/oid4vp/request.jwt",
+                            response_uri="https://v.test/oid4vp/response",
+                            redirect_uri="https://app.test/finished")
+        self.assertEqual(explicit.redirect_uri, "https://app.test/finished")
+
+    def test_an_authentic_answer_carries_the_redirect_and_nothing_else(self):
+        _, status, body = self.exchange()
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"redirect_uri": "https://verifier.test/done"})
