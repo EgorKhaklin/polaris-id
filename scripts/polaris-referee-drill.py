@@ -187,6 +187,60 @@ def main():
         case("...and nobody else's is in that list",
              all(v["applicant_individual_id"] == applicant for v in touched), True)
 
+        # 2026-09-24, a held-out round: of twelve mutations of referee.py, eight survived
+        # test_referee and this drill together, and every one was in the three functions that
+        # touch the database. The rows above insert DIRECTLY, which is the right way to test
+        # the schema's floors and no way at all to test record_vouching, the only place the
+        # bound is enforced (the database cannot hold a count). A record_vouching that never
+        # counted, or counted every referee, or the whole history, passed.
+        def aged(days, referee_id=ref_id):
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO RefereeVouching
+                        (proofing_id, referee_individual_id, applicant_individual_id,
+                         referee_ial, relationship, vouched_ial, vouched_at)
+                    VALUES (%s, %s, %s, 'IAL2', 'NOTARY', 'IAL1',
+                            CURRENT_TIMESTAMP - (%s || ' days')::interval)
+                    RETURNING vouching_id
+                """, (proofing, referee_id, applicant, days))
+                vid = cur.fetchone()["vouching_id"]
+            conn.commit()
+            return vid
+        # Literal ages, not ones derived from the constant: referee.py sets the window at
+        # thirty days, a month of a caseworker's volume, and ages computed from the constant
+        # would follow it anywhere, including to a window too short to see that month.
+        oldest = aged(40)
+        aged(25)
+        direct(third, applicant, "IAL2", "EMPLOYER", "IAL1")
+        case("the window counts this referee's vouchings inside the window and no others",
+             referee.vouchings_in_window(conn, ref_id), 3)
+
+        def record(**kw):
+            args = dict(proofing_id=proofing, referee_id=ref_id, applicant_id=applicant,
+                        referee_ial="IAL2", relationship="SOCIAL_WORKER", vouched_ial="IAL1",
+                        bound=4)
+            args.update(kw)
+            try:
+                vid = referee.record_vouching(conn, **args)
+                conn.commit()
+                return vid
+            except referee.VouchingRefused as exc:
+                conn.rollback()
+                return "CO-SIGNER" if "CO-SIGNER" in str(exc) else "refused"
+        below = record()
+        case("record_vouching records below the bound it was given", isinstance(below, int), True)
+        case("...and at the bound it COUNTS for itself and asks for a co-signer",
+             record(), "CO-SIGNER")
+        cosigned = record(co_signer_id=third)
+        case("...which, supplied, lets it stand", isinstance(cosigned, int), True)
+        touched = referee.vouchings_by(conn, ref_id)
+        case("the compromise list is newest first and reaches past the window",
+             (touched[0]["vouching_id"], touched[-1]["vouching_id"]), (cosigned, oldest))
+        case("...and records the level vouched, not the referee's own",
+             (touched[0]["vouched_ial"], touched[0]["referee_ial"]), ("IAL1", "IAL2"))
+        case("...and names the co-signer, who is the other person to ask",
+             touched[0]["co_signer_individual_id"], third)
+
         # The absence that matters, asked of the live catalog rather than the file.
         with conn.cursor() as cur:
             cur.execute("""
