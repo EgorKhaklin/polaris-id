@@ -5824,6 +5824,23 @@ class StateDirPermsTests(unittest.TestCase):
             "dev keeps the cross-uid launcher share")
 
 
+class Uc5BindDeviceExpiryTests(PolarisTestCase):
+    """uc5_bind_device (1.0.0-rc.36): no device is bound to an expired credential. The status
+    check read ACTIVE, and an expired credential still does."""
+
+    def _bind(self, token_id):
+        return _sql("SELECT uc5_bind_device(%s, 'PHONE', %s, 'SECURE_ENCLAVE', 12) AS b",
+                    (token_id, 'ab' * 16), fetch='one')['b']
+
+    def test_an_expired_credential_takes_no_device(self):
+        self.assertIsNotNone(self._bind(2), 'control: a live credential takes a device')
+        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 3",
+             fetch='none')
+        with self.assertRaises(psycopg2.Error) as ctx:
+            self._bind(3)
+        self.assertIn('expired', str(ctx.exception))
+
+
 class RateWindowTests(unittest.TestCase):
     """1.0.0-rc.34. The rolling rate moved its window only when an event arrived, so after a
     burst it reported the burst as the current rate for as long as nothing else happened."""
@@ -16063,11 +16080,15 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
         csrf = self._csrf_token_from('/verifications/new')
-        self.client.post('/uc5/bind-device', data={
+        # A binding method the table accepts, so a refusal here can only be the binding check;
+        # the first version of this test used 'NFC', which the CHECK constraint refused anyway.
+        r5 = self.client.post('/uc5/bind-device', data={
             'token_id': str(token), 'device_type': 'PHONE', 'device_fingerprint': 'ab' * 16,
-            'binding_method': 'NFC', 'validity_months': '12', 'csrf_token': csrf})
-        self.client.post('/uc6/migrate', data={
+            'binding_method': 'SECURE_ENCLAVE', 'validity_months': '12', 'csrf_token': csrf})
+        self.assertEqual(r5.status_code, 403, 'the device-binding refusal must be the binding check')
+        r6 = self.client.post('/uc6/migrate', data={
             'token_id': str(token), 'new_algorithm': '2', 'csrf_token': csrf})
+        self.assertEqual(r6.status_code, 403, 'the migration refusal must be the binding check')
         self.assertEqual(_sql("SELECT count(*) AS n FROM DeviceBinding WHERE token_id = 2",
                               fetch='one')['n'], before_b, 'a device was bound to another authority\'s token')
         self.assertEqual(_sql("SELECT count(*) AS n FROM TokenSignature WHERE token_id = 2",

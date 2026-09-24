@@ -377,10 +377,11 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     v_token_status VARCHAR(20);
+    v_expiration   DATE;
     v_binding_id   INTEGER;
 BEGIN
     -- Validate: token is ACTIVE.
-    SELECT status INTO v_token_status
+    SELECT status, expiration_date INTO v_token_status, v_expiration
     FROM IdentityToken WHERE token_id = p_token_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Token % does not exist', p_token_id
@@ -389,6 +390,14 @@ BEGIN
     IF v_token_status <> 'ACTIVE' THEN
         RAISE EXCEPTION 'Token % is not ACTIVE (current status: %); cannot bind device',
             p_token_id, v_token_status
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- 1.0.0-rc.36: nor past its expiration date. Nothing moves ACTIVE to EXPIRED when the
+    -- date passes, so the status above still reads ACTIVE for a credential that has run out;
+    -- the relying-party holder-key binding refused one since rc.24, this path did not.
+    -- The database runs on UTC since rc.28, so CURRENT_DATE is the UTC date.
+    IF v_expiration IS NOT NULL AND v_expiration < CURRENT_DATE THEN
+        RAISE EXCEPTION 'Token % expired on %; cannot bind device', p_token_id, v_expiration
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 

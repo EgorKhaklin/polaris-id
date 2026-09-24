@@ -11,6 +11,26 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.36 — 2026-09-24 (a device could be bound to an expired credential)
+
+CORE-BUG against rc.35. Externally observable: `uc5_bind_device`, and `/uc5/bind-device` which
+calls it, refuse a credential past its `expiration_date`. Schema change: migration
+`2026-09-24-006-no-device-for-an-expired-credential`. Nothing is published.
+
+`uc5_bind_device` refused a credential that was not `ACTIVE` and never read its expiry, and an
+expired credential still reads `ACTIVE`. The relying-party holder-key binding has refused one
+since rc.24; this path had not. It now refuses a credential past its date, judged on
+`CURRENT_DATE`, which is the UTC date since rc.28. The migration carries the body; round-tripped
+on a scratch database built from rc.35 (binds, refuses, binds, refuses).
+
+Writing its test exposed a masked one. rc.30's
+`test_device_binding_and_migration_stay_within_the_binding` posted `binding_method='NFC'`, a
+value the table's CHECK constraint refuses. So its device-binding half passed on the constraint,
+whether or not the operator's binding was checked. It now posts an accepted method and asserts
+the 403, and it fails when the route's binding check is removed.
+
+Counterexample, failing on rc.35: `Uc5BindDeviceExpiryTests.test_an_expired_credential_takes_no_device`.
+
 ## v1.0.0-rc.35 — 2026-09-24 (an expired credential could prove membership for a whole epoch)
 
 CORE-BUG against rc.34 (EXT-SECURITY). Externally observable: closing a ZK epoch commits only
