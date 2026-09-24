@@ -14973,6 +14973,79 @@ class RpAuthHeldOutTests(unittest.TestCase):
                 self.assertIsNone(rp.parse_bearer(header))
 
 
+class WebAuthnHeldOutTests(PolarisTestCase):
+    """A held-out round on webauthn_auth.py, 2026-09-24. Of twelve mutations, six survived the
+    ceremony, credential-lookup, cross-site, JSON-totality and next-URL suites and the check
+    layer. The ceremony tests drive the admin role, one credential, one user and no model
+    policy, so nothing separated the other roles' rules, a delete scoped to its owner from one
+    that is not, or a model policy that reads an unreported model as allowed."""
+
+    def _wa(self):
+        import webauthn_auth
+        return webauthn_auth
+
+    def _conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def _enrol(self, conn, user_id, cid, aaguid=None):
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO OperatorWebauthnCredential (credential_id, user_id, "
+                        "public_key, sign_count, aaguid) VALUES (%s, %s, %s, 0, %s)",
+                        (self._wa()._canonical_credential_id(cid), user_id,
+                         psycopg2.Binary(b"\x00"), aaguid))
+        conn.commit()
+
+    def test_every_role_that_enrolled_a_key_is_asked_for_it(self):
+        """An operator or an auditor who enrolled a key is asked for it at login. The docstring
+        records why: a factor that is enrolled and listed but not consulted is a page lying.
+        Every test of the rule used the admin."""
+        wa = self._wa()
+        with self._conn() as conn:
+            for user_id, role in ((2, "operator"), (3, "auditor"), (1, "admin")):
+                with self.subTest(role=role):
+                    self.assertEqual(wa.webauthn_status_for_user(conn, user_id, role),
+                                     "not_required", "control: nothing enrolled yet")
+                    self._enrol(conn, user_id, _b64.urlsafe_b64encode(
+                        b"held-out-%d" % user_id).decode())
+                    self.assertEqual(wa.webauthn_status_for_user(conn, user_id, role),
+                                     "mfa_required")
+
+    def test_a_user_who_vanished_mid_login_fails_safe(self):
+        wa = self._wa()
+        with self._conn() as conn:
+            self.assertEqual(wa.webauthn_status_for_user(conn, 99999, "admin"), "mfa_overdue")
+
+    def test_a_user_can_delete_only_their_own_credential(self):
+        wa = self._wa()
+        with self._conn() as conn:
+            key = _b64.urlsafe_b64encode(b"the admin's key").decode()
+            self._enrol(conn, 1, key)
+            self.assertFalse(wa.delete_credential(conn, 2, key))
+            conn.commit()
+            self.assertIsNotNone(wa.fetch_credential(conn, key),
+                                 "another user's delete removed the admin's key")
+            self.assertTrue(wa.delete_credential(conn, 1, key), "control")
+            conn.commit()
+
+    def test_the_model_policy_reads_an_unreported_model_as_not_allowed(self):
+        wa = self._wa()
+        allowed = "cb69481e-8ff7-4039-93ec-0a2729a154a8"
+        with patch.dict(os.environ, {"POLARIS_WEBAUTHN_ALLOWED_AAGUIDS": allowed}):
+            self.assertTrue(wa.credential_model_allowed({"aaguid": allowed})[0])
+            self.assertTrue(wa.credential_model_allowed({"aaguid": allowed.upper()})[0],
+                            "a UUID's case is not part of it")
+            self.assertFalse(wa.credential_model_allowed({"aaguid": None})[0])
+            self.assertFalse(wa.credential_model_allowed({})[0])
+            self.assertFalse(wa.credential_model_allowed(
+                {"aaguid": "00000000-0000-0000-0000-000000000001"})[0])
+
+    def test_an_allow_list_naming_nothing_is_refused_not_read_as_any(self):
+        wa = self._wa()
+        with patch.dict(os.environ, {"POLARIS_WEBAUTHN_ALLOWED_AAGUIDS": " , ,"}):
+            with self.assertRaises(ValueError):
+                wa.validate_policy()
+
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py
