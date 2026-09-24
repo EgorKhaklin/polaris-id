@@ -481,5 +481,218 @@ class CommandLineExitCodes(unittest.TestCase):
                                       return_value={"decision": decision, "reasons": []}):
                 self.assertEqual(self.main("--pqc-provider", "auto", "--zk-proof", str(self.blob)), code)
 
+
+class StapledDecisionNeedsEveryFact(unittest.TestCase):
+    """verify_stapled accepts only when seven facts hold at once. 2026-09-23: a held-out round
+    dropped each from the acceptance in turn, and five survived every suite and the offline
+    status drill, because each drill case breaks more than one fact (a tampered assertion is
+    also not fresh and has no status) and the others refused for it. Here the two inner
+    verdicts are replaced for one call each: every fact passes, then exactly one does not."""
+
+    GOOD_PACK = {"signature_valid": True, "issuer_trusted": True}
+    GOOD_SA = {"status_authentic": True, "issuer_trusted": True, "fresh": True, "status": "ACTIVE"}
+
+    def decide(self, pack=None, sa=None, token=("T", "T")):
+        from unittest import mock
+        with mock.patch.object(V, "verify_pack", return_value=dict(self.GOOD_PACK, **(pack or {}))), \
+                mock.patch.object(V, "verify_status_assertion", return_value=dict(self.GOOD_SA, **(sa or {}))):
+            return V.verify_stapled({"token_value": token[0]}, {"token_value": token[1]})["decision"]
+
+    def test_all_seven_facts_accept(self):
+        self.assertEqual(self.decide(), "accept")
+        self.assertEqual(self.decide(pack={"issuer_trusted": None}, sa={"issuer_trusted": None}),
+                         "accept", "no anchor given is not an untrusted issuer")
+
+    def test_each_fact_alone_refuses(self):
+        for label, pack, sa in (("credential signature", {"signature_valid": False}, None),
+                                ("credential issuer", {"issuer_trusted": False}, None),
+                                ("assertion signature", None, {"status_authentic": False}),
+                                ("assertion issuer", None, {"issuer_trusted": False}),
+                                ("freshness", None, {"fresh": False}),
+                                ("freshness unknown", None, {"fresh": None}),
+                                ("status", None, {"status": "SUSPENDED"})):
+            with self.subTest(label):
+                self.assertEqual(self.decide(pack=pack, sa=sa), "reject")
+
+    def test_binding_is_to_this_credential_and_never_to_nothing(self):
+        self.assertEqual(self.decide(token=("T", "U")), "reject")
+        self.assertEqual(self.decide(token=("", "")), "reject",
+                         "two missing token values are not a binding")
+        self.assertEqual(self.decide(token=(None, None)), "reject")
+
+
+@unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
+                     "no real ML-DSA backend; these run on real signatures")
+class AgentGrantPrincipalBinding(unittest.TestCase):
+    """The grant's holder key must be one an issuer bound, freshly, to this credential.
+    2026-09-23: a held-out round found three rules here that nothing isolated: the binding
+    dropped from `usable` altogether, a stale binding accepted, and a binding to another
+    credential accepted. The agent-grant drill's cases break several links at once. The
+    genuine grant vector is used as it is; the binding verdict is replaced for one call, so
+    each test starts from a usable grant and breaks one property of the binding."""
+
+    NOW = "2026-05-01T00:00:30Z"
+
+    def setUp(self):
+        self.grant = json.loads((ROOT / "conformance" / "vectors" / "agent-grant-valid.json").read_text())
+        self.good = {"binding_authentic": True, "fresh": True, "bound_to_credential": True,
+                     "holder_public_key_hex": self.grant["public_key_hex"], "note": None}
+
+    def verdict(self, **binding):
+        from unittest import mock
+        with mock.patch.object(V, "verify_holder_binding", return_value=dict(self.good, **binding)):
+            return V.verify_agent_grant(self.grant, binding={"format": "x"}, credential={},
+                                        now=self.NOW)
+
+    def test_a_good_binding_leaves_the_grant_usable(self):
+        v = self.verdict()
+        self.assertTrue(v["grant_authentic"], v["note"])
+        self.assertIs(v["principal_bound"], True)
+        self.assertIs(v["usable"], True)
+
+    def test_each_broken_property_of_the_binding_makes_the_grant_unusable(self):
+        for label, change in (("not authentic", {"binding_authentic": False}),
+                              ("stale", {"fresh": False}),
+                              ("bound to another credential", {"bound_to_credential": False}),
+                              ("another holder's key", {"holder_public_key_hex": "ab" * 32})):
+            with self.subTest(label):
+                v = self.verdict(**change)
+                self.assertIs(v["principal_bound"], False)
+                self.assertIs(v["usable"], False)
+
+
+@unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
+                     "no real ML-DSA backend; these run on real signatures")
+class HolderChainBoundaries(unittest.TestCase):
+    """2026-09-23: a held-out round on the holder chain found six rules no suite isolated: a
+    binding about another token, or signed by another issuer, still bound; the proof's context
+    ignored; the one-minute skew and the five-minute age each doubled; and a verifier clock it
+    cannot read treated as fresh. The published vectors form one genuine chain (issuer ->
+    binding -> holder key -> proof), so these run on real signatures and change one input."""
+
+    @classmethod
+    def setUpClass(cls):
+        vec = lambda n: json.loads((ROOT / "conformance" / "vectors" / n).read_text())  # noqa: E731
+        cls.proof, cls.binding, cls.credential = (vec("holder-proof-valid.json"),
+                                                  vec("holder-binding-valid.json"),
+                                                  vec("holder-credential.json"))
+
+    def bound(self, **credential_change):
+        return V.verify_holder_binding(self.binding, credential=dict(self.credential, **credential_change),
+                                       now="2026-05-01T00:00:00Z")["bound_to_credential"]
+
+    def test_a_binding_binds_only_its_own_token_under_its_issuer(self):
+        self.assertIs(self.bound(), True)
+        self.assertIs(self.bound(token_value="SOMEONE-ELSE-0001"), False)
+        self.assertIs(self.bound(public_key_hex="ab" * 1952), False)
+
+    def proof_at(self, now, **kw):
+        return V.verify_holder_proof(self.proof, binding=self.binding, now=now, **kw)
+
+    def test_the_context_must_be_the_one_expected(self):
+        self.assertIs(self.proof_at("2026-05-01T00:00:10Z", expected_context=1)["context_matches"], True)
+        self.assertIs(self.proof_at("2026-05-01T00:00:10Z", expected_context=2)["context_matches"], False)
+
+    def test_the_proof_is_fresh_for_exactly_five_minutes_and_a_minute_of_skew(self):
+        # issued_at is 2026-05-01T00:00:00Z
+        for now, fresh in (("2026-05-01T00:05:00Z", True), ("2026-05-01T00:05:01Z", False),
+                           ("2026-04-30T23:59:00Z", True), ("2026-04-30T23:58:59Z", False)):
+            with self.subTest(now=now):
+                self.assertIs(self.proof_at(now)["fresh"], fresh)
+
+    def test_a_clock_the_verifier_cannot_read_is_never_fresh(self):
+        v = self.proof_at("not a time")
+        self.assertIs(v["proof_authentic"], True, "the signature itself is fine")
+        self.assertIs(v["fresh"], False)
+
+
+class PresentationUsableNeedsEveryFact(unittest.TestCase):
+    """usable_offline is a conjunction of eleven facts. 2026-09-23: a held-out round dropped each
+    and found five no suite or drill isolated: the credential's authenticity, its issuer's
+    trust, the status assertion being present at all, its authenticity, and (in the holder
+    chain) the binding's freshness. The drills' negative cases each break several facts. Here
+    the inner verdicts are replaced for one call, every fact passes, then exactly one fails."""
+
+    CRED = {"token_value": "T", "public_key_hex": "aa" * 32}
+    SA = {"token_value": "T", "public_key_hex": "aa" * 32}
+
+    def usable(self, pack=None, sa=None, staple=True, binding=None):
+        from unittest import mock
+        pres = {"format": V._PRESENTATION_FORMAT, "credential": dict(self.CRED)}
+        if staple:
+            pres["status_assertion"] = dict(self.SA)
+        patches = [mock.patch.object(V, "verify_pack", return_value=dict(
+                       {"signature_valid": True, "issuer_trusted": True}, **(pack or {}))),
+                   mock.patch.object(V, "verify_status_assertion", return_value=dict(
+                       {"status_authentic": True, "fresh": True, "status": "ACTIVE"}, **(sa or {})))]
+        if binding is not None:
+            pres["holder_binding"], pres["holder_proof"] = {}, {}
+            patches += [mock.patch.object(V, "verify_holder_binding", return_value=dict(
+                            {"binding_authentic": True, "fresh": True, "bound_to_credential": True,
+                             "holder_public_key_hex": "bb" * 32}, **binding)),
+                        mock.patch.object(V, "verify_holder_proof", return_value={
+                            "proof_authentic": True, "fresh": True, "key_matches_binding": True,
+                            "nonce_matches": True, "context_matches": None})]
+        for p in patches:
+            p.start()
+        try:
+            return V.verify_presentation(pres)["usable_offline"]
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_every_fact_holding_is_usable(self):
+        self.assertIs(self.usable(), True)
+        self.assertIs(self.usable(binding={}), True)
+
+    def test_each_fact_alone_makes_it_unusable(self):
+        for label, kw in (("credential not authentic", {"pack": {"signature_valid": False}}),
+                          ("issuer not trusted", {"pack": {"issuer_trusted": False}}),
+                          ("no status assertion stapled", {"staple": False}),
+                          ("status assertion not authentic", {"sa": {"status_authentic": False}}),
+                          ("a stale holder binding", {"binding": {"fresh": False}})):
+            with self.subTest(label):
+                self.assertIs(self.usable(**kw), False)
+
+
+class CrossAuthorityZkTrustChain(unittest.TestCase):
+    """verify_cross_authority_zk trusts a foreign epoch only through a fresh checkpoint, a
+    fresh and trusted manifest, and an attestation of THAT key, in THIS context, inside its own
+    window; then it refuses a replayed nullifier. 2026-09-23: a held-out round removed each of
+    those six rules in turn and every suite and the cross-authority drill stayed green, because
+    each drill case breaks several links at once. The three inner verdicts are replaced here,
+    every link passes, then exactly one fails."""
+
+    KEY = "cc" * 32
+
+    def decide(self, cv=None, mv=None, att=None, zk=None, context=1, anchors=("aa" * 32,)):
+        from unittest import mock
+        attestation = dict({"attested_public_key_hex": self.KEY, "context_id": 1}, **(att or {}))
+        cvr = dict({"checkpoint_authentic": True, "fresh": True}, **(cv or {}))
+        mvr = dict({"manifest_authentic": True, "fresh": True, "issuer_trusted": True,
+                    "authority": {"agency_id": "B"}, "attestations": [attestation]}, **(mv or {}))
+        zkr = dict({"bound": True, "proof_verified": True, "nullifier": "ab", "fresh_nullifier": True,
+                    "note": "replayed"}, **(zk or {}))
+        checkpoint = {"public_key_hex": self.KEY, "epoch": {"root_hex": "00", "number": 1}}
+        with mock.patch.object(V, "verify_epoch_checkpoint", return_value=cvr), \
+                mock.patch.object(V, "verify_manifest", return_value=mvr), \
+                mock.patch.object(V, "verify_zk_against_root", return_value=zkr):
+            return V.verify_cross_authority_zk({}, checkpoint, context, [{}],
+                                               trusted_anchors=list(anchors))["decision"]
+
+    def test_every_link_holding_accepts(self):
+        self.assertEqual(self.decide(), "accept")
+
+    def test_each_broken_link_refuses(self):
+        for label, kw in (("a stale checkpoint", {"cv": {"fresh": False}}),
+                          ("a stale manifest", {"mv": {"fresh": False}}),
+                          ("a manifest from an authority nobody trusts", {"mv": {"issuer_trusted": False}}),
+                          ("an attestation of another key", {"att": {"attested_public_key_hex": "dd" * 32}}),
+                          ("an attestation for another context", {"att": {"context_id": 2}}),
+                          ("an attestation past its window", {"att": {"valid_until": "2000-01-01T00:00:00Z"}}),
+                          ("a replayed nullifier", {"zk": {"fresh_nullifier": False}})):
+            with self.subTest(label):
+                self.assertEqual(self.decide(**kw), "reject")
+
 if __name__ == "__main__":
     unittest.main()

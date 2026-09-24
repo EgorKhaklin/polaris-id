@@ -19080,6 +19080,17 @@ def test_paper_check_citations_check_detects_its_absence(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "проверка_неизвестная" in out[0].message
 
+    # the mathematical edition is held to the same rule
+    (ru / "a.tex").write_text("закреплено \\code{проверка\\_настоящая\\_вещь}.\n")
+    math = tmp_path / "docs/paper/polaris_math.tex"
+    math.write_text("pinned by \\code{check\\_real\\_thing}.\n")
+    assert fn(tmp_path)[0].level == "OK", "a math edition citing a real check must PASS"
+    math.write_text("pinned by \\code{check\\_gone\\_thing}.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris_math.tex" in out[0].message, \
+        "a dead citation in the math edition must FAIL"
+    math.unlink()
+
     # anti-vacuity: no citations at all means the parser drifted
     (sec / "a.tex").write_text("nothing cited.\n"); (ru / "a.tex").write_text("ничего.\n")
     assert fn(tmp_path)[0].level == "FAIL", "must FAIL rather than pass on a paper that cites nothing"

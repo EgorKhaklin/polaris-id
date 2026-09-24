@@ -480,6 +480,169 @@ class OnlineDecisionHeldOutTests(unittest.TestCase):
             self.assertEqual(v._access_token(), "new", "an expired token is never reused")
 
 
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class HolderChainHeldOutTests(unittest.TestCase):
+    """2026-09-23: a held-out round on verify_holder dropped each of the facts `proved` needs
+    and 10 of 12 mutations survived this suite and the conformance runner: only the key match
+    and the nonce were ever isolated. Two chains, both genuinely signed: the published
+    conformance chain, and sdk/testdata/holder-chain-early-binding.json, whose binding opens a
+    day before its proof, so the proof's own one-minute skew can be tested on its own."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.early = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "holder-chain-early-binding.json")))
+        cls.conf = {n: _conformance_vector("holder-%s.json" % n)
+                    for n in ("credential", "binding-valid", "proof-valid")}
+
+    def early_proved(self, now="2026-05-01T00:00:10Z", context=1, credential=None, binding=None, proof=None):
+        e = self.early
+        return pv.verify_holder(credential or e["credential"], binding or e["binding"], proof or e["proof"],
+                                expected_nonce="held-out-nonce", expected_context=context, now=now).proved
+
+    @staticmethod
+    def _flip(obj):
+        out = dict(obj); sig = out["signature_hex"]
+        out["signature_hex"] = ("0" if sig[0] != "0" else "1") + sig[1:]
+        return out
+
+    def test_the_genuine_chain_proves(self):
+        self.assertIs(self.early_proved(), True)
+
+    def test_something_that_is_not_a_holder_chain_proves_nothing(self):
+        """The early refusal returns the initial verdict, so the initial verdict IS the
+        answer on this path; the SDK drill once declared it unobservable."""
+        e = self.early
+        for binding, proof in ((dict(e["binding"], format="x"), e["proof"]),
+                               (e["binding"], dict(e["proof"], format="x")), (None, None)):
+            v = pv.verify_holder(e["credential"], binding, proof, expected_nonce="held-out-nonce",
+                                 expected_context=1, now="2026-05-01T00:00:10Z")
+            self.assertIs(v.proved, False)
+
+    def test_each_link_alone_refuses(self):
+        e = self.early
+        for label, kw in (("binding not authentic", {"binding": self._flip(e["binding"])}),
+                          ("proof not authentic", {"proof": self._flip(e["proof"])}),
+                          ("binding about another token", {"credential": dict(e["credential"], token_value="X")}),
+                          ("binding by another issuer", {"credential": dict(e["credential"], public_key_hex="ab" * 1952)}),
+                          ("another context", {"context": 2})):
+            with self.subTest(label):
+                self.assertIs(self.early_proved(**kw), False)
+
+    def test_the_proof_window_is_five_minutes_and_a_minute_of_skew(self):
+        for now, proved in (("2026-05-01T00:05:00Z", True), ("2026-05-01T00:05:01Z", False),
+                            ("2026-04-30T23:59:00Z", True), ("2026-04-30T23:58:59Z", False)):
+            with self.subTest(now=now):
+                self.assertIs(self.early_proved(now=now), proved)
+
+    def test_a_binding_not_yet_valid_refuses_while_the_proof_is_fresh(self):
+        c = self.conf
+        at = lambda now: pv.verify_holder(c["credential"], c["binding-valid"], c["proof-valid"],  # noqa: E731
+                                          expected_nonce="rp-nonce-1", now=now)
+        self.assertIs(at("2026-05-01T00:00:10Z").proved, True)
+        v = at("2026-04-30T23:59:30Z")  # the proof is inside its skew; the binding has not opened
+        self.assertIs(v.binding_fresh, False)
+        self.assertIs(v.proved, False)
+
+
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class CrossAuthorityHeldOutTests(unittest.TestCase):
+    """2026-09-23: ten of verify_cross_authority's rules removed in turn, eight survived this
+    suite and the conformance runner. sdk/testdata/federation-variants.json is one genuine
+    setup and signed variants, each differing from the base in one property."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+
+    def decide(self, manifest="base", feed="clean", anchors=None, require_signed=False):
+        f = self.f
+        return pv.verify_cross_authority(
+            f["pack"], f["_fixture"]["context_id"], [f["manifests"][manifest]],
+            anchors if anchors is not None else [f["trusted_anchor"]], f["feeds"][feed],
+            now=f["_fixture"]["now"], require_signed_attestation=require_signed).decision
+
+    def test_the_base_setup_is_accepted(self):
+        self.assertEqual(self.decide(), "accept")
+
+    def test_each_variant_is_refused(self):
+        for label, kw in (("a stale manifest", {"manifest": "stale"}),
+                          ("an attestation of another key", {"manifest": "other_key"}),
+                          ("a badly signed attestation", {"manifest": "bad_attestation_signature"}),
+                          ("trust in a RETIRED anchor of the manifest", {"anchors": [self.f["retired_anchor"]]}),
+                          ("an unsigned edge when signed edges are required", {"require_signed": True}),
+                          ("a stale revocation feed", {"feed": "stale"}),
+                          ("a feed signed by another issuer", {"feed": "other_issuer"}),
+                          ("a feed that is not authentic", {"feed": "not_authentic"})):
+            with self.subTest(label):
+                self.assertEqual(self.decide(**kw), "reject")
+
+
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class TimestampAnchorHeldOutTests(unittest.TestCase):
+    """2026-09-23: ten of verify_timestamp_anchor's rules removed in turn; nine survived this
+    suite and the conformance runner. Several sit BEFORE a signature check, so a test that
+    alters a signed field is refused by the signature and not by the rule; those tests replace
+    the one signature verdict, so only the rule named can refuse. The base is the genuine,
+    twice-witnessed anchor in the published vectors."""
+
+    def setUp(self):
+        import copy
+        self.ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
+        self.cos = self.ts["anchor"]["cosignatures"]
+        self.both = [c["public_key_hex"] for c in self.cos]
+
+    def verdict(self, trusted=None, threshold=2, **kw):
+        return pv.verify_timestamp_anchor(self.ts, trusted_witnesses=self.both if trusted is None else trusted,
+                                          threshold=threshold, **kw)
+
+    def test_the_genuine_anchor_is_anchored_and_witnessed(self):
+        v = self.verdict()
+        self.assertTrue(v.anchored, v.note)
+        self.assertTrue(v.witnessed)
+        self.assertEqual(v.cosigner_count, 2)
+
+    def test_a_proof_for_another_entry_does_not_anchor(self):
+        self.ts["anchor"]["proof"]["entry_hex"] = "00" * 32
+        self.assertFalse(self.verdict().anchored)
+
+    def test_a_proof_naming_another_root_does_not_anchor(self):
+        self.ts["anchor"]["proof"]["root_hash_hex"] = "00" * 32
+        self.assertFalse(self.verdict().anchored)
+
+    def test_an_unauthentic_head_does_not_anchor(self):
+        sth = self.ts["anchor"]["sth"]
+        sth["signature_hex"] = ("0" if sth["signature_hex"][0] != "0" else "1") + sth["signature_hex"][1:]
+        v = self.verdict()
+        self.assertFalse(v.sth_authentic)
+        self.assertFalse(v.anchored)
+
+    def test_a_head_by_another_log_key_does_not_anchor(self):
+        self.assertFalse(self.verdict(log_key="ab" * 1952).anchored)
+
+    def test_a_head_from_another_log_does_not_anchor(self):
+        from unittest import mock
+        self.ts["anchor"]["sth"]["log_id"] = "some-other-log"
+        with mock.patch.object(pv, "verify_signed_artifact", return_value=pv.ArtifactVerdict(True, None)):
+            self.assertFalse(self.verdict().anchored)
+
+    def test_only_trusted_distinct_witnesses_count(self):
+        v = self.verdict(trusted=self.both[:1])
+        self.assertEqual((v.cosigner_count, v.witnessed), (1, False), "an untrusted cosigner counted")
+        self.ts["anchor"]["cosignatures"] = [self.cos[0], dict(self.cos[0])]
+        v = self.verdict()
+        self.assertEqual((v.cosigner_count, v.witnessed), (1, False), "one witness counted twice")
+
+    def test_a_cosignature_of_another_head_does_not_count(self):
+        from unittest import mock
+        for field, value in (("tree_size", 5), ("root_hash_hex", "00" * 32)):
+            with self.subTest(field=field):
+                self.setUp()
+                self.cos[1][field] = value
+                with mock.patch.object(pv, "verify_cosignature", return_value=pv.ArtifactVerdict(True, None)):
+                    v = self.verdict()
+                self.assertEqual((v.cosigner_count, v.witnessed), (1, False))
+
+
 class TheTokenCacheLifetimeIsBoundedTests(unittest.TestCase):
     """The issuer says how long its access token lives. The client believed it without
     reading it.

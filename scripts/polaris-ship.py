@@ -142,6 +142,19 @@ VERIFICATION = [
       "python3 conformance/run_conformance.py --self",
       "python3 scripts/polaris-product-boundary-drill.py"],
      "the detached verifier moved: it promises no socket and no dependencies"),
+    # 2026-09-23. The mutation drill that inverts a surface's refusals was named for neither
+    # of the two packages: a change to the detached verifier never named the SDK mutation
+    # drill, which inverts the verifier's 45 refusals, and a change to polaris-oid4vp never
+    # named its own drill. Nor did a change to test_verify_refusals, the verifier's half of
+    # the SDK drill's instruments. That matters because a new test can close a survivor the
+    # drill DECLARES, and a stale declaration fails the drill: it happened three times that
+    # day, and each time it was found only because the drill was run by hand.
+    (r"^packages/polaris-verify/polaris_verify_cli/verifier\.py$|^scripts/test_verify_refusals\.py$",
+     ["python3 scripts/polaris-sdk-mutation-drill.py"],
+     "the detached verifier or its refusal tests moved: the drill inverts its refusals"),
+    (r"^packages/polaris-oid4vp/",
+     ["python3 scripts/polaris-oid4vp-mutation-drill.py"],
+     "the OpenID4VP verifier or its tests moved: the drill inverts its refusals"),
     (r"^scripts/polaris-.*drill\.(py|sh)$", ["the changed drill itself"], "a drill moved"),
     (r"^deploy/|^polaris_web/Dockerfile|^\.github/workflows/", ["the deploy jobs in CI (helm, rolling, failover drills); nothing runs locally"], "deployment moved"),
 ]

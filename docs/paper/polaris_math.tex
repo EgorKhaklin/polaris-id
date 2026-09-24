@@ -1,0 +1,447 @@
+% polaris_math.tex: Polaris stated in mathematics.
+% A companion to the Version 3 report. Every statement carries its evidence mark (Section 0),
+% and nothing here is stronger than the report or the repository it describes.
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{tabularx}
+\usepackage[hidelinks]{hyperref}
+
+\newtheorem{property}{Property}
+\newtheorem{definition}{Definition}
+\theoremstyle{remark}
+\newtheorem*{evidence}{Evidence}
+\newtheorem*{limit}{Limit}
+
+\newcommand{\PP}{\mathfrak P}
+\newcommand{\Tok}{\mathcal T}
+\newcommand{\Per}{\mathcal P}
+\newcommand{\Ag}{\mathcal A}
+\newcommand{\Alg}{\mathcal G}
+\newcommand{\Ev}{\mathcal E}
+\newcommand{\Ctx}{\mathcal C}
+\newcommand{\bool}{\{0,1\}}
+\newcommand{\one}{\mathbf 1}
+\newcommand{\Hs}{H}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\emark}[1]{\textup{\textsf{[#1]}}}
+\newcommand{\st}[1]{\textup{\textsc{#1}}}
+
+\title{\includegraphics[height=4.2cm]{../../site/polaris_logo_clean.png}\\[0.8em]Polaris in Mathematical Form}
+\author{A companion to the Version 3 technical report}
+\date{Draft of 23 September 2026}
+
+\begin{document}
+\sloppy
+\maketitle
+
+\begin{abstract}
+This document restates the Polaris reference implementation as a set of definitions and
+properties. It is a translation, not a proof: each property carries a mark saying how the
+repository supports it, and a property marked \emark{enforced} is enforced by a named object in
+the schema or the code, not proved. Polaris is a reference implementation on notional data. It
+is not deployed, audited or certified, and nothing below claims otherwise.
+\end{abstract}
+
+\section*{0. How to read the marks}
+
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Mark & Meaning\\
+\midrule
+\emark{enforced} & a schema object, trigger, index, check constraint or code path makes it hold, and a check pins that object\\
+\emark{tested} & a test or drill exercises it; nothing forbids a violation outside the tested inputs\\
+\emark{measured} & a number observed on stated hardware at a stated version\\
+\emark{modelled} & a TLA$^+$ model checks it; that is evidence about the model\\
+\emark{assumed} & a cryptographic or operational assumption Polaris relies on and does not establish\\
+\emark{limit} & a stated bound on what Polaris does \emph{not} provide\\
+\bottomrule
+\end{tabularx}
+
+\section*{0.1 A model, not the system}
+
+The equations below are a projection of Polaris, not Polaris. Write $\mathcal R$ for the system as it
+exists in the world (the code, the institutions that would run it, the people it would describe),
+$\mathcal O$ for what can be observed or evidenced about it, and $\mathcal M$ for this formal model.
+The relationship this document assumes is
+\[
+\mathcal R \;\xrightarrow{\;\Omega\;}\; \mathcal O \;\xrightarrow{\;\Pi\;}\; \mathcal M,
+\qquad \Pi(X)\neq X,
+\qquad \mathcal M\not\equiv\mathcal R .
+\]
+$\Omega$ is observation: tests, drills, measurements, and what outside parties have done. $\Pi$ is
+formalisation, and it loses information. What it keeps is what mathematics states well: admissible
+states, transition rules, invariants, verification equations, trust relations, bounds on what flows
+where. What it cannot carry is exactly what the project exists for: whether a person can be
+compelled, whether an institution is legitimate, whether an authority is independent of the one it
+federates with, whether a population consents. Assigning such a thing a variable does not capture
+it. The marks in Section~0 exist because of this gap: a property of $\mathcal M$ is a claim about
+$\mathcal R$ only as far as the evidence in $\mathcal O$ carries it.
+
+Several distinctions the report insists on are instances of the same inequality, and the model keeps
+each of them separate rather than collapsing them:
+\begin{align*}
+\text{claim}&\neq\text{evidence},\\
+\text{internal evidence}&\neq\text{external validation},\\
+\text{signature validity } A(t)&\neq\text{current authority } R(t,\tau),\\
+\text{a passing test}&\neq\text{the property it names},\\
+\text{privacy}&\neq\text{freedom},\\
+\text{protocol independence}&\neq\text{institutional independence}.
+\end{align*}
+What is true of Polaris in the world can exceed what this model establishes, and what the model
+establishes can exceed what has been observed. Reading an equation here as a guarantee about people
+would repeat, in mathematics, the error the report's corrections tables record in code.
+
+\section{The system}
+
+\begin{definition}[System]
+$\PP = \langle \Per, \Tok, \Ag, \Ctx, \Ev, \Alg, \mathcal K, \mathcal L, \mathcal W, \mathcal F\rangle$:
+persons, tokens (credentials), issuing authorities, the seven verification contexts, verification
+events, the table of cryptographic algorithms, keys, the transparency log, its witnesses, and the
+federation graph.
+\end{definition}
+
+\begin{definition}[Token]
+A token is $t=(\nu_t,p_t,a_t,\alpha_t,s_t,x_t,\mathit{prev}_t)$: its value $\nu_t$ (unique:
+$\nu_t=\nu_{t'}\Rightarrow t=t'$), person $p_t\in\Per$, issuing authority $a_t\in\Ag$,
+algorithm $\alpha_t\in\Alg$, status $s_t$, expiry date $x_t$ (possibly $\bot$), and the token it
+succeeds, if any, with $\mathit{prev}_t\neq t$ and $p_{\mathit{prev}_t}=p_t$.
+\end{definition}
+
+\section{The token state machine}
+
+Let $S=\{\st{reserve},\st{active},\st{dormant},\st{lost},\st{expired},\st{revoked}\}$
+and
+\begin{align*}
+\Gamma=\{&(\st{reserve},\st{active}),(\st{reserve},\st{revoked}),(\st{active},\st{dormant}),\\
+&(\st{active},\st{revoked}),(\st{active},\st{lost}),(\st{active},\st{expired})\}.
+\end{align*}
+\begin{property}[Legal transitions]\label{p:sm}
+Every change of status is a pair in $\Gamma$: if $s_t(\tau)\neq s_t(\tau')$ for consecutive writes
+then $(s_t(\tau),s_t(\tau'))\in\Gamma$. Writes that do not change the status are unconstrained by
+$\Gamma$. \emark{enforced} by the token-state triggers; the check holds the six pairs exactly. Pinned by \code{check\_token\_core\_triggers\_are\_bound}.
+\end{property}
+\begin{limit}
+Nothing drives $\st{active}\to\st{expired}$ when $x_t$ passes; there is no sweeper. That is why
+Property~\ref{p:auth} reads the expiry date directly rather than the status.
+\end{limit}
+
+\section{The ten constraints}
+
+\begin{property}[C1: the audit of record is append-only] For every audit table $R$ and times
+$\tau_1\le\tau_2$: $R_{\tau_1}\subseteq R_{\tau_2}$, and every row present at $\tau_1$ is unchanged at
+$\tau_2$. \emark{enforced} by a \texttt{BEFORE UPDATE OR DELETE} trigger on each table, whose function
+raises \texttt{insufficient\_privilege}, and by the grants that keep the purge carve-out out of the
+application role's reach. Pinned by \code{check\_aor\_append\_only\_triggers}, \code{check\_aor\_privilege\_boundary}.
+\end{property}
+
+\begin{property}[C2: a zero-knowledge verification stores no token identifier] For every event
+$e$ with disclosure level $d(e)\in\{\st{zk},\st{selective},\st{full}\}$:
+$d(e)=\st{zk}\Rightarrow \mathit{tok}(e)=\bot$ and $d(e)=\st{full}\Rightarrow
+\mathit{tok}(e)\neq\bot$; \st{selective} constrains neither. \emark{enforced} by a check
+constraint; \emark{modelled}. Pinned by \code{check\_c2\_zk\_token\_null}.
+\end{property}
+
+\begin{property}[C3: one active token per person]
+$\forall p\in\Per:\ \bigl|\{t\in\Tok: p_t=p\wedge s_t=\st{active}\}\bigr|\le 1$.
+\emark{enforced} by a partial unique index on the person where the status is \st{active};
+\emark{tested} with real concurrent threads; \emark{modelled}. Pinned by \code{check\_one\_active\_token\_index}.
+\end{property}
+
+\begin{property}[C4: failed-login counting is atomic] If $k$ failed attempts against one account
+complete, in any interleaving, the counter increases by exactly $k$: no increment is lost.
+\emark{enforced} by a single \texttt{UPDATE \dots\ RETURNING} under the row lock. Pinned by \code{check\_c4\_atomic\_failed\_login}.
+\end{property}
+
+\begin{property}[C5: no inline scripts] The set of script sources a page may execute is
+$\{\texttt{'self'}\}$. \emark{enforced} by the response's Content-Security-Policy header. Pinned by \code{check\_csp\_forbids\_unsafe\_inline}.
+\end{property}
+
+\begin{property}[C6: disclosure is decided by the server] Whatever a client submits, the stored event
+satisfies C2, and every read path returns no location for a \st{zk} event:
+$d(e)=\st{zk}\Rightarrow \mathit{loc}(\mathrm{read}(e))=\bot$. \emark{enforced} in the form handler,
+the C2 constraint, and every read function. Pinned by \code{check\_c6\_atlas\_redacts\_zk\_location}.
+\end{property}
+
+\begin{property}[C7: cryptography is data] $\Alg$ is a relation (rows of a table), each token
+references a row of it, and algorithm metadata is obtained by joining that relation, never from a
+constant in application code. The accepted-signer allowlist is deliberately code, a security decision.
+\emark{enforced}. Pinned by \code{check\_crypto\_algorithm\_is\_data}.
+\end{property}
+
+\begin{property}[C8: every Atlas aggregate is bounded] For every Atlas query $q$ with a caller-supplied
+count $n$, the rows returned satisfy $|q|\le\min(n, N_q)$ with a fixed $N_q$, and queries without a
+caller count return a fixed shape. \emark{enforced} by route-level clamps passed into the SQL. Pinned by \code{check\_c8\_atlas\_caps}.
+\end{property}
+
+\begin{property}[C9: concurrency is tested with real threads] C3 and C4 hold in the interleavings
+produced by real concurrent threads against a live database. \emark{tested}; this is a statement
+about a test suite, not a proof over all interleavings. Pinned by \code{check\_c9\_concurrency\_threading}.
+\end{property}
+
+\begin{property}[C10: identity is not money] No table and no column in the schema or its migrations
+has a monetary name or type. \emark{enforced} structurally by the absence, and by a check that reads
+every name. Pinned by \code{check\_c10\_no\_money\_tables}.
+\end{property}
+\noindent(An earlier draft wrote C10 as ``no function $\Tok\to\mathbb R$''. That is false: an expiry date
+is such a function. The constraint is about what the schema can \emph{hold}, a monetary quantity,
+not about numbers.)
+
+\section{Authenticity and authorization}
+
+\begin{definition}[Signature] $h_t=\mathrm{SHA3\text{-}256}(\nu_t)$ and
+$\sigma_t=\mathrm{Sign}_{\alpha_t}(k^-_{a_t},h_t)$. Authenticity is
+$A(t)=\mathrm{Ver}_{\alpha_t}(k^+_{a_t},h_t,\sigma_t)\in\bool$, a function of the token and the
+published key alone, so it does not change with time.
+\end{definition}
+
+\begin{property}[Accepted algorithms] $\alpha_t\in\Alg_{\mathrm{acc}}=\{\text{ML-DSA-65},\text{ML-DSA-87}\}$;
+ML-DSA-44 is refused. A development placeholder signature exists and is never authentic offline.
+\emark{enforced}.
+\end{property}
+
+\begin{property}[Two witnesses] At issuance, two independent ML-DSA implementations must both return
+1. At verification, a verifier with implementations $V_1,\dots,V_m$ available reports authentic iff
+$m\ge1$ and all available ones return 1; if two disagree it reports not authentic. \emark{enforced}.
+\end{property}
+\begin{limit}
+Whether Module-LWE is hard is \emark{assumed}. Polaris makes no claim of safety against quantum
+adversaries, and the classical half of a credential in migration is protected by nothing here.
+\end{limit}
+
+\begin{property}[Authorization]\label{p:auth} $R(t,\tau)=\one[s_t(\tau)=\st{active}\wedge
+(x_t=\bot\vee \tau\le x_t)]$, where $\tau\le x_t$ compares calendar dates and an expiry that cannot
+be read counts as passed. The relying-party answer is $U(t,\tau)=A(t)\wedge R(t,\tau)$, and
+$A(t)=1$ implies nothing about $R$. \emark{enforced} in both verification endpoints; \emark{tested}.
+\end{property}
+
+\section{Offline authorization: the status assertion}
+
+A status assertion is $\zeta=(\nu,s,\tau_i,\tau_e,\sigma)$ signed by the issuer. A verifier with
+clock $\tau$, maximum window $\Delta_v$ and a credential $t$ accepts it iff
+\[
+\mathrm{Ver}(\sigma)=1 \;\wedge\; \nu=\nu_t \;\wedge\; k^+_\zeta=k^+_{a_t}
+\;\wedge\; \tau_i\le\tau<\tau_e \;\wedge\; \tau_e-\tau_i\le\Delta_v \;\wedge\; s=\st{active}.
+\]
+The window is half-open. \emark{enforced}; each conjunct separately \emark{tested} (2026-09-23).
+\begin{limit}
+A credential revoked at $\tau_r<\tau_e$ still passes this check for $\tau\in[\tau_r,\tau_e)$. Offline
+revocation latency is therefore at most $\tau_e-\tau_i\le\Delta_v$, and no offline mechanism can do
+better without a fresher assertion.
+\end{limit}
+
+\section{Privacy}
+
+\begin{property}[Issuer-unlinkable membership] In zero-knowledge mode the holder holds a secret $w$.
+The leaf for context $c$ is $\ell=\mathrm{Poseidon}(w\,\Vert\,c)$; an epoch publishes the Merkle root
+$\rho$ over its leaves. A proof $\pi$ shows knowledge of $(w,\mathit{path})$ with $\ell$ in the tree
+of root $\rho$, bound to the public inputs $(\rho,\text{epoch},c,\text{nonce},\text{scope},\lambda)$, and
+reveals neither $w$ nor the leaf's index. The nullifier is
+$\lambda=\mathrm{Poseidon}(w\,\Vert\,\text{scope}\,\Vert\,\text{epoch})$. \emark{enforced} by the
+circuit; recomputed by an independent second witness; \emark{assumed}: the proof system's soundness and
+zero knowledge, and Poseidon behaving as a pseudorandom function.
+\end{property}
+
+\begin{property}[What a verifier learns] Let $N$ be the number of leaves in the epoch's tree for that
+context (the anonymity set). A zero-knowledge presentation identifies the holder's leaf to the
+verifier with probability no better than $1/N$ plus the assumptions' advantage. In particular
+$N=1$ identifies the holder. Within one scope and epoch, two presentations by one holder share
+$\lambda$ (one person, one proof); across scopes or epochs the nullifiers are unlinkable under the
+assumption above. \emark{assumed} bound; \emark{limit}: nothing enforces a minimum $N$.
+\end{property}
+\noindent(An earlier draft bounded identification by $1/|\Per|$. The anonymity set is the epoch's leaf
+set, not the population.)
+
+\begin{property}[Pairwise identifiers] A relying party that keys its records on the handle $\psi_r$
+(from the holder's bound key), or receives the login subject $\mathit{sub}_r$, where
+\begin{align*}
+\psi_r&=\mathrm{SHA3\text{-}256}(\texttt{polaris-pairwise/1|}\,k^+_{\mathrm{holder}}\,\texttt{|}\,r),\\
+\mathit{sub}_r&=\mathrm{SHA3\text{-}256}(\texttt{polaris-pairwise/1|}\,\nu\,\texttt{|}\,\mathit{client}_r),
+\end{align*}
+stores values that differ for $r\neq r'$. \emark{enforced}.
+\end{property}
+\begin{limit}
+A full presentation still \emph{shows} each verifier the same $(\nu,\sigma,k^+)$; two verifiers that
+keep that material link on it with certainty. Correlation is bounded, not eliminated: what the design
+bounds is what a verifier needs to store.
+\end{limit}
+
+\section{Duress}
+
+\begin{property}[Duress-aware presentation] A card holds two key slots, normal and duress, selected by
+two PINs of equal length, with both comparisons always run and the retry counter treated the same.
+The reader at the counter receives a well-formed response under either PIN and reports the same
+outcome; only the authority, which recorded both slots' public keys at personalization, decides which
+slot signed, and that is where an alert can be raised. A holder proof is signed without the presented
+code, so a coerced presentation is byte-indistinguishable from a consenting one. \emark{enforced} in
+the card profile and emulator; \emark{tested}.
+\end{property}
+\begin{limit}
+The mechanism resists a coercer who does not know it exists. It does not resist one watching the
+holder, and against lawful or institutional access it is net-negative, because the duress record is
+append-only (C1). It is not a claim of resistance to compulsion.
+\end{limit}
+
+\section{Federation}
+
+\begin{definition}[Trust edges] $\mathcal F=(\Ag,E)$ with $(a_i,a_j,c,[\tau_0,\tau_1))\in E$ when a
+fresh manifest signed by an active anchor of $a_i$ attests $a_j$'s key for context $c$ within that
+window. Write $T(a_i,a_j,c,\tau)$.
+\end{definition}
+\begin{property}[No transitivity] $T(a_i,a_j,c,\tau)\wedge T(a_j,a_k,c,\tau)\not\Rightarrow
+T(a_i,a_k,c,\tau)$: acceptance consults only edges from authorities the relying party itself trusts.
+A foreign credential is accepted iff $A(t)\wedge \exists a: T(a,a_t,c,\tau)\wedge \neg\mathrm{Rev}(t,\tau)$,
+where revocation comes from the issuer's own authentic, fresh feed. No central service sits in the
+path. \emark{enforced}; each conjunct \emark{tested} (2026-09-23).
+\end{property}
+
+\section{Transparency}
+
+\begin{property}[Append-only log] Log states $L_n=(x_1,\dots,x_n)$; $L_m\prec L_n$ iff $m\le n$ and
+they agree on the first $m$ entries. A signed head is $\theta_n=(n,r_n,\tau_n,\sigma_\ell)$ with
+$r_n$ the RFC~6962 Merkle root. For $m<n$ a consistency proof shows $L_m\prec L_n$; an inclusion
+proof shows $x_i\in L_n$. \emark{enforced}.
+\end{property}
+\begin{property}[Equivocation is evidence] Two authentic heads $\theta_n,\theta'_n$ of the same size
+with $r_n\neq r'_n$ are a proof that the log operator equivocated. A head is \emph{witnessed} when at
+least $K$ distinct trusted witnesses have cosigned $(n,r_n)$. \emark{enforced}.
+\end{property}
+
+\section{Delegated agents}
+
+\begin{property}[Agent grants] A grant $\kappa$ signed by the holder names an agent key, actions
+$\mathcal U\neq\varnothing$, limits and a window. A request for action $u$ with amount $m$ is usable
+iff the grant is authentic and fresh, the holder key is bound by an issuer to this credential and
+that binding is fresh, $u\in\mathcal U$, the limits hold (an unknown limit refuses), the holder has
+not revoked the grant, and the agent signed this service's nonce for this action. A grant altered
+after signing is not authentic; revoking a grant does not revoke the credential. \emark{enforced};
+each conjunct \emark{tested}.
+\end{property}
+
+\section{Presentations over constrained channels}
+
+\begin{property}[QR bounds] A QR presentation has at most $9999$ frames, at most $512$\,KiB of
+compressed payload and at most $2$\,MiB after decompression, and it verifies only if the digest over
+the reassembled frames matches the one the frames carry. \emark{enforced}.
+\end{property}
+
+\section{Algorithm migration}
+
+\begin{property}[No credential verifies under nothing] Let $\Alg_{\mathrm{acc}}(\tau)$ be the algorithms
+accepted at time $\tau$. During a migration every active credential keeps at least one signature under
+an accepted algorithm:
+\[
+\forall\tau\ \forall t:\ s_t(\tau)=\st{active}\;\Rightarrow\;\exists\sigma\in\Sigma_t:\
+\alpha(\sigma)\in\Alg_{\mathrm{acc}}(\tau)\wedge \mathrm{Ver}(\sigma)=1 .
+\]
+The superseded signature keeps verifying until its algorithm's deprecation date, and deprecating an
+algorithm is refused while any active credential depends on it alone. \emark{enforced}; the migration
+drill samples the number of credentials violating the property at every batch boundary, not only at
+the ends, and measures it at zero \emark{measured}.
+\end{property}
+\begin{limit}
+Agility is issuer-side only. A deprecation date reaches no signed artifact, so a verifier cannot
+learn that an algorithm is deprecated: retiring one is a software release to every relying party. The
+classical half of a credential in a hybrid cutover is protected by nothing here. Rollback and the
+mixed window of a partial migration are unmeasured.
+\end{limit}
+
+\section{Exchanges and timestamps}
+
+\begin{property}[A receipt records that an exchange happened, not what was exchanged] For an exchange
+of request $q$ and response $r$ between authorities $a_i$ and $a_j$ in context $c$, the signed receipt
+is $J=(a_i,a_j,c,\Hs(q),\Hs(r),\mathit{via},\tau)$; neither $q$ nor $r$ is in $J$. \emark{enforced} by
+the receipt's signed field set.
+\end{property}
+
+\begin{property}[Timestamps] A timestamp is a signature over $(\Hs(x),\text{nonce},\tau)$; it shows
+that the digest existed at $\tau$. Anchored in the transparency log, a timestamp forged later must be
+absent from every witnessed head of its claimed era. \emark{enforced}.
+\end{property}
+\begin{limit}
+A digest is not a secret. For a document an adversary can guess, $\Hs(x)$ confirms the guess; a
+timestamp hides only what is hard to guess. An earlier draft wrote $I(x;\vartheta)\approx0$, which is
+false in exactly that case.
+\end{limit}
+
+\section{Key custody}
+
+\begin{property}[The application does not hold the signing key] The issuer's signing key $k^-$ is held
+by a custody driver behind one interface: a PKCS\#11 token, where the key is non-extractable and
+signing happens inside the token, a managed key service, or, for development, a software key. The
+application requests signatures and never reads $k^-$ in the first two; secrets for the driver are read
+from files, and the application refuses to start if they are passed in the environment.
+\emark{enforced}.
+\end{property}
+
+\section{Recovery}
+
+\begin{property}[Recovery point and recovery time] For a backup taken continuously and restored after
+a loss at $\tau$, the restored database equals the database at some $\tau-\delta$, with targets
+$\delta\le300$\,s (RPO) and restoration within $14\,400$\,s (RTO). Two drills at \code{v9.192}
+measured $\delta$ of 36 and 42 seconds and a database restore under three seconds, on notional data.
+\emark{measured} at that version; later versions are not re-measured in this document.
+\end{property}
+
+\section{Operations and scale}
+
+\begin{property}[Re-signing throughput] Re-signing under ML-DSA-87 with one custodied key runs at
+about $345$ credentials per second on one runner, 91 percent of it signing. \emark{measured}. A
+population of $3.5\times10^8$ is then about $1.0\times10^6$\,s (twelve days) on one runner; on
+$64$ runners, \emph{if the rate scales linearly}, about $1.6\times10^4$\,s. The second figure is an
+extrapolation, not a measurement.
+\end{property}
+
+\section{Analytics}
+
+\begin{property}[The Atlas] Atlas outputs are aggregates over events, bounded by C8
+\emark{enforced}, with the locations of \st{zk} events withheld by C6 \emark{enforced}. That no
+output carries a per-person row is the design; no single check pins it.
+\end{property}
+\begin{limit}
+Aggregates are information about people. The Atlas is bounded, not information-free, and an earlier
+draft's claim that its output has zero mutual information with the population is false.
+\end{limit}
+
+\section{The assurance layer}
+
+For each documented guarantee $g$ with a check $I_g$ and a detection test $D_g$: $D_g$ asserts
+$I_g$ passes on a good fixture and fails on a broken one. That establishes \emph{fixture}
+sensitivity. Mechanism sensitivity is the stronger property
+\[
+\forall \mu\in M_g:\quad I_g(\mu(\PP))=0,
+\]
+for a set $M_g$ of mutations that break $g$'s mechanism in the real tree. On 2026-09-23 held-out
+rounds found many $\mu$ with $I_g(\mu(\PP))=1$, and the repairs add tests until the listed mutations
+are caught. A passing test implies nothing beyond the inputs it exercises: $T_g=1\not\Rightarrow g$.
+\emark{measured}; the rounds and their counts are recorded in the report.
+
+\section{The operating contract}
+
+A change $\Delta\PP$ to product behaviour is admitted iff it has exactly one qualifying reason:
+\[
+\Delta\PP\ \text{admitted}\iff E_{\mathrm{interop}}\vee E_{\mathrm{user}}\vee E_{\mathrm{security}}
+\vee \exists z:\ \mathrm{Promise}(z)=1\wedge \mathrm{Impl}(z)=0,
+\]
+the last being an executable counterexample to a published promise. Progress is the set of external
+dependencies $\mathcal E_{\mathrm{ext}}$. At this writing it holds one stock third-party wallet whose
+presentation the published verifier accepted, one hosted conformance run (awaiting human review, not
+passed), and one third-party test corpus; there is no audit, no pilot, no outside relying party and
+no outside user. $|\mathcal E_{\mathrm{int}}|\to\infty\not\Rightarrow|\mathcal E_{\mathrm{ext}}|>0$.
+
+\section*{What this document does not do}
+
+It does not prove the properties; the marks say what supports each one. It omits a composite
+``integrity score'': an earlier draft wrote Polaris as the maximiser of a product
+$A\cdot R\cdot Z\cdot S$, but no such objective is defined, measured or optimised anywhere in the
+repository, and a formula that looks like a result would be read as one.
+
+\vspace{1.5em}
+\begin{center}\includegraphics[height=2.3cm]{owl-gold.png}\end{center}
+
+\end{document}

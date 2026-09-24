@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
          nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant,
-         verifyInclusion, verifyStatusAssertion, verifyIdToken,
+         verifyInclusion, verifyStatusAssertion, verifyIdToken, verifyHolder, verifyTimestampAnchor,
          verifySignedArtifact, verifyCosignature,
          verifyAttestation, verifyCrossAuthority,
          __canonicalJsonForTest, __isoToEpochForTest, expiresIn } from "../src/index.ts";
@@ -595,4 +595,117 @@ test("held-out: a non-OK answer from the token endpoint is a failed check, not a
   } finally {
     globalThis.fetch = saved;
   }
+});
+
+
+// 2026-09-23: a held-out round on verifyHolder dropped each fact `proved` needs; 8 of 10
+// survived. Only the key match and the nonce were ever isolated. Same tests as the Python
+// SDK's, on the same two genuinely signed chains.
+const EARLY = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "holder-chain-early-binding.json"), "utf8"));
+const flip = (o: any) => ({ ...o, signature_hex: (o.signature_hex[0] !== "0" ? "0" : "1") + o.signature_hex.slice(1) });
+const earlyProved = (kw: any = {}) => verifyHolder(kw.credential ?? EARLY.credential, kw.binding ?? EARLY.binding,
+  kw.proof ?? EARLY.proof, "held-out-nonce", kw.context ?? 1, kw.now ?? "2026-05-01T00:00:10Z").proved;
+
+test("held-out: the genuine holder chain proves", () => {
+  assert.equal(earlyProved(), true);
+});
+
+test("held-out: each link of the holder chain alone refuses", () => {
+  for (const [label, kw] of [["binding not authentic", { binding: flip(EARLY.binding) }],
+                             ["proof not authentic", { proof: flip(EARLY.proof) }],
+                             ["binding about another token", { credential: { ...EARLY.credential, token_value: "X" } }],
+                             ["binding by another issuer", { credential: { ...EARLY.credential, public_key_hex: "ab".repeat(1952) } }],
+                             ["another context", { context: 2 }]] as [string, any][]) {
+    assert.equal(earlyProved(kw), false, label);
+  }
+});
+
+test("held-out: the holder proof window is five minutes and a minute of skew", () => {
+  for (const [now, proved] of [["2026-05-01T00:05:00Z", true], ["2026-05-01T00:05:01Z", false],
+                               ["2026-04-30T23:59:00Z", true], ["2026-04-30T23:58:59Z", false]] as [string, boolean][]) {
+    assert.equal(earlyProved({ now }), proved, now);
+  }
+});
+
+test("held-out: a binding not yet valid refuses while the proof is fresh", () => {
+  const at = (now: string) => verifyHolder(conf("holder-credential.json"), conf("holder-binding-valid.json"),
+    conf("holder-proof-valid.json"), "rp-nonce-1", null, now);
+  assert.equal(at("2026-05-01T00:00:10Z").proved, true);
+  const v = at("2026-04-30T23:59:30Z");
+  assert.equal(v.bindingFresh, false);
+  assert.equal(v.proved, false);
+});
+
+
+// 2026-09-23: the same held-out round on verifyCrossAuthority, over the same genuinely signed
+// variants (sdk/testdata/federation-variants.json), each differing from the base in one way.
+const FED = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "federation-variants.json"), "utf8"));
+const fedDecide = (kw: any = {}) => verifyCrossAuthority(
+  FED.pack, FED._fixture.context_id, [FED.manifests[kw.manifest ?? "base"]],
+  kw.anchors ?? [FED.trusted_anchor], FED.feeds[kw.feed ?? "clean"], FED._fixture.now,
+  kw.requireSigned ?? false).decision;
+
+test("held-out: the base federation setup is accepted", () => {
+  assert.equal(fedDecide(), "accept");
+});
+
+test("held-out: each federation variant is refused", () => {
+  for (const [label, kw] of [["a stale manifest", { manifest: "stale" }],
+                             ["an attestation of another key", { manifest: "other_key" }],
+                             ["a badly signed attestation", { manifest: "bad_attestation_signature" }],
+                             ["trust in a RETIRED anchor", { anchors: [FED.retired_anchor] }],
+                             ["an unsigned edge when signed edges are required", { requireSigned: true }],
+                             ["a stale revocation feed", { feed: "stale" }],
+                             ["a feed signed by another issuer", { feed: "other_issuer" }],
+                             ["a feed that is not authentic", { feed: "not_authentic" }]] as [string, any][]) {
+    assert.equal(fedDecide(kw), "reject", label);
+  }
+});
+
+
+// 2026-09-23: a held-out round on verifyTimestampAnchor. The published witnessed anchor covers
+// the rules a test can reach by editing unsigned fields; sdk/testdata/anchor-variants.json holds
+// genuinely signed variants for the three it cannot (a head for another log, cosignatures over
+// another tree size or root), because a signature verdict cannot be replaced from a test here.
+const ANCH = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "anchor-variants.json"), "utf8"));
+const witnessedTs = () => JSON.parse(JSON.stringify(conf("timestamp-anchor-witnessed.json")));
+const bothWitnesses = (ts: any) => ts.anchor.cosignatures.map((c: any) => c.public_key_hex);
+
+test("held-out: the genuine anchor is anchored and witnessed", () => {
+  const ts = witnessedTs();
+  const v = verifyTimestampAnchor(ts, null, bothWitnesses(ts), 2);
+  assert.equal(v.anchored, true);
+  assert.equal(v.witnessed, true);
+});
+
+test("held-out: an anchor refuses a proof for another entry, another root, a bad head, another log key", () => {
+  const cases: [string, (ts: any) => void, string | null][] = [
+    ["another entry", (ts) => { ts.anchor.proof.entry_hex = "00".repeat(32); }, null],
+    ["another root in the proof", (ts) => { ts.anchor.proof.root_hash_hex = "00".repeat(32); }, null],
+    ["an unauthentic head", (ts) => { const s = ts.anchor.sth.signature_hex; ts.anchor.sth.signature_hex = (s[0] !== "0" ? "0" : "1") + s.slice(1); }, null],
+    ["another log key", () => {}, "ab".repeat(1952)],
+  ];
+  for (const [label, edit, logKey] of cases) {
+    const ts = witnessedTs();
+    edit(ts);
+    assert.equal(verifyTimestampAnchor(ts, logKey, bothWitnesses(ts), 2).anchored, false, label);
+  }
+});
+
+test("held-out: only trusted, distinct witnesses over this exact head count", () => {
+  const ts = witnessedTs();
+  const one = verifyTimestampAnchor(ts, null, bothWitnesses(ts).slice(0, 1), 2);
+  assert.deepEqual([one.cosignerCount, one.witnessed], [1, false], "an untrusted cosigner counted");
+  ts.anchor.cosignatures = [ts.anchor.cosignatures[0], { ...ts.anchor.cosignatures[0] }];
+  const dup = verifyTimestampAnchor(ts, null, bothWitnesses(witnessedTs()), 2);
+  assert.deepEqual([dup.cosignerCount, dup.witnessed], [1, false], "one witness counted twice");
+  for (const variant of ["cosig_other_size", "cosig_other_root"]) {
+    const v = verifyTimestampAnchor(ANCH[variant], ANCH.log_key, ANCH.witnesses, 2);
+    assert.deepEqual([v.anchored, v.cosignerCount, v.witnessed], [true, 1, false], variant);
+  }
+  assert.equal(verifyTimestampAnchor(ANCH.base, ANCH.log_key, ANCH.witnesses, 2).witnessed, true);
+});
+
+test("held-out: a genuinely signed head for another log does not anchor", () => {
+  assert.equal(verifyTimestampAnchor(ANCH.other_log, ANCH.log_key, ANCH.witnesses, 2).anchored, false);
 });

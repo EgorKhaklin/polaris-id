@@ -22197,6 +22197,16 @@ def check_paper_check_citations_resolve(root: pathlib.Path) -> list[Finding]:
                 cited += 1
                 if n not in defined:
                     unresolved.append("%s/%s cites %s" % (d, f.name, n.lstrip("?")))
+    # 2026-09-23: the mathematical edition (polaris_math.tex) is the third map of the system
+    # and names the check that pins each enforced property. It is held to the same rule, so a
+    # renamed check cannot leave the math map citing a function that no longer exists.
+    math = paper / "polaris_math.tex"
+    if math.is_file():
+        for m in re.findall(r"\\code\{(check\\_[a-z0-9\\_]+)\}", math.read_text(encoding="utf-8")):
+            n = m.replace("\\_", "_")
+            cited += 1
+            if n not in defined:
+                unresolved.append("polaris_math.tex cites %s" % n)
     if cited == 0:
         return _fail(name, "the paper cites no check by name. Its layer cards cite over a hundred, so "
                            "finding none means the parser has drifted and this measured nothing")
@@ -22205,8 +22215,9 @@ def check_paper_check_citations_resolve(root: pathlib.Path) -> list[Finding]:
                            "check guards a property is being told something the tree does not do; a "
                            "Russian name that is not in ru-glossary.py cannot be traced at all"
                      % (len(unresolved), "; ".join(sorted(set(unresolved))[:6])))
-    return _ok(name, "all %d check citations in both editions of the paper resolve to a function the "
-                     "tree defines, the Russian ones back through ru-glossary.py" % cited)
+    return _ok(name, "all %d check citations in both editions of the paper and the mathematical "
+                     "edition resolve to a function the tree defines, the Russian ones back through "
+                     "ru-glossary.py" % cited)
 
 
 #: Guards on a BEFORE UPDATE OR DELETE trigger that permit bounded mutation, one field

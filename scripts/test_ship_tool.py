@@ -328,6 +328,11 @@ class TriageHonestyTests(unittest.TestCase):
                         "classifier runs over a refusal string and reports on it")
 
 
+def _write(path, text):
+    with open(path, "w") as fh:
+        fh.write(text)
+
+
 class ShipBaselineTests(unittest.TestCase):
     """What the drill gate diffs against. 2026-09-23: a committed, unpushed change in a tree
     holding one unrelated untracked file read as "dirty", the baseline became HEAD, and the
@@ -343,7 +348,7 @@ class ShipBaselineTests(unittest.TestCase):
         subprocess.run(["git", "init", "--bare", "-q", remote], check=True)
         subprocess.run(["git", "clone", "-q", remote, work], check=True, capture_output=True)
         git("config", "user.email", "t@example.invalid"); git("config", "user.name", "t")
-        open(os.path.join(work, "a.txt"), "w").write("1")
+        _write(os.path.join(work, "a.txt"), "1")
         git("add", "a.txt"); git("commit", "-q", "-m", "base"); git("push", "-q", "origin", "HEAD")
         git("branch", "--set-upstream-to=origin/%s" % git("rev-parse", "--abbrev-ref", "HEAD"))
         return work, git
@@ -359,14 +364,14 @@ class ShipBaselineTests(unittest.TestCase):
     def test_an_unpushed_commit_is_measured_against_the_upstream_even_with_a_stray_file(self):
         work, git = self._repo()
         upstream = git("rev-parse", "HEAD")
-        open(os.path.join(work, "a.txt"), "w").write("2")
+        _write(os.path.join(work, "a.txt"), "2")
         git("commit", "-q", "-am", "the change the gate must see")
-        open(os.path.join(work, "stray.png"), "w").write("x")
+        _write(os.path.join(work, "stray.png"), "x")
         self.assertEqual(self._baseline(work), upstream)
 
     def test_uncommitted_work_on_a_pushed_head_is_measured_against_head(self):
         work, git = self._repo()
-        open(os.path.join(work, "a.txt"), "w").write("2")
+        _write(os.path.join(work, "a.txt"), "2")
         self.assertEqual(self._baseline(work), "HEAD")
 
 
@@ -397,6 +402,16 @@ class VerificationSelectionTests(unittest.TestCase):
 
     def test_no_changes_selects_nothing(self):
         self.assertEqual(ship.verification_for([]), [])
+
+    def test_each_package_names_the_drill_that_inverts_its_refusals(self):
+        def runs(path):
+            return " ".join(" ".join(e["run"]) for e in ship.verification_for([path]))
+        for path in ("packages/polaris-verify/polaris_verify_cli/verifier.py",
+                     "scripts/test_verify_refusals.py"):
+            self.assertIn("polaris-sdk-mutation-drill.py", runs(path), path)
+        for path in ("packages/polaris-oid4vp/polaris_oid4vp/status.py",
+                     "packages/polaris-oid4vp/test_verifier.py"):
+            self.assertIn("polaris-oid4vp-mutation-drill.py", runs(path), path)
 
 
 class RouteChangeDetectionTests(unittest.TestCase):

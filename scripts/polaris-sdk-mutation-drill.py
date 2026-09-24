@@ -181,15 +181,12 @@ DECLARED_SURVIVORS: dict[str, str] = {
         "unreachable behind verifyInclusion's exported type guard; kept because this "
         "function compares BYTES and a silent coercion here was its last bug",
 
-    # --- Initial values, not refusals ------------------------------------------------
-    # `v = AnchorVerdict(False, ...)` is a default that every path overwrites before the
-    # function returns, so inverting it changes nothing observable. The drill cannot tell
-    # an initializer from a return, and this is the honest answer rather than a test that
-    # would be asserting the assignment order of a local.
-    "python:verify_timestamp_anchor:7959f1":
-        "an initial verdict value, overwritten on every path before return",
-    "python:verify_holder:a1ce5e":
-        "an initial verdict value, overwritten on every path before return",
+    # --- Initial values, not refusals: none left ------------------------------------
+    # `python:verify_timestamp_anchor` and `python:verify_holder` were declared here until
+    # 2026-09-23 as "an initial verdict value, overwritten on every path before return".
+    # That was false in both: each function's early refusals return the initial verdict
+    # untouched, so inverting it made a proof for another entry "anchored" and a chain that
+    # is not a holder chain "proved". Held-out tests on those paths now catch both.
 }
 
 #: node_modules is NOT ignored: the TypeScript SDK's tests cannot resolve their imports

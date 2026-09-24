@@ -13108,6 +13108,96 @@ class RelyingPartyApiTests(PolarisTestCase):
         self.assertFalse(v['currently_authoritative'])
         self.assertEqual(v['decision'], 'reject')
 
+    # 2026-09-23: a held-out round on this endpoint. Removing the expiry from its
+    # currently_authoritative, or accepting any status but REVOKED, left every test green: the
+    # expiry was tested on the OPERATOR endpoint only, and the only non-ACTIVE status any test
+    # here reached was REVOKED.
+    def _rp_body(self, suffix, token_value):
+        cid = self._register_rp('secret-held-%s' % suffix, suffix=suffix)
+        bearer = self._bearer(cid, 'secret-held-%s' % suffix)
+        pack = self._issue_and_pack(token_value)
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.assertEqual(self.client.post('/api/v1/verify', headers=bearer, json=body)
+                         .get_json()['decision'], 'accept', 'control: it is usable first')
+        return bearer, body
+
+    def test_verify_rejects_an_expired_credential_but_stays_authentic(self):
+        bearer, body = self._rp_body('0091', 'RP-API-EXPIRED-0001')
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE IdentityToken SET issued_date = now() - interval '30 days', "
+                        "activated_date = now() - interval '30 days', "
+                        "expiration_date = current_date - 1 WHERE token_value = %s",
+                        (body['token_value'],))
+            conn.commit()
+        v = self.client.post('/api/v1/verify', headers=bearer, json=body).get_json()
+        self.assertTrue(v['authentic'])
+        self.assertEqual(v['status'], 'ACTIVE', 'still ACTIVE: nothing sweeps expiry')
+        self.assertFalse(v['currently_authoritative'])
+        self.assertFalse(v['usable'], 'usable is the field a relying party branches on')
+        self.assertEqual(v['decision'], 'reject')
+
+    def test_verify_rejects_every_non_active_status_not_only_revoked(self):
+        for i, status in enumerate(('DORMANT', 'LOST')):
+            with self.subTest(status=status):
+                bearer, body = self._rp_body('009%d' % (2 + i), 'RP-API-%s-0001' % status)
+                with self._new_conn() as conn, conn.cursor() as cur:
+                    cur.execute("UPDATE IdentityToken SET status = %s WHERE token_value = %s",
+                                (status, body['token_value']))
+                    conn.commit()
+                v = self.client.post('/api/v1/verify', headers=bearer, json=body).get_json()
+                self.assertFalse(v['currently_authoritative'], status)
+                self.assertFalse(v['usable'], status)
+                self.assertEqual(v['decision'], 'reject')
+
+    def test_a_stored_signature_that_no_longer_verifies_is_not_verifiable(self):
+        """The presented signature equals the stored one, and the stored one is re-verified
+        before any status is revealed. Corrupt storage cannot be written from a test (the table
+        is an audit of record), so the one verification call is made to answer "invalid"; the
+        uniform refusal must follow even though the comparison succeeded. A held-out mutation
+        that skipped the re-verification survived every test (2026-09-23)."""
+        from unittest import mock
+        import pqc_signing
+        bearer, body = self._rp_body('0095', 'RP-API-STORED-SIG-0001')
+        with mock.patch.object(pqc_signing, 'verify_stored_signature', return_value=False):
+            v = self.client.post('/api/v1/verify', headers=bearer, json=body).get_json()
+        self.assertFalse(v['authentic'])
+        self.assertEqual(v['reason'], 'not a verifiable presentation')
+        self.assertIsNone(v['status'], "no status is revealed for an unverifiable signature")
+
+    def test_a_status_assertion_needs_a_stored_signature_that_still_verifies(self):
+        """The same guard in the shared possession check, which gates the status assertion,
+        holder-key binding and document signing (_possession_authenticated). Its held-out
+        mutation survived too. Control first: the genuine presentation gets an assertion."""
+        from unittest import mock
+        import pqc_signing
+        pack = self._issue_and_pack('RP-API-POSSESSION-0001')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        self.assertEqual(self.client.post('/api/v1/status-assertion', json=body).status_code, 200)
+        with mock.patch.object(pqc_signing, 'verify_stored_signature', return_value=False):
+            r = self.client.post('/api/v1/status-assertion', json=body)
+        self.assertNotEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertNotIn(pack['token_value'], r.get_data(as_text=True))
+
+    def test_a_relying_party_is_held_to_its_own_rate_limit(self):
+        """rate_limit_per_min is per relying party, read on every verification. A held-out
+        mutation that skipped the limiter survived (2026-09-23): no test here ever exceeded
+        one, so an unbounded caller could survey the population's statuses at will."""
+        cid = self._register_rp('secret-held-rate', rate=2, suffix='0096')
+        bearer = self._bearer(cid, 'secret-held-rate')
+        body = {'token_value': 'NO-SUCH-VALUE-RATE', 'signature_hex': '00' * 32}
+        codes = [self.client.post('/api/v1/verify', headers=bearer, json=body).status_code
+                 for _ in range(3)]
+        self.assertEqual(codes[:2], [200, 200], 'control: within the limit it answers')
+        self.assertEqual(codes[2], 429, 'the third request in a minute is over a limit of 2')
+
+    def test_an_expiry_the_server_cannot_read_is_not_open_ended(self):
+        import datetime as _dt
+        self.assertIs(flask_app._not_expired(None), True, "no expiry at all is open-ended")
+        self.assertIs(flask_app._not_expired(_dt.date.today()), True, "valid through its date")
+        self.assertIs(flask_app._not_expired(_dt.date.today() - _dt.timedelta(days=1)), False)
+        for unreadable in ("2099-01-01", 20990101, object()):
+            self.assertIs(flask_app._not_expired(unreadable), False, repr(unreadable))
+
     def test_unknown_value_and_tampered_signature_are_uniformly_not_verifiable(self):
         cid = self._register_rp('secret-ggg', suffix='0007')
         bearer = self._bearer(cid, 'secret-ggg')
