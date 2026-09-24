@@ -696,3 +696,19 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IsoInstantGrammarTests(unittest.TestCase):
+    """sdk/testdata/iso-instants.json: the one instant grammar the verifier shares with both
+    reference SDKs. Until 2026-09-24 this used datetime.fromisoformat, which on Python 3.11+
+    accepts compact, week-date and hour-only forms the TypeScript kit refuses."""
+
+    def test_the_shared_vectors(self):
+        cases = json.loads((ROOT / "sdk" / "testdata" / "iso-instants.json").read_text())["cases"]
+        for c in cases:
+            with self.subTest(c["input"]):
+                try:
+                    got = int(V._parse_iso(c["input"]).timestamp())
+                except ValueError:
+                    got = None
+                self.assertEqual(got, c["epoch"])

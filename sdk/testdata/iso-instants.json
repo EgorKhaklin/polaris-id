@@ -1,0 +1,69 @@
+{
+ "about": "The one ISO 8601 instant grammar every Polaris verifier accepts (2026-09-24). Both reference SDKs and the detached verifier must give these answers; null is refused.",
+ "cases": [
+  {
+   "input": "2026-09-17T09:00:00Z",
+   "epoch": 1789635600
+  },
+  {
+   "input": "2026-09-17T09:00:00",
+   "epoch": 1789635600,
+   "why": "no offset is UTC"
+  },
+  {
+   "input": "2026-09-17 09:00",
+   "epoch": 1789635600
+  },
+  {
+   "input": "2026-09-17T09:00:00+02:00",
+   "epoch": 1789628400
+  },
+  {
+   "input": "2027-01-15",
+   "epoch": 1799971200
+  },
+  {
+   "input": "2028-02-29T00:00:00Z",
+   "epoch": 1835395200,
+   "why": "a real leap day"
+  },
+  {
+   "input": "2026-02-31T00:00:00Z",
+   "epoch": null,
+   "why": "impossible date; Date.UTC rolled it to 3 March"
+  },
+  {
+   "input": "2026-02-29T00:00:00Z",
+   "epoch": null,
+   "why": "not a leap year"
+  },
+  {
+   "input": "2026-13-01T00:00:00Z",
+   "epoch": null
+  },
+  {
+   "input": "2026-01-01T25:00:00Z",
+   "epoch": null
+  },
+  {
+   "input": "20260917T090000Z",
+   "epoch": null,
+   "why": "compact form; Python 3.11 fromisoformat accepts it"
+  },
+  {
+   "input": "2026-W38-4",
+   "epoch": null,
+   "why": "week date; Python 3.11 fromisoformat accepts it"
+  },
+  {
+   "input": "2026-09-17T09Z",
+   "epoch": null,
+   "why": "hour only; Python 3.11 fromisoformat accepts it"
+  },
+  {
+   "input": "2026-09-17T09:00:00.1234567Z",
+   "epoch": null,
+   "why": "seven fractional digits"
+  }
+ ]
+}

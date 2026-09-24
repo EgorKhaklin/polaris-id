@@ -222,19 +222,41 @@ def _verify_over_digest(digest, sig_hex, pk_hex, alg=ALGORITHM):
     return (primary if primary is not None else witness), ran, None
 
 
+_ISO_INSTANT = __import__("re").compile(
+    r"^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?"
+    r"(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$")
+
+
+def _strict_instant(s):
+    """An aware datetime for an ISO 8601 instant in the ONE subset every Polaris verifier
+    accepts, or ValueError.
+
+    The same grammar as the TypeScript SDK's isoToEpoch, so the two reference kits and this
+    verifier agree on every input. Until 2026-09-24 this was datetime.fromisoformat, whose
+    grammar is the interpreter's: Python 3.11 widened it to compact ("20260917T090000Z"),
+    week ("2026-W38-4") and hour-only ("T09Z") forms, so the verdict on one artifact depended
+    on which Python ran it, and differed from the TypeScript kit, which refuses them. The
+    fields are built one by one, so an impossible date ("2026-02-31") is refused rather
+    than rolled over."""
+    from datetime import datetime, timedelta, timezone
+    m = _ISO_INSTANT.match(s.strip()) if isinstance(s, str) else None
+    if not m:
+        raise ValueError("not an ISO 8601 instant in the accepted subset: %r" % (s,))
+    y, mo, d, hh, mi, ss, frac, z, sign, oh, om = m.groups()
+    micro = int((frac or "").ljust(6, "0") or 0)
+    tz = timezone.utc
+    if sign:
+        shift = timedelta(hours=int(oh), minutes=int(om))
+        tz = timezone(shift if sign == "+" else -shift)
+    return datetime(int(y), int(mo), int(d), int(hh or 0), int(mi or 0), int(ss or 0),
+                    micro, tzinfo=tz)
+
+
 def _iso_to_epoch(s):
-    from datetime import datetime, timezone
-    if not isinstance(s, str):
-        return None
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
     try:
-        dt = datetime.fromisoformat(s)
+        return _strict_instant(s).timestamp()
     except ValueError:
         return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.timestamp()
 
 
 #: Formats whose freshness is a REPLAY WINDOW rather than a validity interval, with the

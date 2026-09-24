@@ -728,3 +728,12 @@ test("an impossible date is refused, as the Python kit refuses it", () => {
   assert.equal(__isoToEpochForTest("2028-02-29T00:00:00Z"), Date.UTC(2028, 1, 29) / 1000,
                "control: a real leap day is accepted");
 });
+
+
+test("the ISO instant grammar both reference SDKs share", () => {
+  const cases = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "iso-instants.json"), "utf8")).cases;
+  for (const c of cases) {
+    const got = __isoToEpochForTest(c.input);
+    assert.equal(got === null ? null : Math.round(got), c.epoch, c.input);
+  }
+});

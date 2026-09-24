@@ -780,3 +780,17 @@ class HeldOutSemanticMutationsTests(unittest.TestCase):
                 a = pv.verify_signed_artifact(art, "2026-05-01T00:00:00Z")
                 self.assertFalse(a.authentic, (primary, witness))
                 self.assertIn("DISAGREE", a.note or "")
+
+
+class IsoInstantGrammarTests(unittest.TestCase):
+    """sdk/testdata/iso-instants.json: the grammar both reference SDKs share. Until 2026-09-24
+    this kit used datetime.fromisoformat, whose grammar depends on the interpreter."""
+
+    def test_the_shared_vectors(self):
+        import json
+        import os
+        cases = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "iso-instants.json")))["cases"]
+        for c in cases:
+            with self.subTest(c["input"]):
+                got = pv._iso_to_epoch(c["input"])
+                self.assertEqual(None if got is None else int(got), c["epoch"])
