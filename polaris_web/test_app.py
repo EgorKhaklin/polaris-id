@@ -14529,6 +14529,54 @@ class IdentityProofingTests(PolarisTestCase):
         with self.assertRaises(pf.ProofingRefused):
             pf.check_evidence(dict(self._piece(), strength="EXCELLENT"))
 
+    # A held-out round on proofing.py, 2026-09-24: of twelve mutations, four survived this
+    # class, the enrollment proofing drill and the check layer. The four tests below each sit
+    # on one of them.
+
+    def test_two_strong_pieces_need_a_fair_one_to_reach_ial3(self):
+        pf = self._pf()
+        two_strong = [self._piece("STRONG"), self._piece("STRONG")]
+        kwargs = dict(presence="IN_PERSON", biometric_collected=True)
+        self.assertEqual(pf.derive_ial(two_strong, **kwargs), "IAL2")
+        self.assertEqual(pf.derive_ial(two_strong + [self._piece("FAIR")], **kwargs), "IAL3")
+
+    def test_evidence_validated_by_no_method_contributes_nothing(self):
+        """`validated: True` with validation_method NONE is a contradiction the record could
+        carry, and the method is the part that says what was actually done."""
+        pf = self._pf()
+        piece = self._piece("SUPERIOR")
+        self.assertEqual(pf.effective_strength(piece), "SUPERIOR", "control")
+        piece["validation_method"] = "NONE"
+        self.assertEqual(pf.effective_strength(piece), "UNACCEPTABLE")
+
+    def test_the_quality_bar_is_inclusive(self):
+        pf = self._pf()
+        self.assertTrue(pf.BiometricCapture("FACE", 60, True).acceptable())
+        self.assertFalse(pf.BiometricCapture("FACE", 59.9, True).acceptable())
+
+    def test_a_capture_that_failed_liveness_does_not_lift_the_recorded_level(self):
+        """The unit tests of `acceptable` passed with record_proofing counting any capture at
+        all: nothing recorded a proofing with a poor capture and read the level back."""
+        pf = self._pf()
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT min(individual_id) AS i FROM Individual")
+                person = cur.fetchone()["i"]
+                cur.execute("SELECT min(agency_id) AS a FROM Agency")
+                agency = cur.fetchone()["a"]
+            evidence = [self._piece("SUPERIOR"), self._piece("SUPERIOR")]
+            live = pf.record_proofing(conn, person, agency, evidence, presence="IN_PERSON",
+                                      capture=pf.BiometricCapture("FACE", 90, True))
+            self.assertEqual(live["derived_ial"], "IAL3", "control: a live capture counts")
+            spoof = pf.record_proofing(conn, person, agency, evidence, presence="IN_PERSON",
+                                       capture=pf.BiometricCapture("FACE", 99, False))
+            self.assertEqual((spoof["derived_ial"], spoof["biometric_counted"]), ("IAL2", False))
+            self.assertEqual(pf.current_ial(conn, person), "IAL2")
+        finally:
+            conn.close()
+
+
 
 class PilotWindDownTests(PolarisTestCase):
     """P5.1: the wind-down, measured. The full run is
