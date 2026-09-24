@@ -4547,7 +4547,7 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
         "scripts/polaris-generate-secrets.sh": "write_pgbackrest_creds_if_missing() {\n  : > pgbackrest_repo_creds.conf\n}\nwrite_pgbackrest_creds_if_missing\n",
         "scripts/polaris-deploy.sh": "for secret in polaris_db_password pgbackrest_repo_creds.conf; do :; done\n",
         "scripts/polaris-offsite-drill.sh": (
-            "MINIO_IMAGE=minio/minio@sha256:x\n"
+            "S3_IMAGE=ghcr.io/versity/versitygw@sha256:x\n"
             "docker run -e POLARIS_PGBACKREST_S3_KEY=leaked img && exit 1\n"
             "grep -q '^repo1-type=s3$' /etc/pgbackrest/conf.d/repo.conf\n"
             "pgbackrest --stanza=polaris restore\n"),
@@ -4564,6 +4564,18 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
 
     write()
     assert checks.check_offsite_backup_env_driven(tmp_path)[0].level == "OK", "must PASS on the good fixture"
+
+    # 2026-09-24: the endpoint must be pinned by digest, whichever server it is. A tag is
+    # what a registry can change under the drill; the digest is what makes a withdrawal
+    # fail loud instead of silently running something else.
+    write({"scripts/polaris-offsite-drill.sh": (
+        "S3_IMAGE=ghcr.io/versity/versitygw:latest\n"
+        "docker run -e POLARIS_PGBACKREST_S3_KEY=leaked img && exit 1\n"
+        "grep -q '^repo1-type=s3$' /etc/pgbackrest/conf.d/repo.conf\n"
+        "pgbackrest --stanza=polaris restore\n")})
+    assert checks.check_offsite_backup_env_driven(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the S3 endpoint image is not pinned by digest"
+    write()
 
     # The load-bearing lesson: repo1-path back in the main conf duplicates the
     # rendered fragment and pgBackRest refuses to start.

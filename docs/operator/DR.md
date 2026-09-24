@@ -578,7 +578,7 @@ piling up on the primary and the recovery point is drifting (SEV-2).
 **Proof.** Two CI round-trips exercise archive, backup, and restore with WAL
 replay: one against a local repo (job step "pgBackRest archive + backup +
 restore round-trip" in [`ci.yml`](../../.github/workflows/ci.yml)) and one
-offsite against a TLS MinIO endpoint through the same env-and-fragment path an
+offsite against a TLS S3 endpoint (versitygw, digest-pinned) through the same env-and-fragment path an
 operator uses
 ([`scripts/polaris-offsite-drill.sh`](../../scripts/polaris-offsite-drill.sh)),
 which also proves the key-pair-in-env refusal. The RPO/RTO drill in section 1

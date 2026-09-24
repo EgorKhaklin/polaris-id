@@ -5579,11 +5579,12 @@ def check_offsite_backup_env_driven(root: pathlib.Path) -> list[Finding]:
                      "polaris-generate-secrets.sh must DEFINE write_pgbackrest_creds_if_missing before "
                      "calling it (bash resolves functions at call time; `bash -n` passes on a definition "
                      "placed after the call, and the v9.173 CI prod boot died on 'command not found')")
-    if "minio" not in drill.lower() or "restore" not in drill or "repo1-type=s3" not in drill \
-            or "POLARIS_PGBACKREST_S3_KEY=" not in drill:
+    if not re.search(r'^S3_IMAGE="?[^\s"]+@sha256:', drill, re.M) or "restore" not in drill \
+            or "repo1-type=s3" not in drill or "POLARIS_PGBACKREST_S3_KEY=" not in drill:
         return _fail("offsite_backup",
-                     "polaris-offsite-drill.sh must back up to and restore from an S3 endpoint (MinIO), "
-                     "assert the rendered repo is repo1-type=s3, and prove the key-pair-in-env refusal")
+                     "polaris-offsite-drill.sh must back up to and restore from a digest-pinned S3 "
+                     "endpoint (S3_IMAGE=...@sha256:), assert the rendered repo is repo1-type=s3, and "
+                     "prove the key-pair-in-env refusal")
     if "polaris-offsite-drill.sh" not in ci:
         return _fail("offsite_backup", "ci.yml must run scripts/polaris-offsite-drill.sh")
     if "POLARIS_PGBACKREST_S3_BUCKET" not in dr:
