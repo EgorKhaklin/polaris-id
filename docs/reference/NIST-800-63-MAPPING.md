@@ -83,13 +83,15 @@ requirement above. The design anticipates AAL3; the claim waits on certification
 
 | Requirement | Verdict | Evidence |
 |---|---|---|
-| Multi-factor with a phishing-resistant second factor (WebAuthn) | MET | `test:polaris_web/test_app.py::WebAuthnCeremonyTests` |
+| Multi-factor with a phishing-resistant second factor (WebAuthn) | PARTIAL | Built and enforced (`test:polaris_web/test_app.py::WebAuthnCeremonyTests`), but not by default: the factor is required for an account that has enrolled a key or has `AppUser.webauthn_required_after` set, and no provisioning path sets that deadline, so a new admin signs in with a password alone until an operator sets one. Operators are optional and auditors exempt unless they enrol. Whether admin MFA is mandatory is an operator decision (webauthn_auth.py, docs/PRODUCTION-READINESS.md). |
 | Hardware-only authenticators enforceable by policy | MET | `test:polaris_web/test_app.py::WebAuthnCredentialLookupTests` |
 | Failed-attempt throttling that cannot be raced | MET | `check:c4_atomic_failed_login` |
 | Rate limiting on the authentication endpoint | MET | `test:polaris_web/test_app.py::F03_RateLimitingTests` |
 | Passwords stored one-way | MET | `test:polaris_web/test_app.py::PasswordHashingTests` |
 | Session binding, idle and absolute timeouts, a server-side registry | MET | `check:session_origin_hardening` |
 | Per-role network policy | MET | `test:polaris_web/test_app.py::NetworkPolicyTests` |
+
+**Highest operator AAL claimed: none by default.** A deployment that sets a WebAuthn deadline for every admin and operator account has the mechanism AAL2 asks for; the tree does not set one for it.
 
 ## FAL, federation assurance
 
