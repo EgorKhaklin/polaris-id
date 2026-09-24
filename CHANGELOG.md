@@ -11,6 +11,39 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.16 — 2026-09-24 (a deactivated admin authorizes nothing)
+
+CORE-BUG against rc.15. Externally observable: five procedures now refuse a deactivated admin.
+Schema change: migration `2026-09-24-003-deactivated-admin-holds-no-authority`. Nothing is
+published.
+
+`uc9_complete_recovery` and `uc_pseudonymize_individual` refuse an actor whose account is not
+active; `uc_pseudonymize_individual` says why ("a deactivated admin" cannot act). Five other
+admin-gated procedures checked `AppUser.role` and never `AppUser.is_active`:
+- `uc10_attest_trust`;
+- `uc10_revoke_attestation`;
+- `uc11_close_epoch`;
+- `uc_apply_retention_template`;
+- `uc_archive_purge`, the one `DELETE` path into the append-only audit, `SECURITY DEFINER`.
+
+A deactivated admin's user id still authorized all five. The web routes could not reach them
+with that account, because a deactivated account's sessions end. The CLI and the operator
+scripts pass a user id straight in.
+
+Each now refuses with `insufficient_privilege` after its role check. `05_procedures.sql`
+carries the change for a fresh install, and the migration carries the five bodies for an
+existing one. Measured on a scratch database built from rc.15: the migration applies (the
+deactivated admin is refused), reverts (accepted again) and re-applies.
+
+Counterexample, failing on rc.15:
+`DeactivatedAdminHoldsNoAuthorityTests.test_a_deactivated_admin_authorizes_nothing`, five
+procedures. A control shows the live admin is never refused for being inactive.
+
+Found while reading `uc10_attest_trust` for a held-out round: its role check was the sibling of
+a check two other procedures make with one more column.
+
+---
+
 ## v1.0.0-rc.15 — 2026-09-24 (an operator bound to one authority acts only as that authority)
 
 CORE-BUG against rc.14. Externally observable: nine routes now refuse, with 403, a bound

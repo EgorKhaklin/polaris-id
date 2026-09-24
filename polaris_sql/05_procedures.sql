@@ -1213,6 +1213,13 @@ BEGIN
             p_signed_by, v_user_role
             USING ERRCODE = 'insufficient_privilege';
     END IF;
+    -- 2026-09-24: an admin whose account is DEACTIVATED held this authority as fully as a
+    -- live one. uc9_complete_recovery and uc_pseudonymize_individual refused a deactivated
+    -- actor; the five procedures below checked the role alone.
+    IF NOT (SELECT is_active FROM AppUser WHERE user_id = p_signed_by) THEN
+        RAISE EXCEPTION 'uc10_attest_trust: user % is not an active account', p_signed_by
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
 
     -- Validate valid_until is in the future.
     IF p_valid_until <= CURRENT_DATE THEN
@@ -1330,6 +1337,13 @@ BEGIN
             p_signed_by, v_user_role
             USING ERRCODE = 'insufficient_privilege';
     END IF;
+    -- 2026-09-24: an admin whose account is DEACTIVATED held this authority as fully as a
+    -- live one. uc9_complete_recovery and uc_pseudonymize_individual refused a deactivated
+    -- actor; the five procedures below checked the role alone.
+    IF NOT (SELECT is_active FROM AppUser WHERE user_id = p_signed_by) THEN
+        RAISE EXCEPTION 'uc10_revoke_attestation: user % is not an active account', p_signed_by
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
 
     -- The schema's revocation_consistency CHECK enforces the 8-char
     -- reason floor; we let the constraint surface the readable error.
@@ -1404,6 +1418,13 @@ BEGIN
         RAISE EXCEPTION
             'Epoch closure requires admin role (signer % has role %)',
             p_closed_by, v_user_role
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    -- 2026-09-24: an admin whose account is DEACTIVATED held this authority as fully as a
+    -- live one. uc9_complete_recovery and uc_pseudonymize_individual refused a deactivated
+    -- actor; the five procedures below checked the role alone.
+    IF NOT (SELECT is_active FROM AppUser WHERE user_id = p_closed_by) THEN
+        RAISE EXCEPTION 'uc11_close_epoch: user % is not an active account', p_closed_by
             USING ERRCODE = 'insufficient_privilege';
     END IF;
 
@@ -1748,6 +1769,13 @@ BEGIN
             p_actor_user_id, v_actor_role
             USING ERRCODE = 'insufficient_privilege';
     END IF;
+    -- 2026-09-24: an admin whose account is DEACTIVATED held this authority as fully as a
+    -- live one. uc9_complete_recovery and uc_pseudonymize_individual refused a deactivated
+    -- actor; the five procedures below checked the role alone.
+    IF NOT (SELECT is_active FROM AppUser WHERE user_id = p_actor_user_id) THEN
+        RAISE EXCEPTION 'uc_archive_purge: user % is not an active account', p_actor_user_id
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
 
     -- 4. Open the carve-out. SET LOCAL is transaction-scoped; it
     --    cannot leak past COMMIT/ROLLBACK.
@@ -2066,6 +2094,13 @@ BEGIN
     IF v_role <> 'admin' THEN
         RAISE EXCEPTION 'uc_apply_retention_template: actor_user_id (%) has role %, must be admin.',
             p_actor_user_id, v_role USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    -- 2026-09-24: an admin whose account is DEACTIVATED held this authority as fully as a
+    -- live one. uc9_complete_recovery and uc_pseudonymize_individual refused a deactivated
+    -- actor; the five procedures below checked the role alone.
+    IF NOT (SELECT is_active FROM AppUser WHERE user_id = p_actor_user_id) THEN
+        RAISE EXCEPTION 'uc_apply_retention_template: user % is not an active account', p_actor_user_id
+            USING ERRCODE = 'insufficient_privilege';
     END IF;
 
     -- Supersede whatever is effective for this jurisdiction, then append.

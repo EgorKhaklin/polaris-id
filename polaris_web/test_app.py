@@ -15281,6 +15281,70 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
 
 
+class DeactivatedAdminHoldsNoAuthorityTests(PolarisTestCase):
+    """2026-09-24. Five admin-gated procedures checked AppUser.role and not is_active, so a
+    DEACTIVATED admin's user id still authorized a federation attestation, its revocation, an
+    epoch closure, a retention template and an archive purge (the one DELETE path into the
+    append-only audit). uc9_complete_recovery and uc_pseudonymize_individual already refused a
+    deactivated actor. The web routes cannot reach these with a deactivated account, since its
+    sessions end; the CLI and the operator scripts pass a user id straight in."""
+
+    CALLS = (
+        ("uc10_attest_trust", "CALL uc10_attest_trust(4, 2, 1, CURRENT_DATE + 30, %s)"),
+        ("uc10_revoke_attestation", "CALL uc10_revoke_attestation(1, 'held-out reason', %s)"),
+        ("uc11_close_epoch", "CALL uc11_close_epoch('ab'::varchar, "
+                             "(CURRENT_TIMESTAMP + INTERVAL '1 day')::timestamp, %s, '[]'::jsonb)"),
+        ("uc_archive_purge", "CALL uc_archive_purge(now() - INTERVAL '3650 days', 'file:///x', "
+                             "repeat('a', 64), %s)"),
+        ("uc_apply_retention_template", "CALL uc_apply_retention_template('STANDARD-5Y', 'US-PA', %s)"),
+    )
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+    def test_a_deactivated_admin_authorizes_nothing(self):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE AppUser SET is_active = FALSE WHERE user_id = 1")
+            conn.commit()
+        for proc, sql in self.CALLS:
+            with self.subTest(procedure=proc):
+                with self._new_conn() as conn, conn.cursor() as cur:
+                    with self.assertRaises(psycopg2.Error) as ctx:
+                        cur.execute(sql, (1,))
+                    conn.rollback()
+                self.assertIn("not an active account", str(ctx.exception))
+
+    def test_the_retention_template_refuses_an_unknown_template_and_a_non_admin(self):
+        """scripts/polaris-procedure-mutation-drill.py, 2026-09-24: three of this procedure's
+        refusals could be deleted with every suite green. Nothing in the app suite called it;
+        the CLI's retention command reached it only with good arguments."""
+        cases = (("'NINE-YEARS', 'US-PA', 1", "unknown template"),
+                 ("'STANDARD-5Y', 'US-PA', 99999", "does not exist"),
+                 ("'STANDARD-5Y', 'US-PA', 2", "must be admin"))
+        for args, message in cases:
+            with self.subTest(expect=message):
+                with self._new_conn() as conn, conn.cursor() as cur:
+                    with self.assertRaises(psycopg2.Error) as ctx:
+                        cur.execute("CALL uc_apply_retention_template(%s)" % args)
+                    conn.rollback()
+                self.assertIn(message, str(ctx.exception))
+        with self._new_conn() as conn, conn.cursor() as cur:   # control: the admin applies it
+            cur.execute("CALL uc_apply_retention_template('STANDARD-5Y', 'US-PA', 1)")
+            conn.rollback()
+
+    def test_an_active_admin_is_not_refused_for_being_inactive(self):
+        """The control: the same calls by the live admin fail, if they fail, for another
+        reason."""
+        for proc, sql in self.CALLS:
+            with self.subTest(procedure=proc):
+                with self._new_conn() as conn, conn.cursor() as cur:
+                    try:
+                        cur.execute(sql, (1,))
+                    except psycopg2.Error as e:
+                        self.assertNotIn("not an active account", str(e))
+                    conn.rollback()
+
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py

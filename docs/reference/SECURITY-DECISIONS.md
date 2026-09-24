@@ -295,6 +295,13 @@ token transition, both federation routes, the operator exchange receipt and docu
 `actor_agency_id`, `requesting_agency_id` or `attesting_agency_id` without it. Before 1.0.0-rc.15
 only the last two called it.
 
+**Whether a deactivated admin may still act** is refused in the database, by every admin-gated
+procedure: `uc9_complete_recovery`, `uc_pseudonymize_individual`, `uc10_attest_trust`,
+`uc10_revoke_attestation`, `uc11_close_epoch`, `uc_apply_retention_template` and
+`uc_archive_purge` each check `AppUser.is_active` after the role. Before 1.0.0-rc.16 the last five
+checked the role alone, which the CLI and the operator scripts, passing a user id straight in,
+could reach.
+
 ---
 
 ## 14. Decisions not yet made
