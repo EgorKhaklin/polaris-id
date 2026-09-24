@@ -25,6 +25,7 @@ import pqc_signing
 import security
 from app import (
     _json_object,
+    _operator_authority_permits,
     _signing_algorithm,
     app,
     db_error_to_message,
@@ -63,6 +64,11 @@ def api_federation_attest():
     signed_by = session.get('user_id')
     if signed_by is None:
         return jsonify(error="session missing user_id"), 401
+    # 2026-09-24: an admin bound to one authority recorded an attestation AS another, which
+    # the ceremony below then signed under that other authority's own key.
+    denied = _operator_authority_permits(attesting_id)
+    if denied:
+        return denied
 
     conn = get_db()
     try:
@@ -117,6 +123,14 @@ def api_federation_revoke():
     signed_by = session.get('user_id')
     if signed_by is None:
         return jsonify(error="session missing user_id"), 401
+    # The attesting authority withdraws its own attestation; a bound admin cannot withdraw
+    # another authority's.
+    owner = query("SELECT attesting_agency_id FROM AgencyTrustAttestation "
+                  "WHERE attestation_id = %s", (attestation_id,), fetch='one')
+    if owner is not None:
+        denied = _operator_authority_permits(owner['attesting_agency_id'])
+        if denied:
+            return denied
 
     conn = get_db()
     try:

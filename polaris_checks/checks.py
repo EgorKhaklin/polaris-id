@@ -15607,6 +15607,58 @@ def _emits(source: str, event: str) -> bool:
     return False
 
 
+def check_operator_acts_only_as_its_authority(root: pathlib.Path) -> list[Finding]:
+    """A route that lets the REQUEST name the authority that acts must ask whether the operator
+    may act as it (1.0.0-rc.15).
+
+    `_operator_authority_permits` states the rule: an operator bound to an authority may only
+    act as that authority, which row-level policy cannot enforce because issuing, revoking and
+    signing are not reads. Two routes called it. Nine did not: issuance, reserve activation,
+    revocation, recovery, verification, the duress API, a token transition and both federation
+    routes, so an admin bound to agency 2 recorded a trust attestation as agency 1 and the
+    ceremony signed it under agency 1's own key. A tenth route that reads an acting authority
+    from the request and forgets the guard fails here.
+
+    The acting authority is named by `issuing_agency_id`, `actor_agency_id`,
+    `requesting_agency_id` or `attesting_agency_id`. The other parties to an act (a witness, a
+    co-signer, the attested authority) are not the operator's own and are not guarded."""
+    name = "operator_authority_guard"
+    acting = ("issuing_agency_id", "actor_agency_id", "requesting_agency_id",
+              "attesting_agency_id")
+    reads = re.compile(r"(?:request\.form(?:\.get)?|payload(?:\.get)?)[\[(]\s*['\"](%s)['\"]"
+                       % "|".join(acting))
+    unguarded, guarded = [], 0
+    for path in sorted((root / "polaris_web").glob("*.py")):
+        if path.name.startswith("test_"):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError):
+            return _fail(name, f"{path.name} does not parse")
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if not any(isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "route"
+                       for d in node.decorator_list):
+                continue
+            body = ast.unparse(node)
+            fields = sorted(set(reads.findall(body)))
+            if not fields:
+                continue
+            if "_operator_authority_permits(" in body:
+                guarded += 1
+            else:
+                unguarded.append("%s:%s (%s)" % (path.name, node.name, ", ".join(fields)))
+    if unguarded:
+        return _fail(name, "route(s) let the request name the acting authority and never ask "
+                           "whether a bound operator may act as it: " + "; ".join(unguarded))
+    if guarded < 5:
+        return _fail(name, f"only {guarded} guarded route(s) found; the search has broken and "
+                           "this would pass by finding nothing")
+    return [Finding("OK", name, "all %d routes that take the acting authority from the request "
+                                "refuse a bound operator acting as another" % guarded)]
+
+
 def check_session_revoke_reasons_admitted(root: pathlib.Path) -> list[Finding]:
     """Every reason written to OperatorSession.revoke_reason is one its CHECK admits (1.0.0-rc.13).
 
@@ -22389,6 +22441,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_unique_rules_are_tested_exhaustively,
     check_every_audit_event_has_a_writer,
     check_session_revoke_reasons_admitted,
+    check_operator_acts_only_as_its_authority,
     check_conformance_asks_the_relying_party_question,
     check_zk_witnesses_are_mutation_tested,
     check_triggers_are_mutation_tested,

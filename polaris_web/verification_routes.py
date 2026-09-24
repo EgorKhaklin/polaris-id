@@ -33,6 +33,7 @@ import security
 from app import (
     _PROM_AVAILABLE,
     _check_and_record_duress,
+    _operator_authority_permits,
     _format_cursor_composite,
     _int_arg,
     _parse_cursor_composite,
@@ -281,6 +282,9 @@ def verifications_new():
                 token_id_val = int(token_id)
 
             verifier_id = int(request.form['requesting_agency_id'])
+            _denied = _operator_authority_permits(verifier_id)
+            if _denied:
+                return _denied
             context_id = int(request.form['context_id'])
             outcome = request.form['outcome']
 

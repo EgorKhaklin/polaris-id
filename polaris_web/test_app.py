@@ -15098,6 +15098,111 @@ class SecurityHeldOutTests(unittest.TestCase):
                         self.sec.validate_role_policies()
 
 
+class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
+    """2026-09-24. `_operator_authority_permits` states the rule: "an operator bound to an
+    authority may only act AS that authority", and names signing as the thing row-level policy
+    cannot reach. Two exchange routes called it. Every route where the REQUEST names the
+    authority that acts did not: an admin bound to agency 2 could issue a credential as agency 1,
+    revoke agency 1's credentials as agency 1, and record a federation attestation as agency 1
+    that the ceremony then signed under agency 1's own key. Each route below is asked to act as
+    another authority by an operator bound to agency 2, and must refuse before anything happens;
+    the control shows the same request as the operator's own authority is not refused by the
+    binding."""
+
+    def _bind(self, agency_id):
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = agency_id
+
+    def _form(self, path, data):
+        csrf = self._csrf_token_from('/verifications/new')   # one token per session
+        return self.client.post(path, data=dict(data, csrf_token=csrf))
+
+    CASES = (
+        ('/uc1/issue', 'form', {'legal_name': 'Scope Holder', 'date_of_birth': '1990-01-01',
+                                'jurisdiction': 'US-PA', 'issuing_agency_id': '{A}',
+                                'algorithm_id': '1', 'biometric_binding_type': 'NONE',
+                                'token_value': 'TKN-SCOPE-{A}', 'physical_serial': 'SN-SCOPE-{A}',
+                                'hardware_model': 'TitanQ-3', 'contexts': ['1']}),
+        ('/uc4/activate-reserve', 'form', {'lost_token_id': '3', 'actor_agency_id': '{A}',
+                                           'reason_code': 'LOST', 'reserve_token_id': '1',
+                                           'published_location': 'https://crl.test/x'}),
+        ('/uc8/revoke', 'form', {'token_id': '3', 'actor_agency_id': '{A}',
+                                 'reason_code': 'ADMINISTRATIVE',
+                                 'published_location': 'https://crl.test/y'}),
+        ('/uc9/initiate-recovery', 'form', {'individual_id': '5', 'requesting_agency_id': '{A}'}),
+        ('/api/federation/attest', 'json', {'attesting_agency_id': '{A}', 'attested_agency_id': 5,
+                                            'context_id': 1, 'valid_until': '2027-01-15'}),
+        ('/verifications/new', 'form', {'disclosure_level': 'FULL', 'token_id': '3',
+                                        'requesting_agency_id': '{A}', 'context_id': '1',
+                                        'outcome': 'FAILURE'}),
+        ('/api/duress/record', 'json', {'token_id': 3, 'context_id': 1,
+                                        'requesting_agency_id': '{A}'}),
+        ('/tokens/3/transition', 'form', {'new_status': 'SUSPENDED', 'actor_agency_id': '{A}'}),
+    )
+
+    def test_a_bound_admin_cannot_withdraw_another_authoritys_attestation(self):
+        # Attestation 1 is agency 4's (seed).
+        self._bind(2)
+        csrf = self._csrf_token_from('/verifications/new')
+        r = self.client.post('/api/federation/revoke',
+                             json={'attestation_id': 1, 'revocation_reason': 'not ours to withdraw'},
+                             headers={'X-CSRFToken': csrf})
+        self.assertEqual(r.status_code, 403)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT revocation_date FROM AgencyTrustAttestation WHERE attestation_id = 1")
+            self.assertIsNone(cur.fetchone()['revocation_date'])
+        self._bind(4)
+        r = self.client.post('/api/federation/revoke',
+                             json={'attestation_id': 1, 'revocation_reason': 'withdrawn by owner'},
+                             headers={'X-CSRFToken': csrf})
+        self.assertEqual(r.status_code, 200, "control: the attesting authority withdraws its own")
+
+    def _post(self, path, kind, data, agency):
+        def fill(v):
+            if isinstance(v, str):
+                return v.replace('{A}', str(agency))
+            return v
+        body = {k: fill(v) for k, v in data.items()}
+        if kind == 'json':
+            body = {k: (int(v) if isinstance(v, str) and v.isdigit() else v) for k, v in body.items()}
+            csrf = self._csrf_token_from('/verifications/new')
+            return self.client.post(path, json=body, headers={'X-CSRFToken': csrf})
+        return self._form(path, body)
+
+    def test_a_bound_operator_cannot_act_as_another_authority(self):
+        for path, kind, data in self.CASES:
+            with self.subTest(route=path):
+                self._bind(2)
+                with self._new_conn() as conn, conn.cursor() as cur:
+                    cur.execute("SELECT (SELECT count(*) FROM IdentityToken) AS t, "
+                                "(SELECT count(*) FROM AgencyTrustAttestation) AS a, "
+                                "(SELECT count(*) FROM RecoveryRequest) AS r, "
+                                "(SELECT count(*) FROM VerificationEvent) AS v, "
+                                "(SELECT count(*) FROM DuressEvent) AS d")
+                    before = dict(cur.fetchone())
+                r = self._post(path, kind, data, 1)
+                self.assertEqual(r.status_code, 403, r.get_data(as_text=True)[:200])
+                with self._new_conn() as conn, conn.cursor() as cur:
+                    cur.execute("SELECT (SELECT count(*) FROM IdentityToken) AS t, "
+                                "(SELECT count(*) FROM AgencyTrustAttestation) AS a, "
+                                "(SELECT count(*) FROM RecoveryRequest) AS r, "
+                                "(SELECT count(*) FROM VerificationEvent) AS v, "
+                                "(SELECT count(*) FROM DuressEvent) AS d")
+                    self.assertEqual(dict(cur.fetchone()), before, "the refused act happened")
+                    cur.execute("SELECT status FROM IdentityToken WHERE token_id = 3")
+                    self.assertEqual(cur.fetchone()['status'], 'ACTIVE')
+
+    def test_the_same_request_as_its_own_authority_is_not_refused_by_the_binding(self):
+        for path, kind, data in self.CASES:
+            with self.subTest(route=path):
+                self._bind(1)
+                r = self._post(path, kind, data, 1)
+                self.assertNotEqual(r.status_code, 403, r.get_data(as_text=True)[:200])
+
+    def _new_conn(self):
+        return psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py

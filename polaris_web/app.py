@@ -2071,6 +2071,9 @@ def api_duress_record():
         requesting_agency_id = int(payload['requesting_agency_id'])
     except (KeyError, ValueError, TypeError):
         return jsonify(error="required fields: token_id, context_id, requesting_agency_id"), 400
+    denied = _operator_authority_permits(requesting_agency_id)
+    if denied:
+        return denied
 
     conn = get_db()
     try:

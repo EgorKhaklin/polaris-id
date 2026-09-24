@@ -14597,6 +14597,41 @@ def test_relying_party_questions_check_discriminates(tmp_path):
     assert checks.check_conformance_asks_the_relying_party_question(tmp_path)[0].level == "FAIL", "must FAIL when cases.json is absent"
 
 
+def test_operator_authority_guard_check_discriminates(tmp_path):
+    """1.0.0-rc.15: a route that reads the acting authority from the request and never calls
+    the guard fails the check; the other parties to an act are not the operator's own."""
+    def route(name, field, guarded=True, source="request.form"):
+        guard = ("    denied = _operator_authority_permits(a)\n"
+                 "    if denied:\n        return denied\n") if guarded else ""
+        return ("@app.route('/%s', methods=['POST'])\n"
+                "def %s():\n"
+                "    a = int(%s['%s'])\n%s"
+                "    return 'ok'\n\n" % (name, name, source, field, guard))
+    GOOD = (route("issue", "issuing_agency_id") + route("revoke", "actor_agency_id")
+            + route("recover", "requesting_agency_id") + route("verify", "requesting_agency_id")
+            + route("attest", "attesting_agency_id", source="payload")
+            + route("witness", "witness_agency_id", guarded=False))
+    def write(body):
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web" / "routes.py").write_text(body)
+    write(GOOD)
+    assert checks.check_operator_acts_only_as_its_authority(tmp_path)[0].level == "OK", \
+        "must PASS when every route naming the acting authority is guarded"
+    # The defect: one route takes the acting authority and never asks.
+    write(GOOD + route("transition", "actor_agency_id", guarded=False))
+    out = checks.check_operator_acts_only_as_its_authority(tmp_path)[0]
+    assert out.level == "FAIL" and "transition" in out.message, \
+        "must FAIL, naming the route, when one is unguarded"
+    # Read through payload.get as well as request.form[...]
+    write(GOOD + route("duress", "requesting_agency_id", guarded=False, source="payload.get"))
+    assert checks.check_operator_acts_only_as_its_authority(tmp_path)[0].level == "FAIL", \
+        "a payload.get(...) read of the acting authority counts too"
+    # The search breaks and finds nothing to check.
+    write("x = 1\n")
+    assert checks.check_operator_acts_only_as_its_authority(tmp_path)[0].level == "FAIL", \
+        "must FAIL rather than pass on nothing"
+
+
 def test_session_revoke_reasons_check_discriminates(tmp_path):
     """1.0.0-rc.13: a reason the code writes and the CHECK does not admit fails the check."""
     REASONS = ["logout", "evicted", "idle", "deactivated", "network_policy", "operator"]

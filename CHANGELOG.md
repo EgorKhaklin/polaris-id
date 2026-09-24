@@ -11,6 +11,47 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.15 — 2026-09-24 (an operator bound to one authority acts only as that authority)
+
+CORE-BUG against rc.14. Externally observable: nine routes now refuse, with 403, a bound
+operator acting as another authority. Nothing is published.
+
+`_operator_authority_permits` states the rule: an operator bound to an authority may only act as
+that authority. It covers the half row-level policy cannot reach, because issuing, revoking and
+signing are not reads. Two exchange routes called it. Nine routes let the request name the
+authority that acts, and none asked:
+- `/uc1/issue`;
+- `/uc4/activate-reserve`;
+- `/uc8/revoke`;
+- `/uc9/initiate-recovery`;
+- `/verifications/new`;
+- `/api/duress/record`;
+- `/tokens/<id>/transition`;
+- `/api/federation/attest`;
+- `/api/federation/revoke`.
+
+Measured on rc.14: an admin bound to agency 2 posted an attestation naming agency 1 as the
+attester, and got attestation #7 back, recorded as agency 1. The attestation ceremony signs an
+edge under the attesting authority's own key whenever that authority has one. The same admin
+issued a credential as agency 1.
+
+Each route now refuses before anything is signed or written. Federation revoke asks the question
+of the attestation's own attester. An unbound operator is unaffected: that remains the
+single-authority default.
+
+Counterexamples, nine of them, failing on rc.14: `BoundOperatorActsOnlyAsItsAuthorityTests`. A
+control shows the same request as the operator's own authority is not refused by the binding.
+
+`check_operator_acts_only_as_its_authority` fails any route that reads `issuing_agency_id`,
+`actor_agency_id`, `requesting_agency_id` or `attesting_agency_id` from the request and does
+not call the guard. A detection test covers both read forms and the empty case. The design
+record, `per-authority-isolation.md`, states the half the guard holds.
+
+Found by asking which callers of the guard's signing sites could choose the authority. Two of
+the twenty-odd signing sites were guarded.
+
+---
+
 ## v1.0.0-rc.14 — 2026-09-24 (every id space is sized, and three that ran out are widened)
 
 CORE-BUG against rc.13. Externally observable: the schema (migration

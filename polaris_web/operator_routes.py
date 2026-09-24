@@ -36,6 +36,7 @@ from app import (
     _PROM_AVAILABLE,
     _int_arg,
     _issuer_key_facts,
+    _operator_authority_permits,
     _not_expired,
     _parse_cursor_int,
     app,
@@ -1033,6 +1034,13 @@ def tokens_transition(tok_id):
     new_status = request.form['new_status']
     actor_id = request.form.get('actor_agency_id')  # optional
     reason = request.form.get('reason') or 'WEB_INTERFACE_TRANSITION'
+    if actor_id:
+        try:
+            denied = _operator_authority_permits(int(actor_id))
+        except ValueError:
+            denied = None
+        if denied:
+            return denied
 
     conn = get_db()
     try:

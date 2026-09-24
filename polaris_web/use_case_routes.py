@@ -27,6 +27,7 @@ import pqc_signing
 import security
 from app import (
     _issuing_agency_of,
+    _operator_authority_permits,
     _quota_refused,
     _record_agency_event,
     app,
@@ -64,6 +65,11 @@ def uc1_issue():
             # produced by a different key — an agency's tokens must be signed by the
             # agency, not by whatever key the box happens to hold.
             _issuing_agency = int(request.form['issuing_agency_id'])
+            # 2026-09-24: an operator bound to one authority issued as another. Refused
+            # before anything is signed.
+            _denied = _operator_authority_permits(_issuing_agency)
+            if _denied:
+                return _denied
             sig_bytes, _sig_alg, sig_pubkey = pqc_signing.signature_with_key_for_token(
                 request.form['token_value'], agency_id=_issuing_agency)
             if sig_pubkey is not None:
@@ -124,6 +130,12 @@ def uc1_issue():
 def uc4_activate_reserve():
     """Wraps the uc4_activate_reserve stored procedure."""
     if request.method == 'POST':
+        try:
+            _denied = _operator_authority_permits(int(request.form['actor_agency_id']))
+            if _denied:
+                return _denied
+        except (KeyError, ValueError):
+            pass
         try:
             promoted = query("""
                 SELECT uc4_activate_reserve(%s, %s, %s, %s, %s) AS token_id
@@ -263,6 +275,9 @@ def uc8_revoke():
         try:
             token_id = int(request.form['token_id'])
             actor_agency_id = int(request.form['actor_agency_id'])
+            _denied = _operator_authority_permits(actor_agency_id)
+            if _denied:
+                return _denied
             cosigner_raw = (request.form.get('cosigner_agency_id') or '').strip()
             cosigner_agency_id = int(cosigner_raw) if cosigner_raw else None
 
@@ -334,6 +349,9 @@ def uc9_initiate():
         try:
             individual_id = int(request.form['individual_id'])
             agency_id = int(request.form['requesting_agency_id'])
+            _denied = _operator_authority_permits(agency_id)
+            if _denied:
+                return _denied
 
             conn = get_db()
             try:

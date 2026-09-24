@@ -81,6 +81,32 @@ column with itself, which is true for every row. The isolation drill caught this
 run, before the change left the working tree. `check_per_authority_isolation` refuses any
 `current_setting` cast that is not guarded, so it cannot come back.
 
+## What a bound operator can make an authority do
+
+Row-level policy bounds what a bound operator READS. It cannot bound what they make an
+authority DO: issuing, revoking and signing are not reads. `_operator_authority_permits` is the
+rule for that half: an operator bound to an authority may only act as that authority.
+
+Until 1.0.0-rc.15 two exchange routes called it. Nine routes let the request name the authority
+that acts, and none asked:
+- issuance;
+- reserve activation;
+- revocation;
+- recovery;
+- verification;
+- the duress API;
+- a token transition;
+- both federation routes.
+
+An admin bound to agency 2 could issue a credential as agency 1, revoke agency 1's credentials,
+and record a trust attestation as agency 1, which the ceremony then signed under agency 1's own
+key. Each now refuses with 403 before anything happens. `check_operator_acts_only_as_its_authority`
+fails on any route that reads `issuing_agency_id`, `actor_agency_id`, `requesting_agency_id` or
+`attesting_agency_id` from the request and does not call the guard. The other parties to an act
+(a witness, a co-signer, the attested authority) are not the operator's own and are not guarded.
+
+An unbound operator is unaffected, as before: that is the single-authority default.
+
 ## What is still not enforced
 
 Nothing stops a deployment from running two authorities in one instance and binding no
