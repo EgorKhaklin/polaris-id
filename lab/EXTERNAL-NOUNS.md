@@ -284,8 +284,9 @@ controls in the account. Rehearsed first against a local copy of the suite.
                                 certification with the signed Certification of Conformance
     SELF-CERTIFICATION SUBMITTED yes, 2026-09-24: OpenID Foundation ticket OCS-3049, category
                                 "Certified Relying Party Libraries" (the form lists no VP
-                                category), fee waived by the Foundation's coupon, DocuSign of
-                                the Declaration of Conformance pending with the maintainer
+                                category), fee waived by the Foundation's coupon, Declaration of
+                                Conformance signed by DocuSign the same day; the Foundation
+                                states requests are normally processed within 5 working days
     CERTIFIED                   no: the Foundation's review of OCS-3049 decides that
 
 **The Foundation's own signed exports corroborate all of this.** Downloaded 2026-09-15,
