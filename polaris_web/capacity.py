@@ -243,6 +243,7 @@ GROWTH = {
 #: reason. Every sequence in the schema is in GROWTH or here: an unclassified one fails
 #: check_capacity_model, because skipping it is how thirty-one went unexamined.
 BOUNDED = {
+    "schema_version": "one row per applied migration",
     "Agency": "one row per issuing authority",
     "CryptographicAlgorithm": "one row per parameter set",
     "VerificationContext": "one row per verification context an authority defines",
@@ -276,6 +277,28 @@ def unclassified(schema_sql):
 DEFAULT_HORIZON_YEARS = 25
 
 
+def schema_text(sql_dir):
+    """The schema as the database is built: 00_migrations_table.sql, 01_schema.sql, then every
+    up-migration in order (1.0.0-rc.34).
+
+    01_schema.sql alone was the model's input, and a table a MIGRATION creates is not in it:
+    AuditAccessLog and schema_version were sequences the database owned and the model never
+    saw, while the check reported every sequence sized. Both happen to be BIGSERIAL; the next
+    migration-added SERIAL would not have been caught."""
+    import glob
+    import os
+    parts = []
+    for name in ("00_migrations_table.sql", "01_schema.sql"):
+        path = os.path.join(sql_dir, name)
+        if os.path.isfile(path):
+            with open(path) as fh:
+                parts.append(fh.read())
+    for path in sorted(glob.glob(os.path.join(sql_dir, "migrations", "*.up.sql"))):
+        with open(path) as fh:
+            parts.append(fh.read())
+    return "\n".join(parts)
+
+
 def sequence_columns(schema_sql):
     """Every SERIAL / BIGSERIAL column in the schema, with its owning table.
 
@@ -297,7 +320,24 @@ def sequence_columns(schema_sql):
         c = re.match(r"\s+(\w+)\s+(BIGSERIAL|SERIAL)\b", line)
         if c and table:
             out.append((table, c.group(1), c.group(2)))
-    return out
+            continue
+        # A later migration widening a column (ALTER COLUMN ... TYPE BIGINT) changes what the
+        # database runs, so it changes the entry, in order.
+        w = re.match(r"\s*ALTER TABLE\s+(\w+)\s+ALTER COLUMN\s+(\w+)\s+TYPE\s+BIGINT\b",
+                     line, re.I)
+        if w:
+            out.append((w.group(1), w.group(2), "WIDEN"))
+    # One entry per column, the LAST statement winning: with the migrations read after
+    # 01_schema.sql, a table both define is the migration's, which is what the database runs.
+    last = {}
+    for table, column, kind in out:
+        key = (table.lower(), column)
+        if kind == "WIDEN":
+            if key in last:
+                last[key] = (last[key][0], column, "BIGSERIAL")
+            continue
+        last[key] = (table, column, kind)
+    return list(last.values())
 
 
 def exhaustion(schema_sql, targets=None, horizon_years=DEFAULT_HORIZON_YEARS):

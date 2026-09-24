@@ -17016,9 +17016,12 @@ def check_capacity_model(root: pathlib.Path) -> list[Finding]:
     except Exception as exc:  # noqa: BLE001 - a model that will not load is a failure
         return _fail(name, f"polaris_web/capacity.py does not load: {exc}")
 
-    for fn in ("sequence_columns", "exhaustion", "throughput", "validate"):
+    for fn in ("sequence_columns", "exhaustion", "throughput", "validate", "schema_text"):
         if not hasattr(cap, fn):
             return _fail(name, f"the model must expose {fn}()")
+    # 1.0.0-rc.34: the schema AS BUILT, migrations included. 01_schema.sql alone omits every
+    # table a migration creates, which the model then never sized while this check said it had.
+    schema = cap.schema_text(str(root / "polaris_sql"))
 
     # 1. Every measured constant is the figure the benchmark actually published.
     digits = set(re.findall(r"[\d,]{3,}", bench))

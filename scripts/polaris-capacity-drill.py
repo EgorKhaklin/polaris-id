@@ -127,6 +127,31 @@ def main():
                      row and int(row["max_value"]), INT8_MAX)
             conn.commit()
 
+            # 1b. THE MODEL SEES WHAT THE DATABASE OWNS (1.0.0-rc.34 era). Every sequence
+            #     in the built database is one the capacity model sizes, at the width the
+            #     model believes. Until capacity.schema_text read the migrations, two
+            #     migration-created sequences were owned here and never modelled.
+            sys.path.insert(0, os.path.join(ROOT, "polaris_web"))
+            import capacity
+            model = {("%s.%s" % (t.lower(), c)): ("integer" if k == "SERIAL" else "bigint")
+                     for t, c, k in capacity.sequence_columns(capacity.schema_text(SQL))}
+            cur.execute("""
+                SELECT lower(t.relname) || '.' || a.attname AS col,
+                       format_type(a.atttypid, a.atttypmod) AS width
+                FROM   pg_class s
+                JOIN   pg_depend d ON d.objid = s.oid AND d.deptype IN ('a', 'i')
+                JOIN   pg_class t ON t.oid = d.refobjid
+                JOIN   pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+                WHERE  s.relkind = 'S' AND t.relname NOT LIKE '%%\\_part' ESCAPE '\\'
+            """)
+            owned = {r["col"]: r["width"] for r in cur.fetchall()}
+            case("every sequence the database owns is modelled",
+                 sorted(set(owned) - set(model)), [])
+            case("...at the width the model believes",
+                 sorted(k for k in set(owned) & set(model) if owned[k] != model[k]), [])
+            case("...and the model invents none", sorted(set(model) - set(owned)), [])
+            conn.commit()
+
             # 2. THE CONTROL. A BIGINT column whose sequence is still AS integer:
             #    this is what widening the column alone leaves behind, and it must
             #    fail exactly where the old SERIAL did.

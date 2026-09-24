@@ -57,6 +57,24 @@ REAL_SCHEMA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 
 class ParsingTests(unittest.TestCase):
 
+    def test_the_built_schema_includes_what_migrations_create_and_widen(self):
+        """rc.34 era. 01_schema.sql alone omitted every table a migration creates (AuditAccessLog
+        was owned by the database and never sized), and a CREATE-only reading would take the
+        first declaration of a column a later migration widened."""
+        import capacity
+        sql_dir = os.path.dirname(REAL_SCHEMA)
+        cols = {(t.lower(), c): k for t, c, k in
+                capacity.sequence_columns(capacity.schema_text(sql_dir))}
+        self.assertIn(("auditaccesslog", "access_id"), cols)
+        self.assertIn(("schema_version", "event_id"), cols)
+        self.assertEqual(cols[("enrollmentevidence", "evidence_id")], "BIGSERIAL")
+
+    def test_a_later_widening_wins_over_the_first_declaration(self):
+        import capacity
+        sql = ("CREATE TABLE Thing (\n    thing_id            SERIAL PRIMARY KEY\n);\n"
+               "ALTER TABLE Thing ALTER COLUMN thing_id TYPE BIGINT;\n")
+        self.assertEqual(capacity.sequence_columns(sql), [("Thing", "thing_id", "BIGSERIAL")])
+
     def test_a_partitioned_table_is_not_lost(self):
         """The regression that would hide the finding.
 
