@@ -106,6 +106,21 @@ def sunset_readiness(conn, *, phase, attestations=None):
             "the half it skipped is the half that decides whether anyone is harmed"
             % "; ".join(OPERATOR_ATTESTATIONS[k] for k in missing))
 
+    # Each answer has to BE an answer. Found 2026-09-24: `share < 1.0` is False for NaN, so an
+    # attested share of NaN raised no blocker and the verdict could come back may_sunset: true;
+    # and the yes/no questions were read for truthiness, so "no" typed as text counted as yes.
+    import math
+    for key in ("alternate_path_exists", "alternate_path_is_usable",
+                "legacy_still_issued_to_newcomers"):
+        if not isinstance(attestations[key], bool):
+            raise SunsetRefused("%r must be answered true or false, not %r: %s"
+                                % (key, attestations[key], OPERATOR_ATTESTATIONS[key]))
+    share = attestations["relying_parties_accepting"]
+    if share is not None and (isinstance(share, bool) or not isinstance(share, (int, float))
+                              or not math.isfinite(share) or not 0.0 <= share <= 1.0):
+        raise SunsetRefused("relying_parties_accepting must be a share from 0 to 1, or None "
+                            "for unknown; %r is neither" % (share,))
+
     supply = supply_side(conn)
     blockers = []
 
@@ -122,7 +137,6 @@ def sunset_readiness(conn, *, phase, attestations=None):
             "address or an explanation is a path that excludes the people most likely to need "
             "it, and counting it is how an exclusion is recorded as a success")
 
-    share = attestations.get("relying_parties_accepting")
     if share is None or share < 1.0:
         blockers.append(
             "not every relying party that accepts the legacy credential accepts this one "

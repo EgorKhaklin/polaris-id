@@ -14749,6 +14749,70 @@ class CoexistenceSunsetTests(PolarisTestCase):
         self.assertIn("never met", supply["denominator_warning"])
         self.assertLessEqual(supply["enrolled_holding_share"], 1.0)
 
+    def test_an_attestation_that_is_not_an_answer_is_refused(self):
+        """2026-09-24. `share < 1.0` is False for NaN, so an attested share of NaN raised no
+        blocker and the verdict could read may_sunset: true. And the yes/no questions were
+        read for truthiness, so the answer "no" typed as text counted as yes. A verdict that
+        makes a credential compulsory is not computed from something that is not an answer."""
+        cx = self._cx()
+        with self._conn() as conn:
+            for bad in (float("nan"), float("inf"), -0.1, 1.5, "1.0", "all"):
+                with self.subTest(share=bad):
+                    with self.assertRaises(cx.SunsetRefused):
+                        cx.sunset_readiness(conn, phase="PREFERRED",
+                                            attestations=self._ready(relying_parties_accepting=bad))
+            for key in ("alternate_path_exists", "alternate_path_is_usable",
+                        "legacy_still_issued_to_newcomers"):
+                for bad in ("no", "false", 1, None):
+                    with self.subTest(key=key, value=bad):
+                        with self.assertRaises(cx.SunsetRefused):
+                            cx.sunset_readiness(conn, phase="PREFERRED",
+                                                attestations=self._ready(**{key: bad}))
+            # The unstated share is still a blocker rather than a refusal: None means "we do not
+            # know", which is an answer, and the verdict names it.
+            v = cx.sunset_readiness(conn, phase="PREFERRED",
+                                    attestations=self._ready(relying_parties_accepting=None))
+            self.assertFalse(v["may_sunset"])
+            self.assertTrue(any("unstated" in b for b in v["blockers"]))
+
+    def test_any_one_unanswered_question_is_enough_to_refuse(self):
+        """Held out 2026-09-24: every refusal test omitted ALL the attestations, so a check that
+        tolerated one missing answer passed them."""
+        cx = self._cx()
+        with self._conn() as conn:
+            for key in cx.OPERATOR_ATTESTATIONS:
+                with self.subTest(missing=key):
+                    att = self._ready()
+                    del att[key]
+                    with self.assertRaises(cx.SunsetRefused) as ctx:
+                        cx.sunset_readiness(conn, phase="PREFERRED", attestations=att)
+                    self.assertIn(cx.OPERATOR_ATTESTATIONS[key], str(ctx.exception))
+
+    def test_no_published_epoch_blocks_the_sunset(self):
+        """The seeded database has published epochs, so the only test of this blocker was
+        its absence. An online-only credential does not replace one that works offline."""
+        cx = self._cx()
+        with self._conn() as conn:
+            real = cx.supply_side(conn)
+            self.assertGreater(real["published_epochs"], 0, "the control needs an epoch")
+            with patch.object(cx, "supply_side", return_value=dict(real, published_epochs=0)):
+                v = cx.sunset_readiness(conn, phase="PREFERRED", attestations=self._ready())
+        self.assertFalse(v["may_sunset"])
+        self.assertTrue(any("power cut" in b for b in v["blockers"]))
+
+    def test_holding_counts_people_with_an_active_credential_only(self):
+        cx = self._cx()
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT individual_id, status FROM IdentityToken")
+                rows = cur.fetchall()
+            supply = cx.supply_side(conn)
+        active = {r["individual_id"] for r in rows if r["status"] == "ACTIVE"}
+        anyone = {r["individual_id"] for r in rows}
+        self.assertLess(len(active), len(anyone),
+                        "the seed must hold someone whose only credentials are not ACTIVE")
+        self.assertEqual(supply["people_holding"], len(active))
+
     def test_a_clear_verdict_still_says_it_is_not_permission(self):
         cx = self._cx()
         with self._conn() as conn:
