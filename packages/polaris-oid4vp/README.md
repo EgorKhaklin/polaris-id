@@ -257,7 +257,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-289 tests in seven files, and they are not equal in weight. Coverage is
+294 tests in seven files, and they are not equal in weight. Coverage is
 the weakest of the three instruments here: it says a line ran.
 
 **And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`
@@ -282,7 +282,11 @@ under the header it carries; eleven are caught and the twelfth is equivalent. Of
 mutations of the command line, ten survived, because nothing ran `serve` past its
 missing-files check; `ServeCommandHeldOutTests` runs it to the end with the listener
 replaced, and `KeygenHeldOutTests` pins the certificate properties a counterparty checks.
-All twelve are caught.
+All twelve are caught. Of twelve mutations of the listener, seven survived; `HeldOutListenerTests`
+catches five. One of the five was hidden the way the JWE header's were: a prefix match on the
+request path still ended in 404, because the only test of a wrong path sent no state. The
+other two are equivalent: the listener answers as HTTP/1.0 and closes after every response,
+so deleting `close_connection = True` changes nothing a client can see.
 
 `test_sdjwt` (100) and `test_jwe` (32) are this package agreeing with itself: the material is
 built here and checked here. Each carries a positive control, because a verifier that refuses
@@ -309,7 +313,7 @@ wallet could not answer it. Seven of its tests assert each conformance refusal a
 HTTP 400 rather than merely being noticed, because a 400 is the whole of what those modules
 measure.
 
-`test_serve` (30) asserts the decision becomes an HTTP response: status codes, content types,
+`test_serve` (35) asserts the decision becomes an HTTP response: status codes, content types,
 routing, form parsing, TLS. It exists because `serve.py` was at **0% coverage** and nothing in
 CI touched the file that turns a verdict into a status code.
 

@@ -487,6 +487,110 @@ class BodyFramingTests(ServeTestCase):
         self.assertTrue(self._still_serving())
 
 
+class HeldOutListenerTests(ServeTestCase):
+    """A held-out round on 2026-09-24: of twelve mutations of serve.py, six survived every
+    test in the package. Each test below is the one input that separates a mutant from the
+    listener as written.
+
+    Two of the seven are equivalent and have no test: deleting `close_connection = True` from
+    the bad-Content-Length and oversized-body refusals. `BaseHTTPRequestHandler` answers as
+    HTTP/1.0 unless told otherwise, and closes after every response, so no client can tell
+    the difference. Measured: an ordinary 400 on an HTTP/1.1 request is followed by EOF too.
+    The lines stay, because they state the intent and would matter under keep-alive.
+    """
+
+    _raw = BodyFramingTests._raw
+
+    def test_a_body_of_exactly_the_bound_is_accepted(self):
+        """The bound is inclusive. The test above sat 100 bytes under it, where `>=` and `>`
+        agree."""
+        body = b"response=" + b"x" * (MAX_BODY_BYTES - len(b"response="))
+        self.assertEqual(len(body), MAX_BODY_BYTES)
+        line = self._raw("Content-Length: %d\r\n" % len(body), body, read_timeout=10)
+        self.assertIsNotNone(line)
+        self.assertIn("400", line, "a body of exactly the bound was refused on its size")
+
+    def test_a_path_that_starts_like_the_request_uri_is_not_it(self):
+        """With a state that IS outstanding. The unknown-path test above sends none, so a
+        prefix match there still ends in 404, from the missing state rather than the path."""
+        session, _ = self.verifier.new_request()
+        status, _, _ = _get("%s/request.jwt?state=%s" % (self.base, session.state))
+        self.assertEqual(status, 200, "control: the state is outstanding")
+        for path in ("/request.jwtx", "/request.jwt/", "/request.jwt.bak"):
+            with self.subTest(path=path):
+                status, _, _ = _get("%s%s?state=%s" % (self.base, path, session.state))
+                self.assertEqual(status, 404)
+
+    def test_the_operator_log_names_the_refusal(self):
+        """The wallet is told nothing; the log is the only place the reason goes."""
+        import contextlib
+        import io
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar, nonce="wrong")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            status, _, _ = _post(self.base + "/response", {"response": form["response"][0]})
+        self.assertEqual(status, 400)
+        self.assertIn("refused: nonce", err.getvalue())
+
+    def test_the_verdict_callback_hears_about_a_verifier_that_raised(self):
+        """The operator is told every answer, including the one with no verdict behind it."""
+        import contextlib
+        import io
+        seen = []
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="http://127.0.0.1:0/request.jwt",
+                            response_uri="http://127.0.0.1:0/response")
+
+        def boom(form):
+            raise RuntimeError("a bug in the verifier")
+
+        verifier.handle_direct_post = boom
+        httpd = serve(verifier, host="127.0.0.1", port=0,
+                      on_verdict=lambda status, body, verdict: seen.append((status, verdict)))
+        base = "http://127.0.0.1:%d" % httpd.server_address[1]
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                _post(base + "/response", {"response": "anything"})
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        self.assertEqual(seen, [(400, None)])
+
+    def test_a_client_that_goes_quiet_is_hung_up_on(self):
+        """The read timeout is what frees a thread a silent client holds. Checked in two
+        halves, because waiting out the real twenty seconds in every run is not worth it:
+        the value is finite and modest, and a handler with a short one really does close."""
+        from polaris_oid4vp.serve import _Handler
+        self.assertIsNotNone(_Handler.timeout)
+        self.assertLessEqual(_Handler.timeout, 60)
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="http://127.0.0.1:0/request.jwt",
+                            response_uri="http://127.0.0.1:0/response")
+        httpd = serve(verifier, host="127.0.0.1", port=0)
+        httpd.RequestHandlerClass.timeout = 1
+        import socket
+        import time
+        try:
+            s = socket.create_connection(httpd.server_address[:2], timeout=6)
+            s.settimeout(6)
+            s.sendall(b"POST /response HTTP/1.1\r\nHost: x\r\nContent-Length: 50\r\n\r\nresp")
+            start = time.monotonic()
+            try:
+                while s.recv(4096):
+                    pass
+            except (OSError, socket.timeout):
+                pass
+            elapsed = time.monotonic() - start
+            s.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        self.assertLess(elapsed, 5, "a silent client held its connection past the timeout")
+
+
 class ContentLengthParsingTests(unittest.TestCase):
     """`_content_length` on its own.
 
