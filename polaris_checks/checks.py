@@ -22455,7 +22455,14 @@ def check_append_only_guards_are_classified(root: pathlib.Path) -> list[Finding]
 # function, rp_api._effective_status. This keeps the next route from writing its own answer.
 _LIVENESS_FILES = ("polaris_web/rp_api.py", "polaris_web/operator_routes.py",
                    "polaris_web/verification_routes.py", "polaris_web/app.py",
-                   "polaris_card/personalization.py")
+                   "polaris_card/personalization.py", "polaris_web/transparency_routes.py")
+# 1.0.0-rc.35: the same decision written in SQL. The ZK epoch snapshot selected
+# `status = 'ACTIVE'` alone and committed expired credentials for the epoch's whole life.
+_SQL_STATUS_IS_ACTIVE = re.compile(r"(?i)\b(?:where|and|or)\s+(?:\w+\.)?status\s*=\s*'ACTIVE'")
+# Functions whose SQL counts or lists credentials for DISPLAY, deciding nothing about one.
+_LIVENESS_DISPLAY_ONLY = {
+    "duress_dashboard": "counts active credentials for the duress dashboard",
+}
 _STATUS_IS_ACTIVE = re.compile(r"""(\[['"]status['"]\]|\bstatus)\s*[!=]=\s*['"]ACTIVE['"]""")
 _STATUS_EMITTED = re.compile(r"""['"]\w*[sS]tatus['"]\s*:\s*row\[['"]status['"]\]""")
 _ASKS_EXPIRY = re.compile(r"_not_expired|\bnot_expired\b|_effective_status|expiration_date")
@@ -22489,11 +22496,15 @@ def check_liveness_asks_about_expiry(root: pathlib.Path) -> list[Finding]:
             if _STATUS_EMITTED.search(line):
                 offenders.append(f"{rel}:{i + 1} signs the stored status: {line.strip()[:70]}")
                 continue
-            if not _STATUS_IS_ACTIVE.search(line):
+            is_sql = bool(_SQL_STATUS_IS_ACTIVE.search(line))
+            if not _STATUS_IS_ACTIVE.search(line) and not is_sql:
                 continue
             start = i
             while start > 0 and not re.match(r"\s*def ", lines[start]):
                 start -= 1
+            fn = re.match(r"\s*def (\w+)", lines[start])
+            if is_sql and fn and fn.group(1) in _LIVENESS_DISPLAY_ONLY:
+                continue
             end = i + 1
             while end < len(lines) and not re.match(r"(def |@app\.route|class )", lines[end]):
                 end += 1

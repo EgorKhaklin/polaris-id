@@ -4422,6 +4422,26 @@ class ZKSnarkTests(PolarisTestCase):
         self.assertLess(abs((flask_app._db_now() - now).total_seconds()), 5,
                         '_db_now is the database clock')
 
+    def test_an_epoch_commits_only_credentials_live_through_its_end(self):
+        """1.0.0-rc.35. Closing an epoch snapshotted status = ACTIVE alone, so an expired
+        credential was committed and could prove membership for the epoch's whole life; one
+        expiring mid-epoch could prove it after it ended."""
+        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 3",
+             fetch='none')
+        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE + 1 WHERE token_id = 4",
+             fetch='none')
+        valid_until = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+        csrf = self._csrf_token_from('/verifications/new')
+        r = self.client.post('/api/zk/epoch/close', json={'context_id': 1, 'valid_until': valid_until},
+                             headers={'X-CSRFToken': csrf})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        committed = {row['token_id'] for row in _sql(
+            "SELECT token_id FROM TokenStateEpochLeaf WHERE epoch_id = %s",
+            (r.get_json()['epoch_id'],))}
+        self.assertIn(2, committed, 'control: a credential live through the epoch is committed')
+        self.assertNotIn(3, committed, 'an expired credential was committed to the epoch')
+        self.assertNotIn(4, committed, 'a credential that ends mid-epoch was committed for all of it')
+
     def test_expiry_is_judged_on_the_utc_date_whatever_the_server_zone(self):
         """1.0.0-rc.27. _not_expired read the server's local date; the signed status assertion
         and the standalone verifiers read UTC. Run under UTC+14 and UTC-12: at any moment one

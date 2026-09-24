@@ -5,7 +5,7 @@ national-identity data. **Job:** the bound on every claim in this repository.
 Status first, then the decisions only a deploying organization can make, then
 the engineering record with the check that pins each closed item.
 
-**Status (v1.0.0-rc.34): not production-ready for real identity data.** Every
+**Status (v1.0.0-rc.35): not production-ready for real identity data.** Every
 engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,

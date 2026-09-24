@@ -19306,6 +19306,11 @@ def test_liveness_asks_about_expiry_check_discriminates(tmp_path):
     write(GOOD.replace("def _effective_status(row):", "def _status_of(row):"))
     assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "FAIL", \
         "must FAIL when _effective_status is gone"
+    # rc.35's epoch snapshot: the decision in SQL, status alone.
+    write(GOOD + "\ndef api_zk_epoch_close():\n    rows = query(\"SELECT t.token_id FROM IdentityToken t "
+                 "WHERE t.status = 'ACTIVE' AND p.context_id = %s\")\n")
+    assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a status-only liveness decision written in SQL"
     # A comment explaining the old defect must not trip it.
     write(GOOD + "\n# before rc.24: if row['status'] != 'ACTIVE' was the whole test\n")
     assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "OK", \

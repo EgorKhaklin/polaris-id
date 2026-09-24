@@ -11,6 +11,34 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.35 — 2026-09-24 (an expired credential could prove membership for a whole epoch)
+
+CORE-BUG against rc.34 (EXT-SECURITY). Externally observable: closing a ZK epoch commits only
+credentials that are live through the epoch's `valid_until`. No schema change. Nothing is
+published.
+
+`/api/zk/epoch/close` snapshots the credentials a zero-knowledge membership proof can be made
+against, for the epoch's whole life. It selected `status = 'ACTIVE'` alone, and nothing moves
+`ACTIVE` to `EXPIRED` when the date passes. The two consequences:
+- **an expired credential was committed**, and its holder could prove membership until the
+  epoch ended;
+- **a credential that expires mid-epoch was committed for all of it**, so it could be used to
+  prove membership after it had ended.
+
+Measured: context 1's epoch committed `{2, 3, 4}`, where token 3 had expired yesterday and token
+4 expires tomorrow, in an epoch valid for thirty days.
+
+The snapshot now requires `expiration_date >= valid_until`. It fails closed: a membership proof
+says "valid" until the epoch ends, so a credential's last days are left out rather than vouched
+for after it ends.
+
+The rc.21 sweep dismissed this query as "valid right now". A snapshot that outlives the request
+is a liveness decision. `check_liveness_asks_about_expiry` now reads SQL as well, with a declared
+exemption for the one dashboard count. Run against the rc.34 route, it fails.
+
+Counterexample, failing on rc.34:
+`ZKSnarkTests.test_an_epoch_commits_only_credentials_live_through_its_end`.
+
 ## v1.0.0-rc.34 — 2026-09-24 (a rate that only moved when something happened)
 
 CORE-BUG against rc.33. Externally observable: `/api/metrics` and the alerts built on it report

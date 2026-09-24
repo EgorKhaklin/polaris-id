@@ -188,16 +188,22 @@ def api_zk_epoch_close():
     if signed_by is None:
         return jsonify(error="session missing user_id"), 401
 
-    # Snapshot the active tokens that have permission for the given context.
+    # Snapshot the tokens that are live FOR THE WHOLE EPOCH and have permission for the given
+    # context. 1.0.0-rc.35: the snapshot read status alone, and nothing moves ACTIVE to EXPIRED
+    # when the date passes, so an expired credential was committed and its holder proved
+    # membership for the epoch's whole life. A credential that expires before the epoch does
+    # is left out too: a membership proof says "valid" until valid_until, and failing closed
+    # for the last days of a credential beats vouching for it after it has ended.
     rows = query("""
         SELECT t.token_id, t.token_value
           FROM IdentityToken t
           JOIN TokenPermission p ON p.token_id = t.token_id
          WHERE t.status = 'ACTIVE'
+           AND (t.expiration_date IS NULL OR t.expiration_date >= (%s)::timestamp::date)
            AND p.context_id = %s
            AND NOT EXISTS (SELECT 1 FROM RevocationList r WHERE r.token_id = t.token_id)
          ORDER BY t.token_id
-    """, (context_id,))
+    """, (valid_until, context_id))
     if not rows:
         return jsonify(error="no eligible tokens for the given context"), 404
 
