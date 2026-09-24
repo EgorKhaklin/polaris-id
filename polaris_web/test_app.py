@@ -14944,6 +14944,58 @@ class PilotWindDownTests(PolarisTestCase):
                 pilot.wind_down(conn, 1, cosigner_agency_id=row["issuing_agency_id"])
             self.assertIn("cannot co-sign its own", str(ctx.exception))
 
+    # -- 1.0.0-rc.20 ----------------------------------------------------------------------
+    # The wind-down read only ACTIVE credentials. A RESERVE credential is a pre-issued spare
+    # that can still be activated, so a finished wind-down left spares alive for people it had
+    # just erased, and the co-signer check never saw the authorities that issued them.
+
+    def _grant_both(self, cur, agency_id):
+        cur.execute("SELECT DISTINCT algorithm_id FROM IdentityToken")
+        for r in cur.fetchall():
+            cur.execute("INSERT INTO AgencyAlgorithmAuth (agency_id, algorithm_id, "
+                        "authorization_type) VALUES (%s, %s, 'BOTH') ON CONFLICT "
+                        "(agency_id, algorithm_id) DO UPDATE SET authorization_type = 'BOTH'",
+                        (agency_id, r["algorithm_id"]))
+
+    def test_a_wind_down_leaves_no_credential_that_can_come_back(self):
+        pilot = self._pilot()
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM IdentityToken WHERE status = 'RESERVE'")
+                if cur.fetchone()["n"] == 0:
+                    self.fail("the fixture must hold a RESERVE credential for this to mean anything")
+                cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active "
+                            "ORDER BY user_id LIMIT 1")
+                admin = cur.fetchone()["user_id"]
+                cur.execute("SELECT agency_id FROM Agency WHERE agency_id NOT IN "
+                            "(SELECT issuing_agency_id FROM IdentityToken) ORDER BY agency_id LIMIT 1")
+                cosigner = cur.fetchone()["agency_id"]
+                self._grant_both(cur, cosigner)
+            conn.commit()
+            pilot.wind_down(conn, admin, cosigner_agency_id=cosigner)
+            with conn.cursor() as cur:
+                cur.execute("SELECT t.token_id, t.status, i.legal_name FROM IdentityToken t "
+                            "JOIN Individual i USING (individual_id) "
+                            "WHERE t.status IN ('ACTIVE', 'RESERVE')")
+                left = cur.fetchall()
+        self.assertEqual(left, [], "a credential that can still be live outlived the wind-down")
+
+    def test_an_authority_that_issued_only_spares_cannot_cosign(self):
+        pilot = self._pilot()
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT issuing_agency_id FROM IdentityToken WHERE status = 'RESERVE' "
+                            "AND issuing_agency_id NOT IN (SELECT issuing_agency_id FROM "
+                            "IdentityToken WHERE status = 'ACTIVE') LIMIT 1")
+                row = cur.fetchone()
+                if row is None:
+                    self.fail("the fixture must have an authority that issued only a RESERVE")
+                self._grant_both(cur, row["issuing_agency_id"])
+            conn.commit()
+            with self.assertRaises(pilot.WindDownRefused) as ctx:
+                pilot.wind_down(conn, 1, cosigner_agency_id=row["issuing_agency_id"])
+        self.assertIn("cannot co-sign its own", str(ctx.exception))
+
     def test_a_dry_run_changes_nothing(self):
         pilot = self._pilot()
         with self._conn() as conn:

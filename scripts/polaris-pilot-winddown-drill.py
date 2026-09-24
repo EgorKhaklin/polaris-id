@@ -233,9 +233,13 @@ def main():
         _row("every credential the pilot issued is revoked",
              result["credentials_revoked"] > 0, True)
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) AS n FROM IdentityToken WHERE status = 'ACTIVE' "
-                        "AND issuing_agency_id = %s", (pilot_agency,))
-            _row("...and none of the pilot's is left ACTIVE", cur.fetchone()["n"], 0)
+            # ACTIVE or RESERVE: a spare that can still be activated is a credential that can
+            # come back for a person the wind-down erased. Until 1.0.0-rc.20 this counted
+            # ACTIVE alone, the same blind spot as the wind-down itself.
+            cur.execute("SELECT count(*) AS n FROM IdentityToken "
+                        "WHERE status IN ('ACTIVE', 'RESERVE') AND issuing_agency_id = %s",
+                        (pilot_agency,))
+            _row("...and none of the pilot's is left ACTIVE or RESERVE", cur.fetchone()["n"], 0)
         _row("every participant is pseudonymized",
              result["participants_pseudonymized"], len(people))
 

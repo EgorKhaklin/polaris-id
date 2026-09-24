@@ -11,6 +11,38 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.20 — 2026-09-24 (a pilot's wind-down left its spare credentials alive)
+
+CORE-BUG against rc.19. Externally observable: a pilot wind-down now revokes the pilot's
+`RESERVE` credentials, and refuses as co-signer an authority that issued only spares into the
+pilot. No schema change. Nothing is published.
+
+`pilot.wind_down` revokes every credential the pilot issued, then pseudonymizes every
+participant. The consent language promises "the withdrawal of every credential". The function
+selected credentials with `status = 'ACTIVE'`. A `RESERVE` credential is pre-issued so a holder
+can be moved onto it, and `RESERVE -> ACTIVE` is a legal transition, so a spare is a credential
+that can still become live.
+
+Measured on a copy of the test database: after a full wind-down, the sample `RESERVE` token was
+still `RESERVE`, and its holder was `PSEUDONYMIZED-1`. The same selection fed the co-signer
+check. Agency 2, which had issued that spare and nothing `ACTIVE`, was accepted as co-signer of
+a wind-down of its own credentials.
+
+Fixed by one list of live statuses, `pilot.LIVE_STATUSES = ("ACTIVE", "RESERVE")`, which is now
+used for four things:
+- what is revoked;
+- who counts as an issuer for the co-signer check;
+- who is kept because another authority still serves them;
+- the dry run's report.
+
+`DORMANT` has no outgoing transition and stays outside it. The wind-down drill's final check
+counted `ACTIVE` alone, the same blind spot; it now counts `ACTIVE` and `RESERVE`.
+
+Counterexamples, failing on a worktree of rc.19:
+`PilotWindDownTests.test_a_wind_down_leaves_no_credential_that_can_come_back` and
+`test_an_authority_that_issued_only_spares_cannot_cosign`. On rc.19 the second did not merely
+miss a refusal: the issuing authority co-signed, and the wind-down ran.
+
 ## v1.0.0-rc.19 — 2026-09-24 (revocation's only door was a setting the caller could set)
 
 CORE-BUG against rc.18. Externally observable: the application role can no longer move a token

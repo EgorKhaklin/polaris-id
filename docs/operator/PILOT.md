@@ -83,6 +83,13 @@ nobody can name, so the wind-down keeps them and reports how many it kept, in
 `participants_kept_for_another_authority` (the dry run reports it too). Their pilot credential
 is still revoked. Until 1.0.0-rc.12 a scoped wind-down erased them.
 
+**A spare is a credential.** A `RESERVE` credential is pre-issued so a holder can be moved onto
+it if their active one is lost, which means it can still become live. The wind-down revokes the
+pilot's `RESERVE` credentials with its `ACTIVE` ones, and an authority that issued only spares
+into the pilot is still an issuer and so cannot co-sign. A `RESERVE` credential from another
+authority keeps its holder the way an `ACTIVE` one does. Until 1.0.0-rc.20 the wind-down read
+`ACTIVE` alone: it left every spare alive for the person it had just erased.
+
 **It is idempotent.** A wind-down that could not be re-run is one nobody dares run the first
 time.
 

@@ -38,6 +38,11 @@ from __future__ import annotations
 
 PSEUDONYM_PREFIX = "PSEUDONYMIZED-"
 WINDDOWN_REASON = "ADMINISTRATIVE"      # the RevocationList code for a pilot ending
+# A credential that is live or can still become live. RESERVE is a pre-issued spare that can
+# be activated; leaving one behind after the wind-down leaves a credential that can come back
+# to life for a person whose name has been erased. Until 1.0.0-rc.20 the wind-down read only
+# ACTIVE, so it left every spare, and the co-signer check never saw who had issued them.
+LIVE_STATUSES = ("ACTIVE", "RESERVE")
 
 
 class WindDownRefused(Exception):
@@ -129,11 +134,13 @@ def wind_down(conn, actor_user_id, *, agency_id=None, cosigner_agency_id=None,
     with conn.cursor() as cur:
         if agency_id is None:
             cur.execute("SELECT t.token_id, t.issuing_agency_id, t.algorithm_id "
-                        "FROM IdentityToken t WHERE t.status = 'ACTIVE' ORDER BY t.token_id")
+                        "FROM IdentityToken t WHERE t.status = ANY(%s) ORDER BY t.token_id",
+                        (list(LIVE_STATUSES),))
         else:
             cur.execute("SELECT t.token_id, t.issuing_agency_id, t.algorithm_id "
-                        "FROM IdentityToken t WHERE t.status = 'ACTIVE' "
-                        "AND t.issuing_agency_id = %s ORDER BY t.token_id", (agency_id,))
+                        "FROM IdentityToken t WHERE t.status = ANY(%s) "
+                        "AND t.issuing_agency_id = %s ORDER BY t.token_id",
+                        (list(LIVE_STATUSES), agency_id))
         live = _rows(cur)
 
     plan = {"participants": len(people), "credentials_to_revoke": len(live),
@@ -142,7 +149,8 @@ def wind_down(conn, actor_user_id, *, agency_id=None, cosigner_agency_id=None,
     if dry_run:
         live_ids = {t["token_id"] for t in live}
         with conn.cursor() as cur:
-            cur.execute("SELECT token_id, individual_id FROM IdentityToken WHERE status = 'ACTIVE'")
+            cur.execute("SELECT token_id, individual_id FROM IdentityToken WHERE status = ANY(%s)",
+                        (list(LIVE_STATUSES),))
             served = {r["individual_id"] for r in _rows(cur) if r["token_id"] not in live_ids}
         plan["participants_kept_for_another_authority"] = sum(
             1 for p in people if p["individual_id"] in served
@@ -203,7 +211,8 @@ def wind_down(conn, actor_user_id, *, agency_id=None, cosigner_agency_id=None,
     # same transaction, so only credentials outside the pilot can keep somebody. Found
     # 2026-09-24: a scoped wind-down erased a person another authority still served.
     with conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT individual_id FROM IdentityToken WHERE status = 'ACTIVE'")
+        cur.execute("SELECT DISTINCT individual_id FROM IdentityToken WHERE status = ANY(%s)",
+                    (list(LIVE_STATUSES),))
         still_served = {r["individual_id"] for r in _rows(cur)}
     kept = 0
     erased = 0
