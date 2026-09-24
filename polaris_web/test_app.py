@@ -1821,6 +1821,84 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertHTML(r, 'UC-8', 'Bounded Revocation')
 
+    # -- held-out, 2026-09-24 -------------------------------------------------
+    # Twelve semantic mutations of uc8_revoke_token (the procedure drill inverts refusals;
+    # these move a boundary instead). Seven survived: the bound made inclusive, the window
+    # ignored or doubled, a co-signer's authorization read on ANY algorithm, the CRL naming
+    # the issuer instead of the actor, and a default bound of 50%. Two are equivalent. An empty
+    # agency tripping nothing cannot happen, since a revocation names a token and so its agency
+    # has one. And the literal fallback for the default bound is never read on an installed
+    # database: 09_grants.sql sets polaris.default_max_revoke_percent = 5.00 with ALTER
+    # DATABASE, which is what the default test below exercises.
+
+    def _grow(self, agency_id, to, label):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM IdentityToken WHERE issuing_agency_id=%s",
+                        (agency_id,))
+            have = cur.fetchone()['n']
+        return [self._seed_active_token(agency_id, 1, '%s-%d' % (label, i))
+                for i in range(to - have)]
+
+    def _no_override(self, agency_id):
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE IssuerDiscretionPolicy SET superseded_at = now() "
+                        " WHERE agency_id=%s AND superseded_at IS NULL", (agency_id,))
+            conn.commit()
+
+    def test_reaching_the_bound_exactly_needs_no_cosigner(self):
+        """The bound is a ceiling one may reach: 1 of 20 at 5.00% stands alone, 2 of 20 does
+        not."""
+        toks = self._grow(2, 20, 'edge')
+        self._set_policy(2, 5.00)
+        self._call_uc8(toks[0], actor=2, reason='ADMINISTRATIVE')
+        with self.assertRaises(psycopg2.Error) as ctx:
+            self._call_uc8(toks[1], actor=2, reason='ADMINISTRATIVE')
+        self.assertIn('co-signer required', str(ctx.exception))
+
+    def test_the_default_bound_is_five_percent(self):
+        """No override: 1 of 10 is 10%, over the 5% default. Every test of the default used an
+        agency so small that any single revocation tripped any bound."""
+        toks = self._grow(2, 10, 'dflt')
+        self._no_override(2)
+        with self.assertRaises(psycopg2.Error) as ctx:
+            self._call_uc8(toks[0], actor=2, reason='ADMINISTRATIVE')
+        self.assertIn('co-signer required', str(ctx.exception))
+
+    def test_a_revocation_outside_the_window_does_not_count(self):
+        toks = self._grow(2, 20, 'win')
+        self._set_policy(2, 5.00, window_days=30)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO TokenLifecycleEvent (token_id, actor_agency_id, event_type, "
+                        "event_timestamp, reason_code) VALUES (%s, 2, 'REVOKED', "
+                        "CURRENT_TIMESTAMP - INTERVAL '40 days', 'TEST_OLD')", (toks[5],))
+            conn.commit()
+        # One old revocation 40 days back is outside a 30-day window (and a 60-day one would
+        # hold it): this one is the first in the window, 1 of 20, and stands alone.
+        self._call_uc8(toks[0], actor=2, reason='ADMINISTRATIVE')
+
+    def test_a_cosigner_needs_both_authorization_on_the_tokens_own_algorithm(self):
+        """Agency 3 holds BOTH on algorithm 1 and only ISSUE on algorithm 2. For a token on
+        algorithm 2 it is not an eligible co-signer, whatever it may do on algorithm 1."""
+        tid = self._seed_active_token(1, 2, 'alg2')
+        self._no_override(1)
+        with self.assertRaises(psycopg2.Error) as ctx:
+            self._call_uc8(tid, actor=1, reason='COMPROMISED', cosigner=3)
+        self.assertIn('lacks BOTH', str(ctx.exception))
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO AgencyAlgorithmAuth (agency_id, algorithm_id, "
+                        "authorization_type) VALUES (2, 2, 'BOTH') ON CONFLICT (agency_id, "
+                        "algorithm_id) DO UPDATE SET authorization_type = 'BOTH'")
+            conn.commit()
+        self._call_uc8(tid, actor=1, reason='COMPROMISED', cosigner=2)   # control
+
+    def test_the_revocation_list_names_the_authority_that_revoked(self):
+        tid = self._seed_active_token(1, 1, 'actor')
+        self._set_policy(1, 90.00)
+        self._call_uc8(tid, actor=2, reason='ADMINISTRATIVE')
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT revoked_by_agency_id FROM RevocationList WHERE token_id=%s", (tid,))
+            self.assertEqual(cur.fetchone()['revoked_by_agency_id'], 2)
+
     def test_revoke_under_bound_succeeds(self):
         """With a permissive per-agency override, a single revocation
         succeeds without a co-signer. Verifies both:
