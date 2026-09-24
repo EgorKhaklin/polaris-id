@@ -193,3 +193,11 @@ in the same commit.
     the credential passed. Each now requires the defining statement and was shown red on the
     real tree; Table 16 gains the row.
 
+  - 2026-09-24, the certification. `polaris-oid4vp 1.0.0rc7` is OpenID Certified to the
+    OpenID4VP 1.0 + HAIP 1.0 Verifier profile: the Foundation approved request OCS-3049 and
+    lists it. Section 6 now says so, and the Section 19 and Appendix A rows that said "not
+    certified" are restated. The outside-witnesses figure gains the date, the V2 comparison
+    (Appendix F) records the later run, and the math edition's abstract names it as the one
+    certification. Each says what it covers: one package version in one role, a
+    self-certification the Foundation published, not an endorsement and not an audit. Both
+    editions and the math edition were rebuilt.

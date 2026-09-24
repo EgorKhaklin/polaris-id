@@ -10,9 +10,10 @@ engineering gap this ledger enumerated is closed and pinned by a check (the
 table at the end). The protocol layer (P8, v9.320 to v9.331: the registry, the
 trust list, the exchange gateway and its receipts, the timestamp authority,
 document signing, the auth broker, wallet presentations, algorithm agility and
-versioning) is complete, conformant in both SDKs under the repository's own suite (no
-certification has taken place; REVIEW at the hosted conformance service is not PASSED)
-and frozen at version 1; it changes nothing about this status. One retention fact to know (v9.341): the
+versioning) is complete, conformant in both SDKs under the repository's own suite
+(the one certification is of the OpenID4VP verifier, not of this layer: `polaris-oid4vp
+1.0.0rc7` is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, 2026-09-24,
+which says nothing about readiness for real identity data) and frozen at version 1; it changes nothing about this status. One retention fact to know (v9.341): the
 timestamp authority keeps no per-request record, except one digest and one
 instant per anchored timestamp, and only when the caller asked for the anchor.
 Two holder-side facts to know (v9.349 to v9.352): a credential may carry a

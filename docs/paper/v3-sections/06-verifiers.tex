@@ -103,9 +103,10 @@ and the pinned older verifier must never accept what today's suite rejects. \sIm
 the two controls without which the first would mean nothing. A wallet nobody here wrote presented a
 credential and was accepted; the same wallet, with the verifier trusting a different issuer key, was
 refused; and a re-presentation against an answered request was refused. The Foundation's hosted
-suite scored seven refusals itself and left four acceptances for a human reviewer. A published
-corpus agrees with both signature witnesses on the primitive. None of the three is an audit, a
-certification or a pilot.}{fig:outside-witnesses}
+suite scored seven refusals itself and left four acceptances for a human reviewer; a later run of
+the same plan against \code{1.0.0rc7} was certified (24 September 2026). A published corpus agrees
+with both signature witnesses on the primitive. None of the three is an audit or a pilot, and the
+one certification covers one package version in one role.}{fig:outside-witnesses}
 
 Everything above is Polaris verifying Polaris, and Version 2's honest boundary was that no external
 implementation had interoperated. That sentence is different now, on one path, and the path was
@@ -131,15 +132,20 @@ broken in one specific way, carry the service's own \code{result: PASSED}, score
 the verifier's refusal, which makes them the closest thing to an external adversary this project has
 been offered. The four positive modules finished in \code{REVIEW}, the state the suite reserves for a
 human to attest that the verifier displayed a successful verification; the screenshots are attached
-and a Foundation reviewer sees them only at certification submission, which has not been requested.
-REVIEW is not PASSED, and Polaris is not certified. The first write-up of the run said eleven of
+and a Foundation reviewer sees them only at certification submission. REVIEW is not PASSED. The
+certification came later and separately: on 24 September 2026 the same plan was run once more,
+against the \code{1.0.0rc7} artifact on PyPI and in one plan as a certification package requires,
+all eleven modules finished without failure, and the Foundation approved the request and lists
+\code{polaris-oid4vp 1.0.0rc7} as OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.
+That is a self-certification the Foundation reviewed and published, for that version in that role:
+not an endorsement, not an audit, and not a statement about the rest of Polaris. The first write-up of the run said eleven of
 eleven clean, and it was false in a flattering direction: one fixed alias had been used for every
 module, the suite interrupts a test when another starts under the same alias, and the four positives
 had been killed by their successors, which the suite had already recorded inside the very log
 downloaded to corroborate the claim. It was re-run one module at a time. The run carries two negative
 controls, one per direction: a verifier patched to refuse everything is noticed by the positive
-modules, one patched to accept everything by all seven negatives. \sWit{} for the profile; \sExt{}
-for certification.
+modules, one patched to accept everything by all seven negatives. \sWit{} for the profile, and
+certified for that one package, version and role.
 
 And on the same day an unmodified walt.id Wallet API v2, the published image at a pinned digest,
 presented an SD-JWT VC to the verifier over OpenID4VP and was accepted: it fetched the signed request

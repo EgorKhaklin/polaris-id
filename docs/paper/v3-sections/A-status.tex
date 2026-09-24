@@ -40,7 +40,7 @@ Algorithm agility, population migration & \sImpl\newline\sExt & A verifier canno
 Detached verifier, packaged, fuzzed and attacked & \sImpl & Refuses to start without a declared crypto mode; needs the prover binary for the zero-knowledge path only & \code{check\_detached\_verifier}, \code{check\_verifier\_fuzz}, \code{check\_attacks\_run}, the product-boundary drill \\
 Python and TypeScript SDKs, conformance suite (118 cases) & \sImpl\newline\sExt & No external implementation of the native protocol; 44 verdict fields unconstrained by any case & \code{check\_conformance\_suite}, \code{check\_typescript\_sdk}, \code{check\_conformance\_asks\_the\_relying\_party\_question} \\
 Frozen version 1, cross-version suite & \sImpl & & \code{check\_protocol\_versioning} \\
-OpenID4VP 1.0 + HAIP verifier & \sImpl\newline\sWit & One wallet, one format, one path, ES256 throughout; four hosted modules in REVIEW, not certified & \code{check\_oid4vp\_verifier\_boundary}, the OpenID4VP mutation drill, the scoreboard \\
+OpenID4VP 1.0 + HAIP verifier & \sImpl\newline\sWit & One wallet, one format, one path, ES256 throughout; \code{1.0.0rc7} OpenID Certified to the HAIP verifier profile (24 September 2026), that version and role only & \code{check\_oid4vp\_verifier\_boundary}, the OpenID4VP mutation drill, the scoreboard \\
 Format bridges: ISO 18013-5 rendering, Verifiable Credential of a verdict & \sImpl & Formats, not trust models; no standard mDL reader can verify the ML-DSA issuer signature & the mdoc and VC drills \\
 Relying-party verify API & \sImpl & Client-credentials only; mutual TLS deferred & \code{check\_relying\_party\_api} \\
 Signed status assertion, offline authorization & \sImpl & The revoked-but-valid window is the cost; its maximum rests partly on relying-party configuration & \code{check\_offline\_verification}, the status-freshness model \\
@@ -79,6 +79,6 @@ Metis (learning the system) & \sFut & Assessment required before code, and an ou
 Myrmex (stigmergic debugging) & \sFut & Proposed in this paper & \\
 Blinded or one-time presentations; a native anonymous predicate & \sFut & The residue: a plain or interoperable credential shows a verifier stable material & \\
 Hardware token, enrolment kit & \sFut & Roadmap rows, held & \\
-A non-author operator, a pilot, certification, external audit, independent witnesses & \sExt & External actors & the scoreboard \\
+A non-author operator, a pilot, certification of anything beyond the OpenID4VP verifier, external audit, independent witnesses & \sExt & External actors & the scoreboard \\
 \end{xltabular}
 }

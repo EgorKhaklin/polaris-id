@@ -144,7 +144,7 @@ def outside_witnesses():
      (210, "a service somebody else runs", "OpenID Foundation hosted conformance suite",
       ["across the open internet, 15 September 2026", "exercised: \\code{polaris-oid4vp}, eleven modules",
        "\\textbf{seven negative modules \\code{PASSED}}, scored by the service",
-       "{\\color{gold}four positive modules \\code{REVIEW}}", "certification not requested"],
+       "{\\color{gold}four positive modules \\code{REVIEW}}", "\\textbf{certified 24 September 2026}, \\code{1.0.0rc7}"],
       "zero failures, zero warnings; two controls, one per direction"),
      (330, "a corpus somebody else wrote", "Project Wycheproof",
       ["ML-DSA-65 verification vectors, pinned commit", "exercised: both signature witnesses",
@@ -168,7 +168,7 @@ def outside_witnesses():
                  % (a, a, R, kick, title, body, note))
     o.append("\\draw[draw=navydark, line width=1.2pt, fill=accent, line join=miter] %s;" % star_pts(0, 0, 1.45, 1.1, 11.25))
     o.append("\\node[font=\\bfseries\\footnotesize, text=white] at (0,0) {Polaris};")
-    o.append("\\node[faint, text width=13cm, align=center, anchor=north] at (0,-7.0) {none of the three is an audit, a certification, a pilot or an operator; the scoreboard holds each row with its date and with what it does not establish};")
+    o.append("\\node[faint, text width=13cm, align=center, anchor=north] at (0,-7.0) {none of the three is an audit, a pilot or an operator; the second led to one conformance certification of one package version, which is not an endorsement; the scoreboard holds each row with its date and with what it does not establish};")
     o.append("\\end{tikzpicture}")
     write("outside-witnesses.tex", o)
 

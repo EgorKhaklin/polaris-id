@@ -178,8 +178,9 @@ convenient to build.
 
 ### External conformance profile — HOSTED
 
-**HOSTED TESTING COMPLETE; HUMAN REVIEW PENDING.** Not certified, not published, not
-self-certification-submitted. Those are four different things and this is the first.
+**HOSTED TESTING COMPLETE; HUMAN REVIEW PENDING (the 0.1.0 run, 2026-09-15).** Not certified,
+not published, not self-certification-submitted. Those are four different things and this was
+the first. The certification came later, against 1.0.0rc7: see the certification run below.
 
     Service:                   OpenID Foundation HOSTED conformance suite,
                                https://www.certification.openid.net

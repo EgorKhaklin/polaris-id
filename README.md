@@ -44,15 +44,20 @@ The backbone is a 45-table PostgreSQL schema whose constraints are the security 
 
 ## Status
 
-**1.0.0-rc.3, a release candidate.** The tree and all four published packages are the same version as of 2026-09-18.
+<a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="docs/assets/openid-certified-mark.png" alt="OpenID Certified" width="150"></a>
+
+**`polaris-oid4vp 1.0.0rc7` is OpenID Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`). All eleven modules of the OpenID Foundation's hosted `oid4vp-1final-verifier-haip-test-plan` finished without failure against the artifact on PyPI, and the Foundation approved the request and [lists the certification](https://openid.net/certification/certified-oid4vp-haip-final/) with its published results (24 September 2026). It is a self-certification the Foundation reviewed and published, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris.
+
+**The tree is a release candidate**, and each standalone package carries its own version:
 
 | | version | where |
 |---|---|---|
-| this tree | 1.0.0-rc.3 | the source you are reading |
-| `polaris-verify`, `polaris-sdk-python`, `polaris-oid4vp` | 1.0.0rc3 | PyPI |
+| this tree | 1.0.0-rc.16 | the source you are reading |
+| `polaris-oid4vp` | 1.0.0rc7 | PyPI; the certified version |
+| `polaris-verify`, `polaris-sdk-python` | 1.0.0rc3 | PyPI |
 | `polaris-sdk-ts` | 1.0.0-rc.3 | npm, under `next`; `latest` stays 0.1.0, so a plain install resolves the stable release |
 
-Each candidate exists because a defect was found in the one before it, which is the only thing that moves the number. rc.2 collected twenty-two, measured inside the downloaded wheels rather than inferred, under [**What a stranger installing rc.1 has**](CHANGELOG.md#v100-rc2--2026-09-17-a-defect-found-in-the-candidate). rc.3 resolved two published-contract ambiguities found by an outside design-intent review: a genuine signature no longer implies a trusted issuer at the detached verifier's exit code, and `issuer_authentic` became two fields because one boolean was reporting every credential issued before a key rotation as inauthentic.
+Each candidate exists because a defect was found in the one before it, which is the only thing that moves the number. rc.2 collected twenty-two, measured inside the downloaded wheels rather than inferred, under [**What a stranger installing rc.1 has**](CHANGELOG.md#v100-rc2--2026-09-17-a-defect-found-in-the-candidate). rc.3 resolved two published-contract ambiguities found by an outside design-intent review: a genuine signature no longer implies a trusted issuer at the detached verifier's exit code, and `issuer_authentic` became two fields because one boolean was reporting every credential issued before a key rotation as inauthentic. The candidates since each record, in [the CHANGELOG](CHANGELOG.md), a defect found in the one before it and the test that failed on it.
 
 Publishing to a registry is irreversible and is the owner's call, recorded run by run in [docs/RELEASING.md](docs/RELEASING.md).
 
@@ -61,7 +66,7 @@ The four standalone products are `polaris-verify`, `polaris-oid4vp` and `polaris
 Two things here were checked by someone other than the author:
 
 - **An unmodified wallet spoke to the verifier.** On 15 September 2026 a stock [walt.id](https://walt.id) Wallet API v2 (`waltid/wallet-api2:1.0.0`) presented an SD-JWT VC to `polaris-oid4vp` over OpenID4VP 1.0 and was accepted, the key binding signed by a P-256 key that never left the wallet. It refused Polaris first, correctly: `keygen` was emitting a request-signing certificate with no `digitalSignature` key usage, which eleven conformance modules, 142 package tests and every check in the invariant layer had passed over. You can repeat the exchange in about ten minutes from a clean machine: [STRANGER-PATH.md](docs/STRANGER-PATH.md).
-- **The OpenID Foundation's hosted suite ran the profile.** Eleven modules of `oid4vp-1final-verifier-haip-test-plan` across the open internet, zero failures and zero warnings. Seven negative modules carry the service's own `result: PASSED`; four positive modules sit in REVIEW, awaiting a Foundation reviewer. **REVIEW is not PASSED, and Polaris is not yet certified.**
+- **The OpenID Foundation certified the verifier.** Its hosted suite ran `oid4vp-1final-verifier-haip-test-plan` across the open internet, first against 0.1.0 (15 September 2026) and then, for certification, against `polaris-oid4vp 1.0.0rc7` from PyPI: all eleven modules finished without failure, and the Foundation approved request OCS-3049 and lists that version as OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (24 September 2026). The certification covers that package version in that role and nothing else in this repository.
 
 Everything else on this page is this project checking itself. The counterweight: this is one unpaid author's reference implementation on notional data. It has never held real identity data, no independent security review of it exists, no operator other than the author has run it, and there has been no pilot. That operator is what separates the candidate from 1.0.0. The row-by-row ledger of what has and has not happened outside the project is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 

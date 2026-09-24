@@ -63,15 +63,17 @@ it does not know the law. \sExt
     on one path, in one format, with one signature algorithm, and it refused Polaris once first.
     No second wallet, no wallet on the native protocol, and no outside relying party.
   \item The OpenID Foundation's hosted suite ran the verifier profile: eleven modules, zero failures,
-    seven negative modules passed by the service's own scoring, four positive modules in review
-    awaiting a human the Foundation supplies at submission. Not submitted, not certified.
+    seven negative modules passed by the service's own scoring. A later run against
+    \code{polaris-oid4vp 1.0.0rc7} was submitted, and that version is OpenID Certified to the
+    OpenID4VP 1.0 + HAIP 1.0 Verifier profile (24 September 2026): one package, one version, one
+    role, self-certified and published by the Foundation, not endorsed or audited by it.
   \item A published third-party corpus agrees with both signature witnesses on the ML-DSA-65
     primitive. It tests the primitive, not the protocol.
   \item Four packages are on public registries, each verified by installing from the registry into a
     clean environment. Nobody outside the repository has reported installing one, and a registry
     download count is not a person.
-  \item No external penetration test, cryptographic audit, red team, bug bounty or certification
-    has occurred. The scope document and the review packet exist; no engagement has been
+  \item No external penetration test, cryptographic audit, red team or bug bounty has occurred, and
+    no certification beyond the one conformance certification of the OpenID4VP verifier above. The scope document and the review packet exist; no engagement has been
     commissioned. Almost every guarantee in this paper is checked by machinery written by the same
     author as the guarantee.
   \item No operator other than the author has run any of it, which is the one condition that
