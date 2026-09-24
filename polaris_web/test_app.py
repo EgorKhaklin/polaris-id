@@ -15345,6 +15345,66 @@ class DeactivatedAdminHoldsNoAuthorityTests(PolarisTestCase):
                     conn.rollback()
 
 
+class VerifiableCredentialShapeTests(unittest.TestCase):
+    """A held-out round on vc.py, 2026-09-24: of twelve mutations, nine survived the VC format
+    drill and the check layer. The drill reads a credential back through the same module, so a
+    field built wrong and read back wrong agreed with itself. These pin each field against the
+    data model and the arguments it was built from. No database: the builder is pure."""
+
+    def _build(self, **kw):
+        import datetime as _d
+        import vc
+        now = kw.pop('now', _d.datetime(2026, 9, 24, 12, 0, 0, 123456, tzinfo=_d.timezone.utc))
+        sign = kw.pop('sign', lambda data: (b'\x01\x02', 'ML-DSA-87', 'ab' * 40))
+        return vc, vc.build_credential('polaris:agency:1', {'verificationResult': 'authentic'},
+                                       sign, now=now, **kw)
+
+    def test_the_validity_window_is_the_ttl_it_was_given(self):
+        import datetime as _d
+        _, doc = self._build(ttl_seconds=600)
+        f = lambda s: _d.datetime.fromisoformat(s.replace('Z', '+00:00'))  # noqa: E731
+        self.assertEqual(f(doc['validUntil']) - f(doc['validFrom']), _d.timedelta(seconds=600))
+
+    def test_the_builders_own_clock_carries_no_fraction_of_a_second(self):
+        """When the builder reads the clock itself it drops microseconds, so the instants are
+        second-precision like every other Polaris timestamp. A caller's own instant is used as
+        given."""
+        import vc
+        doc = vc.build_credential('polaris:agency:1', {'verificationResult': 'authentic'},
+                                  lambda d: (b'\x01', 'ML-DSA-65', 'ab' * 40))
+        for field in (doc['validFrom'], doc['validUntil'], doc['proof']['created']):
+            self.assertRegex(field, r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
+
+    def test_a_scoped_subject_identifier_is_carried(self):
+        _, doc = self._build(subject_id='urn:polaris:pairwise:abc')
+        self.assertEqual(doc['credentialSubject']['id'], 'urn:polaris:pairwise:abc')
+        _, bare = self._build()
+        self.assertNotIn('id', bare['credentialSubject'])
+
+    def test_the_proof_names_what_actually_signed(self):
+        vc, doc = self._build()
+        proof = doc['proof']
+        self.assertEqual(proof['polarisAlgorithm'], 'ML-DSA-87', 'the label the signer returned')
+        self.assertEqual(proof['polarisPublicKeyHex'], 'ab' * 40)
+        self.assertEqual(proof['verificationMethod'], 'polaris:key:' + ('ab' * 40)[:32])
+        self.assertEqual(proof['proofPurpose'], 'assertionMethod')
+        self.assertEqual(proof['proofValue'], '0102')
+        _, keyless = self._build(sign=lambda data: (b'', 'DETERMINISTIC-PLACEHOLDER-SHA3-256', None))
+        self.assertEqual(keyless['proof']['verificationMethod'], 'polaris:key:none')
+
+    def test_the_context_is_the_w3c_v2_context_then_polaris(self):
+        vc, doc = self._build()
+        self.assertEqual(doc['@context'], ['https://www.w3.org/ns/credentials/v2',
+                                           'https://polaris.example/ns/v1'])
+
+    def test_canonical_bytes_are_utf8_not_escaped(self):
+        """JCS (RFC 8785) writes non-ASCII as UTF-8. Escaping it as \\uXXXX would give a
+        different byte string, and a general JCS verifier's signature check would fail."""
+        import vc
+        out = vc.canonical_bytes({'b': 'é', 'a': 1, 'proof': {'x': 1}})
+        self.assertEqual(out, '{"a":1,"b":"é"}'.encode('utf-8'))
+
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py
