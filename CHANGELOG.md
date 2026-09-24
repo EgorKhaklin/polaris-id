@@ -11,6 +11,37 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.31 — 2026-09-24 (a bound admin could rewrite another authority's record)
+
+CORE-BUG against rc.30 (EXT-SECURITY). Externally observable: `/agencies/<id>/edit`,
+`/agencies/<id>/delete` and `/tokens/<id>/delete` refuse an admin bound to another authority.
+No schema change. Nothing is published.
+
+The sweep rc.30 prompted listed every POST route an admin or operator can reach, and whether
+each checks the operator's binding. Three more asked nothing:
+- **agency edit**: an admin bound to authority 1 changed authority 2's name, type,
+  jurisdiction and authorization level (measured: 200);
+- **agency delete**;
+- **token delete**.
+
+Each now checks the binding against the authority it names or owns.
+
+The remaining unchecked routes are instance-wide by design. `check_state_changing_routes_ask_
+the_binding` (check 323) declares each with its reason:
+- people, who belong to no authority;
+- creating an authority;
+- the anchor ledger;
+- epoch close;
+- the warrant audit (a read, posted as a form);
+- `/sql`, which refuses a bound account itself.
+
+Any other state-changing admin or operator route with no binding check fails the build. A
+declaration whose route has gone fails it too, so the list cannot become a list of exceptions
+nobody holds.
+
+Counterexample, failing on a worktree of rc.30:
+`BoundOperatorActsOnlyAsItsAuthorityTests.test_a_bound_admin_edits_and_deletes_only_its_own_authority`.
+
 ## v1.0.0-rc.30 — 2026-09-24 (a bound admin decided another authority's recovery)
 
 CORE-BUG against rc.29 (EXT-SECURITY), partly a regression from rc.19. Externally observable:

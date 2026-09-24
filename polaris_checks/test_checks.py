@@ -19310,3 +19310,41 @@ def test_liveness_asks_about_expiry_check_discriminates(tmp_path):
     write(GOOD + "\n# before rc.24: if row['status'] != 'ACTIVE' was the whole test\n")
     assert checks.check_liveness_asks_about_expiry(tmp_path)[0].level == "OK", \
         "a comment is not a decision"
+
+
+
+def test_state_changing_routes_ask_the_binding_check_discriminates(tmp_path):
+    # 1.0.0-rc.31: rc.30 and rc.31 found five routes that asked nothing.
+    GOOD = ("@app.route('/uc9/decide/<int:rid>', methods=['GET', 'POST'])\n"
+            "@security.require_role('admin')\n"
+            "def uc9_decide(rid):\n"
+            "    _denied = _operator_authority_permits(owner)\n"
+            "\n"
+            "@app.route('/agencies/new', methods=['POST'])\n"
+            "@security.require_role('admin')\n"
+            "def agencies_new():\n"
+            "    query('INSERT INTO Agency')\n")
+    OTHERS = "".join("@app.route('%s', methods=['POST'])\n@security.require_role('admin')\n"
+                     "def r%d():\n    pass\n\n" % (r, i)
+                     for i, r in enumerate(checks._INSTANCE_WIDE_ROUTES) if r != "/agencies/new")
+
+    def write(body):
+        f = tmp_path / "polaris_web" / "routes.py"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body)
+
+    write(GOOD + "\n" + OTHERS)
+    assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "OK", \
+        "the well-formed tree must PASS"
+    # rc.31's agency edit: an admin route naming another authority's id, asking nothing.
+    write(GOOD + "\n" + OTHERS + "@app.route('/agencies/<int:ag_id>/edit', methods=['POST'])\n"
+          "@security.require_role('admin')\ndef agencies_edit(ag_id):\n    query('UPDATE Agency')\n")
+    assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
+        "must FAIL on an unbound state-changing admin route"
+    # A declaration with no route behind it is refused, so the list cannot rot.
+    write(GOOD)
+    assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a declared instance-wide route is gone"
+    # A GET-only or unauthenticated route is not in scope.
+    write(GOOD + "\n" + OTHERS + "@app.route('/federation')\ndef viewer():\n    pass\n")
+    assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "OK"

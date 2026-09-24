@@ -22506,6 +22506,74 @@ def check_liveness_asks_about_expiry(root: pathlib.Path) -> list[Finding]:
                "the expiry date as well as the status, and no signed field is set from the stored "
                "status, because nothing moves ACTIVE to EXPIRED when the date passes")
 
+
+# 1.0.0-rc.31. rc.15 bound every route that NAMES an authority; rc.30 and rc.31 found five
+# more that name a token, a request or an agency id and asked nothing, one of them opened by
+# rc.19. This keeps the next route from being the sixth: every state-changing route an admin or
+# operator can reach either checks the operator's binding or is declared instance-wide here,
+# with its reason.
+_INSTANCE_WIDE_ROUTES = {
+    "/individuals/new": "a person is not owned by an authority (the isolation drill's case 6)",
+    "/individuals/<int:ind_id>/edit": "a person is not owned by an authority",
+    "/individuals/<int:ind_id>/delete": "a person is not owned by an authority",
+    "/agencies/new": "creating an authority is an instance-level act, recorded as one",
+    "/api/anchor/batch": "the anchor ledger is instance-wide",
+    "/api/zk/epoch/close": "the epoch covers the whole instance",
+    "/uc7/warrant-audit": "a read, posted as a form; it changes nothing",
+    "/sql": "refuses a bound account outright (1.0.0-rc.18)",
+}
+_BINDING_ASKED = re.compile(r"_operator_authority_permits|_token_authority_denied|"
+                            r"operator_agency_id")
+
+
+def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Finding]:
+    """Every POST/PUT/DELETE route open to admin or operator checks the operator's binding,
+    or is declared instance-wide with a reason. A declaration that no longer matches a route is
+    refused too, so the list cannot rot into a list of exceptions nobody holds."""
+    name = "state_changing_routes_ask_the_binding"
+    web = root / "polaris_web"
+    if not web.is_dir():
+        return _fail(name, "polaris_web/ is missing")
+    unbound, seen = [], set()
+    for f in sorted(web.glob("*.py")):
+        if f.name.startswith("test_"):
+            continue
+        src = _read_path(f).splitlines()
+        i = 0
+        while i < len(src):
+            m = re.match(r"@app\.route\('([^']+)'", src[i])
+            if not (m and re.search(r"POST|PUT|DELETE", src[i])):
+                i += 1
+                continue
+            route = m.group(1)
+            j = i
+            while j < len(src) and not src[j].startswith("def "):
+                j += 1
+            deco = "\n".join(src[i:j])
+            k = j + 1
+            while k < len(src) and not re.match(r"(@app\.route|def |class )", src[k]):
+                k += 1
+            roles = re.findall(r"require_role\(([^)]*)\)", deco)
+            if roles and re.search(r"'(admin|operator)'", roles[0]):
+                seen.add(route)
+                if route not in _INSTANCE_WIDE_ROUTES and \
+                        not _BINDING_ASKED.search("\n".join(src[j:k])):
+                    unbound.append(f"{f.name}: {route}")
+            i = k
+    if not seen:
+        return _fail(name, "no state-changing admin or operator route found; the scan is blind")
+    stale = sorted(r for r in _INSTANCE_WIDE_ROUTES if r not in seen)
+    if unbound:
+        return _fail(name, "state-changing route(s) an operator bound to one authority can use "
+                           "against another, with no binding check and no instance-wide "
+                           "declaration: " + "; ".join(unbound))
+    if stale:
+        return _fail(name, "declared instance-wide but no longer a state-changing admin or "
+                           "operator route: " + ", ".join(stale))
+    return _ok(name, f"all {len(seen)} state-changing admin and operator routes check the "
+                     f"operator's binding or are declared instance-wide with a reason "
+                     f"({len(_INSTANCE_WIDE_ROUTES)} declared)")
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
@@ -22829,6 +22897,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_paper_check_citations_resolve,
     check_append_only_guards_are_classified,
     check_liveness_asks_about_expiry,
+    check_state_changing_routes_ask_the_binding,
 ]
 
 

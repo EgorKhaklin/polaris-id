@@ -228,6 +228,12 @@ def agencies_new():
 @security.csrf_protect
 def agencies_edit(ag_id):
     if request.method == 'POST':
+        # 1.0.0-rc.31: an admin bound to one authority edits only that authority's record
+        # (its name, type, jurisdiction and authorization level), as rc.30 bound the routes that
+        # name a token or a request.
+        _denied = _operator_authority_permits(ag_id)
+        if _denied:
+            return _denied
         try:
             query("""
                 UPDATE Agency
@@ -254,6 +260,9 @@ def agencies_edit(ag_id):
 @security.require_role('admin')
 @security.csrf_protect
 def agencies_delete(ag_id):
+    _denied = _operator_authority_permits(ag_id)      # 1.0.0-rc.31, as agencies_edit
+    if _denied:
+        return _denied
     try:
         n = query('DELETE FROM Agency WHERE agency_id=%s', (ag_id,), fetch='none')
         if n:
@@ -1084,6 +1093,13 @@ def tokens_delete(tok_id):
     Tokens are normally never deleted (audit invariant); this is here for
     completeness and will fail if any audit records reference the token.
     """
+    # 1.0.0-rc.31: only the issuing authority's own admin, as every other token route.
+    owner = query("SELECT issuing_agency_id FROM IdentityToken WHERE token_id = %s",
+                  (tok_id,), fetch='one')
+    if owner is not None:
+        _denied = _operator_authority_permits(owner['issuing_agency_id'])
+        if _denied:
+            return _denied
     try:
         n = query('DELETE FROM IdentityToken WHERE token_id=%s', (tok_id,), fetch='none')
         if n:

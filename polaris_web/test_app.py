@@ -16024,6 +16024,26 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         self.assertEqual(_sql("SELECT count(*) AS n FROM TokenSignature WHERE token_id = 2",
                               fetch='one')['n'], before_s, 'another authority\'s token was re-signed')
 
+    def test_a_bound_admin_edits_and_deletes_only_its_own_authority(self):
+        """1.0.0-rc.31. Agency edit and delete, and token delete, named another authority's
+        record and asked nothing: an admin bound to authority 1 could change authority 2's
+        authorization level."""
+        before = _sql("SELECT name, authorization_level FROM Agency WHERE agency_id = 2", fetch='one')
+        tokens = _sql("SELECT count(*) AS n FROM IdentityToken WHERE token_id = 2", fetch='one')['n']
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+        csrf = self._csrf_token_from('/verifications/new')
+        r = self.client.post('/agencies/2/edit', data={
+            'name': 'Renamed by another authority', 'agency_type': 'STATE', 'jurisdiction': 'US-XX',
+            'authorization_level': '5', 'csrf_token': csrf})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(_sql("SELECT name, authorization_level FROM Agency WHERE agency_id = 2",
+                              fetch='one'), before)
+        self.assertEqual(self.client.post('/agencies/2/delete', data={'csrf_token': csrf}).status_code, 403)
+        self.assertEqual(self.client.post('/tokens/2/delete', data={'csrf_token': csrf}).status_code, 403)
+        self.assertEqual(_sql("SELECT count(*) AS n FROM IdentityToken WHERE token_id = 2",
+                              fetch='one')['n'], tokens)
+
 class DeactivatedAdminHoldsNoAuthorityTests(PolarisTestCase):
     """2026-09-24. Five admin-gated procedures checked AppUser.role and not is_active, so a
     DEACTIVATED admin's user id still authorized a federation attestation, its revocation, an
