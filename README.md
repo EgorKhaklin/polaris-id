@@ -44,7 +44,7 @@ The backbone is a 45-table PostgreSQL schema whose constraints are the security 
 
 ## Status
 
-<a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="docs/assets/openid-certified-mark.png" alt="OpenID Certified" width="150"></a>
+<a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="150"></a>
 
 **`polaris-oid4vp 1.0.0rc7` is OpenID Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`). All eleven modules of the OpenID Foundation's hosted `oid4vp-1final-verifier-haip-test-plan` finished without failure against the artifact on PyPI, and the Foundation approved the request and [lists the certification](https://openid.net/certification/certified-oid4vp-haip-final/) with its published results (24 September 2026). It is a self-certification the Foundation reviewed and published, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris.
 

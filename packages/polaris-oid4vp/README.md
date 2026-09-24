@@ -4,7 +4,7 @@
 presentation produced by a wallet that has never heard of Polaris: an SD-JWT VC signed with
 ES256, with holder key binding, delivered over `direct_post.jwt`.
 
-<a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/docs/assets/openid-certified-mark.png" alt="OpenID Certified" width="160"></a>
+<a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="160"></a>
 
 **OpenID Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.** Egor
 Khaklin has certified that `polaris-oid4vp 1.0.0rc7` conforms to the OpenID for Verifiable
