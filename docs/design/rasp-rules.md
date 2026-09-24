@@ -19,7 +19,7 @@ the edge refuses before a request reaches the application.
 | Per-IP, on read paths | `security.py` | Sixty requests a minute on the verification and Atlas endpoints |
 | Per-IP, at the edge | The Caddy `rate_limit` zone `polaris_global` | Two hundred requests a minute, before anything reaches the application |
 | Per-agency, per kind | `enforce_agency_quota`, a database trigger | Operator-configured caps on issuance, revocation and verification in a rolling window |
-| Per-agency revocation share | `enforce_revocation_velocity_bound`, a database trigger | A share of the agency's outstanding tokens per window, above which a co-signature is required |
+| Per-agency revocation share | `enforce_revocation_velocity_bound`, a database trigger | A share of the agency's issued base (every credential it has issued, any status) per window, above which a co-signature is required |
 
 The per-IP limits and the edge limit are defence in depth against brute force
 and scraping. The two database triggers are the ones that bound an

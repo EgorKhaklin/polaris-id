@@ -22,7 +22,7 @@ C7, which constrains what an agency may sign with.
 
 | Setting | Default | Why |
 |---|---|---|
-| `polaris.default_max_revoke_percent` | 5.00 | At an even spread this still allows roughly sixty percent of an agency's outstanding population in a year, so it does not stop slow abuse. What it stops is the surprise: mass revocation in a day is impossible without a co-signer, and the slow version is an observable trend. |
+| `polaris.default_max_revoke_percent` | 5.00 | At an even spread this still allows roughly sixty percent of an agency's issued base in a year, so it does not stop slow abuse. What it stops is the surprise: mass revocation in a day is impossible without a co-signer, and the slow version is an observable trend. |
 | `polaris.default_window_days` | 30 | Short enough to catch a coordinated campaign inside a useful horizon, long enough to absorb a legitimate bursty workflow such as a hardware recall. |
 
 Per-agency overrides live in `IssuerDiscretionPolicy`; an agency with no row
@@ -103,7 +103,13 @@ application code that skipped the procedure is refused with
 ## Where an adversary ends up
 
 - **The claim.** No agency can revoke more than the configured share of its
-  outstanding tokens in a window without a co-signer from another agency.
+  issued base in a window without a co-signer from another agency. The base is every credential
+  the agency has issued, whatever its status now (`uc8_revoke_token` counts `IdentityToken` rows
+  for the agency with no status filter). It does not shrink as credentials are revoked, so
+  against the credentials still LIVE the share is larger: an agency with 1,000 issued and 100
+  live may revoke 50 a window at 5%, half of what is left. Until 2026-09-24 this line said
+  "outstanding tokens", which the code never measured; measuring against live credentials would
+  be the stricter bound, and is recorded as an open decision rather than changed here.
 - **The strongest attack.** Stay just under the ceiling indefinitely. At the
   default that is still most of a population inside a year, so the bound
   converts a surprise into a trend.
