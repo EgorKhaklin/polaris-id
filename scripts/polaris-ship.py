@@ -534,19 +534,30 @@ def _plain(text):
 
 
 def _failure_blocks(log):
-    """The FAIL/ERROR blocks of a unittest log, each cut at the next separator."""
-    blocks, cur = [], None
+    """The FAIL/ERROR blocks of a unittest log, each running to the next separator.
+
+    unittest prints the header, the test's docstring if it has one, a DASHED line, then the
+    traceback. That first dashed line belongs inside the block. Until 2026-09-24 the block
+    ended there whenever a docstring had made it longer than one line, so a CI failure in a
+    documented test showed its name and docstring and dropped the assertion saying what went
+    wrong. A block now ends at the next `=====`, or at a second dashed line (the one before
+    the `Ran N tests` summary)."""
+    blocks, cur, dashes = [], None, 0
     for line in _plain(log).splitlines():
         if re.match(r"^(FAIL|ERROR): ", line):
-            cur = [line]
+            cur, dashes = [line], 0
             blocks.append(cur)
         elif cur is not None:
-            if line.startswith("-----") or line.startswith("====="):
-                if len(cur) > 1:
+            if line.startswith("====="):
+                cur = None
+                continue
+            if line.startswith("-----"):
+                dashes += 1
+                if dashes > 1:
                     cur = None
                 continue
             cur.append(line)
-    return ["\n".join(b) for b in blocks]
+    return ["\n".join(b).rstrip() for b in blocks]
 
 
 def run(argv, out=None):
@@ -660,7 +671,12 @@ def run(argv, out=None):
             if not ok:
                 blocks = _failure_blocks(text)
                 for b in blocks[:6]:
-                    print("\n" + "\n".join("    " + x for x in b.splitlines()[:30]), file=out)
+                    lines = b.splitlines()
+                    # Head AND tail: the assertion that says what went wrong is the LAST line
+                    # of a traceback, which a head-only cut drops on a deep stack.
+                    if len(lines) > 30:
+                        lines = lines[:4] + ["..."] + lines[-25:]
+                    print("\n" + "\n".join("    " + x for x in lines), file=out)
                 if not blocks:
                     print("\n    shard %d ended without a unittest summary; its log: /tmp/polaris-ship-shard-%d.log\n%s" % (i, i, text[-1200:]), file=out)
                 print("    full log: /tmp/polaris-ship-shard-%d.log" % i, file=out)

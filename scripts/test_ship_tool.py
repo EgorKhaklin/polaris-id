@@ -511,3 +511,44 @@ class ShardingTests(unittest.TestCase):
         shards = ship.distribute([("test_app", "Only", 1)], 8, serial=set())
         flat = [u for shard in shards for u in shard]
         self.assertEqual(flat, [("test_app", "Only", 1)])
+
+
+class FailureBlockTests(unittest.TestCase):
+    """2026-09-24. A CI failure in a test with a docstring printed the test's name and its
+    docstring and nothing else: _failure_blocks ended the block at the first dashed line,
+    which in unittest's format separates the header from the TRACEBACK, so the assertion that
+    says what went wrong never reached the log. A test without a docstring was unaffected,
+    which is why it went unnoticed."""
+
+    LOG = (
+        "..F.\n"
+        "======================================================================\n"
+        "FAIL: test_race (test_app.ConcurrencyTests.test_race)\n"
+        "Two concurrent calls must not both succeed.\n"
+        "----------------------------------------------------------------------\n"
+        "Traceback (most recent call last):\n"
+        "  File \"test_app.py\", line 9, in test_race\n"
+        "AssertionError: 2 != 1 : exactly one should win: {'success': 2}\n"
+        "\n"
+        "======================================================================\n"
+        "ERROR: test_other (test_app.X.test_other)\n"
+        "----------------------------------------------------------------------\n"
+        "Traceback (most recent call last):\n"
+        "RuntimeError: boom\n"
+        "\n"
+        "----------------------------------------------------------------------\n"
+        "Ran 4 tests in 1.000s\n"
+        "\n"
+        "FAILED (failures=1, errors=1)\n")
+
+    def test_a_block_carries_its_assertion_whether_or_not_the_test_has_a_docstring(self):
+        blocks = ship._failure_blocks(self.LOG)
+        self.assertEqual(len(blocks), 2)
+        self.assertIn("Two concurrent calls", blocks[0])
+        self.assertIn("AssertionError: 2 != 1", blocks[0])
+        self.assertIn("RuntimeError: boom", blocks[1])
+
+    def test_a_block_ends_before_the_summary(self):
+        blocks = ship._failure_blocks(self.LOG)
+        self.assertNotIn("Ran 4 tests", blocks[1])
+        self.assertNotIn("FAIL: test_race", blocks[1])
