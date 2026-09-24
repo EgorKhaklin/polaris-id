@@ -51,7 +51,8 @@ Measured from the OpenID Foundation's own instructions, 2026-09-13, not inferred
 - Only the plans carrying the `/HAIP` suffix are the ones intended for certification. The
   others omit the profile's requirements.
 - The suite is open source under MIT on GitLab, with Docker based local deployment. Running it
-  costs nothing. A certification costs a fee.
+  costs nothing. A certification costs a fee, which the Foundation waived for this
+  open-source implementation (2026-09-23).
 
 **The consequence, stated plainly: in the verifier plan Polaris signs nothing.** The suite
 mints the credential, signs it with its own key, and hands it over. Polaris's job is to ask
@@ -341,6 +342,15 @@ modules, with the seven negative ones scored automatically by the suite. The res
 qualifications are in [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md), where they belong; the
 short version is that a local unpublished run against the OpenID Foundation's own software is
 a real thing and is not a certification.
+
+**And then it was certified (2026-09-24).** The certification run used the hosted instance, one
+plan (`7hXWngaA7f0QO`), and the `1.0.0rc7` artifact on PyPI: all eleven modules finished
+without failure. The request (OCS-3049) was approved, with the fee waived under the
+Foundation's open-source policy. `polaris-oid4vp 1.0.0rc7` is listed as OpenID Certified to the
+OpenID4VP 1.0 + HAIP 1.0 Verifier profile at
+<https://openid.net/certification/certified-oid4vp-haip-final/>. That is a self-certification
+the Foundation reviewed and published, for that version in that role, and not an endorsement or
+an audit. [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md) records exactly what it covers.
 
 **What this assessment got right and wrong, kept here on purpose.** Right: that the protocol
 layer was the whole cost and the format choice was downstream of it. Wrong, badly, in its

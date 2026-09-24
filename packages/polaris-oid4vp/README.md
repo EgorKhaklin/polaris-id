@@ -4,12 +4,23 @@
 presentation produced by a wallet that has never heard of Polaris: an SD-JWT VC signed with
 ES256, with holder key binding, delivered over `direct_post.jwt`.
 
-**Status: 1.0.0-rc.7, a release candidate.** The OpenID Foundation's HOSTED conformance suite
-ran all eleven modules of `oid4vp-1final-verifier-haip-test-plan` across the open internet
-against **0.1.0**, the artifact published at the time (2026-09-15): zero failures, zero
-warnings, seven negative modules carrying the service's own `result: PASSED`, four positive
-modules in REVIEW, awaiting a Foundation reviewer. REVIEW is not PASSED, and nothing is yet
-certified. One unmodified external wallet, walt.id Wallet API v2, has presented and been
+<a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/docs/assets/openid-certified-mark.png" alt="OpenID Certified" width="160"></a>
+
+**OpenID Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.** Egor
+Khaklin has certified that `polaris-oid4vp 1.0.0rc7` conforms to the OpenID for Verifiable
+Presentations 1.0 High Assurance Interoperability Profile, verifier role (`sd_jwt_vc`,
+`direct_post.jwt`). The OpenID Foundation approved the request and lists it, with the
+published test results, on
+[its certified implementations page](https://openid.net/certification/certified-oid4vp-haip-final/)
+(2026-09-24). All eleven modules of the Foundation's hosted
+`oid4vp-1final-verifier-haip-test-plan` finished without failure against the 1.0.0rc7 artifact
+on PyPI. The certification covers that version in that role and profile: it is not an
+endorsement by the Foundation, it does not cover other versions, and it is not an audit.
+
+**Status: 1.0.0-rc.7, a release candidate.** Earlier, on 2026-09-15, the Foundation's HOSTED
+conformance suite ran the same eleven modules against **0.1.0**, the artifact published at the
+time: zero failures, zero warnings, seven negative modules `PASSED` and four positive modules
+in REVIEW. One unmodified external wallet, walt.id Wallet API v2, has presented and been
 accepted, most recently against the published **1.0.0-rc.3** (2026-09-18). Both results are
 recorded against the version that produced them because that is what they cover: no external
 party has exercised anything later. No operator other than the

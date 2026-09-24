@@ -287,7 +287,24 @@ controls in the account. Rehearsed first against a local copy of the suite.
                                 category), fee waived by the Foundation's coupon, Declaration of
                                 Conformance signed by DocuSign the same day; the Foundation
                                 states requests are normally processed within 5 working days
-    CERTIFIED                   no: the Foundation's review of OCS-3049 decides that
+    CERTIFIED                   yes, 2026-09-24: request OCS-3049 approved by the OpenID
+                                Foundation certification team, and the implementation listed
+                                at https://openid.net/certification/certified-oid4vp-haip-final/
+                                as: Egor Khaklin | polaris-oid4vp 1.0.0rc7 | OID4VP-1.0+HAIP-1.0
+                                Verifier sd_jwt_vc direct_post.jwt | 24-Sep-2026, with a link
+                                to the published test results. Read back from that page on
+                                2026-09-24, not taken from the email alone.
+
+**What the certification is, and is not.** It is a SELF-certification that the Foundation
+reviewed and published: the implementer states that one deployment and version conforms to
+one conformance profile, submits the suite's results, and the Foundation publishes them. The
+OpenID Certification Terms and Conditions (3(e)) forbid presenting it as an endorsement or as
+the Foundation independently verifying the claims. It covers `polaris-oid4vp 1.0.0rc7` in the
+verifier role on the HAIP profile, with one credential format and one response mode. It does
+not cover the rest of Polaris, any other version of the package, the wallet role, other
+formats, or anything the conformance suite does not test. A later release is not certified
+until it is re-tested and re-submitted. The OpenID Certified mark is used in this repository
+only beside that scoped statement.
 
 **The Foundation's own signed exports corroborate all of this.** Downloaded 2026-09-15,
 each carrying a detached `.sig` over both the JSON and the HTML:

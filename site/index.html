@@ -318,13 +318,17 @@ footer a{color:var(--ink-dim)}
             emitting a request-signing certificate with no <code>digitalSignature</code> key
             usage, which eleven conformance modules and every check in the invariant layer had
             passed over.</p></div>
-        <div class="cell"><h3>Hosted conformance</h3>
-            <p>The OpenID Foundation's hosted suite at certification.openid.net ran the
-            <code>oid4vp-1final-verifier-haip-test-plan</code> against the verifier across the
-            open internet. Eleven of eleven modules finished with zero failures and zero
-            warnings: seven negative modules PASSED automatically, four positive modules are in
-            REVIEW. <b>REVIEW is not PASSED.</b> Those four await a Foundation reviewer. This
-            is not a certification and Polaris is not yet certified.</p></div>
+        <div class="cell"><h3>OpenID Certified verifier</h3>
+            <p><a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark.png" alt="OpenID Certified" width="140" height="73"></a></p>
+            <p><b>OpenID Certified&trade; by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0
+            Verifier profile.</b> <code>polaris-oid4vp 1.0.0rc7</code> ran every module of the
+            Foundation's hosted <code>oid4vp-1final-verifier-haip-test-plan</code> without
+            failure, and the OpenID Foundation approved and
+            <a href="https://openid.net/certification/certified-oid4vp-haip-final/">lists the
+            certification</a> with its published results (24 September 2026). It covers that
+            version of the verifier in that profile: it is a self-certification the Foundation
+            reviewed, not an endorsement and not an audit, and the rest of Polaris is not
+            certified.</p></div>
         <div class="cell"><h3>Installable without cloning anything</h3>
             <p>The standalone products are on their normal registries at 1.0.0-rc.1, as release candidates:
             <code>pip install --pre polaris-verify</code>,

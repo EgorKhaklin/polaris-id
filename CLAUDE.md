@@ -170,9 +170,15 @@ The rules behind the marks:
   thoroughly, is internal evidence and belongs in the bottom half of the scoreboard.
 - **Distribution is not adoption.** A package on a registry, installed and run by the author,
   is "installable". A download count is not a person.
-- **An external exercise is not an audit, a certification, a deployment or a pilot.** The
-  hosted conformance suite's positive modules sit in REVIEW; REVIEW is not PASSED, and
-  Polaris is not certified.
+- **An external exercise is not an audit, a certification, a deployment or a pilot.** One
+  certification exists and it is exactly this narrow: `polaris-oid4vp 1.0.0rc7` is OpenID
+  Certified to the OpenID4VP 1.0 + HAIP 1.0 **Verifier** profile (`sd_jwt_vc`,
+  `direct_post.jwt`), a self-certification the OpenID Foundation approved and lists
+  (2026-09-24, OCS-3049; the scoreboard has the listing). Say that sentence and no larger one:
+  Polaris as a whole is not certified, no other version or package is, it is not an OIDF
+  endorsement and not an audit (the certification terms, 3(e), forbid implying either), and a
+  later release is not certified until it is re-tested and re-submitted. Use the OpenID
+  Certified mark only beside that scoped statement.
 - **A formal model is evidence about the model.** The TLA+ specs in `meta/tla/` are checked
   in CI and bound to named objects, and each must fail its counterpart configuration; a
   checked model still says nothing about the implementation beyond what the binding proves.
@@ -557,7 +563,8 @@ names.
 
 - **What is Polaris?** A working reference implementation on notional data, issuer-unlinkable
   and duress-aware, signed with ML-DSA-65 under an audited algorithm-migration path; a release
-  candidate; not deployed, not certified, not audited, not production-ready (Section 1).
+  candidate; not deployed, not audited, not production-ready, and certified only in one
+  place: `polaris-oid4vp 1.0.0rc7` to the OpenID4VP HAIP verifier profile (Sections 1 and 4).
 - **What may I not violate?** The vocation and C1-C10, the contract, the published contracts,
   the checks, in that order (Sections 2 and 5).
 - **What work may I add?** Only what carries one of the four qualifying reasons; everything
