@@ -3669,6 +3669,43 @@ class IssuerFederationTests(PolarisTestCase):
         self.assertEqual(r.status_code, 302)
         self.assertIn('/verifications', r.location)
 
+    def test_a_success_is_not_recorded_against_a_dead_credential(self):
+        """The trust gate refuses a SUCCESS the federation graph does not support, because the
+        audit-of-record would then say something untrue. A SUCCESS against a credential that
+        was revoked, lost or expired is untrue the same way, whoever the verifier trusts."""
+        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id, issuing_agency_id FROM IdentityToken "
+                        "WHERE status IN ('REVOKED', 'LOST', 'EXPIRED') ORDER BY token_id LIMIT 1")
+            row = cur.fetchone()
+            if row is None:
+                self.fail("the seed must hold a terminal credential for this to mean anything")
+            cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s "
+                        "AND outcome = 'SUCCESS'", (row['token_id'],))
+            before = cur.fetchone()['n']
+        r = self._post('/verifications/new', data={
+            'token_id': str(row['token_id']),
+            'requesting_agency_id': str(row['issuing_agency_id']),   # same agency: trusted
+            'context_id': str(self._context_id('BANKING')),
+            'outcome': 'SUCCESS',
+            'disclosure_level': 'SELECTIVE',
+        }, follow_redirects=False)
+        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s "
+                        "AND outcome = 'SUCCESS'", (row['token_id'],))
+            self.assertEqual(cur.fetchone()['n'], before,
+                             'a SUCCESS was recorded against a %s credential' % 'terminal')
+        self.assertIn('/verifications/new', r.location)
+        # The refusal is for SUCCESS only: recording that the credential was presented and
+        # refused is exactly what the audit log is for.
+        r = self._post('/verifications/new', data={
+            'token_id': str(row['token_id']),
+            'requesting_agency_id': str(row['issuing_agency_id']),
+            'context_id': str(self._context_id('BANKING')),
+            'outcome': 'FAILURE',
+            'disclosure_level': 'SELECTIVE',
+        }, follow_redirects=False)
+        self.assertNotIn('/verifications/new', r.location)
+
     def test_cross_agency_success_blocked_without_attestation(self):
         """No attestation between Agency 6 and Agency 1 for HEALTHCARE →
         SUCCESS verification must be blocked."""

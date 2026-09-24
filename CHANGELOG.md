@@ -11,6 +11,29 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.22 — 2026-09-24 (a verification of a revoked credential was recorded as a success)
+
+CORE-BUG against rc.21. Externally observable: `/verifications/new` refuses to record a
+`SUCCESS` against a credential that is not `ACTIVE`. No schema change. Nothing is published.
+
+The verification form appends to `VerificationEvent`, part of the audit-of-record. It already
+refused a `SUCCESS` that the federation trust graph does not support, and its docstring says
+why: the record would say something untrue. It never asked whether the credential was live.
+Measured: the sample's `REVOKED` token 5, verified by the agency that issued it (implicitly
+trusted, so the federation gate passes), was recorded as `SUCCESS`.
+
+A `SUCCESS` against a revoked, lost, expired or not-yet-activated credential is untrue in the
+same way, whoever the verifier trusts. The form now refuses it and tells the operator to record
+the outcome the credential actually had. `FAILURE` against a dead credential is still recorded:
+that a revoked credential was presented and refused is exactly what the log is for.
+
+The guard is on the route, beside the federation gate it mirrors, not a trigger. The other
+writers of `VerificationEvent` are the simulator, the benchmark and the capacity drill, which
+generate synthetic load.
+
+Counterexample, failing on rc.21:
+`IssuerFederationTests.test_a_success_is_not_recorded_against_a_dead_credential`.
+
 ## v1.0.0-rc.21 — 2026-09-24 (the quantum migration left spare credentials on the fallen algorithm)
 
 CORE-BUG against rc.20. Externally observable: a population migration now re-signs and, when

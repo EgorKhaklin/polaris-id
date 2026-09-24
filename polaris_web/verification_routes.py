@@ -301,6 +301,22 @@ def verifications_new():
                     'error')
                 return redirect(url_for('verifications_new'))
 
+            # 1.0.0-rc.22: nor on a credential that is no longer live. The federation gate above
+            # refuses a SUCCESS the trust graph does not support because the audit-of-record
+            # would then say something untrue; a SUCCESS against a revoked, lost, expired or
+            # not-yet-activated credential is untrue the same way, whoever the verifier trusts.
+            # Only SUCCESS: recording that a dead credential was presented and refused is what
+            # the log is for.
+            if outcome == 'SUCCESS' and token_id_val is not None:
+                live = query("SELECT status FROM IdentityToken WHERE token_id = %s",
+                             (token_id_val,), fetch='one')
+                if live is None or live['status'] != 'ACTIVE':
+                    flash('Token %s is %s, so a verification of it cannot have succeeded. '
+                          'Record the outcome it actually had (FAILURE, or EXPIRED for an '
+                          'expired credential).'
+                          % (token_id_val, live['status'] if live else 'unknown'), 'error')
+                    return redirect(url_for('verifications_new'))
+
             # R11-5 / M2-10 duress-code check (compulsion resistance, PDF §9.5).
             # If a duress_code is supplied AND the token has an enrolled
             # duress_code_hash AND check_password_hash returns true (constant-

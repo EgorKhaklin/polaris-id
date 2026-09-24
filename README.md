@@ -52,7 +52,7 @@ The backbone is a 45-table PostgreSQL schema whose constraints are the security 
 
 | | version | where |
 |---|---|---|
-| this tree | 1.0.0-rc.21 | the source you are reading |
+| this tree | 1.0.0-rc.22 | the source you are reading |
 | `polaris-oid4vp` | 1.0.0rc7 | PyPI; the certified version |
 | `polaris-verify`, `polaris-sdk-python` | 1.0.0rc3 | PyPI |
 | `polaris-sdk-ts` | 1.0.0-rc.3 | npm, under `next`; `latest` stays 0.1.0, so a plain install resolves the stable release |
@@ -133,7 +133,7 @@ Above the ten sits the project's vocation: **no person can be compelled to renou
 | **C9** | Concurrency claims are tested with real threads, not mocks. | Engineering | Threaded test suites against a live database |
 | **C10** | Identity is not money. The schema carries no monetary claim. | Constitutional | Structural absence, pinned by a check |
 
-Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 321 plain `check_*` functions (v1.0.0-rc.21), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. Why these ten, and why they interlock: [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
+Each guarantee is machine-checked by [`polaris_checks`](polaris_checks/): 321 plain `check_*` functions (v1.0.0-rc.22), each paired with a detection test proving it fails on a broken fixture. A check that cannot detect its own violation is treated as broken. Why these ten, and why they interlock: [MISSION.md](MISSION.md) and [meta/constraint-lattice.md](meta/constraint-lattice.md).
 
 ---
 
@@ -194,7 +194,7 @@ Four layers. The schema is the core; everything else is a client of it.
 | [`polaris_web/`](polaris_web/) | Flask application: dashboard, the Atlas, per-use-case flows, WebAuthn operator MFA, health and metrics. |
 | [`polaris_zk/`](polaris_zk/) | Plonky2 Merkle-inclusion prover (Rust), plus [`witness2/`](polaris_zk/witness2/), an independent Python reimplementation that must agree with it. |
 | [`polaris_cli/`](polaris_cli/) | Operator CLI: issuance, revocation, recovery, audit queries, without a browser. |
-| [`polaris_checks/`](polaris_checks/) | The invariant layer. 321 checks (v1.0.0-rc.21), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
+| [`polaris_checks/`](polaris_checks/) | The invariant layer. 321 checks (v1.0.0-rc.22), each with a tested failure mode. `python3 -m polaris_checks.run` gates CI. |
 | [`packages/`](packages/), [`sdk/`](sdk/), [`conformance/`](conformance/) | The standalone products: the detached verifier, the OpenID4VP verifier, the Python and TypeScript verify SDKs, and the conformance suite that holds any verifier to the published cases. |
 | [`scripts/`](scripts/), [`deploy/`](deploy/) | The holder wallet and relying-party verifier (`polaris-wallet.py`, `polaris-relying-party.py`), operator tooling (backup, restore, archive, purge, migrate, recover-admin) and observability config (Prometheus alerts, Grafana dashboards-as-code, opt-in OTel tracing). |
 
