@@ -8188,7 +8188,7 @@ def test_document_signing_check_discriminates(tmp_path):
         "def api_v1_sign_holder(agency_id):\n"
         "    _signed_document_statement(doc)  polaris-signed-document/1 ; the document itself is never sent\n"
         "    row = _possession_authenticated(token_value, presented)\n"
-        "    if row['status'] != 'ACTIVE': return 403\n"
+        "    if _effective_status(row) != 'ACTIVE': return 403\n"
         "    on_behalf_of = {'credential_hash': hashlib.sha3_256(token_value.encode()).hexdigest()}\n"
         "    doc['ltv'] = {'timestamp': _timestamp_body(a, i, sha3(_document_signature_material(doc)), None),\n"
         "                  'manifest': _federation_manifest_body(agency, now), 'revocation_feed': _revocation_feed_body(agency, now)}\n"
@@ -8224,7 +8224,7 @@ def test_document_signing_check_discriminates(tmp_path):
     assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL without the holder route"
     write({'polaris_web/app.py': APP.replace("'credential_hash': hashlib.sha3_256(token_value", "'token_value': token_value")})
     assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if the holder is recorded by token, not hash"
-    write({'polaris_web/app.py': APP.replace("row['status'] != 'ACTIVE'", "True")})
+    write({'polaris_web/app.py': APP.replace("_effective_status(row) != 'ACTIVE'", "True")})
     assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if an inactive credential could sign"
     write({'polaris_web/app.py': APP.replace("_document_signature_material", "_signed_document_statement")})
     assert checks.check_document_signing(tmp_path)[0].level == "FAIL", "must FAIL if the timestamp does not bind the signature"

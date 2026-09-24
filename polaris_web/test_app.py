@@ -703,6 +703,20 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         import base64
         return {'Authorization': 'Basic ' + base64.b64encode(('%s:%s' % (cid, secret)).encode()).decode()}
 
+    def test_an_expired_credential_cannot_sign_in(self):
+        """1.0.0-rc.24. Login checked the stored status alone, and an expired credential still
+        reads ACTIVE, so it signed its holder in to a relying party."""
+        cid, _secret = self._rp('verify authenticate')
+        _tid, tv, sig = self._credential()
+        _verifier, challenge = self._pkce()
+        self.assertEqual(self._authorize(cid, tv, sig, challenge).status_code, 200,
+                         'control: the live credential signs in')
+        flask_app.query("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 "
+                        "WHERE token_value = %s", (tv,), fetch='none')
+        r = self._authorize(cid, tv, sig, challenge)
+        self.assertEqual(r.status_code, 403, r.get_data(as_text=True))
+        self.assertNotIn('code', r.get_json() or {})
+
     def test_code_flow_with_pkce_replay_and_scope(self):
         import hashlib
         cid, secret = self._rp('verify authenticate')
@@ -4245,6 +4259,47 @@ class ZKSnarkTests(PolarisTestCase):
                             "signing_public_key_hex) VALUES (%s, 1, %s, NULL)",
                             (row['token_id'], _pg.Binary(ph)), fetch='none')
         return row['token_value'], ph.hex()
+
+    def _expire(self, token_value):
+        flask_app.query("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 "
+                        "WHERE token_value = %s", (token_value,), fetch='none')
+
+    def test_effective_status_is_the_one_answer_to_is_it_live(self):
+        """The helper every route asks: holder-key binding and holder signing share it with
+        login, the VC and the mdoc. expiration_date is inclusive."""
+        from datetime import date, timedelta
+        import rp_api
+        today = date.today()
+        self.assertEqual(rp_api._effective_status({'status': 'ACTIVE', 'expiration_date': today}),
+                         'ACTIVE', 'the last valid day is still valid')
+        self.assertEqual(rp_api._effective_status(
+            {'status': 'ACTIVE', 'expiration_date': today - timedelta(days=1)}), 'EXPIRED')
+        self.assertEqual(rp_api._effective_status({'status': 'ACTIVE', 'expiration_date': None}),
+                         'ACTIVE')
+        self.assertEqual(rp_api._effective_status(
+            {'status': 'REVOKED', 'expiration_date': today + timedelta(days=9)}), 'REVOKED')
+
+    def test_an_expired_credential_is_not_signed_as_usable(self):
+        """1.0.0-rc.24. Nothing moves ACTIVE to EXPIRED when the date passes. The status
+        assertion learned that at rc.8; the verifiable credential and the mdoc still signed the
+        stored status, so an expired credential was attested usable and ACTIVE."""
+        import cbor2
+        import mdoc
+        tv, sig = self._possession_credential()
+        live = self.client.post('/api/v1/verifiable-credential',
+                                json={'token_value': tv, 'signature_hex': sig}).get_json()
+        self.assertEqual(live['verifiable_credential']['credentialSubject']['verificationResult'],
+                         'usable', 'control: a live credential is usable')
+        self._expire(tv)
+        subject = self.client.post('/api/v1/verifiable-credential', json={
+            'token_value': tv, 'signature_hex': sig}).get_json()['verifiable_credential']['credentialSubject']
+        self.assertEqual(subject['verificationResult'], 'not_usable')
+        self.assertEqual(subject['credentialStatus'], 'EXPIRED')
+        body = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig}).get_json()
+        doc = cbor2.loads(bytes.fromhex(body['document_hex']))
+        items = [cbor2.loads(t.value) for t in doc['issuerSigned']['nameSpaces'][mdoc.NAMESPACE]]
+        statuses = [i['elementValue'] for i in items if i['elementIdentifier'] == 'credential_status']
+        self.assertEqual(statuses, ['EXPIRED'])
 
     def test_mdoc_renders_the_credential_in_iso_18013_5_structure(self):
         # P3.7 (v9.362): a FORMAT bridge. The document must parse as an mdoc and its digests

@@ -13094,7 +13094,9 @@ def check_document_signing(root: pathlib.Path) -> list[Finding]:
                      ("the document itself is never sent", "the digest-only rule"),
                      ("_possession_authenticated(token_value, presented)", "possession authentication of the holder"),
                      ("'credential_hash': hashlib.sha3_256(token_value", "the holder recorded by credential hash"),
-                     ("row['status'] != 'ACTIVE'", "an inactive credential cannot sign"),
+                     ("_effective_status(row) != 'ACTIVE'",
+                      "an inactive or expired credential cannot sign (1.0.0-rc.24: the stored "
+                      "status alone let an expired one through)"),
                      ("_document_signature_material", "the timestamp binds statement AND signature"),
                      ("doc['ltv'] = {", "long-term-validation evidence attached at signing"),
                      ("_federation_manifest_body(agency, now)", "the signer's manifest at the instant"),

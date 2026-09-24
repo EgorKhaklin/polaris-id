@@ -11,6 +11,33 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.24 — 2026-09-24 (an expired credential still signed its holder in)
+
+CORE-BUG against rc.23 (EXT-SECURITY). Externally observable: an expired credential can no
+longer sign in, authorize holder signing or bind a holder key, and the verifiable credential
+and the mdoc attest it `EXPIRED` and not usable. No schema change. Nothing is published.
+
+Nothing moves `ACTIVE` to `EXPIRED` when `expiration_date` passes. The status assertion learned
+this at rc.8 and signs an expired credential `EXPIRED`. Five other relying-party routes read
+the stored status and treated an expired credential as live:
+- **login**: `/api/v1/auth/authorize` issued an authorization code for it;
+- the verifiable credential signed `verificationResult: usable`, `credentialStatus: ACTIVE`;
+- the mdoc signed `credential_status: ACTIVE`;
+- holder signing (`/api/v1/sign/<agency>/holder`) and holder-key binding (`/api/v1/holder-key`)
+  accepted it.
+
+Found by the sweep rc.23 prompted: every place that decides liveness from `status` alone.
+
+`rp_api._effective_status(row)` is now the one answer: `ACTIVE` past its (inclusive)
+`expiration_date` is `EXPIRED`. The status assertion, all five routes above, and nothing else
+compute it separately.
+
+Counterexamples, failing on a worktree of rc.23:
+`AuthBrokerTests.test_an_expired_credential_cannot_sign_in` (rc.23 returned 200 and a code) and
+`ZKSnarkTests.test_an_expired_credential_is_not_signed_as_usable` (rc.23 signed `usable`).
+`test_effective_status_is_the_one_answer_to_is_it_live` pins the boundary: the last valid day
+is still valid.
+
 ## v1.0.0-rc.23 — 2026-09-24 (rc.22's guard read status alone, and an expired credential still reads ACTIVE)
 
 CORE-BUG against rc.22. Externally observable: `/verifications/new` refuses a `SUCCESS`

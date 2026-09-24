@@ -262,6 +262,20 @@ def _status_assertion_statement(token_value, status, issued_at, expires_at):
     }, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
+def _effective_status(row):
+    """The credential's status as of now: ACTIVE past its expiration_date is EXPIRED.
+
+    Nothing moves ACTIVE to EXPIRED when the date passes, so the stored status alone overstates
+    a credential that has run out. The status assertion learned this at rc.8; until 1.0.0-rc.24
+    the verifiable credential, the mdoc, login (auth/authorize), holder signing and holder-key
+    binding each read the stored status and treated an expired credential as live. One function,
+    so the next route asks the same question rather than writing its own answer."""
+    status = row['status']
+    if status == 'ACTIVE' and not _not_expired(row.get('expiration_date')):
+        return 'EXPIRED'
+    return status
+
+
 def _possession_authenticated(token_value, presented_sig_hex):
     """The holder proves POSSESSION of an issued credential by presenting its token_value
     and the genuine issued signature: the row for that credential if the presented signature
@@ -615,7 +629,7 @@ def api_v1_holder_key_bind():
     if row is None:
         return jsonify(error='not_verifiable',
                        error_description='present the genuine issued credential (token_value + signature_hex)'), 400
-    if row['status'] != 'ACTIVE':
+    if _effective_status(row) != 'ACTIVE':
         return jsonify(error='not_active',
                        error_description='a holder key binds only to an ACTIVE credential'), 409
 
@@ -714,11 +728,9 @@ def api_v1_status_assertion():
     # ACTIVE assertion that every offline verifier accepts. Now an expired credential is
     # asserted EXPIRED, and an ACTIVE assertion ends no later than the credential's last
     # valid day (expiration_date is inclusive, so the end is 00:00Z the day after).
-    status = row['status']
+    status = _effective_status(row)
     expiry = row.get('expiration_date')
-    if status == 'ACTIVE' and not _not_expired(expiry):
-        status = 'EXPIRED'
-    elif status == 'ACTIVE' and expiry is not None:
+    if status == 'ACTIVE' and expiry is not None:
         day_after = datetime(expiry.year, expiry.month, expiry.day, tzinfo=timezone.utc) + timedelta(days=1)
         until = min(until, day_after)
     expires_at = until.isoformat().replace('+00:00', 'Z')
@@ -800,7 +812,7 @@ def api_v1_mdoc():
         'context': context_row['context_type'] if context_row else None,
         'assurance_level': _AUTH_ACR_POSSESSION,
         'enrollment_status': enr['current_status'] if enr else 'NOT_ENROLLED',
-        'credential_status': row['status'],
+        'credential_status': _effective_status(row),
     }
     if requested is not None:
         unknown = sorted(set(requested) - set(mdoc.ELEMENTS))
@@ -894,8 +906,8 @@ def api_v1_verifiable_credential():
                         "WHERE t.token_value = %s ORDER BY c.context_id LIMIT 1",
                         (token_value,), fetch='one', primary=True)
     subject = {
-        'verificationResult': 'usable' if row['status'] == 'ACTIVE' else 'not_usable',
-        'credentialStatus': row['status'],
+        'verificationResult': 'usable' if _effective_status(row) == 'ACTIVE' else 'not_usable',
+        'credentialStatus': _effective_status(row),
         'context': context_row['context_type'] if context_row else None,
         'assuranceLevel': _AUTH_ACR_POSSESSION,
         'verifiedAt': now.isoformat().replace('+00:00', 'Z'),
@@ -2119,8 +2131,9 @@ def api_v1_sign_holder(agency_id):
                        error_description='present the genuine issued credential (token_value + signature_hex)'), 400
     if int(row['issuing_agency_id']) != int(agency_id):
         return jsonify(error='forbidden', error_description='this authority did not issue the presented credential'), 403
-    if row['status'] != 'ACTIVE':
-        return jsonify(error='forbidden', error_description='the presented credential is not ACTIVE'), 403
+    if _effective_status(row) != 'ACTIVE':
+        return jsonify(error='forbidden', error_description='the presented credential is not ACTIVE '
+                                                            '(revoked, suspended or expired)'), 403
     on_behalf_of = {'credential_hash': hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()}
     doc, err = _sign_document(agency, agency_id, body, on_behalf_of)
     return err if err else jsonify(doc)
@@ -2237,8 +2250,9 @@ def api_v1_auth_authorize():
     row = _possession_authenticated(token_value, presented)
     if row is None:
         return jsonify(error='not_verifiable', error_description='present the genuine issued credential (token_value + signature_hex)'), 400
-    if row['status'] != 'ACTIVE':
-        return jsonify(error='forbidden', error_description='the presented credential is not ACTIVE'), 403
+    if _effective_status(row) != 'ACTIVE':
+        return jsonify(error='forbidden', error_description='the presented credential is not ACTIVE '
+                                                            '(revoked, suspended or expired)'), 403
     # Duress: an enrolled duress code presented here is recorded silently and the flow proceeds
     # identically -- an observer, or a coercer, sees the same response either way.
     presented_code = body.get('presented_code')
