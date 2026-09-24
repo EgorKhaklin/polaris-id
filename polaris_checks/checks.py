@@ -3354,9 +3354,13 @@ def check_c8_atlas_caps(root: pathlib.Path) -> list[Finding]:
                 # `x = min(x, CAP)`. Both halves are required, so this stays specific: the
                 # variable AND a cap inside one min(), or the variable compared to a cap.
                 v = var.group(1)
+                # A chained bound, `not (0 < x <= CAP)`, counts too: it is the form NaN cannot
+                # pass (`x <= 0 or x > CAP` is False for NaN), adopted on the grid and hex size
+                # checks at 1.0.0-rc.11.
                 clamped = bool(re.search(
                     r"min\(\s*%s\s*,\s*%s\s*\)|min\(\s*%s\s*,\s*%s\s*\)|%s\s*>=?\s*%s"
-                    % (v, cap, cap, v, v, cap), body))
+                    r"|not\s*\(\s*\w+\s*<=?\s*%s\s*<=?\s*%s\s*\)"
+                    % (v, cap, cap, v, v, cap, v, cap), body))
             if not clamped:
                 unclamped.append("%s?%s=" % (route, param))
 

@@ -11,6 +11,31 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.11 — 2026-09-24 (a range check that NaN cannot pass)
+
+CORE-BUG against rc.10. Externally observable: what `/api/atlas/clusters` and
+`/api/atlas/hexbin` accept and return. Nothing is published.
+
+Both endpoints state their bound, "grid must be in (0, 90]" and "size must be in (0, 90]", and
+checked it as `x <= 0 or x > 90`. Every comparison with NaN is False, so `?grid=nan` passed.
+Measured before the fix:
+- `/clusters` answered 200 with `"grid": NaN` and every event in the box collapsed into one
+  cluster;
+- `/hexbin` answered 200 with `"lat": NaN, "lon": NaN` for its hexes;
+- neither response is JSON a browser can parse;
+- NaN in the cache key never equals itself, so each such request missed the cache and added an
+  entry that evicted a real one.
+
+Both checks are now `not (0 < x <= 90)`, which NaN fails. Counterexample, failing on rc.10:
+`AtlasAPITests.test_a_grid_or_hex_size_that_is_not_a_number_in_range_is_400`. It also covers
+infinity, zero and out-of-range values, and a NaN or infinite bbox, which the bbox parser
+already refused.
+
+Found by asking where else the coexistence module's NaN defect (d19ba5a, a sunset verdict that
+passed a NaN share) could live: every float parsed from a request was read.
+
+---
+
 ## v1.0.0-rc.10 — 2026-09-24 (a sealed store cannot write outside its destination)
 
 CORE-BUG against rc.9. Externally observable: what `polaris-secrets.sh unseal` writes, and

@@ -1087,6 +1087,23 @@ def test_c8_atlas_caps_checks_routes_not_only_constants(tmp_path):
     assert out.level == "FAIL" and "newthing" in out.message, \
         "must FAIL on a newly added unbounded route even when the others are fine"
 
+    # 1.0.0-rc.11: the chained bound NaN cannot pass is a clamp; the same chain with only a
+    # LOWER bound is not.
+    write("@app.route('/api/atlas/series')\n"
+          "def atlas_series():\n"
+          "    buckets = int(request.args.get('buckets', '60'))\n"
+          "    if not (0 < buckets <= 240):\n"
+          "        raise ValueError('out of range')\n")
+    assert checks.check_c8_atlas_caps(tmp_path)[0].level == "OK", \
+        "must PASS on `not (0 < x <= CAP)`"
+    write("@app.route('/api/atlas/series')\n"
+          "def atlas_series():\n"
+          "    buckets = int(request.args.get('buckets', '60'))\n"
+          "    if not (0 < buckets):\n"
+          "        raise ValueError('out of range')\n")
+    assert checks.check_c8_atlas_caps(tmp_path)[0].level == "FAIL", \
+        "must FAIL on `not (0 < x)`, a lower bound only"
+
     # 2026-09-17, the three shapes the clamp detection got wrong. Each of these passed
     # while /api/atlas/points had its real `min(..., _ATLAS_MAX_POINTS)` deleted, and so did
     # the application suite and this test as it stood.

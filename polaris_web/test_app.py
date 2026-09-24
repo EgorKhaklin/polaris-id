@@ -7836,6 +7836,25 @@ class AtlasAPITests(PolarisTestCase):
             self.assertEqual(r.status_code, 400,
                 f"Bad bbox {bad!r} should be 400, got {r.status_code}")
 
+    def test_a_grid_or_hex_size_that_is_not_a_number_in_range_is_400(self):
+        """2026-09-24, a sibling of the coexistence NaN finding: `grid <= 0 or grid > 90` is
+        False for NaN, so ?grid=nan passed validation, reached the aggregate query, and went into
+        the cache key. NaN is never equal to itself, so every such request missed the cache and
+        added an entry that evicted a real one. Same for ?size= on the hex grid."""
+        for value in ("nan", "NaN", "inf", "-inf", "0", "91", "-1"):
+            with self.subTest(grid=value):
+                r = self.client.get('/api/atlas/clusters?bbox=20,-130,50,-65&grid=%s'
+                                    '&kind=verification&window=all' % value)
+                self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+            with self.subTest(size=value):
+                r = self.client.get('/api/atlas/hexbin?bbox=20,-130,50,-65&size=%s'
+                                    '&kind=verification&window=all' % value)
+                self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+        for bbox in ("nan,0,1,1", "0,nan,1,1", "0,0,inf,1"):
+            with self.subTest(bbox=bbox):
+                r = self.client.get('/api/atlas/clusters?bbox=%s&grid=5' % bbox)
+                self.assertEqual(r.status_code, 400)
+
     def test_clusters_endpoint_rejects_bad_kind(self):
         r = self.client.get('/api/atlas/clusters?bbox=0,0,1,1&grid=1&kind=banana')
         self.assertEqual(r.status_code, 400)

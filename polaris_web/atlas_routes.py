@@ -411,7 +411,9 @@ def api_atlas_clusters():
     try:
         min_lat, min_lon, max_lat, max_lon = _parse_bbox(request.args.get('bbox'))
         grid = float(request.args.get('grid', '5'))
-        if grid <= 0 or grid > 90:
+        # `not (0 < x <= 90)`, not `x <= 0 or x > 90`: the second is False for NaN, which
+        # passed, reached the query and put NaN into the response and the cache key (2026-09-24).
+        if not (0 < grid <= 90):
             raise ValueError("grid must be in (0, 90] decimal degrees")
         kind = request.args.get('kind', 'verification')
         if kind not in ('verification', 'lifecycle'):
@@ -515,7 +517,9 @@ def api_atlas_hexbin():
     try:
         min_lat, min_lon, max_lat, max_lon = _parse_bbox(request.args.get('bbox'))
         size = float(request.args.get('size', '5'))
-        if size <= 0 or size > 90:
+        # `not (0 < x <= 90)`, not `x <= 0 or x > 90`: the second is False for NaN, which
+        # passed, reached the query and put NaN into the response and the cache key (2026-09-24).
+        if not (0 < size <= 90):
             raise ValueError("size must be in (0, 90] decimal degrees")
         kind = request.args.get('kind', 'verification')
         if kind not in ('verification', 'lifecycle'):
