@@ -240,6 +240,16 @@ function isoToEpoch(s: unknown): number | null {
                    Number(hh || 0), Number(mi || 0), Number(ss || 0),
                    frac ? Math.round(Number("0." + frac) * 1000) : 0);
   if (Number.isNaN(t)) return null;
+  // Date.UTC rolls an impossible date over instead of refusing it: "2026-02-31" became
+  // 3 March and "T25:00" the next day, where Python's fromisoformat, whose subset this
+  // parser promises to accept, refuses all of them. So an artifact dated 31 February read as
+  // fresh here and as unreadable in the Python kit. The fields must come back unchanged.
+  const back = new Date(t);
+  if (back.getUTCFullYear() !== Number(y) || back.getUTCMonth() !== Number(mo) - 1 ||
+      back.getUTCDate() !== Number(d) || back.getUTCHours() !== Number(hh || 0) ||
+      back.getUTCMinutes() !== Number(mi || 0) || back.getUTCSeconds() !== Number(ss || 0)) {
+    return null;
+  }
   if (sign) {
     // An explicit offset is applied; no offset at all means UTC, which is the whole fix.
     const shift = (Number(oh) * 60 + Number(om)) * 60000;

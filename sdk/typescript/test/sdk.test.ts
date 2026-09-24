@@ -717,3 +717,14 @@ test("held-out: grant actions are exact strings", () => {
     assert.equal(grantCovers(GRANT, action), false, action);
   }
 });
+
+
+test("an impossible date is refused, as the Python kit refuses it", () => {
+  // Date.UTC rolled these over into real dates; datetime.fromisoformat refuses every one.
+  for (const s of ["2026-02-31T00:00:00Z", "2026-13-01T00:00:00Z", "2026-01-01T25:00:00Z",
+                   "2026-01-01T12:60:00Z", "2026-02-29T00:00:00Z"]) {
+    assert.equal(__isoToEpochForTest(s), null, s);
+  }
+  assert.equal(__isoToEpochForTest("2028-02-29T00:00:00Z"), Date.UTC(2028, 1, 29) / 1000,
+               "control: a real leap day is accepted");
+});
