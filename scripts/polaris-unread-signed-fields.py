@@ -65,8 +65,6 @@ DECLARED = {
     "authorized_via":     ("SIGNED, NOT SURFACED", "names HOW the exchange was authorized. "
                            "The spec's MUST is that the requester's key is attested in the "
                            "receipt's context, which is checked; the mechanism is not"),
-    "bound_at":           ("SIGNED, NOT SURFACED", "when the holder binding was made; the "
-                           "verdict reports that it is authentic, not when"),
     "revoked_at":         ("SIGNED, NOT SURFACED", "an authentic revocation revokes, whatever "
                            "its date. A revocation dated in the future revokes now, which "
                            "fails closed"),

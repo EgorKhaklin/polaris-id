@@ -19348,3 +19348,21 @@ def test_state_changing_routes_ask_the_binding_check_discriminates(tmp_path):
     # A GET-only or unauthenticated route is not in scope.
     write(GOOD + "\n" + OTHERS + "@app.route('/federation')\ndef viewer():\n    pass\n")
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "OK"
+
+
+
+def test_unread_signed_fields_tool_is_green_check_discriminates(tmp_path):
+    tool = tmp_path / "scripts" / "polaris-unread-signed-fields.py"
+    tool.parent.mkdir(parents=True, exist_ok=True)
+    tool.write_text("print('79 fields examined across 23 canonicalisers')\n")
+    assert checks.check_unread_signed_fields_tool_is_green(tmp_path)[0].level == "OK", \
+        "a clean tool must PASS"
+    tool.write_text("import sys\nsys.exit(0)\n")
+    assert checks.check_unread_signed_fields_tool_is_green(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the tool exits clean having examined nothing"
+    tool.write_text("print('STALE DECLARATIONS (1): bound_at')\nimport sys\nsys.exit(1)\n")
+    assert checks.check_unread_signed_fields_tool_is_green(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the tool is red"
+    tool.unlink()
+    assert checks.check_unread_signed_fields_tool_is_green(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the tool is gone"

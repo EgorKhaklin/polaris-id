@@ -22574,6 +22574,36 @@ def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Find
                      f"operator's binding or are declared instance-wide with a reason "
                      f"({len(_INSTANCE_WIDE_ROUTES)} declared)")
 
+
+def check_unread_signed_fields_tool_is_green(root: pathlib.Path) -> list[Finding]:
+    """scripts/polaris-unread-signed-fields.py runs clean over the tree (1.0.0-rc.31 era).
+
+    The tool lists every field a verifier signs over and never reads, and every such field must
+    be declared with its reason; a declaration for a field that IS read now is refused as stale.
+    Nothing ran it. It went red when the verifier began reading `bound_at` for its linkability
+    list, and stayed red with every other check green: a guarantee reported by a tool nobody
+    executes. It takes a fraction of a second, so the invariant layer runs it."""
+    name = "unread_signed_fields_tool_is_green"
+    tool = root / "scripts" / "polaris-unread-signed-fields.py"
+    if not tool.is_file():
+        return _fail(name, "scripts/polaris-unread-signed-fields.py is missing")
+    import subprocess
+    try:
+        r = subprocess.run([sys.executable, str(tool)], cwd=str(root), capture_output=True,
+                           text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return _fail(name, "the unread-signed-fields tool did not finish in 120s")
+    if r.returncode != 0:
+        tail = " ".join((r.stdout + r.stderr).strip().splitlines()[-3:])[:400]
+        return _fail(name, "the unread-signed-fields tool exits %d: %s" % (r.returncode, tail))
+    m = re.search(r"(\d+) fields examined across (\d+) canonicalisers", r.stdout)
+    if not m or int(m.group(1)) == 0 or int(m.group(2)) == 0:
+        return _fail(name, "the unread-signed-fields tool exited clean without examining any "
+                           "signed field; a tool that looked at nothing proves nothing")
+    return _ok(name, "every signed field a verifier does not read is declared with its reason, "
+                     "and no declaration names a field that is now read (%s fields across %s "
+                     "canonicalisers)" % (m.group(1), m.group(2)))
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
@@ -22898,6 +22928,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_append_only_guards_are_classified,
     check_liveness_asks_about_expiry,
     check_state_changing_routes_ask_the_binding,
+    check_unread_signed_fields_tool_is_green,
 ]
 
 
