@@ -31,6 +31,7 @@ from flask import flash, redirect, render_template, request, url_for
 import app as _app          # for _METRICS_VERIFICATIONS only; see the note above
 import security
 from app import (
+    _not_expired,
     _PROM_AVAILABLE,
     _check_and_record_duress,
     _operator_authority_permits,
@@ -307,14 +308,24 @@ def verifications_new():
             # not-yet-activated credential is untrue the same way, whoever the verifier trusts.
             # Only SUCCESS: recording that a dead credential was presented and refused is what
             # the log is for.
+            #
+            # 1.0.0-rc.23: "live" is ACTIVE AND not past expiration_date, the same test the
+            # relying-party API applies (_not_expired). Expiry is not written back to status, so
+            # a credential past its date still reads ACTIVE, and rc.22 checked status alone.
             if outcome == 'SUCCESS' and token_id_val is not None:
-                live = query("SELECT status FROM IdentityToken WHERE token_id = %s",
-                             (token_id_val,), fetch='one')
-                if live is None or live['status'] != 'ACTIVE':
+                live = query("SELECT status, expiration_date FROM IdentityToken "
+                             "WHERE token_id = %s", (token_id_val,), fetch='one')
+                state = None
+                if live is None:
+                    state = 'unknown'
+                elif live['status'] != 'ACTIVE':
+                    state = live['status']
+                elif not _not_expired(live['expiration_date']):
+                    state = 'past its expiration date'
+                if state is not None:
                     flash('Token %s is %s, so a verification of it cannot have succeeded. '
                           'Record the outcome it actually had (FAILURE, or EXPIRED for an '
-                          'expired credential).'
-                          % (token_id_val, live['status'] if live else 'unknown'), 'error')
+                          'expired credential).' % (token_id_val, state), 'error')
                     return redirect(url_for('verifications_new'))
 
             # R11-5 / M2-10 duress-code check (compulsion resistance, PDF §9.5).

@@ -3706,6 +3706,33 @@ class IssuerFederationTests(PolarisTestCase):
         }, follow_redirects=False)
         self.assertNotIn('/verifications/new', r.location)
 
+    def test_a_success_is_not_recorded_against_an_expired_active_credential(self):
+        """1.0.0-rc.23. Expiry is not written back to status: a credential past its
+        expiration_date still reads ACTIVE. rc.22 checked status alone."""
+        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            cur.execute("SELECT token_id, issuing_agency_id FROM IdentityToken "
+                        "WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
+            row = cur.fetchone()
+            cur.execute("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 "
+                        "WHERE token_id = %s", (row['token_id'],))
+            cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s "
+                        "AND outcome = 'SUCCESS'", (row['token_id'],))
+            before = cur.fetchone()['n']
+            conn.commit()
+        r = self._post('/verifications/new', data={
+            'token_id': str(row['token_id']),
+            'requesting_agency_id': str(row['issuing_agency_id']),
+            'context_id': str(self._context_id('BANKING')),
+            'outcome': 'SUCCESS',
+            'disclosure_level': 'SELECTIVE',
+        }, follow_redirects=False)
+        with psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG) as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s "
+                        "AND outcome = 'SUCCESS'", (row['token_id'],))
+            self.assertEqual(cur.fetchone()['n'], before,
+                             'a SUCCESS was recorded against a credential past its expiry')
+        self.assertIn('/verifications/new', r.location)
+
     def test_cross_agency_success_blocked_without_attestation(self):
         """No attestation between Agency 6 and Agency 1 for HEALTHCARE →
         SUCCESS verification must be blocked."""

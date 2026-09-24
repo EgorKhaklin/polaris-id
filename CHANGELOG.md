@@ -11,6 +11,23 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.23 — 2026-09-24 (rc.22's guard read status alone, and an expired credential still reads ACTIVE)
+
+CORE-BUG against rc.22. Externally observable: `/verifications/new` refuses a `SUCCESS`
+against a credential past its `expiration_date`, as well as one that is not `ACTIVE`. No
+schema change. Nothing is published.
+
+rc.22 refused a `SUCCESS` against a credential whose status is not `ACTIVE`. But expiry is not
+written back to status: rc.8 made the status assertion honour `expiration_date` for exactly
+that reason. So a credential past its date still reads `ACTIVE`, and rc.22 recorded a
+`SUCCESS` against it.
+
+The guard now applies the relying-party API's own definition of currently valid: `ACTIVE`
+**and** `_not_expired(expiration_date)`, calling the same function so the two cannot drift.
+
+Counterexample, failing on rc.22:
+`IssuerFederationTests.test_a_success_is_not_recorded_against_an_expired_active_credential`.
+
 ## v1.0.0-rc.22 — 2026-09-24 (a verification of a revoked credential was recorded as a success)
 
 CORE-BUG against rc.21. Externally observable: `/verifications/new` refuses to record a
