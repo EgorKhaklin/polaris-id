@@ -22556,9 +22556,15 @@ def check_state_changing_routes_ask_the_binding(root: pathlib.Path) -> list[Find
             roles = re.findall(r"require_role\(([^)]*)\)", deco)
             if roles and re.search(r"'(admin|operator)'", roles[0]):
                 seen.add(route)
-                if route not in _INSTANCE_WIDE_ROUTES and \
-                        not _BINDING_ASKED.search("\n".join(src[j:k])):
+                body = "\n".join(src[j:k])
+                if route not in _INSTANCE_WIDE_ROUTES and not _BINDING_ASKED.search(body):
                     unbound.append(f"{f.name}: {route}")
+                # 1.0.0-rc.32: a route that names a TOKEN must ask about that token's own
+                # issuer. The transition route asked only about an optional actor field and was
+                # counted as bound here while a request that omitted the field was not.
+                elif "<int:tok_id>" in route and not re.search(
+                        r"issuing_agency_id|_token_authority_denied", body):
+                    unbound.append(f"{f.name}: {route} (names a token, never asks its issuer)")
             i = k
     if not seen:
         return _fail(name, "no state-changing admin or operator route found; the scan is blind")

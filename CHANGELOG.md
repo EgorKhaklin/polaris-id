@@ -11,6 +11,27 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.32 — 2026-09-24 (the transition route asked about an optional field)
+
+CORE-BUG against rc.31 (EXT-SECURITY). Externally observable: `/tokens/<id>/transition` refuses
+an operator bound to an authority other than the token's issuer. No schema change. Nothing is
+published.
+
+The route checked the operator's binding only against `actor_agency_id`, an optional form
+field. A bound operator who left the field out moved another authority's credential to `LOST`,
+`EXPIRED` or `DORMANT` with no check at all. Revocation was not reachable: rc.19's gate refuses
+a direct move to `REVOKED`. Measured: an operator bound to authority 1 moved authority 3's
+token 2 (302, the transition applied).
+
+rc.31's `check_state_changing_routes_ask_the_binding` counted this route as bound, because it
+does call `_operator_authority_permits`, behind that `if`. The route now always checks the
+binding against the token's own issuer, and checks the named actor as well when one is given.
+The check now also requires a route whose path names a token to look up that token's issuer.
+Run against the rc.31 route, it fails.
+
+Counterexample, failing on a worktree of rc.31:
+`BoundOperatorActsOnlyAsItsAuthorityTests.test_a_transition_without_an_actor_still_asks_the_binding`.
+
 ## v1.0.0-rc.31 — 2026-09-24 (a bound admin could rewrite another authority's record)
 
 CORE-BUG against rc.30 (EXT-SECURITY). Externally observable: `/agencies/<id>/edit`,

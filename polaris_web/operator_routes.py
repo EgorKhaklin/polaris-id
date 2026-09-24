@@ -1043,6 +1043,15 @@ def tokens_transition(tok_id):
     new_status = request.form['new_status']
     actor_id = request.form.get('actor_agency_id')  # optional
     reason = request.form.get('reason') or 'WEB_INTERFACE_TRANSITION'
+    # 1.0.0-rc.32: the binding is asked about the TOKEN'S issuer, always. It used to be asked
+    # only about the optional actor_agency_id, so a bound operator who left that field out moved
+    # another authority's credential to LOST, EXPIRED or DORMANT with no check at all.
+    owner = query("SELECT issuing_agency_id FROM IdentityToken WHERE token_id = %s",
+                  (tok_id,), fetch='one')
+    if owner is not None:
+        denied = _operator_authority_permits(owner['issuing_agency_id'])
+        if denied:
+            return denied
     if actor_id:
         try:
             denied = _operator_authority_permits(int(actor_id))

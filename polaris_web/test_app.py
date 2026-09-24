@@ -16044,6 +16044,18 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         self.assertEqual(_sql("SELECT count(*) AS n FROM IdentityToken WHERE token_id = 2",
                               fetch='one')['n'], tokens)
 
+    def test_a_transition_without_an_actor_still_asks_the_binding(self):
+        """1.0.0-rc.32. The transition route asked the binding only about the OPTIONAL
+        actor_agency_id; leaving it out moved another authority's credential with no check."""
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+        csrf = self._csrf_token_from('/verifications/new')
+        r = self.client.post('/tokens/2/transition', data={'new_status': 'LOST',
+                                                          'csrf_token': csrf})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(_sql("SELECT status FROM IdentityToken WHERE token_id = 2",
+                              fetch='one')['status'], 'ACTIVE')
+
 class DeactivatedAdminHoldsNoAuthorityTests(PolarisTestCase):
     """2026-09-24. Five admin-gated procedures checked AppUser.role and not is_active, so a
     DEACTIVATED admin's user id still authorized a federation attestation, its revocation, an

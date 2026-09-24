@@ -19341,6 +19341,13 @@ def test_state_changing_routes_ask_the_binding_check_discriminates(tmp_path):
           "@security.require_role('admin')\ndef agencies_edit(ag_id):\n    query('UPDATE Agency')\n")
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
         "must FAIL on an unbound state-changing admin route"
+    # rc.32's transition: asks the binding, but only about an optional actor, never about the
+    # token's own issuer.
+    write(GOOD + "\n" + OTHERS + "@app.route('/tokens/<int:tok_id>/transition', methods=['POST'])\n"
+          "@security.require_role('admin', 'operator')\ndef tokens_transition(tok_id):\n"
+          "    if actor_id:\n        denied = _operator_authority_permits(int(actor_id))\n")
+    assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a token route never asks about the token's issuer"
     # A declaration with no route behind it is refused, so the list cannot rot.
     write(GOOD)
     assert checks.check_state_changing_routes_ask_the_binding(tmp_path)[0].level == "FAIL", \
