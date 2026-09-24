@@ -12135,6 +12135,80 @@ class WebAuthnCeremonyTests(PolarisTestCase):
         self.assertEqual(client.get('/dashboard').status_code, 302,
                          'a refused finish leaves no usable session')
 
+    # -- held-out, 2026-09-24: auth_routes.py, twelve mutations, five survived ----------
+
+    def _password_step(self):
+        client = flask_app.app.test_client()
+        r = client.post('/login', data={'username': 'admin', 'password': TEST_PASSWORDS['admin']})
+        self.assertIn('/auth/webauthn/assert', r.headers['Location'])
+        return client
+
+    def test_partial_authentication_starts_from_an_empty_session(self):
+        """Session fixation: whatever the browser carried before the password step must not
+        survive into the half-authenticated session the second factor promotes."""
+        auth = _SyntheticAuthenticator('es256')
+        self._enroll(auth)
+        client = flask_app.app.test_client()
+        with client.session_transaction() as sess:
+            sess['planted_before_login'] = 'x'
+            sess['operator_agency_id'] = 99
+        client.post('/login', data={'username': 'admin', 'password': TEST_PASSWORDS['admin']})
+        with client.session_transaction() as sess:
+            self.assertNotIn('planted_before_login', sess)
+            self.assertNotIn('operator_agency_id', sess)
+            self.assertIn('webauthn_pending_user', sess)
+
+    def test_a_failed_assertion_consumes_its_challenge(self):
+        """One challenge, one attempt. A failed finish must not leave the challenge for a
+        second try, or a prober gets as many attempts per challenge as it likes."""
+        auth = _SyntheticAuthenticator('es256')
+        self._enroll(auth)
+        client = self._password_step()
+        options = client.post('/auth/webauthn/assert/begin').get_data(as_text=True)
+        bad = auth.assertion(options, 'https://evil.example', self.rp_id, True)
+        self.assertEqual(client.post('/auth/webauthn/assert/finish', json=bad).status_code, 401)
+        good = auth.assertion(options, self.origin, self.rp_id, True)
+        r = client.post('/auth/webauthn/assert/finish', json=good)
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        with client.session_transaction() as sess:
+            self.assertFalse(sess.get('logged_in'))
+
+    def test_the_second_factor_never_redirects_off_site(self):
+        auth = _SyntheticAuthenticator('es256')
+        self._enroll(auth)
+        client = self._password_step()
+        with client.session_transaction() as sess:
+            sess['webauthn_pending_next'] = 'https://evil.example/phish'
+        options = client.post('/auth/webauthn/assert/begin').get_data(as_text=True)
+        r = client.post('/auth/webauthn/assert/finish',
+                        json=auth.assertion(options, self.origin, self.rp_id, True))
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertNotIn('evil.example', r.get_json()['redirect'])
+
+    def test_a_registration_challenge_enrols_one_credential(self):
+        opts = self._begin_registration()
+        first = _SyntheticAuthenticator('es256')
+        r = self.client.post('/auth/webauthn/register/finish',
+                             json=first.register(opts, self.origin, self.rp_id),
+                             headers={'X-CSRFToken': self._csrf()})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        second = _SyntheticAuthenticator('es256')
+        r = self.client.post('/auth/webauthn/register/finish',
+                             json=second.register(opts, self.origin, self.rp_id),
+                             headers={'X-CSRFToken': self._csrf()})
+        self.assertEqual(r.status_code, 400, 'a spent challenge enrolled a second key')
+        self.assertIsNone(self._credential_row(second))
+
+    def test_a_challenge_without_a_password_step_is_refused(self):
+        """A challenge alone is not a ceremony: finish must also have the user the password
+        step staged, or it has nobody to log in."""
+        client = flask_app.app.test_client()
+        with client.session_transaction() as sess:
+            sess['webauthn_assert_challenge'] = 'AAAA'
+        r = client.post('/auth/webauthn/assert/finish', json={'id': 'x'})
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        self.assertIn('no pending', r.get_json()['error'])
+
     def test_registration_cannot_be_finished_without_a_challenge(self):
         """`register/finish` with no challenge in the session is refused.
 
