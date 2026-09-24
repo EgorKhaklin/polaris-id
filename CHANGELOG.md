@@ -11,6 +11,31 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.28 — 2026-09-24 (the database judged dates on its own clock)
+
+CORE-BUG against rc.27. Externally observable: on a database initialised outside UTC,
+attestation validity is now judged on the UTC date. Schema change: migration
+`2026-09-24-005-database-clock-is-utc`. Nothing is published.
+
+rc.27 moved credential expiry onto the UTC date, to agree with the signed status assertion and
+the standalone verifiers. Attestation validity is judged in SQL, against `CURRENT_DATE`:
+- the federation trust check behind `/verifications/new`;
+- the relying-party API's trust queries;
+- the Athena functions.
+
+`CURRENT_DATE` answers in the session's timezone, and nothing pinned it. The shipped containers
+run UTC by accident of the image. A database initialised anywhere else (the development
+database here reports `America/New_York`) judged trust on its local date and signed on UTC's
+for hours of every day.
+
+`09_grants.sql` now sets the database's timezone to UTC with `ALTER DATABASE`, as it already
+does the revocation defaults, so every session gets it without asking. The migration does the
+same for an existing install; round-tripped on a scratch database (UTC, default, UTC). The full
+suite passes with every test database on UTC, so nothing depended on the local zone.
+
+Counterexample, failing on a worktree and database of rc.27:
+`ZKSnarkTests.test_the_database_judges_dates_on_the_utc_clock` (`'America/New_York' != 'UTC'`).
+
 ## v1.0.0-rc.27 — 2026-09-24 (expiry was judged on the server's date, and the signature on UTC's)
 
 CORE-BUG against rc.26. Externally observable: on a server whose local timezone is not UTC,

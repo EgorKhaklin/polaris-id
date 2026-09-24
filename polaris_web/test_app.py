@@ -4386,6 +4386,25 @@ class ZKSnarkTests(PolarisTestCase):
         self.assertEqual(rp_api._effective_status(
             {'status': 'REVOKED', 'expiration_date': today + timedelta(days=9)}), 'REVOKED')
 
+    def test_the_database_judges_dates_on_the_utc_clock(self):
+        """1.0.0-rc.28. Attestation validity is judged in SQL against CURRENT_DATE, which is
+        the SESSION's date. Credential expiry and every signed artifact read UTC (rc.27), so
+        the database must too, for every session, without a connection having to ask."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT current_setting('TimeZone') AS tz, CURRENT_DATE AS d, "
+                            "(now() AT TIME ZONE 'UTC')::date AS u")
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row['tz'], 'UTC')
+        self.assertEqual(row['d'], row['u'])
+        grants = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   'polaris_sql', '09_grants.sql')).read()
+        self.assertIn("SET timezone = %L', current_database(), 'UTC'", grants,
+                      'a fresh install must carry the setting too, not only the migration')
+
     def test_expiry_is_judged_on_the_utc_date_whatever_the_server_zone(self):
         """1.0.0-rc.27. _not_expired read the server's local date; the signed status assertion
         and the standalone verifiers read UTC. Run under UTC+14 and UTC-12: at any moment one

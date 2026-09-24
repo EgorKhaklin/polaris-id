@@ -160,6 +160,22 @@ BEGIN
         current_database());
 END$$;
 
+-- ----------------------------------------------------------------------------
+-- 1.0.0-rc.28 — the database's clock is UTC.
+--
+-- CURRENT_DATE and CURRENT_TIMESTAMP answer in the SESSION's timezone, which defaults to
+-- whatever the server was initialised with. Trust decisions compare attestation validity with
+-- CURRENT_DATE, while _not_expired, the signed status assertion and the standalone verifiers
+-- read the UTC date (rc.27). A database initialised outside UTC therefore judged one date and
+-- signed another for hours of every day. Pinned here, for every session of this database, so
+-- no connection has to remember to ask. The shipped containers already run UTC; this makes
+-- that a property of the schema rather than of the image.
+-- ----------------------------------------------------------------------------
+DO $$
+BEGIN
+    EXECUTE format('ALTER DATABASE %I SET timezone = %L', current_database(), 'UTC');
+END$$;
+
 -- ============================================================================
 -- END OF 09_grants.sql
 -- ============================================================================
