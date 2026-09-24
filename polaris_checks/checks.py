@@ -22605,9 +22605,14 @@ def check_unread_signed_fields_tool_is_green(root: pathlib.Path) -> list[Finding
     if not tool.is_file():
         return _fail(name, "scripts/polaris-unread-signed-fields.py is missing")
     import subprocess
+    # Untraced, as the other probes are: CI's coverage traces subprocesses through a
+    # sitecustomize that fires on COVERAGE_PROCESS_START, and a probe run against a temporary
+    # tree (no_vacuous_checks builds one) records a source path that is gone by report time,
+    # which failed the coverage floor on the push that added this check.
+    probe_env = {k: v for k, v in os.environ.items() if k != "COVERAGE_PROCESS_START"}
     try:
         r = subprocess.run([sys.executable, str(tool)], cwd=str(root), capture_output=True,
-                           text=True, timeout=120)
+                           text=True, timeout=120, env=probe_env)
     except subprocess.TimeoutExpired:
         return _fail(name, "the unread-signed-fields tool did not finish in 120s")
     if r.returncode != 0:
