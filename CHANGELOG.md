@@ -11,6 +11,24 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.34 — 2026-09-24 (a rate that only moved when something happened)
+
+CORE-BUG against rc.33. Externally observable: `/api/metrics` and the alerts built on it report
+`request_rate_per_minute`, `error_rate_per_minute` and `auth_failures_per_minute` as of now. No
+schema change. Nothing is published.
+
+`observability.RateWindow` rolled its per-minute samples forward only when an event arrived.
+Reading the rate did not move it, so the reported rate described the last minute anything
+happened in, not the present. Measured with a controlled clock:
+- **after a burst**: a burst of 100 auth failures, then nothing, still read 50 a minute an hour
+  later, so an alert on the failure rate keeps firing after the attack has stopped;
+- **in the minute just after the burst**: the rate read 0, because the previous minute's
+  count was dropped until another event rotated it in.
+
+Both paths now roll the window forward to the present first, counting silent minutes as zero.
+
+Counterexample, failing on rc.33: `RateWindowTests.test_a_burst_ages_out_of_the_rate_without_new_events`.
+
 ## v1.0.0-rc.33 — 2026-09-24 (naming yourself as the actor revoked another authority's credential)
 
 CORE-BUG against rc.32 (EXT-SECURITY), a regression from rc.19. Externally observable:

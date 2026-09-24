@@ -182,29 +182,34 @@ class RateWindow:
         self._current_count = 0
         self._lock = threading.Lock()
 
+    def _advance(self) -> None:
+        """Roll the window forward to the current minute, counting the silent minutes as
+        zero. Caller holds the lock.
+
+        1.0.0-rc.34: this used to happen only when an event arrived, so after a burst the
+        window never moved and rate_per_minute() reported the burst as the current rate for
+        as long as nothing else happened: fifty auth failures a minute, an hour after the
+        last one. A rate is a statement about now, so reading it moves the window too."""
+        now_min = self._minute_now()
+        if now_min == self._current_minute:
+            return
+        self._samples.append(self._current_count)
+        gap = now_min - self._current_minute - 1
+        for _ in range(min(gap, self._window_minutes)):
+            self._samples.append(0)
+        self._current_minute = now_min
+        self._current_count = 0
+
     def inc(self, n: int = 1) -> None:
         with self._lock:
-            now_min = self._minute_now()
-            if now_min != self._current_minute:
-                self._samples.append(self._current_count)
-                gap = now_min - self._current_minute - 1
-                for _ in range(min(gap, self._window_minutes)):
-                    self._samples.append(0)
-                self._current_minute = now_min
-                self._current_count = n
-            else:
-                self._current_count += n
+            self._advance()
+            self._current_count += n
 
     def rate_per_minute(self) -> float:
         with self._lock:
-            now_min = self._minute_now()
-            sample_total = sum(self._samples)
-            if now_min == self._current_minute:
-                sample_total += self._current_count
+            self._advance()
             total_minutes = len(self._samples) + 1
-            if total_minutes == 0:
-                return 0.0
-            return round(sample_total / total_minutes, 2)
+            return round((sum(self._samples) + self._current_count) / total_minutes, 2)
 
     @staticmethod
     def _minute_now() -> int:

@@ -5804,6 +5804,35 @@ class StateDirPermsTests(unittest.TestCase):
             "dev keeps the cross-uid launcher share")
 
 
+class RateWindowTests(unittest.TestCase):
+    """1.0.0-rc.34. The rolling rate moved its window only when an event arrived, so after a
+    burst it reported the burst as the current rate for as long as nothing else happened."""
+
+    def _window(self):
+        import observability
+        clock = [1000]
+        w = observability.RateWindow(window_minutes=5)
+        w._minute_now = lambda: clock[0]
+        w._current_minute = clock[0]
+        return w, clock
+
+    def test_a_burst_ages_out_of_the_rate_without_new_events(self):
+        w, clock = self._window()
+        w.inc(100)
+        clock[0] = 1001
+        self.assertEqual(w.rate_per_minute(), 50.0, 'control: the burst is in the window')
+        clock[0] = 1060
+        self.assertEqual(w.rate_per_minute(), 0.0,
+                         'an hour after the last failure the rate still reported the burst')
+
+    def test_events_after_silence_count_normally(self):
+        w, clock = self._window()
+        w.inc(10)
+        clock[0] = 1030
+        w.inc(6)
+        self.assertEqual(w.rate_per_minute(), 1.0)
+
+
 class MetricsMultiprocessTests(unittest.TestCase):
     """v9.120: under gunicorn's multiple workers, /metrics must AGGREGATE every
     worker's counters (PROMETHEUS_MULTIPROC_DIR) — not report only the worker
