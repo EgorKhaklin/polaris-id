@@ -88,6 +88,14 @@ population once, not twice. They need no coordination with each other.
 polaris migrate-population --to ML-DSA-87 --limit 2000000
 ```
 
+**A credential that already holds a deprecated signature under the target cannot be
+re-signed under it.** A token carries one signature per algorithm and a signature never
+changes, so a population migrated off ML-DSA-65 and later migrated back onto it will have
+credentials whose ML-DSA-65 signature was retired by the first window. The run counts them
+as `cannot be re-signed`, leaves them standing on the signature they have (they are not
+dark), and `--deprecate-old` refuses, naming them, until they are re-issued. Re-running the
+migration does not reach them. Until 1.0.0-rc.9 the run stopped without saying so.
+
 ## 5. What it costs
 
 Measured by the drill, 2,000 credentials, real ML-DSA-87 with one custodied key,

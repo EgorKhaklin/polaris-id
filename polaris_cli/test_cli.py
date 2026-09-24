@@ -1330,6 +1330,23 @@ class MigratePopulationCommandTests(CLIBaseTestCase):
         self.assertIn('unverifiable after     0', closed.stdout,
                       "nobody may be left without a signature that verifies")
 
+    def test_migrating_back_says_which_credentials_no_run_can_reach(self):
+        """1.0.0-rc.9. Migrating back onto an algorithm the population was moved off leaves
+        credentials holding a deprecated signature under it, which a token cannot replace. The
+        command said "Run again to continue" about them, and running again never reached them."""
+        import time
+        run_cli('migrate-population', '--to', 'ML-DSA-87')
+        run_cli('migrate-population', '--to', 'ML-DSA-87', '--deprecate-old',
+                '--grace-seconds', '1')
+        time.sleep(1.3)
+        back = run_cli('migrate-population', '--to', 'ML-DSA-65')
+        self.assertIn('cannot be re-signed', back.stdout)
+        self.assertNotIn('Run again', back.stdout)
+        closing = run_cli('migrate-population', '--to', 'ML-DSA-65', '--deprecate-old',
+                          expect_success=False)
+        self.assertNotEqual(closing.returncode, 0)
+        self.assertIn('cannot be re-signed', closing.stdout + closing.stderr)
+
 
 class RecoveryCommandTests(CLIBaseTestCase):
     """UC-9: catastrophic-loss recovery ceremony (initiate + complete).

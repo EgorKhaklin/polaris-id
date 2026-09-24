@@ -11,6 +11,55 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.9 — 2026-09-24 (a migration run says what it could not do)
+
+CORE-BUG against rc.8. Externally observable: what `polaris migrate-population` reports, and
+what `migrate_population` returns. Nothing is published.
+
+`migrate_population` promised that re-running it finishes the job. Migrating back onto an
+algorithm the population had already left breaks that promise for some credentials. A
+credential that already holds a deprecated signature under the target algorithm cannot get
+another one: a token holds one signature per algorithm (`one_signature_per_algorithm_per_token`),
+and none ever changes. The batch selected those credentials anyway, and its insert did nothing
+for them.
+
+The batch then misreported its own work. The name that held the selected rows was reused for
+the insert's result, so `selected` reported the rows written. A batch that wrote none of what
+it selected looked like the end of the population. The run stopped without an error, the
+command told the operator to "Run again to continue", which never reached those credentials,
+and `--deprecate-old` refused forever with a message about finishing the migration first.
+Nobody was left without a valid signature: those credentials still stood on the signature they
+already had. But the window could never close, and the operator was not told why.
+
+Now:
+- a batch selects only credentials it can sign;
+- `selected` counts what was selected;
+- the run returns `blocked`, the credentials no run can reach;
+- the command prints them as `cannot be re-signed` and says to re-issue them;
+- `--deprecate-old` refuses naming the same count.
+
+`QUANTUM-EVENT.md` explains the case. Counterexamples, failing on rc.8:
+`PopulationMigrationTests.test_migrating_back_names_the_credentials_it_cannot_re_sign`,
+`test_a_batch_reports_what_it_selected_not_only_what_it_wrote`, and the command-line
+`MigratePopulationCommandTests.test_migrating_back_says_which_credentials_no_run_can_reach`.
+
+Found by a held-out mutation round on `migration.py`. Before it, ten of twelve mutations
+survived both the migration tests and the quantum-event drill. Four more tests close four of
+them:
+- one credential left is enough to refuse closing the window;
+- closing the window leaves an earlier deprecation's date where it was;
+- a negative grace period does not backdate the record;
+- the verifiability report can count a credential whose signatures have lapsed.
+
+That last test switches the trigger off for one transaction, because the report is meant to
+be the independent check, not a restatement of the trigger. Two of the twelve mutations are
+equivalent: a limit reached one batch later, and a case-insensitive algorithm name.
+
+The three maps carry it: a Table 16 row in both editions, and the migration limit in the math
+edition, which no longer calls rollback wholly unmeasured.
+
+---
+
 ## v1.0.0-rc.8 — 2026-09-23 (the offline answer agrees with the online one about expiry)
 
 CORE-BUG against rc.7. Externally observable: what `POST /api/v1/status-assertion` signs.

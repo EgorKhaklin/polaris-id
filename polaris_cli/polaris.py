@@ -756,9 +756,15 @@ def cmd_migrate_population(args):
         print(f"  database               {totals['db_seconds']:.1f}s")
         print(f"  still to re-sign       {after_pending}")
         print(f"  unverifiable           {after['unverifiable']}")
-        if after_pending:
+        if totals["blocked"]:
+            # Not "run again": no run reaches these. Each already holds a deprecated signature
+            # under the target, and a token holds one signature per algorithm, immutably.
+            print(red(f"  cannot be re-signed    {totals['blocked']}  (each already holds a "
+                      f"deprecated {target_name} signature; re-issue these credentials, or "
+                      "the window cannot close)"))
+        if after_pending > totals["blocked"]:
             print(dim("  Run again to continue; the remaining work is a query, not a cursor."))
-        else:
+        elif not totals["blocked"]:
             print(dim("  Next: close the window with --deprecate-old once fielded verifiers "
                       f"accept {target_name}."))
     finally:

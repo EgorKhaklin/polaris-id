@@ -13983,6 +13983,145 @@ class PopulationMigrationTests(PolarisTestCase):
                 self.assertEqual(cur.fetchone()["n"], 0,
                                  "a non-ACTIVE credential must not be re-signed")
 
+    def _superseded_then_back(self, m, conn):
+        """Migrate to ML-DSA-87, close the window, then target ML-DSA-65 again. The seed's
+        token 2 then holds a DEPRECATED ML-DSA-65 signature, and the schema allows one
+        signature per algorithm per token and never lets one change."""
+        import time
+        t87, n87 = m.resolve_target(conn, "ML-DSA-87")
+        m.migrate_population(conn, t87, n87, batch_size=50)
+        m.deprecate_superseded(conn, t87, grace_seconds=1)
+        time.sleep(1.2)
+        return m.resolve_target(conn, "ML-DSA-65")
+
+    def test_migrating_back_names_the_credentials_it_cannot_re_sign(self):
+        """CORE-BUG, 2026-09-24, found by a held-out mutation round. `migrate_population`
+        promised that re-running finishes the job. A credential holding a deprecated
+        signature under the target algorithm can never get another one, so the run left it
+        pending, returned without an error, and closing the window was refused forever with
+        a message about finishing a migration that could not be finished."""
+        m = self._migration()
+        with self._new_conn() as conn:
+            t65, n65 = self._superseded_then_back(m, conn)
+            totals = m.migrate_population(conn, t65, n65, batch_size=50)
+            self.assertEqual(totals["blocked"], 1, totals)
+            self.assertEqual(m.pending_count(conn, t65), 1)
+            with self.assertRaises(m.MigrationRefused) as caught:
+                m.deprecate_superseded(conn, t65)
+            self.assertIn("cannot be re-signed", str(caught.exception))
+            self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
+
+    def test_a_batch_reports_what_it_selected_not_only_what_it_wrote(self):
+        """`selected` was `len(rows)` after `rows` had been reused for the INSERT's result,
+        so it reported the rows written. A batch that selected work and wrote less of it (a
+        concurrent runner got there first) read as a batch with less to do, and a batch that
+        wrote none of it ended the run as if the population were finished."""
+        import psycopg2.extras
+        real = psycopg2.extras.execute_values
+
+        def one_lost_to_a_race(*args, **kwargs):
+            return real(*args, **kwargs)[:-1]
+
+        m = self._migration()
+        with self._new_conn() as conn:
+            t87, n87 = m.resolve_target(conn, "ML-DSA-87")
+            pending = m.pending_count(conn, t87)
+            self.assertGreater(pending, 1, "the seed must leave more than one to migrate")
+            with patch("psycopg2.extras.execute_values", one_lost_to_a_race):
+                batch = m.migrate_batch(conn, t87, n87, batch_size=50)
+            self.assertEqual((batch["selected"], batch["written"]), (pending, pending - 1))
+
+    def test_one_credential_left_is_enough_to_refuse_closing_the_window(self):
+        """Held-out, 2026-09-24: `if pending > 1` survived, because every refusal test
+        closed the window over the whole unmigrated population."""
+        m = self._migration()
+        with self._new_conn() as conn:
+            t87, n87 = m.resolve_target(conn, "ML-DSA-87")
+            pending = m.pending_count(conn, t87)
+            m.migrate_population(conn, t87, n87, batch_size=50, limit=pending - 1)
+            self.assertEqual(m.pending_count(conn, t87), 1)
+            with self.assertRaises(m.MigrationRefused):
+                m.deprecate_superseded(conn, t87)
+
+    def _deprecations(self, conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT signature_id, deprecation_date FROM TokenSignature "
+                        "WHERE deprecation_date IS NOT NULL ORDER BY signature_id")
+            return {r["signature_id"]: r["deprecation_date"] for r in cur.fetchall()}
+
+    def test_closing_the_window_leaves_an_earlier_deprecation_where_it_was(self):
+        """A signature already deprecated keeps its date. Rewriting it to now-plus-grace
+        would move it LATER, which the immutability trigger allows, and so extend a
+        signature an earlier decision had already scheduled to retire."""
+        m = self._migration()
+        with self._new_conn() as conn:
+            t87, n87 = m.resolve_target(conn, "ML-DSA-87")
+            m.migrate_population(conn, t87, n87, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE TokenSignature SET deprecation_date =
+                        CURRENT_TIMESTAMP + INTERVAL '10 minutes'
+                    WHERE signature_id = (
+                        SELECT s.signature_id FROM TokenSignature s
+                        JOIN IdentityToken t ON t.token_id = s.token_id
+                        WHERE t.status = 'ACTIVE' AND s.algorithm_id <> %s
+                        ORDER BY s.signature_id LIMIT 1)""", (t87,))
+            conn.commit()
+            before = self._deprecations(conn)
+            self.assertEqual(len(before), 1)
+            m.deprecate_superseded(conn, t87, grace_seconds=3600)
+            after = self._deprecations(conn)
+            self.assertGreater(len(after), 1, "the window closed over the other signatures")
+            self.assertEqual({k: after[k] for k in before}, before)
+
+    def test_a_negative_grace_does_not_backdate_the_record(self):
+        """The deprecation date is the audit-of-record's account of when a signature stopped
+        counting. A negative grace would record that it stopped before anybody decided so."""
+        m = self._migration()
+        with self._new_conn() as conn:
+            before = set(self._deprecations(conn))
+            t87, n87 = m.resolve_target(conn, "ML-DSA-87")
+            m.migrate_population(conn, t87, n87, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT CURRENT_TIMESTAMP AS now")
+                started = cur.fetchone()["now"].replace(tzinfo=None)
+            conn.commit()
+            m.deprecate_superseded(conn, t87, grace_seconds=-3600)
+            new = {k: v for k, v in self._deprecations(conn).items() if k not in before}
+            self.assertTrue(new)
+            self.assertTrue(all(v > started for v in new.values()), new)
+
+    def test_the_report_counts_a_credential_whose_signatures_have_lapsed(self):
+        """The number a migration is judged by has to be able to be non-zero. Every test read
+        it while it was zero, so a report that ignored deprecation dates passed them all.
+
+        The database refuses to leave a token with no active signature, and the report is
+        meant to be the independent check on that, not a restatement of it. So the trigger is
+        switched off for this one transaction (session_replication_role, which needs the
+        superuser the test database runs as), both of one token's signatures are scheduled to
+        lapse a second from now, and the test waits."""
+        import time
+        m = self._migration()
+        with self._new_conn() as conn:
+            t87, n87 = m.resolve_target(conn, "ML-DSA-87")
+            m.migrate_population(conn, t87, n87, batch_size=50)
+            with conn.cursor() as cur:
+                cur.execute("SELECT min(token_id) AS t FROM IdentityToken WHERE status = 'ACTIVE'")
+                token = cur.fetchone()["t"]
+                try:
+                    cur.execute("SET LOCAL session_replication_role = replica")
+                except psycopg2.Error:
+                    conn.rollback()
+                    self.skipTest("the test database role cannot switch triggers off")
+                cur.execute("UPDATE TokenSignature SET deprecation_date = "
+                            "CURRENT_TIMESTAMP + INTERVAL '1 second' "
+                            "WHERE token_id = %s AND deprecation_date IS NULL", (token,))
+            conn.commit()
+            self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
+            conn.rollback()   # a new transaction, or CURRENT_TIMESTAMP stays where it was
+            time.sleep(1.3)
+            self.assertEqual(m.verifiability_report(conn)["unverifiable"], 1)
+
     def test_a_key_for_the_wrong_parameter_set_is_refused(self):
         # Signing with ML-DSA-65 and storing the row as ML-DSA-87 is a false label on a real
         # signature: every later verification attempts the wrong set and reads the failure as

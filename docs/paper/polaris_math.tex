@@ -352,8 +352,12 @@ the ends, and measures it at zero \emark{measured}.
 \begin{limit}
 Agility is issuer-side only. A deprecation date reaches no signed artifact, so a verifier cannot
 learn that an algorithm is deprecated: retiring one is a software release to every relying party. The
-classical half of a credential in a hybrid cutover is protected by nothing here. Rollback and the
-mixed window of a partial migration are unmeasured.
+classical half of a credential in a hybrid cutover is protected by nothing here. The mixed window of
+a partial migration is unmeasured. Migrating back onto an algorithm the population left cannot re-sign
+a credential already holding a deprecated signature under it, since a credential holds at most one
+signature per algorithm and none changes, $|\{\sigma\in\Sigma_t:\alpha(\sigma)=a\}|\le 1$. Such
+credentials are counted as blocked, stay on the signature they have, and hold the window open until
+they are re-issued \emark{enforced} since \code{1.0.0-rc.9}; before it the run stopped without saying so.
 \end{limit}
 
 \section{Exchanges and timestamps}

@@ -58,6 +58,14 @@ _UNMIGRATED = (
     "NOT EXISTS (SELECT 1 FROM TokenSignature s WHERE s.token_id = t.token_id "
     "AND s.algorithm_id = %s AND (s.deprecation_date IS NULL "
     "OR s.deprecation_date > CURRENT_TIMESTAMP))")
+# What a batch can actually sign: no row under the target at all, active or not. The schema
+# allows ONE signature per algorithm per token (one_signature_per_algorithm_per_token) and
+# never lets one change, so a token whose target-algorithm signature was deprecated by an
+# earlier migration can never be given another. Found 2026-09-24: selecting those anyway sent
+# them into an INSERT that did nothing, every run, while they stayed pending.
+_SIGNABLE = (
+    "NOT EXISTS (SELECT 1 FROM TokenSignature s WHERE s.token_id = t.token_id "
+    "AND s.algorithm_id = %s)")
 
 
 def algorithm_row(conn, algorithm):
@@ -97,6 +105,16 @@ def pending_count(conn, target_algorithm_id) -> int:
         return cur.fetchone()["n"]
 
 
+def blocked_count(conn, target_algorithm_id) -> int:
+    """Pending credentials that can NEVER be re-signed under the target: they already hold a
+    deprecated signature under it. Their holders are not dark (the signature they stand on
+    now is still active), but the window cannot close over them. They need re-issuance."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT count(*) AS n FROM {_POPULATION} AND {_UNMIGRATED} "
+                    f"AND NOT {_SIGNABLE}", (target_algorithm_id, target_algorithm_id))
+        return cur.fetchone()["n"]
+
+
 def population_count(conn) -> int:
     with conn.cursor() as cur:
         cur.execute(f"SELECT count(*) AS n FROM {_POPULATION}")
@@ -117,7 +135,7 @@ def migrate_batch(conn, target_algorithm_id, algorithm_name, batch_size=500):
         # without two of them signing the same token: the wasted work of a duplicate signature
         # is small, but at population scale it is the difference between N workers and N/2.
         cur.execute(
-            f"SELECT t.token_id, t.token_value FROM {_POPULATION} AND {_UNMIGRATED} "
+            f"SELECT t.token_id, t.token_value FROM {_POPULATION} AND {_SIGNABLE} "
             "ORDER BY t.token_id LIMIT %s FOR UPDATE OF t SKIP LOCKED",
             (target_algorithm_id, batch_size))
         rows = cur.fetchall()
@@ -142,13 +160,16 @@ def migrate_batch(conn, target_algorithm_id, algorithm_name, batch_size=500):
         # rowcount reports only the LAST page: a 250-row batch reported 100 written. An
         # operator running a national migration would have been reading a number that
         # undercounts by the page size, and the scale drill is what caught it.
-        rows = execute_values(
+        inserted = execute_values(
             cur,
             "INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
             "signing_public_key_hex) VALUES %s "
             "ON CONFLICT (token_id, algorithm_id) DO NOTHING RETURNING signature_id",
             signed, fetch=True)
-        written = len(rows)
+        # Not `rows`: that name held the SELECT, and reusing it here made "selected" report
+        # the rows written. A batch that lost every row to a concurrent runner then read as
+        # a batch with nothing to do.
+        written = len(inserted)
     conn.commit()
     t_end = time.monotonic()
     return {
@@ -163,7 +184,10 @@ def migrate_batch(conn, target_algorithm_id, algorithm_name, batch_size=500):
 
 def migrate_population(conn, target_algorithm_id, algorithm_name, batch_size=500,
                        limit=None, progress=None):
-    """Re-sign every unmigrated ACTIVE credential. Resumable: re-running finishes the job.
+    """Re-sign every unmigrated ACTIVE credential. Resumable: re-running finishes the job,
+    except for `blocked` credentials (see `blocked_count`), which no run can reach and which
+    the returned totals count so the operator hears about them from the run, not from a window
+    that will not close.
 
     `limit` caps the number of credentials re-signed in this invocation, which is how a
     migration is run inside a maintenance window without holding a lock on the rest of the
@@ -186,6 +210,7 @@ def migrate_population(conn, target_algorithm_id, algorithm_name, batch_size=500
         if progress is not None:
             progress(totals, batch)
     totals["seconds"] = time.monotonic() - t0
+    totals["blocked"] = blocked_count(conn, target_algorithm_id)
     return totals
 
 
@@ -199,6 +224,14 @@ def deprecate_superseded(conn, target_algorithm_id, grace_seconds=0):
     console. The old signature keeping its validity until every credential has a new one IS
     the migration window."""
     pending = pending_count(conn, target_algorithm_id)
+    blocked = blocked_count(conn, target_algorithm_id) if pending else 0
+    if blocked:
+        raise MigrationRefused(
+            f"{pending} ACTIVE credential(s) still have no active signature under the target "
+            f"algorithm, and {blocked} of them cannot be re-signed under it: each already "
+            "holds a deprecated signature under that algorithm, and a token holds one per "
+            "algorithm that never changes. Re-running the migration will not reach them. "
+            "Re-issue those credentials, then close the window")
     if pending:
         raise MigrationRefused(
             f"{pending} ACTIVE credential(s) still have no signature under the target "
