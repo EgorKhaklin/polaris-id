@@ -2198,7 +2198,11 @@ def _not_expired(expiration_date) -> bool:
         # A value this function cannot read is not an open-ended credential. The same rule
         # the OpenID4VP and detached verifiers took the same day for the same reason.
         return False
-    return expiration_date >= _dt.date.today()
+    # The UTC date, not the server's (1.0.0-rc.27). The signed status assertion ends an ACTIVE
+    # credential at 00:00Z the day after its expiry, and the standalone verifiers read UTC; a
+    # server whose local date differs from UTC's answered differently from its own signed
+    # assertion for hours around every expiry, and could issue an assertion already expired.
+    return expiration_date >= _dt.datetime.now(_dt.timezone.utc).date()
 
 
 # ============================================================================

@@ -4386,6 +4386,25 @@ class ZKSnarkTests(PolarisTestCase):
         self.assertEqual(rp_api._effective_status(
             {'status': 'REVOKED', 'expiration_date': today + timedelta(days=9)}), 'REVOKED')
 
+    def test_expiry_is_judged_on_the_utc_date_whatever_the_server_zone(self):
+        """1.0.0-rc.27. _not_expired read the server's local date; the signed status assertion
+        and the standalone verifiers read UTC. Run under UTC+14 and UTC-12: at any moment one
+        of them disagrees with UTC about what today is, so the local-date version fails here
+        at every hour of the day."""
+        import subprocess
+        here = os.path.dirname(os.path.abspath(__file__))
+        probe = ("import sys, datetime as d; sys.path.insert(0, %r); "
+                 "from app import _not_expired; "
+                 "u = d.datetime.now(d.timezone.utc).date(); "
+                 "print(_not_expired(u), _not_expired(u - d.timedelta(days=1)))") % here
+        for zone in ("Pacific/Kiritimati", "Etc/GMT+12"):
+            env = dict(os.environ, TZ=zone)
+            out = subprocess.run([sys.executable, "-c", probe], cwd=here, env=env,
+                                 capture_output=True, text=True, timeout=120)
+            last = [l for l in out.stdout.splitlines() if l.strip()][-1:] or ['']
+            self.assertEqual(last[0], "True False",
+                             "under TZ=%s the UTC expiry day is %r: %s" % (zone, last[0], out.stderr[-300:]))
+
     def test_an_expired_credential_is_not_signed_as_usable(self):
         """1.0.0-rc.24. Nothing moves ACTIVE to EXPIRED when the date passes. The status
         assertion learned that at rc.8; the verifiable credential and the mdoc still signed the

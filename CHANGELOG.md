@@ -11,6 +11,30 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.27 — 2026-09-24 (expiry was judged on the server's date, and the signature on UTC's)
+
+CORE-BUG against rc.26. Externally observable: on a server whose local timezone is not UTC,
+whether a credential is expired now follows the UTC date. No schema change. Nothing is
+published.
+
+`_not_expired` compared `expiration_date` with `date.today()`, the server's local date. The
+signed status assertion ends an `ACTIVE` credential at `00:00Z` the day after its expiry, and
+the standalone verifiers read UTC. rc.8 set the rule that the offline answer must agree with
+the online one. On a host behind UTC the two disagreed for hours around every expiry date, and
+the status assertion could be issued with an `expires_at` earlier than its `issued_at`. On a
+host ahead of UTC, the credential expired early.
+
+Measured at 19:00 UTC under `TZ=Pacific/Kiritimati` (UTC+14): rc.26 called a credential
+expired on its own UTC expiry day. `_not_expired` and card personalization now take the date
+from `datetime.now(timezone.utc)`.
+
+The test runs the check in subprocesses under UTC+14 and UTC-12. At any moment one of those
+zones disagrees with UTC about what today is, so the local-date version fails it at every hour
+of the day, not only near midnight.
+
+Counterexample, failing on a worktree of rc.26:
+`ZKSnarkTests.test_expiry_is_judged_on_the_utc_date_whatever_the_server_zone`.
+
 ## v1.0.0-rc.26 — 2026-09-24 (a refused attestation stood anyway)
 
 CORE-BUG against rc.25. Externally observable: `/api/federation/attest` records an

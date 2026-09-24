@@ -93,7 +93,7 @@ def personalize(conn, token_id, card, *, issuer_sign, issuer_verify=None, operat
     if expiry is not None:
         import datetime as _dt
         expiry = expiry.date() if isinstance(expiry, _dt.datetime) else expiry
-        if expiry < _dt.date.today():
+        if expiry < _dt.datetime.now(_dt.timezone.utc).date():   # UTC, as _not_expired
             raise PersonalizationRefused(
                 f"credential {token_id} expired on {expiry}. It still reads ACTIVE because "
                 "nothing moves a credential to EXPIRED when its date passes; a card for it would "
