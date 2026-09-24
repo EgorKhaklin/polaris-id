@@ -317,6 +317,99 @@ def main():
                  "channel, expires_at) SELECT 1, %s, repeat('c',64), 'POSTAL', "
                  "CURRENT_TIMESTAMP + INTERVAL '365 days'"), 1)
 
+        # 2026-09-24, a held-out round: of twelve mutations of enrollment_code.py, ten
+        # survived this drill and test_enrollment_code together. Every lifecycle row above
+        # used ONE code for ONE person, so nothing could tell a lookup scoped to the
+        # applicant from one that was not, a counter on every live code from one on the
+        # newest, or a dead code from a live one. These rows use two people and several codes.
+        # After: eleven caught. The twelfth, dropping `redeemed_at IS NULL` from the redeeming
+        # UPDATE, is equivalent in any sequential run (`outstanding` already filtered the row
+        # out); it guards two redemptions racing, and the one-way door refuses the second.
+        def outcome(fn):
+            """'refused' for CodeRefused (the module's own vocabulary), 'db' for a database
+            refusal the module should have made first, else the return value."""
+            try:
+                got = fn()
+                conn.commit()
+                return got
+            except ec.CodeRefused as exc:
+                conn.commit()
+                outcome.last = str(exc)
+                return "refused"
+            except psycopg2.Error:
+                conn.rollback()
+                return "db"
+        outcome.last = ""
+
+        other = people[1]
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO EnrollmentProofing
+                           (individual_id, recorded_by_agency_id, presence, derived_ial)
+                           VALUES (%s, %s, 'IN_PERSON', 'IAL1') RETURNING proofing_id""",
+                        (other, agency))
+            other_pf = cur.fetchone()["proofing_id"]
+        conn.commit()
+
+        for label, kwargs in (("a code valid for 0 days", {"validity_days": 0}),
+                              ("a code valid past the ceiling",
+                               {"validity_days": ec.MAX_VALIDITY_DAYS + 1}),
+                              ("a code for an unknown channel", {"channel": "PIGEON"})):
+            args = dict(individual_id=other, agency_id=agency, channel="POSTAL")
+            args.update(kwargs)
+            _row("%s is refused by the MODULE, with its reason" % label,
+                 outcome(lambda: ec.issue(conn, **args)), "refused")
+
+        theirs_id, theirs = ec.issue(conn, individual_id=other, agency_id=agency,
+                                     channel="SMS", validity_days=7)
+        conn.commit()
+        _row("another person's code is refused for this applicant",
+             outcome(lambda: ec.redeem(conn, individual_id=people[0], presented=theirs,
+                                       proofing_id=code_pf)), "refused")
+        _row("...and still redeems for the person it was issued to",
+             outcome(lambda: ec.redeem(conn, individual_id=other, presented=theirs,
+                                       proofing_id=other_pf)), theirs_id)
+
+        first_id, first = ec.issue(conn, individual_id=other, agency_id=agency,
+                                   channel="POSTAL", validity_days=7)
+        conn.commit()
+        outcome(lambda: ec.redeem(conn, individual_id=other, presented="NOPE-NOPE",
+                                  proofing_id=other_pf))
+        second_id, _ = ec.issue(conn, individual_id=other, agency_id=agency,
+                                channel="EMAIL", validity_days=7)
+        conn.commit()
+        outcome(lambda: ec.redeem(conn, individual_id=other, presented="NOPE-NOPE",
+                                  proofing_id=other_pf))
+
+        def attempts(cid):
+            with conn.cursor() as cur:
+                cur.execute("SELECT attempts FROM EnrollmentCode WHERE code_id = %s", (cid,))
+                return cur.fetchone()["attempts"]
+        _row("a wrong guess counts against EVERY live code, not only the newest",
+             (attempts(first_id), attempts(second_id)), (2, 1))
+        _row("...and the refusal states the attempts the nearest-dead code has left",
+             "%d attempt(s) remain" % (ec.MAX_ATTEMPTS - 2) in outcome.last, True)
+
+        for _ in range(ec.MAX_ATTEMPTS - 2):
+            outcome(lambda: ec.redeem(conn, individual_id=other, presented="NOPE-NOPE",
+                                      proofing_id=other_pf))
+        _row("a code that has used its attempts is dead",
+             attempts(first_id), ec.MAX_ATTEMPTS)
+        _row("...and its RIGHT value no longer redeems it",
+             outcome(lambda: ec.redeem(conn, individual_id=other, presented=first,
+                                       proofing_id=other_pf)), "refused")
+
+        stale, stale_hash = ec.generate_code()
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO EnrollmentCode (individual_id, issued_by_agency_id,
+                               code_hash, channel, issued_at, expires_at)
+                           VALUES (%s, %s, %s, 'POSTAL', CURRENT_TIMESTAMP - INTERVAL '10 days',
+                                   CURRENT_TIMESTAMP - INTERVAL '1 day')""",
+                        (other, agency, stale_hash))
+        conn.commit()
+        _row("an expired code is refused by the module, not by a constraint violation",
+             outcome(lambda: ec.redeem(conn, individual_id=other, presented=stale,
+                                       proofing_id=other_pf)), "refused")
+
         print()
         if not _cases_recorded:
             print("FAIL: this drill recorded NO cases. It tested nothing and would "
