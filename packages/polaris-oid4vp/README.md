@@ -257,7 +257,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-278 tests in seven files, and they are not equal in weight. Coverage is
+289 tests in seven files, and they are not equal in weight. Coverage is
 the weakest of the three instruments here: it says a line ran.
 
 **And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`
@@ -274,6 +274,15 @@ The drill has a blind spot of its own: it inverts refusals, and a boundary moved
 allowance doubled, `>=` written as `>`) inverts nothing. Ten such mutations written after the
 drill was green on 2026-09-23 found eight the suite passed with; `HeldOutBoundaryTests` in
 `test_sdjwt` and `test_status` sit on each boundary, and a re-run caught all ten.
+
+Two more held-out rounds on 2026-09-24. Of twelve mutations of the JWE decryptor, four survived:
+every bad-header test had edited a token after sealing it, and the header is the AAD, so the
+tag refused them whether or not the header check ran. `HeldOutHeaderTests` seals each token
+under the header it carries; eleven are caught and the twelfth is equivalent. Of twelve
+mutations of the command line, ten survived, because nothing ran `serve` past its
+missing-files check; `ServeCommandHeldOutTests` runs it to the end with the listener
+replaced, and `KeygenHeldOutTests` pins the certificate properties a counterparty checks.
+All twelve are caught.
 
 `test_sdjwt` (100) and `test_jwe` (32) are this package agreeing with itself: the material is
 built here and checked here. Each carries a positive control, because a verifier that refuses

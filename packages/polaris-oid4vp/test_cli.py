@@ -160,5 +160,147 @@ class ServeCommandTests(unittest.TestCase):
         self.assertEqual(verdict.code, "issuer_key", "the operator was not told either")
 
 
+
+class KeygenHeldOutTests(unittest.TestCase):
+    """A held-out round on 2026-09-24: of twelve mutations of cli.py, ten survived every test
+    in the package. These are the certificate half. Each property is one a counterparty
+    checks and this command had asserted nothing about."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-cli-"))
+        keygen(self.tmp, "verifier.test")
+        self.leaf = x509.load_pem_x509_certificate((self.tmp / FILES["client_cert"]).read_bytes())
+        self.anchor = x509.load_pem_x509_certificate((self.tmp / FILES["anchor"]).read_bytes())
+
+    def test_the_anchor_may_sign_certificates_and_nothing_below_the_leaf(self):
+        """A CA without keyCertSign cannot validate the leaf it issued, under RFC 5280; and
+        path_length 0 is what stops the leaf's issuer from minting intermediates."""
+        ku = self.anchor.extensions.get_extension_for_class(x509.KeyUsage).value
+        self.assertTrue(ku.key_cert_sign)
+        self.assertEqual(self.anchor.extensions.get_extension_for_class(
+            x509.BasicConstraints).value.path_length, 0)
+
+    def test_the_leaf_key_usage_is_critical(self):
+        """Critical means a relying party that does not understand it must refuse, which is
+        what makes digitalSignature-only a restriction rather than a hint."""
+        self.assertTrue(self.leaf.extensions.get_extension_for_class(x509.KeyUsage).critical)
+
+    def test_the_leaf_names_the_host(self):
+        san = self.leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        self.assertEqual(san.get_values_for_type(x509.DNSName), ["verifier.test"])
+
+    def test_the_leaf_is_valid_for_a_counterparty_whose_clock_runs_behind(self):
+        import datetime
+        skewed = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
+        self.assertLess(self.leaf.not_valid_before_utc, skewed)
+
+
+class ServeCommandHeldOutTests(unittest.TestCase):
+    """The other half. Nothing ran `_cmd_serve` past its missing-files check, because it
+    blocks forever; here `serve` is replaced and the wait interrupted, so the command runs to
+    its end and what it handed the listener can be read back."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-serve-"))
+        keygen(self.tmp, "verifier.test")
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from polaris_oid4vp.jwe import b64u_encode
+        n = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
+        self.jwk = {"kty": "EC", "crv": "P-256",
+                    "x": b64u_encode(n.x.to_bytes(32, "big")),
+                    "y": b64u_encode(n.y.to_bytes(32, "big"))}
+
+    def _serve(self, *extra):
+        import contextlib
+        import io
+        from unittest import mock
+        from polaris_oid4vp import cli
+        seen = {}
+
+        class _Httpd:
+            def shutdown(self):
+                seen["shutdown"] = True
+
+            def server_close(self):
+                pass
+
+        def fake_serve(verifier, **kwargs):
+            seen["verifier"], seen["kwargs"] = verifier, kwargs
+            return _Httpd()
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "serve", fake_serve), \
+                mock.patch.object(cli.time, "sleep", side_effect=KeyboardInterrupt), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = main(["serve", "--pki", str(self.tmp), *extra])
+        return rc, seen, out.getvalue(), err.getvalue()
+
+    def _jwks_file(self, content):
+        import json
+        path = self.tmp / "issuers.json"
+        path.write_text(json.dumps(content))
+        return str(path)
+
+    def test_it_runs_to_the_end_and_shuts_the_listener(self):
+        rc, seen, out, _ = self._serve()
+        self.assertEqual(rc, 0)
+        self.assertTrue(seen.get("shutdown"))
+        self.assertIn("x509_hash:", out)
+
+    def test_serving_with_no_issuer_warns_on_stderr(self):
+        """The test above this class with that name checks the verdict, not the warning."""
+        _, _, _, err = self._serve()
+        self.assertIn("no --issuer-jwks", err)
+        _, _, _, err = self._serve("--issuer-jwks", self._jwks_file({"keys": [self.jwk]}))
+        self.assertNotIn("no --issuer-jwks", err, "the warning fires when it is configured")
+
+    def test_a_jwks_document_is_unwrapped_to_its_keys(self):
+        _, seen, _, _ = self._serve("--issuer-jwks", self._jwks_file({"keys": [self.jwk]}))
+        self.assertEqual(seen["verifier"].issuer_jwks, [self.jwk])
+
+    def test_a_single_jwk_is_trusted_on_its_own(self):
+        _, seen, _, _ = self._serve("--issuer-jwks", self._jwks_file(self.jwk))
+        self.assertEqual(seen["verifier"].issuer_jwks, [self.jwk])
+
+    def test_a_list_of_jwks_is_trusted_as_given(self):
+        _, seen, _, _ = self._serve("--issuer-jwks", self._jwks_file([self.jwk]))
+        self.assertEqual(seen["verifier"].issuer_jwks, [self.jwk])
+
+    def test_any_one_missing_file_is_refused_and_named(self):
+        import contextlib
+        import io
+        import shutil
+        for name in FILES.values():
+            with self.subTest(missing=name):
+                partial = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-part-"))
+                for other in FILES.values():
+                    if other != name:
+                        shutil.copy(self.tmp / other, partial / other)
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(main(["serve", "--pki", str(partial)]), 2)
+                self.assertIn(name, err.getvalue())
+
+    def test_the_operator_line_says_what_the_verdict_was(self):
+        import contextlib
+        import io
+        from types import SimpleNamespace
+        _, seen, _, _ = self._serve()
+        on_verdict = seen["kwargs"]["on_verdict"]
+        cases = [
+            (SimpleNamespace(authentic=True, claims={"given_name": "Jean"}),
+             "authentic, claims ['given_name']"),
+            (SimpleNamespace(authentic=False, code="nonce", reason="stale"),
+             "refused: nonce: stale"),
+            (None, "refused"),
+        ]
+        for verdict, expected in cases:
+            with self.subTest(expected=expected):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    on_verdict(200 if verdict and verdict.authentic else 400, b"", verdict)
+                self.assertIn(expected, out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
