@@ -32,7 +32,7 @@ import sys
 import unittest
 from unittest.mock import patch
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -15403,6 +15403,79 @@ class VerifiableCredentialShapeTests(unittest.TestCase):
         import vc
         out = vc.canonical_bytes({'b': 'é', 'a': 1, 'proof': {'x': 1}})
         self.assertEqual(out, '{"a":1,"b":"é"}'.encode('utf-8'))
+
+
+class MdocStructureHeldOutTests(unittest.TestCase):
+    """Properties of mdoc.py a held-out mutation round found nothing pinned (2026-09-24).
+
+    Seven edits to the builder left every check green: non-canonical embedded CBOR, ML-DSA-87
+    labelled -49, an 8-byte salt, a ten-day default validity, a dropped device key, a fixed
+    unprotected algorithm, and the signed instant taken from validFrom. Each test below
+    turns one of them red.
+    """
+
+    NOW = datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc)
+    FULL = {'issuing_authority': 'A', 'context': 'C', 'assurance_level': 'IAL2',
+            'enrollment_status': 'ACTIVE', 'credential_status': 'VALID'}
+
+    def _build(self, algorithm='ML-DSA-65', **kw):
+        import mdoc
+        seen = {}
+
+        def sign(data):
+            seen['data'] = data
+            return b'\x01' * 8, algorithm, 'ab' * 4
+        kw.setdefault('now', self.NOW)
+        signed = mdoc.build_issuer_signed(self.FULL, algorithm, sign, **kw)
+        return signed, seen
+
+    def _mso(self, signed):
+        import cbor2
+        return cbor2.loads(cbor2.loads(signed['issuerAuth'][2]).value)
+
+    def test_embedded_cbor_is_canonical(self):
+        # A reader re-encoding an item canonically must get the bytes that were digested.
+        import cbor2
+        import mdoc
+        signed, _ = self._build()
+        tagged = list(signed['nameSpaces'][mdoc.NAMESPACE])
+        tagged.append(cbor2.loads(signed['issuerAuth'][2]))
+        for t in tagged:
+            self.assertEqual(t.value, cbor2.dumps(cbor2.loads(t.value), canonical=True),
+                             'embedded CBOR is not canonically encoded')
+
+    def test_protected_header_names_the_signing_algorithm(self):
+        import cbor2
+        for algorithm, cose in (('ML-DSA-65', -49), ('ML-DSA-87', -50)):
+            signed, _ = self._build(algorithm)
+            self.assertEqual(cbor2.loads(signed['issuerAuth'][0]), {1: cose}, algorithm)
+
+    def test_unprotected_algorithm_is_the_one_the_signer_reported(self):
+        signed, _ = self._build('ML-DSA-87')
+        self.assertEqual(signed['issuerAuth'][1]['polaris_algorithm'], 'ML-DSA-87')
+
+    def test_every_element_has_a_fresh_32_byte_salt(self):
+        import cbor2
+        import mdoc
+        signed, _ = self._build()
+        salts = [cbor2.loads(t.value)['random'] for t in signed['nameSpaces'][mdoc.NAMESPACE]]
+        self.assertEqual(len(salts), len(self.FULL))
+        self.assertTrue(all(len(s) == mdoc.SALT_BYTES == 32 for s in salts), salts)
+        self.assertEqual(len(set(salts)), len(salts), 'a salt was reused across elements')
+
+    def test_default_validity_is_24_hours_and_signed_is_the_issuance_instant(self):
+        signed, _ = self._build(valid_from=self.NOW + timedelta(hours=1))
+        v = self._mso(signed)['validityInfo']
+        self.assertEqual(v['signed'], '2026-09-24T12:00:00Z')
+        self.assertEqual(v['validFrom'], '2026-09-24T13:00:00Z')
+        self.assertEqual(v['validUntil'], '2026-09-25T12:00:00Z')
+
+    def test_device_key_is_carried_into_the_mso(self):
+        key = {1: 2, -1: 1, -2: b'\x02' * 32, -3: b'\x03' * 32}
+        signed, _ = self._build(device_key_cose=key)
+        self.assertEqual(self._mso(signed)['deviceKeyInfo'], {'deviceKey': key})
+        signed, _ = self._build()
+        self.assertEqual(self._mso(signed)['deviceKeyInfo'], {})
 
 
 if __name__ == '__main__':
