@@ -337,7 +337,7 @@ written to `AuthAuditLog`.
 | `role` | VARCHAR(20) NOT NULL | `admin` \| `operator` \| `auditor` at login |
 | `client_ip` | VARCHAR(45) | proxy-aware client address at login |
 | `created_at` / `last_seen_at` | TIMESTAMPTZ NOT NULL | `last_seen_at` touched at most once a minute |
-| `revoked_at` / `revoke_reason` | TIMESTAMPTZ / VARCHAR(20) | co-NULL; reason in `logout`, `evicted`, `idle`, `deactivated`, `network_policy`, `password_changed`, `operator` |
+| `revoked_at` / `revoke_reason` | TIMESTAMPTZ / VARCHAR(20) | co-NULL; reason in `logout`, `evicted`, `idle`, `deactivated`, `network_policy`, `password_changed`, `operator`, `role_changed` (1.0.0-rc.13) |
 
 ---
 

@@ -12132,6 +12132,17 @@ class SessionLimitTests(UnauthenticatedTestCase):
         self.assertEqual(self._row(sid)['revoke_reason'], 'deactivated')
         self.assertIn('SESSION_REVOKED', _audit_events('operator'))
 
+    def test_a_role_change_ends_the_live_session(self):
+        """Held out 2026-09-24: a session kept after its account's role changed survived every
+        suite. An admin demoted to auditor must not keep an admin session until it idles out."""
+        c = self._client_as('operator'); sid = self._sid(c)
+        self.assertEqual(c.get('/dashboard').status_code, 200, "control: the session is live")
+        _sql("UPDATE AppUser SET role = 'auditor' WHERE username='operator'", fetch='none')
+        r = c.get('/dashboard')
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(self._row(sid)['revoke_reason'], 'role_changed')
+        self.assertIn('SESSION_REVOKED', _audit_events('operator'))
+
     def test_logout_revokes_the_registry_row(self):
         c = self._client_as('admin'); sid = self._sid(c)
         page = c.get('/dashboard').get_data(as_text=True)
@@ -15044,6 +15055,47 @@ class WebAuthnHeldOutTests(PolarisTestCase):
         with patch.dict(os.environ, {"POLARIS_WEBAUTHN_ALLOWED_AAGUIDS": " , ,"}):
             with self.assertRaises(ValueError):
                 wa.validate_policy()
+
+
+class SecurityHeldOutTests(unittest.TestCase):
+    """A held-out round on security.py, 2026-09-24. Five of twelve mutations survived the
+    authentication, network-policy, session, next-URL, limiter-selection, resource-bound,
+    authority-scope and cross-site suites and the check layer. Four of them are pure
+    functions, tested here one boundary each; the fifth, a role change, is in
+    SessionLimitTests."""
+
+    def setUp(self):
+        from app import security as sec
+        self.sec = sec
+
+    def test_the_limiter_allows_exactly_its_bound_then_refuses(self):
+        lim = self.sec.InMemoryRateLimiter()
+        self.assertEqual([lim.allow("k", 3, 60) for _ in range(4)], [True, True, True, False])
+
+    def test_the_limiter_window_slides(self):
+        import time as _t
+        lim = self.sec.InMemoryRateLimiter()
+        start = _t.monotonic()
+        with patch.object(self.sec.time, "monotonic", return_value=start):
+            self.assertTrue(lim.allow("k", 1, 60))
+            self.assertFalse(lim.allow("k", 1, 60))
+        with patch.object(self.sec.time, "monotonic", return_value=start + 61):
+            self.assertTrue(lim.allow("k", 1, 60), "an event older than the window still counted")
+
+    def test_an_address_that_does_not_parse_never_matches_an_allow_list(self):
+        with patch.dict(os.environ, {"POLARIS_NETWORK_POLICY_ADMIN": "10.0.0.0/8"}):
+            self.sec._NETWORK_POLICY_CACHE.clear()
+            self.assertTrue(self.sec.network_policy_allows("admin", "10.1.2.3"), "control")
+            for bad in ("not-an-ip", "", "10.1.2.3, 8.8.8.8", "10.1.2.3/8"):
+                with self.subTest(ip=bad):
+                    self.assertFalse(self.sec.network_policy_allows("admin", bad))
+
+    def test_a_negative_session_limit_fails_the_boot(self):
+        for var in ("POLARIS_SESSION_MAX_ADMIN", "POLARIS_SESSION_IDLE_MINUTES_ADMIN"):
+            with self.subTest(var=var):
+                with patch.dict(os.environ, {var: "-1"}):
+                    with self.assertRaises(ValueError):
+                        self.sec.validate_role_policies()
 
 
 if __name__ == '__main__':

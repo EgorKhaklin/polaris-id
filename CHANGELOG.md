@@ -11,6 +11,42 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.13 — 2026-09-24 (a session ended by a role change is ended, not an error)
+
+CORE-BUG against rc.12. Externally observable: what an operator whose role changes sees, and
+what the audit of record says about it. Nothing is published. Schema change: migration
+`2026-09-24-001-session-role-changed`, which adds one allowed value.
+
+Since 2026-09-17 (940af89), `validate_session` promises to end a live session whose account's
+role changed while it was live, and to audit `SESSION_REVOKED`. It writes
+`revoke_reason = 'role_changed'`. The constraint `chk_opsession_revoke_reason` was never widened
+to admit that value.
+
+Measured on rc.12: after `UPDATE AppUser SET role = 'auditor'`, the old session's next request
+raised `CheckViolation` in the before-request hook. The UPDATE rolled back, so:
+- the session was never revoked;
+- `SESSION_REVOKED` was never written to the append-only audit;
+- every request from the old session failed with a server error instead of ending it and
+  redirecting to the login.
+
+The migration adds `role_changed` to the constraint. Its down migration refuses while any row
+carries that value. It round-trips on a scratch database, and `DATA-MODEL.md` lists the value.
+
+Counterexample, failing on rc.12:
+`SessionLimitTests.test_a_role_change_ends_the_live_session`.
+
+Found by a held-out mutation round on `security.py`. Deleting the role-change branch survived
+every suite, and the test written to catch that deletion is what met the constraint. The same
+round closed four more survivors in `SecurityHeldOutTests`:
+- the limiter allowing one past its bound;
+- the limiter window never sliding;
+- an unparseable address matching an allow-list;
+- a negative session limit passing the boot.
+
+After: 12 of 12.
+
+---
+
 ## v1.0.0-rc.12 — 2026-09-24 (ending a pilot does not erase somebody another authority serves)
 
 CORE-BUG against rc.11. Externally observable: what `scripts/polaris-pilot.sh winddown`
