@@ -392,6 +392,81 @@ class SecondWitnessDegradationTests(unittest.TestCase):
         self.assertFalse(pqc_signing.second_witness_available())
 
 
+class HeldOutVerificationTests(unittest.TestCase):
+    """A held-out round on 2026-09-24: of eleven mutations of the verification functions,
+    five survived test_pqc_signing, test_custody, the simulator and nine test_app classes.
+    Each test below is the one input that separates a mutant from the code as written."""
+
+    def test_a_placeholder_differing_only_in_its_last_byte_is_refused(self):
+        """Both placeholder paths compare all 32 bytes. The existing tamper test changed the
+        token, which changes every byte of the digest, so a comparison of any prefix passed."""
+        token = 'TKN-CA-2026-000002'
+        good = hashlib.sha3_256(token.encode('utf-8')).digest()
+        near = good[:-1] + bytes([good[-1] ^ 1])
+        self.assertTrue(pqc_signing.verify_stored_signature(token, good, None))
+        self.assertFalse(pqc_signing.verify_stored_signature(token, near, None))
+        self.assertTrue(pqc_signing.verify_token_signature(token, good, pqc_signing.PLACEHOLDER_LABEL))
+        self.assertFalse(pqc_signing.verify_token_signature(token, near, pqc_signing.PLACEHOLDER_LABEL))
+
+    def test_a_claimed_key_is_never_checked_as_a_placeholder(self):
+        """A stored row that names a public key is a real signature or nothing. Without liboqs
+        it cannot be checked, and the answer is False, not a fall-through to the placeholder
+        comparison, which the placeholder's own bytes would pass."""
+        from unittest import mock
+        token = 'TKN-CA-2026-000002'
+        placeholder = hashlib.sha3_256(token.encode('utf-8')).digest()
+        with mock.patch.object(pqc_signing, '_OQS_AVAILABLE', False):
+            self.assertFalse(pqc_signing.verify_stored_signature(token, placeholder, 'ab' * 1952))
+
+    def _anchors_file(self, doc):
+        import json
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix='.json')
+        with os.fdopen(fd, 'w') as fh:
+            json.dump(doc, fh)
+        return path
+
+    def _anchors(self, doc):
+        from unittest import mock
+        path = self._anchors_file(doc)
+        with mock.patch.dict(os.environ, {'POLARIS_PQC_TRUST_ANCHORS_FILE': path}), \
+                mock.patch.object(pqc_signing, 'trust_anchor_public_key_hex', return_value=None):
+            return pqc_signing.trust_anchor_public_keys()
+
+    def test_a_previous_anchor_is_read_from_the_file(self):
+        """The control for the two refusals below: a well-formed file adds its anchors."""
+        self.assertEqual(self._anchors({'anchors': [{'public_key_hex': 'ab' * 4}]}), ['ab' * 4])
+
+    def test_an_anchor_that_is_not_hex_fails_loud(self):
+        """Trust must not shrink silently, and it must not grow by a key nothing can parse."""
+        with self.assertRaises(RuntimeError):
+            self._anchors({'anchors': [{'public_key_hex': 'not-hex'}]})
+
+    def test_an_anchor_entry_with_no_key_fails_loud(self):
+        with self.assertRaises(RuntimeError):
+            self._anchors({'anchors': [{'label': 'retired 2026', 'retired': True}]})
+
+
+@unittest.skipUnless(pqc_signing.is_available(),
+                     "liboqs-python not importable; the allowlist is only reachable with it")
+class HeldOutAllowlistTests(unittest.TestCase):
+
+    def test_a_valid_signature_under_an_unaccepted_parameter_set_is_refused(self):
+        """ML-DSA-44 is a real parameter set liboqs will verify. It is not one this system
+        accepts, so a signature under it is refused even when it is genuine. The existing test
+        of this sent a signature made under ANOTHER set, which failed verification whether or
+        not the allowlist ran."""
+        import oqs
+        digest = hashlib.sha3_256(b"agile").digest()
+        with oqs.Signature("ML-DSA-44") as signer:
+            pk = signer.generate_keypair()
+            sig = signer.sign(digest)
+        with oqs.Signature("ML-DSA-44") as check:
+            self.assertTrue(check.verify(digest, sig, pk), "control: the signature is genuine")
+        self.assertNotIn("ML-DSA-44", pqc_signing.ACCEPTED_ALGORITHMS)
+        self.assertFalse(pqc_signing.verify(b"agile", sig.hex(), pk.hex(), algorithm="ML-DSA-44"))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
 

@@ -418,5 +418,85 @@ class EnvSelectionTests(unittest.TestCase):
             self.assertIn("error", pqc_signing.availability_report()["custody"])
 
 
+
+@unittest.skipUnless(pqc_signing.is_available(), "liboqs not installed")
+class HeldOutCustodyTests(unittest.TestCase):
+    """A held-out round on 2026-09-24: of twelve mutations of custody.py, six survived this
+    file, test_pqc_signing, the simulator and nine test_app classes. Each test is the one input
+    that separates a mutant from the code as written."""
+
+    def setUp(self):
+        self._env = _EnvSnapshot().__enter__()
+        self.dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        self._env.__exit__()
+
+    def _key(self, path, kp=None):
+        kp = kp or pqc_signing.generate_keypair()
+        with open(path, "w") as fh:
+            json.dump(kp, fh)
+        return kp["public_key_hex"]
+
+    def test_an_agency_id_cannot_reach_outside_the_keys_directory(self):
+        """The id becomes a file name. A path in place of an id would load whatever key file
+        sat where it pointed; it is refused as an id and the global key answers instead."""
+        keys = os.path.join(self.dir, "agencies")
+        os.mkdir(keys)
+        outside = self._key(os.path.join(self.dir, "outside.json"))
+        glob = self._key(os.path.join(self.dir, "global.json"))
+        os.environ["POLARIS_AGENCY_KEYS_DIR"] = keys
+        os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = os.path.join(self.dir, "global.json")
+        custody.reset()
+        got = custody.get_custody_for_agency("../outside").public_key().hex()
+        self.assertNotEqual(got, outside)
+        self.assertEqual(got, glob)
+
+    def test_a_rotated_agency_key_is_picked_up_without_a_restart(self):
+        path = os.path.join(self.dir, "7.json")
+        first = self._key(path)
+        os.environ["POLARIS_AGENCY_KEYS_DIR"] = self.dir
+        custody.reset()
+        self.assertEqual(custody.get_custody_for_agency(7).public_key().hex(), first)
+        second = self._key(path)
+        st = os.stat(path)
+        os.utime(path, (st.st_atime + 10, st.st_mtime + 10))
+        self.assertEqual(custody.get_custody_for_agency(7).public_key().hex(), second)
+
+    def test_the_configured_key_is_not_used_for_another_parameter_set(self):
+        """With no migration key file, a migration to a set the running key is not under is
+        refused. The existing test of this refusal went through the migration key file."""
+        self._key(os.path.join(self.dir, "global.json"))
+        os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = os.path.join(self.dir, "global.json")
+        custody.reset()
+        self.assertEqual(custody.get_custody().algorithm, "ML-DSA-65")
+        self.assertIs(custody.get_custody_for_algorithm("ML-DSA-65"), custody.get_custody())
+        with self.assertRaises(custody.AlgorithmUnavailableError):
+            custody.get_custody_for_algorithm("ML-DSA-87")
+
+    def test_an_unaccepted_parameter_set_is_refused_before_any_key_is_looked_at(self):
+        with self.assertRaises(custody.CustodyError):
+            custody.get_custody_for_algorithm("ML-DSA-44")
+
+    def test_the_driver_name_is_not_case_sensitive(self):
+        self._key(os.path.join(self.dir, "global.json"))
+        os.environ["POLARIS_CUSTODY_DRIVER"] = "  FILE "
+        os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = os.path.join(self.dir, "global.json")
+        custody.reset()
+        self.assertEqual(custody.get_custody().driver, "file")
+
+    def test_a_signature_of_the_wrong_length_is_refused(self):
+        """A driver's backend returning the wrong material must fail loud, the same way the
+        digest check refuses the wrong input. Tested for the digest, not for the output."""
+        path = os.path.join(self.dir, "global.json")
+        self._key(path)
+        c = custody.FileCustody(path)
+        sig = c.sign(_DIGEST)
+        self.assertEqual(c._check_signature(sig), sig, "control: a real signature passes")
+        for bad in (sig[:-1], sig + b"\x00", b""):
+            with self.assertRaises(custody.CustodyError):
+                c._check_signature(bad)
+
+
 if __name__ == "__main__":
     unittest.main()
