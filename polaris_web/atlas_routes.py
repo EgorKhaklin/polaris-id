@@ -28,13 +28,14 @@ exists, and aliases itself into sys.modules first so `python3 app.py` does not l
 import os
 import threading
 import time as _time
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from flask import abort, g, jsonify, render_template, request
 
 import app as _app          # for the two values app.py owns and callers repoint; see below
 import security
 from app import (
+    _db_now,
     app,
     atlas_basemap_origins,
     get_db,
@@ -293,13 +294,11 @@ def _parse_bbox(s):
     return min_lat, min_lon, max_lat, max_lon
 
 
-# Window labels → timedelta. The schema stores event_timestamp as
-# TIMESTAMP-without-zone (local wall clock) and the Polaris app+DB are
-# co-located; therefore Python's `datetime.now()` (also local) is the
-# right reference. Using a UTC clock here would silently
-# shift the boundary by the server's TZ offset — caught during the
-# v8.3 smoke test against a window=1h query that returned 0 rows for
-# events inserted 30 minutes ago.
+# Window labels → timedelta. The schema stores event_timestamp as TIMESTAMP-without-zone in
+# the database session's wall clock, so the window is measured from THAT clock (_db_now).
+# Until 1.0.0-rc.29 this used the app's `datetime.now()` on the premise that app and database
+# share a zone; the v8.3 smoke test caught the UTC-clock version of the same mistake, and
+# rc.28 (the database on UTC) made the local-clock version wrong on any host not on UTC.
 _ATLAS_TIME_WINDOWS = {
     '1h':   timedelta(hours=1),
     '24h':  timedelta(hours=24),
@@ -327,7 +326,7 @@ def _parse_atlas_filters(args):
             f"window must be one of {sorted(_ATLAS_TIME_WINDOWS.keys())}; got {window!r}"
         )
     delta = _ATLAS_TIME_WINDOWS[window]
-    since = (datetime.now() - delta) if delta is not None else None
+    since = (_db_now() - delta) if delta is not None else None
 
     outcomes_raw = (args.get('outcomes') or '').strip()
     if outcomes_raw in _ATLAS_OUTCOME_ALIASES:
@@ -674,7 +673,7 @@ def api_atlas_timeline():
     # 'all' window has no fixed start; default to 30d in that case so the
     # histogram has a meaningful x-range. The HUD reads 'all'; the
     # histogram reads '30d-strip' so both can be honest about scope.
-    since = f['since'] or (datetime.now() - _ATLAS_TIME_WINDOWS['30d'])
+    since = f['since'] or (_db_now() - _ATLAS_TIME_WINDOWS['30d'])
 
     cache_key = ('timeline', kind, min_lat, min_lon, max_lat, max_lon,
                  buckets, _filter_cache_key(f))
@@ -696,7 +695,7 @@ def api_atlas_timeline():
         kind=kind,
         buckets=buckets,
         since=since.isoformat(),
-        until=datetime.now().isoformat(),
+        until=_db_now().isoformat(),
         points=[
             {'ts': r['ts'], 'n_total': int(r['n_total']),
              'n_anomaly': int(r['n_anomaly'])}
@@ -743,7 +742,7 @@ def api_atlas_series():
     if since is None:
         col = 'VerificationEvent' if kind == 'verification' else 'TokenLifecycleEvent'
         row = query(f"SELECT min(event_timestamp) AS t FROM {col}", fetch='one')
-        since = (row and row['t']) or (datetime.now() - _ATLAS_TIME_WINDOWS['30d'])
+        since = (row and row['t']) or (_db_now() - _ATLAS_TIME_WINDOWS['30d'])
 
     cache_key = ('series', kind, buckets, _filter_cache_key(f))
     cached = _atlas_cache_get(cache_key)
@@ -760,7 +759,7 @@ def api_atlas_series():
 
     payload = dict(
         window=f['window'], kind=kind, buckets=buckets,
-        since=since.isoformat(), until=datetime.now().isoformat(),
+        since=since.isoformat(), until=_db_now().isoformat(),
         points=[
             {'ts': r['ts'], 'n_total': int(r['n_total']),
              'n_failure': int(r['n_failure']), 'n_zk': int(r['n_zk'])}
@@ -799,7 +798,7 @@ def api_atlas_heatmap():
     if since is None:
         col = 'VerificationEvent' if kind == 'verification' else 'TokenLifecycleEvent'
         row = query(f"SELECT min(event_timestamp) AS t FROM {col}", fetch='one')
-        since = (row and row['t']) or (datetime.now() - _ATLAS_TIME_WINDOWS['30d'])
+        since = (row and row['t']) or (_db_now() - _ATLAS_TIME_WINDOWS['30d'])
 
     cache_key = ('heatmap', kind, _filter_cache_key(f))
     cached = _atlas_cache_get(cache_key)
@@ -847,7 +846,7 @@ def api_atlas_stacked():
     if since is None:
         col = 'VerificationEvent' if kind == 'verification' else 'TokenLifecycleEvent'
         row = query(f"SELECT min(event_timestamp) AS t FROM {col}", fetch='one')
-        since = (row and row['t']) or (datetime.now() - _ATLAS_TIME_WINDOWS['30d'])
+        since = (row and row['t']) or (_db_now() - _ATLAS_TIME_WINDOWS['30d'])
 
     top_k = 6
     cache_key = ('stacked', kind, buckets, dimension, _filter_cache_key(f))

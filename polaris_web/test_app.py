@@ -4405,6 +4405,23 @@ class ZKSnarkTests(PolarisTestCase):
         self.assertIn("SET timezone = %L', current_database(), 'UTC'", grants,
                       'a fresh install must carry the setting too, not only the migration')
 
+    def test_an_epoch_that_ended_by_the_databases_clock_is_refused(self):
+        """1.0.0-rc.29. valid_until is the database's wall clock; the check compared it with
+        the app's. With the database on UTC and the app on a local zone behind it, an epoch
+        that ended half an hour ago read as still open for the length of the offset."""
+        admin = _sql("SELECT user_id FROM AppUser WHERE role = 'admin' ORDER BY user_id LIMIT 1",
+                     fetch='one')['user_id']
+        row = _sql("INSERT INTO TokenStateEpoch (merkle_root, valid_from, valid_until, "
+                   "committed_count, closed_by_user_id) VALUES ('ab', LOCALTIMESTAMP - "
+                   "INTERVAL '2 hours', LOCALTIMESTAMP - INTERVAL '30 minutes', 1, %s) "
+                   "RETURNING epoch_id", (admin,), fetch='one')
+        ok, reason, status = flask_app._zk_verify_and_consume(row['epoch_id'], 1, 1, {})
+        self.assertFalse(ok)
+        self.assertEqual(reason, 'epoch expired')
+        now = _sql("SELECT LOCALTIMESTAMP AS t", fetch='one')['t']
+        self.assertLess(abs((flask_app._db_now() - now).total_seconds()), 5,
+                        '_db_now is the database clock')
+
     def test_expiry_is_judged_on_the_utc_date_whatever_the_server_zone(self):
         """1.0.0-rc.27. _not_expired read the server's local date; the signed status assertion
         and the standalone verifiers read UTC. Run under UTC+14 and UTC-12: at any moment one
@@ -8957,6 +8974,29 @@ class AtlasFilterAPITests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json()['count'], 0,
             "window=1h with outcomes=FAILURE should not see the 12h-old event")
+
+    def test_the_window_is_measured_on_the_clock_that_wrote_the_events(self):
+        """1.0.0-rc.29. event_timestamp is the database's wall clock; the window was measured
+        from the app's. With the database on UTC (rc.28) and the app on a local zone, a
+        one-hour window stretched by the zone's offset and took in an event three hours old."""
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO VerificationEvent
+                    (token_id, requesting_agency_id, context_id, event_timestamp, outcome,
+                     disclosure_level, latitude, longitude)
+                VALUES (2, 1, 2, CURRENT_TIMESTAMP - INTERVAL '3 hours',
+                        'UNAUTHORIZED', 'SELECTIVE', 51.50, -0.12)
+            """)
+        conn.commit()
+        conn.close()
+        def count(window):
+            r = self.client.get('/api/atlas/clusters?bbox=-89,-179,89,179&grid=5'
+                                '&kind=verification&window=%s&outcomes=UNAUTHORIZED' % window)
+            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+            return r.get_json()['count']
+        self.assertGreaterEqual(count('24h'), 1, 'control: the event is there')
+        self.assertEqual(count('1h'), 0, 'a one-hour window took in an event three hours old')
 
     def test_anomalies_alias_expands_to_outcome_set(self):
         """The 'anomalies' alias is a server-side expansion to

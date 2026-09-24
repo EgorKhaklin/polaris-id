@@ -1902,6 +1902,13 @@ def _format_cursor_composite(ts, id_):
 
 
 
+def _db_now():
+    """The database session's wall clock (LOCALTIMESTAMP), for comparing with a TIMESTAMP
+    column written by CURRENT_TIMESTAMP. Such a column carries no zone; the only clock it can
+    be compared with safely is the one that wrote it (1.0.0-rc.29)."""
+    return query("SELECT LOCALTIMESTAMP AS t", fetch='one', primary=True)['t']
+
+
 def _zk_verify_and_consume(epoch_id, context_id, nonce, proof_bundle):
     """Verify a ZK membership proof against a published epoch and consume its nonce (R2
     anti-replay). Returns (verified, reason, http_status). Shared by /api/zk/verify and the
@@ -1914,11 +1921,13 @@ def _zk_verify_and_consume(epoch_id, context_id, nonce, proof_bundle):
     if not epoch:
         return False, "epoch not found", 404
 
-    # R4: epoch-boundary check. valid_until is a TIMESTAMP-without-zone stored
-    # as local wall clock (app+DB co-located), so compare against datetime.now()
-    # like every other boundary in this module — a UTC clock would shift the
-    # boundary by the server's offset.
-    if epoch['valid_until'] < datetime.now():
+    # R4: epoch-boundary check, decided by the DATABASE's clock (1.0.0-rc.29). valid_until
+    # is a TIMESTAMP without a zone, written in the database session's wall clock. This used
+    # to compare it with the app's datetime.now() on the premise that app and database share
+    # a zone; rc.28 pinned the database to UTC, so on any host not itself on UTC the premise
+    # became false and the boundary moved by the host's offset. Ask the clock that wrote it,
+    # as the login lockout already does.
+    if epoch['valid_until'] < _db_now():
         return False, "epoch expired", 200
 
     try:

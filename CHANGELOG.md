@@ -11,6 +11,30 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.29 — 2026-09-24 (rc.28 moved one clock, and two comparisons assumed it had not)
+
+CORE-BUG against rc.28, and a regression it introduced. Externally observable: on an app host
+whose local zone is not UTC, an expired ZK epoch is refused again, and the Atlas time windows
+cover the span they name. No schema change. Nothing is published.
+
+rc.28 pinned the database's timezone to UTC. Two comparisons read a TIMESTAMP-without-zone
+column, written in the database's wall clock, against the app's `datetime.now()`. Their
+comments gave the reason: "app and DB are co-located", so both clocks share a zone.
+- **The ZK epoch boundary** (`_zk_verify_and_consume`): with the database on UTC and the app
+  behind it, an epoch that ended half an hour ago read as still open for the length of the
+  offset, and a proof against it was verified.
+- **The Atlas windows**: a one-hour window stretched by the offset and took in an event three
+  hours old.
+
+The login lockout had learned this on 2026-09-17 and asks the database's clock. Both
+comparisons now do the same, through `app._db_now()` (the database's `LOCALTIMESTAMP`).
+
+Counterexamples, failing on a worktree of rc.28 (app on `America/New_York`, database on UTC):
+- `ZKSnarkTests.test_an_epoch_that_ended_by_the_databases_clock_is_refused`
+  (rc.28 went on to verify);
+- `AtlasFilterAPITests.test_the_window_is_measured_on_the_clock_that_wrote_the_events`
+  (rc.28 counted the three-hour-old event in a one-hour window).
+
 ## v1.0.0-rc.28 — 2026-09-24 (the database judged dates on its own clock)
 
 CORE-BUG against rc.27. Externally observable: on a database initialised outside UTC,
