@@ -11,6 +11,37 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.21 — 2026-09-24 (the quantum migration left spare credentials on the fallen algorithm)
+
+CORE-BUG against rc.20. Externally observable: a population migration now re-signs and, when
+its window closes, deprecates `RESERVE` credentials along with `ACTIVE` ones, and the window
+will not close while a spare is unmigrated. No schema change. Nothing is published.
+
+`migration.py` re-signs a population under a new algorithm when the old one falls, then
+closes the window by deprecating the old signatures. Its population was
+`status = 'ACTIVE'`. A `RESERVE` credential is the spare a holder is moved onto when theirs is
+lost (UC-4), so it was neither re-signed nor had its old signature deprecated. After a
+completed migration, every spare still stood on the fallen algorithm alone. Activating one
+issued a brand-new credential on exactly the algorithm the migration existed to leave.
+
+Found by the sweep rc.20 prompted: every `status = 'ACTIVE'` query in the tree, asked whether
+it meant "active now" or "can still be live". The others (proof membership snapshots, counts,
+dashboards) mean "active now" and are unchanged.
+
+The population is now `ACTIVE` and `RESERVE`, for re-signing, for the pending count that holds
+the window open, and for deprecation. `test_only_active_credentials_are_re_signed` selected
+`status <> 'ACTIVE'`, which picked the seed's spare. It pinned the defect rather than its own
+rationale about revoked credentials. It is now `test_only_live_credentials_are_re_signed` and
+selects a terminal credential.
+
+The quantum-event drill's population was all `ACTIVE`, so it could not see spares. It now
+seeds one for every tenth subject and asserts, after the window closes, that every spare
+stands on the new algorithm alone. With the population put back to ACTIVE-only, that row
+reports 301 spares left on the old algorithm.
+
+Counterexample, failing on a worktree of rc.20:
+`PopulationMigrationTests.test_a_spare_credential_is_migrated_with_the_population`.
+
 ## v1.0.0-rc.20 — 2026-09-24 (a pilot's wind-down left its spare credentials alive)
 
 CORE-BUG against rc.19. Externally observable: a pilot wind-down now revokes the pilot's

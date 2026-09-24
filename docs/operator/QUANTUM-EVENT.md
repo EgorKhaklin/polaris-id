@@ -44,7 +44,8 @@ partially migrated population contains credentials that verify only under an
 algorithm fielded verifiers may not accept yet, and the holder discovers it at a
 border while the operator's console reports progress. So deprecation is a
 **separate pass**, and `polaris migrate-population --deprecate-old` refuses to
-run while any ACTIVE credential is still unmigrated. That refusal is not advice.
+run while any live credential (`ACTIVE` or `RESERVE`) is still unmigrated. That refusal is not
+advice.
 
 ## 3. Provision the key first
 
@@ -73,7 +74,7 @@ Name the algorithm, not its id. An off-by-one in a numeric id re-signs a
 population under the wrong parameter set with no error anywhere.
 
 **Interruption is expected and costs nothing.** The work remaining is a query
-("ACTIVE credentials with no active signature under the target algorithm"), not a
+("ACTIVE or RESERVE credentials with no active signature under the target algorithm"), not a
 cursor or a progress file. Kill the runner, lose the machine, run it again next
 week: it finishes what is left. There is no state to corrupt because there is no
 state.
@@ -145,9 +146,12 @@ polaris migrate-population --to ML-DSA-87 --dry-run     # unverifiable must be 0
 
 ## 7. What this procedure does not cover
 
-- **Credentials that are not ACTIVE.** A REVOKED or EXPIRED credential keeps its
-  historical signatures exactly as they were. Re-signing one would edit the
-  audit-of-record to say something that was never true.
+- **Credentials that can no longer be live.** A REVOKED, LOST or EXPIRED credential keeps
+  its historical signatures exactly as they were. Re-signing one would edit the
+  audit-of-record to say something that was never true. A `RESERVE` spare IS covered: it is
+  the credential a holder is moved onto when theirs is lost, and until 1.0.0-rc.21 it was
+  left on the fallen algorithm, so activating one after the window closed issued a credential
+  on that algorithm alone.
 - **The physical token.** A card holding a private key under the fallen algorithm
   is not fixed by re-signing the database record. That is the UC-6 dual-signature
   migration on silicon (roadmap P4), and it is the reason the card profile

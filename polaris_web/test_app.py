@@ -14158,6 +14158,32 @@ class PopulationMigrationTests(PolarisTestCase):
             self.assertEqual(again["written"], 0)
             self.assertEqual(again["batches"], 0)
 
+    def test_a_spare_credential_is_migrated_with_the_population(self):
+        """1.0.0-rc.21. A RESERVE credential is a spare a holder is moved onto when theirs is
+        lost. The migration read ACTIVE alone, so after it closed its window a spare still
+        stood only on the old algorithm, and activating it issued a credential on that alone."""
+        m = self._migration()
+        with self._new_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'RESERVE'")
+                spares = [r["token_id"] for r in cur.fetchall()]
+            if not spares:
+                self.fail("the fixture must hold a RESERVE credential for this to mean anything")
+            target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
+            m.migrate_population(conn, target_id, target_name, batch_size=50)
+            m.deprecate_superseded(conn, target_id, grace_seconds=60)
+            with conn.cursor() as cur:
+                for token_id in spares:
+                    cur.execute("SELECT algorithm_id, deprecation_date FROM TokenSignature "
+                                "WHERE token_id = %s", (token_id,))
+                    sigs = cur.fetchall()
+                    self.assertIn(target_id, [s["algorithm_id"] for s in sigs if
+                                              s["deprecation_date"] is None],
+                                  "spare %s was not re-signed under the target" % token_id)
+                    self.assertEqual([s for s in sigs if s["algorithm_id"] != target_id
+                                      and s["deprecation_date"] is None], [],
+                                     "spare %s kept an undeprecated old signature" % token_id)
+
     def test_closing_the_window_early_is_refused(self):
         # THE safety property. The old signature staying valid until the last credential has
         # a new one IS the migration window.
@@ -14185,24 +14211,25 @@ class PopulationMigrationTests(PolarisTestCase):
             self.assertEqual(m.pending_count(conn, target_id), before - 1)
             self.assertEqual(m.verifiability_report(conn)["unverifiable"], 0)
 
-    def test_only_active_credentials_are_re_signed(self):
+    def test_only_live_credentials_are_re_signed(self):
         # Rewriting the signatures of a revoked credential would edit the audit-of-record to
-        # say something that was never true.
+        # say something that was never true. Until rc.21 this selected `status <> 'ACTIVE'`,
+        # which picked the seed's RESERVE spare and so pinned the defect rather than the rule.
         m = self._migration()
         with self._new_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT token_id FROM IdentityToken WHERE status <> 'ACTIVE' "
-                            "LIMIT 1")
+                cur.execute("SELECT token_id FROM IdentityToken "
+                            "WHERE status IN ('REVOKED', 'EXPIRED', 'LOST') LIMIT 1")
                 row = cur.fetchone()
             if row is None:
-                self.skipTest("the seed holds no non-ACTIVE credential")
+                self.fail("the seed must hold a terminal credential for this to mean anything")
             target_id, target_name = m.resolve_target(conn, "ML-DSA-87")
             m.migrate_population(conn, target_id, target_name, batch_size=50)
             with conn.cursor() as cur:
                 cur.execute("SELECT count(*) AS n FROM TokenSignature WHERE token_id = %s "
                             "AND algorithm_id = %s", (row["token_id"], target_id))
                 self.assertEqual(cur.fetchone()["n"], 0,
-                                 "a non-ACTIVE credential must not be re-signed")
+                                 "a terminal credential must not be re-signed")
 
     def _superseded_then_back(self, m, conn):
         """Migrate to ML-DSA-87, close the window, then target ML-DSA-65 again. The seed's
@@ -14225,8 +14252,10 @@ class PopulationMigrationTests(PolarisTestCase):
         with self._new_conn() as conn:
             t65, n65 = self._superseded_then_back(m, conn)
             totals = m.migrate_population(conn, t65, n65, batch_size=50)
-            self.assertEqual(totals["blocked"], 1, totals)
-            self.assertEqual(m.pending_count(conn, t65), 1)
+            # Two since rc.21: the seed's ACTIVE token 2 and its RESERVE spare, token 1, both
+            # hold a deprecated ML-DSA-65 signature once the first window closes.
+            self.assertEqual(totals["blocked"], 2, totals)
+            self.assertEqual(m.pending_count(conn, t65), 2)
             with self.assertRaises(m.MigrationRefused) as caught:
                 m.deprecate_superseded(conn, t65)
             self.assertIn("cannot be re-signed", str(caught.exception))

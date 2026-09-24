@@ -19703,9 +19703,19 @@ def check_quantum_event_readiness(root: pathlib.Path) -> list[Finding]:
                      "pages its argument and reports only the LAST page, so a 250-row batch "
                      "reported 100 and an operator ran a national migration reading a number "
                      "that undercounts by the page size")
-    if "status = 'ACTIVE'" not in mod:
+    # The population is every credential that is or can still become live (ACTIVE, and the
+    # RESERVE spare a holder is moved onto), and nothing terminal. 1.0.0-rc.21: it was ACTIVE
+    # alone, and every spare stayed on the fallen algorithm after the window closed.
+    pop = re.search(r'^_POPULATION\s*=\s*"([^"]*)"', mod, re.M)
+    pop_sql = pop.group(1) if pop else ""
+    if "'ACTIVE'" not in pop_sql or "'RESERVE'" not in pop_sql:
         return _fail(name,
-                     "only ACTIVE credentials are re-signed; rewriting the signatures of a "
+                     "the migration population must be ACTIVE and RESERVE: a spare left on "
+                     "the fallen algorithm is activated later as a credential on that "
+                     "algorithm alone")
+    if any("'%s'" % t in pop_sql for t in ("REVOKED", "EXPIRED", "LOST", "DORMANT")):
+        return _fail(name,
+                     "only live credentials are re-signed; rewriting the signatures of a "
                      "revoked or expired one would edit the audit-of-record to say something "
                      "that was never true")
 

@@ -131,6 +131,16 @@ def _seed_population(conn, n):
             "CURRENT_TIMESTAMP FROM unnest(%s::int[]) i RETURNING token_id, token_value",
             (agency, individuals))
         tokens = cur.fetchall()
+        # And a RESERVE spare for every tenth subject: the credential a holder is moved onto
+        # when theirs is lost. Until 1.0.0-rc.21 the migration read ACTIVE alone, and a
+        # population with no spares in it could not show that it left them behind.
+        cur.execute(
+            "INSERT INTO IdentityToken (token_value, physical_serial, biometric_binding_type, "
+            "individual_id, issuing_agency_id, algorithm_id, status) "
+            "SELECT 'QER-' || i, 'QERS-' || i, 'FINGERPRINT', i, %s, 1, 'RESERVE' "
+            "FROM unnest(%s::int[]) i RETURNING token_id, token_value",
+            (agency, individuals[::10]))
+        tokens += cur.fetchall()
         # One ML-DSA-65 signature each: the population as it stands the morning the algorithm
         # falls. Placeholder bytes are the right fixture here because what is being measured
         # is the migration's cost and safety, not this signature's authenticity.
@@ -209,7 +219,9 @@ def main():
         seeded = _seed_population(conn, POPULATION)
         target_id, target_name = migration.resolve_target(conn, "ML-DSA-87")
         print("  %-62s %-12s %-12s %s" % ("case", "got", "expected", "ok"))
-        _row("a population is standing under the falling algorithm", seeded, POPULATION)
+        # Every subject holds an ACTIVE credential, and every tenth a RESERVE spare as well.
+        _row("a population is standing under the falling algorithm", seeded,
+             POPULATION + len(range(0, POPULATION, 10)))
 
         before = migration.verifiability_report(conn)
         _row("NOBODY IS DARK before the migration", before["unverifiable"], 0)
@@ -322,6 +334,18 @@ def main():
                         "AND s.deprecation_date IS NULL)", (target_id,))
             _row("...and every credential now stands on the new algorithm",
                  cur.fetchone()["n"], 0)
+            cur.execute("SELECT count(*) AS n FROM IdentityToken WHERE status = 'RESERVE'")
+            _row("the population holds spares (the control for the next row)",
+                 cur.fetchone()["n"] > 0, True)
+            cur.execute("SELECT count(*) AS n FROM IdentityToken t WHERE t.status = 'RESERVE' "
+                        "AND (NOT EXISTS (SELECT 1 FROM TokenSignature s "
+                        "WHERE s.token_id = t.token_id AND s.algorithm_id = %s "
+                        "AND s.deprecation_date IS NULL) OR EXISTS (SELECT 1 FROM "
+                        "TokenSignature s WHERE s.token_id = t.token_id AND s.algorithm_id <> %s "
+                        "AND (s.deprecation_date IS NULL OR s.deprecation_date > now())))",
+                        (target_id, target_id))
+            _row("...and every spare stands on the new algorithm alone, so activating one "
+                 "later cannot issue a credential on the old", cur.fetchone()["n"], 0)
 
         # THE COST, MEASURED.
         print()

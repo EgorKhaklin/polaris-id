@@ -49,11 +49,18 @@ class MigrationRefused(Exception):
     """A migration step was refused because running it would leave holders worse off."""
 
 
-# The population a migration is responsible for: an ACTIVE credential whose holder expects it
-# to verify. Nothing else is re-signed. A REVOKED or EXPIRED token keeps its historical
-# signatures exactly as they were, because rewriting the signatures of a credential that is no
-# longer valid would be editing the audit-of-record to say something that was never true.
-_POPULATION = "IdentityToken t WHERE t.status = 'ACTIVE'"
+# The population a migration is responsible for: a credential that is live or can still become
+# live. ACTIVE, whose holder expects it to verify, and RESERVE, the pre-issued spare a holder is
+# moved onto when their active credential is lost. A REVOKED or EXPIRED token keeps its
+# historical signatures exactly as they were, because rewriting the signatures of a credential
+# that is no longer valid would be editing the audit-of-record to say something that was never
+# true.
+#
+# RESERVE since 1.0.0-rc.21. Before it, a spare was neither re-signed nor had its old signature
+# deprecated, so after a completed migration it still stood only on the algorithm being left,
+# and activating it (a lost card, UC-4) issued a new credential on that algorithm alone.
+LIVE_STATUSES = ("ACTIVE", "RESERVE")
+_POPULATION = "IdentityToken t WHERE t.status IN ('ACTIVE', 'RESERVE')"
 _UNMIGRATED = (
     "NOT EXISTS (SELECT 1 FROM TokenSignature s WHERE s.token_id = t.token_id "
     "AND s.algorithm_id = %s AND (s.deprecation_date IS NULL "
@@ -98,7 +105,7 @@ def resolve_target(conn, algorithm):
 
 
 def pending_count(conn, target_algorithm_id) -> int:
-    """ACTIVE credentials with no active signature under the target algorithm."""
+    """Live credentials (ACTIVE or RESERVE) with no active signature under the target."""
     with conn.cursor() as cur:
         cur.execute(f"SELECT count(*) AS n FROM {_POPULATION} AND {_UNMIGRATED}",
                     (target_algorithm_id,))
@@ -184,7 +191,7 @@ def migrate_batch(conn, target_algorithm_id, algorithm_name, batch_size=500):
 
 def migrate_population(conn, target_algorithm_id, algorithm_name, batch_size=500,
                        limit=None, progress=None):
-    """Re-sign every unmigrated ACTIVE credential. Resumable: re-running finishes the job,
+    """Re-sign every unmigrated live (ACTIVE or RESERVE) credential. Resumable: re-running finishes the job,
     except for `blocked` credentials (see `blocked_count`), which no run can reach and which
     the returned totals count so the operator hears about them from the run, not from a window
     that will not close.
@@ -217,7 +224,7 @@ def migrate_population(conn, target_algorithm_id, algorithm_name, batch_size=500
 def deprecate_superseded(conn, target_algorithm_id, grace_seconds=0):
     """Close the migration window: deprecate every OTHER active signature on migrated tokens.
 
-    Refused while any ACTIVE credential still lacks a signature under the target algorithm.
+    Refused while any live credential still lacks a signature under the target algorithm.
     That refusal is the whole safety property of this module. Deprecating as you go would
     produce a population where some credentials verify only under an algorithm that fielded
     verifiers may not support yet, and the holder finds out at a border, not the operator at a
@@ -227,14 +234,14 @@ def deprecate_superseded(conn, target_algorithm_id, grace_seconds=0):
     blocked = blocked_count(conn, target_algorithm_id) if pending else 0
     if blocked:
         raise MigrationRefused(
-            f"{pending} ACTIVE credential(s) still have no active signature under the target "
+            f"{pending} live credential(s) still have no active signature under the target "
             f"algorithm, and {blocked} of them cannot be re-signed under it: each already "
             "holds a deprecated signature under that algorithm, and a token holds one per "
             "algorithm that never changes. Re-running the migration will not reach them. "
             "Re-issue those credentials, then close the window")
     if pending:
         raise MigrationRefused(
-            f"{pending} ACTIVE credential(s) still have no signature under the target "
+            f"{pending} live credential(s) still have no signature under the target "
             "algorithm. Deprecating the old one now would leave those holders with a "
             "credential that verifies under nothing. Finish the migration first")
     with conn.cursor() as cur:
@@ -244,7 +251,7 @@ def deprecate_superseded(conn, target_algorithm_id, grace_seconds=0):
             "UPDATE TokenSignature s SET deprecation_date = "
             "CURRENT_TIMESTAMP + (%s || ' seconds')::INTERVAL "
             "FROM IdentityToken t "
-            "WHERE s.token_id = t.token_id AND t.status = 'ACTIVE' "
+            "WHERE s.token_id = t.token_id AND t.status IN ('ACTIVE', 'RESERVE') "
             "AND s.algorithm_id <> %s AND s.deprecation_date IS NULL",
             (max(int(grace_seconds), 1), target_algorithm_id))
         deprecated = cur.rowcount

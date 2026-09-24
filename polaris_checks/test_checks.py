@@ -13463,6 +13463,7 @@ def test_quantum_event_readiness_check_discriminates(tmp_path):
     MOD = ("import time\n"
            "def pending_count(conn, a):\n    return 0\n"
            "def migrate_batch(conn, a, n, batch_size=500):\n"
+           "_POPULATION = \"IdentityToken t WHERE t.status IN ('ACTIVE', 'RESERVE')\"\n"
            "    cur.execute(\"SELECT t.token_id FROM IdentityToken t WHERE t.status = "
            "'ACTIVE' LIMIT %s FOR UPDATE OF t SKIP LOCKED\")\n"
            "    rows = execute_values(cur, 'INSERT ... ON CONFLICT DO NOTHING RETURNING "
@@ -13548,9 +13549,12 @@ def test_quantum_event_readiness_check_discriminates(tmp_path):
         "a written count taken from cur.rowcount after execute_values undercounts by the page size"
 
     # THE AUDIT-OF-RECORD. A revoked credential's signatures are not rewritten.
-    write({'polaris_web/migration.py': MOD.replace("t.status = 'ACTIVE'", "true")})
-    assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", \
-        "only ACTIVE credentials are re-signed"
+    POP = "_POPULATION = \"IdentityToken t WHERE t.status IN ('ACTIVE', 'RESERVE')\""
+    for bad, why in ((POP.replace(", 'RESERVE'", ""), "the spares left on the fallen algorithm"),
+                     (POP.replace("'RESERVE'", "'RESERVE', 'REVOKED'"), "a revoked credential re-signed"),
+                     (POP.replace("t.status IN ('ACTIVE', 'RESERVE')", "true"), "no status filter at all")):
+        write({'polaris_web/migration.py': MOD.replace(POP, bad)})
+        assert checks.check_quantum_event_readiness(tmp_path)[0].level == "FAIL", why
 
     # THE CLAIM WITHOUT THE NUMBER, and the number without its breakdown.
     write({'scripts/polaris-quantum-event-drill.py':
