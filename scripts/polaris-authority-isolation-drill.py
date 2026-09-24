@@ -6,6 +6,13 @@ bound to one authority cannot read another's credentials THROUGH A RAW SQL QUERY
 isolation is a database policy rather than a WHERE clause somebody has to remember. So this
 drill goes around the application entirely and asks the database directly.
 
+THE QUERY'S AUTHOR IS NOT THE ONE BEING SCOPED. The scope is the session setting
+polaris.operator_agency_id, and SQL can change a session setting, so these policies bound the
+queries the application issues on an operator's behalf, never SQL the operator writes. Until
+1.0.0-rc.18 the SQL console was exactly that: a bound admin or auditor could clear the setting
+in their own query and read every authority's rows. The console now refuses a bound account;
+SQLConsoleTests measures the escape the refusal rests on.
+
 It also asserts the two things that keep the claim honest:
 
   THE DEFAULT IS PERMISSIVE. An unscoped session sees everything, which is correct for a

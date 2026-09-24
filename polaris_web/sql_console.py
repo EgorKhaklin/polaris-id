@@ -16,7 +16,7 @@ import rather than a subtle bug.
 """
 import psycopg2
 
-from flask import render_template, request
+from flask import render_template, request, session
 
 import security
 from app import DB_CONFIG, _apply_operator_scope, app, db_error_to_message
@@ -48,7 +48,24 @@ def sql_query():
           execute DELETE in a read-only transaction" regardless.
         - Whitelist on first keyword (SELECT or WITH only) — UX, not security
         - EXPLAIN ANALYZE button surfaces query plans (still read-only)
+        - Refused outright to an account bound to one authority (1.0.0-rc.18). See below.
     """
+    # AN AUTHORITY SCOPE CANNOT BOUND SQL ITS HOLDER WRITES. The row-level policies read the
+    # scope from the session setting polaris.operator_agency_id, and a read-only transaction
+    # still permits set_config(). One execute() runs every statement in the string, so
+    # "SELECT set_config('polaris.operator_agency_id', '', false); SELECT * FROM
+    # IdentityToken" cleared the scope and read every authority's credentials. Parsing the
+    # text cannot close that (a function call, a CTE, a statement separator inside a string),
+    # and neither can checking the setting afterwards (the query can put it back). The
+    # console is for an instance-wide admin or auditor; a bound account is refused, and says
+    # why, rather than handed a scope its own query can lift.
+    if session.get('operator_agency_id') is not None:
+        return render_template(
+            'error.html', code=403,
+            message='The SQL console is not available to an account bound to one authority.',
+            hint='Its queries run as written, and a query can change the setting that limits '
+                 'what it sees, so no binding could hold here. An instance-wide administrator '
+                 'or auditor can run the query.'), 403
     SQL_MAX_LENGTH = 5000
     SQL_TIMEOUT_MS = 5000  # 5 seconds
 

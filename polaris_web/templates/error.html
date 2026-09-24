@@ -22,6 +22,8 @@
             Polaris's own documentation, the link is wrong: tell an operator,
             and quote the request id below.
         </p>
+    {% elif code == 403 and hint %}
+        <p class="error-hint">{{ hint }}</p>
     {% elif code == 403 %}
         <p class="error-hint">
             You are signed in, but this page needs a different role. An

@@ -5241,6 +5241,63 @@ class RouteModuleTests(PolarisTestCase):
 
 class SQLConsoleTests(PolarisTestCase):
 
+    def test_an_account_bound_to_one_authority_is_refused_the_console(self):
+        """1.0.0-rc.18. The console runs the query as written, and the row-level policies take
+        their scope from a session setting the query itself can change, so a bound admin or
+        auditor could clear it and read every authority's rows. The refusal is asserted by its
+        effect: the posted query's rows never reach the page."""
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+        r = self.client.get('/sql')
+        self.assertEqual(r.status_code, 403)
+        self.assertIn('bound to one authority', r.get_data(as_text=True))
+        r = self._post('/sql', data={
+            'sql': "SELECT set_config('polaris.operator_agency_id', '', false); "
+                   "SELECT individual_id, legal_name FROM Individual ORDER BY individual_id LIMIT 3"})
+        self.assertEqual(r.status_code, 403)
+        self.assertNotIn('Adrian Vasquez', r.get_data(as_text=True),
+                         'a bound account\'s query ran')
+
+    def test_an_unbound_account_keeps_the_console(self):
+        """The regression guard: every single-authority instance leaves the binding unset."""
+        with self.client.session_transaction() as sess:
+            sess.pop('operator_agency_id', None)
+        r = self._post('/sql', data={
+            'sql': 'SELECT individual_id, legal_name FROM Individual ORDER BY individual_id LIMIT 3'})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('Adrian Vasquez', r.get_data(as_text=True))
+
+    def test_why_a_bound_account_cannot_have_it_a_query_lifts_its_own_scope(self):
+        """The fact the refusal rests on, measured as the application role in a read-only
+        transaction, which is exactly what the console runs. If this ever stops holding (a
+        per-authority database role, say), the refusal can be revisited; until then it is
+        what keeps the isolation claim true."""
+        conn = psycopg2.connect(**DB_CONFIG)
+        try:
+            conn.set_session(readonly=True)
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL ROLE polaris_app")
+                cur.execute("SELECT count(*) FROM IdentityToken")
+                everything = cur.fetchone()[0]
+                cur.execute("SELECT issuing_agency_id FROM IdentityToken "
+                            "GROUP BY 1 ORDER BY count(*) LIMIT 1")
+                row = cur.fetchone()
+                if row is None:
+                    self.fail('the fixture has no credentials to scope')
+                cur.execute("SELECT set_config('polaris.operator_agency_id', %s, false)",
+                            (str(row[0]),))
+                cur.execute("SELECT count(*) FROM IdentityToken")
+                scoped = cur.fetchone()[0]
+                cur.execute("SELECT set_config('polaris.operator_agency_id', '', false); "
+                            "SELECT count(*) FROM IdentityToken")
+                lifted = cur.fetchone()[0]
+        finally:
+            conn.rollback()
+            conn.close()
+        self.assertLess(scoped, everything, 'control: the scope must hide something')
+        self.assertEqual(lifted, everything,
+                         'the query cleared its own scope; if it no longer can, revisit the refusal')
+
     def test_console_renders(self):
         r = self.client.get('/sql')
         self.assertEqual(r.status_code, 200)

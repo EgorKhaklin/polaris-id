@@ -302,6 +302,14 @@ procedure: `uc9_complete_recovery`, `uc_pseudonymize_individual`, `uc10_attest_t
 checked the role alone, which the CLI and the operator scripts, passing a user id straight in,
 could reach.
 
+**Whether a bound account may use the SQL console** is refused, in `sql_console.py`. The
+row-level policies take a bound operator's scope from the session setting
+`polaris.operator_agency_id`, and SQL can change a session setting even in a read-only
+transaction. So the policies bound what the application queries on an operator's behalf, and
+cannot bound a query the operator writes. Before 1.0.0-rc.18 a bound admin or auditor could
+clear the setting in their own console query and read every authority's rows. The console is
+now for instance-wide accounts only.
+
 ---
 
 ## 14. Decisions not yet made

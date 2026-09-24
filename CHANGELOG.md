@@ -11,6 +11,37 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.18 — 2026-09-24 (the SQL console cannot be scoped, so a bound account cannot use it)
+
+CORE-BUG against rc.17. Externally observable: `/sql` returns 403 to an account bound to one
+authority. No schema change. Nothing is published.
+
+An operator bound to one authority is held to that authority's rows by row-level policies.
+The policies read the scope from the session setting `polaris.operator_agency_id`, which the
+application sets on every connection it opens for that operator. The SQL console opens such a
+connection and then runs the operator's own text. A read-only transaction still permits
+`set_config()`, and one `execute()` runs every statement in the string. So a bound admin or
+auditor could post
+`SELECT set_config('polaris.operator_agency_id', '', false); SELECT * FROM IdentityToken`
+and read every authority's credentials.
+
+Measured as the application role (`polaris_app`) in a read-only transaction, which is what the
+console runs: a scope that hid two of five credentials hid none once the query cleared it.
+
+Neither parsing the text nor re-checking the setting afterwards can close this. Parsing misses
+a function call, a CTE or a separator inside a string, and the query can put the setting back
+before it returns. The console now refuses a bound account outright, on GET and POST, and says
+why. Unbound accounts, the default for every single-authority instance, keep it.
+
+`scripts/polaris-authority-isolation-drill.py` said a bound operator could not read another
+authority's credentials "through a raw SQL query". It now says the policies bound the queries
+the application issues, never SQL the operator writes.
+
+Counterexample, failing on rc.17:
+`SQLConsoleTests.test_an_account_bound_to_one_authority_is_refused_the_console`. The escape
+itself is measured by `test_why_a_bound_account_cannot_have_it_a_query_lifts_its_own_scope`,
+and `test_an_unbound_account_keeps_the_console` guards the default.
+
 ## v1.0.0-rc.17 — 2026-09-24 (a document someone only looked at is not SUPERIOR evidence)
 
 CORE-BUG against rc.16. Externally observable: the assurance level derived from some
