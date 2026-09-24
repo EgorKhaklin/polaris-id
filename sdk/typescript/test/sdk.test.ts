@@ -709,3 +709,11 @@ test("held-out: only trusted, distinct witnesses over this exact head count", ()
 test("held-out: a genuinely signed head for another log does not anchor", () => {
   assert.equal(verifyTimestampAnchor(ANCH.other_log, ANCH.log_key, ANCH.witnesses, 2).anchored, false);
 });
+
+
+test("held-out: grant actions are exact strings", () => {
+  // A held-out mutation matching actions case-insensitively survived both SDKs (2026-09-23).
+  for (const action of ["READ:STATUS", "read:status ", "read"]) {
+    assert.equal(grantCovers(GRANT, action), false, action);
+  }
+});

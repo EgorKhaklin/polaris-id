@@ -235,8 +235,35 @@ Status, using the vocabulary that distinguishes these states rather than blurrin
     HOSTED TESTED               yes
     HOSTED CLEAN                yes, zero FAILURE and zero WARNING across 11 modules
     HUMAN REVIEW COMPLETE       no, four modules await a Foundation reviewer
+    FEE WAIVER                  granted 2026-09-23 (open-source policy), see below
+    PUBLISHED                   no
     SELF-CERTIFICATION SUBMITTED no
     CERTIFIED                   no
+
+**2026-09-23: the Foundation answered.** On 2026-09-16 the maintainer wrote to the OpenID
+Foundation's certification address with two questions: whether publishing the plan's logs
+exposes the test configuration, including the private `credential.signing_jwk`, and whether
+Polaris qualifies for a fee waiver under the Open-Source Project Certification Policy (stating
+plainly that it is a reference implementation on notional data, unpaid, with no independent
+security review). The Foundation's certification team replied on 2026-09-23:
+
+    configuration           not publicly available when a plan is published, but the
+                            signing key appears in the log information
+    publishing              irreversible except by the Foundation's admins; to change a
+                            result, create another plan from the old plan's configuration
+    keys                    run with disposable, non-production keys
+    certification fee       WAIVED: a coupon for the payments page was issued
+
+What this is: a named outside party taking an action on Polaris, on a date, with a result,
+which is what this file records. What it is not: a review, a pass, or certification. The four
+positive modules are still in REVIEW, nothing has been published, and nothing has been
+submitted. The waiver removes the cost of submitting; the review still decides the result.
+
+The key question is already answered by how the drill works: it mints a fresh issuer key per
+run (`kid: suite-issuer`), which is the disposable key the Foundation recommends, and it is
+why the signed exports above are not committed. Publishing this run's logs would disclose a
+dead throwaway key and nothing else of consequence. Publishing, submitting and the payments
+page are the maintainer's actions; the coupon code is deliberately not recorded here.
 
 **The Foundation's own signed exports corroborate all of this.** Downloaded 2026-09-15,
 each carrying a detached `.sig` over both the JSON and the HTML:

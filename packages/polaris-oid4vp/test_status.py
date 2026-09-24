@@ -443,5 +443,28 @@ class HeldOutBoundaryTests(unittest.TestCase):
             S._json_bounded("[" + at + "]", "payload")
         self.assertIn("deeper", str(caught.exception))
 
+
+class AuthorityIsBoundToIssuerAndUri(unittest.TestCase):
+    """2026-09-23: two held-out mutations survived because another refusal answered first.
+    A stated authority matched on the issuer alone (any URI) survived: every test passed the
+    credential's URI as expected_uri, so a different `sub` was refused as a mismatch before
+    authority was asked. A token with no `sub` survived for the same reason. Here expected_uri
+    is None, so only the rule named can refuse."""
+
+    def test_a_stated_authority_holds_only_at_the_uri_it_names(self):
+        tok = token(payload(sub=OTHER + "/statuslists/1"))
+        v = S.decide(tok, index=1, expected_uri=None, authority=AUTHORITY,
+                     credential_issuer=ISSUER, now=NOW)
+        self.assertIs(v["checked"], False)
+        self.assertEqual(v["code"], "no_authority")
+
+    def test_a_status_list_with_no_subject_is_bound_to_nothing(self):
+        p = payload()
+        del p["sub"]
+        v = S.decide(token(p), index=1, expected_uri=None, authority=AUTHORITY,
+                     credential_issuer=ISSUER, now=NOW, issuer_key_verify=accept)
+        self.assertIs(v["checked"], False)
+        self.assertEqual(v["code"], "sub")
+
 if __name__ == "__main__":
     unittest.main()

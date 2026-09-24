@@ -257,7 +257,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-271 tests in seven files, and they are not equal in weight. Coverage is
+274 tests in seven files, and they are not equal in weight. Coverage is
 the weakest of the three instruments here: it says a line ran.
 
 **And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`
@@ -300,7 +300,7 @@ wallet could not answer it. Seven of its tests assert each conformance refusal a
 HTTP 400 rather than merely being noticed, because a 400 is the whole of what those modules
 measure.
 
-`test_serve` (29) asserts the decision becomes an HTTP response: status codes, content types,
+`test_serve` (30) asserts the decision becomes an HTTP response: status codes, content types,
 routing, form parsing, TLS. It exists because `serve.py` was at **0% coverage** and nothing in
 CI touched the file that turns a verdict into a status code.
 

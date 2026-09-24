@@ -781,8 +781,8 @@ compact JSON of `{format, token_value, status, issued_at, expires_at}`:
 |---|---|
 | `format` | `polaris-status-assertion/1` |
 | `token_value` | binds the assertion to the credential |
-| `status` | the token's **current** lifecycle status (a revoked token gets a `REVOKED` assertion) |
-| `issued_at` / `expires_at` | the validity window; short-lived (`POLARIS_STATUS_ASSERTION_TTL`, default 3600s) |
+| `status` | the token's **current** lifecycle status (a revoked token gets a `REVOKED` assertion). A credential past its `expiration_date` is asserted `EXPIRED` even while its stored status is still `ACTIVE`, the same rule `/verify` applies to `currently_authoritative`, because nothing moves a credential to `EXPIRED` when the date passes |
+| `issued_at` / `expires_at` | the validity window; short-lived (`POLARIS_STATUS_ASSERTION_TTL`, default 3600s), and for an `ACTIVE` assertion never later than the end of the credential's expiration date (00:00Z the day after it) |
 | `algorithm` / `signature_hex` / `public_key_hex` | the issuer's ML-DSA-65 signature and key (`public_key_hex` is null for the dev placeholder) |
 | `max_window_seconds` | the issuer's declared window |
 | `digest_construction` | how to reconstruct the signed bytes |

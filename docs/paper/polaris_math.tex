@@ -229,6 +229,11 @@ clock $\tau$, maximum window $\Delta_v$ and a credential $t$ accepts it iff
 \;\wedge\; \tau_i\le\tau<\tau_e \;\wedge\; \tau_e-\tau_i\le\Delta_v \;\wedge\; s=\st{active}.
 \]
 The window is half-open. \emark{enforced}; each conjunct separately \emark{tested} (2026-09-23).
+On the issuer's side the assertion states the same authorization $R(t,\tau)$ the online answer
+does: a credential past its expiry is asserted \st{expired} even while its stored status is
+\st{active}, and an \st{active} assertion's $\tau_e$ is no later than the end of the credential's
+last valid day. \emark{enforced} since \code{1.0.0-rc.8}; before it the offline and online answers
+disagreed about expired credentials.
 \begin{limit}
 A credential revoked at $\tau_r<\tau_e$ still passes this check for $\tau\in[\tau_r,\tau_e)$. Offline
 revocation latency is therefore at most $\tau_e-\tau_i\le\Delta_v$, and no offline mechanism can do

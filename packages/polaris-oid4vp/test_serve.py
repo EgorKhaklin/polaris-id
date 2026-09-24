@@ -412,6 +412,32 @@ class BodyFramingTests(ServeTestCase):
         self.assertIn("400", line, "a body under the bound reaches the verifier and is "
                                    "refused on its CONTENT, not its size")
 
+    def test_a_body_shorter_than_its_declared_length_is_refused_as_truncated(self):
+        """The client declares more than it sends and stops. The server must say so rather
+        than parse the fragment as a whole form. 2026-09-23: removing this guard survived,
+        because the fragment is refused by the verifier anyway and both answers are a 400;
+        only the reason tells them apart, so the reason is asserted."""
+        import socket
+        host, port = self.httpd.server_address[0], self.httpd.server_address[1]
+        s = socket.create_connection((host, port), timeout=6)
+        s.settimeout(6)
+        s.sendall(b"POST /response HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\nresponse=x")
+        s.shutdown(socket.SHUT_WR)
+        data = b""
+        try:
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+        except (OSError, socket.timeout):
+            pass
+        finally:
+            s.close()
+        text = data.decode("utf-8", "replace")
+        self.assertIn(" 400 ", text.split("\r\n")[0])
+        self.assertIn("shorter than Content-Length", text)
+
     def test_a_non_numeric_content_length_is_answered_rather_than_dropped(self):
         """`int('abc')` raised out of do_POST and the connection closed with no response at
         all, which a wallet reads as a network fault rather than as a refusal."""

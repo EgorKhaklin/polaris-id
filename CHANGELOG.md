@@ -11,6 +11,40 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.8 — 2026-09-23 (the offline answer agrees with the online one about expiry)
+
+CORE-BUG against rc.7. Externally observable: what `POST /api/v1/status-assertion` signs.
+Nothing is published.
+
+Authorization, whether a credential is authoritative right now, is answered two ways: online
+by `/api/v1/verify`, and offline by a short-lived signed status assertion that a holder staples
+to a presentation. The two must give the same answer. On 2026-09-17 `/verify` learned to read
+`expiration_date`, because nothing moves a credential from `ACTIVE` to `EXPIRED` when its date
+passes and the endpoint had been answering `currently_authoritative: true` for credentials past
+their stated end. The status-assertion route was the sibling path and was not changed: it
+signed the stored status alone. So a credential past its expiry date got a freshly signed
+`ACTIVE` assertion, and every offline verifier, the published one included, accepted it. The
+online answer said no; the offline answer said yes.
+
+Now an `ACTIVE` credential past its `expiration_date` is asserted `EXPIRED`, by the same
+`_not_expired` rule `/verify` uses, and an `ACTIVE` assertion's `expires_at` is capped at the end
+of the credential's expiration date (00:00Z the day after it), so an assertion minted on the
+last valid day does not outlive the credential by up to its TTL.
+
+Found by reading the route while mutation-testing the relying-party endpoint around it: the
+held-out round had just shown that endpoint's own expiry check was untested, and the question
+was which other path answers the same question. The test
+(`RelyingPartyApiTests.test_a_status_assertion_never_says_active_for_an_expired_credential`)
+failed on rc.7 on the `ACTIVE` assertion, and fails with the cap removed on an assertion ten
+days past the credential; it passes with both.
+
+The promise: CLAUDE.md section 1 and docs/reference/API.md (authorization answered online or by
+the offline assertion); API.md's `status` row now states the expiry rule and the cap.
+
+The same commit carries tests only, no behaviour, for held-out rounds on the SDKs' grant
+coverage, the OpenID4VP status-list authority and HTTP framing, and the published verifier's
+QR frame decoder.
+
 ## v1.0.0-rc.7 — 2026-09-19 (total on hostile input, this time actually)
 
 CORE-BUG against rc.5. Externally observable. One package: `polaris-oid4vp`. Nothing is

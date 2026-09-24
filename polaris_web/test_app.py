@@ -13190,6 +13190,40 @@ class RelyingPartyApiTests(PolarisTestCase):
         self.assertEqual(codes[:2], [200, 200], 'control: within the limit it answers')
         self.assertEqual(codes[2], 429, 'the third request in a minute is over a limit of 2')
 
+    def test_a_status_assertion_never_says_active_for_an_expired_credential(self):
+        """CORE-BUG 2026-09-23. Authorization is answered online by /verify or offline by this
+        assertion, and the two must agree. /verify reads the expiry date; this route signed
+        the stored status, and nothing moves ACTIVE to EXPIRED when the date passes, so a
+        credential past its expiry got a fresh ACTIVE assertion that every offline verifier
+        accepts. Both halves: an expired credential is not ACTIVE, and an ACTIVE assertion
+        does not outlive the credential's last valid day."""
+        import datetime as _dt
+        pack = self._issue_and_pack('RP-API-SA-EXPIRY-0001')
+        body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
+        # The server's own date, the one _not_expired (and /verify) compares against.
+        today = _dt.date.today()
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE IdentityToken SET issued_date = now() - interval '30 days', "
+                        "activated_date = now() - interval '30 days', expiration_date = %s "
+                        "WHERE token_value = %s", (today, body['token_value']))
+            conn.commit()
+        # A ten-day lifetime, so the cap is observable at any hour rather than only near midnight.
+        from unittest import mock
+        import rp_api
+        with mock.patch.object(rp_api, '_STATUS_ASSERTION_TTL', 10 * 86400):
+            a = self.client.post('/api/v1/status-assertion', json=body).get_json()
+        self.assertEqual(a['status'], 'ACTIVE', 'valid through its expiry date')
+        end_of_day = (today + _dt.timedelta(days=1)).isoformat() + 'T00:00:00Z'
+        self.assertLessEqual(a['expires_at'], end_of_day,
+                             'an ACTIVE assertion must not outlive the credential')
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE IdentityToken SET expiration_date = %s WHERE token_value = %s",
+                        (today - _dt.timedelta(days=1), body['token_value']))
+            conn.commit()
+        a = self.client.post('/api/v1/status-assertion', json=body).get_json()
+        self.assertNotEqual(a['status'], 'ACTIVE', 'an expired credential is not ACTIVE offline')
+        self.assertEqual(a['status'], 'EXPIRED')
+
     def test_an_expiry_the_server_cannot_read_is_not_open_ended(self):
         import datetime as _dt
         self.assertIs(flask_app._not_expired(None), True, "no expiry at all is open-ended")

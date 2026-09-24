@@ -643,6 +643,23 @@ class TimestampAnchorHeldOutTests(unittest.TestCase):
                 self.assertEqual((v.cosigner_count, v.witnessed), (1, False))
 
 
+class GrantCoverageTests(unittest.TestCase):
+    """2026-09-23: a held-out mutation made grant_covers answer yes to ANY action of a grant
+    with a non-empty list, and this suite stayed green: every test here asked about empty or
+    malformed grants, none about an action the grant does not list. Actions are exact
+    strings; a grant for `read:status` does not cover `READ:STATUS` or `transfer:funds`."""
+
+    GRANT = {"actions": ["read:status", "sign:document"]}
+
+    def test_a_listed_action_is_covered(self):
+        self.assertTrue(pv.grant_covers(self.GRANT, "read:status"))
+
+    def test_an_unlisted_action_is_not(self):
+        for action in ("transfer:funds", "READ:STATUS", "read:status ", "read"):
+            with self.subTest(action=action):
+                self.assertFalse(pv.grant_covers(self.GRANT, action))
+
+
 class TheTokenCacheLifetimeIsBoundedTests(unittest.TestCase):
     """The issuer says how long its access token lives. The client believed it without
     reading it.

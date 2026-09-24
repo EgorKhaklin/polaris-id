@@ -270,7 +270,7 @@ def _possession_authenticated(token_value, presented_sig_hex):
     the status assertion (P3.6) and holder-authorized document signing (P8.5)."""
     row = query("""
         SELECT it.token_id, it.individual_id, it.token_value, it.status, it.issuing_agency_id,
-               ts.signature_bytes, ts.signing_public_key_hex
+               it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex
         FROM   IdentityToken it
         JOIN   TokenSignature ts ON ts.token_id = it.token_id AND ts.deprecation_date IS NULL
         WHERE  it.token_value = %s
@@ -707,15 +707,29 @@ def api_v1_status_assertion():
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc).replace(microsecond=0)
     issued_at = now.isoformat().replace('+00:00', 'Z')
-    expires_at = (now + timedelta(seconds=_STATUS_ASSERTION_TTL)).isoformat().replace('+00:00', 'Z')
-    statement = _status_assertion_statement(token_value, row['status'], issued_at, expires_at)
+    until = now + timedelta(seconds=_STATUS_ASSERTION_TTL)
+    # CORE-BUG 2026-09-23. The offline answer must agree with the online one, and /verify
+    # reads the expiry date because nothing moves ACTIVE to EXPIRED when it passes. This
+    # route signed the stored status alone, so a credential past its expiry got a fresh
+    # ACTIVE assertion that every offline verifier accepts. Now an expired credential is
+    # asserted EXPIRED, and an ACTIVE assertion ends no later than the credential's last
+    # valid day (expiration_date is inclusive, so the end is 00:00Z the day after).
+    status = row['status']
+    expiry = row.get('expiration_date')
+    if status == 'ACTIVE' and not _not_expired(expiry):
+        status = 'EXPIRED'
+    elif status == 'ACTIVE' and expiry is not None:
+        day_after = datetime(expiry.year, expiry.month, expiry.day, tzinfo=timezone.utc) + timedelta(days=1)
+        until = min(until, day_after)
+    expires_at = until.isoformat().replace('+00:00', 'Z')
+    statement = _status_assertion_statement(token_value, status, issued_at, expires_at)
     sig_bytes, alg, pub = pqc_signing.signature_over_message(statement, agency_id=row['issuing_agency_id'])
     # P2.6: this assertion names ONE token_value. It is the artifact a shared cache must
     # never hold, because serving it to a second consumer discloses the first's credential.
     return _private_artifact({
         'format': _STATUS_ASSERTION_FORMAT,
         'token_value': token_value,
-        'status': row['status'],
+        'status': status,
         'issued_at': issued_at,
         'expires_at': expires_at,
         'algorithm': alg,

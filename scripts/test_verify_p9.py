@@ -885,3 +885,49 @@ class ATrimmedStapleIsStillAHandleTests(unittest.TestCase):
         would report every stapled presentation as exposed for the wrong reason."""
         self.assertEqual(self._corr(status_assertion={
             "format": "polaris-status-assertion/1", "status": "ACTIVE"}), "bounded")
+
+
+class QrFramesAreOneTransfer(unittest.TestCase):
+    """2026-09-23: a held-out round on decode_presentation_frames. Four rules survived every
+    suite and drill: frames of two transfers mixed, a frame whose index equals the total, a
+    conflicting duplicate, and a decoded object that is not a presentation. The first was
+    masked by the payload digest in every existing case; the next two let a scanner accept a
+    transfer with an extra or a disagreeing frame, because the genuine frames still decode."""
+
+    PRES = {"format": V._PRESENTATION_FORMAT, "credential": {"token_value": "QR-HELD-OUT-1"}}
+
+    def frames(self, pres=None, chunk=24):
+        return V.encode_presentation_frames(pres or self.PRES, chunk)
+
+    def test_the_genuine_frames_decode_in_any_order(self):
+        f = self.frames()
+        out, reason = V.decode_presentation_frames(list(reversed(f)))
+        self.assertEqual(out, self.PRES, reason)
+
+    def test_frames_of_two_transfers_are_refused_as_mixed(self):
+        a = self.frames()
+        b = self.frames(dict(self.PRES, credential={"token_value": "QR-HELD-OUT-2"}))
+        out, reason = V.decode_presentation_frames(a[:1] + b[1:])
+        self.assertIsNone(out)
+        self.assertIn("different transfers", reason)
+
+    def test_a_frame_past_the_end_is_refused(self):
+        f = self.frames()
+        prefix, total, _i, digest, chunk = f[0].split("/", 4)
+        extra = "/".join([prefix, total, total, digest, chunk])
+        out, reason = V.decode_presentation_frames(f + [extra])
+        self.assertIsNone(out, "an extra frame must not be silently ignored")
+        self.assertIn("out of range", reason)
+
+    def test_a_conflicting_duplicate_is_refused_even_when_the_genuine_one_comes_last(self):
+        f = self.frames()
+        head, chunk = f[0].rsplit("/", 1)
+        forged = head + "/" + ("A" if chunk[0] != "A" else "B") + chunk[1:]
+        out, reason = V.decode_presentation_frames([forged] + f)
+        self.assertIsNone(out, "the last copy must not silently win")
+        self.assertIn("conflicting duplicate", reason)
+
+    def test_a_decoded_object_that_is_not_a_presentation_is_refused(self):
+        out, reason = V.decode_presentation_frames(self.frames({"format": "something-else"}))
+        self.assertIsNone(out)
+        self.assertIn("not a", reason)
