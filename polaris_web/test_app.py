@@ -15478,6 +15478,111 @@ class MdocStructureHeldOutTests(unittest.TestCase):
         self.assertEqual(self._mso(signed)['deviceKeyInfo'], {})
 
 
+class AnchoringMerkleHeldOutTests(unittest.TestCase):
+    """Properties of anchoring.py a held-out mutation round found nothing pinned (2026-09-24).
+
+    Fifteen edits, instruments polaris_checks, the transparency and gossip drills, the anchor
+    and log test classes and the verifier's own suites. Nine non-equivalent edits survived:
+    the odd leaf promoted instead of duplicated, an empty batch accepted, a malformed proof
+    step skipped, an empty proof accepted against any root, the unknown-hash fallback
+    changed, SHA3-512 mapped to SHA3-256, the log leaf prefix changed, the empty log head
+    changed, and a negative inclusion index accepted. The log tests compare against the
+    standalone verifier's RFC 6962 implementation rather than against anchoring itself, so
+    the two cannot drift together.
+    """
+
+    @staticmethod
+    def _verifier():
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'packages', 'polaris-verify', 'polaris_verify_cli', 'verifier.py')
+        spec = importlib.util.spec_from_file_location('_anchoring_ref_verifier', path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    @staticmethod
+    def _h(*parts):
+        import hashlib
+        return hashlib.sha3_256(b''.join(bytes.fromhex(x) for x in parts)).hexdigest()
+
+    def _leaves(self, n):
+        import anchoring
+        return [anchoring.leaf_hash(i + 1, '%064x' % (i + 1)) for i in range(n)]
+
+    def test_odd_leaf_is_duplicated_not_promoted(self):
+        import anchoring
+        l = self._leaves(5)
+        h = self._h
+        n44 = h(l[4], l[4])
+        expected = h(h(h(l[0], l[1]), h(l[2], l[3])), h(n44, n44))
+        self.assertEqual(anchoring.merkle_root(l), expected)
+        self.assertEqual(anchoring.merkle_root(l[:3]), h(h(l[0], l[1]), h(l[2], l[2])))
+
+    def test_every_leaf_proves_and_no_proof_step_can_be_skipped(self):
+        import anchoring
+        for n in range(1, 8):
+            l = self._leaves(n)
+            root = anchoring.merkle_root(l)
+            for i in range(n):
+                proof = anchoring.inclusion_proof(l, i)
+                self.assertTrue(anchoring.verify_proof(l[i], proof, root), (n, i))
+                if n > 1:
+                    self.assertFalse(anchoring.verify_proof(l[i], [], root),
+                                     'an empty proof verified a leaf of a %d-leaf tree' % n)
+                    self.assertFalse(anchoring.verify_proof(l[i], proof[:-1], root), (n, i))
+                    bad = [dict(proof[0], position='X')] + proof[1:]
+                    self.assertFalse(anchoring.verify_proof(l[i], bad, root),
+                                     'a malformed position was skipped rather than refused')
+                junk = proof + [{'sibling': l[i], 'position': 'X'}]
+                self.assertFalse(anchoring.verify_proof(l[i], junk, root),
+                                 'a valid proof with a malformed step appended verified')
+
+    def test_empty_batch_is_refused(self):
+        import anchoring
+        with self.assertRaises(ValueError):
+            anchoring.merkle_root([])
+        with self.assertRaises(ValueError):
+            anchoring.compute_batch([])
+
+    def test_hash_name_is_honoured_exactly_or_refused(self):
+        import hashlib
+        import anchoring
+        self.assertEqual(anchoring.leaf_hash(1, 'ab', 'SHA3-512'),
+                         hashlib.sha3_512(b'1|ab').hexdigest())
+        self.assertEqual(anchoring.leaf_hash(1, 'ab', 'SHA3-256'),
+                         hashlib.sha3_256(b'1|ab').hexdigest())
+        for name in ('BLAKE3-256', 'SHA-256', 'sha3-256', ''):
+            with self.assertRaises(ValueError, msg=name):
+                anchoring.leaf_hash(1, 'ab', name)
+
+    def test_log_math_agrees_with_the_standalone_verifier(self):
+        import anchoring
+        v = self._verifier()
+        self.assertEqual(anchoring.log_tree_head([]), v.merkle_tree_head([]))
+        for n in range(1, 10):
+            entries = ['%064x' % (1000 + i) for i in range(n)]
+            head = anchoring.log_tree_head(entries)
+            self.assertEqual(head, v.merkle_tree_head(entries), n)
+            for i in range(n):
+                leaf = anchoring.log_leaf_hash(entries[i])
+                self.assertEqual(leaf, v._lh(entries[i]))
+                proof = [bytes.fromhex(x) for x in anchoring.log_inclusion_proof(i, entries)]
+                self.assertTrue(v.verify_inclusion(i, n, leaf, head, proof), (n, i))
+            for m in range(1, n):
+                proof = [bytes.fromhex(x) for x in anchoring.log_consistency_proof(m, entries)]
+                self.assertTrue(v.verify_consistency(
+                    m, n, anchoring.log_tree_head(entries[:m]), head, proof), (m, n))
+
+    def test_out_of_range_log_indices_yield_no_proof(self):
+        import anchoring
+        entries = ['%064x' % i for i in range(5)]
+        for idx in (-1, -5, 5, 6):
+            self.assertEqual(anchoring.log_inclusion_proof(idx, entries), [], idx)
+        for m in (0, -1, 6):
+            self.assertEqual(anchoring.log_consistency_proof(m, entries), [], m)
+
+
 if __name__ == '__main__':
     # Pull in property-based invariant tests (C1, C2, C3) so they run as
     # part of the main suite. The import is at the bottom so test_app.py

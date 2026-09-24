@@ -44,16 +44,21 @@ from typing import Iterable
 SUPPORTED_HASHES = {
     'SHA3-256': hashlib.sha3_256,
     'SHA3-512': hashlib.sha3_512,
-    'BLAKE3-256': hashlib.sha3_256,   # fallback to SHA3-256 if blake3 not installed
 }
 
 
 def _hash_fn(algorithm_name: str):
-    """Resolve the hash function by canonical name. Falls back to SHA3-256
-    if the requested algorithm is not in SUPPORTED_HASHES — same posture as
-    the schema's CryptographicAlgorithm table (algorithm choice is recorded
-    as metadata; the implementation picks a supported function)."""
-    return SUPPORTED_HASHES.get(algorithm_name, hashlib.sha3_256)
+    """Resolve the hash function by canonical name, and refuse any other name.
+
+    This used to fall back to SHA3-256 for an unknown name, and listed BLAKE3-256 as an
+    alias of SHA3-256. Both let a caller ask for one hash and silently get another, so a
+    root recorded as BLAKE3 would have been a SHA3 root that no BLAKE3 verifier could
+    reproduce. A name is honoured exactly or refused."""
+    try:
+        return SUPPORTED_HASHES[algorithm_name]
+    except KeyError:
+        raise ValueError('unsupported Merkle hash %r; supported: %s'
+                         % (algorithm_name, ', '.join(sorted(SUPPORTED_HASHES)))) from None
 
 
 def leaf_hash(anchor_id: int, commitment_hash: str, algorithm_name: str = 'SHA3-256') -> str:
