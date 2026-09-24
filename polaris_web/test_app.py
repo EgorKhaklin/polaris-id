@@ -14635,6 +14635,65 @@ class IdentityProofingTests(PolarisTestCase):
         piece["validation_method"] = method
         return piece
 
+    # -- held-out, 2026-09-24 (after rc.17) ------------------------------------------------
+    # Twenty mutations of proofing.py against this class, the invariant layer and the
+    # proofing drill; eight survived. Each test below is the input that separates one.
+
+    def test_one_superior_piece_is_not_ial3_whatever_the_session(self):
+        """IAL3 wants two SUPERIOR, a SUPERIOR and a STRONG, or two STRONG and a FAIR.
+        One SUPERIOR with a supervised session and a live biometric is IAL2."""
+        pf = self._pf()
+        kw = dict(presence="IN_PERSON", biometric_collected=True)
+        self.assertEqual(pf.derive_ial([self._piece()], **kw), "IAL2")
+        self.assertEqual(pf.derive_ial([self._piece(), self._piece("STRONG")], **kw), "IAL3")
+
+    def test_a_method_of_none_contributes_nothing_even_if_marked_done(self):
+        """validated/verified are booleans an operator ticks; NONE is the method recorded.
+        A piece verified by NONE was not verified, whatever the box says."""
+        pf = self._pf()
+        self.assertEqual(pf.effective_strength(self._verified_by("NONE")), "UNACCEPTABLE")
+        self.assertEqual(pf.effective_strength(self._validated_by("NONE")), "UNACCEPTABLE")
+
+    def test_unknown_methods_and_missing_fields_are_refused_by_name(self):
+        """An unknown method would carry no ceiling and so count at full strength."""
+        pf = self._pf()
+        for field in ("validation_method", "verification_method"):
+            piece = dict(self._piece(), **{field: "TRUST_ME"})
+            with self.assertRaises(pf.ProofingRefused, msg=field):
+                pf.effective_strength(piece)
+        for field in ("evidence_type", "strength", "validation_method", "verification_method"):
+            piece = self._piece()
+            del piece[field]
+            with self.assertRaises(pf.ProofingRefused, msg=field) as ctx:
+                pf.check_evidence(piece)
+            self.assertIn(field, str(ctx.exception))
+
+    def test_recording_refuses_an_overclaim_before_touching_the_database(self):
+        """An operator who believes a proofing reached IAL2 must be told, not silently
+        recorded at IAL1. The refusal comes first, so nothing is written."""
+        pf = self._pf()
+
+        class _NoDatabase:
+            def cursor(self):
+                raise AssertionError("an overclaim reached the database")
+        with self.assertRaises(pf.ProofingRefused):
+            pf.record_proofing(_NoDatabase(), 1, 1, [self._piece("STRONG")], claimed_ial="IAL2")
+
+    def test_a_capture_record_holds_exactly_three_facts(self):
+        """Modality, quality, liveness. Not the vendor, and never a template."""
+        pf = self._pf()
+        rec = pf.BiometricCapture("FACE", 80, True, vendor="AcmeVision").as_record()
+        self.assertEqual(set(rec), {"biometric_modality", "biometric_quality",
+                                    "biometric_liveness_passed"})
+
+    def test_why_not_higher_names_every_missing_ingredient_of_ial3(self):
+        pf = self._pf()
+        msg = pf.why_not_higher([self._piece(), self._piece()])
+        self.assertTrue(msg.startswith("IAL3 would need"), msg)
+        self.assertIn("an in-person or supervised session", msg)
+        self.assertIn("a biometric", msg)
+        self.assertNotIn("stronger evidence", msg, "two SUPERIOR is IAL3 evidence")
+
     def test_how_it_was_validated_caps_what_it_contributes(self):
         """1.0.0-rc.17: the sibling of v9.395, one question earlier.
 
