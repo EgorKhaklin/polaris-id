@@ -162,7 +162,113 @@ GROWTH = {
         "basis": ASSUMED,
         "why": "duress activations, assuming one a day nationally",
     },
+    # 2026-09-24. Nine drivers covered forty sequences; the other thirty-one were skipped
+    # without a word, and among them were tables that grow faster than one row per person.
+    "EnrollmentProofing": {
+        "rate": lambda t: t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "one proofing event per enrollment, at the enrollment surge rate",
+    },
+    "EnrollmentEvidence": {
+        "rate": lambda t: 3 * t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "up to three evidence pieces per proofing (800-63A's IAL2 and IAL3 combinations "
+               "take one to three), at the enrollment surge rate",
+    },
+    "EnrollmentStatusEvent": {
+        "rate": lambda t: 3 * t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "a NOT_ENROLLED row seeded by trigger for every person, then PENDING and "
+               "ENROLLED: at least three per enrollment",
+    },
+    "HolderKeyEvent": {
+        "rate": lambda t: 2 * t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "a binding and a rotation per credential over its life, at the enrollment "
+               "surge rate",
+    },
+    "DeviceBinding": {
+        "rate": lambda t: t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "one device binding per credential issued",
+    },
+    "CardPersonalization": {
+        "rate": lambda t: t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "one personalization per card issued",
+    },
+    "EnrollmentCode": {
+        "rate": lambda t: t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "one code per enrollment by post or message",
+    },
+    "RefereeVouching": {
+        "rate": lambda t: 0.05 * t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "vouching for the one enrollment in twenty with no documents",
+    },
+    "ExchangeReceiptLog": {
+        "rate": lambda t: t["verification_sustained"],
+        "basis": ASSUMED,
+        "why": "at most one receipt per verification-scale exchange",
+    },
+    "TimestampLog": {
+        "rate": lambda t: t["verification_sustained"],
+        "basis": ASSUMED,
+        "why": "at most one timestamp per verification-scale event",
+    },
+    "AuditAccessLog": {
+        "rate": lambda t: 10.0,
+        "basis": ASSUMED,
+        "why": "audited reads by operators, assuming ten a second nationally",
+    },
+    "BulkEnrollmentStaging": {
+        "rate": lambda t: t["enrollment_surge"] / 86400.0,
+        "basis": ASSUMED,
+        "why": "one staged row per bulk-issued credential",
+    },
+    "RecoveryRequest": {
+        "rate": lambda t: 0.01 * t["population"] / SECONDS_PER_YEAR,
+        "basis": ASSUMED,
+        "why": "catastrophic-loss recovery for 1% of the population a year",
+    },
+    "IndividualErasureEvent": {
+        "rate": lambda t: 0.01 * t["population"] / SECONDS_PER_YEAR,
+        "basis": ASSUMED,
+        "why": "erasure for 1% of the population a year",
+    },
 }
+
+#: Sequences whose table does NOT grow with the population or its traffic, each with the
+#: reason. Every sequence in the schema is in GROWTH or here: an unclassified one fails
+#: check_capacity_model, because skipping it is how thirty-one went unexamined.
+BOUNDED = {
+    "Agency": "one row per issuing authority",
+    "CryptographicAlgorithm": "one row per parameter set",
+    "VerificationContext": "one row per verification context an authority defines",
+    "AppUser": "one row per operator account",
+    "RelyingParty": "one row per registered relying party",
+    "AgencyEvent": "changes to authorities, an administrative rate",
+    "AppUserEvent": "changes to operator accounts, an administrative rate",
+    "RelyingPartyEvent": "changes to relying parties, an administrative rate",
+    "AuthorityKeyEvent": "authority key rotations",
+    "BlockchainAnchor": "one anchor per anchoring interval",
+    "AnchorBatch": "one batch per anchoring interval",
+    "IssuerDiscretionPolicy": "one row per policy an authority sets",
+    "AgencyQuota": "one row per authority quota",
+    "AgencyTrustAttestation": "one row per trust edge between authorities",
+    "TokenStateEpoch": "one row per epoch closure, a few a day at most",
+    "LifecycleArchiveCheckpoint": "one row per archive run",
+    "RetentionPolicy": "one row per retention decision",
+    "BulkEnrollmentBatch": "one row per bulk-issuance batch, not per credential",
+}
+
+
+def unclassified(schema_sql):
+    """Sequences in neither GROWTH nor BOUNDED: an id space nobody has sized."""
+    return sorted({(t, c) for t, c, _ in sequence_columns(schema_sql)
+                   if t not in GROWTH and t not in BOUNDED})
+
 
 #: The horizon a national identity system plans over. A judgment, not a measurement:
 #: credentials are valid for years and the program outlives the people who start it, so
@@ -181,7 +287,10 @@ def sequence_columns(schema_sql):
     """
     out, table = [], None
     for line in schema_sql.splitlines():
-        m = re.match(r"\s*CREATE TABLE (\w+)", line)
+        # IF NOT EXISTS: until 2026-09-24 this read the table name as "IF", so every
+        # sequence on a table declared that way was attributed to a table called IF and
+        # silently skipped (there is no growth driver for IF).
+        m = re.match(r"\s*CREATE TABLE (?:IF NOT EXISTS )?(\w+)", line)
         if m:
             table = m.group(1)
             continue

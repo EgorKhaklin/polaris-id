@@ -11289,6 +11289,27 @@ def test_capacity_model_check_discriminates(tmp_path):
     assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
         "a model admitting nothing it cannot establish must FAIL"
 
+    # 2026-09-24: A TABLE DECLARED `IF NOT EXISTS` READ AS ONE NAMED "IF". Every sequence on
+    # such a table was skipped, and three of them ran out inside the horizon.
+    write('polaris_web/capacity.py', r'CREATE TABLE (?:IF NOT EXISTS )?(\w+)',
+          r'CREATE TABLE (\w+)')
+    assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
+        "a parse that names tables IF must FAIL: their sequences go unsized"
+
+    # AN UNSIZED SEQUENCE. A table in neither GROWTH nor BOUNDED was skipped without a word.
+    write('polaris_web/capacity.py', '    "AgencyQuota": "one row per authority quota",\n', '')
+    out = checks.check_capacity_model(tmp_path)[0]
+    assert out.level == "FAIL" and "AgencyQuota" in out.message, \
+        "a sequence nobody has sized must FAIL, named"
+
+    # A 32-BIT ID BACK ON THE ENROLLMENT PATH: three evidence rows per enrollment lasts
+    # under ten years at the surge target.
+    write('polaris_sql/01_schema.sql',
+          '    evidence_id            BIGSERIAL    PRIMARY KEY,',
+          '    evidence_id            SERIAL       PRIMARY KEY,')
+    assert checks.check_capacity_model(tmp_path)[0].level == "FAIL", \
+        "a SERIAL on EnrollmentEvidence must FAIL: it lasts under ten years at the surge"
+
     # THE SCHEMA PARSE BREAKS. Finding no sequence columns at all must fail rather than
     # pass by having nothing to check.
     write('polaris_web/capacity.py', '(BIGSERIAL|SERIAL)', '(NOTHINGSERIAL)')

@@ -406,6 +406,15 @@ $64$ runners, \emph{if the rate scales linearly}, about $1.6\times10^4$\,s. The 
 extrapolation, not a measurement.
 \end{property}
 
+\begin{property}[Every id space outlasts the horizon] For every sequence $q$ in the schema, with
+capacity $c_q\in\{2^{31}-1,\,2^{63}-1\}$ and a growth rate $r_q$ at the roadmap's targets,
+$c_q/r_q\ \ge\ H$ with $H=25$ years; a sequence whose table does not grow with the population is
+declared bounded instead, with its reason. \emark{enforced} by \code{check\_capacity\_model} over
+every sequence since \code{1.0.0-rc.14}. Before it the check sized nine of forty, and three 32-bit
+sequences on the enrollment path had $c_q/r_q$ of $9.8$, $9.8$ and $14.7$ years. The rates are
+assumptions stated beside each figure, except the per-verification and per-epoch ones.
+\end{property}
+
 \section{Analytics}
 
 \begin{property}[The Atlas] Atlas outputs are aggregates over events, bounded by C8

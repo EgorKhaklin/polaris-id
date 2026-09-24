@@ -16977,7 +16977,19 @@ def check_capacity_model(root: pathlib.Path) -> list[Finding]:
                          "the numbers under it, and a hand-copied constant is what keeps the "
                          "old figure after a re-benchmark")
 
-    # 2. No sequence runs out inside the horizon.
+    # 2. Every sequence is sized. Until 2026-09-24 a table with no growth driver was skipped
+    # without a word, and a `CREATE TABLE IF NOT EXISTS` table was read as one named IF:
+    # thirty-one of forty sequences were never sized, three of them ran out inside the
+    # horizon, and this check said every sequence outlasted it.
+    if not hasattr(cap, "unclassified"):
+        return _fail(name, "the model must expose unclassified(): an id space nobody has sized "
+                           "is the one that runs out")
+    unsized = cap.unclassified(schema)
+    if unsized:
+        return _fail(name, "sequence(s) in neither GROWTH nor BOUNDED, so nothing has sized them: "
+                           + ", ".join("%s.%s" % tc for tc in unsized)
+                           + ". Give each a growth driver, or a reason it is bounded")
+    # 3. No sequence runs out inside the horizon.
     rows = cap.exhaustion(schema)
     if not rows:
         return _fail(name,
@@ -16992,7 +17004,7 @@ def check_capacity_model(root: pathlib.Path) -> list[Finding]:
                      f"({worst['why']}). Nothing is slow when a sequence is exhausted: every "
                      "insert on the path fails")
 
-    # 3. An unvalidated link can never be reported as met.
+    # 4. An unvalidated link can never be reported as met.
     #
     # Checked by RUNNING the model rather than by finding the constant's name in it.
     # An earlier draft of this check looked for a mention of UNVALIDATED_LINKS, and

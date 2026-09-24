@@ -11,6 +11,41 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.14 — 2026-09-24 (every id space is sized, and three that ran out are widened)
+
+CORE-BUG against rc.13. Externally observable: the schema (migration
+`2026-09-24-002-widen-enrollment-sequences`) and the capacity report. Nothing is published.
+
+`check_capacity_model` states on every push that "every sequence in the schema outlasts the
+25-year horizon at the roadmap's stated national targets". It had sized nine of forty. The model
+read `CREATE TABLE IF NOT EXISTS X` as a table named `IF`, and skipped any table it had no growth
+driver for, without a word. Sized, three of the other thirty-one are 32-bit `SERIAL`s that run
+out inside the horizon at the roadmap's surge target of 200,000 enrollments a day:
+- `EnrollmentStatusEvent.event_id`, 9.8 years: a `NOT_ENROLLED` row is seeded per person, then
+  `PENDING` and `ENROLLED` follow;
+- `EnrollmentEvidence.evidence_id`, 9.8 years: up to three evidence pieces per proofing;
+- `HolderKeyEvent.event_id`, 14.7 years: a binding and a rotation per credential.
+
+When a sequence is exhausted every insert on the path fails, and here the path is enrollment.
+
+What changed:
+- The migration widens all three, with their sequences, and recreates the two views that read
+  them (`IndividualCurrentEnrollment`, `HolderKeyCurrent`) with their grants. It declares each
+  widening for `check_migrations_expand_contract`. It round-trips, and it applies both to an
+  rc.13 schema and to a fresh one.
+- `01_schema.sql` carries `BIGSERIAL` for all three.
+- Every sequence is now in `GROWTH`, with a rate and its basis, or in `BOUNDED`, with the reason
+  its table does not grow with the population. The check fails on one in neither, named.
+
+Counterexamples, failing on rc.13, in `test_capacity_model_check_discriminates`:
+- the `IF` parse;
+- an unsized sequence;
+- a `SERIAL` back on `EnrollmentEvidence`.
+
+`docs/design/capacity-model.md` records what the model had not sized.
+
+---
+
 ## v1.0.0-rc.13 — 2026-09-24 (a session ended by a role change is ended, not an error)
 
 CORE-BUG against rc.12. Externally observable: what an operator whose role changes sees, and

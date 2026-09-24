@@ -997,7 +997,7 @@ COMMENT ON TABLE AgencyQuota IS
 -- ----------------------------------------------------------------------------
 -- coverage:exempt — C1 AoR enforced by tg_enrollmentstatusevent_append_only; tested in test_app.py::TieredEnrollmentTests
 CREATE TABLE EnrollmentStatusEvent (
-    event_id              SERIAL,
+    event_id              BIGSERIAL,
     individual_id         INTEGER   NOT NULL REFERENCES Individual(individual_id),
     status                VARCHAR(20) NOT NULL
         CHECK (status IN ('NOT_ENROLLED',
@@ -1312,7 +1312,7 @@ DROP TABLE IF EXISTS AgencyTrustAttestation CASCADE;
 -- Append-only: a binding, a rotation and a revocation are all events, and the current key is
 -- derived. A key that could be un-bound would let an operator replace the holder.
 CREATE TABLE HolderKeyEvent (
-    event_id        SERIAL       PRIMARY KEY,
+    event_id        BIGSERIAL    PRIMARY KEY,
     token_id        INTEGER      NOT NULL REFERENCES IdentityToken(token_id),
     public_key_hex  TEXT         NOT NULL
         CONSTRAINT chk_holder_key_hex CHECK (public_key_hex ~ '^[0-9a-f]{64,}$'),
@@ -1618,7 +1618,7 @@ CREATE TABLE IF NOT EXISTS EnrollmentProofing (
 );
 
 CREATE TABLE IF NOT EXISTS EnrollmentEvidence (
-    evidence_id            SERIAL       PRIMARY KEY,
+    evidence_id            BIGSERIAL    PRIMARY KEY,
     proofing_id            INTEGER      NOT NULL
         REFERENCES EnrollmentProofing(proofing_id),
     evidence_type          VARCHAR(40)  NOT NULL,

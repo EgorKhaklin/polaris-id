@@ -129,6 +129,27 @@ so `validate()` reports the target `UNVALIDATED` and says what would settle it. 
 nothing here can establish never becomes MET because its other numbers look comfortable, and
 that rule is checked by running the model rather than by finding the constant's name in it.
 
+### What the model did not size, until 1.0.0-rc.14
+
+For its first seventeen days the model sized nine sequences and skipped the rest without a word.
+It had a growth driver for nine tables. Its parser read `CREATE TABLE IF NOT EXISTS X` as a table
+named `IF`. Any table it had no driver for was passed over. Thirty-one of forty sequences were
+never sized, and the check reported that every sequence outlasted the horizon.
+
+Sized now, three of the thirty-one were 32-bit `SERIAL`s that run out inside it, all on the
+enrollment path:
+
+| Column | Lifetime at the surge target | Why |
+| --- | --- | --- |
+| `EnrollmentStatusEvent.event_id` | 9.8 years | a `NOT_ENROLLED` row seeded per person, then `PENDING` and `ENROLLED` |
+| `EnrollmentEvidence.evidence_id` | 9.8 years | up to three evidence pieces per proofing |
+| `HolderKeyEvent.event_id` | 14.7 years | a binding and a rotation per credential |
+
+Migration `2026-09-24-002-widen-enrollment-sequences` widens all three, sequences included, and
+recreates the two views that read them. Every sequence is now in `GROWTH` with a rate, or in
+`BOUNDED` with the reason its table does not grow with the population. An unclassified one
+fails the check, named.
+
 ---
 
 ## 5. What the model still reports rather than decides
@@ -148,7 +169,7 @@ outside a window somebody chose.
 
 | Mechanism | What it holds |
 | --- | --- |
-| `check_capacity_model` | Recomputes the exhaustion arithmetic from the live schema every push, so a `SERIAL` reintroduced on a table that grows with national traffic fails on that push. Resolves every MEASURED constant against BENCHMARK.md. Runs the model to confirm an unvalidated target is never reported met. Fails if the schema parse finds no sequence columns at all. |
+| `check_capacity_model` | Recomputes the exhaustion arithmetic from the live schema every push, so a `SERIAL` reintroduced on a table that grows with national traffic fails on that push. Resolves every MEASURED constant against BENCHMARK.md. Runs the model to confirm an unvalidated target is never reported met. Fails if the schema parse finds no sequence columns at all, and, since 1.0.0-rc.14, if any sequence is in neither `GROWTH` nor `BOUNDED`. |
 | `check_migrations_expand_contract` | Grades declared widenings: recognised pair, declared target matches the statement, and no foreign key references the column. |
 | `scripts/polaris-capacity-drill.py` | Inserts across the old 32-bit ceiling on a real database, with a half-widened control that must fail there. |
 | `polaris_web/test_capacity.py` | 25 measured tests, including that a partitioned table is not lost by the parser (`VerificationEvent` ends its `CREATE TABLE` differently from every other table, and losing it would have hidden the whole finding). |
