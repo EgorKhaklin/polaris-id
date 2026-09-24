@@ -333,5 +333,47 @@ class QueryShapeTests(unittest.TestCase):
             self.assertNotIn("token_value", sql)
 
 
+
+class HeldOutSuppressionTests(unittest.TestCase):
+    """A held-out round on 2026-09-24: of twelve mutations of the suppression arithmetic,
+    three survived every test here. Each is a way the report could claim a cell is protected
+    when a reader can recover it, or withhold what it did not need to."""
+
+    def test_a_complementary_cell_is_known_to_be_at_least_the_threshold(self):
+        """The reader can see a complementary cell was not small, and so knows it is at least
+        the threshold. Modelling it as `[0, total]` instead survived. Here that is the whole
+        disclosure: a zero cell beside a cell of exactly the threshold, total published. Both
+        suppressed, the reader still gets zero = total - (at least 5) and so the zero. Only
+        withholding the total protects it."""
+        cells = [Cell(("Q1", "a"), 0), Cell(("Q1", "b"), 5)]
+        t = suppress(cells, threshold=5)
+        self.assertIsNone(t.total, "the total pins the zero cell once b is known to be >= 5")
+        assert_not_invertible(t, cells, threshold=5)
+
+    def test_the_recheck_counts_what_earlier_reports_published(self):
+        """The independent re-check is the guard against a bug in `suppress`, so it is
+        exercised here against a table `suppress` would never produce: one that suppresses a
+        cell an earlier report already published. A reader holds that figure. A re-check
+        that forgot earlier publications saw two unknowns and passed it."""
+        from transparency import SuppressedTable
+        cells = [Cell(("Q1", "a"), 2), Cell(("Q1", "b"), 10)]
+        table = SuppressedTable({}, [("Q1", "a"), ("Q1", "b")], 12, None, 5)
+        assert_not_invertible(table, cells, threshold=5)   # control: nothing known yet
+        with self.assertRaises(InvertibleReport):
+            assert_not_invertible(table, cells, threshold=5,
+                                  previously_published=[("Q1", "b")])
+
+    def test_a_cell_that_does_not_count_people_is_never_withheld_to_protect_one(self):
+        """Complementary suppression spends people-counting cells only. A cell that counts
+        something else (anchors, checks) was withheld under a mutant that took the smallest
+        cell of any kind, which loses a figure an oversight reader wanted and protects
+        nobody that a people cell would not."""
+        cells = [Cell(("Q1", "small"), 1), Cell(("Q1", "people"), 10),
+                 Cell(("Q1", "anchors"), 6, counts_people=False)]
+        t = suppress(cells, threshold=5)
+        self.assertIn(("Q1", "anchors"), t.published)
+        self.assertEqual(keys(t), {"Q1/small", "Q1/people"})
+
+
 if __name__ == "__main__":
     unittest.main()
