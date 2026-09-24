@@ -70,6 +70,23 @@ VERIFICATION_CEILING = {
     "KNOWLEDGE_BASED": "WEAK",
 }
 
+#: THE CEILING EACH VALIDATION METHOD PUTS ON THE EVIDENCE IT VALIDATED (1.0.0-rc.17).
+#:
+#: The same error one question earlier. v9.395 capped the weak ways of binding a document to
+#: a person and left the ways of checking the document itself uncapped, so a passport that an
+#: operator LOOKED AT counted as SUPERIOR, and one SUPERIOR is IAL2. 800-63A grades validation
+#: the way it grades verification: trained personnel inspecting a document reach FAIR,
+#: confirming the integrity of its physical security features reaches STRONG, and SUPERIOR
+#: needs the cryptographic features checked or the details confirmed with the issuing source.
+#: A forged passport is built to survive a look; that is what its security features are for.
+#:
+#: Methods absent from this mapping have no ceiling: a verified chip signature and a
+#: confirmation from the issuer are the checks SUPERIOR is defined by.
+VALIDATION_CEILING = {
+    "VISUAL_INSPECTION": "FAIR",
+    "PHYSICAL_SECURITY_FEATURES": "STRONG",
+}
+
 # Where the applicant was when this happened. IAL3 requires in-person or a supervised remote
 # session; the distinction is not a formality, because an unsupervised remote session is one an
 # attacker can run against a coerced or absent applicant.
@@ -141,7 +158,11 @@ def effective_strength(evidence: dict) -> str:
     proves somebody at an address opened a letter, knowledge-based answers prove access to
     a credit file, and a biometric comparison proves the document belongs to the person in
     the room. Counting all three at the document's nominal strength is the same error one
-    level down -- see VERIFICATION_CEILING."""
+    level down -- see VERIFICATION_CEILING.
+
+    AND SO DOES HOW IT WAS VALIDATED. A document an operator looked at has been checked to
+    the depth a look reaches, which is not the depth its security features exist for -- see
+    VALIDATION_CEILING. The lower of the two ceilings applies."""
     check_evidence(evidence)
     if not evidence.get("validated") or not evidence.get("verified"):
         return "UNACCEPTABLE"
@@ -149,11 +170,15 @@ def effective_strength(evidence: dict) -> str:
         return "UNACCEPTABLE"
     # A weak binding to the applicant caps what the evidence contributes, however strong
     # the document itself is. A genuine passport verified by a posted code is a genuine
-    # passport and an unproven claim that it is this person's.
-    ceiling = VERIFICATION_CEILING.get(evidence["verification_method"])
-    if ceiling is not None and _rank(evidence["strength"]) > _rank(ceiling):
-        return ceiling
-    return evidence["strength"]
+    # passport and an unproven claim that it is this person's. A shallow check of the
+    # document caps it the same way: a passport nobody checked past its surface is a
+    # passport-shaped object.
+    strength = evidence["strength"]
+    for ceiling in (VALIDATION_CEILING.get(evidence["validation_method"]),
+                    VERIFICATION_CEILING.get(evidence["verification_method"])):
+        if ceiling is not None and _rank(strength) > _rank(ceiling):
+            strength = ceiling
+    return strength
 
 
 def derive_ial(evidence_list, *, presence="REMOTE_UNSUPERVISED", biometric_collected=False):
@@ -215,6 +240,11 @@ def why_not_higher(evidence_list, *, presence="REMOTE_UNSUPERVISED",
     if discounted:
         parts.append("%d piece(s) contributed nothing because they were not validated AND "
                      "verified to the applicant" % discounted)
+    capped = sum(1 for e in evidence_list
+                 if _rank(e["strength"]) > _rank(effective_strength(e)) >= _rank("FAIR"))
+    if capped:
+        parts.append("%d piece(s) counted below their nominal strength because of how they "
+                     "were validated or verified" % capped)
     return "; ".join(parts)
 
 

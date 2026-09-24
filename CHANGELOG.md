@@ -11,6 +11,43 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.17 — 2026-09-24 (a document someone only looked at is not SUPERIOR evidence)
+
+CORE-BUG against rc.16. Externally observable: the assurance level derived from some
+evidence is lower. No schema change. Nothing is published.
+
+v9.395 capped what evidence contributes by how it was **verified** (bound to the applicant):
+a posted code caps at `FAIR`, knowledge-based answers at `WEAK`. It left how the document was
+**validated** (checked to be genuine) uncapped. Any method other than `NONE` let the evidence
+count at its full nominal strength. So a passport an operator only looked at
+(`VISUAL_INSPECTION`) counted as `SUPERIOR`, and one `SUPERIOR` piece is IAL2 on its own.
+
+NIST SP 800-63A grades validation the same way it grades verification:
+- trained personnel inspecting a document reach `FAIR`;
+- confirming the integrity of its physical security features reaches `STRONG`;
+- `SUPERIOR` needs its cryptographic features checked, or its details confirmed with the
+  issuing source.
+
+`proofing.VALIDATION_CEILING` now caps `VISUAL_INSPECTION` at `FAIR` and
+`PHYSICAL_SECURITY_FEATURES` at `STRONG`. `DIGITAL_SIGNATURE_CHECK` and
+`ISSUING_SOURCE_CONFIRMATION` carry no ceiling. When both ceilings apply, the lower one wins.
+`why_not_higher` now counts pieces that were capped, so an operator sees why a passport did
+not reach IAL2.
+
+Neither capped method was used by any test, drill or check before this entry. The same was
+true of both verification methods v9.395 capped.
+
+Existing `EnrollmentProofing` rows are append-only and are not rewritten. A record derived
+under rc.16 from a visually inspected document keeps its level until the person is re-proofed.
+The current level is the latest proofing event's level, so re-proofing sets it.
+
+Counterexample, failing on rc.16:
+`IdentityProofingTests.test_how_it_was_validated_caps_what_it_contributes` and
+`test_a_looked_at_passport_does_not_carry_an_ial2_enrollment`.
+`check_enrollment_proofing` exercises the ceiling through `effective_strength`. Its detection
+test fails the check when the ceiling is removed, when it is set higher than the method can
+reach, and when a `SUPERIOR` method is capped.
+
 ## v1.0.0-rc.16 — 2026-09-24 (a deactivated admin authorizes nothing)
 
 CORE-BUG against rc.15. Externally observable: five procedures now refuse a deactivated admin.

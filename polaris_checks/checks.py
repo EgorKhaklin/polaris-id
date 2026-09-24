@@ -18734,6 +18734,22 @@ def check_enrollment_proofing(root: pathlib.Path) -> list[Finding]:
                          f"one document verified only by {weak} reaches "
                          f"{pf.derive_ial([piece])}. That is an assurance level resting on a "
                          "binding the method does not make")
+    # 1.0.0-rc.17: how the document was validated caps it too. 800-63A grades validation:
+    # trained personnel inspecting it reach FAIR, its physical security features STRONG, and
+    # SUPERIOR needs the cryptographic features or the issuing source.
+    verified = dict(doc, verification_method="BIOMETRIC_COMPARISON")
+    for shallow, cap in (("VISUAL_INSPECTION", "FAIR"), ("PHYSICAL_SECURITY_FEATURES", "STRONG")):
+        got = pf.effective_strength(dict(verified, validation_method=shallow))
+        if got != cap:
+            return _fail("enrollment_proofing",
+                         f"a SUPERIOR document validated only by {shallow} contributes {got}, "
+                         f"not {cap}. A forged document is built to survive a look; its "
+                         "security features are what validation at a higher strength checks")
+    for deep in ("DIGITAL_SIGNATURE_CHECK", "ISSUING_SOURCE_CONFIRMATION"):
+        if pf.effective_strength(dict(verified, validation_method=deep)) != "SUPERIOR":
+            return _fail("enrollment_proofing",
+                         f"a document validated by {deep} is capped. That is the check "
+                         "SUPERIOR validation is defined by")
     strong = dict(doc, verification_method="BIOMETRIC_COMPARISON")
     if pf.effective_strength(strong) != "SUPERIOR":
         return _fail("enrollment_proofing",

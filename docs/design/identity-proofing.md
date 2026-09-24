@@ -140,6 +140,22 @@ solve that. It stops the system recording a high assurance level on the strength
 Both capped methods were in the vocabulary from v9.371 and **no test used either**, which is
 where an overstatement hides: a vocabulary entry nothing exercises.
 
+### How it was validated caps it too (1.0.0-rc.17)
+
+The same error was left one question earlier. How a document was **checked to be genuine**
+had no ceiling, so a passport an operator only looked at counted as `SUPERIOR` and carried an
+IAL2 enrollment on its own. 800-63A grades validation the way it grades verification:
+
+| Validation method | Ceiling | Why |
+| --- | --- | --- |
+| `DIGITAL_SIGNATURE_CHECK` | none | A verified chip signature is what `SUPERIOR` validation is defined by |
+| `ISSUING_SOURCE_CONFIRMATION` | none | The issuer confirmed the details |
+| `PHYSICAL_SECURITY_FEATURES` | `STRONG` | The document's physical features were checked; its cryptographic ones were not |
+| `VISUAL_INSPECTION` | `FAIR` | A forged document is built to survive a look. Its security features exist for exactly that |
+
+Where both a validation and a verification ceiling apply, the lower one wins. Records derived
+before rc.17 are append-only and keep their level until the person is re-proofed.
+
 ---
 
 ## The enrollment code

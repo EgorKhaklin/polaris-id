@@ -12577,14 +12577,17 @@ def test_enrollment_proofing_check_discriminates(tmp_path):
            "    unknown = set(evidence) - set(EVIDENCE_FIELDS)\n"
            "    if unknown:\n        raise ProofingRefused('unknown')\n"
            "VERIFICATION_CEILING = {'ENROLLMENT_CODE': 'FAIR', 'KNOWLEDGE_BASED': 'WEAK'}\n"
+           "VALIDATION_CEILING = {'VISUAL_INSPECTION': 'FAIR', 'PHYSICAL_SECURITY_FEATURES': 'STRONG'}\n"
            "STRENGTHS = ('UNACCEPTABLE', 'WEAK', 'FAIR', 'STRONG', 'SUPERIOR')\n"
            "\ndef effective_strength(evidence):\n"
            "    if not evidence.get('validated') or not evidence.get('verified'):\n"
            "        return 'UNACCEPTABLE'\n"
-           "    ceiling = VERIFICATION_CEILING.get(evidence.get('verification_method'))\n"
-           "    if ceiling and STRENGTHS.index(evidence['strength']) > STRENGTHS.index(ceiling):\n"
-           "        return ceiling\n"
-           "    return evidence['strength']\n"
+           "    strength = evidence['strength']\n"
+           "    for ceiling in (VALIDATION_CEILING.get(evidence.get('validation_method')),\n"
+           "                    VERIFICATION_CEILING.get(evidence.get('verification_method'))):\n"
+           "        if ceiling and STRENGTHS.index(strength) > STRENGTHS.index(ceiling):\n"
+           "            strength = ceiling\n"
+           "    return strength\n"
            "\ndef derive_ial(evidence_list, presence=None, biometric_collected=False):\n"
            "    if any(effective_strength(e) == 'SUPERIOR' for e in evidence_list):\n"
            "        return 'IAL2'\n"
@@ -12662,6 +12665,20 @@ def test_enrollment_proofing_check_discriminates(tmp_path):
         "'BIOMETRIC_COMPARISON': 'FAIR'}")})
     assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
         "must FAIL when a biometric comparison is capped"
+
+    # 1.0.0-rc.17: the same error one question earlier. With no validation ceiling a
+    # passport an operator only looked at counts as SUPERIOR and carries IAL2 alone.
+    VC = "VALIDATION_CEILING = {'VISUAL_INSPECTION': 'FAIR', 'PHYSICAL_SECURITY_FEATURES': 'STRONG'}"
+    write({"polaris_web/proofing.py": MOD.replace(VC, "VALIDATION_CEILING = {}")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a visually inspected document counts at full strength"
+    write({"polaris_web/proofing.py": MOD.replace(VC, "VALIDATION_CEILING = {'VISUAL_INSPECTION': 'SUPERIOR'}")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a visual inspection is capped at a strength it cannot reach"
+    write({"polaris_web/proofing.py": MOD.replace(
+        VC, VC[:-1] + ", 'DIGITAL_SIGNATURE_CHECK': 'STRONG'}")})
+    assert checks.check_enrollment_proofing(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a verified chip signature is capped"
 
     # THE LEVEL AS A LABEL.
     write({'polaris_web/proofing.py': MOD.replace(

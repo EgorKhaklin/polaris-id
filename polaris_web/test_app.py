@@ -14517,6 +14517,49 @@ class IdentityProofingTests(PolarisTestCase):
         piece["verification_method"] = method
         return piece
 
+    def _validated_by(self, method, strength="SUPERIOR"):
+        piece = self._piece(strength)
+        piece["validation_method"] = method
+        return piece
+
+    def test_how_it_was_validated_caps_what_it_contributes(self):
+        """1.0.0-rc.17: the sibling of v9.395, one question earlier.
+
+        v9.395 capped the weak ways of binding a document to a person and left the ways of
+        checking the document itself uncapped, so a passport an operator looked at counted
+        as SUPERIOR and alone reached IAL2. Neither capped method was used by any test.
+        """
+        pf = self._pf()
+        self.assertEqual(pf.effective_strength(self._validated_by("VISUAL_INSPECTION")), "FAIR")
+        self.assertEqual(
+            pf.effective_strength(self._validated_by("PHYSICAL_SECURITY_FEATURES")), "STRONG")
+        for method in ("DIGITAL_SIGNATURE_CHECK", "ISSUING_SOURCE_CONFIRMATION"):
+            self.assertEqual(pf.effective_strength(self._validated_by(method)), "SUPERIOR",
+                             "%s is what SUPERIOR validation is defined by" % method)
+
+    def test_a_looked_at_passport_does_not_carry_an_ial2_enrollment(self):
+        pf = self._pf()
+        self.assertEqual(pf.derive_ial([self._validated_by("VISUAL_INSPECTION")]), "IAL1")
+        self.assertEqual(pf.derive_ial([self._validated_by("PHYSICAL_SECURITY_FEATURES")]),
+                         "IAL1", "one STRONG piece is not IAL2")
+        self.assertEqual(pf.derive_ial([self._validated_by("PHYSICAL_SECURITY_FEATURES")] * 2),
+                         "IAL2", "two STRONG pieces are")
+        with self.assertRaises(pf.ProofingRefused) as ctx:
+            pf.check_claimed_ial("IAL2", [self._validated_by("VISUAL_INSPECTION")])
+        self.assertIn("below their nominal strength", str(ctx.exception))
+
+    def test_the_lower_of_the_two_ceilings_applies(self):
+        pf = self._pf()
+        piece = self._validated_by("PHYSICAL_SECURITY_FEATURES")
+        piece["verification_method"] = "ENROLLMENT_CODE"
+        self.assertEqual(pf.effective_strength(piece), "FAIR")
+        piece = self._validated_by("VISUAL_INSPECTION")
+        piece["verification_method"] = "KNOWLEDGE_BASED"
+        self.assertEqual(pf.effective_strength(piece), "WEAK")
+        self.assertEqual(
+            pf.effective_strength(self._validated_by("VISUAL_INSPECTION", "WEAK")), "WEAK",
+            "a ceiling never raises a weak document")
+
     def test_how_it_was_verified_caps_what_it_contributes(self):
         """v9.395: the methods are not interchangeable at the job verification does.
 

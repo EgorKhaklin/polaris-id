@@ -44,6 +44,7 @@ What was established about the person at enrollment. The mechanism is
 |---|---|---|
 | Evidence is classified by strength | MET | `check:enrollment_proofing` |
 | Evidence is validated (is the document genuine) and verified (is it this person's), and a piece failing either contributes nothing | MET | `drill:scripts/polaris-enrollment-proofing-drill.py` |
+| The strength a piece contributes is capped by how it was validated and how it was verified (a visual inspection reaches FAIR, a posted code FAIR) | MET | `check:enrollment_proofing` |
 | The assurance level is derived from the evidence, never entered | MET | `check:enrollment_proofing` |
 | A claimed level above what the evidence supports is refused | MET | `drill:scripts/polaris-enrollment-proofing-drill.py` |
 | IAL2 evidence combinations | MET | `drill:scripts/polaris-enrollment-proofing-drill.py` |
