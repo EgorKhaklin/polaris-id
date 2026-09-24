@@ -93,7 +93,15 @@ procedural detail.
 `enforce_revocation_velocity_bound` is a BEFORE UPDATE trigger on
 `IdentityToken`. It refuses any transition to `REVOKED` unless
 `uc8_revoke_token` has set the per-transaction setting
-`polaris.revoke_check_done`.
+`polaris.revoke_check_done` **and** the current role owns `uc8_revoke_token`.
+
+The second condition is what makes it a door rather than a sign. Until 1.0.0-rc.19 the setting
+alone was enough, and any session can set a setting: a `polaris_app` session set it and revoked
+with a plain UPDATE. The three procedures that revoke (`uc4_activate_reserve`,
+`uc8_revoke_token`, `uc9_complete_recovery`) now run `SECURITY DEFINER`, so inside them the
+current role is the owner, and outside them the application role never is. The default bound
+is read from the database's own setting (`polaris_database_setting()`), not the session's, for
+the same reason: a caller must not choose the bound it is about to be held to.
 
 The trigger does not repeat the rate arithmetic. Its job is to close every
 other door: a direct UPDATE from psql, from the SQL console, or from

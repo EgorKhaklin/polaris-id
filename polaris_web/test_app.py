@@ -1855,6 +1855,62 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
             self._call_uc8(toks[1], actor=2, reason='ADMINISTRATIVE')
         self.assertIn('co-signer required', str(ctx.exception))
 
+    # -- 1.0.0-rc.19 ----------------------------------------------------------------------
+    # The trigger that makes uc8_revoke_token the only way into REVOKED admitted any session
+    # that had set polaris.revoke_check_done, and any session can set it. The tests above run
+    # as the schema owner, which owns the procedure; these run as the application role, which
+    # is who an installed deployment connects as.
+
+    def _as_app(self, conn):
+        with conn.cursor() as cur:
+            cur.execute("SET ROLE polaris_app")
+
+    def test_the_application_role_cannot_unlock_the_trigger_itself(self):
+        tid = self._seed_active_token(1, 1, 'self-unlock')
+        with self._new_conn() as conn:
+            self._as_app(conn)
+            with conn.cursor() as cur:
+                # Session-wide (is_local false), so it holds whether or not the connection
+                # autocommits: a transaction-local setting would expire before the UPDATE on an
+                # autocommitting connection and the test would pass on the defect it targets.
+                cur.execute("SELECT set_config('polaris.revoke_check_done', '1', false)")
+                cur.execute("SELECT current_setting('polaris.revoke_check_done', true) AS v")
+                self.assertEqual(cur.fetchone()['v'], '1', 'control: the flag must be set')
+                with self.assertRaises(psycopg2.Error) as ctx:
+                    cur.execute("UPDATE IdentityToken SET status='REVOKED' WHERE token_id=%s",
+                                (tid,))
+            conn.rollback()
+        self.assertIn('Direct UPDATE to status=REVOKED is not allowed', str(ctx.exception),
+                      'the refusal must be the revocation gate, not a missing grant')
+
+    def test_the_application_role_revokes_through_the_procedure(self):
+        """The control: the sanctioned path still works for the role the app connects as."""
+        toks = self._grow(2, 30, 'app-path')
+        self._no_override(2)
+        with self._new_conn() as conn:
+            self._as_app(conn)
+            with conn.cursor() as cur:
+                cur.execute("CALL uc8_revoke_token(%s, 2, 'ADMINISTRATIVE', %s, NULL)",
+                            (toks[0], 'https://crl.idtoken.gov/test/uc8.crl'))
+                cur.execute("SELECT status FROM IdentityToken WHERE token_id=%s", (toks[0],))
+                self.assertEqual(cur.fetchone()['status'], 'REVOKED')
+            conn.commit()
+
+    def test_a_session_cannot_loosen_the_default_bound(self):
+        """1 of 10 is over the 5% default. A caller that sets the default to 100% for its own
+        session must still be held to the database's 5%."""
+        toks = self._grow(2, 10, 'loosen')
+        self._no_override(2)
+        with self._new_conn() as conn:
+            self._as_app(conn)
+            with conn.cursor() as cur:
+                cur.execute("SET polaris.default_max_revoke_percent = '100'")
+                with self.assertRaises(psycopg2.Error) as ctx:
+                    cur.execute("CALL uc8_revoke_token(%s, 2, 'ADMINISTRATIVE', %s, NULL)",
+                                (toks[0], 'https://crl.idtoken.gov/test/uc8.crl'))
+            conn.rollback()
+        self.assertIn('co-signer required', str(ctx.exception))
+
     def test_the_default_bound_is_five_percent(self):
         """No override: 1 of 10 is 10%, over the 5% default. Every test of the default used an
         agency so small that any single revocation tripped any bound."""

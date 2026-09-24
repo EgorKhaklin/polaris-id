@@ -455,7 +455,15 @@ BEGIN
 
     -- Procedure path sets this GUC. If absent, the UPDATE bypassed
     -- uc8_revoke_token and the bound has not been checked.
-    IF current_setting('polaris.revoke_check_done', true) = '1' THEN
+    --
+    -- 1.0.0-rc.19: the GUC alone is not a gate, because any session can set it; a
+    -- polaris_app session did, and revoked with a plain UPDATE. It is honoured only
+    -- when the CURRENT ROLE owns the revocation procedure, which is true inside the
+    -- SECURITY DEFINER procedures and for the schema owner (who could drop this
+    -- trigger anyway), and never for the application role.
+    IF current_setting('polaris.revoke_check_done', true) = '1'
+       AND current_user = (SELECT pg_get_userbyid(p.proowner) FROM pg_proc p
+                            WHERE p.proname = 'uc8_revoke_token' LIMIT 1) THEN
         RETURN NEW;
     END IF;
 

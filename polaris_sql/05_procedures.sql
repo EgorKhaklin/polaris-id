@@ -196,6 +196,15 @@ CREATE OR REPLACE FUNCTION uc4_activate_reserve(
     p_published_location VARCHAR(300)
 ) RETURNS INTEGER
 LANGUAGE plpgsql
+-- SECURITY DEFINER (1.0.0-rc.19): this procedure moves a token into REVOKED, and
+-- trg_enforce_revocation_velocity admits that transition only when the current role owns
+-- the revocation procedures. Before rc.19 the trigger admitted it whenever the session had
+-- set polaris.revoke_check_done, which any session holding polaris_app could set for itself
+-- and then revoke with a plain UPDATE, skipping the rate bound and the co-signer rule. The
+-- actor is authenticated by parameter, never by current_user, so running as the owner does
+-- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
+SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_lost_individual_id     INTEGER;
@@ -471,6 +480,26 @@ COMMENT ON FUNCTION uc7_warrant_audit IS
   'permits the warrant query; the disclosure level governs what it returns.';
 
 -- ----------------------------------------------------------------------------
+-- polaris_database_setting (1.0.0-rc.19): a setting as the DATABASE holds it (ALTER
+-- DATABASE ... SET), ignoring any value the current session set for itself. A bound read
+-- through current_setting() is a bound the caller can move; this is the value an operator
+-- configured for everyone.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION polaris_database_setting(p_name TEXT)
+RETURNS TEXT
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+    SELECT o.option_value
+      FROM pg_db_role_setting s
+      JOIN pg_database d ON d.oid = s.setdatabase
+     CROSS JOIN LATERAL pg_options_to_table(s.setconfig) o
+     WHERE d.datname = current_database()
+       AND s.setrole = 0
+       AND o.option_name = p_name
+$$;
+
+-- ----------------------------------------------------------------------------
 -- UC-8: Bounded Revocation (R11-6 / M2-11)
 --
 --   The single sanctioned revocation path. Enforces the rolling-window
@@ -488,7 +517,6 @@ COMMENT ON FUNCTION uc7_warrant_audit IS
 --   of the issuer-trust-concentration triad (alongside cryptographic
 --   diversity in R11-1 and federation in R11-8/M2-8).
 -- ----------------------------------------------------------------------------
-
 CREATE OR REPLACE PROCEDURE uc8_revoke_token(
     p_token_id            INTEGER,
     p_actor_agency_id     INTEGER,
@@ -496,7 +524,17 @@ CREATE OR REPLACE PROCEDURE uc8_revoke_token(
     p_published_location  VARCHAR(300),
     p_cosigner_agency_id  INTEGER DEFAULT NULL
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+-- SECURITY DEFINER (1.0.0-rc.19): this procedure moves a token into REVOKED, and
+-- trg_enforce_revocation_velocity admits that transition only when the current role owns
+-- the revocation procedures. Before rc.19 the trigger admitted it whenever the session had
+-- set polaris.revoke_check_done, which any session holding polaris_app could set for itself
+-- and then revoke with a plain UPDATE, skipping the rate bound and the co-signer rule. The
+-- actor is authenticated by parameter, never by current_user, so running as the owner does
+-- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_issuing_agency_id INTEGER;
     v_current_status    VARCHAR(20);
@@ -540,11 +578,14 @@ BEGIN
     WHERE agency_id = v_issuing_agency_id
       AND superseded_at IS NULL;   -- v9.426: a superseded bound does not bind
     IF NOT FOUND THEN
+        -- The DATABASE's setting, not the session's (1.0.0-rc.19). ALTER DATABASE sets the
+        -- default, and any session can override a setting for itself, so reading
+        -- current_setting() let the caller choose the bound it was about to be held to.
         v_max_percent := COALESCE(
-            NULLIF(current_setting('polaris.default_max_revoke_percent', true), '')::NUMERIC,
+            NULLIF(polaris_database_setting('polaris.default_max_revoke_percent'), '')::NUMERIC,
             5.00);
         v_window_days := COALESCE(
-            NULLIF(current_setting('polaris.default_window_days', true), '')::INTEGER,
+            NULLIF(polaris_database_setting('polaris.default_window_days'), '')::INTEGER,
             30);
     END IF;
 
@@ -730,7 +771,17 @@ CREATE OR REPLACE PROCEDURE uc9_complete_recovery(
     p_liveness_check     VARCHAR DEFAULT NULL,
     p_published_location VARCHAR DEFAULT NULL
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+-- SECURITY DEFINER (1.0.0-rc.19): this procedure moves a token into REVOKED, and
+-- trg_enforce_revocation_velocity admits that transition only when the current role owns
+-- the revocation procedures. Before rc.19 the trigger admitted it whenever the session had
+-- set polaris.revoke_check_done, which any session holding polaris_app could set for itself
+-- and then revoke with a plain UPDATE, skipping the rate bound and the co-signer rule. The
+-- actor is authenticated by parameter, never by current_user, so running as the owner does
+-- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_individual_id     INTEGER;
     v_requesting_agency INTEGER;

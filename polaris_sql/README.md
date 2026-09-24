@@ -14,11 +14,12 @@ Athena curated tables)
 (v6 web auth) + `AgencyQuota` (v9.190) + `IndividualErasureEvent` +
 `ZkVerificationNonce`), foreign keys and `CHECK` constraints throughout, the partial unique index that
 enforces one-active-token-per-person, the state-machine trigger from
-Appendix A, **19 stored procedures and functions** (v9.234: UC-1, UC-4, UC-5,
+Appendix A, **20 stored procedures and functions** (v9.234: UC-1, UC-4, UC-5,
 UC-6, UC-7, UC-8, UC-9 initiate + complete, `close_anchor_batch`,
 `uc10_attest_trust`, `uc10_revoke_attestation`, `uc11_close_epoch`,
 `uc12_record_duress`, `uc_archive_purge`, `uc_pseudonymize_individual`,
-`uc_apply_retention_template`, and the helpers they read) plus the
+`uc_apply_retention_template`, and the helpers they read, among them
+`polaris_database_setting` since 1.0.0-rc.19) plus the
 **`civic_enrollment_summary` civic-query function** (R11-4), the
 **v6 atlas SQL functions** for scale (≥ 1M events), the v7
 schema-hardening tests, the **M2-3 substrate-dependency view**, and an
@@ -56,7 +57,7 @@ That single command:
    views (`03_view.sql`)
 4. Loads sample data including two closed `AnchorBatch` rows
    (R10-2) (`04_data.sql`)
-5. Defines 19 stored procedures and functions (UC-1 / UC-4 / UC-5 / UC-6 / UC-7 /
+5. Defines 20 stored procedures and functions (UC-1 / UC-4 / UC-5 / UC-6 / UC-7 /
    UC-8 / UC-9 initiate + complete / `close_anchor_batch` /
    `uc10_attest_trust` / `uc10_revoke_attestation` /
    `uc11_close_epoch` / `uc12_record_duress` / `uc_archive_purge` /
@@ -98,7 +99,7 @@ labels valid` (plus all assertion-suite messages).
 | `02_indexes.sql` | Partial unique indexes + spatial + revocation-rate + enrollment-event + recovery-queue + active-signature indexes + secondary indexes |
 | `03_view.sql` | `ActiveTokens` + `IndividualCurrentEnrollment` views |
 | `04_data.sql` | Coherent sample data with 8 individuals across all five enrollment states + TokenSignature backfill |
-| `05_procedures.sql` | 19 stored procedures and functions: UC-1 / UC-4 / UC-5 / UC-6 / UC-7 / UC-8 / UC-9 (initiate + complete) / `close_anchor_batch` (R10-2) / `uc10_attest_trust` + `uc10_revoke_attestation` (R11-3) / `uc11_close_epoch` (R10-1) / `uc12_record_duress` (R11-5) / `uc_archive_purge` (audit-log archive+purge framework, v8.87) / `uc_pseudonymize_individual` (right-to-erasure pseudonymization, v9.125) / `uc_apply_retention_template` + `retention_days_for` + `retention_cutoff` (the retention engine, v9.234) |
+| `05_procedures.sql` | 20 stored procedures and functions: UC-1 / UC-4 / UC-5 / UC-6 / UC-7 / UC-8 / UC-9 (initiate + complete) / `close_anchor_batch` (R10-2) / `uc10_attest_trust` + `uc10_revoke_attestation` (R11-3) / `uc11_close_epoch` (R10-1) / `uc12_record_duress` (R11-5) / `uc_archive_purge` (audit-log archive+purge framework, v8.87) / `uc_pseudonymize_individual` (right-to-erasure pseudonymization, v9.125) / `uc_apply_retention_template` + `retention_days_for` + `retention_cutoff` (the retention engine, v9.234) / `polaris_database_setting` (the database's own setting, 1.0.0-rc.19) |
 | `06_triggers.sql` | State-machine + auto-audit + append-only triggers (every audit-of-record table) + revocation-velocity bound (R11-6) + enrollment-seed (R11-4) + active-signature + signature-immutability (R11-1) |
 | `07_queries.sql` | Relational-algebra queries from §8 + UC-6 bonus + `civic_enrollment_summary` (R11-4) |
 | `08_tests.sql` | Core self-test suite, 78 assertions (v9.194) |

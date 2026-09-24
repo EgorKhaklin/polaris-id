@@ -11,6 +11,53 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.19 — 2026-09-24 (revocation's only door was a setting the caller could set)
+
+CORE-BUG against rc.18. Externally observable: the application role can no longer move a token
+into `REVOKED` except through the revocation procedures, and a session can no longer loosen
+the default revocation bound. Schema change: migration `2026-09-24-004-revocation-gate-by-role`.
+Nothing is published.
+
+`trg_enforce_revocation_velocity` is what makes `uc8_revoke_token` the only way into
+`REVOKED`. It refuses a plain `UPDATE ... SET status='REVOKED'`, and it admitted the transition
+when the session had set `polaris.revoke_check_done`. The procedure sets that flag after it has
+checked the rate bound and the co-signer. But any session can set a session setting. Measured
+as `polaris_app`, the role an installed deployment connects as:
+`SELECT set_config('polaris.revoke_check_done', '1', false)` followed by the plain `UPDATE`
+revoked the token. The rate bound, the co-signer rule and the CRL publication were all
+skipped. The trigger's own comment said a direct UPDATE "from psql, the SQL console, or app
+code" would be rejected.
+
+The same shape held one level down. With no per-agency policy, `uc8_revoke_token` read the
+default bound with `current_setting('polaris.default_max_revoke_percent')`. `09_grants.sql`
+sets that with `ALTER DATABASE`, and a session can override it for itself. So the caller could
+choose the bound it was about to be held to.
+
+The fix copies the design `uc_archive_purge` already uses:
+- The three procedures that set the flag (`uc4_activate_reserve`, `uc8_revoke_token`,
+  `uc9_complete_recovery`) now run `SECURITY DEFINER`, with a pinned `search_path`. Each
+  authenticates its actor by parameter, never by `current_user`, so running as the owner
+  weakens no gate.
+- The trigger honours the flag only when the current role owns `uc8_revoke_token`. That holds
+  inside the procedures and for the schema owner, who could drop the trigger anyway. It never
+  holds for the application role.
+- `uc8_revoke_token` reads the default bound through the new
+  `polaris_database_setting()`, which returns the database's setting and ignores the
+  session's.
+
+Migration tested on a scratch database built from rc.18. Before it, the self-set flag revokes;
+it applies (refused, all three procedures `SECURITY DEFINER`), reverts (revokes again) and
+re-applies (refused).
+
+The existing test of this trigger ran as the schema owner, which owns the procedure. The new
+tests run as `polaris_app`.
+
+Counterexamples, failing on rc.18:
+`IssuerDiscretionBoundsTests.test_the_application_role_cannot_unlock_the_trigger_itself` and
+`test_a_session_cannot_loosen_the_default_bound`.
+`test_the_application_role_revokes_through_the_procedure` is the control: the sanctioned path
+still works for the application role.
+
 ## v1.0.0-rc.18 — 2026-09-24 (the SQL console cannot be scoped, so a bound account cannot use it)
 
 CORE-BUG against rc.17. Externally observable: `/sql` returns 403 to an account bound to one

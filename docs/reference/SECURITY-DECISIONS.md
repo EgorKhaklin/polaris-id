@@ -310,6 +310,15 @@ cannot bound a query the operator writes. Before 1.0.0-rc.18 a bound admin or au
 clear the setting in their own console query and read every authority's rows. The console is
 now for instance-wide accounts only.
 
+**Whether a session setting may authorize anything** is answered no, since 1.0.0-rc.19.
+A setting says what the session says about itself. `trg_enforce_revocation_velocity` used one
+(`polaris.revoke_check_done`) as the only door into `REVOKED`, and `uc8_revoke_token` read its
+default bound from one. The application role could set either. Authorization now rests on the
+role: the revoking procedures run `SECURITY DEFINER`, and the trigger admits the transition only
+for the role that owns them. Settings remain in use for what the application records about its
+own actions (`polaris.actor`, `polaris.justification`, `polaris.reason_code`), where the
+application is the party the record describes.
+
 ---
 
 ## 14. Decisions not yet made
