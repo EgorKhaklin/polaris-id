@@ -13,6 +13,7 @@ Run: python3 -m unittest test_secretstore
 
 import json
 import os
+import stat
 import shutil
 import subprocess
 import sys
@@ -217,9 +218,28 @@ class AwsKmsBackendTests(_Common, unittest.TestCase):
     def test_blob_presented_under_another_name_is_refused(self):
         sealed = os.path.join(self.root, "sealed")
         ss.seal(self.backend, self.plain, sealed)
-        os.replace(os.path.join(sealed, "polaris_db_password.kms"), os.path.join(sealed, "polaris_secret_key.kms"))
-        with self.assertRaises(ss.SecretStoreError):
+        # COPIED, not moved: moving it left polaris_db_password.kms missing, and the missing
+        # file refused the store before the name was ever compared.
+        shutil.copy(os.path.join(sealed, "polaris_db_password.kms"), os.path.join(sealed, "polaris_secret_key.kms"))
+        with self.assertRaises(ss.SecretStoreError) as caught:
             ss.unseal_to_memory(self.backend, sealed)
+        # The name check, not the AEAD behind it, and it says which: held out 2026-09-24,
+        # deleting the name check survived because the AEAD refused the same blob.
+        self.assertIn("renamed/tampered", str(caught.exception))
+
+    def test_a_renamed_blob_with_its_name_field_edited_fails_authentication(self):
+        """The blob's JSON is not authenticated, so an attacker renaming a file can edit its
+        `name` to match. The AEAD's associated data is what still binds it to the name it was
+        sealed under; with it empty, this swap decrypted to the other secret's value."""
+        sealed = os.path.join(self.root, "sealed")
+        ss.seal(self.backend, self.plain, sealed)
+        doc = json.loads(open(os.path.join(sealed, "polaris_db_password.kms"), "rb").read())
+        doc["name"] = "polaris_secret_key"
+        with open(os.path.join(sealed, "polaris_secret_key.kms"), "w") as fh:
+            json.dump(doc, fh)
+        with self.assertRaises(ss.SecretStoreError) as caught:
+            ss.unseal_to_memory(self.backend, sealed)
+        self.assertIn("failed authentication", str(caught.exception))
 
 
 class EnvSelectionTests(unittest.TestCase):
@@ -240,6 +260,79 @@ class EnvSelectionTests(unittest.TestCase):
             self.assertEqual(ss.verify(ss.FileBackend(), sealed, plain)["drift"], [])
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+
+
+class HeldOutSecretStoreTests(unittest.TestCase):
+    """A held-out round on secretstore.py, 2026-09-24. Six of twelve mutations survived this
+    file, test_custody and the check layer, and reading the code for them found a name in the
+    manifest used as a path."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="polaris-ss-held-")
+        self.plain, self.files = _make_plain(self.root)
+        self.sealed = os.path.join(self.root, "sealed")
+        ss.seal(ss.FileBackend(), self.plain, self.sealed)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _manifest(self, edit):
+        path = os.path.join(self.sealed, ss.MANIFEST)
+        with open(path) as fh:
+            m = json.load(fh)
+        edit(m)
+        with open(path, "w") as fh:
+            json.dump(m, fh)
+
+    def test_a_manifest_name_cannot_write_outside_the_destination(self):
+        """`unseal` joined each manifest name onto the destination directory. The manifest is
+        not authenticated, and under age anybody holding the public recipients can seal a
+        file, so a name like ../x wrote attacker-chosen bytes outside the tmpfs the secrets
+        are meant to live in. A manifest name is a file name or the store is refused."""
+        payload = b"planted\n"
+        # Where the file backend reads the blob for that name: sealed/../escaped.
+        with open(os.path.join(self.root, "escaped"), "wb") as fh:
+            fh.write(payload)
+        self._manifest(lambda m: m["files"].update(
+            {"../escaped": {"sha256": ss._sha256(payload), "mode": "0600", "size": len(payload)}}))
+        dst = os.path.join(self.root, "run", "secrets")
+        os.makedirs(os.path.dirname(dst))
+        target = os.path.join(self.root, "run", "escaped")
+        with self.assertRaises(ss.SecretStoreError) as caught:
+            ss.unseal(ss.FileBackend(), self.sealed, dst)
+        self.assertIn("../escaped", str(caught.exception))
+        self.assertFalse(os.path.exists(target), "a file was written outside the destination")
+        for bad in ("/etc/x", "a/b", "..", ".", ""):
+            with self.subTest(name=bad):
+                self._manifest(lambda m: m.update(files={bad: {"sha256": "0" * 64}}))
+                with self.assertRaises(ss.SecretStoreError):
+                    ss.unseal_to_memory(ss.FileBackend(), self.sealed)
+
+    def test_a_store_sealed_by_another_backend_is_refused_for_that_reason(self):
+        """The existing test unsealed an age store with the file backend, whose file names
+        have no extension, so a missing file refused it whether or not the backend was
+        compared. The reason is what tells the operator which variable is wrong."""
+        self._manifest(lambda m: m.update(backend="age"))
+        with self.assertRaises(ss.SecretStoreError) as caught:
+            ss.unseal_to_memory(ss.FileBackend(), self.sealed)
+        self.assertIn("sealed with backend", str(caught.exception))
+
+    def test_a_manifest_with_no_mode_unseals_owner_only(self):
+        self._manifest(lambda m: [meta.pop("mode") for meta in m["files"].values()])
+        dst = os.path.join(self.root, "out")
+        ss.unseal(ss.FileBackend(), self.sealed, dst)
+        for name in self.files:
+            self.assertEqual(stat.S_IMODE(os.stat(os.path.join(dst, name)).st_mode), 0o600, name)
+
+    def test_a_manifest_listing_no_files_is_refused(self):
+        self._manifest(lambda m: m.update(files={}))
+        with self.assertRaises(ss.SecretStoreError):
+            ss.unseal_to_memory(ss.FileBackend(), self.sealed)
+
+    def test_the_backend_name_is_not_case_sensitive(self):
+        self.assertIsInstance(ss.backend_from_env({"POLARIS_SECRETS_BACKEND": " FILE "}),
+                              ss.FileBackend)
 
 
 if __name__ == "__main__":

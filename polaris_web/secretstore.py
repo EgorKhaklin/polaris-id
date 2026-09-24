@@ -255,6 +255,16 @@ def _read_manifest(sealed: str) -> dict:
         raise SecretStoreError(f"unseal: {sealed} has no readable {MANIFEST}: {exc}") from exc
     if not isinstance(m.get("files"), dict) or not m["files"]:
         raise SecretStoreError(f"unseal: {MANIFEST} lists no files")
+    # A manifest name becomes a path under the destination, and the manifest is not
+    # authenticated: under age anybody with the public recipients can seal a blob. A name
+    # that is not a plain file name ("../x", "/etc/x", "a/b") wrote outside the tmpfs the
+    # secrets belong in. Found 2026-09-24; refused before any blob is read.
+    for name in m["files"]:
+        if (not isinstance(name, str) or name in ("", ".", "..") or "\x00" in name
+                or name != os.path.basename(name) or "\\" in name):
+            raise SecretStoreError(f"unseal: {MANIFEST} names {name!r}, which is not a plain "
+                                   "file name; refusing a store that would write outside its "
+                                   "destination")
     return m
 
 

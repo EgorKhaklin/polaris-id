@@ -241,6 +241,16 @@ when the caller is root on Linux), file modes are restored from the manifest,
 and compose reads every secret and certificate from there. No plaintext
 touches the disk.
 
+**What the store is trusted for, and what it is not.** `MANIFEST.json` is not signed. It
+carries a SHA-256 per file, which catches a blob that does not match the manifest, not a
+manifest and blob that were replaced together. Under `age`, anybody holding the PUBLIC
+recipients file can seal a blob, so write access to the sealed store is write access to
+the secrets it materializes: keep it where only the operators can write. Under `awskms`,
+each blob is bound to its file name by the AEAD, so a blob renamed onto another secret is
+refused even when its `name` field is edited to match. Since 1.0.0-rc.10, a manifest name
+that is not a plain file name (`../x`, `/etc/x`, `a/b`) refuses the whole store before
+anything is read. Until then such a name wrote outside `POLARIS_SECRETS_DIR`.
+
 For `awskms`: `POLARIS_SECRETS_BACKEND=awskms POLARIS_SECRETS_AWSKMS_KEY_ID=<key arn>
 POLARIS_SECRETS_AWSKMS_REGION=<region>`, host `python3` with boto3
 (`pip install -r polaris_web/requirements-custody.txt`), and an instance role

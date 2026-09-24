@@ -11,6 +11,42 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.10 — 2026-09-24 (a sealed store cannot write outside its destination)
+
+CORE-BUG against rc.9. Externally observable: what `polaris-secrets.sh unseal` writes, and
+where. Nothing is published.
+
+`unseal` promises to materialize the sealed store into `POLARIS_SECRETS_DIR`, a tmpfs, so that
+no plaintext touches the disk (`docs/operator/SECRETS.md`). It joined each name in
+`MANIFEST.json` onto that directory. The manifest is not authenticated. Under `age`, anybody
+holding the public recipients file can seal a blob. So a manifest naming `../escaped`, with a
+matching blob and hash, wrote attacker-chosen bytes outside the tmpfs, next to it, on every
+boot that ran `unseal-if-configured`. Measured before the fix: the file was written.
+
+Now a manifest name that is not a plain file name (`../x`, `/etc/x`, `a/b`, `.`, `..`, empty, a
+NUL, a backslash) refuses the whole store before any blob is read.
+`SECRETS.md` now states what the store is and is not trusted for: the manifest is unsigned, and
+under `age` write access to the store is write access to the secrets.
+
+Counterexample, failing on rc.9:
+`HeldOutSecretStoreTests.test_a_manifest_name_cannot_write_outside_the_destination`.
+
+Found by reading the code for a held-out mutation round on `secretstore.py`. In that round six
+of twelve mutations survived `test_secretstore`, `test_custody` and the check layer:
+- the backend-mismatch refusal deleted;
+- a missing mode defaulting to 0644;
+- an empty manifest accepted;
+- the backend name made case-sensitive;
+- the awskms name check deleted;
+- the awskms AEAD no longer bound to the name.
+
+The last two were masked. The existing rename test MOVED the blob, so the store was refused for
+a missing file before any name was compared. It now copies, and a second test edits the blob's
+`name` field to match, which only the AEAD can catch. After: 12 of 12. The awskms tests also
+ran nowhere locally until boto3 was installed in the test environment; CI installs it.
+
+---
+
 ## v1.0.0-rc.9 — 2026-09-24 (a migration run says what it could not do)
 
 CORE-BUG against rc.8. Externally observable: what `polaris migrate-population` reports, and
