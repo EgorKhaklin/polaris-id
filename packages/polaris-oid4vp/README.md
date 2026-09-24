@@ -257,7 +257,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-274 tests in seven files, and they are not equal in weight. Coverage is
+278 tests in seven files, and they are not equal in weight. Coverage is
 the weakest of the three instruments here: it says a line ran.
 
 **And coverage is not the test that matters.** `scripts/polaris-oid4vp-mutation-drill.py`
@@ -275,7 +275,7 @@ allowance doubled, `>=` written as `>`) inverts nothing. Ten such mutations writ
 drill was green on 2026-09-23 found eight the suite passed with; `HeldOutBoundaryTests` in
 `test_sdjwt` and `test_status` sit on each boundary, and a re-run caught all ten.
 
-`test_sdjwt` (100) and `test_jwe` (28) are this package agreeing with itself: the material is
+`test_sdjwt` (100) and `test_jwe` (32) are this package agreeing with itself: the material is
 built here and checked here. Each carries a positive control, because a verifier that refuses
 everything passes every refusal test ever written, and both directions were checked by
 patching the verifier rather than assumed. Measured 2026-09-23: a verifier that always accepts

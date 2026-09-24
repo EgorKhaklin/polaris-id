@@ -298,3 +298,66 @@ class TheCoordinateDecodeRefusalIsAssertedTests(unittest.TestCase):
                "x": b64u_encode(k.x.to_bytes(32, "big")),
                "y": b64u_encode(k.y.to_bytes(32, "big"))}
         self.assertIsNotNone(_public_key_from_jwk(jwk))
+
+
+class HeldOutHeaderTests(unittest.TestCase):
+    """A held-out round on 2026-09-24 found four header refusals no test could tell from
+    their absence: `alg` compared case-insensitively, a `y` coordinate of the wrong length, and
+    no check of `kty`, all survived; so did treating an empty `apu` as present, which is
+    equivalent (an empty string decodes to the empty bytes the absent case uses).
+
+    Why the first three survived: every existing test of a bad header edited the header of a
+    token after it was sealed, and the header is the AES-GCM AAD, so the TAG refused those
+    tokens whether or not the header check ran. Here each token is sealed under the header
+    it carries, so the tag authenticates and the header check is the only thing that can
+    refuse. The positive control below shows the sealing opens when the header is right.
+    """
+
+    def _seal(self, edit, plaintext=b"hello"):
+        from polaris_oid4vp.jwe import AESGCM, _concat_kdf
+        key = ec.generate_private_key(ec.SECP256R1())
+        eph = ec.generate_private_key(ec.SECP256R1())
+        n = eph.public_key().public_numbers()
+        header = {"alg": "ECDH-ES", "enc": "A128GCM",
+                  "epk": {"kty": "EC", "crv": "P-256",
+                          "x": b64u_encode(n.x.to_bytes(32, "big")),
+                          "y": b64u_encode(n.y.to_bytes(32, "big"))}}
+        edit(header, n)
+        protected = b64u_encode(json.dumps(header, separators=(",", ":")).encode())
+        cek = _concat_kdf(eph.exchange(ec.ECDH(), key.public_key()), "A128GCM", 16)
+        iv = os.urandom(12)
+        sealed = AESGCM(cek).encrypt(iv, plaintext, protected.encode("ascii"))
+        token = ".".join([protected, "", b64u_encode(iv), b64u_encode(sealed[:-16]),
+                          b64u_encode(sealed[-16:])])
+        return token, key
+
+    def test_the_sealing_opens_when_the_header_is_right(self):
+        token, key = self._seal(lambda h, n: None)
+        self.assertEqual(decrypt_compact(token, key), b"hello")
+
+    def test_alg_is_matched_exactly_not_by_case(self):
+        for alg in ("ecdh-es", "Ecdh-Es"):
+            with self.subTest(alg=alg):
+                token, key = self._seal(lambda h, n: h.update(alg=alg))
+                with self.assertRaises(JweError) as caught:
+                    decrypt_compact(token, key)
+                self.assertIn("alg=", str(caught.exception))
+
+    def test_a_coordinate_padded_past_32_bytes_is_refused(self):
+        """Prepending a zero byte leaves the integer, and so the point, unchanged: only the
+        length check separates it. Both coordinates, because the check names both."""
+        for field, attr in (("x", "x"), ("y", "y")):
+            with self.subTest(field=field):
+                token, key = self._seal(lambda h, n: h["epk"].update(
+                    {field: b64u_encode(b"\x00" + getattr(n, attr).to_bytes(32, "big"))}))
+                with self.assertRaises(JweError) as caught:
+                    decrypt_compact(token, key)
+                self.assertIn("32 bytes", str(caught.exception))
+
+    def test_a_key_that_is_not_kty_EC_is_refused_even_with_valid_P256_numbers(self):
+        for kty in ("OKP", "oct", None):
+            with self.subTest(kty=kty):
+                token, key = self._seal(lambda h, n: h["epk"].update(kty=kty))
+                with self.assertRaises(JweError) as caught:
+                    decrypt_compact(token, key)
+                self.assertIn("not an EC P-256 JWK", str(caught.exception))
