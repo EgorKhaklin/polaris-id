@@ -11,6 +11,41 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.26 — 2026-09-24 (a refused attestation stood anyway)
+
+CORE-BUG against rc.25. Externally observable: `/api/federation/attest` records an
+attestation and its signature in one transaction, so a refusal now means nothing was recorded.
+In the development signing profile the edge is recorded unsigned rather than refused. No schema
+change. Nothing is published.
+
+The attestation route called `uc10_attest_trust`, committed, and only then signed the new edge
+under the attesting authority's key. When signing failed, the caller got an error while the
+attestation it described stood, recorded and unsigned. Failures included a custody error
+(raised as a 500, since it is not a database error) and a constraint on the signature columns.
+Measured under the test profile: 400 `Constraint violation.`, and the attestation count went
+from 6 to 7. The failing constraint was `attestation_signature_complete`: the development
+placeholder signer names no key, and the table refuses a signature without one, so every
+attestation toward an authority with a registered key hit it.
+
+The edge and its signature now commit together, and any failure rolls both back. A signer that
+names no key leaves the edge unsigned, which the verifier already reports as such, instead of
+recording bytes nothing can verify.
+
+Found by a held-out round on `federation_routes.py`: ten mutations, of which six survived the
+route's own test classes. Two of those (the signed statement losing its attested key, or its
+canonical order) were caught by `test_canonical_equivalence`, an instrument the round had
+missed. Four were genuine gaps, now pinned:
+- the signature must be under the ATTESTING authority's key;
+- a second signing must not replace the recorded signature;
+- the viewer must show an expired attestation as `EXPIRED`;
+- the viewer must count it as expired.
+
+Writing the first of those four tests surfaced this defect.
+
+Counterexamples, failing on a worktree of rc.25:
+`IssuerFederationTests.test_an_attestation_that_cannot_be_signed_is_not_recorded` and
+`test_a_placeholder_signature_leaves_the_edge_unsigned_not_refused`.
+
 ## v1.0.0-rc.25 — 2026-09-24 (a card could be made for an expired credential)
 
 CORE-BUG against rc.24. Externally observable: `polaris_card.personalization.personalize`

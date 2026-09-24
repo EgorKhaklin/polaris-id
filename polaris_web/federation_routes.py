@@ -73,9 +73,12 @@ def api_federation_attest():
     conn = get_db()
     try:
         with conn.cursor() as cur:
+            # ONE transaction for the edge and its signature (1.0.0-rc.26). The edge used to be
+            # committed first and signed after, so a signing failure (a custody error, a
+            # constraint) answered 400 or 500 while the attestation it described stood,
+            # recorded and unsigned: the caller was told it had not happened when it had.
             cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
                         (attesting_id, attested_id, context_id, valid_until, signed_by))
-            conn.commit()
             cur.execute("""
                 SELECT attestation_id FROM AgencyTrustAttestation
                  WHERE attesting_agency_id = %s
@@ -93,6 +96,10 @@ def api_federation_attest():
     except psycopg2.Error as e:
         conn.rollback()
         return jsonify(error=db_error_to_message(e)), 400
+    except Exception:
+        # Signing is part of the ceremony: if it cannot happen, neither does the edge.
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -236,6 +243,11 @@ def _sign_attestation(cur, attestation_id):
     }
     sig_bytes, alg, pub = pqc_signing.signature_over_message(
         _attestation_statement(body), agency_id=row['attesting_agency_id'])
+    if not pub:
+        # The development placeholder signs under no key. Recording its bytes as a signature
+        # would claim a verification that nothing can perform (and the table refuses a
+        # signature without its key); the edge stays unsigned, which a verifier reports.
+        return None
     body['algorithm'] = alg
     body['signature_hex'] = sig_bytes.hex()
     body['public_key_hex'] = pub

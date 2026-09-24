@@ -3895,6 +3895,113 @@ class IssuerFederationTests(PolarisTestCase):
 
     # -- Route smoke tests --------------------------------------------------
 
+    # -- held-out, 2026-09-24: federation_routes.py, ten mutations, four genuine survivors --
+
+    def _fresh_attestation(self):
+        """Attest 6 -> 1 for HEALTHCARE through the route (no attestation exists there), with
+        the attested agency holding a key so the ceremony signs. Returns (attestation_id,
+        the agency ids the signer was asked for)."""
+        import pqc_signing
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
+                        ('ab' * 16,), fetch='none')
+        asked = []
+        real = pqc_signing.signature_over_message
+
+        def recording(message, agency_id=None, **kw):
+            asked.append(agency_id)
+            sig, alg, pub = real(message, agency_id=agency_id, **kw)
+            # The test profile's placeholder signer names no key, and a recorded signature
+            # must come with one (attestation_signature_complete).
+            return sig, alg, pub or ('%02x' % agency_id) * 16
+        csrf = self._csrf_token_from('/verifications/new')
+        with patch.object(pqc_signing, 'signature_over_message', recording):
+            r = self.client.post('/api/federation/attest', json={
+                'attesting_agency_id': 6, 'attested_agency_id': 1,
+                'context_id': self._context_id('HEALTHCARE'),
+                'valid_until': str(datetime.now().date() + timedelta(days=90))},
+                headers={'X-CSRFToken': csrf})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertTrue(r.get_json()['attestation_signed'])
+        return r.get_json()['attestation_id'], asked
+
+    def test_an_attestation_is_signed_by_the_authority_that_attests(self):
+        """The signature is the attesting authority accepting another. Signed under the
+        attested authority's key it would be that authority vouching for itself."""
+        _aid, asked = self._fresh_attestation()
+        self.assertEqual(asked, [6])
+
+    def test_an_attestation_signature_is_written_once(self):
+        import federation_routes
+        import pqc_signing
+        aid, _ = self._fresh_attestation()
+        before = _sql("SELECT attestation_signature_hex AS s FROM AgencyTrustAttestation "
+                      "WHERE attestation_id = %s", (aid,), fetch='one')['s']
+        with patch.object(pqc_signing, 'signature_over_message',
+                          lambda m, agency_id=None, **kw: (b'\x01' * 8, 'ML-DSA-65', 'cd' * 16)):
+            conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+            try:
+                with conn.cursor() as cur:
+                    federation_routes._sign_attestation(cur, aid)
+                conn.commit()
+            finally:
+                conn.close()
+        after = _sql("SELECT attestation_signature_hex AS s FROM AgencyTrustAttestation "
+                     "WHERE attestation_id = %s", (aid,), fetch='one')['s']
+        self.assertEqual(after, before, 'a second signing replaced the recorded signature')
+
+    def _attest_6_to_1(self, signer):
+        import pqc_signing
+        flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1",
+                        ('ab' * 16,), fetch='none')
+        before = _sql("SELECT count(*) AS n FROM AgencyTrustAttestation", fetch='one')['n']
+        csrf = self._csrf_token_from('/verifications/new')
+        with patch.object(pqc_signing, 'signature_over_message', signer):
+            r = self.client.post('/api/federation/attest', json={
+                'attesting_agency_id': 6, 'attested_agency_id': 1,
+                'context_id': self._context_id('HEALTHCARE'),
+                'valid_until': str(datetime.now().date() + timedelta(days=90))},
+                headers={'X-CSRFToken': csrf})
+        after = _sql("SELECT count(*) AS n FROM AgencyTrustAttestation", fetch='one')['n']
+        return r, after - before
+
+    def test_an_attestation_that_cannot_be_signed_is_not_recorded(self):
+        """1.0.0-rc.26. The edge was committed before the signature was attempted, so a
+        signing failure left an unsigned attestation standing behind an error response."""
+        def failing(message, agency_id=None, **kw):
+            raise RuntimeError("custody unreachable")
+        flask_app.app.config['PROPAGATE_EXCEPTIONS'] = False
+        try:
+            r, added = self._attest_6_to_1(failing)
+        finally:
+            flask_app.app.config['PROPAGATE_EXCEPTIONS'] = None
+        self.assertGreaterEqual(r.status_code, 400)
+        self.assertEqual(added, 0, 'the caller was refused and the attestation was recorded anyway')
+
+    def test_a_placeholder_signature_leaves_the_edge_unsigned_not_refused(self):
+        """The development signer names no key. The edge is recorded unsigned (a verifier
+        reports it so) rather than refused by the constraint after it was committed."""
+        r, added = self._attest_6_to_1(lambda m, agency_id=None, **kw: (b'\x02' * 8, 'ML-DSA-65', None))
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertFalse(r.get_json()['attestation_signed'])
+        self.assertEqual(added, 1)
+
+    def test_the_viewer_shows_an_expired_attestation_as_expired(self):
+        import re as _re
+        def read():
+            page = self.client.get('/federation').get_data(as_text=True)
+            return (int(_re.search(r'(\d+) ACTIVE</span>', page).group(1)),
+                    int(_re.search(r'(\d+) EXPIRED</span>', page).group(1)),
+                    page.count('<span class="pill pill-warn">EXPIRED</span>'))
+        active, expired, pills = read()
+        admin = _sql("SELECT user_id FROM AppUser WHERE role = 'admin' ORDER BY user_id LIMIT 1",
+                     fetch='one')['user_id']
+        _sql("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, "
+             "context_id, attested_date, valid_until, signed_by) VALUES (6, 2, %s, "
+             "CURRENT_TIMESTAMP - INTERVAL '400 days', CURRENT_DATE - 10, %s)",
+             (self._context_id('HEALTHCARE'), admin), fetch='none')
+        self.assertEqual(read(), (active, expired + 1, pills + 1),
+                         'an attestation that expired ten days ago must read EXPIRED, not ACTIVE')
+
     def test_api_federation_attest_requires_admin(self):
         """Operator role cannot POST to /api/federation/attest."""
         self._logout()
