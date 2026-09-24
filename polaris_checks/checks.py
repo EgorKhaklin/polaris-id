@@ -15607,6 +15607,58 @@ def _emits(source: str, event: str) -> bool:
     return False
 
 
+def check_session_revoke_reasons_admitted(root: pathlib.Path) -> list[Finding]:
+    """Every reason written to OperatorSession.revoke_reason is one its CHECK admits (1.0.0-rc.13).
+
+    On 2026-09-17 validate_session learned to end a session whose account's role changed and
+    wrote revoke_reason 'role_changed'. chk_opsession_revoke_reason was never widened, so for a
+    week every request from such a session raised CheckViolation in the before-request hook:
+    the revocation rolled back and the audit never recorded it. Nothing noticed until a
+    held-out test changed a role during a live session. The two lists live in different
+    languages and nothing compared them; this does, in the direction that fails at runtime.
+
+    Written reasons are read from the application, the CLI, the scripts and the operator
+    runbooks (an operator pastes the runbook's UPDATE): a `revoke_reason = '<x>'` literal, an
+    `ended = ('<x>', ...)` tuple in validate_session, or a `revoke_session(..., '<x>')` call."""
+    name = "session_revoke_reasons"
+    defs = sorted(f for f in (root / "polaris_sql" / "migrations").glob("*.up.sql")
+                  if "chk_opsession_revoke_reason" in _read_path(f))
+    if not defs:
+        return _fail(name, "no migration defines chk_opsession_revoke_reason")
+    text = _read_path(defs[-1])
+    defn = re.search(r"CONSTRAINT chk_opsession_revoke_reason\s*\n?\s*CHECK\s*\((.*?)\)\s*\)",
+                     text, re.S)
+    if defn is None:
+        return _fail(name, f"{defs[-1].name} names chk_opsession_revoke_reason but its list "
+                           "could not be read")
+    admitted = set(re.findall(r"'([a-z_]+)'", defn.group(1)))
+    if len(admitted) < 5:
+        return _fail(name, f"only {len(admitted)} reasons parsed from the CHECK; the parse has "
+                           "broken and this check would pass by finding nothing")
+    written = {}
+    for pattern in ("polaris_web/*.py", "polaris_cli/*.py", "scripts/*.py", "scripts/*.sh",
+                    "docs/operator/*.md"):
+        for path in sorted(root.glob(pattern)):
+            if path.name.startswith("test_"):
+                continue
+            src = _read_path(path)
+            for rx in (r"revoke_reason\s*=\s*'([a-z_]+)'",
+                       r"\bended\s*=\s*\(\s*'([a-z_]+)'",
+                       r"revoke_session\([^)]*'([a-z_]+)'\s*\)"):
+                for reason in re.findall(rx, src):
+                    written.setdefault(reason, path.relative_to(root).as_posix())
+    if not written:
+        return _fail(name, "no revoke reason was found written anywhere; the search has broken")
+    stray = sorted(r for r in written if r not in admitted)
+    if stray:
+        return _fail(name, "revoke reason(s) written that chk_opsession_revoke_reason does not "
+                           "admit, so the UPDATE raises and the session is never ended: "
+                           + ", ".join("%s (%s)" % (r, written[r]) for r in stray)
+                           + ". Widen the constraint with a migration.")
+    return [Finding("OK", name, "all %d revoke reasons written (%s) are admitted by the CHECK in %s"
+                    % (len(written), ", ".join(sorted(written)), defs[-1].name))]
+
+
 def check_every_audit_event_has_a_writer(root: pathlib.Path) -> list[Finding]:
     """An event type nothing emits makes the audit log answer a question it cannot (v9.422).
 
@@ -22324,6 +22376,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_csrf_exemptions_do_not_trust_the_session,
     check_unique_rules_are_tested_exhaustively,
     check_every_audit_event_has_a_writer,
+    check_session_revoke_reasons_admitted,
     check_conformance_asks_the_relying_party_question,
     check_zk_witnesses_are_mutation_tested,
     check_triggers_are_mutation_tested,

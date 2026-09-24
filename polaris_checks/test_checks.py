@@ -14576,6 +14576,43 @@ def test_relying_party_questions_check_discriminates(tmp_path):
     assert checks.check_conformance_asks_the_relying_party_question(tmp_path)[0].level == "FAIL", "must FAIL when cases.json is absent"
 
 
+def test_session_revoke_reasons_check_discriminates(tmp_path):
+    """1.0.0-rc.13: a reason the code writes and the CHECK does not admit fails the check."""
+    REASONS = ["logout", "evicted", "idle", "deactivated", "network_policy", "operator"]
+    def mig(reasons):
+        return ("ALTER TABLE OperatorSession ADD CONSTRAINT chk_opsession_revoke_reason\n"
+                "    CHECK (revoke_reason IS NULL OR revoke_reason IN\n"
+                "           (%s));\n" % ", ".join("'%s'" % r for r in reasons))
+    APP = ("def validate(c):\n"
+           "    ended = ('idle', 'SESSION_EXPIRED', 'why')\n"
+           "    ended = ('role_changed', 'SESSION_REVOKED', 'why')\n"
+           "    c.execute(\"UPDATE OperatorSession SET revoke_reason = 'evicted'\")\n"
+           "    revoke_session(c, sid, 'logout')\n")
+    def write(reasons, app=APP):
+        (tmp_path / "polaris_sql" / "migrations").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_sql" / "migrations" / "2026-09-01-001-operator-session.up.sql"
+         ).write_text(mig(reasons))
+        (tmp_path / "polaris_web").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "polaris_web" / "security.py").write_text(app)
+    write(REASONS + ["role_changed"])
+    assert checks.check_session_revoke_reasons_admitted(tmp_path)[0].level == "OK", \
+        "must PASS when every written reason is admitted"
+    # The defect: the code writes a reason the constraint never admitted.
+    write(REASONS)
+    out = checks.check_session_revoke_reasons_admitted(tmp_path)[0]
+    assert out.level == "FAIL" and "role_changed" in out.message, \
+        "must FAIL, naming the reason, when a written reason is not admitted"
+    # A LATER migration that widens the constraint is the one that counts.
+    (tmp_path / "polaris_sql" / "migrations" / "2026-09-24-001-session-role-changed.up.sql"
+     ).write_text(mig(REASONS + ["role_changed"]))
+    assert checks.check_session_revoke_reasons_admitted(tmp_path)[0].level == "OK", \
+        "the newest migration defining the constraint is the live one"
+    # The written reasons cannot be found: fail rather than pass on nothing.
+    write(REASONS + ["role_changed"], app="x = 1\n")
+    assert checks.check_session_revoke_reasons_admitted(tmp_path)[0].level == "FAIL", \
+        "must FAIL when no written reason is found at all"
+
+
 def test_audit_writers_check_discriminates(tmp_path):
     TYPES = ["LOGIN_SUCCESS", "LOGIN_FAILED", "LOGOUT", "PASSWORD_CHANGED", "ACCOUNT_CREATED",
              "ACCOUNT_DEACTIVATED", "CSRF_REJECTED", "AUTH_REQUIRED", "AUTHZ_DENIED",
