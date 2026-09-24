@@ -11,7 +11,7 @@ externally observable changes.
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc7, 2026-09-24 | 1.0.0rc3, 2026-09-18 |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc3, 2026-09-18 | 1.0.0rc1, 2026-09-16 |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.3, 2026-09-18 | 1.0.0-rc.1, 2026-09-16 |
 
@@ -243,6 +243,10 @@ worse state to be in than three runs.
 | 35298734112 | 2026-09-18 | `polaris-oid4vp` 1.0.0rc3 | published to PyPI the same way; read back, and STRANGER-PATH walked end to end against it |
 | 35298838076 | 2026-09-18 | `polaris-sdk-ts` 1.0.0-rc.3 | staged (id b399d351), not published by the job; npm requires a maintainer's second factor to finish |
 | (by hand) | 2026-09-18 | `polaris-sdk-ts` 1.0.0-rc.3 | approved with a passkey via `npm stage approve` and published under `next`; shasum 7bc35e6d matches the staged tarball, and `npm install polaris-sdk-ts@next` into a clean directory runs |
+| 35946054368 | 2026-09-24 | dry run | built and gated; nothing published |
+| 35946206199 | 2026-09-24 | dry run | the PyPI job skipped: target or confirm did not match exactly; nothing published |
+| 35946434707 | 2026-09-24 | dry run | the same; nothing published |
+| 35946558589 | 2026-09-24 | `polaris-oid4vp` 1.0.0rc7 | published to PyPI by trusted publishing; read back from the live registry and installed into a clean environment outside the tree. Published so the OpenID Foundation certification run tests the version a stranger installs, not 0.1.0 |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different

@@ -14,16 +14,17 @@ for an external engagement is [docs/RED-TEAM-SCOPE.md](docs/RED-TEAM-SCOPE.md).
 
 ---
 
-## What the registries serve, and what the older versions carry (2026-09-18)
+## What the registries serve, and what the older versions carry (2026-09-24)
 
-**Every package is at `1.0.0-rc.3`, published 2026-09-18.** The defects listed below were
+**`polaris-oid4vp` is at `1.0.0rc7`, published 2026-09-24; the other three packages are at
+`1.0.0-rc.3`, published 2026-09-18.** The defects listed below were
 found by measuring the *downloaded wheels* of `1.0.0-rc.1` rather than by reading a
 changelog, and they are fixed in the version the registries now serve. If you installed
 rc.1 or `0.1.0`, or pinned either, this is what you are still running.
 
 | Package | Current | Older versions still carrying the defects |
 |---|---|---|
-| `polaris-oid4vp` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: **never reads `exp`**, so a credential whose validity has ended verifies as authentic. Also absent: the finite-number guards, the forbidden-disclosure-name list (a disclosure can overwrite `iss` or the key-binding key in the returned claims), the presentation size bounds (four denial-of-service paths that need no credential), and the `vct` binding. |
+| `polaris-oid4vp` | `1.0.0rc7` | `1.0.0rc3`: no Token Status List support at all, so a revoked credential is never discovered to be revoked (added in rc.4 to rc.6, bounded against hostile input in rc.7). `1.0.0rc1`, `0.1.0`: **never reads `exp`**, so a credential whose validity has ended verifies as authentic. Also absent: the finite-number guards, the forbidden-disclosure-name list (a disclosure can overwrite `iss` or the key-binding key in the returned claims), the presentation size bounds (four denial-of-service paths that need no credential), and the `vct` binding. |
 | `polaris-verify` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: **never reads a trust attestation's `valid_until`**, so an authority that time-boxed an edge to one year keeps granting cross-authority acceptance after it ends. No finite-number guards, so an agent grant signed with a non-finite `max_amount` is a signed unlimited grant wearing a limit field; and five entry points raise instead of returning a verdict. |
 | `polaris-sdk-python` | `1.0.0rc3` | `1.0.0rc1`, `0.1.0`: no finite-number guards on `grant_within_limits`, so a spending ceiling is defeated by a value that is not a number. The cached access-token lifetime is whatever the issuer says, so a revoked client keeps presenting a token. |
 | `polaris-sdk-ts` (npm) | `1.0.0-rc.3` under `next` | `0.1.0` predates `1.0.0-rc.1` entirely: the canonicalisation and instant-parsing divergences from the wire specification, and the constant-time comparison whose length guard could be inverted, are all present. `latest` still resolves `0.1.0` by design, so a plain `npm install` gets the stable release and `@next` gets the candidate. |

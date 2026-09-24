@@ -265,6 +265,26 @@ why the signed exports above are not committed. Publishing this run's logs would
 dead throwaway key and nothing else of consequence. Publishing, submitting and the payments
 page are the maintainer's actions; the coupon code is deliberately not recorded here.
 
+**2026-09-24 (UTC): the certification run.** Re-run on the hosted suite against the version a
+stranger installs, `polaris-oid4vp` 1.0.0rc7, published to PyPI that evening for this purpose
+(docs/RELEASING.md). The September run tested 0.1.0, which predates the hardening this file
+records, and it put each module in its own plan, which a certification package cannot hold. So
+the drill gained a `--certification` mode: ONE plan, the modules one at a time, each FINISHED
+(and the four positive ones given their screenshot) before the next starts, no negative
+controls in the account. Rehearsed first against a local copy of the suite.
+
+    Plan:                      7hXWngaA7f0QO (hosted, oid4vp-1final-verifier-haip-test-plan)
+    polaris-oid4vp version:    1.0.0rc7, the PyPI artifact's source
+    Keys:                      minted for this run and discarded (the Foundation's advice)
+    Result, as the drill read it back:
+                               11 of 11 modules FINISHED without failure
+
+    HOSTED TESTED               yes (twice: 0.1.0 on 2026-09-15, 1.0.0rc7 on 2026-09-24)
+    PUBLISHED                   not yet: the maintainer publishes the rc7 plan with the
+                                signed Certification of Conformance, which is irreversible
+    SELF-CERTIFICATION SUBMITTED not yet
+    CERTIFIED                   no
+
 **The Foundation's own signed exports corroborate all of this.** Downloaded 2026-09-15,
 each carrying a detached `.sig` over both the JSON and the HTML:
 

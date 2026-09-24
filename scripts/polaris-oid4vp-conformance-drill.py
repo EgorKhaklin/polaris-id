@@ -148,14 +148,26 @@ def credential_signing_jwk():
             "y": b64u_encode(pub.y.to_bytes(32, "big"))}
 
 
-def run_module(suite, verifier, config, module):
-    """Create the test, drive it, and return (result, tally, failures)."""
+def create_plan(suite, config):
+    """One plan on the suite; returns its id."""
     variant = urllib.parse.quote(json.dumps({"credential_format": "sd_jwt_vc",
                                              "response_mode": "direct_post.jwt"}))
-    alias = "%s-%s" % (ALIAS_BASE, secrets.token_hex(4))
-    config = dict(config, alias=alias)
     plan = api(suite, "/api/plan?planName=%s&variant=%s" % (PLAN, variant), "POST", config)
-    plan_id = (plan or {}).get("_id") or (plan or {}).get("id")
+    return (plan or {}).get("_id") or (plan or {}).get("id")
+
+
+def run_module(suite, verifier, config, module, plan_id=None):
+    """Create the test, drive it, and return (result, tally, failures).
+
+    With `plan_id`, the module runs inside that existing plan under the plan's own alias,
+    which is what a certification package needs: every module in ONE plan. Without it, each
+    module gets a fresh plan and a unique alias, so no module can interrupt another."""
+    if plan_id is None:
+        alias = "%s-%s" % (ALIAS_BASE, secrets.token_hex(4))
+        config = dict(config, alias=alias)
+        plan_id = create_plan(suite, config)
+    else:
+        alias = config["alias"]
     run = api(suite, "/api/runner?test=%s&plan=%s" % (module, plan_id), "POST") or {}
     test_id = run["id"]
 
@@ -178,8 +190,18 @@ def run_module(suite, verifier, config, module):
     print("      plan %s  test %s  %s/log-detail.html?log=%s"
           % (plan_id, test_id, suite, test_id))
 
-    entries = api(suite, "/api/log/" + test_id) or []
-    entries = entries if isinstance(entries, list) else entries.get("data", [])
+    # The suite writes a module's terminal entry (FINISHED, or the REVIEW placeholder a
+    # positive module waits on) a moment AFTER the verifier answers. Read at once, the log
+    # can end short of it and a clean happy-flow scores as "the flow did not complete":
+    # measured 2026-09-23 against the local suite. So wait briefly for a terminal entry.
+    import time
+    for _ in range(10):
+        entries = api(suite, "/api/log/" + test_id) or []
+        entries = entries if isinstance(entries, list) else entries.get("data", [])
+        results = {e.get("result") for e in entries}
+        if results & {"REVIEW", "FINISHED", "FAILURE"}:
+            break
+        time.sleep(2)
     tally, failures = {}, []
     for entry in entries:
         result = entry.get("result") or "(info)"
@@ -225,11 +247,44 @@ def _stop(httpd):
     httpd.server_close()
 
 
+def wait_finished(suite, test_id, needs_screenshot, timeout=900):
+    """Certification mode: a module must be FINISHED before the next starts, or the next
+    one's start interrupts it under the shared alias. A positive module waits for a human
+    to upload the screenshot the suite asks for (OID4VP-1FINAL-8.2); this asks for it and
+    waits. Returns the final (status, result)."""
+    import time
+    asked = False
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        info = api(suite, "/api/info/" + test_id) or {}
+        status, result = info.get("status"), info.get("result")
+        if status in ("FINISHED", "INTERRUPTED"):
+            return status, result
+        if needs_screenshot and not asked and status in ("WAITING", "RUNNING"):
+            print("\n  >>> This module wants a screenshot of the ACCEPTED box printed above.\n"
+                  "  >>> 1. Take the screenshot.  2. Open %s/log-detail.html?log=%s\n"
+                  "  >>> 3. Upload it where the page asks.  4. Come back and press Enter."
+                  % (suite, test_id), flush=True)
+            try:
+                input("  >>> Press Enter once it is uploaded... ")
+            except EOFError:
+                print("\n  >>> no terminal to wait on: run this from an interactive shell, "
+                      "or upload the screenshot and re-run.", flush=True)
+                return "WAITING", None
+            asked = True
+        time.sleep(3)
+    return "TIMEOUT", None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--suite", default="https://localhost:8443")
     ap.add_argument("--workdir", default="/tmp/polaris-oid4vp-drill")
-    ap.add_argument("--only", default=None, help="run one module by name")
+    ap.add_argument("--only", default=None, help="run only these modules (comma-separated names)")
+    ap.add_argument("--certification", action="store_true",
+                    help="run every module inside ONE plan, one at a time, waiting for each to "
+                         "finish (and for the screenshot on the four positive ones); no "
+                         "negative controls, so the account holds only the plan to publish")
     args = ap.parse_args()
 
     workdir = pathlib.Path(args.workdir)
@@ -272,7 +327,31 @@ def main() -> int:
         "credential": {"signing_jwk": issuer_jwk},
     }
 
-    modules = [m for m in MODULES if args.only in (None, m[0])]
+    wanted = None if args.only is None else set(args.only.split(","))
+    modules = [m for m in MODULES if wanted is None or m[0] in wanted]
+    if args.certification:
+        config = dict(config, alias="%s-cert-%s" % (ALIAS_BASE, secrets.token_hex(4)))
+        plan_id = create_plan(args.suite, config)
+        print("  certification plan %s  %s/plan-detail.html?plan=%s\n"
+              % (plan_id, args.suite, plan_id), flush=True)
+        final = []
+        for module, needs_screenshot in modules:
+            test_id, tally, failures = run_module(args.suite, verifier, config, module, plan_id)
+            status, result = wait_finished(args.suite, test_id, needs_screenshot)
+            final.append((module, status, result))
+            print("  %-32s %s / %s" % (module.replace("oid4vp-1final-verifier-", ""),
+                                       status, result), flush=True)
+            for line in failures[:3]:
+                print("      %s" % line)
+        bad = [m for m, st, r in final if st != "FINISHED" or r in ("FAILED", "FAILURE", None)]
+        print("\n  plan %s  %s/plan-detail.html?plan=%s" % (plan_id, args.suite, plan_id))
+        print("  == %d of %d modules FINISHED without failure%s ==" % (
+            len(final) - len(bad), len(final),
+            "" if not bad else "; NOT READY: " + ", ".join(bad)))
+        print("  Publish for certification ONLY if every module above is FINISHED and PASSED or "
+              "REVIEW. Publishing cannot be undone.")
+        _stop(httpd)
+        return 0 if not bad else 1
     rows, not_clean = [], []
     for module, needs_screenshot in modules:
         _, tally, failures = run_module(args.suite, verifier, config, module)
