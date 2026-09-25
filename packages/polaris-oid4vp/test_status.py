@@ -153,6 +153,25 @@ class RefusalsTests(unittest.TestCase):
         self.assertEqual(v["status"], 3)
         self.assertIsNone(v["meaning"])
 
+    def test_a_list_that_inflates_to_nothing_covers_no_credential(self):
+        """The empty-list refusal, aimed at directly (2026-09-25). Its only test used to be the
+        case labelled "lst not base64" with "!!!", which the lenient decoder turned into zero
+        bytes; since the decoder is canonical-only that case is refused where its label says,
+        and this refusal needed a case of its own."""
+        p = payload()
+        empty = dict(p, status_list={"bits": 1, "lst": b64u(zlib.compress(b""))})
+        v = decide(token(empty), issuer_key_verify=accept)
+        self.assertFalse(v["checked"])
+        self.assertEqual(v["code"], "lst")
+        self.assertIn("empty", v["reason"])
+
+    def test_the_decoder_accepts_only_canonical_base64url(self):
+        self.assertEqual(S._b64u("QUI", "probe"), b"AB")
+        for bad in ("QUJ", "QU!I", "Q UI"):
+            with self.subTest(value=bad):
+                with self.assertRaises(ValueError):
+                    S._b64u(bad, "probe")
+
     def test_hostile_input_never_raises_and_never_answers(self):
         p = payload()
         cases = [

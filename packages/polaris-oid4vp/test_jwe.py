@@ -262,10 +262,10 @@ class TheCoordinateDecodeRefusalIsAssertedTests(unittest.TestCase):
     every wrong-type case is refused above this line. A refusal made unreachable by a new
     guard in front of it is the quiet way a verifier loses a check.
 
-    Measured while writing this: the branch is narrower than it looks. `urlsafe_b64decode` is
-    lenient, so `"!!!!"`, `"a b c"` and `"===="` all decode to something short and are caught
-    by the LENGTH check below rather than here. What actually reaches the decode refusal is a
-    coordinate that is a string and is not ASCII.
+    Measured while writing this: the branch was narrower than it looked. `urlsafe_b64decode` is
+    lenient, so `"!!!!"`, `"a b c"` and `"===="` decoded to something short and were caught by
+    the LENGTH check rather than here. Since 2026-09-25 the decoder accepts only canonical
+    base64url, so they are refused at the decode too.
     """
 
     GOOD = {"kty": "EC", "crv": "P-256",
@@ -284,11 +284,21 @@ class TheCoordinateDecodeRefusalIsAssertedTests(unittest.TestCase):
         """The positive control, and the thing that makes the test above meaningful: these
         reach the LENGTH refusal, which proves the decode let them through."""
         from polaris_oid4vp.jwe import JweError, _public_key_from_jwk
-        for bad in (b64u_encode(b"\x01" * 8), "!!!!", "===="):
-            with self.subTest(value=repr(bad)[:14]):
+        bad = b64u_encode(b"\x01" * 8)
+        with self.assertRaises(JweError) as caught:
+            _public_key_from_jwk(dict(self.GOOD, x=bad))
+        self.assertIn("32 bytes", str(caught.exception))
+
+    def test_a_non_canonical_coordinate_is_refused_at_the_decode(self):
+        """Since 2026-09-25 the decoder is canonical-only, so "!!!!" and "====", which the
+        lenient decoder turned into short byte strings for the length check to catch, are
+        refused at the decode itself."""
+        from polaris_oid4vp.jwe import JweError, _public_key_from_jwk
+        for bad in ("!!!!", "===="):
+            with self.subTest(value=bad):
                 with self.assertRaises(JweError) as caught:
                     _public_key_from_jwk(dict(self.GOOD, x=bad))
-                self.assertIn("32 bytes", str(caught.exception))
+                self.assertNotIn("32 bytes", str(caught.exception))
 
     def test_a_well_formed_coordinate_pair_builds_a_key(self):
         from polaris_oid4vp.jwe import _public_key_from_jwk

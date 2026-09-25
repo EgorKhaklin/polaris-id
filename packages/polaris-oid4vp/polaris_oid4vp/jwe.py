@@ -61,9 +61,14 @@ class JweError(Exception):
 
 
 def b64u_decode(value):
+    """Canonical base64url only, as sdjwt.b64u_decode (2026-09-25): an input whose trailing
+    padding bits or stray characters its bytes do not carry is refused, not normalised."""
     if isinstance(value, str):
         value = value.encode("ascii", "strict")
-    return base64.urlsafe_b64decode(value + b"=" * (-len(value) % 4))
+    raw = base64.urlsafe_b64decode(value + b"=" * (-len(value) % 4))
+    if base64.urlsafe_b64encode(raw).rstrip(b"=") != value:
+        raise ValueError("not canonical base64url")
+    return raw
 
 
 def b64u_encode(raw):

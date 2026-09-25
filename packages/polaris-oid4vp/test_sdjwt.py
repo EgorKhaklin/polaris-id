@@ -1342,3 +1342,24 @@ class HeldOutBoundaryTests(unittest.TestCase):
         v = self._verify(claims=at + (("one_more", "v"),))
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "disclosure")
+
+
+class CanonicalEncodingTests(unittest.TestCase):
+    """2026-09-25. The key binding signature's last character carries padding bits a lenient
+    decoder ignores; fifteen other characters verified as the same signature."""
+
+    def test_only_the_canonical_key_binding_signature_verifies(self):
+        w = Wallet()
+        g = w.present()
+        self.assertTrue(w.verify(g).authentic, "control: the genuine presentation verifies")
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        accepted = [c for c in alphabet
+                    if c != g[-1] and w.verify(g[:-1] + c).authentic]
+        self.assertEqual(accepted, [], "a non-canonical spelling of the signature verified")
+
+    def test_the_decoder_refuses_what_it_cannot_reproduce(self):
+        from polaris_oid4vp.sdjwt import b64u_decode, b64u_encode
+        self.assertEqual(b64u_encode(b64u_decode("QUJD")), "QUJD")
+        for bad in ("QUJ", "QUJE!", "QU JD"):
+            with self.assertRaises(ValueError, msg=bad):
+                b64u_decode(bad)

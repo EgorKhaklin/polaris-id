@@ -241,14 +241,25 @@ def _refuse(code, reason):
 # --------------------------------------------------------------------------- encoding
 
 def b64u_decode(value):
-    """Decode base64url without padding. Raises ValueError on anything malformed."""
+    """Decode base64url without padding. Raises ValueError on anything malformed.
+
+    Only the CANONICAL encoding is accepted (2026-09-25). The last character of a base64url
+    string carries padding bits that a lenient decoder ignores, so the key binding JWT's
+    signature, which nothing else hashes, verified in sixteen spellings: the same signature
+    bytes, sixteen different presentations. Replay is refused per nonce, so this opened no
+    replay, but a verifier should accept exactly the bytes it checked and nothing that merely
+    decodes to them. RFC 7515 base64url has one encoding for given bytes; this requires it."""
     if isinstance(value, str):
         value = value.encode("ascii", "strict")
     pad = -len(value) % 4
     try:
-        return base64.urlsafe_b64decode(value + b"=" * pad)
+        raw = base64.urlsafe_b64decode(value + b"=" * pad)
     except (binascii.Error, ValueError) as exc:
         raise ValueError("not base64url: %s" % exc) from exc
+    if base64.urlsafe_b64encode(raw).rstrip(b"=") != value:
+        raise ValueError("not canonical base64url: the input carries characters or padding "
+                         "bits that its bytes do not")
+    return raw
 
 
 def b64u_encode(raw):

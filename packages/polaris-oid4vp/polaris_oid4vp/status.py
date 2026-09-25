@@ -213,9 +213,13 @@ def _b64u(value, what):
         value = value.encode("ascii", "strict")
     pad = -len(value) % 4
     try:
-        return base64.urlsafe_b64decode(value + b"=" * pad)
+        raw = base64.urlsafe_b64decode(value + b"=" * pad)
     except (binascii.Error, ValueError) as exc:
         raise ValueError("%s is not valid base64url: %s" % (what, exc))
+    # Canonical only, as sdjwt.b64u_decode (2026-09-25).
+    if base64.urlsafe_b64encode(raw).rstrip(b"=") != value:
+        raise ValueError("%s is not canonical base64url" % what)
+    return raw
 
 
 def _inflate_bounded(raw, limit=MAX_DECOMPRESSED_BYTES):
