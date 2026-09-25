@@ -126,7 +126,11 @@ and
 \begin{property}[Legal transitions]\label{p:sm}
 Every change of status is a pair in $\Gamma$: if $s_t(\tau)\neq s_t(\tau')$ for consecutive writes
 then $(s_t(\tau),s_t(\tau'))\in\Gamma$. Writes that do not change the status are unconstrained by
-$\Gamma$. \emark{enforced} by the token-state triggers; the check holds the six pairs exactly. Pinned by \code{check\_token\_core\_triggers\_are\_bound}.
+$\Gamma$. And no write enters \st{active} past the expiry: if $s_t(\tau')=\st{active}\neq s_t(\tau)$
+then $x_t=\bot\vee\tau'\le x_t$, comparing calendar dates. \emark{enforced} by the token-state
+triggers; the check holds the six pairs exactly; the expiry condition since \code{1.0.0-rc.37}
+(before it, reporting a credential lost could promote a reserve already past its date). Pinned by
+\code{check\_token\_core\_triggers\_are\_bound}.
 \end{property}
 \begin{limit}
 Nothing drives $\st{active}\to\st{expired}$ when $x_t$ passes; there is no sweeper. That is why
@@ -139,7 +143,12 @@ Property~\ref{p:auth} reads the expiry date directly rather than the status.
 $\tau_1\le\tau_2$: $R_{\tau_1}\subseteq R_{\tau_2}$, and every row present at $\tau_1$ is unchanged at
 $\tau_2$. \emark{enforced} by a \texttt{BEFORE UPDATE OR DELETE} trigger on each table, whose function
 raises \texttt{insufficient\_privilege}, and by the grants that keep the purge carve-out out of the
-application role's reach. Pinned by \code{check\_aor\_append\_only\_triggers}, \code{check\_aor\_privilege\_boundary}.
+application role's reach. The grants reach every partition of the four partitioned audit tables
+since \code{1.0.0-rc.40} (before it the application role could empty them through their partitions),
+and the carve-out requires the purge's owner as well as its setting. Where a row is written only by a
+recorder (the change records, since \code{1.0.0-rc.38}; the lifecycle log, since \code{1.0.0-rc.40}),
+the application role cannot write one directly, so $R_{\tau_2}\setminus R_{\tau_1}$ holds only rows a
+recorder wrote. Pinned by \code{check\_aor\_append\_only\_triggers}, \code{check\_aor\_privilege\_boundary}.
 \end{property}
 
 \begin{property}[C2: a zero-knowledge verification stores no token identifier] For every event
