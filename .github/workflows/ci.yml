@@ -574,6 +574,10 @@ jobs:
         env:
           POLARIS_RATE_LIMIT_BACKEND: redis
           POLARIS_REDIS_URL: redis://localhost:6379/0
+          # The app under load runs as the role a deployment uses; the drill's own setup stays
+          # the owner (2026-09-25).
+          POLARIS_APP_DB_USER: polaris_app
+          POLARIS_APP_DB_PASSWORD: polaris_dev_password
         run: bash scripts/polaris-abuse-drill.sh
 
       # v9.242 (roadmap P2.11) — the fail-closed harness, on every push. It

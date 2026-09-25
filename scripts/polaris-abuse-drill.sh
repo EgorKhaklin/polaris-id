@@ -87,6 +87,10 @@ export POLARIS_DB_PORT="${POLARIS_DB_PORT:-5432}"
 export POLARIS_DB_NAME="${POLARIS_DB_NAME:-polaris_test}"
 export POLARIS_DB_USER="${POLARIS_DB_USER:-postgres}"
 if [ -n "${POLARIS_DB_PASSWORD:-}" ]; then export PGPASSWORD="$POLARIS_DB_PASSWORD"; fi
+# The drill's own setup and measurements run as POLARIS_DB_USER (the schema owner: the reload
+# needs it). The application it starts can run as the role a deployment uses instead:
+# POLARIS_APP_DB_USER=polaris_app (2026-09-25; CI sets it, so the quota and the alerts are
+# measured for that role and not only for the owner).
 PSQL=(psql -v ON_ERROR_STOP=1 -h "$POLARIS_DB_HOST" -p "$POLARIS_DB_PORT" -U "$POLARIS_DB_USER" -d "$POLARIS_DB_NAME" -q)
 
 echo "== 2. reset the sample data (as the test suite does) and cap agency $AGENCY at $CAP verifications/hour =="
@@ -111,6 +115,8 @@ echo "== 3. start the app on :$PORT (rate-limiter backend: ${POLARIS_RATE_LIMIT_
     cd "$ROOT/polaris_web" && \
     POLARIS_PORT="$PORT" POLARIS_SECRET_KEY="abuse-drill-$(date +%s)-not-a-real-key" \
     POLARIS_STATE_DIR="$WORK/state" POLARIS_TEST_RELOAD_VIA=direct \
+    POLARIS_DB_USER="${POLARIS_APP_DB_USER:-$POLARIS_DB_USER}" \
+    POLARIS_DB_PASSWORD="${POLARIS_APP_DB_PASSWORD:-${POLARIS_DB_PASSWORD:-}}" \
     exec "$PY" app.py > "$WORK/app.log" 2>&1
 ) &
 APP_PID=$!
