@@ -1080,6 +1080,64 @@ class TestUseCaseFunctionRefusals(_CheckBase):
             self.assertIsNotNone(cur.fetchone()['binding_id'])
 
 
+
+class TestBulkIssueRefusals(unittest.TestCase):
+    """uc_bulk_issue's six refusals, each driven directly (2026-09-24). The procedure mutation
+    drill first examined this procedure when rc.40 made it SECURITY DEFINER, and all six could
+    be deleted with every suite it runs still green: bulk issuance was exercised only through
+    the CLI's tests. One connection as the owner, a savepoint per case, all rolled back."""
+
+    def setUp(self):
+        self.conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.cur = self.conn.cursor()
+        self.n = 0
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    def _batch(self, agency=1, algorithm=1, rows=1, signed=True, issued=False):
+        self.cur.execute("INSERT INTO BulkEnrollmentBatch (issuing_agency_id, algorithm_id, note, "
+                         "issued_at) VALUES (%s, %s, 'refusal probe', %s) RETURNING batch_id",
+                         (agency, algorithm, "2026-01-01" if issued else None))
+        bid = self.cur.fetchone()["batch_id"]
+        for _ in range(rows):
+            self.n += 1
+            tv = "BULK-REFUSAL-%d-%d" % (bid, self.n)
+            self.cur.execute(
+                "INSERT INTO BulkEnrollmentStaging (batch_id, legal_name, date_of_birth, "
+                "jurisdiction, biometric_binding_type, token_value, physical_serial, "
+                "signature_bytes) VALUES (%s, 'Bulk Probe', DATE '1990-01-01', 'US-PA', 'IRIS', "
+                "%s, %s, %s)", (bid, tv, "SN-" + tv, psycopg2.Binary(b"sig") if signed else None))
+        return bid
+
+    def _refused(self, bid, phrase):
+        self.cur.execute("SAVEPOINT probe")
+        with self.assertRaises(psycopg2.Error) as ctx:
+            self.cur.execute("CALL uc_bulk_issue(%s)", (bid,))
+        self.cur.execute("ROLLBACK TO SAVEPOINT probe")
+        self.assertIn(phrase, str(ctx.exception))
+
+    def test_a_good_batch_issues(self):
+        bid = self._batch(rows=2)
+        self.cur.execute("CALL uc_bulk_issue(%s)", (bid,))
+        self.assertEqual(self.cur.fetchone()["p_rows_issued"], 2, "control: a good batch issues")
+        self.cur.execute("SELECT count(*) AS n FROM TokenLifecycleEvent e JOIN BulkEnrollmentStaging s "
+                         "ON s.token_id = e.token_id WHERE s.batch_id = %s AND e.event_type = 'ISSUED'",
+                         (bid,))
+        self.assertEqual(self.cur.fetchone()["n"], 2)
+
+    def test_each_refusal(self):
+        self._refused(987654321, "does not exist")
+        self._refused(self._batch(issued=True), "already issued")
+        self._refused(self._batch(agency=4), "not authorized to issue")
+        self.cur.execute("UPDATE CryptographicAlgorithm SET deprecation_date = now() - INTERVAL '1 day' "
+                         "WHERE algorithm_id = 3")
+        self._refused(self._batch(algorithm=3), "deprecated")
+        self._refused(self._batch(rows=0), "no staged rows")
+        self._refused(self._batch(signed=False), "requires a signature")
+
+
 class TestC1PrivilegeBoundary(unittest.TestCase):
     """C1 append-only is a PRIVILEGE boundary, not only a trigger.
 
