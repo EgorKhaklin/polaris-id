@@ -731,6 +731,25 @@ def run(argv, out=None):
             for label, text in u_failures:
                 print("\n    %s:\n%s" % (label, "\n".join("    " + x for x in text.splitlines()[-30:])), file=out)
                 failed = True
+            # 2026-09-25: CI's application-role suite, locally. The suites above connect as the
+            # owner; this re-runs the web and CLI suites with the application and the CLI as
+            # polaris_app, which is where a route needing more than that role fails. Found two
+            # such failures the first time it ran; CI ran it before anything local did.
+            ar_env = dict(base_env, POLARIS_DB_NAME=dbs[0])
+            ar = subprocess.run([py, os.path.join(ROOT, "scripts", "polaris-app-role-suite.py")],
+                                cwd=ROOT, env=ar_env, capture_output=True, text=True)
+            summary = [x for x in _plain(ar.stdout or "").splitlines()
+                       if x.startswith(("app-role suite:", "OK:", "  FAIL", "       "))]
+            if ar.returncode == 3:
+                print("run: app-role suite: SKIPPED (polaris_app cannot connect)", file=out)
+            elif ar.returncode != 0:
+                print("run: app-role suite: FAILED", file=out)
+                for x in summary:
+                    print("    " + x, file=out)
+                failed = True
+            else:
+                print("run: app-role suite: PASS (%s)" % "; ".join(
+                    x.split(": ", 1)[1] for x in summary if x.startswith("app-role suite:")), file=out)
         return 1 if (failed or ran != total) else 0
     finally:
         for port in redis_ports:
