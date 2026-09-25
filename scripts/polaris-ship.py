@@ -752,9 +752,13 @@ def run(argv, out=None):
                     x.split(": ", 1)[1] for x in summary if x.startswith("app-role suite:")), file=out)
             # 2026-09-25: the same module under real ML-DSA-65. Everything above signs with the
             # development placeholder; the first real run found five tests asserting the
-            # placeholder's bytes. Skipped (and said so) where liboqs is not installed.
+            # placeholder's bytes. Skipped (and said so) where liboqs is not installed. CI runs this
+            # gate inside the main job, which has no liboqs; there the suite belongs to the pqc-real
+            # job, where the script fails closed. So CI is unset for this one call: without liboqs
+            # the gate reports SKIPPED rather than failing a job that was never meant to run it.
+            rs_env = {k: v for k, v in ar_env.items() if k != "CI"}
             rs = subprocess.run([py, os.path.join(ROOT, "scripts", "polaris-real-signer-suite.py")],
-                                cwd=ROOT, env=ar_env, capture_output=True, text=True)
+                                cwd=ROOT, env=rs_env, capture_output=True, text=True)
             summary = [x for x in _plain(rs.stdout or "").splitlines()
                        if x.startswith(("real-signer suite:", "OK:", "  FAIL", "       "))]
             if rs.returncode == 3:
