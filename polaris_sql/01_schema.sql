@@ -1623,7 +1623,9 @@ CREATE TABLE IF NOT EXISTS EnrollmentEvidence (
     evidence_id            BIGSERIAL    PRIMARY KEY,
     proofing_id            INTEGER      NOT NULL
         REFERENCES EnrollmentProofing(proofing_id),
-    evidence_type          VARCHAR(40)  NOT NULL,
+    -- A classification, never an identifier: no digits, so no document number rides in here.
+    evidence_type          VARCHAR(40)  NOT NULL
+        CONSTRAINT chk_evidence_type_shape CHECK (evidence_type ~ '^[A-Z][A-Z_]{1,39}$'),
     strength               VARCHAR(12)  NOT NULL
         CHECK (strength IN ('UNACCEPTABLE', 'WEAK', 'FAIR', 'STRONG', 'SUPERIOR')),
     -- How it was checked to be genuine, and how it was bound to the person in front of you.
@@ -1636,7 +1638,8 @@ CREATE TABLE IF NOT EXISTS EnrollmentEvidence (
         CHECK (verification_method IN ('NONE', 'PHYSICAL_COMPARISON', 'BIOMETRIC_COMPARISON',
                                        'ENROLLMENT_CODE', 'KNOWLEDGE_BASED')),
     -- The DOCUMENT's issuer by name, never a number that identifies the document.
-    issuing_authority_name VARCHAR(120),
+    issuing_authority_name VARCHAR(120)
+        CONSTRAINT chk_evidence_issuer_not_a_number CHECK (issuing_authority_name !~ '[0-9]{4,}'),
     validated              BOOLEAN      NOT NULL,
     verified               BOOLEAN      NOT NULL
 );

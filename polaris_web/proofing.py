@@ -31,6 +31,8 @@ See docs/design/identity-proofing.md.
 """
 from __future__ import annotations
 
+import re
+
 # The evidence strengths 800-63A defines, weakest first. UNACCEPTABLE is recorded rather than
 # dropped: an authority that looked at something and rejected it has made a finding, and a
 # record that silently omits rejected evidence cannot be audited for what was considered.
@@ -106,6 +108,10 @@ EVIDENCE_FIELDS = ("evidence_type", "strength", "validation_method", "verificati
                    "issuing_authority_name", "validated", "verified")
 
 
+_EVIDENCE_TYPE_SHAPE = re.compile(r"[A-Z][A-Z_]{1,39}")
+_DIGIT_RUN = re.compile(r"[0-9]{4,}")
+
+
 class ProofingRefused(ValueError):
     """The evidence or the claimed level would put something untrue into the record."""
 
@@ -137,6 +143,24 @@ def check_evidence(evidence: dict) -> dict:
         if not evidence.get(field):
             raise ProofingRefused("a piece of evidence needs %s" % field)
     _rank(evidence["strength"])
+    # The two free-text VALUES are the other way a document gets into the record: refusing a
+    # field named document_number is no help if the number rides in as evidence_type
+    # "PASSPORT 123456789". The type is a classification, so it is an identifier with no digits;
+    # the issuer is a name, so it carries no run of digits long enough to identify a document.
+    # The vocabulary stays open (which document types exist is an authority's policy); the shape
+    # does not. EnrollmentEvidence carries the same two rules as CHECKs (2026-09-24).
+    if not (isinstance(evidence["evidence_type"], str)
+            and _EVIDENCE_TYPE_SHAPE.fullmatch(evidence["evidence_type"])):
+        raise ProofingRefused("evidence_type %r is not a classification such as PASSPORT or "
+                              "DRIVING_LICENCE (uppercase letters and underscores): the record "
+                              "says what kind of document it was, never which one"
+                              % (evidence["evidence_type"],))
+    issuer = evidence.get("issuing_authority_name")
+    if issuer is not None and (not isinstance(issuer, str) or len(issuer) > 120
+                               or _DIGIT_RUN.search(issuer)):
+        raise ProofingRefused("issuing_authority_name must be the issuer's name, at most 120 "
+                              "characters and with no run of four or more digits, which is the "
+                              "shape of a document number rather than a name")
     if evidence["validation_method"] not in VALIDATION_METHODS:
         raise ProofingRefused("unknown validation method: %r" % evidence["validation_method"])
     if evidence["verification_method"] not in VERIFICATION_METHODS:

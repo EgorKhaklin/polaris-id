@@ -15275,6 +15275,21 @@ class IdentityProofingTests(PolarisTestCase):
                 pf.check_evidence(piece)
             self.assertIn(field, str(ctx.exception))
 
+    def test_no_document_number_rides_in_on_a_free_text_value(self):
+        """2026-09-24. A field named document_number is refused by name; the same number in
+        evidence_type or the issuer's name was recorded. Both are refused now, and the
+        vocabulary stays open."""
+        pf = self._pf()
+        for kind in ("PASSPORT 123456789", "passport", "P123", "PASSPORT-X", ""):
+            with self.assertRaises(pf.ProofingRefused, msg=kind):
+                pf.check_evidence(dict(self._piece(), evidence_type=kind))
+        for name in ("Passport Office 123456789", "x" * 121):
+            with self.assertRaises(pf.ProofingRefused, msg=name):
+                pf.check_evidence(dict(self._piece(), issuing_authority_name=name))
+        for kind in ("PASSPORT", "DRIVING_LICENCE", "NATIONAL_ID_CARD"):
+            pf.check_evidence(dict(self._piece(), evidence_type=kind))
+        pf.check_evidence(dict(self._piece(), issuing_authority_name="Department of State, 3rd Bureau"))
+
     def test_recording_refuses_an_overclaim_before_touching_the_database(self):
         """An operator who believes a proofing reached IAL2 must be told, not silently
         recorded at IAL1. The refusal comes first, so nothing is written."""

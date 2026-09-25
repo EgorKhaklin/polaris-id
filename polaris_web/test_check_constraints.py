@@ -1264,6 +1264,22 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                             "VALUES (1, %s, %s, 'registered')", (key, alg))
         conn.rollback()
 
+    def test_enrollment_evidence_values_carry_no_document_number(self):
+        """chk_evidence_type_shape and chk_evidence_issuer_not_a_number (2026-09-24)."""
+        conn = self._app_conn()
+        ins = ("WITH p AS (%s) INSERT INTO EnrollmentEvidence (proofing_id, evidence_type, strength, "
+               "validation_method, verification_method, issuing_authority_name, validated, verified) "
+               "SELECT p.proofing_id, %%s, 'STRONG', 'VISUAL_INSPECTION', 'BIOMETRIC_COMPARISON', %%s, "
+               "true, true FROM p" % _PROOFING)
+        for kind, issuer in (("PASSPORT 123456789", None), ("PASSPORT", "Office 123456789")):
+            with conn.cursor() as cur:
+                with self.assertRaises(pg_errors.CheckViolation, msg=(kind, issuer)):
+                    cur.execute(ins, (kind, issuer))
+            conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute(ins, ("DRIVING_LICENCE", "Department of State, 3rd Bureau"))
+        conn.rollback()
+
     def test_app_role_can_still_append_audit_rows(self):
         conn = self._app_conn()
         with conn.cursor() as cur:
