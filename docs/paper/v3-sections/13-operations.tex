@@ -24,8 +24,8 @@ The repository's rule is to exercise rather than read: ten of ten defects found 
 invisible to reading. Every operational claim below is a drill that runs in CI and commits a number.
 
 \begin{description}
-  \item[High availability.] The database runs under Patroni with a leader lease in a three-member
-    etcd and role-based routing. Under a live write stream the drill loses the leader (the replica
+  \item[High availability.] The database runs under Patroni, which elects the primary, with its leader lease
+    held in a three-member etcd consensus store, and role-based routing. Under a live write stream the drill loses the leader (the replica
     promoted after the 20-second lease, in-flight queries failing fast and retried, none lost), cuts
     the leader off from the lease store (it stood down in 7 seconds), performs a planned switchover
     (3.3 seconds, no insert failed), and crashes an etcd member (a 0.3-second stall). The Kubernetes

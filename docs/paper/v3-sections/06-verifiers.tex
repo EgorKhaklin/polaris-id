@@ -99,11 +99,12 @@ and the pinned older verifier must never accept what today's suite rejects. \sIm
 \subsection{A verifier for wallets Polaris has never met}
 
 Everything above is Polaris verifying Polaris. One more verifier faces the other way: a door for
-wallets Polaris has never met. It is an OpenID4VP 1.0 verifier under the High Assurance
-Interoperability Profile, a role for which the OpenID Foundation's conformance suite has a test plan, \code{oid4vp-1final-verifier-haip-test-plan}, in which \emph{the suite signs the
+wallets Polaris has never met. It is an OpenID4VP 1.0 verifier (OpenID4VP is the standard protocol by which a digital wallet presents
+a credential) under the High Assurance Interoperability Profile (HAIP), a role for which the OpenID Foundation's conformance suite has a test plan, \code{oid4vp-1final-verifier-haip-test-plan}, in which \emph{the suite signs the
 credential}, so Polaris's own ML-DSA issuance is not involved. \code{polaris-oid4vp} is that
-verifier: it checks an SD-JWT VC signed with ES256, with holder key binding, delivered as an
-encrypted \code{direct\_post.jwt} response, and it refuses with a named reason, one per negative
+verifier: it checks an SD-JWT VC (a signed credential whose fields can be disclosed one by one) signed with
+ES256 (a classical elliptic-curve signature), with holder key binding, delivered as an
+encrypted response the wallet posts back to the verifier (\code{direct\_post.jwt}), and it refuses with a named reason, one per negative
 module of the plan, \code{issuer\_signature}, \code{sd\_hash}, \code{kb\_signature}, \code{nonce},
 \code{audience}, \code{kb\_freshness}. It is a separate package because \code{polaris-verify}
 promises to open no socket and this one must listen. One of its fixtures is not self-referential: a
@@ -118,7 +119,7 @@ last ring of this map (Section~\ref{sec:outside}).
 Two format bridges make the boundary explicit. A Polaris credential renders in the ISO/IEC 18013-5
 mobile-document structure, and a reader that speaks the standard parses it, walks its namespaces and
 verifies every disclosed element's digest against the signed security object, with an independent
-CBOR implementation proving it rather than the one that wrote the bytes; the reader cannot verify the
+implementation of CBOR, the standard's binary encoding, proving it rather than the one that wrote the bytes; the reader cannot verify the
 issuer signature, because it is ML-DSA-65 and the standard mandates classical algorithms, and the
 repository calls that the design rather than a limitation, since a post-quantum credential carrying
 a classical signature to earn a green tick would be a classical credential. A verification result also

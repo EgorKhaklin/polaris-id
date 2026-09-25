@@ -101,7 +101,7 @@ other's decision flip over the wire, with no cooperation from the compromised pa
 
 \subsection{Agility under an audited migration path, and what a break would cost}
 
-ML-DSA-65's security does not rest on a prediction about quantum hardware; it rests on Module-LWE and Module-SIS being hard
+ML-DSA-65's security does not rest on a prediction about quantum hardware; it rests on Module-LWE and Module-SIS, the lattice problems the scheme is built on, being hard
 against the best known classical and quantum algorithms, which could be wrong for mathematical
 reasons. The two real risks are a cryptanalytic advance against the lattice assumptions and an
 implementation flaw, and the design already answers both, the hash-based hedge in the registry and
@@ -149,7 +149,7 @@ The token signature, the digests, the Merkle commitments, the zero-knowledge pro
 client-to-edge key exchange for modern clients and the hop from the
 application to the connection pooler are post-quantum, each of the last two read off a real
 handshake rather than inferred from a base image. The hop from the pooler to the database, the certificate
-signatures, and the operator's WebAuthn credentials remain classical, each gated on a third party (a
+signatures, and the operator's WebAuthn credentials (hardware-key sign-in) remain classical, each gated on a third party (a
 PostgreSQL release, the public certificate ecosystem, authenticator hardware) and each stated in the
 posture ledger with its threat and its exposure. None of the lattice library, the proof system or the
 circuit has had an external cryptographic audit. \sExt

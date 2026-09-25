@@ -43,8 +43,8 @@ a decade. By Mosca's inequality, which compares the years data must stay secret 
 migration takes against the years until a quantum computer can break today's signatures, a credential
 system deployed on classical cryptography in 2026 is a deferred compromise rather than a working
 system (Appendix~\ref{app:from-v1}). At
-\code{1.0.0-rc.7} the default signing algorithm is ML-DSA-65 (FIPS 204), ML-DSA-87 is accepted beside
-it, the zero-knowledge proof system is hash-based with no trusted setup, and the public TLS edge and
+\code{1.0.0-rc.7} the default signing algorithm is ML-DSA-65 (the lattice-based signature standard FIPS 204), ML-DSA-87 is accepted beside
+it, the zero-knowledge proof system (which proves a statement without revealing the data behind it) is hash-based with no trusted setup, and the public TLS edge and
 one of the two internal hops negotiate a hybrid post-quantum key exchange.
 
 \emph{Post-quantum} is accurate about the algorithms. It is not a claim the

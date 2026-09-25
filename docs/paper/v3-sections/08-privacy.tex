@@ -17,7 +17,7 @@ valid token exists without recording which: the event's token identifier is null
 constraint refuses any row that says otherwise (C2). \code{SELECTIVE} records named attributes only.
 \code{FULL} records the identity and is logged and rate-limited. The level is decided by the server
 and cannot be upgraded by the client (C6): a relying party cannot turn a zero-knowledge check into a
-full one by asking differently, and the Atlas redacts a zero-knowledge event's location server-side.
+full one by asking differently, and the Atlas, the operators' bounded console (Section~\ref{sec:cognition}), redacts a zero-knowledge event's location server-side.
 The default level is zero-knowledge. \sImpl
 
 \subsection{Issuer-side unlinkable verification records}
@@ -50,7 +50,7 @@ credential value is a stable handle across the verifiers it is shown to.}{fig:ho
 The second use of zero knowledge is a proof object. A Merkle tree behaves like a cryptographic
 fingerprint of an entire set: instead of handing a verifier the whole set, one can hand it a short
 proof that a particular item belongs to the set with the committed fingerprint. Polaris commits, per
-epoch, a Merkle root over the active-token set, and a holder can produce a Plonky2 proof on their own
+epoch, a Merkle root over the active-token set, and a holder can produce a Plonky2 proof (a hash-based zero-knowledge proof system) on their own
 device, against a published anonymity set, that their token is a leaf under that root, bound to the
 epoch, a context and a nonce, without revealing which leaf. The verifier sees the proof bytes and the
 public inputs and cannot recover the leaf; that is the proof system's property, not an API rule. The
@@ -67,8 +67,10 @@ only: it is a separate program, written by the same author from the same reading
 so it catches an implementation slip and not a misreading of the statement. The two signature
 witnesses (Section~\ref{sec:signatures}) are independent in implementation and in authorship, and
 share only the standard. Neither pair is independent in its interpretation of the specification.
-The proof carries a per-verifier nullifier,
-\code{Poseidon(secret\,||\,scope\,||\,epoch)}, so a relying party can enforce \emph{one enrolled
+The proof carries a per-verifier nullifier, a value that repeats if the same holder proves twice in the
+same scope and reveals nothing else,
+\code{Poseidon(secret\,||\,scope\,||\,epoch)}, Poseidon being a hash function designed for proof
+circuits, so a relying party can enforce \emph{one enrolled
 identity, once} (not one human: C3 does not see a human enrolled twice, Section~\ref{sec:core})
 within its own scope while another cannot correlate its nullifiers. \sImpl
 
