@@ -97,8 +97,8 @@ DECLARE
         -- (deleting it re-opens the replay window). polaris_app INSERTs to
         -- consume; it must not UPDATE/DELETE.
         'zkverificationnonce',
-        -- v9.125: the right-to-erasure log. polaris_app INSERTs an erasure
-        -- record (via uc_pseudonymize_individual) but must not edit or remove
+        -- v9.125: the right-to-erasure log. uc_pseudonymize_individual INSERTs an erasure
+        -- record (as the owner since 2026-09-25); polaris_app must not edit or remove
         -- one, or the erasure log could be made to lie about what happened.
         'individualerasureevent',
         -- P1.11: the retention policy. Appending a policy is INSERT and stays
@@ -161,6 +161,15 @@ REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;
 -- after the batch closed. The application writes neither table.
 REVOKE INSERT ON AnchorBatch FROM polaris_app;
 REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;
+
+-- 2026-09-25. Three append-only records the application never writes directly, each written by a
+-- SECURITY DEFINER procedure that refuses what a direct INSERT would not: a duress event for a
+-- credential with no duress code enrolled (uc12_record_duress), an archive checkpoint for a purge
+-- that did not run (uc_archive_purge), an erasure that did not happen (uc_pseudonymize_individual).
+-- Append-only means a fabricated row in any of them is permanent.
+REVOKE INSERT ON DuressEvent FROM polaris_app;
+REVOKE INSERT ON LifecycleArchiveCheckpoint FROM polaris_app;
+REVOKE INSERT ON IndividualErasureEvent FROM polaris_app;
 
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion

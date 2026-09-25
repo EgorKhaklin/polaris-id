@@ -1277,7 +1277,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             # batches, are written only by SECURITY DEFINER routines.
             self.assertEqual(bool(row["ins"]),
                              tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
-                                                 "anchorbatch"),
+                                                 "anchorbatch", "duressevent"),
                              f"append-only is insert-allowed except the lifecycle log, the epoch "
                              f"leaves and the anchor batches: {tbl}")
             conn.rollback()
@@ -1335,6 +1335,47 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 with self.assertRaises(pg_errors.InsufficientPrivilege):
                     cur.execute(sql)
             conn.rollback()
+
+    def test_app_role_cannot_fabricate_a_permanent_record(self):
+        """2026-09-25. DuressEvent, LifecycleArchiveCheckpoint and IndividualErasureEvent are
+        append-only, and the application role held INSERT on all three though it writes none: it
+        could record a duress alarm for a holder with no duress code, a checkpoint for a purge that
+        never ran, or an erasure that never happened, and none could be corrected. Each is refused;
+        the procedures that write them still work for the role."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE username = 'admin'")
+            admin = cur.fetchone()["user_id"]
+        conn.rollback()
+        attempts = (
+            ("a duress alarm", "INSERT INTO DuressEvent (token_id, context_id, requesting_agency_id, "
+                               "oob_channel) VALUES (1, 1, 1, 'AUDIT_TABLE')", ()),
+            ("an archive checkpoint", "INSERT INTO LifecycleArchiveCheckpoint DEFAULT VALUES", ()),
+            ("an erasure", "INSERT INTO IndividualErasureEvent (individual_id, pseudonym_assigned, "
+                           "erased_by_user_id, reason) VALUES (1, 'PSEUDONYMIZED-1', %s, 'never happened')",
+             (admin,)),
+        )
+        for label, sql, args in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql, args)
+            conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT individual_id FROM Individual WHERE individual_id NOT IN "
+                        "(SELECT individual_id FROM IndividualErasureEvent) ORDER BY 1 LIMIT 1")
+            ind = cur.fetchone()["individual_id"]
+            cur.execute("CALL uc_pseudonymize_individual(%s, %s, %s)", (ind, admin, "rolled back by the test"))
+            cur.execute("SELECT count(*) AS n FROM IndividualErasureEvent WHERE individual_id = %s", (ind,))
+            self.assertEqual(cur.fetchone()["n"], 1, "the procedure still records the erasure for the role")
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE duress_code_hash IS NULL ORDER BY 1 LIMIT 1")
+            plain = cur.fetchone()["token_id"]
+            with self.assertRaises(psycopg2.Error) as ctx:
+                cur.execute("CALL uc12_record_duress(%s, 1, 1)", (plain,))
+            self.assertIn("no duress code enrolled", str(ctx.exception),
+                          "the procedure is reachable and refuses on its own terms")
+        conn.rollback()
 
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch

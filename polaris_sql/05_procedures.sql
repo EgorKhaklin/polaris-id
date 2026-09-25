@@ -2062,7 +2062,14 @@ CREATE OR REPLACE PROCEDURE uc_pseudonymize_individual(
     p_actor_user_id   INTEGER,
     p_reason          VARCHAR(200)
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+-- SECURITY DEFINER (2026-09-25): the one door into IndividualErasureEvent. With INSERT the
+-- application role could record an erasure that never happened, naming any actor, in a log that
+-- cannot be corrected (append-only). Individual carries no row-level security, so running as the
+-- owner widens nothing this procedure reads; the actor is authenticated by parameter.
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_actor_role   VARCHAR(64);
     v_actor_active BOOLEAN;

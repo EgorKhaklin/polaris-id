@@ -830,6 +830,16 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                                     "DELETE ON BlockchainAnchor: the application writes neither, and "
                                     "BlockchainAnchor has no trigger to stop an anchor being moved "
                                     "between batches (C1)")
+    # 2026-09-25. Append-only records the application never writes directly.
+    for table in ("DuressEvent", "LifecycleArchiveCheckpoint", "IndividualErasureEvent"):
+        if not re.search(r"REVOKE\s+INSERT\s+ON\s+" + table + r"\s+FROM\s+polaris_app", grants, re.I):
+            return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON " + table + ": it is "
+                                        "append-only, so a row the application fabricates there is "
+                                        "permanent (C1)")
+    head = re.search(r"PROCEDURE\s+uc_pseudonymize_individual\b.*?AS\s+\$\$", proc, re.I | re.S)
+    if not head or not re.search(r"SECURITY\s+DEFINER", head.group(0), re.I):
+        return _fail("c1_aor_priv", "uc_pseudonymize_individual must be SECURITY DEFINER: it is the "
+                                    "erasure log's only writer (C1)")
     triggers = _read(root, "polaris_sql/06_triggers.sql")
     imm = re.search(r"FUNCTION\s+enforce_attestation_immutability\b.*?END\$\$;", triggers, re.I | re.S)
     if not imm or "uc10_revoke_attestation" not in imm.group(0) or "proowner" not in imm.group(0):

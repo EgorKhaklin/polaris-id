@@ -1646,7 +1646,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
             + "AS $$ BEGIN NULL; END; $$;\n"
             + "".join("CREATE OR REPLACE PROCEDURE %s(p INTEGER)\nLANGUAGE plpgsql\n%sAS $$ BEGIN NULL; END; $$;\n"
                       % (r, "SECURITY DEFINER\n" if uc10_definer else "")
-                      for r in ("uc10_attest_trust", "uc10_revoke_attestation")))
+                      for r in ("uc10_attest_trust", "uc10_revoke_attestation", "uc_pseudonymize_individual")))
 
     # A real REVOKE naming the tables, not a comment listing them: the check reads
     # 09_grants.sql for the statement, and a comment is not one (v9.399).
@@ -1685,7 +1685,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
               "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n"
               "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n"
               "REVOKE INSERT ON AnchorBatch FROM polaris_app;\n"
-              "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n")
+              "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n"
+              "REVOKE INSERT ON DuressEvent FROM polaris_app;\n"
+              "REVOKE INSERT ON LifecycleArchiveCheckpoint FROM polaris_app;\n"
+              "REVOKE INSERT ON IndividualErasureEvent FROM polaris_app;\n")
     full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
             "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
@@ -1748,6 +1751,14 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", gone
     write(full, True, True)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
+
+    # 10. 2026-09-25: append-only records the application never writes directly.
+    for table in ("DuressEvent", "LifecycleArchiveCheckpoint", "IndividualErasureEvent"):
+        write(full.replace("REVOKE INSERT ON %s FROM polaris_app;\n" % table, ""), True, True)
+        assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
+    write(full, True, True, uc10_definer=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL"
+    write(full, True, True)
 
 
 def test_prod_app_password_synced_check_discriminates(tmp_path):

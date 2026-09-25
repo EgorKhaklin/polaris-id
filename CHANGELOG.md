@@ -11,6 +11,33 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.52 — 2026-09-25 (duress events, archive checkpoints and erasure records cannot be fabricated)
+
+CORE-BUG against three published refusals: `uc12_record_duress` records duress only for a
+credential with a duress code enrolled; `uc_archive_purge` writes a checkpoint only for the purge
+it performs; `uc_pseudonymize_individual` records an erasure only for the pseudonymization it does,
+by an active admin. Externally observable: the application role can no longer insert into
+`DuressEvent`, `LifecycleArchiveCheckpoint` or `IndividualErasureEvent`. Schema change: migration
+`2026-09-25-011-append-only-records-written-only-by-their-procedures`. Nothing is published.
+
+All three tables are append-only, and the application role held INSERT on each without ever
+writing them directly. A direct write skipped each procedure's refusal, and the append-only rule
+then made the record permanent. It could be a duress alarm for a holder who enrolled no duress
+code, which is worse than a lost one: the duress record is net-negative against institutional
+access. It could be a checkpoint claiming an archive and purge that never ran. Or it could be an
+erasure record claiming a person was erased who was not. Fourth to sixth pairs of the open-door
+sweep.
+
+- The application role loses INSERT on the three tables. `uc12_record_duress` and
+  `uc_archive_purge` were already SECURITY DEFINER; `uc_pseudonymize_individual` becomes so, with
+  a pinned `search_path`. `Individual` has no row-level security, so running as the owner widens
+  nothing it reads.
+- Test: `test_app_role_cannot_fabricate_a_permanent_record`, as `polaris_app`. It covers the
+  three direct inserts, an erasure through the procedure, and the duress procedure refusing a
+  credential with no code on its own terms. It fails with the down migration applied.
+- `check_aor_privilege_boundary` requires the three revokes and a definer
+  `uc_pseudonymize_individual`; new detection cases.
+
 ## v1.0.0-rc.51 — 2026-09-25 (the anchoring layer is written only by the procedure that closes a batch)
 
 CORE-BUG against the anchoring contract: `close_anchor_batch` sizes a batch from its pending
