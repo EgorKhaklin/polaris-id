@@ -22654,7 +22654,17 @@ def check_definer_routines_pin_search_path(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "a SECURITY DEFINER routine resolves names through its caller's "
                            "search_path: " + ", ".join(offenders) +
                            ". Add SET search_path = public, pg_temp")
-    return _ok(name, f"all {found} SECURITY DEFINER routines pin their own search_path")
+    # 2026-09-25: and none is callable by PUBLIC, which PostgreSQL grants by default. The loop
+    # in 09_grants.sql walks the catalog, so the file must carry it.
+    grants = _read(root, "polaris_sql/09_grants.sql")
+    if not (re.search(r"REVOKE\s+EXECUTE\s+ON\s+ROUTINE\s+%s\s+FROM\s+PUBLIC", grants, re.I)
+            and re.search(r"\bprosecdef\b", grants)):
+        return _fail(name, "09_grants.sql must revoke EXECUTE from PUBLIC on every SECURITY "
+                           "DEFINER routine (a loop over pg_proc.prosecdef): each one runs as its "
+                           "owner, so PUBLIC's default EXECUTE lends the owner's rights to any "
+                           "role that can connect")
+    return _ok(name, f"all {found} SECURITY DEFINER routines pin their own search_path, and "
+                     "09_grants.sql takes PUBLIC's EXECUTE off every one")
 
 
 # 1.0.0-rc.31. rc.15 bound every route that NAMES an authority; rc.30 and rc.31 found five

@@ -19449,7 +19449,12 @@ def test_definer_routines_pin_search_path_check_discriminates(tmp_path):
     good = ("CREATE OR REPLACE FUNCTION f(a INTEGER) RETURNS INTEGER\nLANGUAGE plpgsql\n"
             "SECURITY DEFINER\nSET search_path = public, pg_temp\nAS $$ BEGIN RETURN a; END; $$;\n"
             "CREATE OR REPLACE FUNCTION g() RETURNS INTEGER LANGUAGE sql AS $$ SELECT 1 $$;\n")
+    loop = ("DO $$ BEGIN FOR v IN SELECT p.oid FROM pg_proc p WHERE p.prosecdef LOOP\n"
+            "  EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM PUBLIC', v);\nEND LOOP; END$$;\n")
     f.write_text(good)
+    assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", \
+        "no PUBLIC revoke must FAIL"
+    (tmp_path / "polaris_sql" / "09_grants.sql").write_text(loop)
     assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "OK", "pinned must PASS"
     f.write_text(good.replace("SET search_path = public, pg_temp\n", ""))
     r = checks.check_definer_routines_pin_search_path(tmp_path)[0]

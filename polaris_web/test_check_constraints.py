@@ -1489,6 +1489,33 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             owner.rollback()
             owner.close()
 
+    def test_a_definer_routine_is_the_applications_alone_to_call(self):
+        """2026-09-25. PostgreSQL grants EXECUTE to PUBLIC, and a SECURITY DEFINER routine runs as
+        its owner and authenticates its actor by parameter, so any role that could connect ran
+        uc8_revoke_token as the owner. Measured with a role holding no grant at all: it entered
+        the body and was stopped only by the business rules. Now it is refused at the door, and
+        the application role keeps its EXECUTE."""
+        owner = psycopg2.connect(**DB_CONFIG)
+        try:
+            with owner.cursor() as cur:
+                cur.execute("SELECT p.oid::regprocedure::text FROM pg_proc p "
+                            "WHERE p.prosecdef AND p.pronamespace = 'public'::regnamespace")
+                routines = [r[0] for r in cur.fetchall()]
+                self.assertGreaterEqual(len(routines), 9)
+                for sig in routines:
+                    cur.execute("SELECT has_function_privilege('polaris_app', %s, 'EXECUTE'), "
+                                "       has_function_privilege('public', %s, 'EXECUTE')", (sig, sig))
+                    app, public = cur.fetchone()
+                    self.assertTrue(app, "the application must still call " + sig)
+                    self.assertFalse(public, "PUBLIC can call " + sig + " as its owner")
+                cur.execute("CREATE ROLE polaris_nobody_probe NOLOGIN")
+                cur.execute("SET LOCAL ROLE polaris_nobody_probe")
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute("CALL uc8_revoke_token(3, 1, 'COMPROMISED', 'https://crl.example/x', NULL)")
+        finally:
+            owner.rollback()
+            owner.close()
+
     def test_a_partition_made_later_is_locked_too(self):
         """The partition manager takes the blanket grant back from each partition it creates."""
         # In ONE transaction, rolled back: the partitions this makes (and the triggers each

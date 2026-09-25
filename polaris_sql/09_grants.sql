@@ -192,3 +192,30 @@ END$$;
 -- ============================================================================
 -- END OF 09_grants.sql
 -- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 2026-09-25. EXECUTE on a SECURITY DEFINER routine is the owner's rights, lent. PostgreSQL
+-- grants EXECUTE to PUBLIC on every new routine, and these authenticate their actor by a
+-- PARAMETER, so any role that can connect (a replication role given LOGIN, a monitoring
+-- account, a pooler's auth user) could run uc8_revoke_token or uc_archive_purge as the owner by
+-- naming an agency or an admin. Measured: a role holding no grant at all entered
+-- uc8_revoke_token and was stopped only by its business rules. Each definer routine is
+-- executable by the application role and nobody else. Looped over the catalog, not listed, so
+-- a definer routine added later is covered when this file runs; a migration that adds one
+-- carries its own REVOKE (check_definer_routines_pin_search_path holds both).
+-- ----------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_sig TEXT;
+BEGIN
+    FOR v_sig IN
+        SELECT p.oid::regprocedure::text
+          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.prosecdef
+    LOOP
+        EXECUTE format('REVOKE EXECUTE ON ROUTINE %s FROM PUBLIC', v_sig);
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
+            EXECUTE format('GRANT EXECUTE ON ROUTINE %s TO polaris_app', v_sig);
+        END IF;
+    END LOOP;
+END$$;
