@@ -1409,6 +1409,27 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                     cur.execute(sql, args)
             conn.rollback()
 
+    def test_app_role_cannot_record_the_recovery_channels_or_reopen_a_batch(self):
+        """2026-09-25. uc9_complete_recovery approves only when the request shows all three
+        out-of-band channels; with UPDATE the application role could record all three itself, so
+        three independent verifications were one role's word. A bulk-issuance batch could have its
+        issued_at reset, re-opening uc_bulk_issue's refusal to issue a batch twice. Both refused."""
+        conn = self._app_conn()
+        attempts = (
+            ("the three recovery channels",
+             "UPDATE RecoveryRequest SET biometric_verified = TRUE, sworn_statement_hash = %s "
+             "WHERE recovery_id = (SELECT min(recovery_id) FROM RecoveryRequest)", ("ab" * 32,)),
+            ("an issued batch re-opened",
+             "UPDATE BulkEnrollmentBatch SET issued_at = NULL, rows_issued = NULL "
+             "WHERE batch_id = (SELECT min(batch_id) FROM BulkEnrollmentBatch)", ()),
+            ("a staged row rewritten", "UPDATE BulkEnrollmentStaging SET token_id = NULL WHERE false", ()),
+        )
+        for label, sql, args in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql, args)
+            conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

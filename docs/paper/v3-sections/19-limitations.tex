@@ -23,6 +23,11 @@ it does not know the law. \sExt
 \subsection{What is not built}
 
 \begin{itemize}
+  \item No path in the product records the recovery ceremony's three out-of-band channels (the
+    biometric check, the sworn statement, the witness co-sign). The approval requires all three, the
+    decision page shows them as pending, and since 1.0.0-rc.54 only the schema owner can set them,
+    in an act the audit trail does not attribute; before it the application's own role could set
+    all three, which made three independent verifications one role's word.
   \item The physical token is a specification, an emulator and published vectors; no card is
     manufactured and no silicon is certified, and the profile states which of its properties an
     emulator cannot establish.

@@ -183,6 +183,17 @@ REVOKE INSERT ON RevocationList FROM polaris_app;
 REVOKE INSERT ON DeviceBinding FROM polaris_app;
 REVOKE INSERT ON RecoveryRequest FROM polaris_app;
 
+-- 2026-09-25. The UPDATE doors. uc9_complete_recovery approves only when the request shows all
+-- three out-of-band channels (biometric, sworn statement, witness co-sign), and the application
+-- role could set all three itself with a plain UPDATE, so "three independent channels" was one
+-- role's word. The bulk-issuance batch could have issued_at reset, re-opening uc_bulk_issue's
+-- "already issued" refusal. The application updates none of these; their procedures are SECURITY
+-- DEFINER. Recording the channels takes the schema owner, which docs/design/recovery-ceremony.md
+-- states as the gap it is.
+REVOKE UPDATE, DELETE ON RecoveryRequest FROM polaris_app;
+REVOKE UPDATE, DELETE ON BulkEnrollmentBatch FROM polaris_app;
+REVOKE UPDATE, DELETE ON BulkEnrollmentStaging FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
 -- bound enforced by uc8_revoke_token.

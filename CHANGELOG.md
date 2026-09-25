@@ -11,6 +11,34 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.54 — 2026-09-25 (three recovery channels are no longer one role's word; an issued batch cannot be re-opened)
+
+CORE-BUG against the recovery ceremony's claim that approval needs "three independent
+out-of-band channels" (`docs/design/recovery-ceremony.md`), and against `uc_bulk_issue`'s refusal
+to issue a batch twice. Externally observable: the application role can no longer update or
+delete `RecoveryRequest`, `BulkEnrollmentBatch` or `BulkEnrollmentStaging`. Schema change:
+migration `2026-09-25-013-recovery-and-bulk-rows-updated-only-by-their-procedures`. Nothing is
+published.
+
+This is the UPDATE side of the open-door sweep. The immutability trigger on `RecoveryRequest`
+lets the out-of-band channels be written while a request is pending, and the application role
+held UPDATE. So one role could record the biometric check, the sworn statement and the witness
+co-sign, which `uc9_complete_recovery` then read as three independent verifications. On the bulk
+batch, the role could reset `issued_at` and re-open a batch the procedure had refused to issue
+again. The application updates none of these rows itself, and both procedures are SECURITY
+DEFINER.
+
+The sweep also found a gap no revoke closes: no path in the product records the three channels.
+The decision page shows them as pending, the tests insert them already recorded, and until now the
+only way in was the application role's UPDATE. Recording now takes the schema owner, and the act
+is unattributed. `docs/design/recovery-ceremony.md` and the report's list of what is not built
+state this; a gated, attributed recording procedure is the missing piece and is not built.
+
+- The application role loses UPDATE and DELETE on the three tables.
+- Test: `test_app_role_cannot_record_the_recovery_channels_or_reopen_a_batch`, as `polaris_app`.
+  All three cases fail with the down migration applied.
+- `check_aor_privilege_boundary` requires the three revokes; three new detection cases.
+
 ## v1.0.0-rc.53 — 2026-09-25 (a credential cannot be created around issuance)
 
 CORE-BUG against the issuance contract: a credential exists because `uc1_issue_and_activate` or

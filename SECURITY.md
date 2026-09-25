@@ -244,5 +244,5 @@ policy.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-09-24 (v1.0.0-rc.53)*
+*Last updated: 2026-09-24 (v1.0.0-rc.54)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

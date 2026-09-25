@@ -38,6 +38,14 @@ check, a sworn statement, and a witnessing agency. That work happens in the
 world, not in the database. The tests insert rows with the channels already
 recorded.
 
+**No path in the product records them.** Until 1.0.0-rc.54 the application role
+could set all three with a plain UPDATE, so the "three independent channels"
+were in practice one role's word. That role has lost UPDATE on RecoveryRequest;
+recording a channel now takes the schema owner, and nothing attributes the act.
+The decision page shows each channel as pending until someone with that access
+records it. A recording procedure, gated per channel and attributed, is the
+missing piece, and it is not built.
+
 ### Completing, by an admin
 
 `uc9_complete_recovery` requires the admin role twice over: the route carries
