@@ -4,7 +4,7 @@
 # transitive package is pinned so the image is reproducible; Dependabot's pip
 # ecosystem bumps them like the app's requirements.
 patroni[etcd3]==4.1.5
-psycopg[binary]==3.3.5
+psycopg[binary]==3.3.6
 psycopg-binary==3.3.5
 certifi==2026.7.22
 charset-normalizer==3.5.1
