@@ -1303,7 +1303,14 @@ CREATE OR REPLACE PROCEDURE uc10_attest_trust(
     p_valid_until   DATE,
     p_signed_by     INTEGER
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+-- SECURITY DEFINER (2026-09-25): the one door into AgencyTrustAttestation. The application role
+-- held INSERT, so it could record a trust edge no admin signed, backdated and for any window, and
+-- the signing pass would then sign it with the attesting authority's real key. The role loses
+-- INSERT (09_grants.sql); the actor is authenticated by parameter; search_path is pinned.
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_user_role TEXT;
 BEGIN
@@ -1389,7 +1396,13 @@ CREATE OR REPLACE PROCEDURE uc10_revoke_attestation(
     p_revocation_reason VARCHAR(80),
     p_signed_by         INTEGER
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+-- SECURITY DEFINER (2026-09-25): trg_attestation_immutable admits a change to the revocation
+-- columns only when the current role owns this procedure, so revoking a trust edge goes through
+-- the admin gate below and not through a plain UPDATE by the application role.
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_attesting_id  INTEGER;
     v_already_rev   TIMESTAMP;

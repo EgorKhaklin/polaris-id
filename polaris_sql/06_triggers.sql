@@ -704,6 +704,20 @@ BEGIN
         END IF;
     END IF;
 
+    -- 2026-09-25: revoking a trust edge is uc10_revoke_attestation's, which checks the signer is
+    -- an active admin. The application role keeps UPDATE to attach the edge's signature, and
+    -- with it could set revocation_date itself; so a change to the revocation columns is
+    -- admitted only when the current role owns that procedure, which is what it runs as
+    -- (SECURITY DEFINER), exactly as rc.19 did for token revocation.
+    IF (NEW.revocation_date IS DISTINCT FROM OLD.revocation_date
+        OR NEW.revocation_reason IS DISTINCT FROM OLD.revocation_reason)
+       AND current_user <> (SELECT pg_get_userbyid(p.proowner) FROM pg_proc p
+                             WHERE p.proname = 'uc10_revoke_attestation' LIMIT 1) THEN
+        RAISE EXCEPTION
+            'a trust attestation is revoked only through uc10_revoke_attestation'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
     RETURN NEW;
 END$$;
 

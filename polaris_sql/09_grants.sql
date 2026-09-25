@@ -148,6 +148,12 @@ REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;
 REVOKE INSERT, UPDATE, DELETE ON TokenStateEpoch FROM polaris_app;
 REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;
 
+-- 2026-09-25. A federation trust edge is recorded only by uc10_attest_trust (SECURITY DEFINER,
+-- admin-gated). With INSERT the application role could record one no admin signed, and the
+-- signing pass would sign it. UPDATE stays, for attaching the signature; the trigger admits a
+-- revocation only from uc10_revoke_attestation.
+REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
 -- bound enforced by uc8_revoke_token.

@@ -1630,7 +1630,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
                    "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent")
 
-    def write(grants, mig_revoke, proc_definer, uc11_definer=True):
+    def write(grants, mig_revoke, proc_definer, uc11_definer=True, uc10_definer=True):
         (sql / "09_grants.sql").write_text(grants)
         (mig / "2026-05-15-003-audit-access-log.up.sql").write_text(
             "REVOKE UPDATE, DELETE ON AuditAccessLog FROM polaris_app;\n"
@@ -1643,7 +1643,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
             "CREATE OR REPLACE PROCEDURE uc11_close_epoch(p_closed_by INTEGER)\n"
             "LANGUAGE plpgsql\n"
             + ("SECURITY DEFINER\nSET search_path = public, pg_temp\n" if uc11_definer else "")
-            + "AS $$ BEGIN NULL; END; $$;\n")
+            + "AS $$ BEGIN NULL; END; $$;\n"
+            + "".join("CREATE OR REPLACE PROCEDURE %s(p INTEGER)\nLANGUAGE plpgsql\n%sAS $$ BEGIN NULL; END; $$;\n"
+                      % (r, "SECURITY DEFINER\n" if uc10_definer else "")
+                      for r in ("uc10_attest_trust", "uc10_revoke_attestation")))
 
     # A real REVOKE naming the tables, not a comment listing them: the check reads
     # 09_grants.sql for the statement, and a comment is not one (v9.399).
@@ -1679,10 +1682,16 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     ensure = ("CREATE OR REPLACE PROCEDURE uc_ensure_event_partitions(n integer) AS $$\nBEGIN\n"
               "    PERFORM polaris_lock_event_partitions();\nEND $$;\n")
     epochs = ("REVOKE INSERT, UPDATE, DELETE ON TokenStateEpoch FROM polaris_app;\n"
-              "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n")
+              "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n"
+              "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n")
     full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
             "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
+    immutable = ("CREATE OR REPLACE FUNCTION enforce_attestation_immutability()\nRETURNS TRIGGER AS $$\nBEGIN\n"
+                 "  IF current_user <> (SELECT pg_get_userbyid(p.proowner) FROM pg_proc p\n"
+                 "     WHERE p.proname = 'uc10_revoke_attestation') THEN RAISE EXCEPTION 'x'; END IF;\n"
+                 "END$$;\n")
+    (sql / "06_triggers.sql").write_text(immutable)
 
     # 5. The rc.39 shape: parents revoked, partitions and the lifecycle INSERT not -> FAIL.
     write(good_grants, True, True)
@@ -1715,6 +1724,20 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     write(full, True, True, uc11_definer=False)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when uc11_close_epoch runs with the caller's rights"
+
+    # 8. 2026-09-25: the federation trust graph.
+    write(full.replace("REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n", ""), True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the application keeps INSERT on the trust graph"
+    write(full, True, True, uc10_definer=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the uc10 procedures run with the caller's rights"
+    write(full, True, True)
+    (sql / "06_triggers.sql").write_text(immutable.replace("uc10_revoke_attestation", "somebody_else"))
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the trigger does not ask for the revocation procedure's owner"
+    (sql / "06_triggers.sql").write_text(immutable)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
 
 
 def test_prod_app_password_synced_check_discriminates(tmp_path):

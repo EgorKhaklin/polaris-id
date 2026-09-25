@@ -11,6 +11,35 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.50 — 2026-09-25 (a federation trust edge is recorded and revoked only through its admin-gated procedures)
+
+CORE-BUG against the federation contract that a trust edge is an admin's decision
+(`uc10_attest_trust`: "Federation attestation requires admin role"; the same for
+`uc10_revoke_attestation`). Externally observable: the application role can no longer insert a
+trust attestation directly or revoke one with a plain UPDATE. Schema change: migration
+`2026-09-25-009-trust-edges-only-through-uc10`. Nothing is published.
+
+The application role held INSERT and UPDATE on `AgencyTrustAttestation`. With INSERT it could
+record a trust edge no admin signed, backdated and for any window. The signing pass signs every
+unsigned edge with the attesting authority's own key, so such an edge would then be published as
+that authority's signed attestation. With UPDATE it could set `revocation_date` and cut a trust
+edge without the admin gate. The immutability trigger kept the edge's identity and validity fixed
+after it existed, but it never asked who revoked. Found by the open-door sweep rc.49 began: for
+every table a rule-procedure writes, can the application role write it directly? Twenty-three
+pairs answered yes. This is the second closed, chosen first because it decides who is trusted.
+
+- `uc10_attest_trust` and `uc10_revoke_attestation` are SECURITY DEFINER with a pinned
+  `search_path`. The application role loses INSERT on `AgencyTrustAttestation` and keeps UPDATE,
+  which the signing pass needs to attach a signature.
+- `enforce_attestation_immutability` admits a change to `revocation_date` or `revocation_reason`
+  only when the current role owns `uc10_revoke_attestation`, the rc.19 pattern for token
+  revocation.
+- Test: `test_app_role_records_and_revokes_trust_only_through_uc10`, as `polaris_app`. A direct
+  insert and a direct revocation are refused, and both procedures still work for the role. It
+  fails with the down migration applied.
+- `check_aor_privilege_boundary` requires the revoke, both definers, and the trigger's owner test;
+  three new detection cases.
+
 ## v1.0.0-rc.49 — 2026-09-25 (an epoch is written only by the procedure that enforces the anonymity floor)
 
 CORE-BUG against rc.46, which promised that "`uc11_close_epoch` refuses an epoch below the

@@ -1281,6 +1281,38 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                              f"epoch leaves: {tbl}")
             conn.rollback()
 
+    def test_app_role_records_and_revokes_trust_only_through_uc10(self):
+        """2026-09-25. With INSERT on AgencyTrustAttestation the application role could record a
+        trust edge no admin signed, and the signing pass would sign it with the attesting
+        authority's key; with UPDATE it could revoke one without the admin gate. Direct writes
+        are refused; the two procedures still work for the role, in a transaction rolled back."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, "
+                            "context_id, attested_date, valid_until, signed_by) VALUES "
+                            "(6, 1, 1, now() - interval '400 days', now()::date + 3650, "
+                            "(SELECT user_id FROM AppUser WHERE username = 'admin'))")
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT attestation_id FROM AgencyTrustAttestation "
+                        "WHERE revocation_date IS NULL ORDER BY attestation_id LIMIT 1")
+            aid = cur.fetchone()["attestation_id"]
+            with self.assertRaises(pg_errors.InsufficientPrivilege) as ctx:
+                cur.execute("UPDATE AgencyTrustAttestation SET revocation_date = now(), "
+                            "revocation_reason = 'revoked around the gate' WHERE attestation_id = %s", (aid,))
+            self.assertIn("uc10_revoke_attestation", str(ctx.exception))
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE username = 'admin'")
+            admin = cur.fetchone()["user_id"]
+            cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)", (aid, "rolled back by the test", admin))
+            cur.execute("SELECT revocation_date IS NOT NULL AS revoked FROM AgencyTrustAttestation "
+                        "WHERE attestation_id = %s", (aid,))
+            self.assertTrue(cur.fetchone()["revoked"], "the procedure still revokes for the role")
+            cur.execute("CALL uc10_attest_trust(6, 1, 1, (now()::date + 30), %s)", (admin,))
+        conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count
@@ -1643,10 +1675,14 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         conn = self._app_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT individual_id, issuing_agency_id, status FROM IdentityToken "
-                            "WHERE token_id = 2")
+                # Any ACTIVE credential of an authority other than the one the operator is bound
+                # to (1). It named token 2, which a test elsewhere in the same shard database can
+                # have moved to LOST (found 2026-09-25 when the shards were packed differently).
+                cur.execute("SELECT token_id, individual_id, issuing_agency_id FROM IdentityToken "
+                            "WHERE status = 'ACTIVE' AND issuing_agency_id <> 1 "
+                            "ORDER BY token_id LIMIT 1")
                 tok = cur.fetchone()
-                self.assertEqual((tok["issuing_agency_id"], tok["status"]), (3, "ACTIVE"), "fixture")
+                self.assertIsNotNone(tok, "fixture: another authority's ACTIVE credential")
                 cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' LIMIT 1")
                 admin = cur.fetchone()["user_id"]
             conn.rollback()
@@ -1655,7 +1691,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                  "CALL uc9_initiate_recovery(%s, 1, %s, 48)", (tok["individual_id"], admin)),
                 ("an ACTIVE token on the revocation list",
                  "INSERT INTO RevocationList (token_id, revoked_by_agency_id, effective_date, "
-                 "reason_code) VALUES (2, 1, polaris_utc_date(), 'COMPROMISED')", ()),
+                 "reason_code) VALUES (%s, 1, polaris_utc_date(), 'COMPROMISED')", (tok["token_id"],)),
             ]
             for binding in ("", "1"):
                 for label, sql, args in attempts:

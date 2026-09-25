@@ -811,11 +811,28 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         return _fail("c1_aor_priv", "uc11_close_epoch must be SECURITY DEFINER: it is the only "
                                     "writer of the epoch tables once the application role loses "
                                     "INSERT on them (C1)")
+    # 2026-09-25. The federation trust graph: recorded only by uc10_attest_trust, revoked only by
+    # uc10_revoke_attestation, whose ownership the immutability trigger asks for.
+    if not re.search(r"REVOKE\s+INSERT\s+ON\s+AgencyTrustAttestation\s+FROM\s+polaris_app", grants, re.I):
+        return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON AgencyTrustAttestation: a "
+                                    "trust edge the application records directly skips the admin "
+                                    "gate and is then signed with the authority's key (C1)")
+    for routine in ("uc10_attest_trust", "uc10_revoke_attestation"):
+        head = re.search(r"PROCEDURE\s+" + routine + r"\b.*?AS\s+\$\$", proc, re.I | re.S)
+        if not head or not re.search(r"SECURITY\s+DEFINER", head.group(0), re.I):
+            return _fail("c1_aor_priv", routine + " must be SECURITY DEFINER: it is the federation "
+                                        "trust graph's only door (C1)")
+    triggers = _read(root, "polaris_sql/06_triggers.sql")
+    imm = re.search(r"FUNCTION\s+enforce_attestation_immutability\b.*?END\$\$;", triggers, re.I | re.S)
+    if not imm or "uc10_revoke_attestation" not in imm.group(0) or "proowner" not in imm.group(0):
+        return _fail("c1_aor_priv", "enforce_attestation_immutability must admit a revocation only "
+                                    "from the owner of uc10_revoke_attestation, or the application "
+                                    "role revokes trust with a plain UPDATE (C1)")
     return _ok("c1_aor_priv",
                "append-only tables revoke UPDATE/DELETE from polaris_app, and so does every "
                "partition of the four event tables; the lifecycle log and the ZK epoch tables refuse "
-               "the application's INSERT; uc_archive_purge and uc11_close_epoch are SECURITY "
-               "DEFINER (C1)")
+               "the application's INSERT, and so does the trust graph, revoked only from its "
+               "procedure; uc_archive_purge, uc11_close_epoch and uc10 are SECURITY DEFINER (C1)")
 
 
 # ---------------------------------------------------------------------------

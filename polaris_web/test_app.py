@@ -494,16 +494,27 @@ class ExchangeGatewayTests(UnauthenticatedTestCase):
         flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 3", (key_m,), fetch='none')
         ins = ("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, valid_until, signed_by) "
                "VALUES (%s, 3, %s, polaris_utc_date() + INTERVAL '30 days', 1)")
-        flask_app.query(ins, (5, ctx), fetch='none')
+
+        def as_owner(sql, args):
+            # The fixture writes the trust graph as the schema owner: since 2026-09-25 the
+            # application role records and revokes a trust edge only through uc10, and what this
+            # test asks about is how the gateway READS the graph.
+            conn = psycopg2.connect(**DB_CONFIG)
+            try:
+                with conn, conn.cursor() as cur:
+                    cur.execute(sql, args)
+            finally:
+                conn.close()
+        as_owner(ins, (5, ctx))
         try:
             self.assertIsNone(rp_api._exchange_attestation(1, key_m, ctx), "B holds no attestation of M: C's must not authorize M at B")
             self.assertEqual(rp_api._exchange_attestation(5, key_m, ctx)['authority_id'], 5, "C's attestation authorizes M at C")
-            flask_app.query(ins, (1, ctx), fetch='none')
+            as_owner(ins, (1, ctx))
             self.assertEqual(rp_api._exchange_attestation(1, key_m, ctx)['authority_id'], 1, "B's own attestation authorizes M at B")
             self.assertIsNone(rp_api._exchange_attestation(1, key_m, other), "an attestation is in-context only")
         finally:
-            flask_app.query("UPDATE AgencyTrustAttestation SET revocation_date = CURRENT_TIMESTAMP, revocation_reason = %s "
-                            "WHERE attested_agency_id = 3 AND context_id = %s AND revocation_date IS NULL", ('test ' + run, ctx), fetch='none')
+            as_owner("UPDATE AgencyTrustAttestation SET revocation_date = CURRENT_TIMESTAMP, revocation_reason = %s "
+                     "WHERE attested_agency_id = 3 AND context_id = %s AND revocation_date IS NULL", ('test ' + run, ctx))
         self.assertIsNone(rp_api._exchange_attestation(1, key_m, ctx), "a revoked attestation authorizes nothing")
 
     def test_unadvertised_format_version_is_refused_not_guessed(self):
