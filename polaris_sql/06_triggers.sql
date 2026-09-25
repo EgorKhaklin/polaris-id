@@ -120,8 +120,15 @@ BEGIN
     -- path through.
     IF TG_OP = 'DELETE' THEN
         v_purge_in_progress := current_setting('polaris.purge_in_progress', true);
-        IF v_purge_in_progress = 'TRUE' THEN
-            -- The carve-out is open. Allow the DELETE.
+        -- 2026-09-24 (after rc.40): the setting alone opened the carve-out, and ANY role can
+        -- set a custom setting, so the append-only guarantee was only as strong as the grants
+        -- beside it; rc.40 found a partition where they did not reach. The carve-out now also
+        -- requires the role to be the owner of uc_archive_purge, which is what the purge runs
+        -- as (SECURITY DEFINER), exactly as rc.19 did for the revocation gate. A role holding
+        -- DELETE by mistake, now or on a table added later, still cannot delete here.
+        IF v_purge_in_progress = 'TRUE'
+           AND current_user = (SELECT pg_get_userbyid(p.proowner) FROM pg_proc p
+                                WHERE p.proname = 'uc_archive_purge' LIMIT 1) THEN
             RETURN OLD;
         END IF;
     END IF;

@@ -1390,6 +1390,25 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertEqual(cur.fetchone()["n"], before + 1, "the recorder must still write")
         conn.rollback()
 
+    def test_the_purge_carve_out_is_not_opened_by_the_setting_alone(self):
+        """2026-09-24 (after rc.40). The setting is settable by any role, so the trigger was
+        only as strong as the grants beside it. A role that holds DELETE by mistake still
+        cannot delete: the carve-out needs the purge's owner. Driven with a throwaway role
+        granted DELETE, so the grant cannot be what refuses; all of it rolls back."""
+        owner = psycopg2.connect(**DB_CONFIG)
+        try:
+            with owner.cursor() as cur:
+                cur.execute("CREATE ROLE polaris_carveout_probe NOLOGIN")
+                cur.execute("GRANT SELECT, DELETE ON AnchorBatch TO polaris_carveout_probe")
+                cur.execute("SET LOCAL ROLE polaris_carveout_probe")
+                cur.execute("SELECT set_config('polaris.purge_in_progress', 'TRUE', true)")
+                with self.assertRaises(pg_errors.InsufficientPrivilege) as ctx:
+                    cur.execute("DELETE FROM AnchorBatch")
+                self.assertIn("append-only", str(ctx.exception))
+        finally:
+            owner.rollback()
+            owner.close()
+
     def test_a_partition_made_later_is_locked_too(self):
         """The partition manager takes the blanket grant back from each partition it creates."""
         owner = psycopg2.connect(**DB_CONFIG)
