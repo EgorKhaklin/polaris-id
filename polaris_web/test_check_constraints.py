@@ -1273,10 +1273,42 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 row = cur.fetchone()
             self.assertFalse(row["upd"], f"polaris_app must not hold UPDATE on {tbl}")
             self.assertFalse(row["del"], f"polaris_app must not hold DELETE on {tbl}")
-            # Since rc.40 the lifecycle log is written only by SECURITY DEFINER routines.
-            self.assertEqual(bool(row["ins"]), tbl.lower() != "tokenlifecycleevent",
-                             f"append-only is insert-allowed except the lifecycle log: {tbl}")
+            # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves, are written
+            # only by SECURITY DEFINER routines.
+            self.assertEqual(bool(row["ins"]),
+                             tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf"),
+                             f"append-only is insert-allowed except the lifecycle log and the "
+                             f"epoch leaves: {tbl}")
             conn.rollback()
+
+    def test_app_role_writes_an_epoch_only_through_uc11(self):
+        """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
+        uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count
+        (what the verifier reads as the anonymity set) its leaves do not bear out. The direct
+        write is refused; the procedure is still callable and still refuses on its own terms."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("INSERT INTO TokenStateEpoch (merkle_root, valid_from, valid_until, "
+                            "committed_count, closed_at, closed_by_user_id) VALUES "
+                            "(%s, now(), now() + interval '1 day', 20, now(), "
+                            "(SELECT user_id FROM AppUser WHERE username = 'admin'))", ("ab" * 32,))
+        conn.rollback()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("INSERT INTO TokenStateEpochLeaf (epoch_id, token_id, leaf_hash, proof_path) "
+                            "VALUES (1, 1, %s, '[]'::jsonb)", ("cd" * 32,))
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE username = 'admin'")
+            admin = cur.fetchone()["user_id"]
+            with self.assertRaises(psycopg2.Error) as ctx:
+                cur.execute("CALL uc11_close_epoch(%s, now()::timestamp + interval '1 day', %s, '[]'::jsonb)",
+                            ("ef" * 32, admin))
+            self.assertNotIsInstance(ctx.exception, pg_errors.InsufficientPrivilege,
+                                     "the application role must still be able to call uc11_close_epoch")
+            self.assertIn("empty epoch", str(ctx.exception))
+        conn.rollback()
 
     def test_receipt_log_is_hash_only_and_strictly_append_only(self):
         """P8.2c: ExchangeReceiptLog holds ONLY a SHA3-256 hex (chk_receipt_log_hash) and is

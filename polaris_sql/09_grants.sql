@@ -142,6 +142,12 @@ SELECT polaris_lock_event_partitions();
 -- nothing did.
 REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;
 
+-- 2026-09-25. An epoch is written only by uc11_close_epoch, SECURITY DEFINER now. With INSERT
+-- the application role could write an epoch below the anonymity floor, or one whose
+-- committed_count (what the verifier reads as the anonymity set) its leaves do not bear out.
+REVOKE INSERT, UPDATE, DELETE ON TokenStateEpoch FROM polaris_app;
+REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
 -- bound enforced by uc8_revoke_token.

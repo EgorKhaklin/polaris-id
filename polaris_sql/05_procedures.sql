@@ -1508,7 +1508,16 @@ CREATE OR REPLACE PROCEDURE uc11_close_epoch(
     -- token_leaves: JSON array of objects [{"token_id": int, "leaf_hash": hex, "proof_path": [...]}, ...]
     p_token_leaves     JSONB
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+-- SECURITY DEFINER (2026-09-25): the one door into TokenStateEpoch and TokenStateEpochLeaf.
+-- The application role held INSERT on both, so it could write an epoch this procedure would
+-- refuse (below the anonymity floor, signed by a non-admin, or claiming a committed_count its
+-- leaves do not have) and the verifier would read that count as the anonymity set. The role
+-- loses INSERT (09_grants.sql) and this runs with the owner's rights. The actor is
+-- authenticated by parameter, never by current_user; search_path is pinned.
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_floor           INTEGER;
     v_new_epoch_id  INTEGER;

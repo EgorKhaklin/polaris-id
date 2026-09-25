@@ -14686,13 +14686,21 @@ class EpochRevocationTests(PolarisTestCase):
         self.assertEqual(self.client.get('/api/v1/epoch/%d/leaves' % row['epoch_id']).status_code,
                          200, 'a normal epoch is served')
 
-        # And the database is what refuses the oversized one, which is the claim above.
-        with self.assertRaises(psycopg2.errors.CheckViolation):
-            flask_app.query(
-                "INSERT INTO TokenStateEpoch (merkle_root, valid_until, committed_count, "
-                "closed_by_user_id) VALUES (%s, CURRENT_TIMESTAMP + INTERVAL '1 day', %s, "
-                "(SELECT user_id FROM AppUser ORDER BY user_id LIMIT 1))",
-                ('ee' * 32, rp_api._EPOCH_LEAVES_MAX + 1), fetch='none')
+        # And the database is what refuses the oversized one, which is the claim above. Asked
+        # as the schema owner: since 2026-09-25 the application role cannot insert an epoch at
+        # all (uc11_close_epoch is the only writer), so a refusal there would be the privilege,
+        # not the CHECK this test is about.
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        try:
+            with conn.cursor() as cur, self.assertRaises(psycopg2.errors.CheckViolation):
+                cur.execute(
+                    "INSERT INTO TokenStateEpoch (merkle_root, valid_until, committed_count, "
+                    "closed_by_user_id) VALUES (%s, CURRENT_TIMESTAMP + INTERVAL '1 day', %s, "
+                    "(SELECT user_id FROM AppUser ORDER BY user_id LIMIT 1))",
+                    ('ee' * 32, rp_api._EPOCH_LEAVES_MAX + 1))
+        finally:
+            conn.rollback()
+            conn.close()
 
     def test_epoch_checkpoint_shape_and_canonical_match(self):
         self._register_key(1, 'a1' * 32)

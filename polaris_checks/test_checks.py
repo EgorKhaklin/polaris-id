@@ -1630,7 +1630,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                    "anchorbatch tokenstateepochleaf duressevent authauditlog "
                    "individualerasureevent", "exchangereceiptlog", "exchangenonce", "authcodeconsumed", "authoritykeyevent", "timestamplog", "holderkeyevent")
 
-    def write(grants, mig_revoke, proc_definer):
+    def write(grants, mig_revoke, proc_definer, uc11_definer=True):
         (sql / "09_grants.sql").write_text(grants)
         (mig / "2026-05-15-003-audit-access-log.up.sql").write_text(
             "REVOKE UPDATE, DELETE ON AuditAccessLog FROM polaris_app;\n"
@@ -1639,6 +1639,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
             "CREATE OR REPLACE PROCEDURE uc_archive_purge(p_actor INTEGER)\n"
             "LANGUAGE plpgsql\n"
             + ("SECURITY DEFINER\n" if proc_definer else "")
+            + "AS $$ BEGIN NULL; END; $$;\n"
+            "CREATE OR REPLACE PROCEDURE uc11_close_epoch(p_closed_by INTEGER)\n"
+            "LANGUAGE plpgsql\n"
+            + ("SECURITY DEFINER\nSET search_path = public, pg_temp\n" if uc11_definer else "")
             + "AS $$ BEGIN NULL; END; $$;\n")
 
     # A real REVOKE naming the tables, not a comment listing them: the check reads
@@ -1674,7 +1678,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
             "  EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON %I FROM polaris_app', v);\n$$;\n")
     ensure = ("CREATE OR REPLACE PROCEDURE uc_ensure_event_partitions(n integer) AS $$\nBEGIN\n"
               "    PERFORM polaris_lock_event_partitions();\nEND $$;\n")
-    full = good_grants + "SELECT polaris_lock_event_partitions();\nREVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n"
+    epochs = ("REVOKE INSERT, UPDATE, DELETE ON TokenStateEpoch FROM polaris_app;\n"
+              "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n")
+    full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
+            "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
 
     # 5. The rc.39 shape: parents revoked, partitions and the lifecycle INSERT not -> FAIL.
@@ -1696,7 +1703,18 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     (sql / "01_schema.sql").write_text(lock + ensure)
     write(full, True, True)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK", \
-        "must PASS when the parents, the partitions and the lifecycle log are all locked"
+        "must PASS when the parents, the partitions, the lifecycle log and the epochs are all locked"
+
+    # 7. 2026-09-25: the ZK epoch tables and their one writer.
+    write(full.replace(epochs, ""), True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the application keeps INSERT on the epoch tables"
+    write(full.replace("REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n", ""), True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the application keeps INSERT on the epoch leaves"
+    write(full, True, True, uc11_definer=False)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when uc11_close_epoch runs with the caller's rights"
 
 
 def test_prod_app_password_synced_check_discriminates(tmp_path):

@@ -800,10 +800,22 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
     if not re.search(r"REVOKE\s+INSERT\s+ON\s+TokenLifecycleEvent\s+FROM\s+polaris_app", grants, re.I):
         return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON TokenLifecycleEvent: the "
                                     "lifecycle log is written only by SECURITY DEFINER routines (C1)")
+    # 2026-09-25. The same for the zero-knowledge epochs: uc11_close_epoch is their one door.
+    if not (re.search(r"REVOKE\s+INSERT\b[^;]*\bON\s+TokenStateEpoch\s+FROM\s+polaris_app", grants, re.I)
+            and re.search(r"REVOKE\s+INSERT\s+ON\s+TokenStateEpochLeaf\s+FROM\s+polaris_app", grants, re.I)):
+        return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON TokenStateEpoch and "
+                                    "TokenStateEpochLeaf: an epoch the application writes directly "
+                                    "skips the anonymity floor uc11_close_epoch enforces (C1)")
+    uc11 = re.search(r"PROCEDURE\s+uc11_close_epoch\b.*?AS\s+\$\$", proc, re.I | re.S)
+    if not uc11 or not re.search(r"SECURITY\s+DEFINER", uc11.group(0), re.I):
+        return _fail("c1_aor_priv", "uc11_close_epoch must be SECURITY DEFINER: it is the only "
+                                    "writer of the epoch tables once the application role loses "
+                                    "INSERT on them (C1)")
     return _ok("c1_aor_priv",
                "append-only tables revoke UPDATE/DELETE from polaris_app, and so does every "
-               "partition of the four event tables; the lifecycle log refuses the application's "
-               "INSERT; uc_archive_purge is SECURITY DEFINER (C1)")
+               "partition of the four event tables; the lifecycle log and the ZK epoch tables refuse "
+               "the application's INSERT; uc_archive_purge and uc11_close_epoch are SECURITY "
+               "DEFINER (C1)")
 
 
 # ---------------------------------------------------------------------------

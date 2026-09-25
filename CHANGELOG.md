@@ -11,6 +11,31 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.49 — 2026-09-25 (an epoch is written only by the procedure that enforces the anonymity floor)
+
+CORE-BUG against rc.46, which promised that "`uc11_close_epoch` refuses an epoch below the
+minimum anonymity set". Externally observable: the application role can no longer write
+`TokenStateEpoch` or `TokenStateEpochLeaf` directly. Schema change: migration
+`2026-09-25-008-epochs-written-only-by-uc11`. Nothing is published.
+
+rc.46 put the floor in `uc11_close_epoch`, but the application role held INSERT on both epoch
+tables. A client connected as that role could write an epoch the procedure refuses: one member,
+signed by a non-admin, or with a `committed_count` its leaves do not bear out. The last matters
+most, because the verifier reads that count as the anonymity set. The update and delete triggers
+stopped changes to an epoch after it existed, but nothing stopped a new one. Found by asking of
+the rc.46 fix what rc.40 asked of the lifecycle log: is the procedure the only way in?
+
+- `uc11_close_epoch` is SECURITY DEFINER with a pinned `search_path`; the actor is authenticated
+  by parameter, as in the other definer procedures. The application role loses INSERT, UPDATE and
+  DELETE on `TokenStateEpoch` and INSERT on `TokenStateEpochLeaf`, and keeps EXECUTE on the
+  procedure.
+- Test: `test_app_role_writes_an_epoch_only_through_uc11`, as `polaris_app`. A direct epoch
+  insert is refused, and so is a direct leaf insert. The procedure is still callable and still
+  refuses an empty epoch on its own terms. With the down migration applied, it and the
+  append-only privilege test fail.
+- `check_aor_privilege_boundary` now requires both revokes and a definer `uc11_close_epoch`;
+  three new cases in its detection test.
+
 ## v1.0.0-rc.48 — 2026-09-25 (Polaris's own database sessions run in UTC whatever PGTZ says)
 
 CORE-BUG against rc.28's promise, closing the item rc.47 recorded as open, for the processes
