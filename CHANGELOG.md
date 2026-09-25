@@ -11,6 +11,31 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.43 — 2026-09-25 (a bound operator could bind a device to another authority's credential)
+
+CORE-BUG against rc.42, and a regression introduced by rc.40. Externally observable: for an
+operator bound to one authority, the token-scoped routes refuse (403) a credential that
+row-level security hides from them, instead of passing it on. No schema change. Nothing is
+published.
+
+`_token_authority_denied`, the binding check for routes that name a token, looked up the token's
+issuer and, when the lookup found no row, returned "not denied" for the route's own "not found"
+to answer. For a bound operator that lookup runs under row-level security, so another
+authority's credential is not missing, it is hidden. While `uc5_bind_device` ran as its caller
+it could not see the token either, and the request failed. rc.40 made it `SECURITY DEFINER`, and
+from then on the procedure saw what the gate could not. Measured on rc.42 as the application role
+for an operator bound to authority 1: `POST /uc5/bind-device` for authority 3's token 2 answered
+302 and the credential went from 2 device bindings to 3. The same probe against `/uc6/migrate`,
+`/tokens/2/transition` and `/tokens/2/delete` changed nothing: uc6 stops earlier on its own
+checks, and the other two write as the application role, so the same policy scopes their UPDATE
+and DELETE. That is an accident of which role runs the write, so their gates now fail closed too.
+
+For a bound operator a credential the lookup cannot see is refused, with the same 403 as a
+credential of another authority; unbound, nothing is hidden and "not found" still answers.
+`BoundOperatorRouteIsolationTests.test_no_route_acts_on_another_authoritys_credential` posts all
+four, each from a freshly loaded database, as the application role, and asserts that nothing about
+the credential changes. Against rc.42 it fails on `/uc5/bind-device` alone.
+
 ## v1.0.0-rc.42 — 2026-09-25 (a bound operator's session blinded the database's own rules)
 
 CORE-BUG against rc.41, in operator isolation. Externally observable: for an operator bound to

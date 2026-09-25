@@ -1052,6 +1052,13 @@ def tokens_transition(tok_id):
         denied = _operator_authority_permits(owner['issuing_agency_id'])
         if denied:
             return denied
+    elif session.get('operator_agency_id') is not None:
+        # 1.0.0-rc.43: hidden by row-level security is not "not found". The write below is
+        # scoped by the same policy today, which is an accident of which role runs it; rc.40
+        # and rc.42 moved two such writes to the owner and a gate like this one waved another
+        # authority's credential through.
+        return jsonify(error='forbidden', error_description='an operator bound to one '
+                       'authority cannot act on a credential it cannot see'), 403
     if actor_id:
         try:
             denied = _operator_authority_permits(int(actor_id))
@@ -1109,6 +1116,13 @@ def tokens_delete(tok_id):
         _denied = _operator_authority_permits(owner['issuing_agency_id'])
         if _denied:
             return _denied
+    elif session.get('operator_agency_id') is not None:
+        # 1.0.0-rc.43: hidden by row-level security is not "not found". The write below is
+        # scoped by the same policy today, which is an accident of which role runs it; rc.40
+        # and rc.42 moved two such writes to the owner and a gate like this one waved another
+        # authority's credential through.
+        return jsonify(error='forbidden', error_description='an operator bound to one '
+                       'authority cannot act on a credential it cannot see'), 403
     try:
         n = query('DELETE FROM IdentityToken WHERE token_id=%s', (tok_id,), fetch='none')
         if n:

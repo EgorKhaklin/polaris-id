@@ -5984,6 +5984,41 @@ class BoundOperatorRouteIsolationTests(PolarisTestCase):
                 leaked.append(url)
         self.assertEqual(leaked, [], 'another authority\'s credential reached these pages')
 
+    def test_no_route_acts_on_another_authoritys_credential(self):
+        """1.0.0-rc.43. The token gate returned "not denied" when the lookup found no row, and
+        for a bound operator a hidden row is not a missing one. rc.40 made uc5_bind_device
+        SECURITY DEFINER, so the procedure then saw what the gate could not: a device was bound
+        to authority 3's credential by an operator bound to authority 1 (measured, 2 -> 3
+        bindings). The rule is the effect: nothing about token 2 changes."""
+        def state():
+            return _sql("SELECT t.status, t.algorithm_id, "
+                        "(SELECT count(*) FROM DeviceBinding d WHERE d.token_id = 2) AS devices, "
+                        "(SELECT count(*) FROM IdentityToken s WHERE s.predecessor_token_id = 2) AS successors "
+                        "FROM IdentityToken t WHERE t.token_id = 2", fetch='one')
+        attempts = [
+            ('/uc5/bind-device', {'token_id': '2', 'device_type': 'PHONE',
+                                  'device_fingerprint': 'cd' * 16, 'binding_method': 'SECURE_ENCLAVE',
+                                  'validity_months': '12'}, None),
+            ('/uc6/migrate', {'token_id': '2', 'new_algorithm': '2'}, None),
+            ('/tokens/2/transition', {'new_status': 'DORMANT'}, '/tokens'),
+            ('/tokens/2/delete', {}, '/tokens'),
+        ]
+        # Each attempt from the same starting state, so one route's change cannot be charged
+        # to the next. Measured one at a time on rc.42: only /uc5/bind-device changed token 2;
+        # the others are here because their gates had the same shape.
+        for path, data, csrf_from in attempts:
+            with self.subTest(route=path):
+                reload_sample_data()        # which also ends the session: sign in again
+                self.client = flask_app.app.test_client()
+                self._login('admin')
+                with self.client.session_transaction() as sess:
+                    sess['operator_agency_id'] = 1
+                before = state()
+                self.assertIsNotNone(before, 'fixture: token 2 exists')
+                r = self._post(path, data=data, csrf_from=csrf_from)
+                self.assertEqual(state(), before, '%s changed another authority\'s credential '
+                                 '(HTTP %d)' % (path, r.status_code))
+
     def test_no_page_shows_another_authoritys_credential(self):
         """Every GET page that takes no argument. With IdentityToken's policy disabled this
         names /tokens and the four use-case forms that list credentials (measured

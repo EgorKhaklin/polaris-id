@@ -21,7 +21,7 @@ exists, and aliases itself into sys.modules first so `python3 app.py` does not l
 """
 import psycopg2
 
-from flask import flash, redirect, render_template, request, session, url_for
+from flask import flash, jsonify, redirect, render_template, request, session, url_for
 
 import pqc_signing
 import security
@@ -51,7 +51,17 @@ def _token_authority_denied(token_id):
     row = query("SELECT issuing_agency_id FROM IdentityToken WHERE token_id = %s",
                 (token_id,), fetch='one')
     if row is None:
-        return None          # the route's own "not found" handles it
+        # 1.0.0-rc.43. For a BOUND operator this lookup runs under row-level security, so
+        # another authority's credential is not "not found", it is hidden, and returning None
+        # waved the request through to a procedure that, SECURITY DEFINER since rc.40 (uc5) and
+        # rc.42 (uc6), sees it. Measured: a device bound to authority 3's credential by an
+        # operator bound to authority 1. A token a bound operator cannot see is one they may
+        # not act on. Unbound, nothing is hidden and the route's own "not found" answers.
+        if session.get('operator_agency_id') is not None:
+            return jsonify(error='forbidden',
+                           error_description='an operator bound to one authority cannot act '
+                                             'on a credential it cannot see'), 403
+        return None
     return _operator_authority_permits(row['issuing_agency_id'])
 
 
