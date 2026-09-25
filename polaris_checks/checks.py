@@ -22701,6 +22701,50 @@ def check_views_run_as_their_caller(root: pathlib.Path) -> list[Finding]:
                      "holds through every view")
 
 
+# 1.0.0-rc.42. Row-level security hides another authority's credentials from an operator bound to
+# one, and a routine that enforces a rule by READING IdentityToken, VerificationEvent or
+# TokenLifecycleEvent while running as its caller saw nothing to refuse under that binding: a
+# recovery opened for a holder with a live credential elsewhere, another authority's ACTIVE token
+# went onto the revocation list. A trigger or a procedure is where a rule is enforced, so each
+# one that reads those tables runs as its owner. Display functions (Atlas, foresight) are not
+# held to it: for them the operator's scope is the point.
+_RLS_TABLES = re.compile(r"\b(IdentityToken|VerificationEvent|TokenLifecycleEvent)\b", re.I)
+_RULE_ROUTINE = re.compile(r"CREATE\s+OR\s+REPLACE\s+(PROCEDURE\s+(\w+)|FUNCTION\s+(\w+)\s*\(\s*\)\s*"
+                           r"RETURNS\s+TRIGGER)(.*?)\bAS\s*\$\$(.*?)\$\$;", re.I | re.S)
+#: Routines that name the tables only to manage their storage, never to read a row.
+_RLS_READ_EXEMPT = {
+    "uc_ensure_event_partitions": "creates partitions by table name; reads no row",
+    "uc_detach_event_partitions_before": "detaches partitions by table name; reads no row",
+}
+
+
+def check_rule_routines_see_past_the_binding(root: pathlib.Path) -> list[Finding]:
+    """Every trigger function and procedure that reads a row-level-secured table is SECURITY
+    DEFINER, so the rule it enforces holds for an operator bound to one authority."""
+    name = "rule_routines_see_past_the_binding"
+    found, offenders = 0, []
+    for f in sorted((root / "polaris_sql").glob("*.sql")):
+        for m in _RULE_ROUTINE.finditer(_read_path(f)):
+            routine = m.group(2) or m.group(3)
+            body = re.sub(r"--[^\n]*", "", m.group(5))
+            if routine in _RLS_READ_EXEMPT or not _RLS_TABLES.search(body):
+                continue
+            found += 1
+            head = re.sub(r"--[^\n]*", "", m.group(4))
+            if not re.search(r"\bSECURITY\s+DEFINER\b", head, re.I):
+                offenders.append(f"{f.name}:{routine}")
+    if not found:
+        return _fail(name, "no trigger function or procedure reading a row-level-secured table "
+                           "was found; the check would pass vacuously")
+    if offenders:
+        return _fail(name, "a rule is enforced by reading a table that row-level security filters "
+                           "for a bound operator, as the caller, so under the binding it sees "
+                           "nothing to refuse: " + ", ".join(offenders[:8]) +
+                           ". Make it SECURITY DEFINER with a pinned search_path")
+    return _ok(name, f"all {found} trigger functions and procedures that read a row-level-secured "
+                     "table run as their owner, so their rules hold for a bound operator")
+
+
 # 1.0.0-rc.31. rc.15 bound every route that NAMES an authority; rc.30 and rc.31 found five
 # more that name a token, a request or an agency id and asked nothing, one of them opened by
 # rc.19. This keeps the next route from being the sixth: every state-changing route an admin or
@@ -23149,6 +23193,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_algorithm_columns_are_constrained,
     check_definer_routines_pin_search_path,
     check_views_run_as_their_caller,
+    check_rule_routines_see_past_the_binding,
 ]
 
 

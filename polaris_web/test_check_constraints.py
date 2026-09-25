@@ -1552,6 +1552,43 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             conn.rollback()
             conn.close()
 
+    def test_a_rule_the_database_enforces_holds_for_a_bound_operator(self):
+        """1.0.0-rc.42. Row-level security hides another authority's credentials from an
+        operator bound to one, and routines that enforce a rule by READING those credentials
+        ran as the caller, so under the binding the rule saw nothing to refuse. Measured on
+        rc.41: a recovery opened for a holder with an ACTIVE credential elsewhere, and another
+        authority's ACTIVE token put on the revocation list. Each case is refused unbound (the
+        control) and must be refused bound."""
+        conn = self._app_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT individual_id, issuing_agency_id, status FROM IdentityToken "
+                            "WHERE token_id = 2")
+                tok = cur.fetchone()
+                self.assertEqual((tok["issuing_agency_id"], tok["status"]), (3, "ACTIVE"), "fixture")
+                cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' LIMIT 1")
+                admin = cur.fetchone()["user_id"]
+            conn.rollback()
+            attempts = [
+                ("recovery for a holder with an ACTIVE credential",
+                 "CALL uc9_initiate_recovery(%s, 1, %s, 48)", (tok["individual_id"], admin)),
+                ("an ACTIVE token on the revocation list",
+                 "INSERT INTO RevocationList (token_id, revoked_by_agency_id, effective_date, "
+                 "reason_code) VALUES (2, 1, CURRENT_DATE, 'COMPROMISED')", ()),
+            ]
+            for binding in ("", "1"):
+                for label, sql, args in attempts:
+                    with self.subTest(binding=binding or "none", case=label):
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT set_config('polaris.operator_agency_id', %s, false)",
+                                        (binding,))
+                            with self.assertRaises(psycopg2.Error):
+                                cur.execute(sql, args)
+                        conn.rollback()
+        finally:
+            conn.rollback()
+            conn.close()
+
     def test_a_partition_made_later_is_locked_too(self):
         """The partition manager takes the blanket grant back from each partition it creates."""
         # In ONE transaction, rolled back: the partitions this makes (and the triggers each

@@ -726,13 +726,20 @@ COMMENT ON PROCEDURE uc8_revoke_token(INTEGER, INTEGER, VARCHAR, VARCHAR, INTEGE
 -- triad (entry: R11-4, exit: R11-6, recovery: this).
 -- ----------------------------------------------------------------------------
 
+-- 1.0.0-rc.42: SECURITY DEFINER. This routine enforces a rule by READING a table that row-level
+-- security filters for an operator bound to one authority, and under that binding the rows
+-- it had to see were invisible to it: the rule held only for unbound operators. As the owner
+-- it sees every row; the routes that reach it ask the operator's binding themselves.
 CREATE OR REPLACE PROCEDURE uc9_initiate_recovery(
     p_individual_id      INTEGER,
     p_requesting_agency  INTEGER,
     p_requesting_user    INTEGER,
     p_cooldown_hours     INTEGER DEFAULT 48
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_active_count   INTEGER;
     v_pending_count  INTEGER;
@@ -1058,6 +1065,10 @@ COMMENT ON PROCEDURE uc9_complete_recovery(INTEGER, INTEGER, VARCHAR, TEXT,
 -- (alongside R11-6 = constitutional limits ✅ and M2-8 = federation, open).
 -- ----------------------------------------------------------------------------
 
+-- 1.0.0-rc.42: SECURITY DEFINER. This routine enforces a rule by READING a table that row-level
+-- security filters for an operator bound to one authority, and under that binding the rows
+-- it had to see were invisible to it: the rule held only for unbound operators. As the owner
+-- it sees every row; the routes that reach it ask the operator's binding themselves.
 CREATE OR REPLACE PROCEDURE uc6_migrate_algorithm(
     p_token_id        INTEGER,
     p_new_algorithm   INTEGER,
@@ -1065,7 +1076,10 @@ CREATE OR REPLACE PROCEDURE uc6_migrate_algorithm(
     p_deprecate_old   BOOLEAN DEFAULT FALSE,
     p_signing_public_key_hex TEXT DEFAULT NULL
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_token_exists  INTEGER;
     v_alg_exists    INTEGER;
@@ -1156,6 +1170,10 @@ COMMENT ON PROCEDURE uc6_migrate_algorithm(INTEGER, INTEGER, BYTEA, BOOLEAN, TEX
 -- Implements PDF §9 "Centralized trust assumption" leg — the relational
 -- schema as the off-chain commitment-record layer.
 -- ----------------------------------------------------------------------------
+-- 1.0.0-rc.42: SECURITY DEFINER. This routine enforces a rule by READING a table that row-level
+-- security filters for an operator bound to one authority, and under that binding the rows
+-- it had to see were invisible to it: the rule held only for unbound operators. As the owner
+-- it sees every row; the routes that reach it ask the operator's binding themselves.
 CREATE OR REPLACE PROCEDURE close_anchor_batch(
     p_algorithm_id  INTEGER,
     p_merkle_root   VARCHAR(128),
@@ -1163,7 +1181,10 @@ CREATE OR REPLACE PROCEDURE close_anchor_batch(
     -- pre-computed by anchoring.py in the same call.
     p_proofs        JSONB
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_pending_count   INTEGER;
     v_new_batch_id    INTEGER;
@@ -1562,13 +1583,20 @@ COMMENT ON PROCEDURE uc11_close_epoch(VARCHAR, TIMESTAMP, INTEGER, JSONB) IS
 -- NOT join to DuressEvent — only auditors with explicit access see
 -- duress events.
 -- ----------------------------------------------------------------------------
+-- 1.0.0-rc.42: SECURITY DEFINER. This routine enforces a rule by READING a table that row-level
+-- security filters for an operator bound to one authority, and under that binding the rows
+-- it had to see were invisible to it: the rule held only for unbound operators. As the owner
+-- it sees every row; the routes that reach it ask the operator's binding themselves.
 CREATE OR REPLACE PROCEDURE uc12_record_duress(
     p_token_id              INTEGER,
     p_context_id            INTEGER,
     p_requesting_agency_id  INTEGER,
     p_oob_channel           VARCHAR(40) DEFAULT 'AUDIT_TABLE'
 )
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 BEGIN
     -- Validate that the token actually has a duress_code_hash enrolled.
     -- If the caller invoked this procedure for a token that hasn't enrolled

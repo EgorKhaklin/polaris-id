@@ -19481,3 +19481,25 @@ def test_views_run_as_their_caller_check_discriminates(tmp_path):
     f.write_text("SELECT 1;\n")
     (sql / "migrations" / "2026-01-01-001-old.up.sql").unlink()
     assert checks.check_views_run_as_their_caller(tmp_path)[0].level == "FAIL", "no view is vacuous"
+
+
+def test_rule_routines_see_past_the_binding_check_discriminates(tmp_path):
+    f = tmp_path / "polaris_sql" / "06_triggers.sql"
+    f.parent.mkdir(parents=True)
+    good = ("CREATE OR REPLACE FUNCTION enforce_x() RETURNS TRIGGER\nLANGUAGE plpgsql\n"
+            "SECURITY DEFINER\nSET search_path = public, pg_temp\nAS $$\nBEGIN\n"
+            "  PERFORM 1 FROM IdentityToken WHERE token_id = NEW.token_id;\n  RETURN NEW;\nEND;\n$$;\n"
+            "CREATE OR REPLACE FUNCTION atlas_x() RETURNS INTEGER LANGUAGE sql AS $$ "
+            "SELECT count(*) FROM IdentityToken $$;\n")
+    f.write_text(good)
+    assert checks.check_rule_routines_see_past_the_binding(tmp_path)[0].level == "OK", \
+        "a definer rule and a display function must PASS"
+    f.write_text(good.replace("SECURITY DEFINER\nSET search_path = public, pg_temp\n", ""))
+    r = checks.check_rule_routines_see_past_the_binding(tmp_path)[0]
+    assert r.level == "FAIL" and "enforce_x" in r.message, "a caller-rights rule must FAIL"
+    f.write_text("CREATE OR REPLACE PROCEDURE p() LANGUAGE plpgsql AS $$ BEGIN "
+                 "PERFORM 1 FROM IdentityToken; END; $$;\n")
+    assert checks.check_rule_routines_see_past_the_binding(tmp_path)[0].level == "FAIL", \
+        "a caller-rights procedure must FAIL"
+    f.write_text("SELECT 1;\n")
+    assert checks.check_rule_routines_see_past_the_binding(tmp_path)[0].level == "FAIL", "none is vacuous"

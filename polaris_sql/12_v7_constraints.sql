@@ -16,9 +16,15 @@
 -- guarantees succession is per-holder, not cross-individual.
 -- ----------------------------------------------------------------------------
 
+-- 1.0.0-rc.42: SECURITY DEFINER. This routine enforces a rule by READING a table that row-level
+-- security filters for an operator bound to one authority, and under that binding the rows
+-- it had to see were invisible to it: the rule held only for unbound operators. As the owner
+-- it sees every row; the routes that reach it ask the operator's binding themselves.
 CREATE OR REPLACE FUNCTION enforce_predecessor_same_individual()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_predecessor_individual INTEGER;
@@ -59,15 +65,23 @@ COMMENT ON FUNCTION enforce_predecessor_same_individual IS
 -- the public revocation registry.
 -- ----------------------------------------------------------------------------
 
+-- 1.0.0-rc.42: SECURITY DEFINER. This routine enforces a rule by READING a table that row-level
+-- security filters for an operator bound to one authority, and under that binding the rows
+-- it had to see were invisible to it: the rule held only for unbound operators. As the owner
+-- it sees every row; the routes that reach it ask the operator's binding themselves.
 CREATE OR REPLACE FUNCTION enforce_revocation_status()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_status VARCHAR(20);
 BEGIN
     SELECT status INTO v_status FROM IdentityToken WHERE token_id = NEW.token_id;
-    IF v_status NOT IN ('REVOKED', 'LOST', 'EXPIRED') THEN
+    -- NULL (no such token) is refused too: `NULL NOT IN (...)` is NULL, which an IF reads as
+    -- false, and that is how a hidden row passed this check.
+    IF v_status IS NULL OR v_status NOT IN ('REVOKED', 'LOST', 'EXPIRED') THEN
         RAISE EXCEPTION
             'Cannot add token % to RevocationList: status is % (must be REVOKED, LOST, or EXPIRED)',
             NEW.token_id, COALESCE(v_status, 'NULL')

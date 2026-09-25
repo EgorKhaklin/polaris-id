@@ -808,8 +808,15 @@ CREATE TRIGGER trg_authaudit_append_only
 -- the agency doing it. The count-based cap and the percentage bound compose;
 -- whichever trips first refuses.
 -- ----------------------------------------------------------------------------
+-- 1.0.0-rc.42: SECURITY DEFINER. This routine enforces a rule by READING a table that row-level
+-- security filters for an operator bound to one authority, and under that binding the rows
+-- it had to see were invisible to it: the rule held only for unbound operators. As the owner
+-- it sees every row; the routes that reach it ask the operator's binding themselves.
 CREATE OR REPLACE FUNCTION enforce_agency_quota()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_kind      TEXT := TG_ARGV[0];      -- 'issue' | 'revoke' | 'verify'
     v_agency_id INTEGER;

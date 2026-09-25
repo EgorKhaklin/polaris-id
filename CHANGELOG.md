@@ -11,6 +11,40 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.42 — 2026-09-25 (a bound operator's session blinded the database's own rules)
+
+CORE-BUG against rc.41, in operator isolation. Externally observable: for an operator bound to
+one authority, `uc9_initiate_recovery` refuses a holder who has an ACTIVE credential anywhere,
+and `RevocationList` refuses any token that is not REVOKED, LOST or EXPIRED, exactly as they do
+unbound. Schema change: migration `2026-09-25-003-rules-see-past-the-operator-binding`. Nothing
+is published.
+
+Row-level security hides another authority's credentials from a bound operator, which is what
+it is for. But seven routines enforce a rule by READING `IdentityToken` while running as their
+caller, and under the binding the rows they had to see were invisible, so the rule held only
+for unbound operators. Measured on rc.41 as `polaris_app` bound to authority 1, each case
+refused unbound: `uc9_initiate_recovery` opened a recovery for the holder of authority 3's
+ACTIVE token 2, and `enforce_revocation_status` let that ACTIVE token onto the revocation list.
+The second failed OPEN on a NULL: the hidden row's status read as NULL, `NULL NOT IN (...)` is
+NULL, and an IF reads NULL as false.
+
+`uc6_migrate_algorithm`, `uc9_initiate_recovery`, `uc12_record_duress`, `close_anchor_batch`,
+`enforce_revocation_status`, `enforce_predecessor_same_individual` and `enforce_agency_quota` are
+`SECURITY DEFINER` with a pinned `search_path` and executable by the application role only. None
+changes a credential's status, so none passes the revocation gate. The routes that reach them
+ask the operator's binding themselves (check 323). The revocation trigger also refuses a NULL
+status. `check_rule_routines_see_past_the_binding` (329) requires every trigger function and
+procedure that reads one of the three row-level-secured tables to run as its owner; display
+functions are exempt, since for them the operator's scope is the point. Run against rc.41, it
+names the routines.
+
+Also since rc.41, as plain commits: the route-level isolation tests, run as the application role
+(`BoundOperatorRouteIsolationTests`); the verifier fuzzer's and the invariant properties' soak
+budgets; and `polaris-oid4vp` accepts only canonical base64url (source only, see its commit).
+
+Counterexample, failing on rc.41:
+`TestC1PrivilegeBoundary.test_a_rule_the_database_enforces_holds_for_a_bound_operator`.
+
 ## v1.0.0-rc.41 — 2026-09-25 (a bound operator could read other authorities' credentials through a view)
 
 CORE-BUG against rc.40, in operator isolation. Externally observable: every view is
