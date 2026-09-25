@@ -2,11 +2,9 @@
 \section{AI agents, proof of personhood and the future internet}
 \label{sec:agents}
 
-Version 2 first wrote this section as a statement of what did not exist, then rewrote it when the
-holder-side work was built. Version 3 changes little in it, because little changed: the four
-mechanisms still run, their bounds are the same, and what this version adds is what the first
-outside path taught about the residue, and which of the refusals below were found, by mutation, to
-be refusals in name only until they were fixed.
+This section maps what the holder-side mechanisms establish when the one presenting a credential
+may be an agent rather than a person: four mechanisms, what each proves, what each refuses, and the
+residue none of them reaches.
 
 \subsection{The problem that is arriving}
 
@@ -28,13 +26,12 @@ Six ingredients of a privacy-preserving proof of personhood run.
 
 \begin{itemize}
   \item \textbf{Uniqueness at issuance.} C3, one active token per person, is a partial unique index
-    in the database, and since \code{v9.374} a model checked on every push. What it establishes is
+    in the database and a model checked on every push. What it establishes is
     credential uniqueness within an enrolment identity, not human uniqueness: one \code{Individual}
     row holds at most one active credential, and no application code can bypass that. Nothing in
     the database or above it notices one human enrolled as two rows; that is decided at the
-    enrolment desk, by an operator's judgement recorded as evidence (Section~\ref{sec:privacy}). An
-    earlier version of this paper called C3 ``the root of Sybil resistance''; the mechanism does
-    not support the phrase, and it is withdrawn. \sImpl
+    enrolment desk, by an operator's judgement recorded as evidence (Section~\ref{sec:privacy}).
+    C3 is therefore not Sybil resistance. \sImpl
   \item \textbf{Membership without identity.} The epoch membership proof proves that a valid token
     exists in an authority's committed set with public inputs of only the root, the epoch, a context,
     a nonce and a scoped nullifier; a zero-knowledge verification records no token at all; the
@@ -62,16 +59,13 @@ two sites cannot link their nullifiers. That is a public input of the circuit, a
 relying parties pooling everything they hold still cannot link a holder is a formal model checked
 with a configuration it must fail. \sImpl
 
-Adding it was not the small change Version 2 once predicted, and the reason is worth keeping
-because it is the kind of mistake a plan makes from outside the code. The epoch leaf was a
-\code{SHA3-256} digest computed \emph{outside} the circuit and handed in as an opaque private
-value. A nullifier beside an opaque leaf proves only that the prover knows some number: nothing ties
-the two to one secret, so a prover could pair any member's leaf with a nullifier of their own
-choosing, and every property above would have been a claim rather than a proof. Constraining both to
-one secret means opening the leaf inside the circuit, and verifying a \code{SHA3-256} preimage there
-costs thousands of constraints where Poseidon costs about a hundred. So the leaf became
-\code{Poseidon(secret\,||\,context)}, a commitment the circuit opens, and the old digest became the
-holder's secret. Epochs closed under the old derivation are re-closed rather than migrated.
+The leaf is opened inside the circuit, and the reason is structural. A nullifier beside a leaf the
+circuit cannot open proves only that the prover knows some number: nothing ties the two to one
+secret, so a prover could pair any member's leaf with a nullifier of their own choosing, and every
+property above would be a claim rather than a proof. Constraining both to one secret means opening
+the leaf in the circuit, where a \code{SHA3-256} preimage costs thousands of constraints and
+Poseidon about a hundred. So the leaf is \code{Poseidon(secret\,||\,context)}, a commitment the
+circuit opens, and the holder's secret is derived with \code{SHA3-256} outside it.
 
 The two conditions the vocation imposes were carried into the implementation rather than left as
 intentions. The nullifier's scope is per relying party and per epoch, never global, because a global
@@ -118,9 +112,8 @@ refused rather than ignored, since a grant that says \code{max\_transfers: 3} to
 never heard of it must not read as unlimited. And the agent must sign: without that link a grant is a
 bearer token, and whoever copies it in transit becomes the agent. Two of these refusals, an exhausted
 use count and an amount over its ceiling, are the bound that makes delegation something other than a
-bearer token, and at \code{v9.455} both were found to be invertible in the reference verifier with
-every suite green; they are covered now, and the conformance contract, which had published no case
-in which a grant's or a revocation's signature was bad, has those cases. \sImpl
+bearer token; the conformance contract includes cases in which a grant's or a revocation's
+signature is bad, and a mutation drill shows the tests notice losing either bound. \sImpl
 
 Revocation is the property worth naming twice. The revocation is signed by the same key that signed
 the grant, so anyone may publish bytes but only the holder may end it. The issuer is not contacted

@@ -12,7 +12,7 @@ signature over the SHA3-256 digest of the token value, together with the public 
 it, so that verification is self-contained and survives the retirement of the signing key. A token
 without a signature row cannot exist: a database trigger refuses any write that would leave one
 without a non-deprecated signature. The credential is therefore not a document but a signed claim:
-\emph{this authority issued this token to this person.} Since \code{v9.349} the claim may also bind a
+\emph{this authority issued this token to this person.} The claim may also bind a
 key the holder controls, recorded in \entity{HolderKeyEvent} under the same append-only discipline
 as an authority key, so that possession of the file stops being possession of the credential
 (Section~\ref{sec:agents}). \sImpl
@@ -24,8 +24,7 @@ Polaris code (Section~\ref{sec:verifiers}).
 
 \subsection{The physical token, as an object somebody else can implement}
 
-Version 2 recorded the hardware card as modelled and not manufactured. That is still true of the
-silicon, and false of everything around it. Since \code{v9.366} the card is an encoding with a
+The silicon is modelled and not manufactured; everything around it exists. The card is an encoding with a
 reference codec and published vectors (\code{polaris\_card/\allowbreak{}card\_profile.py}), a software token that
 speaks ISO 7816-4 with real status words, two PIN slots, a retry counter and a PUK
 (\code{emulator.py}), a personalization step in which the card generates its own keys so that the
@@ -81,11 +80,9 @@ enrolment, where an operator records the evidence and the assurance level is der
 enforces it: six legal transitions, each labelled with the lifecycle event it writes automatically.
 \code{ACTIVE} is the only operational state. A token enters at \code{RESERVE} and is activated, or
 is revoked before it ever is; an active token leaves through one of three terminal states or into
-\code{DORMANT} when a successor takes over. Version 1's figure left out the revocation of a reserve
-token, which the trigger has always allowed.}{fig:lifecycle}
+\code{DORMANT} when a successor takes over.}{fig:lifecycle}
 
-Version 1 recommended enforcing the transitions in a trigger and left it as future work. The
-trigger exists, and a second trigger writes a \entity{TokenLifecycleEvent} row for every status
+A trigger enforces the transitions, and a second trigger writes a \entity{TokenLifecycleEvent} row for every status
 change, including a change made by hand from a database shell. Succession is by reference, never by
 overwrite: a replacement token points at its predecessor and the old token stays in the database in
 its terminal state. Lost tokens stay lost, and their data is not erased. \sImpl
@@ -93,7 +90,7 @@ its terminal state. Lost tokens stay lost, and their data is not erased. \sImpl
 \subsection{Entering, leaving and returning}
 
 Three mechanisms surround the core so that the schema cannot be turned against the holder at the
-edges of the lifecycle, and each has grown a record of what it rested on since Version 2.
+edges of the lifecycle, and each keeps a record of what it rested on.
 
 \begin{description}
   \item[Entering: tiered enrolment, and what an enrolment rests on.] Every person has an enrolment
@@ -125,21 +122,21 @@ edges of the lifecycle, and each has grown a record of what it rested on since V
     required, recorded in the audit trail. The five percent is a deployment default and a governance
     parameter, not a security invariant: an authority may set its own (one seeded agency runs at
     seven), and no property of the system follows from the number itself. The bound converts a surprise into a trend that reporting
-    can see; it does not stop slow abuse under the ceiling, and says so. Since Version 2 the settings
-    around this power have become records: the ceiling itself (\entity{IssuerDiscretionPolicy}) can
+    can see; it does not stop slow abuse under the ceiling, and says so. The settings around this
+    power are records: the ceiling itself (\entity{IssuerDiscretionPolicy}) can
     only be changed with a stated justification and leaves a row saying who changed it and from what;
     a quota on how much of the population an agency may touch is a decision with a reason rather than
     a value that can be overwritten; the row at the root of the hierarchy, \entity{Agency}, carries a
     trigger that records every change to an authority's level and marks whether it widened; and a
-    relying party's bar, which could be lowered with nothing recorded anywhere until \code{v9.425},
-    is now recorded with the same discipline, weakenings flagged and reasons required. \sImpl
+    relying party's bar is recorded with the same discipline, weakenings flagged and reasons required. \sImpl
   \item[Returning: the recovery ceremony.] A fire takes the wallet and the reserve together. Recovery
     is mandatory and is also an impersonation path, so it is made expensive without being made
     impossible: a two-phase ceremony with a 48-hour cool-down, three independent out-of-band channels,
     an approver who cannot be the requester, and admin-only completion. The decision fields move one
-    way under a trigger since \code{v9.347}, and the four-eyes rule, the cool-down and the three
-    channels are refusals a stored procedure makes that a mutation drill now proves the tests would
-    notice losing (Section~\ref{sec:walls}). The holder is without identity for the cool-down; the
+    way under a trigger, and the four-eyes rule, the cool-down and the three channels are refusals a
+    stored procedure makes, each of which a mutation drill shows the tests would notice losing
+    (Section~\ref{sec:walls}). No path in the product records the three channels
+    (Section~\ref{sec:limitations}). The holder is without identity for the cool-down; the
     substitute credential a production system would want for that window is not built. \sImpl{}
     for the ceremony, \sFut{} for the interim credential.
 \end{description}
@@ -159,10 +156,9 @@ same way, unlocking a second key slot whose public key the card object does not 
 measures the response in time as well as in bytes, because a coercer at a reader observes how long
 the card took. \sImpl{} as a tested property of the modelled flow.
 
-Version 2 called the system compulsion-resistant. Version 3 does not, because the repository's own
-assessment of the mechanism against the three coercers the operating contract names concluded that
-the word was not supported, and the vocabulary was weakened to \emph{duress-aware} on every outward
-surface, with a check that refuses the strong word's return. Against a casual coercer, one who does
+The duress mechanism is \emph{duress-aware}, not compulsion-resistant: it can keep an alert from a
+coercer who does not know it exists, and it does not protect against an informed coercer or against
+institutional access. A check refuses the stronger word on every outward surface. Against a casual coercer, one who does
 not know duress codes exist, the mechanism works: the screen is identical and the alert is silent.
 Against an informed coercer standing beside the holder it does not: the code is typed on the
 verifier's terminal, keystrokes are not constant-time, and because enrolment is opt-in, \emph{I have no

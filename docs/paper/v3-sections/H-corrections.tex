@@ -168,3 +168,27 @@ version number stopped counting ships: 9.467 had been bumped by the change that 
 the change that fixed a comment alike, and under the operating contract a version marks an
 externally observable change, which is rare.
 
+\subsection*{Dates moved out of the body}
+
+The body states what each mechanism is; these are the dates it no longer carries.
+
+\begin{itemize}
+  \item \code{v9.347}: the recovery request's decision fields became one-way under a trigger.
+  \item \code{v9.349}: a credential may bind a holder-controlled key (\entity{HolderKeyEvent}).
+  \item \code{v9.354}: the epoch leaf became a Poseidon commitment the circuit opens; before it the leaf
+    was a \code{SHA3-256} digest handed in as an opaque value, so a nullifier proved nothing about
+    it, and epochs closed under the old derivation were re-closed.
+  \item \code{v9.361}: the proof library was evaluated against its successor and kept.
+  \item \code{v9.366}: the card became an encoding, an emulator and a personalization step.
+  \item \code{v9.374}: C3 gained a formal model checked on every push.
+  \item \code{v9.382}: the warrant read, which sat behind a stored procedure and had left no record of
+    its own use, began writing the same audit row as every other read.
+  \item \code{v9.408}: the reconstruction-risk assertion was reshaped after two weaknesses in its
+    adversary were found invisible to the old shape.
+  \item \code{v9.425}: a relying party's bar, which could be lowered with nothing recorded, became a
+    recorded decision.
+  \item The lifecycle figure of Version 1 omitted the revocation of a reserve token, which the trigger
+    has always allowed; Version 1 recommended the transition trigger as future work.
+  \item 25 September 2026: the minimum anonymity set; before it an epoch of one member closed, and a
+    proof against it hid nobody.
+\end{itemize}

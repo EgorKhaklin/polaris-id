@@ -25,9 +25,8 @@ promise: the repository carries a redaction proof that the redacted field is non
 stated adversary model, property tests exercise every read path, and the claim that two relying
 parties pooling everything they hold still cannot link a holder is a formal model checked on every
 push. The property test that measures reconstruction risk runs an adversary against isolated
-zero-knowledge events and asserts its success rate is no better than chance, and since \code{v9.408}
-the assertion is shaped so that a weak adversary cannot flatter the result: two weaknesses in the
-adversary had been invisible to the old shape. The claim is scoped precisely. It covers
+zero-knowledge events and asserts its success rate is no better than chance, and the assertion is
+shaped so that a weak adversary cannot flatter the result. The claim is scoped precisely. It covers
 zero-knowledge-mode events. Selective and full events do carry a token identifier, because that is
 what those levels mean. \sImpl
 
@@ -53,12 +52,11 @@ epoch, a context and a nonce, without revealing which leaf. The verifier sees th
 public inputs and cannot recover the leaf; that is the proof system's property, not an API rule. The
 setup is transparent, with no ceremony, and the commitments are hash-based. The default tree depth
 of fourteen covers the schema's ten-thousand-leaf epoch cap, so the anonymity set is the epoch, and
-the epoch has a floor: since 25 September 2026 an epoch smaller than the minimum anonymity set (a
-database setting, twenty unless set; the notional sample sets one and says so) is refused rather
-than closed smaller, and a proof against an older one below it answers \emph{privacy unavailable}
+the epoch has a floor: an epoch smaller than the minimum anonymity set (a database setting, twenty
+unless set; the notional sample sets one and says so) is refused rather than closed smaller, and a proof against an older one below it answers \emph{privacy unavailable}
 rather than verifying. The authority waits for members or lengthens its cadence; epochs are not
 merged. The detached verifier applies the same floor offline to a foreign authority's epoch, from the
-size its signed checkpoint states. Before that date an epoch of one member closed, and a proof against it hid nobody.
+size its signed checkpoint states.
 On the reference machine a proof takes about 25~ms to make and about 12~ms to check, and the verdict
 is two-witnessed at the statement level. That second witness is independent in implementation
 only: it is a separate program, written by the same author from the same reading of the circuit,
@@ -78,8 +76,8 @@ state, so a relying party that needs single use issues a challenge. The nullifie
 holder from the \emph{issuer}, which derives every leaf in order to build the tree and could compute
 any member's nullifier in any scope; the property is between relying parties. And the circuit over
 the proof library has had no external cryptographic audit; the repository's soundness ledger says
-not to protect real identities with it as shipped. The proof library itself was re-evaluated against
-its successor at \code{v9.361} and kept, with the triggers that would reopen the question recorded.
+not to protect real identities with it as shipped. The proof library has been evaluated against its
+successor and kept, with the triggers that would reopen the question recorded.
 \sExt{} for the audit.
 
 \subsection{Bounded, not permanent, and what bounded was found to mean}
@@ -152,10 +150,9 @@ operator's atlas, and a request for six and a half million cluster bins returns 
 thousand. The single-entity investigation pages are built to refuse cross-individual link analysis
 and are audited: a meta-audit table records who read which audit surface, with what filter, and how
 many rows came back, and it is append-only. The authority's most invasive power, pulling one named
-person's whole verification history under a warrant, left no record of its own use for as long as it
-existed, because the read sat behind a stored procedure and nothing looking for a \code{SELECT}
-found it; since \code{v9.382} it writes the same row, and a structural rule extends that to any read
-hidden behind a procedure or a view. The authority-structure layer, Athena, is forbidden by
+person's whole verification history under a warrant, writes the same row, and a structural rule
+extends that to any read hidden behind a procedure or a view, where a search for a \code{SELECT}
+would not find it. The authority-structure layer, Athena, is forbidden by
 \code{check\_athena\_no\_person} from referencing any natural-person table or column (Section~\ref{sec:cognition}). And
 timestamps, the timestamp authority and the exchange gateway are built to learn nothing about what
 they touch, which Section~\ref{sec:institutions} describes. \sImpl
