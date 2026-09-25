@@ -1113,6 +1113,7 @@ def validate_session(get_conn):
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT s.revoked_at, u.is_active, u.role AS current_role, "
+                "       u.agency_id AS current_agency_id, "
                 "       (%(idle)s > 0 AND s.last_seen_at < now() - make_interval(mins => %(idle)s)) AS idle_expired, "
                 "       (s.last_seen_at < now() - make_interval(secs => %(touch)s)) AS stale "
                 "  FROM OperatorSession s JOIN AppUser u ON u.user_id = s.user_id "
@@ -1141,6 +1142,18 @@ def validate_session(get_conn):
                 ended = ('role_changed', 'SESSION_REVOKED',
                          "the account's role changed from %s to %s while this session was "
                          "live; re-authentication required" % (role, row['current_role']))
+            elif (row['current_agency_id'] is not None) != (session.get('operator_agency_id') is not None) \
+                    or (row['current_agency_id'] is not None
+                        and int(row['current_agency_id']) != int(session['operator_agency_id'])):
+                # 1.0.0-rc.44: the authority an operator is bound to is read into the cookie at
+                # sign-in and never again, the gap the role had until 2026-09-17. Measured: an
+                # unbound account bound to authority 1 kept its unbound session, and with it
+                # every authority's credentials, at 200 until the cookie expired. Binding an
+                # operator to one authority is how an incident narrows what they can reach.
+                ended = ('agency_changed', 'SESSION_REVOKED',
+                         "the account's authority binding changed from %s to %s while this "
+                         "session was live; re-authentication required"
+                         % (session.get('operator_agency_id'), row['current_agency_id']))
             elif row['idle_expired']:
                 ended = ('idle', 'SESSION_EXPIRED',
                          f"idle longer than POLARIS_SESSION_IDLE_MINUTES_{role.upper()}={idle}")

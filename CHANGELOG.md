@@ -11,6 +11,29 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.44 — 2026-09-25 (binding an operator to an authority did not reach their live session)
+
+CORE-BUG against rc.43. Externally observable: a live session whose account is bound to an
+authority, moved to another, or unbound, ends on its next request with `revoke_reason`
+`agency_changed` and a `SESSION_REVOKED` audit event, as a role change has since 2026-09-17.
+Schema change: migration `2026-09-25-004-session-agency-changed` widens
+`chk_opsession_revoke_reason` to admit the new reason. Nothing is published.
+
+The authority an operator is bound to is copied into the session cookie at sign-in and was never
+read again. Binding an operator to one authority is how an incident narrows what they can reach,
+and it did not take until they signed in again. Measured on rc.43 as the application role: an
+unbound account, signed in, was bound to authority 1; its live session went on answering 200 and
+showing authority 3's credentials until the cookie expired. `validate_session` already re-read
+the account's role and activity on every request, so it now reads the binding with them and ends
+the session when it differs. Ending rather than adopting is the same choice the role change made:
+a change of authority is a reason to re-authenticate, and a session carrying on under a binding it
+did not sign in with would leave an audit trail that says one thing and a session that did
+another. The migration comes with the code this time; 2026-09-24-001 records what happened when
+the role change did not.
+
+Counterexample, failing on rc.43:
+`SessionLimitTests.test_an_authority_binding_change_ends_the_live_session`.
+
 ## v1.0.0-rc.43 — 2026-09-25 (a bound operator could bind a device to another authority's credential)
 
 CORE-BUG against rc.42, and a regression introduced by rc.40. Externally observable: for an

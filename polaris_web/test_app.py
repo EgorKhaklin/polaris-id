@@ -5626,6 +5626,7 @@ class SQLConsoleTests(PolarisTestCase):
         effect: the posted query's rows never reach the page."""
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)
         r = self.client.get('/sql')
         self.assertEqual(r.status_code, 403)
         self.assertIn('bound to one authority', r.get_data(as_text=True))
@@ -5640,6 +5641,7 @@ class SQLConsoleTests(PolarisTestCase):
         """The regression guard: every single-authority instance leaves the binding unset."""
         with self.client.session_transaction() as sess:
             sess.pop('operator_agency_id', None)
+            _bind_account(sess, None)
         r = self._post('/sql', data={
             'sql': 'SELECT individual_id, legal_name FROM Individual ORDER BY individual_id LIMIT 3'})
         self.assertEqual(r.status_code, 200)
@@ -5964,6 +5966,7 @@ class BoundOperatorRouteIsolationTests(PolarisTestCase):
         self.addCleanup(patcher.stop)
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)
 
     def test_the_investigate_card_is_scoped(self):
         self.assertEqual(self.client.get('/investigate/token/2').status_code, 404)
@@ -6013,6 +6016,7 @@ class BoundOperatorRouteIsolationTests(PolarisTestCase):
                 self._login('admin')
                 with self.client.session_transaction() as sess:
                     sess['operator_agency_id'] = 1
+                    _bind_account(sess, 1)
                 before = state()
                 self.assertIsNotNone(before, 'fixture: token 2 exists')
                 r = self._post(path, data=data, csrf_from=csrf_from)
@@ -12318,6 +12322,18 @@ class _SyntheticAuthenticator:
                              'userHandle': None}}
 
 
+
+def _bind_account(sess, agency_id):
+    """Bind the signed-in account to `agency_id` (None unbinds) in the DATABASE as well as the
+    cookie. Since 1.0.0-rc.44 a session whose cookie binding differs from its account's is
+    ended on the next request, which is the point; so a test that binds an operator has to bind
+    the account, as an administrator would, not only the session."""
+    uid = sess.get('user_id')
+    if uid is None:
+        return
+    _sql("SELECT set_config('polaris.justification', 'test: bind the signed-in account', false); "
+         "UPDATE AppUser SET agency_id = %s WHERE user_id = %s", (agency_id, uid), fetch='none')
+
 def _sql(query, params=None, fetch='all'):
     conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
     try:
@@ -12598,6 +12614,7 @@ class WebAuthnCeremonyTests(PolarisTestCase):
         with client.session_transaction() as sess:
             sess['planted_before_login'] = 'x'
             sess['operator_agency_id'] = 99
+            _bind_account(sess, 99)
         client.post('/login', data={'username': 'admin', 'password': TEST_PASSWORDS['admin']})
         with client.session_transaction() as sess:
             self.assertNotIn('planted_before_login', sess)
@@ -12972,6 +12989,31 @@ class SessionLimitTests(UnauthenticatedTestCase):
         self.assertEqual(r.status_code, 302)
         self.assertEqual(self._row(sid)['revoke_reason'], 'role_changed')
         self.assertIn('SESSION_REVOKED', _audit_events('operator'))
+
+    def test_an_authority_binding_change_ends_the_live_session(self):
+        """1.0.0-rc.44. The binding was read into the cookie at sign-in and never again: an
+        unbound account bound to one authority kept its unbound session, and so every
+        authority's credentials, until the cookie expired. Both directions end the session."""
+        _REBIND = ("SELECT set_config('polaris.justification', "
+                   "'test: an operator moved between authorities', false); ")
+        for username, before, after in (('operator', None, 1), ('admin', None, 2)):
+            with self.subTest(user=username):
+                _sql(_REBIND + "UPDATE AppUser SET agency_id = %s WHERE username = %s",
+                     (before, username), fetch='none')
+                c = self._client_as(username); sid = self._sid(c)
+                self.assertEqual(c.get('/dashboard').status_code, 200, "control: the session is live")
+                _sql(_REBIND + "UPDATE AppUser SET agency_id = %s WHERE username = %s",
+                     (after, username), fetch='none')
+                r = c.get('/dashboard')
+                self.assertEqual(r.status_code, 302)
+                self.assertEqual(self._row(sid)['revoke_reason'], 'agency_changed')
+                self.assertIn('SESSION_REVOKED', _audit_events(username))
+        # and a bound session moved to another authority
+        c = self._client_as('operator'); sid = self._sid(c)
+        self.assertEqual(c.get('/dashboard').status_code, 200)
+        _sql(_REBIND + "UPDATE AppUser SET agency_id = 3 WHERE username = 'operator'", fetch='none')
+        self.assertEqual(c.get('/dashboard').status_code, 302)
+        self.assertEqual(self._row(sid)['revoke_reason'], 'agency_changed')
 
     def test_logout_revokes_the_registry_row(self):
         c = self._client_as('admin'); sid = self._sid(c)
@@ -14642,6 +14684,7 @@ class OperatorAuthorityScopeTests(PolarisTestCase):
         with self.client.session_transaction() as sess:
             sess['logged_in'] = True
             sess['operator_agency_id'] = 2
+            _bind_account(sess, 2)
         with flask_app.app.test_request_context('/'):
             from flask import session as flask_session
             flask_session['logged_in'] = True
@@ -14712,6 +14755,7 @@ class OperatorAuthorityScopeTests(PolarisTestCase):
         self._login('operator')
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)
             token = sess['csrf_token']
         body = {'digest_hex': 'a' * 64}
         r = self.client.post('/api/v1/sign/2', json=body, headers={'X-CSRFToken': token})
@@ -14737,6 +14781,7 @@ class OperatorAuthorityScopeTests(PolarisTestCase):
         self._login('operator')
         with self.client.session_transaction() as sess:
             sess.pop('operator_agency_id', None)
+            _bind_account(sess, None)
             token = sess['csrf_token']
         r = self.client.post('/api/v1/sign/1', json={'digest_hex': 'a' * 64},
                              headers={'X-CSRFToken': token})
@@ -16180,6 +16225,7 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
     def _bind(self, agency_id):
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = agency_id
+            _bind_account(sess, agency_id)
 
     def _form(self, path, data):
         csrf = self._csrf_token_from('/verifications/new')   # one token per session
@@ -16285,6 +16331,7 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
                       "AND issuing_agency_id = 2 AND status = 'ACTIVE'", fetch='one')['n']
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)
         csrf = self._csrf_token_from('/verifications/new')
         r = self.client.post('/uc9/decide/%d' % rid, data={
             'decision': 'REJECTED', 'reason': 'bound admin, another authority',
@@ -16313,6 +16360,7 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         before_s = _sql("SELECT count(*) AS n FROM TokenSignature WHERE token_id = 2", fetch='one')['n']
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)
         csrf = self._csrf_token_from('/verifications/new')
         # A binding method the table accepts, so a refusal here can only be the binding check;
         # the first version of this test used 'NFC', which the CHECK constraint refused anyway.
@@ -16336,6 +16384,7 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         tokens = _sql("SELECT count(*) AS n FROM IdentityToken WHERE token_id = 2", fetch='one')['n']
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)
         csrf = self._csrf_token_from('/verifications/new')
         r = self.client.post('/agencies/2/edit', data={
             'name': 'Renamed by another authority', 'agency_type': 'STATE', 'jurisdiction': 'US-XX',
@@ -16353,6 +16402,7 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
         actor_agency_id; leaving it out moved another authority's credential with no check."""
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)
         csrf = self._csrf_token_from('/verifications/new')
         r = self.client.post('/tokens/2/transition', data={'new_status': 'LOST',
                                                           'csrf_token': csrf})
@@ -16370,6 +16420,7 @@ class BoundOperatorActsOnlyAsItsAuthorityTests(PolarisTestCase):
             conn.commit()
         with self.client.session_transaction() as sess:
             sess['operator_agency_id'] = 1
+            _bind_account(sess, 1)
         csrf = self._csrf_token_from('/verifications/new')
         r = self.client.post('/uc8/revoke', data={
             'token_id': '2', 'actor_agency_id': '1', 'reason_code': 'ADMINISTRATIVE',
