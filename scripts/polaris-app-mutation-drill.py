@@ -181,6 +181,15 @@ DECLARED: dict[tuple[str, str], str] = {
     # With both removed, HolderKeyBindingTests.test_only_an_accepted_parameter_set_is_registered
     # fails (measured 2026-09-24: an Ed25519 binding was issuer-signed).
     ("api_v1_holder_key_bind", "event not in"): "masked by chk_holder_key_event, answered 400",
+    # 1.0.0-rc.43: a bound operator's hidden credential is refused before the write. On these two
+    # the write itself runs as the application role, so the token policy already scopes the
+    # UPDATE and the DELETE to nothing; measured one route at a time on rc.42, neither changed
+    # authority 3's token. Kept because that is an accident of which role writes (rc.40 moved
+    # uc5's write to the owner and its twin gate opened). uc5 and uc6's twins ARE caught.
+    ("tokens_transition", "session.get('operator_agency_id') is not None"):
+        "masked by the token policy on the write (measured rc.42); defence in depth",
+    ("tokens_delete", "session.get('operator_agency_id') is not None"):
+        "masked by the token policy on the write (measured rc.42); defence in depth",
     ("api_v1_holder_key_bind", "re.fullmatch"): "masked by chk_holder_key_hex, answered 400",
     ("api_v1_holder_key_bind", "holder_alg not in"): "masked by chk_holder_key_algorithm (2026-09-24), answered 400",
     ("api_v1_exchange_receipt_signed", "_EXCHANGE_MINT_WINDOW"): "stale mint time: federation-instances drill, "
