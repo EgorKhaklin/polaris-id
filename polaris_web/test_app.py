@@ -1407,6 +1407,21 @@ class TokenTests(PolarisTestCase):
 # UC-1 (issuance) TESTS
 # ============================================================================
 
+def _assert_signed_by_the_signing_module(test, token_value, stored, public_key_hex, msg):
+    """The stored signature is what pqc_signing produces for this token, in whichever mode
+    runs. Placeholder: SHA3-256(token_value) with no key. Real ML-DSA-65 (added 2026-09-25,
+    when test_app first ran under it): a key is stored beside the signature and both
+    witnesses accept the pair. Asserting the placeholder bytes alone made this suite fail
+    under the real signer, so the real path had never run through it."""
+    import hashlib
+    import pqc_signing
+    if pqc_signing.is_enabled():
+        test.assertTrue(public_key_hex, msg + " (a real signature must store its key)")
+        test.assertTrue(pqc_signing.verify_stored_signature(token_value, stored, public_key_hex), msg)
+    else:
+        test.assertEqual(stored, hashlib.sha3_256(token_value.encode('utf-8')).digest(), msg)
+
+
 class UC1Tests(PolarisTestCase):
 
     def test_form_renders(self):
@@ -1437,7 +1452,6 @@ class UC1Tests(PolarisTestCase):
         TokenSignature.signature_bytes (a deterministic SHA3-256 binding of
         token_value with POLARIS_USE_REAL_PQC unset), not a hardcoded SQL
         string. This is the test that the pqc_signing island is wired."""
-        import hashlib
         token_value = 'TKN-PQC-WIRE-0001'
         r = self._post('/uc1/issue', data={
             'legal_name': 'PQC Wire Holder',
@@ -1460,7 +1474,7 @@ class UC1Tests(PolarisTestCase):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT s.signature_bytes FROM TokenSignature s "
+                    "SELECT s.signature_bytes, s.signing_public_key_hex FROM TokenSignature s "
                     "JOIN IdentityToken t ON s.token_id = t.token_id "
                     "WHERE t.token_value = %s", (token_value,))
                 row = cur.fetchone()
@@ -1468,9 +1482,9 @@ class UC1Tests(PolarisTestCase):
             conn.close()
         self.assertIsNotNone(row, "no TokenSignature for the issued token")
         stored = bytes(row['signature_bytes'])
-        expected = hashlib.sha3_256(token_value.encode('utf-8')).digest()
-        self.assertEqual(stored, expected,
-            "issuance signature is not the signing module's SHA3-256 placeholder; "
+        _assert_signed_by_the_signing_module(
+            self, token_value, stored, row['signing_public_key_hex'],
+            "issuance signature is not the signing module's output; "
             "the route may be bypassing pqc_signing")
         self.assertNotIn(b'UC1_ISSUE_PLACEHOLDER', stored)
 
@@ -1498,7 +1512,14 @@ class UC1Tests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         body = r.get_data(as_text=True)
         self.assertIn('Verification', body, "the token-detail signature table must have a Verification column")
-        self.assertIn('placeholder', body, "a freshly-issued placeholder signature must verify as 'placeholder'")
+        import pqc_signing
+        if pqc_signing.is_enabled():
+            # 2026-09-25: under real ML-DSA-65 the stored signature carries its key and the
+            # page must show it authenticated, not a placeholder.
+            self.assertIn('&#10003; verified', body, "a real signature must verify at use")
+            self.assertNotIn('placeholder', body.split('<h3>Token Signatures</h3>')[1].split('</table>')[0])
+        else:
+            self.assertIn('placeholder', body, "a freshly-issued placeholder signature must verify as 'placeholder'")
         # The stored signature must not equal a value that would render as INVALID
         # for a correctly-issued token.
         self.assertNotIn('&#10007; INVALID', body, "a correctly-issued signature must not show INVALID")
@@ -3066,7 +3087,6 @@ class MultiSignatureTests(PolarisTestCase):
         """v9.119: the /uc6/migrate route routes the migration signature through
         pqc_signing (the placeholder path stores sha3(token_value)), not the old
         hardcoded UC6_OPERATOR_MIGRATE string."""
-        import hashlib
         tid = self._seed_token(label='uc6-route', algorithm_id=1)
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT token_value FROM IdentityToken WHERE token_id=%s", (tid,))
@@ -3077,13 +3097,14 @@ class MultiSignatureTests(PolarisTestCase):
         }, follow_redirects=True)
         self.assertEqual(r.status_code, 200)
         with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT signature_bytes FROM TokenSignature "
+            cur.execute("SELECT signature_bytes, signing_public_key_hex FROM TokenSignature "
                         "WHERE token_id=%s AND algorithm_id=2", (tid,))
             row = cur.fetchone()
         self.assertIsNotNone(row, "uc6 route did not add a signature for the new algorithm")
         stored = bytes(row['signature_bytes'])
-        self.assertEqual(stored, hashlib.sha3_256(token_value.encode('utf-8')).digest(),
-            "uc6 migration signature is not the signing module's SHA3-256 output")
+        _assert_signed_by_the_signing_module(
+            self, token_value, stored, row['signing_public_key_hex'],
+            "uc6 migration signature is not the signing module's output")
         self.assertNotIn(b'UC6_OPERATOR_MIGRATE', stored)
 
     def test_migrate_rejects_nonexistent_token(self):
@@ -11169,7 +11190,7 @@ class AuthenticityPackTests(PolarisTestCase):
             cur.execute("SELECT token_id FROM IdentityToken WHERE token_value=%s", (token_value,))
             return cur.fetchone()['token_id']
 
-    def _run_detached_verifier(self, pack):
+    def _run_detached_verifier(self, pack, *extra):
         """Run the ACTUAL shipped scripts/polaris-verify.py on a pack via stdin.
         The point of the test is that this is a separate process with no Polaris
         imports — exactly how a relying party runs it."""
@@ -11177,7 +11198,7 @@ class AuthenticityPackTests(PolarisTestCase):
         script = str(pathlib.Path(__file__).resolve().parent.parent / "scripts" / "polaris-verify.py")
         # polaris-verify 0.1.0 refuses to start until the run says what cryptography it is
         # doing (exit 4). A relying party declares it, so this test does too.
-        return subprocess.run([sys.executable, script, "--pqc-provider", "auto", "--json"],
+        return subprocess.run([sys.executable, script, "--pqc-provider", "auto", "--json", *extra],
                               input=_json.dumps(pack), capture_output=True, text=True)
 
     def test_pack_round_trips_through_the_detached_verifier(self):
@@ -11189,6 +11210,20 @@ class AuthenticityPackTests(PolarisTestCase):
         self.assertEqual(pack['token_value'], 'AUTHPACK-RT-0001')
         self.assertEqual(pack['digest_construction'], 'SHA3-256(token_value.encode("utf-8"))')
         self.assertIn('verify_with', pack)
+        import pqc_signing
+        if pqc_signing.is_enabled():
+            # 2026-09-25: under real ML-DSA-65 the pack carries the key, and the shipped
+            # detached verifier authenticates it with both witnesses (exit 0).
+            self.assertTrue(pack['real_signature'])
+            self.assertTrue(pack['public_key_hex'])
+            # Authenticity is the question here, not issuer trust: without --signature-only
+            # the verifier abstains (exit 2) on a genuine signature it has no anchor for.
+            proc = self._run_detached_verifier(pack, '--signature-only')
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            verdict = _json.loads(proc.stdout)
+            self.assertTrue(verdict['signature_valid'])
+            self.assertIn('liboqs=valid', verdict['witnesses'])
+            return
         # No real key in the placeholder profile; the pack says so plainly.
         self.assertFalse(pack['real_signature'])
         self.assertIsNone(pack['public_key_hex'])
@@ -11219,12 +11254,23 @@ class AuthenticityPackTests(PolarisTestCase):
         import json as _json
         tid = self._issue_token('AUTHPACK-TAMPER-0001')
         pack = self.client.get(f'/api/tokens/{tid}/authenticity-pack').get_json()
-        pack['signature_hex'] = '00' * 32  # not the real SHA3 binding
+        import pqc_signing
+        real = pqc_signing.is_enabled()
+        if real:
+            # Flip one byte of a genuine ML-DSA-65 signature: every witness must refuse it.
+            sig = bytearray.fromhex(pack['signature_hex']); sig[0] ^= 1
+            pack['signature_hex'] = sig.hex()
+        else:
+            pack['signature_hex'] = '00' * 32  # not the real SHA3 binding
         proc = self._run_detached_verifier(pack)
         self.assertEqual(proc.returncode, 2)
         verdict = _json.loads(proc.stdout)
         self.assertFalse(verdict['signature_valid'])
-        self.assertIn('does NOT match', verdict['note'])
+        if real:
+            self.assertTrue(verdict['witnesses'])
+            self.assertTrue(all('INVALID' in w for w in verdict['witnesses']), verdict['witnesses'])
+        else:
+            self.assertIn('does NOT match', verdict['note'])
 
     def test_pack_404_for_missing_token(self):
         self.assertEqual(self.client.get('/api/tokens/999999/authenticity-pack').status_code, 404)

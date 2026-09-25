@@ -750,6 +750,23 @@ def run(argv, out=None):
             else:
                 print("run: app-role suite: PASS (%s)" % "; ".join(
                     x.split(": ", 1)[1] for x in summary if x.startswith("app-role suite:")), file=out)
+            # 2026-09-25: the same module under real ML-DSA-65. Everything above signs with the
+            # development placeholder; the first real run found five tests asserting the
+            # placeholder's bytes. Skipped (and said so) where liboqs is not installed.
+            rs = subprocess.run([py, os.path.join(ROOT, "scripts", "polaris-real-signer-suite.py")],
+                                cwd=ROOT, env=ar_env, capture_output=True, text=True)
+            summary = [x for x in _plain(rs.stdout or "").splitlines()
+                       if x.startswith(("real-signer suite:", "OK:", "  FAIL", "       "))]
+            if rs.returncode == 3:
+                print("run: real-signer suite: SKIPPED (liboqs is not importable here)", file=out)
+            elif rs.returncode != 0:
+                print("run: real-signer suite: FAILED", file=out)
+                for x in summary:
+                    print("    " + x, file=out)
+                failed = True
+            else:
+                print("run: real-signer suite: PASS (%s)" % "; ".join(
+                    x.split(": ", 1)[1] for x in summary if x.startswith("real-signer suite:")), file=out)
         return 1 if (failed or ran != total) else 0
     finally:
         for port in redis_ports:

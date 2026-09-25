@@ -1816,6 +1816,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       # fetch-depth 2 so the SDK drill's --changed has a baseline. Without it HEAD~1 is
@@ -2299,6 +2308,32 @@ jobs:
         run: |
           set -o pipefail
           python -m unittest test_custody -v 2>&1 | grep -v faulthandler
+
+      # 2026-09-25: the web suite had only ever run with the placeholder signer; the first run
+      # under real ML-DSA-65 found five tests asserting the placeholder's bytes. This job has
+      # liboqs and a Postgres server, so it loads a test database and runs test_app whole.
+      # The ZK class skips here (no polaris-zk binary in this job; it runs in the main job
+      # under the placeholder), and the suite's summary line counts that skip.
+      - name: Web suite under real ML-DSA-65 (test_app, the whole module)
+        env:
+          PGPASSWORD: ci_password
+          POLARIS_DB_HOST: localhost
+          POLARIS_DB_PORT: '5432'
+          POLARIS_DB_NAME: polaris_test
+          POLARIS_DB_USER: postgres
+          POLARIS_DB_PASSWORD: ci_password
+          POLARIS_SECRET_KEY: ci-only-test-secret-key-32-bytes-long
+          POLARIS_STATE_DIR: /tmp/polaris-state
+          POLARIS_TEST_REDIS_URL: redis://localhost:6379/0
+        run: |
+          pip install -r polaris_web/requirements-dev.txt
+          mkdir -p "$POLARIS_STATE_DIR"
+          createdb -h localhost -U postgres polaris_test
+          (cd polaris_sql && psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -q -f 00_load_all.sql)
+          for f in $(ls polaris_sql/migrations/*.up.sql | sort); do
+            psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          python scripts/polaris-real-signer-suite.py
 
   # --------------------------------------------------------------------------
   # v9.299 (roadmap P3.10) — federation proven across the DEPLOYMENT boundary.

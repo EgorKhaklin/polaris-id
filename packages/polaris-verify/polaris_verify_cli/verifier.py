@@ -27,8 +27,11 @@ issuer has published (so it is genuinely the issuer's key, not an attacker's).
 Two independent witnesses, exactly like Polaris issuance: liboqs (primary) and
 cryptography/OpenSSL (a second, independent implementation). They must AGREE.
 
-Exit code 0 iff the signature is valid (and, when an anchor is given, the key is
-trusted). 2 iff invalid. 3 on a usage/dependency error.
+Exit code 0 iff the signature is valid AND either the key is in the --issuer-anchor
+trust root or the caller passed --signature-only; 2 when it is invalid, untrusted, or no
+trust root was given (an abstention: a genuine signature is not a trusted issuer, since
+2026-09-17); 3 on a usage/dependency error; 4 when no cryptography was declared. The
+README's exit-code table is the full list.
 
 Dependencies: `pip install liboqs-python` (primary). Optionally
 `cryptography>=48` on OpenSSL 3.5+ for the independent second witness.
