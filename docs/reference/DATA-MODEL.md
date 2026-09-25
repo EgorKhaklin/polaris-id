@@ -201,6 +201,8 @@ Every state transition of an IdentityToken.
 **Trigger:** `trg_lifecycle_append_only` (BEFORE UPDATE OR DELETE)
 raises `insufficient_privilege`. Constraint C1.
 
+Written only by `uc1_issue_and_activate`, `uc5_bind_device`, `uc_bulk_issue` and the `audit_token_state_change` trigger, all `SECURITY DEFINER`; the application role holds `SELECT` only, on the parent and on every partition (1.0.0-rc.40).
+
 ### `VerificationEvent`
 
 Every verification attempt.
@@ -262,6 +264,8 @@ use. The holder proof signed with this key covers the credential, the context, t
 nonce and the instant, and deliberately NOT the presented code, so a coerced presentation stays
 byte-indistinguishable from a consenting one.
 
+`chk_holder_key_algorithm` confines `algorithm` to `ML-DSA-65` and `ML-DSA-87` (2026-09-24); the route's allowlist had been the only guard, and with it removed the issuer signed a binding naming a classical algorithm.
+
 ### `TimestampLog` (constraint C1: append-only; roadmap P8.5b)
 
 The timestamp transparency log (v9.341). `seq BIGSERIAL PRIMARY KEY`, `timestamp_hash CHAR(64)
@@ -308,6 +312,8 @@ active) with the instants each took effect; the signed trust list
 registry report real statuses from it. Transitions are one-way by construction;
 append-only by trigger (`trg_authority_key_event_append_only`) and by privilege.
 
+`chk_authority_key_algorithm` confines `algorithm` to `ML-DSA-65` and `ML-DSA-87` (2026-09-24), the value the trust list publishes for relying parties to verify under.
+
 ## Operational tables
 
 ### `AuthAuditLog`
@@ -337,7 +343,7 @@ written to `AuthAuditLog`.
 | `role` | VARCHAR(20) NOT NULL | `admin` \| `operator` \| `auditor` at login |
 | `client_ip` | VARCHAR(45) | proxy-aware client address at login |
 | `created_at` / `last_seen_at` | TIMESTAMPTZ NOT NULL | `last_seen_at` touched at most once a minute |
-| `revoked_at` / `revoke_reason` | TIMESTAMPTZ / VARCHAR(20) | co-NULL; reason in `logout`, `evicted`, `idle`, `deactivated`, `network_policy`, `password_changed`, `operator`, `role_changed` (1.0.0-rc.13) |
+| `revoked_at` / `revoke_reason` | TIMESTAMPTZ / VARCHAR(20) | co-NULL; reason in `logout`, `evicted`, `idle`, `deactivated`, `network_policy`, `password_changed`, `operator`, `role_changed` (1.0.0-rc.13), `agency_changed` (1.0.0-rc.44: the account's authority binding changed while the session was live) |
 
 ---
 
@@ -561,6 +567,8 @@ wrote nothing anywhere. Pinned by `check_relying_party_decisions_cannot_be_silen
 and `TestRelyingPartyDecisionsAreRecorded`; migration
 `2026-09-11-018-relying-party-events`.
 
+A direct `INSERT` is refused and `db_role` is always the session's own (1.0.0-rc.38): the application role holds `INSERT` because the recorder runs as the caller, and until then could append an event nothing did.
+
 ### `AgencyEvent`
 
 Append-only record of every decision about an issuing authority (v9.440):
@@ -604,6 +612,8 @@ and have its `authorization_level` raised from 3 to 5 in silence, while
 `polaris-id` had no command for the row at the root of the hierarchy. Pinned by
 `check_authority_creation_is_recorded` and `TestAuthorityChangesAreRecorded`;
 migration `2026-09-12-002-agency-events`.
+
+A direct `INSERT` is refused and `db_role` is always the session's own (1.0.0-rc.38): the application role holds `INSERT` because the recorder runs as the caller, and until then could append an event nothing did.
 
 ### `AppUserEvent`
 
@@ -669,6 +679,8 @@ Deliberately **not** a foreign key to `AppUser`, for the reason `AgencyEvent` is
 not one to `Agency`. Pinned by `check_operator_accounts_are_recorded` and
 `TestAppUserChangesAreRecorded`; migration `2026-09-12-003-app-user-events`.
 
+A direct `INSERT` is refused and `db_role` is always the session's own (1.0.0-rc.38): the application role holds `INSERT` because the recorder runs as the caller, and until then could append an event nothing did.
+
 ### `AgencyQuota`
 
 Opt-in per-agency caps enforced by the `enforce_agency_quota` trigger on
@@ -721,6 +733,8 @@ The companion view `IndividualCurrentEnrollment` (defined in
 `civic_enrollment_summary(jurisdiction)` (in `07_queries.sql`)
 returns per-jurisdiction × status counts only: per-individual
 enumeration of `NOT_ENROLLED` is deliberately not first-class.
+
+A direct `INSERT` is refused unless it comes from the seeding trigger or the table's owner (1.0.0-rc.39): a person's enrollment status is the latest row, and the application role could otherwise make anyone `ENROLLED`.
 
 ### `RecoveryRequest`
 
@@ -906,6 +920,8 @@ cutoff silently.
 ---
 
 ---
+
+A single decision is recorded through `uc_set_retention_policy` (1.0.0-rc.45), `SECURITY DEFINER` like `uc_apply_retention_template`; the application role is refused `UPDATE` here, so superseding a decision always goes through a procedure that checks the actor.
 
 ## Stored procedures (`05_procedures.sql`)
 
