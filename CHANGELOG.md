@@ -11,6 +11,29 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.51 — 2026-09-25 (the anchoring layer is written only by the procedure that closes a batch)
+
+CORE-BUG against the anchoring contract: `close_anchor_batch` sizes a batch from its pending
+leaves, refuses a deprecated algorithm, and assigns every pending anchor with its proof in a
+deterministic order ("defeats the publish-then-fork attack"). Externally observable: the
+application role can no longer write `AnchorBatch` or `BlockchainAnchor`. Schema change: migration
+`2026-09-25-010-anchors-written-only-by-close-anchor-batch`. Nothing is published.
+
+The application role held INSERT on `AnchorBatch`, and INSERT, UPDATE and DELETE on
+`BlockchainAnchor`, which carries no trigger. It could record a batch whose `batch_size` no
+leaves bear out, or one under a deprecated algorithm. After a batch closed it could move an
+anchor into another batch and rewrite its Merkle proof: the publish-then-fork the procedure's
+ordering exists to prevent, done by other means. The application writes neither table; only
+the sample data and the procedure, already SECURITY DEFINER, do. Third pair closed in the
+open-door sweep.
+
+- The application role loses INSERT on `AnchorBatch` and INSERT, UPDATE and DELETE on
+  `BlockchainAnchor`.
+- Test: `test_app_role_cannot_write_the_anchoring_layer`, as `polaris_app`, covers four
+  attempts: moving an anchor, adding one, deleting one, recording a batch. Each fails with the
+  down migration applied.
+- `check_aor_privilege_boundary` requires both revokes; two new detection cases.
+
 ## v1.0.0-rc.50 — 2026-09-25 (a federation trust edge is recorded and revoked only through its admin-gated procedures)
 
 CORE-BUG against the federation contract that a trust edge is an admin's decision

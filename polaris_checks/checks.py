@@ -822,6 +822,14 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         if not head or not re.search(r"SECURITY\s+DEFINER", head.group(0), re.I):
             return _fail("c1_aor_priv", routine + " must be SECURITY DEFINER: it is the federation "
                                         "trust graph's only door (C1)")
+    # 2026-09-25. The anchoring layer: written by close_anchor_batch and the sample data only.
+    if not (re.search(r"REVOKE\s+INSERT\s+ON\s+AnchorBatch\s+FROM\s+polaris_app", grants, re.I)
+            and re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+BlockchainAnchor\s+FROM\s+polaris_app",
+                          grants, re.I)):
+        return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON AnchorBatch and INSERT, UPDATE, "
+                                    "DELETE ON BlockchainAnchor: the application writes neither, and "
+                                    "BlockchainAnchor has no trigger to stop an anchor being moved "
+                                    "between batches (C1)")
     triggers = _read(root, "polaris_sql/06_triggers.sql")
     imm = re.search(r"FUNCTION\s+enforce_attestation_immutability\b.*?END\$\$;", triggers, re.I | re.S)
     if not imm or "uc10_revoke_attestation" not in imm.group(0) or "proowner" not in imm.group(0):

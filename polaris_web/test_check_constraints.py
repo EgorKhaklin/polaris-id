@@ -1273,12 +1273,13 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 row = cur.fetchone()
             self.assertFalse(row["upd"], f"polaris_app must not hold UPDATE on {tbl}")
             self.assertFalse(row["del"], f"polaris_app must not hold DELETE on {tbl}")
-            # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves, are written
-            # only by SECURITY DEFINER routines.
+            # Since rc.40 the lifecycle log, and since 2026-09-25 the epoch leaves and the anchor
+            # batches, are written only by SECURITY DEFINER routines.
             self.assertEqual(bool(row["ins"]),
-                             tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf"),
-                             f"append-only is insert-allowed except the lifecycle log and the "
-                             f"epoch leaves: {tbl}")
+                             tbl.lower() not in ("tokenlifecycleevent", "tokenstateepochleaf",
+                                                 "anchorbatch"),
+                             f"append-only is insert-allowed except the lifecycle log, the epoch "
+                             f"leaves and the anchor batches: {tbl}")
             conn.rollback()
 
     def test_app_role_records_and_revokes_trust_only_through_uc10(self):
@@ -1312,6 +1313,28 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertTrue(cur.fetchone()["revoked"], "the procedure still revokes for the role")
             cur.execute("CALL uc10_attest_trust(6, 1, 1, (now()::date + 30), %s)", (admin,))
         conn.rollback()
+
+    def test_app_role_cannot_write_the_anchoring_layer(self):
+        """2026-09-25. BlockchainAnchor has no trigger, and the application role held UPDATE on it:
+        after a batch closed, an anchor could be moved into another batch and its Merkle proof
+        rewritten. With INSERT on AnchorBatch it could record a batch whose size no leaves bear
+        out. The application writes neither table; close_anchor_batch does, as the owner."""
+        conn = self._app_conn()
+        attempts = (
+            ("move an anchor into another batch",
+             "UPDATE BlockchainAnchor SET batch_id = batch_id, merkle_proof = '[]'::jsonb "
+             "WHERE anchor_id = (SELECT min(anchor_id) FROM BlockchainAnchor)"),
+            ("add an anchor", "INSERT INTO BlockchainAnchor (token_id, did, commitment_hash, ledger_network) "
+                              "VALUES (1, 'did:x', 'ab', 'X')"),
+            ("delete an anchor", "DELETE FROM BlockchainAnchor WHERE anchor_id = 0"),
+            ("record a batch", "INSERT INTO AnchorBatch (merkle_root, algorithm_id, batch_size) "
+                               "VALUES ('ab', 1, 5000)"),
+        )
+        for label, sql in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
 
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch

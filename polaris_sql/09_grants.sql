@@ -154,6 +154,14 @@ REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;
 -- revocation only from uc10_revoke_attestation.
 REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;
 
+-- 2026-09-25. The anchoring layer is written only by close_anchor_batch (SECURITY DEFINER) and by
+-- the sample data. With INSERT on AnchorBatch the application role could record a batch whose
+-- size no leaves bear out, or under a deprecated algorithm; with UPDATE on BlockchainAnchor,
+-- which has no trigger, it could move an anchor into another batch or rewrite its Merkle proof
+-- after the batch closed. The application writes neither table.
+REVOKE INSERT ON AnchorBatch FROM polaris_app;
+REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
 -- bound enforced by uc8_revoke_token.

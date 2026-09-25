@@ -1683,7 +1683,9 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
               "    PERFORM polaris_lock_event_partitions();\nEND $$;\n")
     epochs = ("REVOKE INSERT, UPDATE, DELETE ON TokenStateEpoch FROM polaris_app;\n"
               "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n"
-              "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n")
+              "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n"
+              "REVOKE INSERT ON AnchorBatch FROM polaris_app;\n"
+              "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n")
     full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
             "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
@@ -1737,6 +1739,14 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when the trigger does not ask for the revocation procedure's owner"
     (sql / "06_triggers.sql").write_text(immutable)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
+
+    # 9. 2026-09-25: the anchoring layer.
+    for gone in ("REVOKE INSERT ON AnchorBatch FROM polaris_app;\n",
+                 "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n"):
+        write(full.replace(gone, ""), True, True)
+        assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", gone
+    write(full, True, True)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
 
 
