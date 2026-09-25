@@ -201,6 +201,8 @@
 % The town analogy, always returned from. An unbreakable box: it is a few lines long, and a
 % few lines split across a page break read worse than the space a whole box leaves behind
 % when it moves to the next page. Readability over page count.
+% \motif: одна строка, которой открывается каждое кольцо, единственная мысль документа для этого кольца (25.09.2026).
+\newcommand{\motif}[1]{\par\vspace{2pt}{\centering\itshape\color{navymid}#1\par}\vspace{6pt}}
 \newcommand{\analogy}[1]{\par\vspace{4pt}\begin{tcolorbox}[enhanced, colback=tabstripe, colframe=tabstripe, boxrule=0pt, arc=0pt, outer arc=0pt, left=6pt, right=6pt, top=6pt, bottom=6pt, boxsep=0pt, before skip=0pt, after skip=0pt]\small{\scshape\color{gold}в городе}\enspace #1\end{tcolorbox}\par\vspace{4pt}}
 % Why the next layer exists: the causal step.
 \newcommand{\nextlayer}[1]{\par\vspace{4pt}\noindent{\color{accent}\rule[-3pt]{2.5pt}{13pt}}\hspace{7pt}\parbox[t]{\dimexpr\textwidth-12pt}{\small\itshape #1}\par\vspace{4pt}}
