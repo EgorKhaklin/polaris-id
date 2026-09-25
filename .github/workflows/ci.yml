@@ -81,6 +81,9 @@ jobs:
       POLARIS_DB_NAME: polaris_test
       POLARIS_DB_USER: postgres
       POLARIS_DB_PASSWORD: ci_password
+      # The application role's password, as 09_grants.sql creates it. Without it the tests that
+      # connect AS polaris_app (the C1 privilege boundary) could not log in and skipped.
+      POLARIS_APP_TEST_PASSWORD: polaris_dev_password
       POLARIS_SECRET_KEY: ci-only-test-secret-key-32-bytes-long
       # v9.280 (PE.1) — this suite runs the SHA3-256 placeholder signer (no liboqs
       # here). Name the dev profile explicitly so the boot is quiet and honest,

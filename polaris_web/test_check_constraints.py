@@ -1132,6 +1132,13 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         try:
             conn = psycopg2.connect(cursor_factory=RealDictCursor, **cfg)
         except psycopg2.OperationalError as exc:
+            # 2026-09-24: CI gave this role the superuser's password, the connection failed,
+            # and every test here SKIPPED, so the C1 privilege boundary was never exercised in
+            # CI (rc.38's guards could be dropped with nothing going red). A skip is a pass
+            # nobody reads. In CI it is a failure; elsewhere it still skips, with the reason.
+            if os.environ.get("CI"):
+                self.fail(f"polaris_app role unreachable in CI, so the privilege-boundary tests "
+                          f"cannot run: {exc}. Set POLARIS_APP_TEST_PASSWORD.")
             self.skipTest(f"polaris_app role unreachable: {exc}")
         self.addCleanup(conn.close)
         return conn
