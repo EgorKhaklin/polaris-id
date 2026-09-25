@@ -1474,6 +1474,21 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             owner.rollback()
             owner.close()
 
+    def test_the_partition_manager_refuses_an_absurd_horizon(self):
+        """p_months_ahead is bounded 0..60 (the full procedure drill found the bound untested,
+        2026-09-24). A negative horizon or a century of empty partitions is refused."""
+        owner = psycopg2.connect(**DB_CONFIG)
+        try:
+            for months in (-1, 61):
+                with owner.cursor() as cur:
+                    with self.assertRaises(psycopg2.Error, msg=months) as ctx:
+                        cur.execute("CALL uc_ensure_event_partitions(%s)", (months,))
+                    self.assertIn("between 0 and 60", str(ctx.exception))
+                owner.rollback()
+        finally:
+            owner.rollback()
+            owner.close()
+
     def test_a_partition_made_later_is_locked_too(self):
         """The partition manager takes the blanket grant back from each partition it creates."""
         # In ONE transaction, rolled back: the partitions this makes (and the triggers each
