@@ -46,8 +46,10 @@ VALID_OUTCOMES         = ['SUCCESS', 'FAILURE', 'EXPIRED', 'UNAUTHORIZED']
 LAT = st.floats(min_value=-89.99, max_value=89.99, allow_nan=False, allow_infinity=False)
 LON = st.floats(min_value=-179.99, max_value=179.99, allow_nan=False, allow_infinity=False)
 
+# 15 keeps the suite fast enough to run on every push; POLARIS_PROPERTY_EXAMPLES raises it for a
+# deliberate soak (2026-09-25: 400 per property, locally), which is where a rare input shows up.
 HYPOTHESIS_SETTINGS = settings(
-    max_examples=15,
+    max_examples=int(os.environ.get("POLARIS_PROPERTY_EXAMPLES", "15")),
     deadline=None,
     suppress_health_check=[HealthCheck.function_scoped_fixture],
 )
