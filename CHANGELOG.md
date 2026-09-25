@@ -11,6 +11,29 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.39 — 2026-09-24 (the application role could set a person's enrollment status)
+
+CORE-BUG against rc.38. Externally observable: a direct `INSERT` into `EnrollmentStatusEvent`
+is refused unless it comes from the recording trigger or from the table's owner. Schema change:
+migration `2026-09-24-012-enrollment-status-written-only-by-its-recorder`. Nothing is
+published.
+
+The sibling of rc.38, found by asking which other append-only tables the application role
+holds `INSERT` on but never writes itself. A person's enrollment status is the latest
+`EnrollmentStatusEvent`, and `/api/v1/auth/authorize` refuses a holder who does not meet a
+relying party's `required_enrollment`. Nothing in the product writes one except the trigger
+that seeds `NOT_ENROLLED` when a person is created; the sample data is loaded by the owner. The
+grant exists only because that trigger runs as the caller. Measured on rc.38: connected as
+`polaris_app`, one `INSERT` made person 5, `LAPSED`, `ENROLLED`.
+
+A `BEFORE INSERT` trigger on the partitioned parent refuses the row unless it arrives from
+inside a trigger or the session is the owner, so the sample load and an operator at the
+console still work, and a partition written directly obeys the same rule. The test also creates
+a person as the application role and checks the seed still arrives.
+
+Counterexample, failing on rc.38:
+`test_check_constraints.TestC1PrivilegeBoundary.test_the_application_cannot_set_a_persons_enrollment_status`.
+
 ## v1.0.0-rc.38 — 2026-09-24 (the application role could invent entries in the change records)
 
 CORE-BUG against rc.37. Externally observable: a direct `INSERT` into `AgencyEvent`,

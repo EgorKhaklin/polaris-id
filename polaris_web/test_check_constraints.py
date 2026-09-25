@@ -1309,6 +1309,29 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertEqual(cur.fetchone()["db_role"], "polaris_app")
         conn.rollback()
 
+    def test_the_application_cannot_set_a_persons_enrollment_status(self):
+        """1.0.0-rc.39. Enrollment status is the latest EnrollmentStatusEvent, and a relying
+        party's required_enrollment is decided on it at sign-in. Measured on rc.38: as
+        polaris_app, one INSERT made a LAPSED person ENROLLED."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.InsufficientPrivilege) as ctx:
+                cur.execute("INSERT INTO EnrollmentStatusEvent (individual_id, status, "
+                            "transition_reason, recorded_by_agency_id) "
+                            "VALUES (5, 'ENROLLED', 'forged', 1)")
+            self.assertIn("written only by the trigger", str(ctx.exception))
+        conn.rollback()
+        # The recorder still writes: a person created by the application is seeded NOT_ENROLLED.
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO Individual (legal_name, date_of_birth, jurisdiction) "
+                        "VALUES ('Enrollment Guard Probe', DATE '1990-01-01', 'US-PA') "
+                        "RETURNING individual_id")
+            iid = cur.fetchone()["individual_id"]
+            cur.execute("SELECT current_status FROM IndividualCurrentEnrollment "
+                        "WHERE individual_id = %s", (iid,))
+            self.assertEqual(cur.fetchone()["current_status"], "NOT_ENROLLED")
+        conn.rollback()
+
     def test_app_role_can_still_append_audit_rows(self):
         conn = self._app_conn()
         with conn.cursor() as cur:

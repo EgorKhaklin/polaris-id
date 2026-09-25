@@ -1883,3 +1883,36 @@ DROP TRIGGER IF EXISTS trg_relying_party_event_by_recorder ON RelyingPartyEvent;
 CREATE TRIGGER trg_relying_party_event_by_recorder
     BEFORE INSERT ON RelyingPartyEvent
     FOR EACH ROW EXECUTE FUNCTION enforce_event_written_by_its_recorder();
+
+-- ----------------------------------------------------------------------------
+-- 1.0.0-rc.39. A person's enrollment status is the latest EnrollmentStatusEvent, and a
+-- relying party's required_enrollment is decided on it at sign-in. Nothing in the product
+-- writes one except seed_default_enrollment_status (NOT_ENROLLED, when a person is created);
+-- the sample data is loaded by the owner. But polaris_app holds INSERT, because that seeding
+-- trigger runs as the caller, and so the application role could append ENROLLED for anyone.
+-- Measured on rc.38: person 5, LAPSED, made ENROLLED by one INSERT, which is the status a
+-- relying party requiring enrollment then admits. A direct INSERT is now refused unless it
+-- comes from inside a trigger or from the table's owner (the sample load, an operator at the
+-- console). The rule is on the partitioned parent, so a partition written directly obeys it.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION enforce_enrollment_status_written_by_its_recorder()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF pg_trigger_depth() < 2
+       AND session_user::name <> (SELECT pg_get_userbyid(relowner) FROM pg_class
+                                   WHERE oid = 'EnrollmentStatusEvent'::regclass) THEN
+        RAISE EXCEPTION 'EnrollmentStatusEvent is written only by the trigger that records an '
+                        'enrollment, or by the owner; a direct INSERT would set a person''s '
+                        'enrollment status that nothing established'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enrollment_event_by_recorder ON EnrollmentStatusEvent;
+CREATE TRIGGER trg_enrollment_event_by_recorder
+    BEFORE INSERT ON EnrollmentStatusEvent
+    FOR EACH ROW EXECUTE FUNCTION enforce_enrollment_status_written_by_its_recorder();
