@@ -3401,7 +3401,7 @@ class IssuerFederationTests(PolarisTestCase):
                         (attesting_agency_id, attested_agency_id, context_id,
                          valid_until, signed_by)
                     VALUES (1, 1, %s, %s, %s)
-                """, (ctx, datetime.now().date() + timedelta(days=30), admin))
+                """, (ctx, datetime.now(timezone.utc).date() + timedelta(days=30), admin))
 
     def test_zero_duration_attestation_rejected_by_check(self):
         with self._db() as conn, conn.cursor() as cur:
@@ -3457,7 +3457,7 @@ class IssuerFederationTests(PolarisTestCase):
         with self._db() as conn, conn.cursor() as cur:
             cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
                         (attesting, attested, ctx,
-                         datetime.now().date() + timedelta(days=days), signer))
+                         datetime.now(timezone.utc).date() + timedelta(days=days), signer))
             conn.commit()
 
 
@@ -3636,7 +3636,7 @@ class IssuerFederationTests(PolarisTestCase):
         ctx = self._context_id('MOTOR_VEHICLE')
         with self._db() as conn, conn.cursor() as cur:
             cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
-                        (4, 2, ctx, datetime.now().date() + timedelta(days=30), admin))
+                        (4, 2, ctx, datetime.now(timezone.utc).date() + timedelta(days=30), admin))
             cur.execute("""
                 SELECT attestation_id FROM AgencyTrustAttestation
                  WHERE attesting_agency_id=4 AND attested_agency_id=2
@@ -3664,7 +3664,7 @@ class IssuerFederationTests(PolarisTestCase):
             with self.assertRaises(psycopg2.Error):
                 cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
                             (1, 2, ctx,
-                             datetime.now().date() + timedelta(days=30), op))
+                             datetime.now(timezone.utc).date() + timedelta(days=30), op))
 
     # -- Verification-flow contract (R1: no transitive trust) ---------------
 
@@ -3776,7 +3776,7 @@ class IssuerFederationTests(PolarisTestCase):
         with self._db() as conn, conn.cursor() as cur:
             cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
                         (1, 6, ctx_travel,
-                         datetime.now().date() + timedelta(days=30), admin))
+                         datetime.now(timezone.utc).date() + timedelta(days=30), admin))
             conn.commit()
 
         # Step 2: Create a token issued by Agency 6 (the "C" in our chain).
@@ -3842,7 +3842,7 @@ class IssuerFederationTests(PolarisTestCase):
         with self._db() as conn, conn.cursor() as cur:
             cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
                         (4, 1, ctx_voting,
-                         datetime.now().date() + timedelta(days=30), admin))
+                         datetime.now(timezone.utc).date() + timedelta(days=30), admin))
             cur.execute("""
                 SELECT attestation_id FROM AgencyTrustAttestation
                  WHERE attesting_agency_id=4 AND attested_agency_id=1
@@ -3918,7 +3918,7 @@ class IssuerFederationTests(PolarisTestCase):
             r = self.client.post('/api/federation/attest', json={
                 'attesting_agency_id': 6, 'attested_agency_id': 1,
                 'context_id': self._context_id('HEALTHCARE'),
-                'valid_until': str(datetime.now().date() + timedelta(days=90))},
+                'valid_until': str(datetime.now(timezone.utc).date() + timedelta(days=90))},
                 headers={'X-CSRFToken': csrf})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertTrue(r.get_json()['attestation_signed'])
@@ -3959,7 +3959,7 @@ class IssuerFederationTests(PolarisTestCase):
             r = self.client.post('/api/federation/attest', json={
                 'attesting_agency_id': 6, 'attested_agency_id': 1,
                 'context_id': self._context_id('HEALTHCARE'),
-                'valid_until': str(datetime.now().date() + timedelta(days=90))},
+                'valid_until': str(datetime.now(timezone.utc).date() + timedelta(days=90))},
                 headers={'X-CSRFToken': csrf})
         after = _sql("SELECT count(*) AS n FROM AgencyTrustAttestation", fetch='one')['n']
         return r, after - before
@@ -4020,7 +4020,7 @@ class IssuerFederationTests(PolarisTestCase):
         added in v8.22)."""
         ctx_mv = self._context_id('MOTOR_VEHICLE')
         csrf = self._csrf_token_from('/verifications/new')
-        valid_until = str(datetime.now().date() + timedelta(days=90))
+        valid_until = str(datetime.now(timezone.utc).date() + timedelta(days=90))
         r = self.client.post(
             '/api/federation/attest',
             json={'attesting_agency_id': 5,
@@ -4374,9 +4374,9 @@ class ZKSnarkTests(PolarisTestCase):
     def test_effective_status_is_the_one_answer_to_is_it_live(self):
         """The helper every route asks: holder-key binding and holder signing share it with
         login, the VC and the mdoc. expiration_date is inclusive."""
-        from datetime import date, timedelta
+        from datetime import datetime, timedelta, timezone
         import rp_api
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
         self.assertEqual(rp_api._effective_status({'status': 'ACTIVE', 'expiration_date': today}),
                          'ACTIVE', 'the last valid day is still valid')
         self.assertEqual(rp_api._effective_status(
@@ -5839,6 +5839,67 @@ class Uc5BindDeviceExpiryTests(PolarisTestCase):
         with self.assertRaises(psycopg2.Error) as ctx:
             self._bind(3)
         self.assertIn('expired', str(ctx.exception))
+
+
+class Uc4ReserveExpiryTests(PolarisTestCase):
+    """uc4_activate_reserve (1.0.0-rc.37): an expired reserve is not activated. The procedure
+    read the reserve's status and never its expiration_date, so reporting a credential lost
+    spent it and handed the holder a replacement that was already dead: ACTIVE in the table,
+    EXPIRED to every verifier, and nothing live left to present."""
+
+    def _holder_with_active(self):
+        tid = _sql("""INSERT INTO IdentityToken
+                          (token_value, physical_serial, hardware_model, biometric_binding_type,
+                           individual_id, issuing_agency_id, algorithm_id, status,
+                           issued_date, expiration_date)
+                      VALUES ('TKN-UC4-EXP', 'SN-UC4-EXP', 'TitanQ-3', 'IRIS', 1, 2, 1,
+                              'RESERVE', CURRENT_TIMESTAMP, (CURRENT_DATE + 3650))
+                      RETURNING token_id""", fetch='one')['token_id']
+        _sql("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
+             "WHERE token_id=%s", (tid,), fetch='none')
+        return tid
+
+    def _activate(self, lost_id):
+        return _sql("SELECT uc4_activate_reserve(%s, 2, 'LOST', 1, %s) AS t",
+                    (lost_id, 'https://crl.idtoken.gov/uc4exp'), fetch='one')['t']
+
+    def test_an_expired_reserve_is_not_activated(self):
+        lost_id = self._holder_with_active()
+        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 1",
+             fetch='none')
+        with self.assertRaises(psycopg2.Error) as ctx:
+            self._activate(lost_id)
+        self.assertIn('expired', str(ctx.exception))
+        after = _sql("SELECT token_id, status FROM IdentityToken WHERE token_id IN (1, %s) "
+                     "ORDER BY token_id", (lost_id,), fetch='all')
+        self.assertEqual([r['status'] for r in after], ['RESERVE', 'ACTIVE'],
+                         'the refusal must leave the holder exactly as they were')
+
+    def test_a_live_reserve_still_activates(self):
+        lost_id = self._holder_with_active()
+        self.assertEqual(self._activate(lost_id), 1, 'control: a live reserve activates')
+
+    def test_no_path_activates_an_expired_credential(self):
+        """The refusal is the state machine's, so a plain UPDATE is refused as uc4 is."""
+        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 1",
+             fetch='none')
+        with self.assertRaises(psycopg2.Error) as ctx:
+            _sql("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
+                 "WHERE token_id = 1", fetch='none')
+        self.assertIn('expired', str(ctx.exception))
+        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE WHERE token_id = 1",
+             fetch='none')
+        _sql("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
+             "WHERE token_id = 1", fetch='none')
+        self.assertEqual(_sql("SELECT status FROM IdentityToken WHERE token_id = 1",
+                              fetch='one')['status'], 'ACTIVE',
+                         'control: a credential live through today still activates')
+
+    def test_the_form_offers_no_expired_reserve(self):
+        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 1",
+             fetch='none')
+        body = self.client.get('/uc4/activate-reserve').get_data(as_text=True)
+        self.assertNotIn('Adrian Vasquez', body)
 
 
 class RateWindowTests(unittest.TestCase):
@@ -8059,7 +8120,7 @@ class ConcurrencyTests(PolarisTestCase):
             return lambda cur: cur.execute(
                 "CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
                 (4, 1, context_id,
-                 (datetime.now().date() + timedelta(days=180)), admin))
+                 (datetime.now(timezone.utc).date() + timedelta(days=180)), admin))
 
         self.assertContends(attest(ctx_voting), attest(ctx_mv),
                             'Same-attesting-agency attests')
@@ -8079,7 +8140,7 @@ class ConcurrencyTests(PolarisTestCase):
             return lambda cur: cur.execute(
                 "CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
                 (attesting_id, 2, ctx_mv,
-                 (datetime.now().date() + timedelta(days=180)), admin))
+                 (datetime.now(timezone.utc).date() + timedelta(days=180)), admin))
 
         self.assertDoesNotContend(attest(4), attest(5),
                                   'Cross-attesting-agency attests')
@@ -8280,7 +8341,7 @@ class ConcurrencyTests(PolarisTestCase):
         def attest(cur):
             cur.execute("CALL uc10_attest_trust(%s, %s, %s, %s, %s)",
                         (4, 2, ctx_mv,
-                         (datetime.now().date() + timedelta(days=180)), admin))
+                         (datetime.now(timezone.utc).date() + timedelta(days=180)), admin))
 
         def revoke(cur):
             cur.execute("CALL uc10_revoke_attestation(%s, %s, %s)",
@@ -11328,7 +11389,7 @@ class TokenVerifyTests(PolarisTestCase):
         self.assertTrue(body['currently_authoritative'], "the fixture must start usable")
         self.assertTrue(body['usable'])
 
-        self._set_expiry(tok, _dt.date.today() - _dt.timedelta(days=1), age_days=400)
+        self._set_expiry(tok, _dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=1), age_days=400)
         body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
         self.assertEqual(body['status'], 'ACTIVE',
                          "the status column is untouched: this is decided at READ time")
@@ -11345,7 +11406,7 @@ class TokenVerifyTests(PolarisTestCase):
         second past midnight on its final day would be a different rule."""
         import datetime as _dt
         tok = self._issue_token('EXPIRY-TODAY-0001')
-        self._set_expiry(tok, _dt.date.today())
+        self._set_expiry(tok, _dt.datetime.now(_dt.timezone.utc).date())
         body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
         self.assertTrue(body['currently_authoritative'], body)
         self.assertFalse(body['expired'])
@@ -11363,13 +11424,13 @@ class TokenVerifyTests(PolarisTestCase):
         thing and the relying party another."""
         import datetime as _dt
         tok = self._issue_token('EXPIRY-RP-0001')
-        self._set_expiry(tok, _dt.date.today() - _dt.timedelta(days=1), age_days=400)
+        self._set_expiry(tok, _dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=1), age_days=400)
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT status, expiration_date FROM IdentityToken WHERE token_id=%s",
                         (tok,))
             after = cur.fetchone()
         self.assertEqual(after['status'], 'ACTIVE')
-        self.assertLess(after['expiration_date'], _dt.date.today())
+        self.assertLess(after['expiration_date'], _dt.datetime.now(_dt.timezone.utc).date())
         operator = self.client.get('/api/tokens/%d/verify' % tok).get_json()
         self.assertFalse(operator['currently_authoritative'])
 
@@ -13866,7 +13927,7 @@ class RelyingPartyApiTests(PolarisTestCase):
         pack = self._issue_and_pack('RP-API-SA-EXPIRY-0001')
         body = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex']}
         # The server's own date, the one _not_expired (and /verify) compares against.
-        today = _dt.date.today()
+        today = _dt.datetime.now(_dt.timezone.utc).date()
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("UPDATE IdentityToken SET issued_date = now() - interval '30 days', "
                         "activated_date = now() - interval '30 days', expiration_date = %s "
@@ -13892,8 +13953,8 @@ class RelyingPartyApiTests(PolarisTestCase):
     def test_an_expiry_the_server_cannot_read_is_not_open_ended(self):
         import datetime as _dt
         self.assertIs(flask_app._not_expired(None), True, "no expiry at all is open-ended")
-        self.assertIs(flask_app._not_expired(_dt.date.today()), True, "valid through its date")
-        self.assertIs(flask_app._not_expired(_dt.date.today() - _dt.timedelta(days=1)), False)
+        self.assertIs(flask_app._not_expired(_dt.datetime.now(_dt.timezone.utc).date()), True, "valid through its date")
+        self.assertIs(flask_app._not_expired(_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=1)), False)
         for unreadable in ("2099-01-01", 20990101, object()):
             self.assertIs(flask_app._not_expired(unreadable), False, repr(unreadable))
 

@@ -184,6 +184,7 @@ def uc4_activate_reserve():
         SELECT t.token_id, i.legal_name, t.token_value
         FROM   IdentityToken t JOIN Individual i ON t.individual_id = i.individual_id
         WHERE  t.status = 'RESERVE'
+          AND  (t.expiration_date IS NULL OR t.expiration_date >= CURRENT_DATE)
         ORDER BY t.token_id
     """)
     agencies = query("SELECT * FROM Agency ORDER BY agency_id")

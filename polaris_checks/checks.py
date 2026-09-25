@@ -21345,6 +21345,7 @@ VACUOUS_IS_CORRECT = {
     "check_no_citations_to_deleted_apparatus": "asserts a citation is absent",
     "check_no_fk_cascade": "asserts no ON DELETE CASCADE exists",
     "check_no_debug_artifacts": "asserts no pdb/breakpoint call exists",
+    "check_no_local_date": "asserts no local-date call exists; empty files make none",
     "check_no_grep_q_transaction_scrape": "asserts a fragile shell idiom is absent",
     "check_no_migration_column_drift": "asserts no migration drifts from the schema",
     "check_psql_status_capture_set_e_safe": "asserts an unsafe psql capture idiom is absent",
@@ -22521,6 +22522,41 @@ def check_liveness_asks_about_expiry(root: pathlib.Path) -> list[Finding]:
                "status, because nothing moves ACTIVE to EXPIRED when the date passes")
 
 
+# 1.0.0-rc.37. The server's date is the UTC date (the database clock since rc.28, and
+# _not_expired). Four tests computed "today" with the local date instead, so from 20:00 to midnight
+# on a machine west of UTC they judged a credential against the wrong day and failed, while CI,
+# which runs in UTC, could never see it. A local date anywhere else is the same disagreement.
+_LOCAL_DATE = re.compile(r"\bdate\.today\(\)|\bdatetime\.now\(\s*\)\.date\(\)")
+_LOCAL_DATE_DIRS = ("polaris_web", "polaris_card", "polaris_cli", "polaris_sim", "sdk",
+                    "packages", "scripts")
+
+
+def check_no_local_date(root: pathlib.Path) -> list[Finding]:
+    """No product code or test asks for the local date; the server's today is the UTC date."""
+    name = "no_local_date"
+    offenders, scanned = [], 0
+    for d in _LOCAL_DATE_DIRS:
+        base = root / d
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.py")):
+            if any(part in ("node_modules", "build", ".venv", "__pycache__") for part in f.parts):
+                continue
+            scanned += 1
+            for i, line in enumerate(_read_path(f).splitlines(), 1):
+                if _LOCAL_DATE.search(line.split("#", 1)[0]):
+                    offenders.append(f"{f.relative_to(root)}:{i}")
+    if not scanned:
+        return _fail(name, "no Python found under " + ", ".join(_LOCAL_DATE_DIRS) +
+                           "; the check would pass vacuously")
+    if offenders:
+        return _fail(name, "the local date is asked for where the server's date is the UTC date, "
+                           "so the answer changes with the machine's zone: " +
+                           "; ".join(offenders[:6]) + ". Use datetime.now(timezone.utc).date()")
+    return _ok(name, f"no local date in {scanned} Python files: every 'today' is the UTC date the "
+                     "server and the database judge expiry on")
+
+
 # 1.0.0-rc.31. rc.15 bound every route that NAMES an authority; rc.30 and rc.31 found five
 # more that name a token, a request or an agency id and asked nothing, one of them opened by
 # rc.19. This keeps the next route from being the sixth: every state-changing route an admin or
@@ -22965,6 +23001,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_liveness_asks_about_expiry,
     check_state_changing_routes_ask_the_binding,
     check_unread_signed_fields_tool_is_green,
+    check_no_local_date,
 ]
 
 

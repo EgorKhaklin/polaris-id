@@ -11,6 +11,37 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.37 — 2026-09-24 (reporting a credential lost could activate an expired reserve)
+
+CORE-BUG against rc.36. Externally observable: `uc4_activate_reserve`, and
+`/uc4/activate-reserve` which calls it, refuse a reserve past its `expiration_date`, and the
+form no longer offers one. Schema change: migration
+`2026-09-24-007-no-expired-reserve-activated`. Nothing is published.
+
+`uc4_activate_reserve` checked that the reserve was `RESERVE` and never read its expiry. So
+reporting a credential lost could spend it and promote a reserve already past its date. The
+holder got a credential that reads `ACTIVE` in the table while every verifier refuses it as
+expired, and nothing live remained. The refusal is not in the procedure. It is in
+`enforce_token_state_machine`, the trigger every status change passes through, so no path into
+`ACTIVE` accepts a credential past its date: not the procedure, not an operator's transition, not
+a plain `UPDATE`. It is judged on `CURRENT_DATE`, which is the UTC date since rc.28. Because the
+trigger aborts the procedure, the lost credential stays `ACTIVE` too; the test asserts the
+holder is left exactly as they were.
+
+The migration carries the trigger body. On the test database, down and then up gives the
+function a fresh install builds, and down alone restores the old body.
+
+Counterexamples, failing on rc.36: `Uc4ReserveExpiryTests.test_an_expired_reserve_is_not_activated`
+and `test_no_path_activates_an_expired_credential`.
+
+The gate for this release ran after 20:00 EDT, which is past midnight UTC, and four existing
+tests failed there. They computed "today" with the local date. The server's today is the UTC
+date, the database clock since rc.28, so for four hours every evening west of UTC they judged a
+credential against the wrong day. CI runs in UTC and could never see it. All twenty local-date
+calls in `test_app.py` now use the UTC date, and they pass after midnight UTC. A new check,
+`check_no_local_date` (325), refuses `date.today()` and `datetime.now().date()` anywhere in the
+product, its kits and its tests. No product code had one.
+
 ## v1.0.0-rc.36 — 2026-09-24 (a device could be bound to an expired credential)
 
 CORE-BUG against rc.35. Externally observable: `uc5_bind_device`, and `/uc5/bind-device` which

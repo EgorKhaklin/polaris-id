@@ -19385,3 +19385,18 @@ def test_unread_signed_fields_tool_is_green_check_discriminates(tmp_path):
     tool.unlink()
     assert checks.check_unread_signed_fields_tool_is_green(tmp_path)[0].level == "FAIL", \
         "must FAIL when the tool is gone"
+
+
+def test_no_local_date_check_discriminates(tmp_path):
+    f = tmp_path / "polaris_web" / "test_x.py"
+    f.parent.mkdir(parents=True)
+    f.write_text("from datetime import datetime, timezone\ntoday = datetime.now(timezone.utc).date()\n")
+    assert checks.check_no_local_date(tmp_path)[0].level == "OK", "the UTC date must PASS"
+    for local in ("import datetime\ntoday = datetime.date.today()\n",
+                  "from datetime import datetime\ntoday = datetime.now().date()\n"):
+        f.write_text(local)
+        assert checks.check_no_local_date(tmp_path)[0].level == "FAIL", local
+    f.write_text("x = 1  # date.today() would be wrong here\n")
+    assert checks.check_no_local_date(tmp_path)[0].level == "OK", "a comment is not a call"
+    f.unlink()
+    assert checks.check_no_local_date(tmp_path)[0].level == "FAIL", "must FAIL when nothing is scanned"
