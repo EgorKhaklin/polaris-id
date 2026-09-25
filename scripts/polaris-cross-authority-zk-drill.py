@@ -147,10 +147,16 @@ def run(path, zk_binary=None):
     trust = [mf]
     anchors = [fx["pub_b"]]
 
-    def decide(proof, checkpoint, context=ctx, manifests=trust, zk_bin=zk_binary):
+    # The fixture's epoch has five members, below the default anonymity floor of twenty, so every
+    # case but the floor's own names five as the floor, as a relying party accepting a small
+    # set on purpose would (2026-09-25).
+    small = fx["epoch_checkpoint"]["epoch"]["committed_count"]
+
+    def decide(proof, checkpoint, context=ctx, manifests=trust, zk_bin=zk_binary, floor=small):
         return V.verify_cross_authority_zk(proof, checkpoint, context, manifests, now=now,
                                            max_window_seconds=None, trusted_anchors=anchors,
-                                           expected_nonce=nonce, zk_binary=zk_bin)
+                                           expected_nonce=nonce, zk_binary=zk_bin,
+                                           min_anonymity_set=floor)
 
     forged_cp = json.loads(json.dumps(cp))
     _b = bytearray.fromhex(forged_cp["signature_hex"]); _b[0] ^= 0x01
@@ -175,6 +181,9 @@ def run(path, zk_binary=None):
          decide(tampered_proof, cp)["decision"], "reject"),
         ("no polaris-zk binary: ABSTAIN (trust holds, proof unverifiable here), never accept",
          decide(fx["proof"], cp, zk_bin="/nonexistent/polaris-zk")["decision"], "abstain"),
+        ("the same genuine proof under the DEFAULT floor (20 > 5 members): REJECT, privacy unavailable",
+         (lambda d: (d["decision"], d["reasons"][0].startswith("privacy unavailable")))(
+             decide(fx["proof"], cp, floor=V.DEFAULT_MIN_ANONYMITY_SET)), ("reject", True)),
         ("the verdict carries no token_value (zero-knowledge)",
          "token_value" not in json.dumps(decide(fx["proof"], cp)).lower(), True),
     ]

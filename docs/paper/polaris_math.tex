@@ -274,8 +274,8 @@ $N=1$ identifies the holder. Within one scope and epoch, two presentations by on
 $\lambda$ (one enrolment record, one proof); across scopes or epochs the nullifiers are unlinkable under the
 assumption above. \emark{assumed} bound. Since \code{1.0.0-rc.46} an epoch closes only if
 $N\ge N_{\min}$ (a database setting, $20$ unless set) and a proof against an epoch with
-$N<N_{\min}$ is answered \emph{privacy unavailable}, never accepted; \emark{enforced} at close and
-at verification. Before it nothing enforced a minimum $N$. \emark{limit}: $N_{\min}$ bounds the
+$N<N_{\min}$ is answered \emph{privacy unavailable}, never accepted; \emark{enforced} at close,
+at verification, and offline by the detached verifier from the checkpoint's signed $N$. Before it nothing enforced a minimum $N$. \emark{limit}: $N_{\min}$ bounds the
 set, not what epoch timing reveals.
 \end{property}
 \noindent(An earlier draft bounded identification by $1/|\Per|$. The anonymity set is the epoch's leaf

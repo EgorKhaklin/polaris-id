@@ -664,8 +664,10 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
     every link passes, then exactly one fails."""
 
     KEY = "cc" * 32
+    ABSENT = object()
 
-    def decide(self, cv=None, mv=None, att=None, zk=None, context=1, anchors=("aa" * 32,)):
+    def decide(self, cv=None, mv=None, att=None, zk=None, context=1, anchors=("aa" * 32,),
+               size=20, **floor):
         from unittest import mock
         attestation = dict({"attested_public_key_hex": self.KEY, "context_id": 1}, **(att or {}))
         cvr = dict({"checkpoint_authentic": True, "fresh": True}, **(cv or {}))
@@ -673,12 +675,15 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
                     "authority": {"agency_id": "B"}, "attestations": [attestation]}, **(mv or {}))
         zkr = dict({"bound": True, "proof_verified": True, "nullifier": "ab", "fresh_nullifier": True,
                     "note": "replayed"}, **(zk or {}))
-        checkpoint = {"public_key_hex": self.KEY, "epoch": {"root_hex": "00", "number": 1}}
+        epoch = {"root_hex": "00", "number": 1}
+        if size is not self.ABSENT:
+            epoch["committed_count"] = size
+        checkpoint = {"public_key_hex": self.KEY, "epoch": epoch}
         with mock.patch.object(V, "verify_epoch_checkpoint", return_value=cvr), \
                 mock.patch.object(V, "verify_manifest", return_value=mvr), \
                 mock.patch.object(V, "verify_zk_against_root", return_value=zkr):
             return V.verify_cross_authority_zk({}, checkpoint, context, [{}],
-                                               trusted_anchors=list(anchors))["decision"]
+                                               trusted_anchors=list(anchors), **floor)["decision"]
 
     def test_every_link_holding_accepts(self):
         self.assertEqual(self.decide(), "accept")
@@ -690,9 +695,27 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
                           ("an attestation of another key", {"att": {"attested_public_key_hex": "dd" * 32}}),
                           ("an attestation for another context", {"att": {"context_id": 2}}),
                           ("an attestation past its window", {"att": {"valid_until": "2000-01-01T00:00:00Z"}}),
-                          ("a replayed nullifier", {"zk": {"fresh_nullifier": False}})):
+                          ("a replayed nullifier", {"zk": {"fresh_nullifier": False}}),
+                          # 2026-09-25: the anonymity floor, as the online verifier applies it.
+                          ("an epoch one below the default floor", {"size": 19}),
+                          ("an epoch of one member", {"size": 1}),
+                          ("a checkpoint that does not state its size", {"size": ABSENT_SIZE}),
+                          ("a size that is a boolean", {"size": True}),
+                          ("a size that is a string", {"size": "20"})):
             with self.subTest(label):
+                kw = {k: (self.ABSENT if v is ABSENT_SIZE else v) for k, v in kw.items()}
                 self.assertEqual(self.decide(**kw), "reject")
+
+    def test_the_floor_is_the_callers_to_name(self):
+        """A relying party may accept a smaller set on purpose, by naming it; the default is the
+        issuing authority's own (20)."""
+        self.assertEqual(V.DEFAULT_MIN_ANONYMITY_SET, 20)
+        self.assertEqual(self.decide(size=5), "reject")
+        self.assertEqual(self.decide(size=5, min_anonymity_set=5), "accept")
+        self.assertEqual(self.decide(size=4, min_anonymity_set=5), "reject")
+
+
+ABSENT_SIZE = "the checkpoint has no committed_count"
 
 if __name__ == "__main__":
     unittest.main()

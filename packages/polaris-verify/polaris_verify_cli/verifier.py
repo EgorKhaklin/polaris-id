@@ -926,6 +926,11 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
 #     contact -- revocation propagates through published, signed data, not a callback.
 # ---------------------------------------------------------------------------
 _EPOCH_CHECKPOINT_FORMAT = "polaris-epoch-checkpoint/1"
+
+#: The smallest foreign epoch whose zero-knowledge proof is accepted offline (2026-09-25). The same
+#: default as polaris.min_epoch_anonymity_set, which the issuing authority's database applies at
+#: close and its online verifier at verification; a caller may name a different floor.
+DEFAULT_MIN_ANONYMITY_SET = 20
 _REVOCATION_FEED_FORMAT = "polaris-revocation-feed/1"
 
 
@@ -1516,7 +1521,7 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
 def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, trusted_manifests,
                               now=None, max_window_seconds=None, trusted_anchors=None,
                               expected_nonce=None, zk_binary=None, expected_scope=None,
-                              seen_nullifiers=None):
+                              seen_nullifiers=None, min_anonymity_set=DEFAULT_MIN_ANONYMITY_SET):
     """Decide a HOLDER's zero-knowledge inclusion proof against a FOREIGN authority's epoch,
     OFFLINE (P3.2d). Accept iff: (1) the foreign epoch checkpoint is authentic and fresh, and
     signed by an authority a trusted manifest attests IN the presented context -- so the epoch
@@ -1531,7 +1536,14 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
     person, one proof, per scope and epoch. The verdict returns the nullifier so the caller can
     add it to its ledger. The nullifier still identifies nobody: it is a hash under this
     verifier's own scope, and the same person at another verifier presents a value the two
-    cannot correlate."""
+    cannot correlate.
+
+    2026-09-25: an epoch smaller than `min_anonymity_set` (20 unless the caller says otherwise,
+    the same default the issuing authority's database applies) is refused as "privacy
+    unavailable", as the online verifier refuses it. The size is the checkpoint's signed
+    `committed_count`; a checkpoint without one is refused too, since an epoch of unknown size
+    hides an unknown number of people. Before this an epoch of one member was accepted here
+    while the authority's own verifier refused it."""
     cv = verify_epoch_checkpoint(epoch_checkpoint, now=now, max_window_seconds=max_window_seconds)
     base = {"decision": "reject",
             "checkpoint_authentic": bool(cv["checkpoint_authentic"] and cv["fresh"]),
@@ -1564,6 +1576,13 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
     if not via:
         return {**base, "reasons": ["no trusted authority attests to the checkpoint's issuer in this context"]}
     epoch = (epoch_checkpoint.get("epoch") if isinstance(epoch_checkpoint, dict) else None) or {}
+    size = epoch.get("committed_count") if isinstance(epoch, dict) else None
+    if isinstance(size, bool) or not isinstance(size, int) or size < max(1, int(min_anonymity_set)):
+        return {**base, "via": via, "reasons": [
+            "privacy unavailable: the foreign epoch's anonymity set is %s, below the minimum of %d; "
+            "the proof would identify its holder among too few, so it is not accepted"
+            % (size if isinstance(size, int) and not isinstance(size, bool) else "not stated",
+               max(1, int(min_anonymity_set)))]}
     zk = verify_zk_against_root(proof_bundle, epoch.get("root_hex"), epoch.get("number"),
                                 context_id, expected_nonce=expected_nonce, zk_binary=zk_binary,
                                 expected_scope=expected_scope, seen_nullifiers=seen_nullifiers)
@@ -4675,6 +4694,9 @@ def main(argv=None):
     ap.add_argument("--zk-proof", help="a holder's ZK inclusion proof bundle JSON (P3.2d): with "
                     "--epoch-checkpoint and --trusted-manifest, decide a cross-authority proof OFFLINE")
     ap.add_argument("--epoch-checkpoint", help="a foreign authority's signed epoch checkpoint JSON")
+    ap.add_argument("--min-anonymity-set", type=int, default=DEFAULT_MIN_ANONYMITY_SET,
+                    help="refuse a proof against a foreign epoch with fewer members than this "
+                         "(default %(default)s, the issuing authority's own default)")
     ap.add_argument("--trusted-manifest", action="append",
                     help="a federation manifest the relying party trusts (repeatable)")
     ap.add_argument("--trusted-anchor", help="an anchor public key hex the relying party trusts")
@@ -4778,7 +4800,7 @@ def main(argv=None):
         verdict = verify_cross_authority_zk(
             proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
             trusted_anchors=([args.trusted_anchor] if args.trusted_anchor else None),
-            expected_nonce=args.nonce)
+            expected_nonce=args.nonce, min_anonymity_set=args.min_anonymity_set)
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:

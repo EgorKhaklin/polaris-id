@@ -57,7 +57,8 @@ the epoch has a floor: since 25 September 2026 an epoch smaller than the minimum
 database setting, twenty unless set; the notional sample sets one and says so) is refused rather
 than closed smaller, and a proof against an older one below it answers \emph{privacy unavailable}
 rather than verifying. The authority waits for members or lengthens its cadence; epochs are not
-merged. Before that date an epoch of one member closed, and a proof against it hid nobody.
+merged. The detached verifier applies the same floor offline to a foreign authority's epoch, from the
+size its signed checkpoint states. Before that date an epoch of one member closed, and a proof against it hid nobody.
 On the reference machine a proof takes about 25~ms to make and about 12~ms to check, and the verdict
 is two-witnessed at the statement level. That second witness is independent in implementation
 only: it is a separate program, written by the same author from the same reading of the circuit,

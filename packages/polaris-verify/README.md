@@ -45,7 +45,9 @@ meant to ask.
 
 This is 1.0.0-rc.4. The artifact on PyPI is 1.0.0-rc.3, put there by GitHub Actions
 trusted publishing over OIDC; rc.4 refuses a signed transparency head whose `tree_size`
-is a bool, and goes out when the owner publishes it. Both are release candidates:
+is a bool, refuses a zero-knowledge proof against a foreign epoch with fewer members than
+`--min-anonymity-set` (20 unless named, the issuing authority's own default) as "privacy
+unavailable", and goes out when the owner publishes it. Both are release candidates:
 `--pre` tells pip to consider them, and 0.1.0 remains as the prior release. What separates a candidate from 1.0.0 is one thing, an operator who is not the
 author reaching a verified result without help. Verified by installing from the live
 registry into a clean virtualenv and running the command there, not by a build that exited
