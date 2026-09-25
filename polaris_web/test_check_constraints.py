@@ -1247,6 +1247,23 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 cur.execute("DELETE FROM AuthorityKeyEvent WHERE public_key_hex = %s", (key,))
         conn.rollback()
 
+    def test_authority_key_register_accepts_only_the_ml_dsa_sets(self):
+        """chk_authority_key_algorithm (2026-09-24): the registry publishes this value for
+        relying parties to verify under, and until then only the CLI's choices kept a classical
+        one out."""
+        conn = self._app_conn()
+        key = "cd" * 32
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.CheckViolation):
+                cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event) "
+                            "VALUES (1, %s, 'Ed25519', 'registered')", (key,))
+        conn.rollback()
+        with conn.cursor() as cur:
+            for alg in ('ML-DSA-65', 'ML-DSA-87'):
+                cur.execute("INSERT INTO AuthorityKeyEvent (agency_id, public_key_hex, algorithm, event) "
+                            "VALUES (1, %s, %s, 'registered')", (key, alg))
+        conn.rollback()
+
     def test_app_role_can_still_append_audit_rows(self):
         conn = self._app_conn()
         with conn.cursor() as cur:

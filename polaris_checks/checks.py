@@ -22557,6 +22557,46 @@ def check_no_local_date(root: pathlib.Path) -> list[Finding]:
                      "server and the database judge expiry on")
 
 
+# 2026-09-24. HolderKeyEvent.algorithm and AuthorityKeyEvent.algorithm were free text: the route's
+# allowlist and the CLI's choices were the only things keeping a classical parameter set out of
+# registers whose value is issuer-signed or published for relying parties to verify under. A
+# column naming an algorithm is constrained in the schema, by a CHECK or by a foreign key into
+# CryptographicAlgorithm, so no writer has to remember.
+_ALG_COLUMN = re.compile(r"^\s+(\w*algorithm\w*)\s+(VARCHAR|TEXT|INTEGER|SMALLINT|CHAR)\b", re.I)
+
+
+def check_algorithm_columns_are_constrained(root: pathlib.Path) -> list[Finding]:
+    """Every column naming an algorithm carries a CHECK or a REFERENCES in its definition."""
+    name = "algorithm_columns_are_constrained"
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    if not schema:
+        return _fail(name, "polaris_sql/01_schema.sql is missing")
+    found, offenders = 0, []
+    for t in re.finditer(r"CREATE TABLE(?: IF NOT EXISTS)? (\w+) \((.*?)\n\);", schema, re.S):
+        lines = t.group(2).split("\n")
+        for i, line in enumerate(lines):
+            m = _ALG_COLUMN.match(line)
+            if not m:
+                continue
+            found += 1
+            # The column's definition runs until the next line that starts a column or constraint.
+            j = i + 1
+            while j < len(lines) and re.match(r"\s{6,}\S", lines[j]) and not _ALG_COLUMN.match(lines[j]):
+                j += 1
+            definition = " ".join(lines[i:j])
+            if not re.search(r"\bCHECK\s*\(|\bREFERENCES\b", definition, re.I):
+                offenders.append(f"{t.group(1)}.{m.group(1)}")
+    if not found:
+        return _fail(name, "no column naming an algorithm was found in 01_schema.sql; the check "
+                           "would pass vacuously")
+    if offenders:
+        return _fail(name, "a column naming an algorithm accepts any value, so only its writers "
+                           "keep a classical parameter set out: " + ", ".join(offenders) +
+                           ". Add a CHECK (algorithm IN (...)) or a REFERENCES CryptographicAlgorithm")
+    return _ok(name, f"all {found} columns naming an algorithm are constrained in the schema "
+                     "(a CHECK or a foreign key), not only by the code that writes them")
+
+
 # 1.0.0-rc.31. rc.15 bound every route that NAMES an authority; rc.30 and rc.31 found five
 # more that name a token, a request or an agency id and asked nothing, one of them opened by
 # rc.19. This keeps the next route from being the sixth: every state-changing route an admin or
@@ -23002,6 +23042,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_state_changing_routes_ask_the_binding,
     check_unread_signed_fields_tool_is_green,
     check_no_local_date,
+    check_algorithm_columns_are_constrained,
 ]
 
 

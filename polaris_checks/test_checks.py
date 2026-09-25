@@ -19400,3 +19400,18 @@ def test_no_local_date_check_discriminates(tmp_path):
     assert checks.check_no_local_date(tmp_path)[0].level == "OK", "a comment is not a call"
     f.unlink()
     assert checks.check_no_local_date(tmp_path)[0].level == "FAIL", "must FAIL when nothing is scanned"
+
+
+def test_algorithm_columns_are_constrained_check_discriminates(tmp_path):
+    f = tmp_path / "polaris_sql" / "01_schema.sql"
+    f.parent.mkdir(parents=True)
+    ok = ("CREATE TABLE K (\n    id INTEGER,\n    algorithm VARCHAR(40) NOT NULL DEFAULT 'ML-DSA-65'\n"
+          "        CONSTRAINT c CHECK (algorithm IN ('ML-DSA-65')),\n"
+          "    algorithm_id INTEGER NOT NULL\n        REFERENCES CryptographicAlgorithm(algorithm_id)\n);\n")
+    f.write_text(ok)
+    assert checks.check_algorithm_columns_are_constrained(tmp_path)[0].level == "OK", "constrained must PASS"
+    f.write_text(ok.replace("\n        CONSTRAINT c CHECK (algorithm IN ('ML-DSA-65'))", ""))
+    r = checks.check_algorithm_columns_are_constrained(tmp_path)[0]
+    assert r.level == "FAIL" and "K.algorithm" in r.message, "free text must FAIL, naming the column"
+    f.write_text("CREATE TABLE K (\n    id INTEGER\n);\n")
+    assert checks.check_algorithm_columns_are_constrained(tmp_path)[0].level == "FAIL", "no column is vacuous"
