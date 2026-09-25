@@ -34,7 +34,7 @@ records the mistake that split the two results permanently. Authenticity is a pr
 material, the signed value, the signature bytes and the stored key, so a lagging replica can neither
 forge it nor deny it. Whether the token is usable \emph{now} is a current-authorization question, and
 a revocation lands on the primary; a replica inside its staleness window could still show a
-just-revoked token as active. Since \code{v9.264} the status that decides \code{usable} is pinned to
+just-revoked token as active. The status that decides \code{usable} is pinned to
 the primary, the response names its source and carries \code{as\_of} and a zero staleness bound, and
 a caller may cache authenticity and must re-read authorization. \sImpl
 
@@ -100,7 +100,7 @@ a member's status, because it cannot sign as the member. The bundle adds availab
 \sImpl
 
 Signing a status artifact is also what lets an untrusted cache carry it, and a cache introduces the
-one failure signing does not prevent, which is time. Since \code{v9.358} a cache directive is never a
+one failure signing does not prevent, which is time. A cache directive is never a
 constant: every windowed artifact's \code{max-age} is its own remaining life, computed from the
 \code{expires\_at} the issuer signed, so a cache cannot outlive the window the issuer committed to;
 every artifact that names one credential is \code{no-store}, because a shared cache holding one
@@ -114,7 +114,7 @@ size of the crowd, since the anonymity set is the epoch; and how often a relying
 one-human-once ledger resets. Closing an epoch was once the expensive part, and it was expensive for
 a bad reason: a fixed-depth tree padded to the national depth of 24 materialised sixteen million
 leaves whatever the population was, so a root over a thousand members took 10.8 seconds and
-2.9~GB. Since \code{v9.357} the padding is one repeated value hashed once per level, and a root over a
+2.9~GB. The padding is one repeated value hashed once per level, and a root over a
 million members takes 2.1 seconds in tens of megabytes; the binding constraint on cadence is the
 anonymity floor per context, not the compute. \sImpl
 

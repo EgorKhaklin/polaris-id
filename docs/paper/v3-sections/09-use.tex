@@ -35,7 +35,7 @@ foreign-issuer credential and staying blind to duress, and an end-to-end drill r
 wallet-to-relying-party matrix under real signatures every release. A relying party registers with
 an issuer as an organisation with a scope that a schema constraint bounds to exactly \code{verify},
 \code{authenticate}, or both, so that a fourth kind of access is a constitutional change rather than
-a configuration one. Identity never becomes a login product by accident. Since \code{v9.425} a
+a configuration one. Identity never becomes a login product by accident. A
 relying party is also an object about which decisions are recorded: registering one, turning off the
 zero-knowledge step-up its holders had to satisfy, disabling or re-enabling it, each writes an
 append-only event, a change that weakens what the party must satisfy is flagged as such and refused
@@ -52,26 +52,24 @@ authorization code with PKCE. The holder presents the credential at its issuing 
 instance by possession, and the relying party exchanges the resulting code for an identity token
 signed by the issuing agency, which it verifies offline. Four guards keep this from becoming a login
 record. The token's subject is the per-relying-party handle of Section~\ref{sec:privacy}, never a
-person identifier and, since \code{v9.353}, not the same value at every relying party. The token
+person identifier and not the same value at every relying party. The token
 carries no claim beyond the vocabulary: context, disclosure level, the assurance reached, enrolment
 status, instants. The authorize route writes nothing, and the token endpoint's only write is the
 code's hash into a register that holds no subject and no relying party. And duress is served
 identically. \sImpl
 
-An outside review at \code{v9.331} found that the relying party's demands, a required
-zero-knowledge step-up or a required enrolment status, arrived only in the holder-side request, so
-nothing bound the authority to what the relying party actually required. Since \code{v9.336} the
-policy is registered on the relying party's row and applied first: a request may add a requirement
-and never remove one, and a context other than the registered one is refused. The same review noted
-that the authorization code was signed but readable; it is now encrypted. And the conformance
+A relying party's demands, a required zero-knowledge step-up or a required enrolment status, bind
+the authority and do not travel only in the holder-side request: the policy is registered on the
+relying party's row and applied first, a request may add a requirement and never remove one, and a
+context other than the registered one is refused. The authorization code is encrypted as well as
+signed. And the conformance
 contract was later found to verify an identity token's signature and never its audience or nonce, so
 a verifier that ignored both, and therefore accepted a token minted for one relying party at another,
 passed every case; four cases fixed it. \sImpl
 
 \subsection{The stranger's path}
 
-Version 2 could tell a reader how to run Polaris from a clone. Version 3 can tell a reader how to
-reach one accepted presentation from software nobody here wrote, on a clean machine, in about ten
+A reader can reach one accepted presentation from software nobody here wrote, on a clean machine, in about ten
 minutes, without cloning the repository: install \code{polaris-oid4vp} from the registry, start the
 published wallet image at its pinned digest, generate the verifier's keys, give the wallet a
 credential bound to a key it generated itself, run the verifier, present. The page that says how was

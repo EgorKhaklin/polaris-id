@@ -82,10 +82,10 @@ successor and kept, with the triggers that would reopen the question recorded.
 
 \subsection{Bounded, not permanent, and what bounded was found to mean}
 
-Polaris is a full-credential presentation system, and until \code{v9.353} the consequence was flat:
-the login token's subject was the credential's hash, the same value at every relying party, so two
-of them could join their user tables exactly and forever. The subject and the presentation handle
-are now derived under the relying party's own scope, stable where an account needs it and
+Polaris is a full-credential presentation system, and the consequence would be flat if the login
+token's subject were the credential's hash: the same value at every relying party, so that two of
+them could join their user tables exactly and forever. The subject and the presentation handle are
+derived under the relying party's own scope, stable where an account needs it and
 unrecognisable at the next verifier; since the subject is the value a relying party \emph{writes
 down}, and written-down values are the ones pooled, sold, subpoenaed and breached, this is the half
 that matters most in practice. The other half did not change: a plain presentation still shows the

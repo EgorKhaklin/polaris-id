@@ -63,7 +63,7 @@ C1's purge coverage, C2's unlinkability across two pooling relying parties, and 
 issue and revoke, each with a counterpart configuration it must fail, so none of the three is vacuous.
 
 \figpage{districts}{The 45 canonical tables of \code{01\_schema.sql} at \code{1.0.0-rc.7}, as rings
-around the Version 1 nucleus. The faint lattice at the centre is the nucleus geometry of
+around the nucleus. The faint lattice at the centre is the nucleus geometry of
 Figure~\ref{fig:nucleus} at the same proportions. Ring two is the credential machinery: signatures,
 permissions, epochs, recovery, duress, the holder's key, the card. Ring three is authority, trust and
 the people at the counter: who may sign under which algorithm, who trusts whom, revocation ceilings,
@@ -81,7 +81,7 @@ signature's deprecation date or an attestation's revocation date. Every one of t
 enforced by a trigger that raises \code{insufficient\_privilege}, and a check fails the build if any
 trigger stops doing so. Beyond the fourteen the design record names, thirty-one tables in all carry
 an append-only trigger at \code{1.0.0-rc.7}, the new ones being the records that decisions about
-authorities, operators, relying parties and enrolments now leave behind, and since \code{v9.412} C1 is
+authorities, operators, relying parties and enrolments now leave behind, and C1 is
 tested once per table that claims it. Of the thirty-one, twenty-four refuse every edit, and a
 table-driven suite tests each of them for both UPDATE and DELETE, cross-checked against the
 catalogue; the other seven permit bounded mutation, one field moving one way, and the trigger
@@ -122,41 +122,18 @@ vocation refuses unbounded retention; it equally refuses retention short enough 
 Above the schema sits a flat layer of 313 plain functions, each of the form
 \code{check\_*(repo\_root)}, that read the repository and return a finding. They gate continuous
 integration: any failure fails the build. Each check is paired with a detection test that breaks a
-fixture in the specific way the check claims to catch and asserts that the check turns red, and,
-since \code{v9.405}, also asserts that the check passes on the same fixture unbroken, because a test
+fixture in the specific way the check claims to catch and asserts that the check turns red, and also asserts that the check passes on the same fixture unbroken, because a test
 that only ever asserts failure has not established that it detects anything. A check that cannot
 detect its own violation is treated as broken. This is the mechanism by which prose claims are turned
 into gates: a count stated in the README, a route that must return a header, a migration that must
 not cascade, a drill that CI must run. \sImpl
 
-Version 2 described the checks and stopped there. Between \code{v9.398} and \code{v9.437} the
-repository asked the layer the question it asks everything else, not \emph{does it pass} but
-\emph{would it notice}, and the answer was often no. Commenting out the lines carrying a check's
-search strings, which is exactly what a temporarily disabled line looks like, left 71 of 75 checks
-green, because the helper every check reads through handed it the comments along with the code.
-Dropping each of the 46 CHECK constraints found every one load-bearing, which was the good news;
-dropping each of the 37 triggers found 14 that nothing noticed, twelve of them the append-only guards
-that C1 \emph{is}; dropping each of the 17 unique indexes found twelve uncovered, and stopped on the
-second, because with \code{uq\_one\_active\_per\_person} absent the suite that exists to prove C3 had
-inserted and committed a second active token for one person and the index could not be rebuilt.
-Deleting each of the 59 refusals the sixteen stored procedures make found 27 that no test would miss,
-concentrated exactly where a trigger cannot see: the four-eyes rule, the cool-down, the three channels
-and the third-person witness of the recovery ceremony, the preconditions on an irreversible erasure.
-Every one of these is now covered. The drill selected procedures only, and three of the use cases,
-issuance, reserve activation and device binding, are functions, because they return the id they
-create; their eleven refusals sat outside it until 23 September 2026. Among the ones no test
-noticed were the check that an agency is authorized for the algorithm it issues under and the check that a reserve token belongs
-to the same person as the credential it replaces. Nine are covered now. One of them, the reserve check the routine repeats under its lock, can
-fire only if another transaction moves the reserve while the routine waits, so its test holds the
-lock itself, waits until the routine is seen blocked on it, revokes the reserve and lets go. The
-two that remain are the copies of its two status checks made before the lock, which on one connection
-refuse exactly when their twins do. Every one of these
-measurements is now a drill that runs on
-every push with a negative control, so that a result of zero survivors is distinguishable from a
-harness that ran nothing. Twelve such drills exist at \code{1.0.0-rc.7}: over the checks, the
-constraints, the triggers, the procedures, the zero-knowledge witnesses, the conformance contract, the
-two reference verifiers, the OpenID4VP verifier, the application, the constitutional constraints, the
-surfaces a check quantifies over, and the moves of code between modules. Section~\ref{sec:senses} describes that layer, and Appendix~\ref{app:corrections} carries the record.
+The walls are tested as well as trusted. A mutation drill removes each check, each CHECK constraint,
+each trigger, each unique index and each refusal a stored procedure makes, one at a time, and requires
+something to go red; it runs on every push, with a negative control so that zero survivors cannot be
+confused with a harness that ran nothing. Section~\ref{sec:senses} describes that layer, and
+Appendix~\ref{app:corrections} records what it found, including the suite that exists to prove C3
+violating C3.
 \sImpl
 
 \begin{layercard}{Layer card: the walls}

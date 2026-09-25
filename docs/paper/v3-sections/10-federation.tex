@@ -62,14 +62,12 @@ decision, never a token. \sImpl
 \subsection{One instance, many authorities, and the part policies cannot fix}
 
 A Polaris instance can hold many agencies; the schema permits it and the shipped seed demonstrates
-six. A review at \code{v9.364} asked whether one authority's operators could see another's data in
-such an instance, and found that they could: an operator account carried no authority binding at all,
-and sixteen of the seventy-four operator routes read credential or holder data with no
-issuing-agency filter, the token list plainest among them, selecting every token joined to every
-holder with no notion of whose it was. Operators are now bound to an agency and every such route
-filters on it. What the review also recorded is the part no filter fixes: in a shared instance the
-database owner, the backup and the schema are shared, so isolation inside one instance is a
-courtesy the application extends, not a boundary the schema holds. The topology the design record
+six. Inside such an instance an operator is bound to one authority, and the database, not the query,
+keeps the others' credentials and holders out of that operator's sight: row-level security hides
+them from a bound session, the views run with the caller's rights, and the routines that must see past
+the binding to enforce a rule do so as the owner and return nothing the binding would hide. What no
+binding changes is that the database owner, the backup and the schema are shared, so against the owner
+isolation inside one instance is not a boundary. The topology the design record
 chose is that each authority runs its own instance, and a shared instance is a deployment decision
 whose cost is stated. \sImpl{} for the binding and the filters; \sExt{} for a boundary between
 authorities, which is a deployment.

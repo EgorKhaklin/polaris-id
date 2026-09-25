@@ -51,7 +51,7 @@ the operator configured, and returns the response with a signed receipt. Nothing
 hash and the consumed nonce is written. The evidence of the exchange is the pair of envelope and
 receipt, verifiable offline by a third party with no body.}{fig:gateway}
 
-Authorization at the gateway is directional. Since \code{v9.333} the responding agency itself must
+Authorization at the gateway is directional. The responding agency itself must
 attest the requester's key in the envelope's context; an attestation by any other agency on the
 instance authorizes nothing there. Before that fix the gateway accepted an attestation from anyone
 on the instance, which was the transitive trust the federation layer refuses, reappearing one layer
@@ -62,7 +62,7 @@ up. \sImpl
 The timestamp authority binds an arbitrary SHA3-256 digest to an instant under an authority's
 registered key. It accepts a digest, never content, and keeps no per-request record, because a
 timestamp authority that logs every request is a store of who timestamped what and when. The
-evidence is the signed statement in the requester's hands. Since \code{v9.341} a caller may choose
+evidence is the signed statement in the requester's hands. A caller may choose
 to anchor: the timestamp's own hash joins an append-only, witnessed log and the inclusion evidence
 comes back stapled, so that a timestamp backdated under a stolen authority key is one absent from
 every witnessed head of its claimed era. What the authority then retains is one digest and one

@@ -106,8 +106,8 @@ Single-witness verification across an eight-core node & about 62,800 per second 
 }
 
 The roadmap's planning targets (ten million persons for a state; 350 million, five thousand
-sustained and fifty thousand peak verifications per second nationally) were checked at
-\code{v9.384} against a computational throughput model, and both halves of the answer are recorded.
+sustained and fifty thousand peak verifications per second nationally) were checked
+against a computational throughput model, and both halves of the answer are recorded.
 The model is built from single-machine measurements under stated assumptions; nothing has run at
 national scale, and the first bottleneck no measurement reaches is operational (replication,
 pooling and partition maintenance under a real multi-instance load). Every throughput target clears by more
@@ -136,9 +136,8 @@ reason that survives being changed rather than a setting that can be overwritten
 compare each agency to its own trailing week. The per-IP rate limiter shares one Redis bucket across
 workers. Operators authenticate with WebAuthn as a second factor after an enrolment deadline,
 sessions are registered server-side with per-role caps and origin checks, and a per-role network
-policy applies. Creating an operator account left no record that it had happened until
-\code{v9.422}, and six of the twenty-one audit event types the schema named had no writer anywhere
-in the tree; every one has a writer, pinned by a check. Secrets are file-mounted, sealed and rotated through one
+policy applies. Creating an operator account leaves a record, and every audit event type the schema names has a
+writer, pinned by a check. Secrets are file-mounted, sealed and rotated through one
 lifecycle, and a database password reaches the database before its file changes, or is not rotated at
 all; the application refuses to boot in production on a default key, and the application log
 records no form body, cookie value or token value, which a check holds by reading the logging
@@ -171,7 +170,7 @@ repeats the web suite as the production role and under the real signer. \sImpl
 Two operations were written down as procedures that run rather than as paragraphs, because each is
 the promise an institution actually says yes on. A pilot's real promise is not that it will work but
 that it can be wound back, and that promise fails quietly: erasure becomes a paragraph in a consent
-form nobody executes. The wind-down (\code{v9.376}) revokes every pilot credential and replaces every
+form nobody executes. The wind-down revokes every pilot credential and replaces every
 name with a meaningless marker under the append-only erasure record, the consent language a
 participant is shown is generated from what the code does rather than written from what would be
 reassuring, and the whole procedure runs against a real database on every push. The pilot pack that
@@ -181,7 +180,7 @@ pilot, since none has run.
 A new national credential arrives beside a driving licence and a passport, and for years it is the
 second thing somebody carries. The dangerous moment in that period is not the cutover but the
 sunset, the day the old credential stops being accepted, because that is the moment the new one
-becomes compulsory without anybody having decided to make it so. The coexistence plan (\code{v9.381})
+becomes compulsory without anybody having decided to make it so. The coexistence plan
 treats the sunset as a decision with a floor under it rather than a phase that arrives, and its
 verdict refuses to be computed from what the issuer can see: whether relying parties accept the
 credential and whether an alternate path exists and is usable are attestations an operator makes,

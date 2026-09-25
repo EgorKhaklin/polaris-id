@@ -25,7 +25,7 @@ cheap. A zero-knowledge verification is counted in volume and in the disclosure 
 located, because it carries no token to attribute it by. The single-entity investigation pages are
 built to refuse cross-individual link analysis, and every read of an audit surface is itself
 recorded. A live-simulation mode is driven in a headless browser in CI and the console is asserted to
-actually stream. Since \code{v9.402} the benchmark times every bounded aggregate at a tenth of the
+actually stream. The benchmark times every bounded aggregate at a tenth of the
 event stream and at all of it, minutes apart on the same hardware, and grades each against the
 row-count growth, because a timing at one scale says an aggregate was fast once and cannot tell a
 roll-up that tracks the rows from one going quadratic; every aggregate grows slower than its data,
@@ -64,7 +64,7 @@ scoring. No action: the layer reads and never writes. Those are the kill criteri
 study that endorsed a constrained Athena, and they are the boundary any future cognitive layer
 inherits.
 
-\subsection{Metis and Themis, named carefully}
+\subsection{What a learning layer may never learn}
 
 The roadmap carries a captured brief for a future, advisory-only learning subsystem that would learn
 Polaris itself: infrastructure anomaly detection, capacity forecasting with uncertainty, regression
@@ -80,11 +80,8 @@ alternative collides with the metrics stack, and records that a rule that works 
 should be preferred to the model. Nothing of it is built; under the operating contract of
 Section~\ref{sec:research} nothing of it will be until an outside party needs it. \sFut
 
-This paper uses the name Themis for the constitution's constraining role over all four layers, and
-the repository's own brief uses it in the same sentence: Atlas sees, Athena understands structure,
-Metis learns system behaviour, Themis constrains them all. Themis is not a component. It is the
-vocation and C1 to C10 as enforced in the schema and pinned by the checks, which already exist. The
-name is a reading aid and nothing in the code carries it.
+Over all of these layers stands the constitution: the vocation and C1 to C10, enforced in the schema
+and pinned by the checks. It is not a component; it is what every component is constrained by.
 
 \begin{layercard}{Layer card: system cognition}
 \qa{What it is}{Atlas, the bounded operational console; Athena, the read-only authority-and-constitution layer; and two proposals, Metis and Myrmex.}

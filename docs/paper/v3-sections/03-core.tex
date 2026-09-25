@@ -97,9 +97,8 @@ edges of the lifecycle, and each keeps a record of what it rested on.
     status drawn from five values, and \code{EXEMPT} is a first-class one: a recognised way to take
     part in civic life without a token, whether for biometric incompatibility, religious exemption or
     an alternative path. Recording an exemption is one row; enumerating the not-enrolled is possible
-    but unhelped by any function, and it is audited when done. Until \code{v9.371} the system could
-    issue a credential and had no way to say how the person had been proven to be who they claimed.
-    \entity{EnrollmentProofing} now records one proofing event and \entity{EnrollmentEvidence} what
+    but unhelped by any function, and it is audited when done. A credential records how the person
+    was proven to be who they claimed: \entity{EnrollmentProofing} records one proofing event and \entity{EnrollmentEvidence} what
     it rested on, both append-only, and the assurance level is \emph{derived} from the evidence
     rather than typed by an operator; there is deliberately no column for the document itself, and a
     named set of fields is refused outright, so the record cannot reconstruct a passport. What it
@@ -141,7 +140,7 @@ edges of the lifecycle, and each keeps a record of what it rested on.
     for the ceremony, \sFut{} for the interim credential.
 \end{description}
 
-\subsection{Duress, and what the word is allowed to mean}
+\subsection{Duress: an alert the coercer cannot see}
 
 The vocation above the ten constraints is anti-coercion: no person may be compelled to renounce,
 transfer or surrender their identity against their will. The mechanism that gives that sentence

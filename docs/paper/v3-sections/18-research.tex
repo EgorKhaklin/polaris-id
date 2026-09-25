@@ -2,9 +2,8 @@
 \section{Future research and engineering, under a rule that forbids most of it}
 \label{sec:research}
 
-Version 2's version of this section was a list of things to build. This one cannot be, because on
-13 September 2026 the repository adopted an operating contract that changes what \emph{future work}
-means. A product change now needs exactly one qualifying reason: a named external implementation
+This section is not a list of things to build. The operating contract changes what \emph{future
+work} means: a product change needs exactly one qualifying reason: a named external implementation
 requires it, a named non-author operator or holder requires it, a finding originating outside the
 repository requires it, or an executable counterexample shows behaviour the repository already
 promises to be false. Cleanliness, completeness, elegance and a desirable new guarantee do not
@@ -12,14 +11,6 @@ qualify, and the contract says not to invent a fifth reason. Everything else goe
 job is to falsify the differentiating claims, not to expand the architecture. So the items below are
 sorted by who would have to act, and everything is marked \sFut{} unless stated otherwise.
 
-\figfile{stigmergy}{The proposed colony. Small specialised agents traverse the code and the
-architecture and leave machine-readable pheromones on a persistent evidence landscape: suspicion, a
-trust-boundary anomaly, an unusual state transition, a cryptographic assumption, a missing edge, an
-inconsistent claim, an area repeatedly associated with failure. Pheromones strengthen under
-independent evidence and decay unsupported; agents follow reinforced trails. An orchestrator allocates
-work and aggregates evidence and decides nothing. Confidence comes only from external evidence, never
-from agreement between models. What survives reproduction enters Polaris's own loop as a test and an
-invariant.}{fig:stigmergy}
 
 \subsection{Gates that are not the repository's to pass}
 
@@ -108,7 +99,7 @@ before any null result counts.
 
 \subsection{Presentation technologies that would remove the correlator, held}
 
-Version 2 listed five families. One, the pairwise identifier, is built, with the bound
+Five families of presentation technology would remove the correlator. One, the pairwise identifier, is built, with the bound
 Section~\ref{sec:privacy} states. The other four are held rather than scheduled, and the reason each
 is not built is the contract's, not a technical one.
 
@@ -139,23 +130,18 @@ Athena's six checks. Under the contract the assessment itself waits on an outsid
 what it would produce; nothing about Metis is scheduled, and this paper keeps the brief because the
 prohibition in it binds any future cognitive layer whether or not Metis is ever built.
 
-\subsection{Myrmex: stigmergic debugging as an outside observer}
+\subsection{Myrmex: an outside observer, proposed}
 
-Version 2 proposed, under the provisional name Myrmex, a debugging system that would live outside
-Polaris and attack it independently, inspired by how an ant colony coordinates without a central
-plan: specialised agents leaving machine-readable evidence on a shared landscape, confidence drawn
-only from reproductions and never from agreement between models, and every reproducible failure
-entering the loop of Section~\ref{sec:senses} as a test and an invariant. The proposal stands, and
-the caution with it: an earlier apparatus that lived inside the tree and asserted claims about itself
-was deleted as scaffolding, so Myrmex would be held to the opposite discipline, outside and
-adversarial, or not built.
-
-What Version 3 can add is that the thing Myrmex was for has been demonstrated without it. The
-mutation drills are the colony's cheapest members, built inside the tree: they do not reason, they
-delete and invert and watch for red, and they found more than any review had. And the observer that
-found what no drill could, a certificate every internal instrument accepted, was not a colony of
-agents but one wallet written by strangers. The proposal is kept because a stranger's wallet
-exercises one path, and the rings inside it are still watched only by their author's instruments.
+Myrmex is a proposed debugging system that would live outside Polaris and attack it independently,
+coordinated the way an ant colony is, without a central plan: specialised agents leave
+machine-readable evidence on a shared landscape, confidence comes only from reproductions and never
+from agreement between models, and every reproducible failure enters the assurance loop of
+Section~\ref{sec:senses} as a test and an invariant. It is held to the opposite discipline of anything
+inside the tree: outside and adversarial, or not built. Part of its purpose is already served without
+it. The mutation drills are its cheapest members, built inside the tree; and the observer that found
+what no drill could was one wallet written by strangers (Section~\ref{sec:outside}). The proposal
+stands because a stranger's wallet exercises one path, and the rings inside it are still watched only
+by their author's instruments. \sFut
 
 \subsection{Engineering items held under the contract}
 
