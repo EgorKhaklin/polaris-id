@@ -35,16 +35,14 @@ organisation. \sImpl{} for the drivers and the drill; \sExt{} for hardware custo
 module has been used.
 
 The placeholder deserves a paragraph, because it is where an honest system is most easily
-misread, and Version 3 says it more bluntly than Version 2 did. Without the real-signing flag and a
+misread. Without the real-signing flag and a
 lattice library present, the signing module produces a deterministic SHA3-256 binding labelled
 \code{DETERMINISTIC-PLACEHOLDER-SHA3-256}: thirty-two bytes that verify against no key, where a real
 ML-DSA-65 signature is 3,309. That is the default in development and in most of continuous
-integration. It is guarded, since \code{v9.280} a production boot fails closed unless real signing is
+integration. It is guarded: a production boot fails closed unless real signing is
 actually available, the placeholder is a named development profile, and it warns loudly when used
 unnamed, and it is still the reason the repository no longer calls itself post-quantum without
-saying so in the same breath. The history is recorded rather than hidden: at \code{v9.58} the
-headline post-quantum claim was, at the data level, a hardcoded string, and the real signing module
-was an unused island until it was wired into issuance. \sImpl
+saying so in the same breath. \sImpl
 
 \subsection{Two witnesses at issuance, one at use, sampled, and one outside corpus}
 
@@ -74,8 +72,8 @@ re-implementation with plain integers modulo a prime, sharing no code with the R
 re-derives the membership statement and must agree, and it abstains, in the open, on the one axis it
 cannot model, the integrity of the proof bytes. What the principle catches is implementation
 divergence. What it does not catch is a shared misreading of the specification, and the repository
-says so beside every two-witness claim. Since \code{v9.419} the witnesses are also mutation-tested:
-the claim that two implementations must agree is now a claim about the tests as well as the code.
+says so beside every two-witness claim. The witnesses are also mutation-tested, so
+the claim that two implementations must agree is a claim about the tests as well as the code.
 
 \subsection{Canonical signing: the same bytes on both sides}
 
@@ -99,15 +97,11 @@ other's decision flip over the wire, with no cooperation from the compromised pa
 
 \subsection{Agility under an audited migration path, and what a break would cost}
 
-This subsection is new, and it replaces a word. Version 2 called Polaris post-quantum on its cover.
-An outside argument, that the phrase is empty because nobody knows how large quantum computers will
-get, attacked the wrong thing, and the part it got right was sharper than its framing: ML-DSA-65's
-security does not rest on a hardware prediction, it rests on Module-LWE and Module-SIS being hard
+ML-DSA-65's security does not rest on a prediction about quantum hardware; it rests on Module-LWE and Module-SIS being hard
 against the best known classical and quantum algorithms, which could be wrong for mathematical
 reasons. The two real risks are a cryptanalytic advance against the lattice assumptions and an
 implementation flaw, and the design already answers both, the hash-based hedge in the registry and
-the two witnesses at issuance. So the engineering was not the problem; the wording was. What the
-repository can demonstrate is \emph{algorithm agility under an audited migration path}: C7 makes the
+the two witnesses at issuance. What the repository can demonstrate, and so what it claims, is \emph{algorithm agility under an audited migration path}: C7 makes the
 algorithm a row, \entity{AgencyAlgorithmAuth} authorizes it per authority, and a population can be
 re-signed under a new parameter set on a path that runs on every push. \sImpl
 
@@ -148,10 +142,9 @@ deploying organisation. \sExt
 \subsection{What remains classical}
 
 The token signature, the digests, the Merkle commitments, the zero-knowledge proof, the
-client-to-edge key exchange for modern clients and, since \code{v9.404}, the hop from the
+client-to-edge key exchange for modern clients and the hop from the
 application to the connection pooler are post-quantum, each of the last two read off a real
-handshake rather than inferred from a base image, which is how the posture ledger had once called
-one of them classical while it was not. The hop from the pooler to the database, the certificate
+handshake rather than inferred from a base image. The hop from the pooler to the database, the certificate
 signatures, and the operator's WebAuthn credentials remain classical, each gated on a third party (a
 PostgreSQL release, the public certificate ecosystem, authenticator hardware) and each stated in the
 posture ledger with its threat and its exposure. None of the lattice library, the proof system or the

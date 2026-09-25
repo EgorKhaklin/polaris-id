@@ -30,7 +30,7 @@ invisible to reading. Every operational claim below is a drill that runs in CI a
   \item[A second region.] The HA profile survives a node dying; it does not survive the region, and
     the tempting fix, a third member in region B, is wrong three ways at once, because it puts the
     wide-area network inside the lease store's quorum, on every commit, and inside region A's blast
-    radius. So since \code{v9.359} region B is a standby cluster: its own lease store, a different
+    radius. So region B is a standby cluster: its own lease store, a different
     scope, streaming asynchronously through region A's router so a failover inside A does not break
     replication, electing no primary of its own so two regions can never both accept writes. The
     recovery point is therefore not zero, and it is measured rather than asserted: the drill cuts
@@ -120,7 +120,7 @@ every insert on the path simply fails. Five surrogate identifiers are 64-bit now
 the arithmetic from the live schema on every push, and the rule the repository drew from it is that a
 capacity question answered in cores and seconds is the easy half. The model also refuses to call a
 core count \emph{measured}: the per-core rate is measured, the multiplication has never been run, and
-since \code{v9.387} every extrapolation carries its assumption by name. A separate cost model
+every extrapolation carries its assumption by name. A separate cost model
 finds that verification throughput is not the cost driver at any realistic national scale, since a
 hundred million people verified twelve times a year is thirty-eight verifications per second on
 average, and states which of its inputs are facts about the code and which are guesses about a
@@ -131,20 +131,18 @@ constraints; it has not been run. \sExp
 
 Per-agency quotas on issuance, revocation and verification are opt-in rows enforced by a trigger on
 every write path, exact under concurrency by an advisory lock, refused loudly on every surface, and
-keyed by agency identifiers, never by a person; since \code{v9.424} a quota is a decision with a
+keyed by agency identifiers, never by a person; a quota is a decision with a
 reason that survives being changed rather than a setting that can be overwritten. Velocity alerts
 compare each agency to its own trailing week. The per-IP rate limiter shares one Redis bucket across
 workers. Operators authenticate with WebAuthn as a second factor after an enrolment deadline,
 sessions are registered server-side with per-role caps and origin checks, and a per-role network
 policy applies. Creating an operator account left no record that it had happened until
 \code{v9.422}, and six of the twenty-one audit event types the schema named had no writer anywhere
-in the tree; every one has a writer now, pinned by a check, and the first version of that check was
-wrong about three of them and says so. Secrets are file-mounted, sealed and rotated through one
+in the tree; every one has a writer, pinned by a check. Secrets are file-mounted, sealed and rotated through one
 lifecycle, and a database password reaches the database before its file changes, or is not rotated at
-all: until 23 September 2026 the file changed first, and a live stack the script took for stopped
-was left presenting a password the database had never been told; the application refuses to boot in production on a default key, and the application log
-records no form body, cookie value or token value, which was a documented promise kept by discipline
-alone until a check began reading the logging calls. Every release ships bills of materials with
+all; the application refuses to boot in production on a default key, and the application log
+records no form body, cookie value or token value, which a check holds by reading the logging
+calls. Every release ships bills of materials with
 signed provenance, and CVE scans of the dependency surface and of every self-built image gate the
 build. \sImpl
 
@@ -162,15 +160,11 @@ ML-DSA-65; federate two instances over HTTP; install \code{polaris-verify} as a 
 test and conform the TypeScript SDK; scan dependencies and every image for vulnerabilities; and boot
 the full production stack end to end. \sImpl
 
-Version 3 adds what Version 2 could not: the witness was asked whether it watches. Twenty-two drills
-were found printing their whole verdict paragraph from zero recorded cases, so a drill now refuses to
-report a guarantee it did not test, and a check holds every drill to counting its cases. A drill
-wired into a CI job that lacked the runtime it needed refused to report rather than calling an
-unverifiable tree clean, which was correct, and the job then failed on its own setup rather than on a
-finding, which is how a real finding gets waved through; every job now installs what it runs, and a
-check holds it to that. The local gate a maintainer runs before pushing ran four suites while CI ran
-eighteen, and shipped a broken change twice before CI said so; it runs what CI runs now, and it names
-the verification a change needs from the paths and route handlers that moved. \sImpl
+The drills are themselves watched. A drill refuses to report a guarantee it did not test, and a check
+holds every drill to counting its cases; every CI job installs what it runs, so a job fails on a
+finding rather than on its own setup; and the local gate a maintainer runs before pushing runs what
+CI runs, names the verification a change needs from the paths and route handlers that moved, and
+repeats the web suite as the production role and under the real signer. \sImpl
 
 \subsection{The day a pilot ends, and the day the old credential stops being accepted}
 

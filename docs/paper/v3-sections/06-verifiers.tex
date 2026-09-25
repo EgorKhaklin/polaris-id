@@ -5,11 +5,10 @@
 \subsection{The detached verifier, as a thing a stranger installs}
 
 \code{polaris-verify} verifies a credential's authenticity pack with only a standard ML-DSA
-library: no Polaris code, no database, no network unless asked to fetch status. Version 2 described
-it as a script in the repository. It is now a package on a public registry, at \code{1.0.0-rc.3}, a
+library: no Polaris code, no database, no network unless asked to fetch status. It is a package on a public registry, at \code{1.0.0-rc.3}, a
 release candidate, with \code{0.1.0} beneath it since 15 September 2026, published by the
 repository's own workflow under trusted publishing so that no long-lived credential exists anywhere,
-and the script that Version 2 named is a shim onto it. It refuses to start until the run says what
+and the script of that name in the repository is a shim onto it. It refuses to start until the run says what
 cryptography it is doing: \code{--pqc-provider oqs}, \code{cryptography} or \code{auto}, or
 \code{--dev-placeholder}, with no default and no environment variable, because a verifier that
 quietly stopped verifying still answers every question. Every machine-readable verdict carries a
@@ -108,9 +107,8 @@ the same plan against \code{1.0.0rc7} was certified (24 September 2026). A publi
 with both signature witnesses on the primitive. None of the three is an audit or a pilot, and the
 one certification covers one package version in one role.}{fig:outside-witnesses}
 
-Everything above is Polaris verifying Polaris, and Version 2's honest boundary was that no external
-implementation had interoperated. That sentence is different now, on one path, and the path was
-chosen because it is the one an outside wallet actually speaks. Under the operating contract the
+Everything above is Polaris verifying Polaris. One path has been exercised by an external
+implementation, chosen because it is the one an outside wallet actually speaks. Under the operating contract the
 first interoperability target was an OpenID4VP 1.0 verifier under the High Assurance
 Interoperability Profile, and the OpenID Foundation's conformance suite has a test plan for exactly
 that role, \code{oid4vp-1final-verifier-haip-test-plan}, in which \emph{the suite signs the
@@ -166,7 +164,7 @@ general. Anyone can repeat the exchange from a clean machine in about ten minute
 repository; the page that says how was executed before it was written. \sWit{} for this path.
 
 The native protocol, the \code{polaris-*/1} formats that everything else in this paper is built on,
-remains where Version 2 left it: the specification, the cases and two SDKs exist, and no implementation
+has not been exercised from outside: the specification, the cases and two SDKs exist, and no implementation
 by an external team from the documents alone has happened. \sExt
 
 Two format bridges make the boundary explicit. A Polaris credential renders in the ISO/IEC 18013-5
