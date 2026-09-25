@@ -628,8 +628,9 @@ national rollout (P7). Do not read a closed ledger here as readiness for those.
   first, and opt-in per-agency quotas enforced by trigger.
 - **The constraints that can live in the database do**, not in policy: C1's
   grant boundary revokes UPDATE and DELETE on append-only audit tables from
-  `polaris_app`, the only DELETE path is SECURITY DEFINER, and `polaris_app`
-  has no DDL; C2 is a CHECK constraint, C3 a partial unique index, C7 a
+  `polaris_app`, on every partition as well as the parent since 1.0.0-rc.40 (before
+  it the partitions kept the blanket grant), the only DELETE path is SECURITY
+  DEFINER and the carve-out asks for its owner, and `polaris_app` has no DDL; C2 is a CHECK constraint, C3 a partial unique index, C7 a
   registry table, C10 an absence. C4, C5, C6 and C9 are enforced in the
   application, the response policy and the threaded tests, as the table in
   [MISSION.md](../MISSION.md) records, and every one of the ten is pinned by a
@@ -710,6 +711,8 @@ CHANGELOG entry for the version carries the detail.
 | The four append-only event tables are monthly range-partitioned; a manager premakes and detaches months (re-adding the append-only trigger so C1 holds across the detach), an online migration converts a pre-v9.245 database in place, and a drill proves append-only across a partition, an attach and a detach on every push | v9.245 | `check_event_table_partitioning` |
 | The read-only surfaces (the atlas API, the verification list, the token export) route to a streaming replica under an explicit staleness contract with failback to the primary; correctness-critical reads stay on the primary; the failover drill proves the app serves reads from the replica | v9.246 | `check_read_replica_routing` |
 | A whole population stages with `COPY` and issues set-based in one transaction through `uc_bulk_issue`, every row through the full constraint set and a single violation rolling the batch back; a drill proves throughput, all-or-none atomicity, and C3 across the batch on every push | v9.247 | `check_bulk_enrollment` |
+| The audit of record accepts only what its recorders write: the change records and the enrollment log refuse a direct insert (the application role could append events nothing did, and set a person ENROLLED), the lifecycle log is written only by SECURITY DEFINER routines, every partition of the four event tables is read-only to the application role including those made later (it could delete every row through them), and the purge carve-out asks for the purge's owner | 1.0.0-rc.38 to rc.40 | `check_aor_privilege_boundary` |
+| Per-authority isolation holds past the policies' edges: every view runs as its caller (a view showed a bound operator another authority's credentials), every rule that reads a secured table runs as its owner (a bound session blinded two), a binding gate refuses a credential it cannot see, a change of an operator's binding ends their live session, and the routes are tested as the application role for a bound operator | 1.0.0-rc.41 to rc.44 | `check_views_run_as_their_caller`, `check_rule_routines_see_past_the_binding` |
 
 ---
 
