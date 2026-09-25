@@ -360,6 +360,33 @@ UNSHARDED_RUNNERS = {
 }
 
 
+#: 2026-09-25. test_e2e_atlas drives whatever answers on POLARIS_E2E_PORT (2222 by default). On a
+#: machine with an old Polaris container bound there, the gate tested that container, reported
+#: seven failures on every run, and they had to be explained away each time, which is how a real
+#: failure gets missed. The gate starts the CURRENT application on its own port, against the
+#: gate's own database, for that one suite.
+E2E_GATE_PORT = 2298
+
+
+def _start_e2e_server(py, env, db):
+    import urllib.request
+    subprocess.run(["psql", "-q", "-h", env.get("POLARIS_DB_HOST", "localhost"),
+                    "-U", env.get("POLARIS_DB_USER", "postgres"), "-d", db, "-c",
+                    "UPDATE AppUser SET locked_until = NULL, failed_login_count = 0"],
+                   env=env, capture_output=True)
+    server_env = dict(env, POLARIS_PORT=str(E2E_GATE_PORT),
+                      POLARIS_SECRET_KEY=env.get("POLARIS_SECRET_KEY") or "gate-e2e-not-a-real-key-000000")
+    server = subprocess.Popen([py, "app.py"], cwd=os.path.join(ROOT, "polaris_web"), env=server_env,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(60):
+        try:
+            urllib.request.urlopen("http://127.0.0.1:%d/login" % E2E_GATE_PORT, timeout=2).read()
+            break
+        except Exception:
+            time.sleep(1)
+    return dict(env, POLARIS_E2E_PORT=str(E2E_GATE_PORT)), server
+
+
 def run_unsharded(py, base_env, db, out):
     """Run the CI suites `run` does not shard, against one already-loaded database.
 
@@ -395,7 +422,18 @@ def run_unsharded(py, base_env, db, out):
                              ROOT, "discover " + d))
         for cmd, wd, label in cmds:
             groups += 1
-            pr = subprocess.run(cmd, cwd=wd, env=env, capture_output=True, text=True)
+            run_env, server = env, None
+            if any(str(c).endswith("test_e2e_atlas.py") for c in cmd):
+                run_env, server = _start_e2e_server(py, env, db)
+            try:
+                pr = subprocess.run(cmd, cwd=wd, env=run_env, capture_output=True, text=True)
+            finally:
+                if server is not None:
+                    server.terminate()
+                    try:
+                        server.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        server.kill()
             text = _plain((pr.stdout or "") + (pr.stderr or ""))
             m = re.search(r"Ran (\d+) tests?", text) or re.search(r"(\d+) passed", text)
             n = int(m.group(1)) if m else 0
