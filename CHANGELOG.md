@@ -11,6 +11,30 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.53 — 2026-09-25 (a credential cannot be created around issuance)
+
+CORE-BUG against the issuance contract: a credential exists because `uc1_issue_and_activate` or
+`uc_bulk_issue` issued it (two-witness signing, the algorithm authorization, the enrolment
+evidence). The contract covers its permissions, its revocation-list entries (`uc4`, `uc8`,
+`uc9`), its device bindings (`uc5`) and its recoveries (`uc9_initiate_recovery`) the same way.
+Externally observable: the application role can no longer insert into `IdentityToken`,
+`TokenPermission`, `RevocationList`, `DeviceBinding` or `RecoveryRequest`. Schema change:
+migration `2026-09-25-012-credential-tables-written-only-by-their-procedures`. Nothing is
+published.
+
+The application role held INSERT on all five, and the application inserts none of them
+directly; every procedure that does is SECURITY DEFINER, since rc.40 for issuance. With that
+right the role could create a credential that never passed issuance and grant it permissions.
+It could also put a token on the revocation list without the revocation gate, bind a device, or
+open a recovery. Pairs seven to eleven of the open-door sweep. Two tables stay writable, because
+the application writes them itself: `Individual` from the operator routes, and `TokenSignature`
+from the population migration.
+
+- The application role loses INSERT on the five tables; UPDATE is unchanged.
+- Test: `test_app_role_cannot_create_a_credential_around_issuance`, as `polaris_app`, covers the
+  five direct inserts. It goes red with the down migration applied.
+- `check_aor_privilege_boundary` requires the five revokes; five new detection cases.
+
 ## v1.0.0-rc.52 — 2026-09-25 (duress events, archive checkpoints and erasure records cannot be fabricated)
 
 CORE-BUG against three published refusals: `uc12_record_duress` records duress only for a

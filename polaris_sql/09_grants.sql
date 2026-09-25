@@ -171,6 +171,18 @@ REVOKE INSERT ON DuressEvent FROM polaris_app;
 REVOKE INSERT ON LifecycleArchiveCheckpoint FROM polaris_app;
 REVOKE INSERT ON IndividualErasureEvent FROM polaris_app;
 
+-- 2026-09-25. The credential tables. A credential, its permissions, a revocation-list entry, a
+-- device binding and a recovery request are each created only by a use-case procedure, all
+-- SECURITY DEFINER: uc1_issue_and_activate and uc_bulk_issue (issuance: two-witness signing, the
+-- algorithm authorization, the enrolment evidence), uc4/uc8/uc9 (the revocation list), uc5 (device
+-- binding), uc9_initiate_recovery (recovery). The application inserts none of them directly; with
+-- INSERT its role could create a credential that never passed issuance.
+REVOKE INSERT ON IdentityToken FROM polaris_app;
+REVOKE INSERT ON TokenPermission FROM polaris_app;
+REVOKE INSERT ON RevocationList FROM polaris_app;
+REVOKE INSERT ON DeviceBinding FROM polaris_app;
+REVOKE INSERT ON RecoveryRequest FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
 -- bound enforced by uc8_revoke_token.

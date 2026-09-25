@@ -1377,6 +1377,38 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                           "the procedure is reachable and refuses on its own terms")
         conn.rollback()
 
+    def test_app_role_cannot_create_a_credential_around_issuance(self):
+        """2026-09-25. Issuance is uc1_issue_and_activate (or uc_bulk_issue): two-witness signing,
+        the algorithm authorization, the enrolment evidence. With INSERT on IdentityToken the
+        application role could create an ACTIVE credential that passed none of it, and with INSERT
+        on the other four tables grant it permissions, list a token as revoked, bind a device or
+        open a recovery around their procedures. Each direct insert is refused."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT individual_id FROM Individual ORDER BY 1 LIMIT 1")
+            ind = cur.fetchone()["individual_id"]
+            cur.execute("SELECT token_id FROM IdentityToken ORDER BY 1 LIMIT 1")
+            tid = cur.fetchone()["token_id"]
+        conn.rollback()
+        attempts = (
+            ("a credential", "INSERT INTO IdentityToken (token_value, physical_serial, "
+                             "biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, "
+                             "status) VALUES ('AROUND-ISSUANCE', 'AROUND-SN', 'FINGERPRINT', %s, 1, 1, "
+                             "'RESERVE')", (ind,)),
+            ("a permission", "INSERT INTO TokenPermission (token_id, context_id, permission_level) "
+                             "VALUES (%s, 1, 'VERIFY')", (tid,)),
+            ("a revocation-list entry", "INSERT INTO RevocationList (token_id, revoked_by_agency_id, "
+                                        "effective_date, reason_code) VALUES (%s, 1, polaris_utc_date(), "
+                                        "'COMPROMISED')", (tid,)),
+            ("a device binding", "INSERT INTO DeviceBinding (token_id) VALUES (%s)", (tid,)),
+            ("a recovery request", "INSERT INTO RecoveryRequest (claimed_individual_id) VALUES (%s)", (ind,)),
+        )
+        for label, sql, args in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql, args)
+            conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

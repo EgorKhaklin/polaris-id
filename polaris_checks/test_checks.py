@@ -1688,7 +1688,10 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
               "REVOKE INSERT, UPDATE, DELETE ON BlockchainAnchor FROM polaris_app;\n"
               "REVOKE INSERT ON DuressEvent FROM polaris_app;\n"
               "REVOKE INSERT ON LifecycleArchiveCheckpoint FROM polaris_app;\n"
-              "REVOKE INSERT ON IndividualErasureEvent FROM polaris_app;\n")
+              "REVOKE INSERT ON IndividualErasureEvent FROM polaris_app;\n"
+              + "".join("REVOKE INSERT ON %s FROM polaris_app;\n" % t for t in
+                        ("IdentityToken", "TokenPermission", "RevocationList", "DeviceBinding",
+                         "RecoveryRequest")))
     full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
             "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
@@ -1753,7 +1756,9 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK"
 
     # 10. 2026-09-25: append-only records the application never writes directly.
-    for table in ("DuressEvent", "LifecycleArchiveCheckpoint", "IndividualErasureEvent"):
+    for table in ("DuressEvent", "LifecycleArchiveCheckpoint", "IndividualErasureEvent",
+                  "IdentityToken", "TokenPermission", "RevocationList", "DeviceBinding",
+                  "RecoveryRequest"):
         write(full.replace("REVOKE INSERT ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
     write(full, True, True, uc10_definer=False)

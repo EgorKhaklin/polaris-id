@@ -831,7 +831,10 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                                     "BlockchainAnchor has no trigger to stop an anchor being moved "
                                     "between batches (C1)")
     # 2026-09-25. Append-only records the application never writes directly.
-    for table in ("DuressEvent", "LifecycleArchiveCheckpoint", "IndividualErasureEvent"):
+    for table in ("DuressEvent", "LifecycleArchiveCheckpoint", "IndividualErasureEvent",
+                  # and the credential tables, created only by the use-case procedures
+                  "IdentityToken", "TokenPermission", "RevocationList", "DeviceBinding",
+                  "RecoveryRequest"):
         if not re.search(r"REVOKE\s+INSERT\s+ON\s+" + table + r"\s+FROM\s+polaris_app", grants, re.I):
             return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON " + table + ": it is "
                                         "append-only, so a row the application fabricates there is "
