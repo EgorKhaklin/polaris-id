@@ -9,7 +9,7 @@
 
 DROP VIEW IF EXISTS ActiveTokens;
 
-CREATE OR REPLACE VIEW ActiveTokens AS
+CREATE OR REPLACE VIEW ActiveTokens WITH (security_invoker = true) AS
 SELECT  t.token_id,
         t.token_value,
         i.legal_name,
@@ -46,7 +46,7 @@ COMMENT ON VIEW ActiveTokens IS
 -- and operator UIs consult it; the underlying event log is the
 -- append-only source of truth.
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW IndividualCurrentEnrollment AS
+CREATE OR REPLACE VIEW IndividualCurrentEnrollment WITH (security_invoker = true) AS
 WITH latest AS (
     SELECT DISTINCT ON (individual_id)
            individual_id,
@@ -76,7 +76,7 @@ COMMENT ON VIEW IndividualCurrentEnrollment IS
 -- P8.7b (v9.328): each authority key's CURRENT status from its append-only events. A key
 -- is 'compromised' if any compromised event exists (from the earliest such effective_at),
 -- else 'retired' if a retired event exists, else 'active' from its registration.
-CREATE OR REPLACE VIEW AuthorityKeyCurrent AS
+CREATE OR REPLACE VIEW AuthorityKeyCurrent WITH (security_invoker = true) AS
 SELECT  e.agency_id,
         e.public_key_hex,
         MIN(e.algorithm)                                                     AS algorithm,

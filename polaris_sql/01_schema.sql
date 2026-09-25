@@ -1338,7 +1338,7 @@ CREATE INDEX idx_holder_key_event_key ON HolderKeyEvent USING hash (public_key_h
 CREATE INDEX idx_holder_key_event_token ON HolderKeyEvent (token_id, effective_at DESC);
 
 -- The current holder key per credential: the latest event, with revocation showing as such.
-CREATE OR REPLACE VIEW HolderKeyCurrent AS
+CREATE OR REPLACE VIEW HolderKeyCurrent WITH (security_invoker = true) AS
 SELECT DISTINCT ON (hke.token_id)
        hke.token_id,
        hke.public_key_hex,

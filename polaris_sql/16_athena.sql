@@ -141,7 +141,7 @@ ON CONFLICT (driver) DO UPDATE SET
 -- ----------------------------------------------------------------------------
 -- Object views (all read-only over authority tables; NONE reference a person).
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW v_athena_jurisdiction AS
+CREATE OR REPLACE VIEW v_athena_jurisdiction WITH (security_invoker = true) AS
 SELECT j.jurisdiction,
        (SELECT COUNT(*) FROM Agency a WHERE a.jurisdiction = j.jurisdiction) AS agency_count,
        'Agency.jurisdiction'::text AS source
@@ -149,12 +149,12 @@ SELECT j.jurisdiction,
         UNION
         SELECT DISTINCT jurisdiction FROM RetentionPolicy WHERE jurisdiction IS NOT NULL) j;
 
-CREATE OR REPLACE VIEW v_athena_agency AS
+CREATE OR REPLACE VIEW v_athena_agency WITH (security_invoker = true) AS
 SELECT a.agency_id, a.name, a.agency_type, a.jurisdiction, a.authorization_level,
        'Agency'::text AS source
   FROM Agency a;
 
-CREATE OR REPLACE VIEW v_athena_algorithm AS
+CREATE OR REPLACE VIEW v_athena_algorithm WITH (security_invoker = true) AS
 SELECT alg.algorithm_id, alg.name, alg.family, alg.quantum_resistant,
        alg.nist_standard, alg.security_level_bits,
        alg.public_key_size, alg.signature_size, alg.deprecation_date,
@@ -162,7 +162,7 @@ SELECT alg.algorithm_id, alg.name, alg.family, alg.quantum_resistant,
        'CryptographicAlgorithm'::text AS source
   FROM CryptographicAlgorithm alg;
 
-CREATE OR REPLACE VIEW v_athena_credential_class AS
+CREATE OR REPLACE VIEW v_athena_credential_class WITH (security_invoker = true) AS
 SELECT alg.algorithm_id AS class_id, alg.name AS class_name, alg.family,
        alg.quantum_resistant, alg.security_level_bits,
        (alg.deprecation_date IS NOT NULL AND alg.deprecation_date <= CURRENT_DATE) AS is_deprecated,
@@ -173,13 +173,13 @@ SELECT alg.algorithm_id AS class_id, alg.name AS class_name, alg.family,
  GROUP BY alg.algorithm_id, alg.name, alg.family, alg.quantum_resistant,
           alg.security_level_bits, alg.deprecation_date;
 
-CREATE OR REPLACE VIEW v_athena_relying_party_class AS
+CREATE OR REPLACE VIEW v_athena_relying_party_class WITH (security_invoker = true) AS
 SELECT vc.context_id, vc.context_type, vc.description,
        vc.requires_biometric, vc.min_security_level,
        'VerificationContext'::text AS source
   FROM VerificationContext vc;
 
-CREATE OR REPLACE VIEW v_athena_proof_policy AS
+CREATE OR REPLACE VIEW v_athena_proof_policy WITH (security_invoker = true) AS
 SELECT vc.context_id, vc.context_type,
        vc.min_security_level, vc.requires_biometric,
        'VerificationContext'::text AS source
@@ -187,7 +187,7 @@ SELECT vc.context_id, vc.context_type,
 
 -- Disclosure model as class-level reference (the C6-enforced vocabulary). No
 -- token, no person: a policy statement, not a per-verification record.
-CREATE OR REPLACE VIEW v_athena_disclosure_policy AS
+CREATE OR REPLACE VIEW v_athena_disclosure_policy WITH (security_invoker = true) AS
 SELECT d.disclosure_level, d.semantics, d.ordinal,
        'disclosure vocabulary + C6 server-side enforcement'::text AS source
   FROM (VALUES
@@ -197,7 +197,7 @@ SELECT d.disclosure_level, d.semantics, d.ordinal,
   ) AS d(disclosure_level, semantics, ordinal);
 
 -- "Current" trust agreements only (revoked/expired excluded). No signer person.
-CREATE OR REPLACE VIEW v_athena_trust_agreement AS
+CREATE OR REPLACE VIEW v_athena_trust_agreement WITH (security_invoker = true) AS
 SELECT ata.attestation_id,
        ata.attesting_agency_id, aa.name AS attesting_agency_name,
        ata.attested_agency_id,  ab.name AS attested_agency_name,
@@ -214,7 +214,7 @@ SELECT ata.attestation_id,
 -- ----------------------------------------------------------------------------
 -- Edge views (each a SELECT over an existing table or the curated rule state).
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW v_athena_authorizes AS
+CREATE OR REPLACE VIEW v_athena_authorizes WITH (security_invoker = true) AS
 SELECT aaa.agency_id, a.name AS agency_name,
        aaa.algorithm_id, alg.name AS algorithm_name,
        aaa.authorization_type, aaa.authorized_date,
@@ -223,7 +223,7 @@ SELECT aaa.agency_id, a.name AS agency_name,
   JOIN Agency a ON aaa.agency_id = a.agency_id
   JOIN CryptographicAlgorithm alg ON aaa.algorithm_id = alg.algorithm_id;
 
-CREATE OR REPLACE VIEW v_athena_may_issue AS
+CREATE OR REPLACE VIEW v_athena_may_issue WITH (security_invoker = true) AS
 SELECT aaa.agency_id, a.name AS agency_name,
        aaa.algorithm_id AS class_id, alg.name AS class_name,
        'AgencyAlgorithmAuth'::text AS source
@@ -232,13 +232,13 @@ SELECT aaa.agency_id, a.name AS agency_name,
   JOIN CryptographicAlgorithm alg ON aaa.algorithm_id = alg.algorithm_id
  WHERE aaa.authorization_type IN ('ISSUE','BOTH');
 
-CREATE OR REPLACE VIEW v_athena_may_request AS
+CREATE OR REPLACE VIEW v_athena_may_request WITH (security_invoker = true) AS
 SELECT vc.context_id, vc.context_type, d.disclosure_level,
        'VerificationContext + C6'::text AS source
   FROM VerificationContext vc
  CROSS JOIN (VALUES ('ZERO_KNOWLEDGE'),('SELECTIVE'),('FULL')) AS d(disclosure_level);
 
-CREATE OR REPLACE VIEW v_athena_relies_on AS
+CREATE OR REPLACE VIEW v_athena_relies_on WITH (security_invoker = true) AS
 SELECT ata.attesting_agency_id AS from_agency_id, aa.name AS from_agency_name,
        ata.attested_agency_id  AS to_agency_id,   ab.name AS to_agency_name,
        ata.context_id, vc.context_type, ata.valid_until,
@@ -250,12 +250,12 @@ SELECT ata.attesting_agency_id AS from_agency_id, aa.name AS from_agency_name,
  WHERE ata.revocation_date IS NULL
    AND ata.valid_until >= CURRENT_DATE;
 
-CREATE OR REPLACE VIEW v_athena_constrains AS
+CREATE OR REPLACE VIEW v_athena_constrains WITH (security_invoker = true) AS
 SELECT r.rule_code, r.title, r.kind,
        'athena_constitutional_rule'::text AS source
   FROM athena_constitutional_rule r;
 
-CREATE OR REPLACE VIEW v_athena_enforced_by AS
+CREATE OR REPLACE VIEW v_athena_enforced_by WITH (security_invoker = true) AS
 SELECT e.rule_code, r.title, e.mechanism_kind, e.mechanism_name, e.note,
        'athena_rule_enforcement'::text AS source
   FROM athena_rule_enforcement e
@@ -263,14 +263,14 @@ SELECT e.rule_code, r.title, e.mechanism_kind, e.mechanism_name, e.note,
 
 -- approved_by reinforces non-sovereignty: a C-rule's authority comes from the
 -- constitution (MISSION.md), never from Athena.
-CREATE OR REPLACE VIEW v_athena_approved_by AS
+CREATE OR REPLACE VIEW v_athena_approved_by WITH (security_invoker = true) AS
 SELECT r.rule_code, r.title, r.source_ref AS approved_by,
        'athena_constitutional_rule.source_ref'::text AS source
   FROM athena_constitutional_rule r;
 
 -- supersedes: a deprecated algorithm is superseded by the non-deprecated
 -- post-quantum algorithms at or above its security level.
-CREATE OR REPLACE VIEW v_athena_supersedes AS
+CREATE OR REPLACE VIEW v_athena_supersedes WITH (security_invoker = true) AS
 SELECT newer.algorithm_id AS supersedes_algorithm_id, newer.name AS supersedes_name,
        old.algorithm_id   AS superseded_algorithm_id, old.name  AS superseded_name,
        old.family AS superseded_family,

@@ -105,7 +105,7 @@ COMMENT ON INDEX idx_token_individual_status IS
 -- a separate query.
 -- ----------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW TokensWithLifecycleSummary AS
+CREATE OR REPLACE VIEW TokensWithLifecycleSummary WITH (security_invoker = true) AS
 SELECT
     t.token_id,
     t.token_value,

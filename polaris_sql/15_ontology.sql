@@ -36,7 +36,7 @@
 -- ----------------------------------------------------------------------------
 -- v_ontology_token
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW v_ontology_token AS
+CREATE OR REPLACE VIEW v_ontology_token WITH (security_invoker = true) AS
 SELECT
     t.token_id,
     t.token_value,
@@ -80,7 +80,7 @@ COMMENT ON VIEW v_ontology_token IS
 -- ----------------------------------------------------------------------------
 -- v_ontology_agency
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW v_ontology_agency AS
+CREATE OR REPLACE VIEW v_ontology_agency WITH (security_invoker = true) AS
 SELECT
     a.agency_id,
     a.name,
@@ -110,7 +110,7 @@ COMMENT ON VIEW v_ontology_agency IS
 -- ----------------------------------------------------------------------------
 -- v_ontology_verification
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW v_ontology_verification AS
+CREATE OR REPLACE VIEW v_ontology_verification WITH (security_invoker = true) AS
 SELECT
     v.event_id        AS verification_id,
     v.token_id,
@@ -148,7 +148,7 @@ COMMENT ON VIEW v_ontology_verification IS
 -- types so consumers can render a unified table without union'ing at
 -- query time. Distinct sources keep their detail via the `detail_jsonb`
 -- payload column.
-CREATE OR REPLACE VIEW v_ontology_token_timeline AS
+CREATE OR REPLACE VIEW v_ontology_token_timeline WITH (security_invoker = true) AS
 SELECT
     'lifecycle'::TEXT      AS event_kind,
     le.event_id,

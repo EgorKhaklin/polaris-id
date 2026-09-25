@@ -11,6 +11,38 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.41 — 2026-09-25 (a bound operator could read other authorities' credentials through a view)
+
+CORE-BUG against rc.40, in operator isolation. Externally observable: every view is
+`security_invoker`, so an operator bound to one authority sees through `v_ontology_token`,
+`v_ontology_token_timeline`, `v_ontology_verification`, `ActiveTokens` and the rest exactly what
+the underlying tables show them, and `/investigate/token/<id>` answers 404 for another
+authority's credential. Schema change: migration `2026-09-25-002-views-run-as-their-caller`.
+Nothing is published.
+
+Reads by a bound operator are scoped by row-level security: the session carries
+`polaris.operator_agency_id`, and the policies on `IdentityToken`, `VerificationEvent` and
+`TokenLifecycleEvent` filter every query, which is why sixteen read routes need no filter of
+their own. A view is evaluated with its OWNER's rights, and RLS on the tables beneath it applies
+to the owner, who bypasses it. Measured on rc.40 as `polaris_app` bound to authority 1:
+authority 3's token 2 was invisible in `IdentityToken` and visible, with its three-event
+timeline, in `v_ontology_token`; `v_ontology_verification` showed 8 verifications where the
+table showed 2. The investigate routes read those views.
+
+`security_invoker = true` makes a view apply its caller's privileges and policies. The
+application already holds `SELECT` on every table, so nothing else changes. `CREATE OR REPLACE
+VIEW` without the option resets it, so all 26 definitions carry it, and the migration sets it on
+every view a deployed database has. `check_views_run_as_their_caller` (328) requires it of every
+definition in the base files and in migrations from this one on.
+
+Also since rc.40, as plain commits: `SECURITY DEFINER` routines pin `search_path` (check 327)
+and are executable by the application role only (migration `2026-09-25-001`); the purge
+carve-out asks for the purge's owner (migration `2026-09-24-014`); the tests that connect as
+`polaris_app` run in CI, where they had always skipped.
+
+Counterexample, failing on rc.40:
+`TestC1PrivilegeBoundary.test_a_view_shows_a_bound_operator_no_more_than_the_tables_do`.
+
 ## v1.0.0-rc.40 — 2026-09-24 (the application role could empty the audit of record through its partitions)
 
 CORE-BUG against rc.39, in the C1 privilege boundary. Externally observable: `polaris_app`

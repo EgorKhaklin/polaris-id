@@ -19461,3 +19461,23 @@ def test_definer_routines_pin_search_path_check_discriminates(tmp_path):
     assert r.level == "FAIL" and "05_procedures.sql:f" in r.message, "an unpinned definer must FAIL"
     f.write_text("CREATE OR REPLACE FUNCTION g() RETURNS INTEGER LANGUAGE sql AS $$ SELECT 1 $$;\n")
     assert checks.check_definer_routines_pin_search_path(tmp_path)[0].level == "FAIL", "none found is vacuous"
+
+
+def test_views_run_as_their_caller_check_discriminates(tmp_path):
+    sql = tmp_path / "polaris_sql"
+    (sql / "migrations").mkdir(parents=True)
+    f = sql / "15_ontology.sql"
+    f.write_text("CREATE OR REPLACE VIEW v WITH (security_invoker = true) AS SELECT 1;\n")
+    assert checks.check_views_run_as_their_caller(tmp_path)[0].level == "OK", "invoker must PASS"
+    f.write_text("CREATE OR REPLACE VIEW v AS SELECT 1;\n")
+    r = checks.check_views_run_as_their_caller(tmp_path)[0]
+    assert r.level == "FAIL" and "15_ontology.sql:v" in r.message, "an owner-rights view must FAIL"
+    f.write_text("CREATE OR REPLACE VIEW v WITH (security_invoker = true) AS SELECT 1;\n")
+    (sql / "migrations" / "2026-09-26-001-x.up.sql").write_text("CREATE VIEW w AS SELECT 1;\n")
+    assert checks.check_views_run_as_their_caller(tmp_path)[0].level == "FAIL", "a new migration's view counts"
+    (sql / "migrations" / "2026-09-26-001-x.up.sql").unlink()
+    (sql / "migrations" / "2026-01-01-001-old.up.sql").write_text("CREATE VIEW w AS SELECT 1;\n")
+    assert checks.check_views_run_as_their_caller(tmp_path)[0].level == "OK", "an older migration is covered by 002"
+    f.write_text("SELECT 1;\n")
+    (sql / "migrations" / "2026-01-01-001-old.up.sql").unlink()
+    assert checks.check_views_run_as_their_caller(tmp_path)[0].level == "FAIL", "no view is vacuous"

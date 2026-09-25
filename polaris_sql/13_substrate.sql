@@ -22,7 +22,7 @@
 
 DROP VIEW IF EXISTS SystemDependency;
 
-CREATE VIEW SystemDependency AS
+CREATE VIEW SystemDependency WITH (security_invoker = true) AS
 SELECT
     primitive,
     layer,

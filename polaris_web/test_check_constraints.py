@@ -1516,6 +1516,42 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             owner.rollback()
             owner.close()
 
+    def test_a_view_shows_a_bound_operator_no_more_than_the_tables_do(self):
+        """2026-09-25. Operator isolation is row-level security, and a view ran as its owner, so
+        RLS beneath it applied to the owner. Measured as polaris_app bound to agency 1: token 2
+        (agency 3) invisible in IdentityToken, visible with its timeline in v_ontology_token,
+        which /investigate/token/<id> reads. Every view now runs as its caller."""
+        conn = self._app_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('polaris.operator_agency_id', '1', false)")
+                pairs = [
+                    ("SELECT count(*) AS n FROM IdentityToken WHERE token_id = 2",
+                     "SELECT count(*) AS n FROM v_ontology_token WHERE token_id = 2"),
+                    ("SELECT count(*) AS n FROM IdentityToken WHERE status = 'ACTIVE'",
+                     "SELECT count(*) AS n FROM ActiveTokens"),
+                    ("SELECT count(*) AS n FROM VerificationEvent",
+                     "SELECT count(*) AS n FROM v_ontology_verification"),
+                    ("SELECT count(*) AS n FROM (SELECT token_id FROM TokenLifecycleEvent WHERE token_id = 2 "
+                     "UNION ALL SELECT token_id FROM VerificationEvent WHERE token_id = 2) t",
+                     "SELECT count(*) AS n FROM v_ontology_token_timeline WHERE token_id = 2"),
+                ]
+                for table_sql, view_sql in pairs:
+                    cur.execute(table_sql)
+                    through_table = cur.fetchone()["n"]
+                    cur.execute(view_sql)
+                    self.assertLessEqual(cur.fetchone()["n"], through_table, view_sql)
+                cur.execute("SELECT count(*) AS n FROM IdentityToken WHERE token_id = 2")
+                self.assertEqual(cur.fetchone()["n"], 0, "fixture: token 2 is another authority's")
+                cur.execute("SELECT c.relname FROM pg_class c WHERE c.relkind = 'v' "
+                            "AND c.relnamespace = 'public'::regnamespace AND NOT coalesce("
+                            "'security_invoker=true' = ANY(c.reloptions), false)")
+                self.assertEqual([r["relname"] for r in cur.fetchall()], [],
+                                 "a view that runs as its owner")
+        finally:
+            conn.rollback()
+            conn.close()
+
     def test_a_partition_made_later_is_locked_too(self):
         """The partition manager takes the blanket grant back from each partition it creates."""
         # In ONE transaction, rolled back: the partitions this makes (and the triggers each

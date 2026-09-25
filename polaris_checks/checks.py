@@ -9584,7 +9584,8 @@ def _athena_function_bodies(sql: str):
 
 
 def _athena_view_body(sql: str, view: str):
-    m = re.search(r"CREATE\s+OR\s+REPLACE\s+VIEW\s+" + re.escape(view) + r"\s+AS(.*?);",
+    m = re.search(r"CREATE\s+OR\s+REPLACE\s+VIEW\s+" + re.escape(view)
+                  + r"\s+(?:WITH\s*\([^)]*\)\s*)?AS(.*?);",
                   sql, re.S | re.I)
     return m.group(1) if m else None
 
@@ -22667,6 +22668,39 @@ def check_definer_routines_pin_search_path(root: pathlib.Path) -> list[Finding]:
                      "09_grants.sql takes PUBLIC's EXECUTE off every one")
 
 
+# 2026-09-25. Operator isolation is row-level security, and a view is evaluated with its OWNER's
+# rights, so RLS beneath it applied to the owner and a bound operator read every authority's
+# credentials through v_ontology_token (/investigate/token/<id>). Every view now carries
+# security_invoker = true, and CREATE OR REPLACE VIEW without the option RESETS it, so every
+# definition must carry it: the base files, and any migration from 2026-09-25-002 on (that one
+# sets it on every view an older migration defined).
+_VIEW_DEF = re.compile(r"CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)(.*?)\bAS\b", re.I | re.S)
+
+
+def check_views_run_as_their_caller(root: pathlib.Path) -> list[Finding]:
+    """Every view definition applies its caller's privileges and row-level security."""
+    name = "views_run_as_their_caller"
+    sql = root / "polaris_sql"
+    files = sorted(sql.glob("*.sql"))
+    files += [f for f in sorted((sql / "migrations").glob("*.up.sql")) if f.name >= "2026-09-25-002"]
+    found, offenders = 0, []
+    for f in files:
+        text = re.sub(r"--[^\n]*", "", _read_path(f))
+        for m in _VIEW_DEF.finditer(text):
+            found += 1
+            if not re.search(r"security_invoker\s*=\s*(true|on)", m.group(2), re.I):
+                offenders.append(f"{f.name}:{m.group(1)}")
+    if not found:
+        return _fail(name, "no view definition was found under polaris_sql; the check would pass "
+                           "vacuously")
+    if offenders:
+        return _fail(name, "a view runs as its owner, so the row-level security that isolates a "
+                           "bound operator does not apply through it: " + ", ".join(offenders[:8]) +
+                           ". Define it WITH (security_invoker = true)")
+    return _ok(name, f"all {found} view definitions run as their caller, so operator isolation "
+                     "holds through every view")
+
+
 # 1.0.0-rc.31. rc.15 bound every route that NAMES an authority; rc.30 and rc.31 found five
 # more that name a token, a request or an agency id and asked nothing, one of them opened by
 # rc.19. This keeps the next route from being the sixth: every state-changing route an admin or
@@ -23114,6 +23148,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_no_local_date,
     check_algorithm_columns_are_constrained,
     check_definer_routines_pin_search_path,
+    check_views_run_as_their_caller,
 ]
 
 
