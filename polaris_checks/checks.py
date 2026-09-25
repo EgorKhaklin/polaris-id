@@ -22626,6 +22626,37 @@ def check_algorithm_columns_are_constrained(root: pathlib.Path) -> list[Finding]
                      "(a CHECK or a foreign key), not only by the code that writes them")
 
 
+# 2026-09-25. rc.40 made four more routines SECURITY DEFINER, nine in all. A definer routine
+# runs with its owner's rights, and resolves every unqualified name through the CALLER's
+# search_path unless it pins its own: a caller who can put a table or function earlier on the
+# path can have the owner run it. All nine pin `search_path = public, pg_temp`; nothing held the
+# tenth to it.
+_ROUTINE_HEAD = re.compile(r"CREATE\s+OR\s+REPLACE\s+(FUNCTION|PROCEDURE)\s+(\w+)\s*\((.*?)\bAS\s*\$\$",
+                           re.I | re.S)
+
+
+def check_definer_routines_pin_search_path(root: pathlib.Path) -> list[Finding]:
+    """Every SECURITY DEFINER routine in the schema sources sets its own search_path."""
+    name = "definer_routines_pin_search_path"
+    found, offenders = 0, []
+    for f in sorted((root / "polaris_sql").glob("*.sql")):
+        for m in _ROUTINE_HEAD.finditer(_read_path(f)):
+            head = re.sub(r"--[^\n]*", "", m.group(3))
+            if not re.search(r"\bSECURITY\s+DEFINER\b", head, re.I):
+                continue
+            found += 1
+            if not re.search(r"\bSET\s+search_path\s*(=|TO)", head, re.I):
+                offenders.append(f"{f.name}:{m.group(2)}")
+    if not found:
+        return _fail(name, "no SECURITY DEFINER routine was found in polaris_sql/*.sql; the check "
+                           "would pass vacuously")
+    if offenders:
+        return _fail(name, "a SECURITY DEFINER routine resolves names through its caller's "
+                           "search_path: " + ", ".join(offenders) +
+                           ". Add SET search_path = public, pg_temp")
+    return _ok(name, f"all {found} SECURITY DEFINER routines pin their own search_path")
+
+
 # 1.0.0-rc.31. rc.15 bound every route that NAMES an authority; rc.30 and rc.31 found five
 # more that name a token, a request or an agency id and asked nothing, one of them opened by
 # rc.19. This keeps the next route from being the sixth: every state-changing route an admin or
@@ -23072,6 +23103,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_unread_signed_fields_tool_is_green,
     check_no_local_date,
     check_algorithm_columns_are_constrained,
+    check_definer_routines_pin_search_path,
 ]
 
 
