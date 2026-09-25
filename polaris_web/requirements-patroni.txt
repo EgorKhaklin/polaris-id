@@ -19,7 +19,7 @@ python-etcd==0.4.5
 PyYAML==6.0.3
 requests==2.34.2
 six==1.17.0
-urllib3==2.7.0
+urllib3==2.8.0
 wcwidth==0.8.3
 # Held below 1.5 BY PATRONI, not by preference: patroni 4.1.5 declares
 # ydiff!=1.4.0,!=1.4.1,<1.5,>=1.2.0, so 1.5 makes the image unbuildable
