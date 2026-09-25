@@ -9,6 +9,11 @@ something polaris_app does not have passes every test and fails in every deploym
 FROM, which PostgreSQL refuses on a table whose row-level security applies to the caller. The
 feature failed on every tick in production and was green in 873 tests.
 
+THE CLI TOO. polaris_cli connects as polaris_app by default, and its suite ran every command
+against the owner. The same first run found `retention-set` superseding a decision with an UPDATE
+the application role is refused on purpose: "permission denied" in every deployment, green in
+the suite. The second phase runs test_cli with the CLI's subprocesses as polaris_app.
+
 WHAT IT DOES. It imports test_app, gives the test module's own helpers (fixtures, reloads,
 assertions against the database) a private copy of the owner's configuration, and switches the
 APPLICATION's configuration to polaris_app. Then it runs the whole module. Every failure is
@@ -58,12 +63,47 @@ def main():
     for test, tb in bad:
         last = [line for line in tb.strip().splitlines() if line.strip()][-1]
         print("  FAIL %s\n       %s" % (test.id().split(".", 1)[-1], last[:200]))
-    if bad:
-        print("\nEach is a route that fails for the role production runs as, or a test that "
-              "depends on the owner's rights.")
+    cli_bad, cli_ran = run_cli_phase(app_role)
+    if bad or cli_bad:
+        print("\nEach is a route or command that fails for the role production runs as, or a "
+              "test that depends on the owner's rights.")
         return 1
-    print("OK: every test_app test passes with the application connected as polaris_app.")
+    print("OK: every test_app test and every test_cli command passes with the application "
+          "connected as polaris_app (%d + %d)." % (result.testsRun, cli_ran))
     return 0
+
+
+def run_cli_phase(app_role):
+    """test_cli, with each `polaris.py` subprocess connected as polaris_app and the suite's
+    fixtures still the owner."""
+    import subprocess
+    cli_dir = os.path.join(os.path.dirname(HERE), "polaris_cli")
+    sys.path.insert(0, cli_dir)
+    os.chdir(cli_dir)
+    import test_cli as C
+    real_run = subprocess.run
+
+    def run_as_app(cmd, *a, **kw):
+        if isinstance(cmd, list) and len(cmd) > 1 and str(cmd[1]).endswith("polaris.py"):
+            env = dict(kw.get("env") or os.environ)
+            env.update(POLARIS_DB_USER=app_role["user"], POLARIS_DB_PASSWORD=app_role["password"])
+            kw["env"] = env
+        return real_run(cmd, *a, **kw)
+
+    C.subprocess.run = run_as_app
+    suite = unittest.defaultTestLoader.loadTestsFromModule(C)
+    with open(os.devnull, "w") as sink:
+        result = unittest.TextTestRunner(verbosity=0, stream=sink).run(suite)
+    bad = result.failures + result.errors
+    print("app-role suite: %d CLI tests as polaris_app, %d failed" % (result.testsRun, len(bad)))
+    if result.testsRun < 50:
+        print("app-role suite: fewer CLI tests ran than test_cli holds")
+        return [("loader", "")], result.testsRun
+    for test, tb in bad:
+        why = [line for line in tb.splitlines() if "stderr" in line or "denied" in line.lower()]
+        print("  FAIL %s\n       %s" % (test.id().split(".", 1)[-1],
+                                         (why[-1] if why else tb.strip().splitlines()[-1])[:200]))
+    return bad, result.testsRun
 
 
 if __name__ == "__main__":

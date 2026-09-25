@@ -1138,6 +1138,55 @@ class TestBulkIssueRefusals(unittest.TestCase):
         self._refused(self._batch(signed=False), "requires a signature")
 
 
+
+class TestRetentionDecisionProcedure(unittest.TestCase):
+    """uc_set_retention_policy (2026-09-25): the CLI's single-decision path, moved into a
+    procedure because the application role is refused UPDATE on RetentionPolicy and the CLI
+    connects as it. Its three actor refusals and its supersede, as the owner, rolled back."""
+
+    def setUp(self):
+        self.conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        self.cur = self.conn.cursor()
+        self.cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active LIMIT 1")
+        self.admin = self.cur.fetchone()["user_id"]
+        self.cur.execute("SELECT user_id FROM AppUser WHERE role <> 'admin' LIMIT 1")
+        self.other = self.cur.fetchone()["user_id"]
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    def _set(self, actor, days=2000, jurisdiction="US-ZZ"):
+        self.cur.execute("CALL uc_set_retention_policy('VERIFICATION', %s, %s, "
+                         "'retention probe: a decision recorded by the test', %s, NULL, NULL)",
+                         (jurisdiction, days, actor))
+        return self.cur.fetchone()
+
+    def test_a_decision_supersedes_the_last(self):
+        first = self._set(self.admin)
+        self.assertEqual(first["p_superseded"], 0)
+        second = self._set(self.admin, days=2100)
+        self.assertEqual(second["p_superseded"], 1, "the earlier decision is superseded, not edited")
+        self.cur.execute("SELECT retention_days, superseded_at IS NULL AS live FROM RetentionPolicy "
+                         "WHERE policy_id IN (%s, %s) ORDER BY policy_id",
+                         (first["p_policy_id"], second["p_policy_id"]))
+        self.assertEqual([(r["retention_days"], r["live"]) for r in self.cur.fetchall()],
+                         [(2000, False), (2100, True)])
+
+    def test_only_an_active_admin_records_one(self):
+        for actor, phrase in ((987654, "does not exist"), (self.other, "must be admin")):
+            self.cur.execute("SAVEPOINT s")
+            with self.assertRaises(psycopg2.Error, msg=phrase) as ctx:
+                self._set(actor)
+            self.cur.execute("ROLLBACK TO SAVEPOINT s")
+            self.assertIn(phrase, str(ctx.exception))
+        self.cur.execute("SELECT set_config('polaris.justification', 'probe: deactivate', true)")
+        self.cur.execute("UPDATE AppUser SET is_active = FALSE WHERE user_id = %s", (self.admin,))
+        with self.assertRaises(psycopg2.Error) as ctx:
+            self._set(self.admin)
+        self.assertIn("not an active account", str(ctx.exception))
+
+
 class TestC1PrivilegeBoundary(unittest.TestCase):
     """C1 append-only is a PRIVILEGE boundary, not only a trigger.
 

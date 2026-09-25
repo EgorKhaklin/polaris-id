@@ -11,6 +11,39 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.45 — 2026-09-25 (two operator features failed for the role a deployment runs as)
+
+CORE-BUG against rc.44. Externally observable: `polaris retention-set` records a single retention
+decision in a deployment, and the Atlas simulation tick (`/api/sim/tick`) writes its events. Both
+failed on every call for `polaris_app`, the role the CLI and the application connect as. Schema
+change: migration `2026-09-25-005-retention-set-through-a-procedure` adds
+`uc_set_retention_policy`. Nothing is published.
+
+The web suite and the CLI suite connect as the schema owner, and so did the application and the
+CLI they drive. The owner bypasses row-level security and holds every privilege, so anything that
+needed more than `polaris_app` has passed every test and failed in every deployment.
+`scripts/polaris-app-role-suite.py` runs both suites again with the application and the CLI
+connected as `polaris_app` (the tests' own fixtures stay the owner), and found exactly two:
+
+- `polaris retention-set`, for a single decision, superseded the current one with a direct
+  `UPDATE RetentionPolicy`, which the application role is refused on purpose: superseding a
+  retention decision without recording who did it is what that grant exists to stop. It now calls
+  `uc_set_retention_policy`, `SECURITY DEFINER`, which makes the template procedure's actor checks
+  (the actor exists, is an admin, is active), supersedes, and inserts. The procedure drill measures
+  all three refusals.
+- The simulation tick streamed verifications with `COPY FROM`, which PostgreSQL refuses on a table
+  whose row-level security applies to the caller. The writer asks `row_security_active()` and uses
+  batched inserts where the policy applies; the bulk simulator, running as the owner, keeps `COPY`.
+  (Pushed as c2dbc56; recorded here with the release it belongs to.)
+
+The harness is a CI step in the product job: 873 web tests and 113 CLI tests as `polaris_app`, none
+failing. Against rc.44 it fails naming the two simulation tests and the two retention-set tests.
+
+Counterexamples, failing on rc.44 under `scripts/polaris-app-role-suite.py`:
+`RetentionCommandTests.test_retention_set_records_a_decision_and_show_reflects_it`,
+`RetentionCommandTests.test_retention_set_supersedes_rather_than_edits`,
+`AtlasSimulationModeTests.test_tick_streams_events_through_the_real_path`.
+
 ## v1.0.0-rc.44 — 2026-09-25 (binding an operator to an authority did not reach their live session)
 
 CORE-BUG against rc.43. Externally observable: a live session whose account is bound to an

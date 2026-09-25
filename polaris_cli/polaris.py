@@ -1834,20 +1834,13 @@ def cmd_retention_set(args):
                 scope = args.jurisdiction or '(deployment default)'
                 print(green(f"✓ {args.template} adopted for {scope}"))
             else:
-                cur.execute("""
-                    UPDATE RetentionPolicy SET superseded_at = now()
-                     WHERE table_class = %s
-                       AND jurisdiction IS NOT DISTINCT FROM %s
-                       AND superseded_at IS NULL
-                """, (args.table_class, args.jurisdiction))
-                superseded = cur.rowcount
-                cur.execute("""
-                    INSERT INTO RetentionPolicy
-                        (table_class, jurisdiction, retention_days, justification, set_by_user_id)
-                    VALUES (%s, %s, %s, %s, %s) RETURNING policy_id
-                """, (args.table_class, args.jurisdiction, args.days,
-                      args.justification.strip(), args.actor_user_id))
-                pid = cur.fetchone()['policy_id']
+                # 2026-09-25: through the procedure. A direct UPDATE here was refused for
+                # polaris_app, which is what this command connects as in a deployment.
+                cur.execute("CALL uc_set_retention_policy(%s, %s, %s, %s, %s, NULL, NULL)",
+                            (args.table_class, args.jurisdiction, args.days,
+                             args.justification.strip(), args.actor_user_id))
+                out = cur.fetchone()
+                pid, superseded = out['p_policy_id'], out['p_superseded']
                 conn.commit()
                 scope = args.jurisdiction or '(deployment default)'
                 print(green(f"✓ policy #{pid}: {args.table_class} kept {args.days} days "
