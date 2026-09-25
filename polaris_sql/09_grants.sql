@@ -129,6 +129,19 @@ BEGIN
     END LOOP;
 END$$;
 
+-- 1.0.0-rc.40. The loop above names the partitioned PARENTS, and the blanket grant at the top
+-- of this file reached every PARTITION too, where it stayed: polaris_app could delete audit
+-- rows from a partition directly. polaris_lock_event_partitions (01_schema.sql) strips a
+-- partition to SELECT for the application role; the partition manager calls it after each
+-- partition it creates.
+SELECT polaris_lock_event_partitions();
+
+-- 1.0.0-rc.40. TokenLifecycleEvent is written only by uc1_issue_and_activate, uc5_bind_device,
+-- uc_bulk_issue and the audit_token_state_change trigger, all SECURITY DEFINER now. The
+-- application role keeps SELECT and loses INSERT, so it cannot append a lifecycle event
+-- nothing did.
+REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
 -- bound enforced by uc8_revoke_token.

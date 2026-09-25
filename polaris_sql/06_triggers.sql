@@ -361,9 +361,15 @@ COMMENT ON FUNCTION reject_audit_modification IS
 -- The trigger maps status transitions to event_type values per Appendix A.
 -- ----------------------------------------------------------------------------
 
+-- 1.0.0-rc.40: SECURITY DEFINER. TokenLifecycleEvent is written by this and three other
+-- routines only, and polaris_app no longer holds INSERT on it, so the application role cannot
+-- append a lifecycle event nothing did. Running as the owner bypasses row-level security: the
+-- routes that call this ask the operator's binding themselves (check 323 holds them to it).
 CREATE OR REPLACE FUNCTION audit_token_state_change()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_event_type    VARCHAR(40);

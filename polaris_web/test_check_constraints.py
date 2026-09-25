@@ -1159,7 +1159,9 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 row = cur.fetchone()
             self.assertFalse(row["upd"], f"polaris_app must not hold UPDATE on {tbl}")
             self.assertFalse(row["del"], f"polaris_app must not hold DELETE on {tbl}")
-            self.assertTrue(row["ins"], f"append-only is insert-allowed: polaris_app needs INSERT on {tbl}")
+            # Since rc.40 the lifecycle log is written only by SECURITY DEFINER routines.
+            self.assertEqual(bool(row["ins"]), tbl.lower() != "tokenlifecycleevent",
+                             f"append-only is insert-allowed except the lifecycle log: {tbl}")
             conn.rollback()
 
     def test_receipt_log_is_hash_only_and_strictly_append_only(self):
@@ -1333,14 +1335,91 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
         conn.rollback()
 
     def test_app_role_can_still_append_audit_rows(self):
+        """The application records verifications itself, through the partitioned parent.
+        (Until rc.40 this appended to TokenLifecycleEvent, which the application no longer
+        writes directly; see the test below.)"""
         conn = self._app_conn()
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO TokenLifecycleEvent (token_id, event_type, event_timestamp, reason_code) "
-                "VALUES (1, 'ISSUED', now(), 'BOUNDARY_TEST') RETURNING event_id")
+                "INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, outcome, "
+                "disclosure_level) VALUES (NULL, 1, 1, 'SUCCESS', 'ZERO_KNOWLEDGE') RETURNING event_id")
             self.assertIsNotNone(cur.fetchone()["event_id"],
-                                 "append-only must still permit INSERT by polaris_app")
+                                 "append-only must still permit INSERT through the parent")
         conn.rollback()
+
+    def test_no_partition_of_an_audit_table_can_be_emptied(self):
+        """1.0.0-rc.40. The UPDATE/DELETE revoke named the partitioned parents, and every
+        partition kept the blanket grant. With the purge carve-out's setting, which any role
+        can set, the trigger let a DELETE on a partition through. Measured on rc.39 as
+        polaris_app: every row of all four event tables deleted."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+                        "JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname IN "
+                        "('tokenlifecycleevent', 'verificationevent', 'enrollmentstatusevent', "
+                        "'authauditlog') ORDER BY 1")
+            parts = [r["relname"] for r in cur.fetchall()]
+        conn.rollback()
+        self.assertGreaterEqual(len(parts), 8, "the partitions must exist for this to mean anything")
+        for part in parts:
+            for stmt in ("DELETE FROM %s" % part, "TRUNCATE %s" % part):
+                with conn.cursor() as cur:
+                    cur.execute("SELECT set_config('polaris.purge_in_progress', 'TRUE', true)")
+                    with self.assertRaises(pg_errors.InsufficientPrivilege, msg=stmt):
+                        cur.execute(stmt)
+                conn.rollback()
+
+    def test_the_application_cannot_append_a_lifecycle_event(self):
+        """1.0.0-rc.40. TokenLifecycleEvent is written by uc1_issue_and_activate,
+        uc5_bind_device, uc_bulk_issue and the audit_token_state_change trigger, all SECURITY
+        DEFINER; polaris_app keeps SELECT only. The trigger still records a status change the
+        application makes."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            with self.assertRaises(pg_errors.InsufficientPrivilege):
+                cur.execute("INSERT INTO TokenLifecycleEvent (token_id, event_type, event_timestamp, "
+                            "reason_code) VALUES (1, 'REVOKED', now(), 'forged')")
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM TokenLifecycleEvent WHERE token_id = 1")
+            before = cur.fetchone()["n"]
+            cur.execute("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = now() "
+                        "WHERE token_id = 1 AND status = 'RESERVE'")
+            self.assertEqual(cur.rowcount, 1, "fixture: token 1 is the sample RESERVE")
+            cur.execute("SELECT count(*) AS n FROM TokenLifecycleEvent WHERE token_id = 1")
+            self.assertEqual(cur.fetchone()["n"], before + 1, "the recorder must still write")
+        conn.rollback()
+
+    def test_a_partition_made_later_is_locked_too(self):
+        """The partition manager takes the blanket grant back from each partition it creates."""
+        owner = psycopg2.connect(**DB_CONFIG)
+        owner.autocommit = True
+        with owner.cursor() as cur:
+            cur.execute("CALL uc_ensure_event_partitions(8)")
+            cur.execute("SELECT count(*) FROM information_schema.role_table_grants "
+                        "WHERE grantee = 'polaris_app' AND privilege_type <> 'SELECT' "
+                        "AND table_name ~ '^(tokenlifecycleevent|verificationevent|"
+                        "enrollmentstatusevent|authauditlog)_'")
+            self.assertEqual(cur.fetchone()[0], 0)
+        owner.close()
+
+    def _seed_old_lifecycle_row(self):
+        owner = psycopg2.connect(**DB_CONFIG)
+        owner.autocommit = True
+        with owner.cursor() as cur:
+            cur.execute("INSERT INTO TokenLifecycleEvent (token_id, event_type, event_timestamp, "
+                        "reason_code) VALUES (1, 'ISSUED', now() - INTERVAL '2200 days', "
+                        "'PURGE_DEFINER_TEST')")
+        owner.close()
+        self.addCleanup(self._drop_old_lifecycle_row)
+
+    def _drop_old_lifecycle_row(self):
+        owner = psycopg2.connect(**DB_CONFIG)
+        with owner.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.purge_in_progress', 'TRUE', true)")
+            cur.execute("DELETE FROM TokenLifecycleEvent WHERE reason_code = 'PURGE_DEFINER_TEST'")
+        owner.commit()
+        owner.close()
 
     def test_archive_purge_still_deletes_via_security_definer(self):
         """The legitimate purge path still works for polaris_app: uc_archive_purge
@@ -1354,9 +1433,9 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             if admin is None:
                 self.skipTest("no admin user to authorize the purge")
             admin_id = admin["user_id"]
-            cur.execute(
-                "INSERT INTO TokenLifecycleEvent (token_id, event_type, event_timestamp, reason_code) "
-                "VALUES (1, 'ISSUED', now() - INTERVAL '2200 days', 'PURGE_DEFINER_TEST')")
+            # Since rc.40 the application cannot write the lifecycle log, so the owner seeds
+            # the old row (committed) and the finally below removes it if the purge did not.
+            self._seed_old_lifecycle_row()
             cutoff = "now() - INTERVAL '2000 days'"
             cur.execute(
                 f"SELECT count(*) AS n FROM TokenLifecycleEvent WHERE event_timestamp < {cutoff}")

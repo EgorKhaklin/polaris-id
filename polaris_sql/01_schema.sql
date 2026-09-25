@@ -2104,6 +2104,40 @@ CREATE INDEX IF NOT EXISTS idx_bulkstaging_batch ON BulkEnrollmentStaging(batch_
 -- PostgreSQL propagates to every partition, DEFAULT included; attach and detach
 -- do not open a hole (polaris-partition-drill.sh proves it).
 -- ============================================================================
+-- 1.0.0-rc.40. The append-only guarantee on the four event tables was a trigger AND a
+-- privilege boundary (09_grants.sql revokes UPDATE and DELETE), but the revoke named only the
+-- PARENTS. Every partition kept the blanket grant, so polaris_app could DELETE from
+-- tokenlifecycleevent_2026_09 directly, and with the purge carve-out's setting (which any role
+-- can set) the trigger let it: measured, every row of all four tables deleted. A row is always
+-- routed through the parent, whose privileges are the ones checked, so the application needs
+-- nothing on a partition beyond reading it. This strips the rest, on every partition that
+-- exists; the partition manager and 09_grants.sql call it after they create or grant.
+CREATE OR REPLACE FUNCTION polaris_lock_event_partitions()
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_part TEXT;
+    v_n    INTEGER := 0;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app') THEN
+        RETURN 0;
+    END IF;
+    FOR v_part IN
+        SELECT c.relname
+          FROM pg_inherits i
+          JOIN pg_class c ON c.oid = i.inhrelid
+          JOIN pg_class p ON p.oid = i.inhparent
+         WHERE p.relname IN ('tokenlifecycleevent', 'verificationevent',
+                             'enrollmentstatusevent', 'authauditlog')
+    LOOP
+        EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON %I FROM polaris_app', v_part);
+        v_n := v_n + 1;
+    END LOOP;
+    RETURN v_n;
+END;
+$$;
+
 CREATE OR REPLACE PROCEDURE uc_ensure_event_partitions(p_months_ahead integer DEFAULT 3)
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -2131,6 +2165,8 @@ BEGIN
             END;
         END LOOP;
     END LOOP;
+    -- 1.0.0-rc.40: a new partition inherits the blanket grant; take it back at once.
+    PERFORM polaris_lock_event_partitions();
 END $$;
 COMMENT ON PROCEDURE uc_ensure_event_partitions(integer) IS
   'Roadmap P2.1: premake monthly partitions for the four event tables from the '

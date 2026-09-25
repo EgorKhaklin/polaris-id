@@ -11,6 +11,44 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.40 — 2026-09-24 (the application role could empty the audit of record through its partitions)
+
+CORE-BUG against rc.39, in the C1 privilege boundary. Externally observable: `polaris_app`
+holds only `SELECT` on every partition of `TokenLifecycleEvent`, `VerificationEvent`,
+`EnrollmentStatusEvent` and `AuthAuditLog`, and no `INSERT` on `TokenLifecycleEvent`, whose
+four writers are `SECURITY DEFINER`. Schema change: migration
+`2026-09-24-013-audit-of-record-privilege-boundary-reaches-partitions`. Nothing is published.
+
+Two holes in one boundary. The append-only guarantee is a trigger AND a privilege: the trigger
+honours the purge carve-out's session setting, which any role can set, so `09_grants.sql`
+revokes `UPDATE` and `DELETE` from the application role and only `uc_archive_purge`, running as
+the owner, can delete. The revoke named the partitioned PARENTS, and the blanket grant at the top
+of the same file had reached every PARTITION, where it stayed. Measured on rc.39 as
+`polaris_app`, with the setting on: every row of all four event tables deleted through their
+partitions (rolled back). The second hole was found while fixing the rc.38 and rc.39 sibling:
+`polaris_app` held `INSERT` on `TokenLifecycleEvent` because its writers ran as the caller, so it
+could append a lifecycle event nothing did.
+
+`polaris_lock_event_partitions()` strips each partition to `SELECT` for the application role. A
+row is always routed through the parent, whose privileges are the ones checked, so nothing the
+application does needs more. `09_grants.sql` calls it after its grants, and
+`uc_ensure_event_partitions` calls it after creating a partition, which inherits the default
+grant. `uc1_issue_and_activate`, `uc5_bind_device`, `uc_bulk_issue` and the
+`audit_token_state_change` trigger are `SECURITY DEFINER` with a pinned `search_path`, and the
+application role loses `INSERT` on the lifecycle log. Running as the owner bypasses row-level
+security; the web routes that call the first two ask the operator's binding themselves
+(check 323 holds them to it), and bulk issuance is reachable only from the operator CLI.
+
+`check_aor_privilege_boundary` now requires all of it; run against rc.39 it fails. Two existing
+tests assumed the old grant: one appended to the lifecycle log to prove the application still
+could, and now appends a verification through its parent; the purge test seeds its old row as
+the owner.
+
+Counterexamples, failing on rc.39:
+`TestC1PrivilegeBoundary.test_no_partition_of_an_audit_table_can_be_emptied`,
+`test_the_application_cannot_append_a_lifecycle_event` and
+`test_a_partition_made_later_is_locked_too`.
+
 ## v1.0.0-rc.39 — 2026-09-24 (the application role could set a person's enrollment status)
 
 CORE-BUG against rc.38. Externally observable: a direct `INSERT` into `EnrollmentStatusEvent`

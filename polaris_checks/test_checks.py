@@ -1667,10 +1667,36 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when the AuditAccessLog migration does not revoke UPDATE/DELETE"
 
-    # 5. All three present -> OK.
+    # rc.40: the partitions and the lifecycle log.
+    lock = ("CREATE OR REPLACE FUNCTION polaris_lock_event_partitions() RETURNS INTEGER AS $$\n"
+            "  WHERE p.relname IN ('tokenlifecycleevent', 'verificationevent', "
+            "'enrollmentstatusevent', 'authauditlog')\n"
+            "  EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON %I FROM polaris_app', v);\n$$;\n")
+    ensure = ("CREATE OR REPLACE PROCEDURE uc_ensure_event_partitions(n integer) AS $$\nBEGIN\n"
+              "    PERFORM polaris_lock_event_partitions();\nEND $$;\n")
+    full = good_grants + "SELECT polaris_lock_event_partitions();\nREVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n"
+    (sql / "01_schema.sql").write_text(lock + ensure)
+
+    # 5. The rc.39 shape: parents revoked, partitions and the lifecycle INSERT not -> FAIL.
     write(good_grants, True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when 09_grants.sql never locks the partitions"
+    write(good_grants + "SELECT polaris_lock_event_partitions();\n", True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the application keeps INSERT on the lifecycle log"
+    (sql / "01_schema.sql").write_text(lock.replace("'authauditlog'", "'x'") + ensure)
+    write(full, True, True)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the lock omits one of the four event tables"
+    (sql / "01_schema.sql").write_text(lock + ensure.replace("    PERFORM polaris_lock_event_partitions();\n", ""))
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the partition manager leaves a new partition unlocked"
+
+    # 6. Everything present -> OK.
+    (sql / "01_schema.sql").write_text(lock + ensure)
+    write(full, True, True)
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "OK", \
-        "must PASS when revoke + migration revoke + SECURITY DEFINER are all present"
+        "must PASS when the parents, the partitions and the lifecycle log are all locked"
 
 
 def test_prod_app_password_synced_check_discriminates(tmp_path):

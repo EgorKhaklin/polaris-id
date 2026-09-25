@@ -48,6 +48,10 @@
 DROP FUNCTION IF EXISTS uc1_issue_and_activate(
     varchar, date, varchar, integer, integer, varchar, integer, varchar,
     varchar, varchar, varchar, integer[]);
+-- 1.0.0-rc.40: SECURITY DEFINER. TokenLifecycleEvent is written by this and three other
+-- routines only, and polaris_app no longer holds INSERT on it, so the application role cannot
+-- append a lifecycle event nothing did. Running as the owner bypasses row-level security: the
+-- routes that call this ask the operator's binding themselves (check 323 holds them to it).
 CREATE OR REPLACE FUNCTION uc1_issue_and_activate(
     p_legal_name              VARCHAR(200),
     p_dob                     DATE,
@@ -65,6 +69,8 @@ CREATE OR REPLACE FUNCTION uc1_issue_and_activate(
     p_signing_public_key_hex  TEXT    DEFAULT NULL
 ) RETURNS INTEGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_individual_id  INTEGER;
@@ -366,6 +372,10 @@ COMMENT ON FUNCTION uc4_activate_reserve IS
 --   Returns: binding_id.
 -- ----------------------------------------------------------------------------
 
+-- 1.0.0-rc.40: SECURITY DEFINER. TokenLifecycleEvent is written by this and three other
+-- routines only, and polaris_app no longer holds INSERT on it, so the application role cannot
+-- append a lifecycle event nothing did. Running as the owner bypasses row-level security: the
+-- routes that call this ask the operator's binding themselves (check 323 holds them to it).
 CREATE OR REPLACE FUNCTION uc5_bind_device(
     p_token_id           INTEGER,
     p_device_type        VARCHAR(20),
@@ -374,6 +384,8 @@ CREATE OR REPLACE FUNCTION uc5_bind_device(
     p_validity_months    INTEGER DEFAULT 12
 ) RETURNS INTEGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_token_status VARCHAR(20);
@@ -2203,8 +2215,15 @@ COMMENT ON PROCEDURE uc_apply_retention_template IS
     'ones; nothing is edited or deleted. Both templates are engineering '
     'defaults, not legal determinations.';
 
+-- 1.0.0-rc.40: SECURITY DEFINER. TokenLifecycleEvent is written by this and three other
+-- routines only, and polaris_app no longer holds INSERT on it, so the application role cannot
+-- append a lifecycle event nothing did. Running as the owner bypasses row-level security: the
+-- routes that call this ask the operator's binding themselves (check 323 holds them to it).
 CREATE OR REPLACE PROCEDURE uc_bulk_issue(p_batch_id INTEGER, INOUT p_rows_issued INTEGER DEFAULT NULL)
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     v_agency INTEGER; v_algo INTEGER; v_auth VARCHAR(20); v_n INTEGER;
 BEGIN

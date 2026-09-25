@@ -772,9 +772,38 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
         return _fail("c1_aor_priv",
                      "uc_archive_purge must be SECURITY DEFINER so the purge runs with the "
                      "owner's rights after polaris_app loses direct DELETE (C1)")
+    # 1.0.0-rc.40. The REVOKE names the partitioned PARENTS, and every partition kept the
+    # blanket grant: polaris_app deleted all four event tables' rows through their partitions.
+    # The partitions are locked by polaris_lock_event_partitions, called after the grants and
+    # after the partition manager creates one; the lock must name all four parents.
+    schema = _read(root, "polaris_sql/01_schema.sql")
+    lock = re.search(r"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+polaris_lock_event_partitions\b.*?\$\$;",
+                     schema, re.I | re.S)
+    if not lock:
+        return _fail("c1_aor_priv", "01_schema.sql must define polaris_lock_event_partitions, "
+                                    "which strips the application role to SELECT on every event "
+                                    "partition (C1)")
+    unlocked = [t for t in ("tokenlifecycleevent", "verificationevent", "enrollmentstatusevent",
+                            "authauditlog") if t not in lock.group(0).lower()]
+    if unlocked or not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE", lock.group(0), re.I):
+        return _fail("c1_aor_priv", "polaris_lock_event_partitions must REVOKE INSERT, UPDATE, "
+                                    "DELETE on the partitions of all four event tables; missing: "
+                                    + (", ".join(unlocked) or "the REVOKE") + " (C1)")
+    if not re.search(r"^\s*SELECT\s+polaris_lock_event_partitions\(\)", grants, re.I | re.M):
+        return _fail("c1_aor_priv", "09_grants.sql must call polaris_lock_event_partitions() after "
+                                    "its blanket GRANT, or every partition keeps UPDATE and DELETE (C1)")
+    ensure = re.search(r"PROCEDURE\s+uc_ensure_event_partitions\b.*?END\s*\$\$;", schema, re.I | re.S)
+    if not ensure or "polaris_lock_event_partitions" not in ensure.group(0):
+        return _fail("c1_aor_priv", "uc_ensure_event_partitions must call "
+                                    "polaris_lock_event_partitions after creating a partition, which "
+                                    "inherits the default grant (C1)")
+    if not re.search(r"REVOKE\s+INSERT\s+ON\s+TokenLifecycleEvent\s+FROM\s+polaris_app", grants, re.I):
+        return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT ON TokenLifecycleEvent: the "
+                                    "lifecycle log is written only by SECURITY DEFINER routines (C1)")
     return _ok("c1_aor_priv",
-               "append-only tables revoke UPDATE/DELETE from polaris_app; "
-               "uc_archive_purge is SECURITY DEFINER (C1)")
+               "append-only tables revoke UPDATE/DELETE from polaris_app, and so does every "
+               "partition of the four event tables; the lifecycle log refuses the application's "
+               "INSERT; uc_archive_purge is SECURITY DEFINER (C1)")
 
 
 # ---------------------------------------------------------------------------
