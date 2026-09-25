@@ -5935,6 +5935,56 @@ class TransparencyProofBoundsTests(UnauthenticatedTestCase):
             self.assertEqual(r.get_json()['log_size'], size)
 
 
+class BoundOperatorRouteIsolationTests(PolarisTestCase):
+    """The routes themselves, run AS the application role by an operator bound to authority 1,
+    asked for authority 3's credential (2026-09-25). Every other test in this file connects as
+    the schema owner, whom row-level security does not bind, so no route test had ever gone
+    through the policies; the rc.41 view leak was invisible to all of them. The rule is the
+    effect: the other authority's credential value never reaches a page."""
+
+    def setUp(self):
+        super().setUp()
+        from unittest import mock
+        app_cfg = dict(user='polaris_app',
+                       password=os.environ.get('POLARIS_APP_TEST_PASSWORD', 'polaris_dev_password'))
+        try:
+            psycopg2.connect(**dict(flask_app.DB_CONFIG, **app_cfg)).close()
+        except psycopg2.OperationalError as exc:
+            if os.environ.get('CI'):
+                self.fail('polaris_app unreachable in CI: %s' % exc)
+            self.skipTest('polaris_app unreachable: %s' % exc)
+        row = _sql("SELECT token_value, issuing_agency_id FROM IdentityToken WHERE token_id = 2",
+                   fetch='one')
+        self.assertNotEqual(row['issuing_agency_id'], 1, 'fixture: token 2 is another authority\'s')
+        self.foreign_value = row['token_value']
+        self.own_value = _sql("SELECT token_value FROM IdentityToken WHERE issuing_agency_id = 1 "
+                              "AND token_id = 3", fetch='one')['token_value']
+        patcher = mock.patch.dict(flask_app.DB_CONFIG, app_cfg)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        with self.client.session_transaction() as sess:
+            sess['operator_agency_id'] = 1
+
+    def test_the_investigate_card_is_scoped(self):
+        self.assertEqual(self.client.get('/investigate/token/2').status_code, 404)
+        own = self.client.get('/investigate/token/3')
+        self.assertEqual(own.status_code, 200, 'control: the operator\'s own credential shows')
+        self.assertIn(self.own_value, own.get_data(as_text=True))
+
+    def test_no_token_route_shows_another_authoritys_credential(self):
+        routes = sorted({r.rule for r in flask_app.app.url_map.iter_rules()
+                         if 'GET' in r.methods and len(r.arguments) == 1
+                         and any(a in r.arguments for a in ('tok_id', 'token_id'))})
+        self.assertGreaterEqual(len(routes), 3, 'the sweep must find the token routes')
+        leaked = []
+        for rule in routes:
+            url = rule.replace('<int:tok_id>', '2').replace('<int:token_id>', '2')
+            body = self.client.get(url).get_data(as_text=True)
+            if self.foreign_value in body:
+                leaked.append(url)
+        self.assertEqual(leaked, [], 'another authority\'s credential reached these pages')
+
+
 class RateWindowTests(unittest.TestCase):
     """1.0.0-rc.34. The rolling rate moved its window only when an event arrived, so after a
     burst it reported the burst as the current rate for as long as nothing else happened."""
