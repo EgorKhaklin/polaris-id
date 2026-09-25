@@ -19520,3 +19520,36 @@ def test_security_suite_refuses_skips_in_ci_check_discriminates(tmp_path):
     assert checks.check_security_suite_refuses_skips_in_ci(tmp_path)[0].level == "FAIL", "no guard must FAIL"
     f.write_text(guard.replace("class T(", "@unittest.skipUnless(False, 'x')\nclass T("))
     assert checks.check_security_suite_refuses_skips_in_ci(tmp_path)[0].level == "FAIL", "a decorator must FAIL"
+
+
+def test_no_session_date_in_sql_check_discriminates(tmp_path):
+    sql = tmp_path / "polaris_sql"
+    sql.mkdir()
+    web = tmp_path / "polaris_web"
+    web.mkdir()
+    (sql / "05_procedures.sql").write_text(
+        "CREATE OR REPLACE FUNCTION polaris_utc_date()\nRETURNS DATE AS $$\n"
+        "    SELECT (now() AT TIME ZONE 'UTC')::date\n$$;\n")
+    trig = sql / "06_triggers.sql"
+    trig.write_text("IF NEW.expiration_date < polaris_utc_date() THEN\n"
+                    "-- CURRENT_DATE is the session's date, which is why this reads the function\n")
+    route = web / "rp_api.py"
+    route.write_text('q = "SELECT 1 WHERE valid_until >= polaris_utc_date()"  # not CURRENT_DATE\n')
+    assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "OK", \
+        "the UTC function must PASS, and a comment naming CURRENT_DATE is not a use"
+    for bad in ("IF NEW.expiration_date < CURRENT_DATE THEN\n",
+                "SELECT now()::date;\n",
+                "SELECT CURRENT_TIMESTAMP :: DATE;\n"):
+        trig.write_text(bad)
+        assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "FAIL", bad
+    trig.write_text("SELECT 1;\n")
+    route.write_text('q = "SELECT 1 WHERE valid_until >= CURRENT_DATE"\n')
+    assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "FAIL", \
+        "SQL the application sends is judged too"
+    route.write_text("x = 1\n")
+    (web / "test_x.py").write_text('q = "CURRENT_DATE - 1"\n')
+    assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "OK", \
+        "a test fixture is not a product decision"
+    (sql / "05_procedures.sql").write_text("SELECT 1;\n")
+    assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "FAIL", \
+        "must FAIL when polaris_utc_date() is not defined"

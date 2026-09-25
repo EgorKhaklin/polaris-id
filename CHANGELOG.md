@@ -11,6 +11,42 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.47 — 2026-09-25 (a client's timezone no longer moves an expiry decision)
+
+CORE-BUG against rc.28, whose entry and `09_grants.sql` promise that the database judges dates on
+UTC "for every session of this database, so no connection has to remember to ask". Externally
+observable: every expiry and validity decision in the database, and in the SQL the application
+sends, reads the UTC date whatever timezone the session set. Schema change: migration
+`2026-09-25-007-utc-date-for-every-session` adds `polaris_utc_date()` and re-creates the fourteen
+objects that read `CURRENT_DATE`. Nothing is published.
+
+rc.28 made UTC the database's default timezone. A default is what a session gets when it does
+not ask: a client with `PGTZ` set, a connection pooler, or a `SET timezone` overrides it, and
+`CURRENT_DATE` is then that client's date. Found by running the web and constraint suites with
+the database session at UTC+14 and at UTC-12, the axis flipped the way the application role and
+the signer were flipped earlier the same day. At UTC+14 seven tests failed, among them an expired
+credential signing in to a relying party. Most of the seven were fixtures computing "yesterday"
+with the session's date. The defect under them is that the state-machine trigger, UC-1, UC-4,
+UC-5, UC-8, UC-9, UC-10, bulk issuance, four Athena views, the authority chain and five
+application queries judged dates in the client's zone. The application, the signed status
+assertion and the verifiers judged them in UTC. For up to fourteen hours of every day the two
+could disagree about whether a credential had expired.
+
+- `polaris_utc_date()` (`05_procedures.sql`) is `(now() AT TIME ZONE 'UTC')::date`, which no
+  session setting moves. Every product decision reads it; the test fixtures do too.
+- Test: `test_a_session_timezone_does_not_move_an_expiry_decision` picks whichever of UTC+14
+  and UTC-12 is on a different calendar date from UTC at the moment it runs. It asks the trigger
+  to activate a credential that expired yesterday in UTC (refused) and one that expires today in
+  UTC (allowed). With `CURRENT_DATE` put back in the trigger it fails.
+- Check 331, `check_no_session_date_in_sql`, refuses `CURRENT_DATE` and `now()::date` in the
+  product SQL and in the SQL the application and CLI send, and fails if `polaris_utc_date()` is
+  not defined. Detection test in `polaris_checks/test_checks.py`.
+- Open, recorded rather than fixed here: 58 columns are `TIMESTAMP` without a zone, filled by
+  `CURRENT_TIMESTAMP` in the writing session's zone, and `_db_now` compares with them through
+  `LOCALTIMESTAMP` for that reason. A session in another zone writes and compares a different
+  wall clock. That is the same class one level down (the column type), and it needs its own
+  migration.
+
 ## v1.0.0-rc.46 — 2026-09-25 (an epoch too small to hide anyone is refused, and a security test cannot skip in CI)
 
 EXT-SECURITY: both findings come from an outside reviewer's questions of 25 September 2026.

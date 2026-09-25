@@ -129,7 +129,8 @@ then $(s_t(\tau),s_t(\tau'))\in\Gamma$. Writes that do not change the status are
 $\Gamma$. And no write enters \st{active} past the expiry: if $s_t(\tau')=\st{active}\neq s_t(\tau)$
 then $x_t=\bot\vee\tau'\le x_t$, comparing calendar dates. \emark{enforced} by the token-state
 triggers; the check holds the six pairs exactly; the expiry condition since \code{1.0.0-rc.37}
-(before it, reporting a credential lost could promote a reserve already past its date). Pinned by
+(before it, reporting a credential lost could promote a reserve already past its date). The date compared is the UTC
+date whatever timezone the session set, since \code{1.0.0-rc.47}; before it a client's timezone moved it. Pinned by
 \code{check\_token\_core\_triggers\_are\_bound}.
 \end{property}
 \begin{limit}

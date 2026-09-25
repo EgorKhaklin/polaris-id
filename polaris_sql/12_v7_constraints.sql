@@ -210,7 +210,7 @@ BEGIN
     END IF;
     BEGIN
         INSERT INTO RevocationList (token_id, revoked_by_agency_id, effective_date, reason_code)
-        VALUES (v_active_token, 1, CURRENT_DATE, 'COMPROMISED');
+        VALUES (v_active_token, 1, polaris_utc_date(), 'COMPROMISED');
         RAISE NOTICE 'TEST V7-2 FAIL: ACTIVE token was added to RevocationList (C-NEW-2 broken)';
     EXCEPTION WHEN check_violation THEN
         v_caught := TRUE;

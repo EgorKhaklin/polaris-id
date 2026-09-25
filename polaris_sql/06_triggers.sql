@@ -64,7 +64,7 @@ BEGIN
     -- EXPIRED when the date passes, so a credential activated already expired would read
     -- ACTIVE in the table while every verifier refuses it; uc4_activate_reserve did exactly
     -- that. Asked here, the one door into ACTIVE, so no route or procedure has to remember.
-    IF NEW.status = 'ACTIVE' AND NEW.expiration_date < CURRENT_DATE THEN
+    IF NEW.status = 'ACTIVE' AND NEW.expiration_date < polaris_utc_date() THEN
         RAISE EXCEPTION 'Cannot activate token %: it expired on %', NEW.token_id, NEW.expiration_date
             USING ERRCODE = 'invalid_parameter_value';
     END IF;

@@ -166,21 +166,21 @@ BEGIN
 
     RETURN QUERY
     WITH weeks AS (
-        SELECT (DATE_TRUNC('week', CURRENT_DATE) - (n || ' weeks')::INTERVAL)::DATE AS week_start
+        SELECT (DATE_TRUNC('week', polaris_utc_date()) - (n || ' weeks')::INTERVAL)::DATE AS week_start
           FROM generate_series(0, p_weeks - 1) n
     ),
     lifecycle_per_week AS (
         SELECT DATE_TRUNC('week', event_timestamp)::DATE AS w,
                COUNT(*) AS c
           FROM TokenLifecycleEvent
-         WHERE event_timestamp >= CURRENT_DATE - (p_weeks * 7 || ' days')::INTERVAL
+         WHERE event_timestamp >= polaris_utc_date() - (p_weeks * 7 || ' days')::INTERVAL
          GROUP BY 1
     ),
     verification_per_week AS (
         SELECT DATE_TRUNC('week', event_timestamp)::DATE AS w,
                COUNT(*) AS c
           FROM VerificationEvent
-         WHERE event_timestamp >= CURRENT_DATE - (p_weeks * 7 || ' days')::INTERVAL
+         WHERE event_timestamp >= polaris_utc_date() - (p_weeks * 7 || ' days')::INTERVAL
          GROUP BY 1
     )
     SELECT

@@ -1516,13 +1516,13 @@ def _dashboard_model():
     revoked = _window_counts("SELECT COUNT(*) AS n FROM TokenLifecycleEvent "
                              "WHERE event_type = 'REVOKED' AND event_timestamp >= now() - {window}")
     expiry = query("""
-        -- `< CURRENT_DATE`, matching `_not_expired`, not `< now()`. The two differed by up
+        -- `< polaris_utc_date()`, matching `_not_expired`, not `< now()`. The two differed by up
         -- to a day: a credential expiring today read as already past here from one second
         -- after midnight while the verification path still honoured it. One predicate, two
         -- spellings, is how the next disagreement starts.
-        SELECT SUM(CASE WHEN expiration_date < CURRENT_DATE THEN 1 ELSE 0 END) AS past,
-               SUM(CASE WHEN expiration_date >= CURRENT_DATE
-                         AND expiration_date < CURRENT_DATE + INTERVAL '30 days' THEN 1 ELSE 0 END) AS soon
+        SELECT SUM(CASE WHEN expiration_date < polaris_utc_date() THEN 1 ELSE 0 END) AS past,
+               SUM(CASE WHEN expiration_date >= polaris_utc_date()
+                         AND expiration_date < polaris_utc_date() + INTERVAL '30 days' THEN 1 ELSE 0 END) AS soon
           FROM IdentityToken WHERE status = 'ACTIVE'
     """, fetch='one')
     by_issuer = query("""
@@ -2194,7 +2194,7 @@ def _issuer_key_facts(token_id, agency_id, token_key):
 #: its status column says.
 #:
 #: 2026-09-17: nothing compared this column anywhere on a verification path. It is written at
-#: issuance (`uc1_issue_and_activate`, CURRENT_DATE + 10 years), `ACTIVE -> EXPIRED` is a
+#: issuance (`uc1_issue_and_activate`, polaris_utc_date() + 10 years), `ACTIVE -> EXPIRED` is a
 #: legal transition in the state machine, and the operator dashboard COUNTS active
 #: credentials past their expiry. Nothing drives the transition: no sweeper exists. So the
 #: count grew and both verification endpoints answered `currently_authoritative: true` for
@@ -2205,7 +2205,7 @@ def _issuer_key_facts(token_id, agency_id, token_key):
 #: running silently restores the defect, and a predicate cannot stop running. The column stays
 #: the record; this decides what it means.
 #:
-#: Valid THROUGH the expiry date, not up to its start: a DATE compared with `>= CURRENT_DATE`
+#: Valid THROUGH the expiry date, not up to its start: a DATE compared with `>= polaris_utc_date()`
 #: matches the schema's own `expiration_date >= issued_date` ordering CHECK. A NULL expiry is
 #: no expiry, which is what the nullable column means.
 def _not_expired(expiration_date) -> bool:

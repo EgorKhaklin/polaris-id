@@ -22587,6 +22587,45 @@ def check_no_local_date(root: pathlib.Path) -> list[Finding]:
                      "server and the database judge expiry on")
 
 
+# 2026-09-25. The database's CURRENT_DATE is the SESSION's date. rc.28 made UTC the database's
+# default timezone, but a client's PGTZ, a pooler or SET timezone overrides a default, and every
+# expiry and validity decision written with CURRENT_DATE then answered in the client's zone while
+# the application, the signed status assertion and the verifiers answered in UTC (measured: with
+# PGTZ at UTC+14 an expired credential signed in). Decisions read polaris_utc_date().
+# LOCALTIMESTAMP is not in the pattern: _db_now reads it deliberately, to compare with the
+# TIMESTAMP-without-zone columns the writing session's clock fills. That is the same class one
+# level down (the column type), recorded as open, not waved through here.
+_SESSION_DATE = re.compile(r"\bCURRENT_DATE\b|\b(?:now\(\)|CURRENT_TIMESTAMP)\s*::\s*date\b", re.I)
+
+
+def check_no_session_date_in_sql(root: pathlib.Path) -> list[Finding]:
+    """No product SQL, and no SQL the application sends, reads the session's date; every date
+    decision reads polaris_utc_date(), which a session's timezone cannot move."""
+    name = "no_session_date_in_sql"
+    procs = _read(root, "polaris_sql/05_procedures.sql")
+    if not re.search(r"FUNCTION polaris_utc_date\(\).*?AT TIME ZONE 'UTC'", procs, re.S):
+        return _fail(name, "polaris_utc_date() is not defined in 05_procedures.sql as the UTC date, "
+                           "so there is nothing for a date decision to read instead")
+    offenders, scanned = [], 0
+    sql_dir = root / "polaris_sql"
+    sources = [(f, "--") for f in sorted(sql_dir.glob("[01]*.sql")) if f.name != "08_tests.sql"]
+    for d in ("polaris_web", "polaris_cli"):
+        sources += [(f, "#") for f in sorted((root / d).glob("*.py")) if not f.name.startswith("test_")]
+    for f, comment in sources:
+        scanned += 1
+        for i, line in enumerate(_read_path(f).splitlines(), 1):
+            code = line.split(comment, 1)[0]
+            if comment == "#" and code.lstrip().startswith("--"):
+                continue
+            if _SESSION_DATE.search(code):
+                offenders.append(f"{f.relative_to(root)}:{i}")
+    if offenders:
+        return _fail(name, "a date decision reads the session's date, which a client's timezone "
+                           "moves: " + "; ".join(offenders[:6]) + ". Use polaris_utc_date()")
+    return _ok(name, f"no session date in {scanned} SQL and application files: every date decision "
+                     "reads polaris_utc_date(), the UTC date whatever timezone a session set")
+
+
 # 2026-09-24. HolderKeyEvent.algorithm and AuthorityKeyEvent.algorithm were free text: the route's
 # allowlist and the CLI's choices were the only things keeping a classical parameter set out of
 # registers whose value is issuer-signed or published for relying parties to verify under. A
@@ -23223,6 +23262,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_views_run_as_their_caller,
     check_rule_routines_see_past_the_binding,
     check_security_suite_refuses_skips_in_ci,
+    check_no_session_date_in_sql,
 ]
 
 

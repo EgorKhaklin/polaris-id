@@ -493,7 +493,7 @@ class ExchangeGatewayTests(UnauthenticatedTestCase):
         key_m = os.urandom(32).hex() * 2
         flask_app.query("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 3", (key_m,), fetch='none')
         ins = ("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, valid_until, signed_by) "
-               "VALUES (%s, 3, %s, CURRENT_DATE + INTERVAL '30 days', 1)")
+               "VALUES (%s, 3, %s, polaris_utc_date() + INTERVAL '30 days', 1)")
         flask_app.query(ins, (5, ctx), fetch='none')
         try:
             self.assertIsNone(rp_api._exchange_attestation(1, key_m, ctx), "B holds no attestation of M: C's must not authorize M at B")
@@ -732,7 +732,7 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         _verifier, challenge = self._pkce()
         self.assertEqual(self._authorize(cid, tv, sig, challenge).status_code, 200,
                          'control: the live credential signs in')
-        flask_app.query("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 "
+        flask_app.query("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 "
                         "WHERE token_value = %s", (tv,), fetch='none')
         r = self._authorize(cid, tv, sig, challenge)
         self.assertEqual(r.status_code, 403, r.get_data(as_text=True))
@@ -1596,7 +1596,7 @@ class UC4Tests(PolarisTestCase):
                 VALUES
                     ('TKN-PA-UC4-ACTIVE', 'SN-PA-UC4-ACT', 'TitanQ-3',
                      'IRIS', 1, 2, 1,
-                     'RESERVE', CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date)
+                     'RESERVE', CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date)
                 RETURNING token_id
             """)
             new_active_id = cur.fetchone()['token_id']
@@ -1839,7 +1839,7 @@ class IssuerDiscretionBoundsTests(PolarisTestCase):
                 VALUES
                     (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, %s,
                      'RESERVE', CURRENT_TIMESTAMP,
-                     (CURRENT_DATE + INTERVAL '10 years')::date)
+                     (polaris_utc_date() + INTERVAL '10 years')::date)
                 RETURNING token_id
             """, (f'TKN-R11-6-{label}', f'SN-R11-6-{label}',
                   iid, agency_id, algorithm_id))
@@ -2670,7 +2670,7 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                      algorithm_id, status, issued_date, expiration_date)
                 VALUES ('TKN-UC9-PRE', 'SN-UC9-PRE', 'TitanQ-3',
                         'IRIS', %s, 1, 1, 'RESERVE', CURRENT_TIMESTAMP,
-                        (CURRENT_DATE + INTERVAL '10 years')::date)
+                        (polaris_utc_date() + INTERVAL '10 years')::date)
                 RETURNING token_id
             """, (iid,))
             old_token_id = cur.fetchone()['token_id']
@@ -2905,7 +2905,7 @@ class MultiSignatureTests(PolarisTestCase):
                 VALUES
                     (%s, %s, 'TitanQ-3', 'IRIS', %s, 1, %s,
                      'RESERVE', CURRENT_TIMESTAMP,
-                     (CURRENT_DATE + INTERVAL '10 years')::date)
+                     (polaris_utc_date() + INTERVAL '10 years')::date)
                 RETURNING token_id
             """, (f'TKN-MS-{label}', f'SN-MS-{label}',
                   individual_id, algorithm_id))
@@ -3454,7 +3454,7 @@ class IssuerFederationTests(PolarisTestCase):
                     INSERT INTO AgencyTrustAttestation
                         (attesting_agency_id, attested_agency_id, context_id,
                          valid_until, signed_by)
-                    VALUES (4, 1, %s, CURRENT_DATE, %s)
+                    VALUES (4, 1, %s, polaris_utc_date(), %s)
                 """, (ctx, admin))
 
     def test_revocation_reason_floor_rejected_by_check(self):
@@ -3821,7 +3821,7 @@ class IssuerFederationTests(PolarisTestCase):
             cur.execute("SELECT token_id, issuing_agency_id FROM IdentityToken "
                         "WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
             row = cur.fetchone()
-            cur.execute("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 "
+            cur.execute("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 "
                         "WHERE token_id = %s", (row['token_id'],))
             cur.execute("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s "
                         "AND outcome = 'SUCCESS'", (row['token_id'],))
@@ -3888,7 +3888,7 @@ class IssuerFederationTests(PolarisTestCase):
                      algorithm_id, status, issued_date, expiration_date)
                 VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, 6, 1,
                         'ACTIVE', CURRENT_TIMESTAMP,
-                        (CURRENT_DATE + INTERVAL '10 years')::date)
+                        (polaris_utc_date() + INTERVAL '10 years')::date)
                 RETURNING token_id
             """, (f'TKN-TRANS-{iid}', f'SN-TRANS-{iid}', iid))
             tid = cur.fetchone()['token_id']
@@ -4091,7 +4091,7 @@ class IssuerFederationTests(PolarisTestCase):
                      fetch='one')['user_id']
         _sql("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, "
              "context_id, attested_date, valid_until, signed_by) VALUES (6, 2, %s, "
-             "CURRENT_TIMESTAMP - INTERVAL '400 days', CURRENT_DATE - 10, %s)",
+             "CURRENT_TIMESTAMP - INTERVAL '400 days', polaris_utc_date() - 10, %s)",
              (self._context_id('HEALTHCARE'), admin), fetch='none')
         self.assertEqual(read(), (active, expired + 1, pills + 1),
                          'an attestation that expired ten days ago must read EXPIRED, not ACTIVE')
@@ -4462,7 +4462,7 @@ class ZKSnarkTests(PolarisTestCase):
         return row['token_value'], ph.hex()
 
     def _expire(self, token_value):
-        flask_app.query("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 "
+        flask_app.query("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 "
                         "WHERE token_value = %s", (token_value,), fetch='none')
 
     def test_effective_status_is_the_one_answer_to_is_it_live(self):
@@ -4481,23 +4481,74 @@ class ZKSnarkTests(PolarisTestCase):
             {'status': 'REVOKED', 'expiration_date': today + timedelta(days=9)}), 'REVOKED')
 
     def test_the_database_judges_dates_on_the_utc_clock(self):
-        """1.0.0-rc.28. Attestation validity is judged in SQL against CURRENT_DATE, which is
-        the SESSION's date. Credential expiry and every signed artifact read UTC (rc.27), so
-        the database must too, for every session, without a connection having to ask."""
+        """1.0.0-rc.28 made UTC the database's default timezone, so that CURRENT_DATE would be the
+        UTC date that credential expiry and every signed artifact read (rc.27). A default is what
+        a session gets when it does not ask; this asserts it for a session that does not ask,
+        and the test below covers one that does."""
         conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT current_setting('TimeZone') AS tz, CURRENT_DATE AS d, "
-                            "(now() AT TIME ZONE 'UTC')::date AS u")
+                # The DATABASE's setting, not this session's: a client with PGTZ set gets its own
+                # zone even from SET timezone = DEFAULT, which is the point of the test below.
+                cur.execute("SELECT polaris_database_setting('TimeZone') AS tz")
                 row = cur.fetchone()
         finally:
             conn.close()
         self.assertEqual(row['tz'], 'UTC')
-        self.assertEqual(row['d'], row['u'])
         grants = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                    'polaris_sql', '09_grants.sql')).read()
         self.assertIn("SET timezone = %L', current_database(), 'UTC'", grants,
                       'a fresh install must carry the setting too, not only the migration')
+
+    def test_a_session_timezone_does_not_move_an_expiry_decision(self):
+        """2026-09-25. The rc.28 pin is a default that PGTZ or SET timezone overrides, and every
+        expiry and validity decision was written with CURRENT_DATE, the session's date. With the
+        session at UTC+14 an expired credential signed in. Decisions now read polaris_utc_date().
+        One of UTC+14 and UTC-12 is on a different calendar date from UTC at every hour, so this
+        picks that one and asks the state-machine trigger to activate a credential that expired
+        yesterday in UTC (refused) and one that expires today in UTC (allowed)."""
+        import datetime as _dt
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **DB_CONFIG)
+        conn.autocommit = False
+        try:
+            with conn.cursor() as cur:
+                utc_today = _dt.datetime.now(_dt.timezone.utc).date()
+                for zone in ('Etc/GMT-14', 'Etc/GMT+12'):
+                    cur.execute("SET LOCAL timezone = %s", (zone,))
+                    cur.execute("SELECT CURRENT_DATE AS local, polaris_utc_date() AS utc")
+                    row = cur.fetchone()
+                    if row['local'] != row['utc']:
+                        break
+                self.assertNotEqual(row['local'], row['utc'], 'no zone off the UTC date was found')
+                self.assertEqual(row['utc'], utc_today)
+                # RESERVE -> ACTIVE is the one door into ACTIVE. The holder's current ACTIVE
+                # credential steps aside first (C3), all inside this rolled-back transaction.
+                cur.execute("SELECT token_id, individual_id FROM IdentityToken "
+                            "WHERE status = 'RESERVE' ORDER BY token_id LIMIT 1")
+                reserve = cur.fetchone()
+                self.assertIsNotNone(reserve, 'the sample data holds a RESERVE credential')
+                tid = reserve['token_id']
+                cur.execute("UPDATE IdentityToken SET status = 'DORMANT' "
+                            "WHERE individual_id = %s AND status = 'ACTIVE'", (reserve['individual_id'],))
+                activate = ("UPDATE IdentityToken SET status = 'ACTIVE', activated_date = now() "
+                            "WHERE token_id = %s")
+                cur.execute("SAVEPOINT expired")
+                cur.execute("UPDATE IdentityToken SET expiration_date = %s WHERE token_id = %s",
+                            (utc_today - _dt.timedelta(days=1), tid))
+                with self.assertRaises(psycopg2.Error, msg='expired yesterday in UTC, activated '
+                                       'from a session whose local date says otherwise') as ctx:
+                    cur.execute(activate, (tid,))
+                self.assertIn('expired on', str(ctx.exception))
+                cur.execute("ROLLBACK TO SAVEPOINT expired")
+                cur.execute("UPDATE IdentityToken SET expiration_date = %s WHERE token_id = %s",
+                            (utc_today, tid))
+                cur.execute(activate, (tid,))
+                cur.execute("SELECT status FROM IdentityToken WHERE token_id = %s", (tid,))
+                self.assertEqual(cur.fetchone()['status'], 'ACTIVE',
+                                 'a credential that expires today in UTC is still activatable')
+        finally:
+            conn.rollback()
+            conn.close()
 
     def test_an_epoch_that_ended_by_the_databases_clock_is_refused(self):
         """1.0.0-rc.29. valid_until is the database's wall clock; the check compared it with
@@ -4520,9 +4571,9 @@ class ZKSnarkTests(PolarisTestCase):
         """1.0.0-rc.35. Closing an epoch snapshotted status = ACTIVE alone, so an expired
         credential was committed and could prove membership for the epoch's whole life; one
         expiring mid-epoch could prove it after it ended."""
-        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 3",
+        _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 WHERE token_id = 3",
              fetch='none')
-        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE + 1 WHERE token_id = 4",
+        _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() + 1 WHERE token_id = 4",
              fetch='none')
         valid_until = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
         csrf = self._csrf_token_from('/verifications/new')
@@ -5930,7 +5981,7 @@ class Uc5BindDeviceExpiryTests(PolarisTestCase):
 
     def test_an_expired_credential_takes_no_device(self):
         self.assertIsNotNone(self._bind(2), 'control: a live credential takes a device')
-        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 3",
+        _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 WHERE token_id = 3",
              fetch='none')
         with self.assertRaises(psycopg2.Error) as ctx:
             self._bind(3)
@@ -5949,7 +6000,7 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
                            individual_id, issuing_agency_id, algorithm_id, status,
                            issued_date, expiration_date)
                       VALUES ('TKN-UC4-EXP', 'SN-UC4-EXP', 'TitanQ-3', 'IRIS', 1, 2, 1,
-                              'RESERVE', CURRENT_TIMESTAMP, (CURRENT_DATE + 3650))
+                              'RESERVE', CURRENT_TIMESTAMP, (polaris_utc_date() + 3650))
                       RETURNING token_id""", fetch='one')['token_id']
         _sql("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
              "WHERE token_id=%s", (tid,), fetch='none')
@@ -5961,7 +6012,7 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
 
     def test_an_expired_reserve_is_not_activated(self):
         lost_id = self._holder_with_active()
-        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 1",
+        _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 WHERE token_id = 1",
              fetch='none')
         with self.assertRaises(psycopg2.Error) as ctx:
             self._activate(lost_id)
@@ -5977,13 +6028,13 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
 
     def test_no_path_activates_an_expired_credential(self):
         """The refusal is the state machine's, so a plain UPDATE is refused as uc4 is."""
-        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 1",
+        _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 WHERE token_id = 1",
              fetch='none')
         with self.assertRaises(psycopg2.Error) as ctx:
             _sql("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
                  "WHERE token_id = 1", fetch='none')
         self.assertIn('expired', str(ctx.exception))
-        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE WHERE token_id = 1",
+        _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() WHERE token_id = 1",
              fetch='none')
         _sql("UPDATE IdentityToken SET status='ACTIVE', activated_date=CURRENT_TIMESTAMP "
              "WHERE token_id = 1", fetch='none')
@@ -5992,7 +6043,7 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
                          'control: a credential live through today still activates')
 
     def test_the_form_offers_no_expired_reserve(self):
-        _sql("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 WHERE token_id = 1",
+        _sql("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 WHERE token_id = 1",
              fetch='none')
         body = self.client.get('/uc4/activate-reserve').get_data(as_text=True)
         self.assertNotIn('Adrian Vasquez', body)
@@ -7698,7 +7749,7 @@ class ConcurrencyTests(PolarisTestCase):
                     VALUES
                         (%s, %s, 'TitanQ-3', 'IRIS', %s, 2, 1,
                          'RESERVE', CURRENT_TIMESTAMP,
-                         (CURRENT_DATE + INTERVAL '10 years')::date)
+                         (polaris_utc_date() + INTERVAL '10 years')::date)
                     RETURNING token_id
                 """, (f'TKN-R11-6-C9-{label}', f'SN-R11-6-C9-{label}', iid))
                 tid = cur.fetchone()['token_id']
@@ -7771,7 +7822,7 @@ class ConcurrencyTests(PolarisTestCase):
                     VALUES
                         (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, 1,
                          'RESERVE', CURRENT_TIMESTAMP,
-                         (CURRENT_DATE + INTERVAL '10 years')::date)
+                         (polaris_utc_date() + INTERVAL '10 years')::date)
                     RETURNING token_id
                 """, (f'TKN-R11-6-CROSS-{label}', f'SN-R11-6-CROSS-{label}', iid, agency_id))
                 tid = cur.fetchone()['token_id']
@@ -7968,7 +8019,7 @@ class ConcurrencyTests(PolarisTestCase):
                      algorithm_id, status, issued_date, expiration_date)
                 VALUES ('TKN-R11-1-LOCK', 'SN-R11-1-LOCK', 'TitanQ-3',
                         'IRIS', %s, 1, 1, 'RESERVE',
-                        CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date)
+                        CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date)
                 RETURNING token_id
             """, (iid,))
             tid = cur.fetchone()['token_id']
@@ -8031,7 +8082,7 @@ class ConcurrencyTests(PolarisTestCase):
                      algorithm_id, status, issued_date, expiration_date)
                 VALUES ('TKN-R11-1-SNAP', 'SN-R11-1-SNAP', 'TitanQ-3',
                         'IRIS', %s, 1, 1, 'RESERVE',
-                        CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date)
+                        CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date)
                 RETURNING token_id
             """, (iid,))
             tid = cur.fetchone()['token_id']
@@ -8124,7 +8175,7 @@ class ConcurrencyTests(PolarisTestCase):
                          algorithm_id, status, issued_date, expiration_date)
                     VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, 1, 1,
                             'RESERVE', CURRENT_TIMESTAMP,
-                            (CURRENT_DATE + INTERVAL '10 years')::date)
+                            (polaris_utc_date() + INTERVAL '10 years')::date)
                     RETURNING token_id
                 """, (f'TKN-R11-1-X{iid}', f'SN-R11-1-X{iid}', iid))
                 tid = cur.fetchone()['token_id']
@@ -8431,7 +8482,7 @@ class ConcurrencyTests(PolarisTestCase):
                          biometric_binding_type, individual_id, issuing_agency_id,
                          algorithm_id, status, issued_date, expiration_date)
                     VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, 2, 1, 'RESERVE',
-                            CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date)
+                            CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date)
                     RETURNING token_id
                 """, ('TKN-C9-LP-%s' % label, 'SN-C9-LP-%s' % label, iid))
                 tid = cur.fetchone()['token_id']
@@ -8467,7 +8518,7 @@ class ConcurrencyTests(PolarisTestCase):
                      biometric_binding_type, individual_id, issuing_agency_id,
                      algorithm_id, status, issued_date, expiration_date)
                 VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, 1, 1, 'RESERVE',
-                        CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date)
+                        CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date)
                 RETURNING token_id
             """, ('TKN-C9-LPM-%s' % iid, 'SN-C9-LPM-%s' % iid, iid))
             tid = cur.fetchone()['token_id']
@@ -8543,7 +8594,7 @@ class ConcurrencyTests(PolarisTestCase):
                     (attesting_agency_id, attested_agency_id, context_id,
                      attested_date, valid_until, signed_by)
                 VALUES (4, 3, %s, CURRENT_TIMESTAMP,
-                        (CURRENT_DATE + INTERVAL '180 days')::date, %s)
+                        (polaris_utc_date() + INTERVAL '180 days')::date, %s)
                 RETURNING attestation_id
             """, (ctx_voting, admin))
             attestation_id = cur.fetchone()['attestation_id']
@@ -11414,7 +11465,7 @@ class FederationInAppTests(PolarisTestCase):
                         (token_value, physical_serial, hardware_model, biometric_binding_type,
                          individual_id, issuing_agency_id, algorithm_id, status, issued_date, expiration_date)
                     VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, 1, 'RESERVE', CURRENT_TIMESTAMP,
-                            (CURRENT_DATE + INTERVAL '10 years')::date)
+                            (polaris_utc_date() + INTERVAL '10 years')::date)
                     RETURNING token_id""", (token_value, 'SN-' + token_value, iid, agency_id))
                 tid = cur.fetchone()['token_id']
                 cur.execute("SELECT set_config('polaris.actor_agency_id', %s, false)", (str(agency_id),))
@@ -13242,7 +13293,7 @@ class AgencyQuotaTests(PolarisTestCase):
                 cur.execute("INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
                             "biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, "
                             "status, issued_date, expiration_date) VALUES (%s, %s, 'TitanQ-3', 'IRIS', "
-                            "%s, %s, 1, 'RESERVE', CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date) "
+                            "%s, %s, 1, 'RESERVE', CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date) "
                             "RETURNING token_id", (f'TKN-QUOTA-{label}', f'SN-QUOTA-{label}', iid, agency_id))
                 tid = cur.fetchone()['token_id']
                 cur.execute("SELECT set_config('polaris.actor_agency_id', %s, false)", (str(agency_id),))
@@ -13637,14 +13688,14 @@ class AthenaOntologyTests(PolarisTestCase):
                 cur.execute(
                     "INSERT INTO AgencyTrustAttestation "
                     "(attesting_agency_id, attested_agency_id, context_id, valid_until, signed_by) "
-                    "VALUES (%s,%s,%s, CURRENT_DATE + 90, %s) RETURNING attestation_id",
+                    "VALUES (%s,%s,%s, polaris_utc_date() + 90, %s) RETURNING attestation_id",
                     (ags[0], ags[1], ctx, signer))
                 current_id = cur.fetchone()['attestation_id']
                 cur.execute(
                     "INSERT INTO AgencyTrustAttestation "
                     "(attesting_agency_id, attested_agency_id, context_id, valid_until, signed_by, "
                     " revocation_date, revocation_reason) "
-                    "VALUES (%s,%s,%s, CURRENT_DATE + 90, %s, CURRENT_TIMESTAMP, 'revoked for test') "
+                    "VALUES (%s,%s,%s, polaris_utc_date() + 90, %s, CURRENT_TIMESTAMP, 'revoked for test') "
                     "RETURNING attestation_id",
                     (ags[0], ags[1], ctx, signer))
                 revoked_id = cur.fetchone()['attestation_id']
@@ -14126,7 +14177,7 @@ class RelyingPartyApiTests(PolarisTestCase):
         with self._new_conn() as conn, conn.cursor() as cur:
             cur.execute("UPDATE IdentityToken SET issued_date = now() - interval '30 days', "
                         "activated_date = now() - interval '30 days', "
-                        "expiration_date = current_date - 1 WHERE token_value = %s",
+                        "expiration_date = polaris_utc_date() - 1 WHERE token_value = %s",
                         (body['token_value'],))
             conn.commit()
         v = self.client.post('/api/v1/verify', headers=bearer, json=body).get_json()
@@ -14532,7 +14583,7 @@ class FederationManifestTests(PolarisTestCase):
             ctx = cur.fetchone()['context_id']
             cur.execute("DELETE FROM AgencyTrustAttestation WHERE attesting_agency_id=1 AND attested_agency_id=2 AND context_id=%s", (ctx,))
             cur.execute("INSERT INTO AgencyTrustAttestation (attesting_agency_id, attested_agency_id, context_id, valid_until, signed_by) "
-                        "VALUES (1, 2, %s, CURRENT_DATE + INTERVAL '1 year', 1)", (ctx,))
+                        "VALUES (1, 2, %s, polaris_utc_date() + INTERVAL '1 year', 1)", (ctx,))
             conn.commit()
         m = self.client.get('/api/v1/federation-manifest/1').get_json()
         self.assertEqual(m['format'], 'polaris-federation-manifest/1')
@@ -15283,7 +15334,7 @@ class CardPersonalizationTests(PolarisTestCase):
         with self._new_conn() as conn:
             token_id = self._active_token(conn)
             with conn.cursor() as cur:
-                cur.execute("UPDATE IdentityToken SET expiration_date = CURRENT_DATE - 1 "
+                cur.execute("UPDATE IdentityToken SET expiration_date = polaris_utc_date() - 1 "
                             "WHERE token_id = %s", (token_id,))
             conn.commit()
             card, _ = em.new_blank_token()
@@ -15898,7 +15949,7 @@ class PilotWindDownTests(PolarisTestCase):
                         biometric_binding_type, individual_id, issuing_agency_id, algorithm_id,
                         activation_sequence, status, issued_date, activated_date, expiration_date)
                     VALUES ('TKN-WIND-OLD-0002', 'SN-WIND-OLD-0002', 'TitanQ-3', 'NONE', 2, 1, 1,
-                            9, 'REVOKED', CURRENT_DATE - 400, CURRENT_DATE - 399, CURRENT_DATE + 3000)
+                            9, 'REVOKED', polaris_utc_date() - 400, polaris_utc_date() - 399, polaris_utc_date() + 3000)
                     RETURNING token_id""")
                 old = cur.fetchone()["token_id"]
                 cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes) "
@@ -16536,7 +16587,7 @@ class DeactivatedAdminHoldsNoAuthorityTests(PolarisTestCase):
     sessions end; the CLI and the operator scripts pass a user id straight in."""
 
     CALLS = (
-        ("uc10_attest_trust", "CALL uc10_attest_trust(4, 2, 1, CURRENT_DATE + 30, %s)"),
+        ("uc10_attest_trust", "CALL uc10_attest_trust(4, 2, 1, polaris_utc_date() + 30, %s)"),
         ("uc10_revoke_attestation", "CALL uc10_revoke_attestation(1, 'held-out reason', %s)"),
         ("uc11_close_epoch", "CALL uc11_close_epoch('ab'::varchar, "
                              "(CURRENT_TIMESTAMP + INTERVAL '1 day')::timestamp, %s, '[]'::jsonb)"),

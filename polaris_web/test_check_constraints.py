@@ -151,7 +151,7 @@ class TestAgencyTrustAttestationChecks(_CheckBase):
             "INSERT INTO AgencyTrustAttestation "
             "(attesting_agency_id, attested_agency_id, context_id, "
             "valid_until, signed_by) "
-            "VALUES (1, 1, 1, CURRENT_DATE + interval '90 days', 1)",
+            "VALUES (1, 1, 1, polaris_utc_date() + interval '90 days', 1)",
             constraint_name='no_self_attestation',
         )
 
@@ -161,7 +161,7 @@ class TestAgencyTrustAttestationChecks(_CheckBase):
             "INSERT INTO AgencyTrustAttestation "
             "(attesting_agency_id, attested_agency_id, context_id, "
             "attested_date, valid_until, signed_by) "
-            "VALUES (1, 2, 1, CURRENT_DATE, CURRENT_DATE, 1)",
+            "VALUES (1, 2, 1, polaris_utc_date(), polaris_utc_date(), 1)",
             constraint_name='validity_floor',
         )
 
@@ -172,7 +172,7 @@ class TestAgencyTrustAttestationChecks(_CheckBase):
             "INSERT INTO AgencyTrustAttestation "
             "(attesting_agency_id, attested_agency_id, context_id, "
             "valid_until, signed_by, revocation_date) "
-            "VALUES (1, 2, 1, CURRENT_DATE + interval '90 days', 1, CURRENT_DATE)",
+            "VALUES (1, 2, 1, polaris_utc_date() + interval '90 days', 1, polaris_utc_date())",
             constraint_name='revocation_consistency',
         )
 
@@ -182,8 +182,8 @@ class TestAgencyTrustAttestationChecks(_CheckBase):
             "INSERT INTO AgencyTrustAttestation "
             "(attesting_agency_id, attested_agency_id, context_id, "
             "valid_until, signed_by, revocation_date, revocation_reason) "
-            "VALUES (1, 2, 1, CURRENT_DATE + interval '90 days', 1, "
-            "CURRENT_DATE, 'short')",
+            "VALUES (1, 2, 1, polaris_utc_date() + interval '90 days', 1, "
+            "polaris_utc_date(), 'short')",
             constraint_name='revocation_consistency',
         )
 
@@ -1623,7 +1623,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                  "CALL uc9_initiate_recovery(%s, 1, %s, 48)", (tok["individual_id"], admin)),
                 ("an ACTIVE token on the revocation list",
                  "INSERT INTO RevocationList (token_id, revoked_by_agency_id, effective_date, "
-                 "reason_code) VALUES (2, 1, CURRENT_DATE, 'COMPROMISED')", ()),
+                 "reason_code) VALUES (2, 1, polaris_utc_date(), 'COMPROMISED')", ()),
             ]
             for binding in ("", "1"):
                 for label, sql, args in attempts:
@@ -2543,7 +2543,7 @@ class TestDiscretionPolicyIsAppendOnly(_CheckBase):
             "INSERT INTO IdentityToken (token_value, physical_serial, hardware_model, "
             "biometric_binding_type, individual_id, issuing_agency_id, algorithm_id, status, "
             "issued_date, expiration_date) VALUES (%s, %s, 'TitanQ-3', 'IRIS', %s, %s, %s, "
-            "'RESERVE', CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date) "
+            "'RESERVE', CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date) "
             "RETURNING token_id",
             ('TKN-DISC-' + label, 'SN-DISC-' + label, iid, self.AGENCY, row["algorithm_id"]))
         tid = self.cur.fetchone()["token_id"]
@@ -3123,7 +3123,7 @@ class TestRevocationListStatusGuard(_CheckBase):
             with self.assertRaises(pg_errors.CheckViolation) as caught:
                 cur.execute(
                     "INSERT INTO RevocationList (token_id, revoked_by_agency_id, effective_date, "
-                    "reason_code) VALUES (%s, 1, CURRENT_DATE, 'COMPROMISED')", (live['token_id'],))
+                    "reason_code) VALUES (%s, 1, polaris_utc_date(), 'COMPROMISED')", (live['token_id'],))
             self.assertIn('RevocationList', str(caught.exception))
 
     def test_a_revoked_token_can_be_added(self):
@@ -3136,7 +3136,7 @@ class TestRevocationListStatusGuard(_CheckBase):
             self.assertIsNotNone(dead, "no REVOKED/LOST/EXPIRED token in the sample data")
             cur.execute(
                 "INSERT INTO RevocationList (token_id, revoked_by_agency_id, effective_date, "
-                "reason_code) VALUES (%s, 1, CURRENT_DATE, 'COMPROMISED') RETURNING revocation_id",
+                "reason_code) VALUES (%s, 1, polaris_utc_date(), 'COMPROMISED') RETURNING revocation_id",
                 (dead['token_id'],))
             self.assertIsNotNone(cur.fetchone()['revocation_id'])
 

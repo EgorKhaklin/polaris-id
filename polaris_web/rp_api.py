@@ -1015,7 +1015,7 @@ def _federation_manifest_body(ag, now):
         JOIN   Agency ag2 ON ag2.agency_id = att.attested_agency_id
         WHERE  att.attesting_agency_id = %s
           AND  att.revocation_date IS NULL
-          AND  att.valid_until >= CURRENT_DATE
+          AND  att.valid_until >= polaris_utc_date()
         ORDER BY att.attested_agency_id, att.context_id
     """, (agency_id,), primary=True)
     epoch = query("SELECT epoch_id, merkle_root FROM TokenStateEpoch ORDER BY epoch_id DESC LIMIT 1",
@@ -1401,7 +1401,7 @@ def _exchange_attestation(responder_agency_id, req_key, context_id):
           AND  lower(ag2.signing_public_key_hex) = %s
           AND  att.context_id = %s
           AND  att.revocation_date IS NULL
-          AND  att.valid_until >= CURRENT_DATE
+          AND  att.valid_until >= polaris_utc_date()
         ORDER BY att.attestation_id LIMIT 1
     """, (int(responder_agency_id), req_key, context_id), fetch='one', primary=True)
 

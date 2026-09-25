@@ -205,7 +205,7 @@ JOIN    Agency                  ag  ON it.issuing_agency_id = ag.agency_id
 WHERE   it.status = 'ACTIVE'
   AND   (alg.quantum_resistant = FALSE
          OR (alg.deprecation_date IS NOT NULL
-             AND alg.deprecation_date < CURRENT_DATE + INTERVAL '24 months'))
+             AND alg.deprecation_date < polaris_utc_date() + INTERVAL '24 months'))
 ORDER BY alg.deprecation_date NULLS LAST, it.token_id;
 
 -- ============================================================================

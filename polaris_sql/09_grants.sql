@@ -183,6 +183,10 @@ END$$;
 -- signed another for hours of every day. Pinned here, for every session of this database, so
 -- no connection has to remember to ask. The shipped containers already run UTC; this makes
 -- that a property of the schema rather than of the image.
+--
+-- 2026-09-25: a DEFAULT, which a client's PGTZ or SET timezone overrides for its own session.
+-- Decisions therefore read polaris_utc_date() (05_procedures.sql), not CURRENT_DATE; this pin
+-- remains so that timestamps a session prints and truncates are UTC by default.
 -- ----------------------------------------------------------------------------
 DO $$
 BEGIN

@@ -158,14 +158,14 @@ CREATE OR REPLACE VIEW v_athena_algorithm WITH (security_invoker = true) AS
 SELECT alg.algorithm_id, alg.name, alg.family, alg.quantum_resistant,
        alg.nist_standard, alg.security_level_bits,
        alg.public_key_size, alg.signature_size, alg.deprecation_date,
-       (alg.deprecation_date IS NOT NULL AND alg.deprecation_date <= CURRENT_DATE) AS is_deprecated,
+       (alg.deprecation_date IS NOT NULL AND alg.deprecation_date <= polaris_utc_date()) AS is_deprecated,
        'CryptographicAlgorithm'::text AS source
   FROM CryptographicAlgorithm alg;
 
 CREATE OR REPLACE VIEW v_athena_credential_class WITH (security_invoker = true) AS
 SELECT alg.algorithm_id AS class_id, alg.name AS class_name, alg.family,
        alg.quantum_resistant, alg.security_level_bits,
-       (alg.deprecation_date IS NOT NULL AND alg.deprecation_date <= CURRENT_DATE) AS is_deprecated,
+       (alg.deprecation_date IS NOT NULL AND alg.deprecation_date <= polaris_utc_date()) AS is_deprecated,
        COUNT(*) FILTER (WHERE aaa.authorization_type IN ('ISSUE','BOTH')) AS authorized_issuer_count,
        'CryptographicAlgorithm + AgencyAlgorithmAuth'::text AS source
   FROM CryptographicAlgorithm alg
@@ -209,7 +209,7 @@ SELECT ata.attestation_id,
   JOIN Agency ab ON ata.attested_agency_id  = ab.agency_id
   JOIN VerificationContext vc ON ata.context_id = vc.context_id
  WHERE ata.revocation_date IS NULL
-   AND ata.valid_until >= CURRENT_DATE;
+   AND ata.valid_until >= polaris_utc_date();
 
 -- ----------------------------------------------------------------------------
 -- Edge views (each a SELECT over an existing table or the curated rule state).
@@ -248,7 +248,7 @@ SELECT ata.attesting_agency_id AS from_agency_id, aa.name AS from_agency_name,
   JOIN Agency ab ON ata.attested_agency_id  = ab.agency_id
   JOIN VerificationContext vc ON ata.context_id = vc.context_id
  WHERE ata.revocation_date IS NULL
-   AND ata.valid_until >= CURRENT_DATE;
+   AND ata.valid_until >= polaris_utc_date();
 
 CREATE OR REPLACE VIEW v_athena_constrains WITH (security_invoker = true) AS
 SELECT r.rule_code, r.title, r.kind,
@@ -299,7 +299,7 @@ LANGUAGE sql STABLE AS $athena_chain$
     UNION ALL
     SELECT 2, 'algorithm',
            alg.name || ' (' || alg.family || ', L' || alg.security_level_bits ||
-           CASE WHEN alg.deprecation_date IS NOT NULL AND alg.deprecation_date <= CURRENT_DATE
+           CASE WHEN alg.deprecation_date IS NOT NULL AND alg.deprecation_date <= polaris_utc_date()
                 THEN ', DEPRECATED' ELSE '' END || ')',
            'CryptographicAlgorithm'
       FROM CryptographicAlgorithm alg WHERE alg.algorithm_id = p_algorithm_id

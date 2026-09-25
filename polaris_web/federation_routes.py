@@ -174,7 +174,7 @@ def federation_viewer():
                u.username AS signed_by_username,
                CASE
                    WHEN att.revocation_date IS NOT NULL THEN 'REVOKED'
-                   WHEN att.valid_until < CURRENT_DATE  THEN 'EXPIRED'
+                   WHEN att.valid_until < polaris_utc_date()  THEN 'EXPIRED'
                    ELSE 'ACTIVE'
                END AS state
           FROM AgencyTrustAttestation att
@@ -189,9 +189,9 @@ def federation_viewer():
         SELECT
             SUM(CASE WHEN revocation_date IS NOT NULL THEN 1 ELSE 0 END) AS revoked,
             SUM(CASE WHEN revocation_date IS NULL
-                      AND valid_until <  CURRENT_DATE THEN 1 ELSE 0 END) AS expired,
+                      AND valid_until <  polaris_utc_date() THEN 1 ELSE 0 END) AS expired,
             SUM(CASE WHEN revocation_date IS NULL
-                      AND valid_until >= CURRENT_DATE THEN 1 ELSE 0 END) AS active
+                      AND valid_until >= polaris_utc_date() THEN 1 ELSE 0 END) AS active
           FROM AgencyTrustAttestation
     """, fetch='one')
     return render_template('federation_viewer.html', rows=rows, counts=counts)

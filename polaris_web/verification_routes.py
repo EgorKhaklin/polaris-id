@@ -252,7 +252,7 @@ def _federation_trust_holds(verifier_agency_id, token_id, context_id):
            AND attested_agency_id  = %s
            AND context_id          = %s
            AND revocation_date IS NULL
-           AND valid_until >= CURRENT_DATE
+           AND valid_until >= polaris_utc_date()
          LIMIT 1
     """, (verifier_agency_id, issuer_id, context_id), fetch='one')
     return match is not None

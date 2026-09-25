@@ -22,6 +22,25 @@
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
+-- polaris_utc_date (2026-09-25): the UTC calendar date, whatever timezone the SESSION set.
+-- 1.0.0-rc.28 pinned the database's timezone to UTC so that CURRENT_DATE would be the UTC date,
+-- but that is only a DEFAULT: a client that sets PGTZ, a pooler, or a SET timezone overrides it
+-- for its own session, and every expiry and validity decision written with CURRENT_DATE then
+-- answered in that client's zone while _not_expired, the signed status assertion and the
+-- standalone verifiers answered in UTC. Measured: with PGTZ at UTC+14, an expired credential
+-- signed in. The same reason polaris_database_setting exists: a bound the caller can move is
+-- not a bound. Every product decision reads this instead; check_no_session_date_in_sql
+-- refuses CURRENT_DATE in the product's SQL.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION polaris_utc_date()
+RETURNS DATE
+LANGUAGE sql STABLE PARALLEL SAFE
+SET search_path = pg_catalog, pg_temp
+AS $$
+    SELECT (now() AT TIME ZONE 'UTC')::date
+$$;
+
+-- ----------------------------------------------------------------------------
 -- UC-1: New Token Issuance and Initial Activation
 --   Argument flow:
 --     p_legal_name, p_dob, p_jurisdiction      -- individual identification
@@ -119,7 +138,7 @@ BEGIN
     VALUES
         (p_token_value, p_physical_serial, p_hardware_model,
          p_biometric_binding_type, v_individual_id, p_issuing_agency_id, p_algorithm_id,
-         'RESERVE', CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date)
+         'RESERVE', CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date)
     RETURNING token_id INTO v_token_id;
 
     -- R11-1 / M2-6: issue a TokenSignature row alongside the IdentityToken
@@ -335,7 +354,7 @@ BEGIN
     INSERT INTO RevocationList
         (token_id, revoked_by_agency_id, effective_date, reason_code, published_location)
     VALUES
-        (p_lost_token_id, p_actor_agency_id, CURRENT_DATE,
+        (p_lost_token_id, p_actor_agency_id, polaris_utc_date(),
          p_reason_code, p_published_location);
 
     -- Step 3: promote the reserve to ACTIVE with predecessor pointer.
@@ -407,8 +426,8 @@ BEGIN
     -- 1.0.0-rc.36: nor past its expiration date. Nothing moves ACTIVE to EXPIRED when the
     -- date passes, so the status above still reads ACTIVE for a credential that has run out;
     -- the relying-party holder-key binding refused one since rc.24, this path did not.
-    -- The database runs on UTC since rc.28, so CURRENT_DATE is the UTC date.
-    IF v_expiration IS NOT NULL AND v_expiration < CURRENT_DATE THEN
+    -- polaris_utc_date(), not CURRENT_DATE: rc.28 made UTC the default, which a session can override.
+    IF v_expiration IS NOT NULL AND v_expiration < polaris_utc_date() THEN
         RAISE EXCEPTION 'Token % expired on %; cannot bind device', p_token_id, v_expiration
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
@@ -683,7 +702,7 @@ BEGIN
         (token_id, revoked_by_agency_id, effective_date,
          reason_code, published_location)
     VALUES
-        (p_token_id, p_actor_agency_id, CURRENT_DATE,
+        (p_token_id, p_actor_agency_id, polaris_utc_date(),
          p_reason_code, p_published_location);
 END$$;
 
@@ -958,7 +977,7 @@ BEGIN
                     (token_id, revoked_by_agency_id, effective_date,
                      reason_code, published_location)
                 VALUES
-                    (v_lost_token.token_id, v_requesting_agency, CURRENT_DATE,
+                    (v_lost_token.token_id, v_requesting_agency, polaris_utc_date(),
                      'SUPERSEDED', p_published_location);
             ELSE
                 UPDATE IdentityToken
@@ -969,7 +988,7 @@ BEGIN
                     (token_id, revoked_by_agency_id, effective_date,
                      reason_code, published_location)
                 VALUES
-                    (v_lost_token.token_id, v_requesting_agency, CURRENT_DATE,
+                    (v_lost_token.token_id, v_requesting_agency, polaris_utc_date(),
                      'LOST', p_published_location);
             END IF;
         END LOOP;
@@ -988,7 +1007,7 @@ BEGIN
             (p_new_token_value, p_new_serial, 'TitanQ-3',
              p_biometric_binding, v_individual_id, v_requesting_agency,
              p_algorithm_id, 'RESERVE', CURRENT_TIMESTAMP,
-             (CURRENT_DATE + INTERVAL '10 years')::DATE,
+             (polaris_utc_date() + INTERVAL '10 years')::DATE,
              p_liveness_check)
         RETURNING token_id INTO v_new_token_id;
 
@@ -1315,7 +1334,7 @@ BEGIN
     END IF;
 
     -- Validate valid_until is in the future.
-    IF p_valid_until <= CURRENT_DATE THEN
+    IF p_valid_until <= polaris_utc_date() THEN
         RAISE EXCEPTION
             'valid_until must be strictly in the future; got %', p_valid_until;
     END IF;
@@ -2370,7 +2389,7 @@ BEGIN
                                individual_id, issuing_agency_id, algorithm_id, status, issued_date, expiration_date,
                                biometric_enrolled_date, enrollment_witness_agency_id, liveness_check_type)
       SELECT token_id, token_value, physical_serial, hardware_model, biometric_binding_type,
-             individual_id, v_agency, v_algo, 'RESERVE', CURRENT_TIMESTAMP, (CURRENT_DATE + INTERVAL '10 years')::date,
+             individual_id, v_agency, v_algo, 'RESERVE', CURRENT_TIMESTAMP, (polaris_utc_date() + INTERVAL '10 years')::date,
              CURRENT_TIMESTAMP, witness_agency_id, liveness_check_type
         FROM BulkEnrollmentStaging WHERE batch_id = p_batch_id;
     -- (FKs, CHECKs, and the token_value/physical_serial UNIQUE constraints hold per row)
