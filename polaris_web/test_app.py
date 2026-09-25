@@ -703,6 +703,27 @@ class AuthBrokerTests(UnauthenticatedTestCase):
         import base64
         return {'Authorization': 'Basic ' + base64.b64encode(('%s:%s' % (cid, secret)).encode()).decode()}
 
+    # -- a held-out round over the 400 surface (2026-09-24): the application mutation drill
+    # -- switched each of these off with every test green.
+
+    def test_an_unknown_disclosure_level_is_refused_not_signed(self):
+        """disclosure_level goes into the grant the broker signs. Unchecked, a caller chooses
+        what the issuer signs as the level disclosed."""
+        cid, _secret = self._rp('verify authenticate')
+        _tid, tv, sig = self._credential()
+        _verifier, challenge = self._pkce()
+        r = self._authorize(cid, tv, sig, challenge, disclosure_level='EVERYTHING')
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        self.assertNotIn('code', r.get_json() or {})
+        self.assertEqual(self._authorize(cid, tv, sig, challenge).status_code, 200,
+                         'control: a named level is accepted')
+
+    def test_the_token_endpoint_speaks_only_the_code_grant(self):
+        cid, secret = self._rp('verify authenticate')
+        r = self.client.post('/api/v1/auth/token', headers=self._basic(cid, secret),
+                             data={'grant_type': 'client_credentials'})
+        self.assertEqual((r.status_code, r.get_json()['error']), (400, 'unsupported_grant_type'))
+
     def test_an_expired_credential_cannot_sign_in(self):
         """1.0.0-rc.24. Login checked the stored status alone, and an expired credential still
         reads ACTIVE, so it signed its holder in to a relying party."""
@@ -5900,6 +5921,18 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
              fetch='none')
         body = self.client.get('/uc4/activate-reserve').get_data(as_text=True)
         self.assertNotIn('Adrian Vasquez', body)
+
+
+class TransparencyProofBoundsTests(UnauthenticatedTestCase):
+    """The three logs' inclusion-proof routes answer an index past the end with 400. Switched
+    off, the route indexed past its list and answered 500; nothing noticed (2026-09-24)."""
+
+    def test_an_index_past_the_end_is_a_clean_refusal(self):
+        for log in ('', 'receipts/', 'timestamps/'):
+            size = len(self.client.get('/api/v1/transparency/%sentries' % log).get_json()['entries'])
+            r = self.client.get('/api/v1/transparency/%sproof/%d' % (log, size))
+            self.assertEqual(r.status_code, 400, (log, r.get_data(as_text=True)[:200]))
+            self.assertEqual(r.get_json()['log_size'], size)
 
 
 class RateWindowTests(unittest.TestCase):
@@ -14037,6 +14070,30 @@ class HolderKeyBindingTests(PolarisTestCase):
             'holder_public_key_hex': self.KEY})
         self.assertEqual(unk.status_code, 400)
         self.assertEqual(unk.get_json()['error'], 'not_verifiable')
+
+    def test_only_an_accepted_parameter_set_is_registered(self):
+        """HolderKeyEvent.algorithm had no CHECK until 2026-09-24, so this refusal was the only
+        thing keeping a classical holder key out of the register; nothing tested it."""
+        tid, pack = self._issue_pack('HOLDER-KEY-ALG-1')
+        base = {'token_value': pack['token_value'], 'signature_hex': pack['signature_hex'],
+                'holder_public_key_hex': self.KEY}
+        for field, value in (('holder_algorithm', 'Ed25519'), ('event', 'stolen')):
+            r = self.client.post('/api/v1/holder-key', json=dict(base, **{field: value}))
+            self.assertEqual(r.status_code, 400, (field, r.get_data(as_text=True)))
+        r = self.client.post('/api/v1/holder-key', json=dict(base, holder_public_key_hex='AB' * 40))
+        self.assertEqual(r.status_code, 400, 'an uppercase key is not the canonical form')
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM HolderKeyEvent WHERE token_id = %s", (tid,))
+            self.assertEqual(cur.fetchone()['n'], 0, 'a refused request registers nothing')
+        self.assertEqual(self.client.post('/api/v1/holder-key', json=dict(
+            base, holder_algorithm='ML-DSA-87')).status_code, 200, 'control: ML-DSA-87 binds')
+
+    def test_the_register_itself_refuses_a_classical_algorithm(self):
+        tid, _pack = self._issue_pack('HOLDER-KEY-ALG-2')
+        with self.assertRaises(psycopg2.errors.CheckViolation):
+            with self._new_conn() as conn, conn.cursor() as cur:
+                cur.execute("INSERT INTO HolderKeyEvent (token_id, public_key_hex, algorithm, event) "
+                            "VALUES (%s, %s, 'Ed25519', 'bound')", (tid, self.KEY))
 
     def test_binding_shape_carries_no_personal_data(self):
         _tid, pack = self._issue_pack('HOLDER-KEY-SHAPE-1')

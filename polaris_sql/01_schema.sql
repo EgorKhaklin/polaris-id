@@ -1316,7 +1316,8 @@ CREATE TABLE HolderKeyEvent (
     token_id        INTEGER      NOT NULL REFERENCES IdentityToken(token_id),
     public_key_hex  TEXT         NOT NULL
         CONSTRAINT chk_holder_key_hex CHECK (public_key_hex ~ '^[0-9a-f]{64,}$'),
-    algorithm       VARCHAR(40)  NOT NULL DEFAULT 'ML-DSA-65',
+    algorithm       VARCHAR(40)  NOT NULL DEFAULT 'ML-DSA-65'
+        CONSTRAINT chk_holder_key_algorithm CHECK (algorithm IN ('ML-DSA-65', 'ML-DSA-87')),
     event           VARCHAR(20)  NOT NULL
         CONSTRAINT chk_holder_key_event CHECK (event IN ('bound', 'rotated', 'revoked')),
     effective_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,

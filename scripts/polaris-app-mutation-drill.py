@@ -171,6 +171,18 @@ DECLARED: dict[tuple[str, str], str] = {
                                "authority's attestation of X does not authorize X at B (403)'",
     ("api_v1_exchange", "_consume_exchange_nonce"): "nonce replay: federation-instances drill, 'the SAME envelope "
                                "replayed is refused (409): the nonce was consumed'",
+    # 2026-09-24, the 400 surface: switched off, the body-binding check is caught by the
+    # federation-instances drill (measured: it goes red), which unit tests cannot drive.
+    ("api_v1_exchange", "_canonical_body_hash"): "body not bound to the signed envelope: federation-instances "
+                               "drill, 'the receipt ... binds BOTH bodies' (measured 2026-09-24)",
+    # Masked by the register itself: HolderKeyEvent's CHECKs (chk_holder_key_event, _hex,
+    # _algorithm) refuse each value, and the route answers that refusal 400 through
+    # db_error_to_message. The route check gives the better message; the table is the boundary.
+    # With both removed, HolderKeyBindingTests.test_only_an_accepted_parameter_set_is_registered
+    # fails (measured 2026-09-24: an Ed25519 binding was issuer-signed).
+    ("api_v1_holder_key_bind", "event not in"): "masked by chk_holder_key_event, answered 400",
+    ("api_v1_holder_key_bind", "re.fullmatch"): "masked by chk_holder_key_hex, answered 400",
+    ("api_v1_holder_key_bind", "holder_alg not in"): "masked by chk_holder_key_algorithm (2026-09-24), answered 400",
     ("api_v1_exchange_receipt_signed", "_EXCHANGE_MINT_WINDOW"): "stale mint time: federation-instances drill, "
                                               "'a STALE signed time (30 min) rejects (401)'",
     ("api_v1_exchange_receipt_signed", "not ok"): "bad mint signature: federation-instances drill, "
