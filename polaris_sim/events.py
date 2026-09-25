@@ -138,29 +138,54 @@ def _cell(v: object) -> str:
 
 def write_verifications(conn, events: Iterable[Verification], batch_size: int = 10000) -> int:
     """Stream verifications into VerificationEvent with COPY. Returns the count
-    written. The partitioned table routes each row by event_timestamp."""
+    written. The partitioned table routes each row by event_timestamp.
+
+    COPY FROM is refused on a table whose row-level security applies to the
+    caller, and VerificationEvent's does apply to the application role. The
+    bulk simulator runs as the owner and keeps COPY; the web application's
+    simulation tick (/api/sim/tick) runs as polaris_app and failed on every
+    tick in any real deployment, while the suite, connected as the owner,
+    passed (found 2026-09-25 by running the suite as the application role).
+    Where the policy applies, the same rows go in as batched INSERTs."""
     written = 0
     buf = io.StringIO()
+    rows: list[tuple] = []
     n = 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT row_security_active('verificationevent') AS rls")
+        r = cur.fetchone()
+        use_copy = not (r["rls"] if isinstance(r, dict) else r[0])
 
     def flush():
         nonlocal n
         if n == 0:
             return
-        buf.seek(0)
         with conn.cursor() as cur:
-            cur.copy_expert(
-                f"COPY VerificationEvent ({', '.join(_COPY_COLS)}) FROM STDIN", buf)
-        buf.seek(0)
-        buf.truncate(0)
+            if use_copy:
+                buf.seek(0)
+                cur.copy_expert(
+                    f"COPY VerificationEvent ({', '.join(_COPY_COLS)}) FROM STDIN", buf)
+                buf.seek(0)
+                buf.truncate(0)
+            else:
+                from psycopg2.extras import execute_values
+                execute_values(cur, f"INSERT INTO VerificationEvent ({', '.join(_COPY_COLS)}) "
+                                    f"VALUES %s", rows, page_size=1000)
+                rows.clear()
         n = 0
 
     for e in events:
-        buf.write("\t".join((
-            _cell(e.token_id), _cell(e.requesting_agency_id), _cell(e.context_id),
-            _cell(e.event_timestamp), _cell(e.outcome), _cell(e.disclosure_level),
-            _cell(e.proof_commitment), _cell(e.requestor_location),
-            _cell(e.latitude), _cell(e.longitude), _cell(e.requesting_purpose_text))) + "\n")
+        if use_copy:
+            buf.write("\t".join((
+                _cell(e.token_id), _cell(e.requesting_agency_id), _cell(e.context_id),
+                _cell(e.event_timestamp), _cell(e.outcome), _cell(e.disclosure_level),
+                _cell(e.proof_commitment), _cell(e.requestor_location),
+                _cell(e.latitude), _cell(e.longitude), _cell(e.requesting_purpose_text))) + "\n")
+        else:
+            rows.append((e.token_id, e.requesting_agency_id, e.context_id, e.event_timestamp,
+                         e.outcome, e.disclosure_level, e.proof_commitment,
+                         e.requestor_location, e.latitude, e.longitude,
+                         e.requesting_purpose_text))
         written += 1
         n += 1
         if n >= batch_size:

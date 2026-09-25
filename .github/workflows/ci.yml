@@ -468,6 +468,14 @@ jobs:
       # A constraint whose removal leaves the suite green is not tested by it. Runs
       # AFTER the coverage gate because it mutates the schema; it restores every
       # constraint it drops and fails if the catalog does not come back.
+      # 2026-09-25: the web suite connects as the schema owner, and so does the application it
+      # drives, so a route needing a privilege polaris_app lacks passes every test and fails in
+      # every deployment. This runs the whole suite again with the APPLICATION connected as
+      # polaris_app. First run: the Atlas simulation tick used COPY FROM on a row-level-secured
+      # table, refused for the real role, green in all 873 tests.
+      - name: The web suite with the application connected as polaris_app
+        run: python scripts/polaris-app-role-suite.py
+
       - name: Constraint mutation drill (drop each named constraint, the suite must notice)
         run: python scripts/polaris-constraint-mutation-drill.py
 
