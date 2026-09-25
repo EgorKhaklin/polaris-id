@@ -1418,16 +1418,26 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
 
     def test_a_partition_made_later_is_locked_too(self):
         """The partition manager takes the blanket grant back from each partition it creates."""
+        # In ONE transaction, rolled back: the partitions this makes (and the triggers each
+        # clones from its parent) must not outlive the test. An autocommitted first version
+        # left 30 triggers behind, which the trigger mutation drill caught as a catalog that
+        # did not come back.
         owner = psycopg2.connect(**DB_CONFIG)
-        owner.autocommit = True
-        with owner.cursor() as cur:
-            cur.execute("CALL uc_ensure_event_partitions(8)")
-            cur.execute("SELECT count(*) FROM information_schema.role_table_grants "
-                        "WHERE grantee = 'polaris_app' AND privilege_type <> 'SELECT' "
-                        "AND table_name ~ '^(tokenlifecycleevent|verificationevent|"
-                        "enrollmentstatusevent|authauditlog)_'")
-            self.assertEqual(cur.fetchone()[0], 0)
-        owner.close()
+        try:
+            with owner.cursor() as cur:
+                cur.execute("SELECT count(*) FROM pg_inherits")
+                before = cur.fetchone()[0]
+                cur.execute("CALL uc_ensure_event_partitions(8)")
+                cur.execute("SELECT count(*) FROM pg_inherits")
+                self.assertGreater(cur.fetchone()[0], before, "fixture: no partition was made")
+                cur.execute("SELECT count(*) FROM information_schema.role_table_grants "
+                            "WHERE grantee = 'polaris_app' AND privilege_type <> 'SELECT' "
+                            "AND table_name ~ '^(tokenlifecycleevent|verificationevent|"
+                            "enrollmentstatusevent|authauditlog)_'")
+                self.assertEqual(cur.fetchone()[0], 0)
+        finally:
+            owner.rollback()
+            owner.close()
 
     def _seed_old_lifecycle_row(self):
         owner = psycopg2.connect(**DB_CONFIG)
