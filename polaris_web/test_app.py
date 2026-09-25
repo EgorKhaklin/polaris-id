@@ -5984,6 +5984,22 @@ class BoundOperatorRouteIsolationTests(PolarisTestCase):
                 leaked.append(url)
         self.assertEqual(leaked, [], 'another authority\'s credential reached these pages')
 
+    def test_no_page_shows_another_authoritys_credential(self):
+        """Every GET page that takes no argument. With IdentityToken's policy disabled this
+        names /tokens and the four use-case forms that list credentials (measured
+        2026-09-25), so it is a sweep that can fail; with the policy, none."""
+        served, leaked = 0, []
+        for r in sorted(flask_app.app.url_map.iter_rules(), key=lambda r: r.rule):
+            if ('GET' not in r.methods or r.arguments or r.rule.startswith('/static')
+                    or 'logout' in r.rule):
+                continue
+            resp = self.client.get(r.rule)
+            served += resp.status_code == 200
+            if self.foreign_value in resp.get_data(as_text=True):
+                leaked.append(r.rule)
+        self.assertGreaterEqual(served, 30, 'the sweep must reach the pages')
+        self.assertEqual(leaked, [], 'another authority\'s credential reached these pages')
+
 
 class RateWindowTests(unittest.TestCase):
     """1.0.0-rc.34. The rolling rate moved its window only when an event arrived, so after a
