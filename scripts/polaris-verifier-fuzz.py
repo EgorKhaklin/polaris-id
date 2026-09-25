@@ -47,7 +47,9 @@ from datetime import datetime, timezone, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "polaris_web"))
 
-_SEED = 20260908  # fixed, so a break reproduces
+# Fixed, so a break reproduces. POLARIS_FUZZ_SEED picks another for a deliberate soak across
+# seeds (2026-09-25); CI keeps this one.
+_SEED = int(os.environ.get("POLARIS_FUZZ_SEED", "20260908"))
 # P8.8a: the parameter set every genuine object is signed under (CI runs the battery under
 # ML-DSA-65 and again under ML-DSA-87: the verifier must be total under both).
 _FUZZ_ALG = os.environ.get("POLARIS_FUZZ_ALGORITHM", "ML-DSA-65")
