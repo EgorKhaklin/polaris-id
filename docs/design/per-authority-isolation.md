@@ -107,6 +107,35 @@ fails on any route that reads `issuing_agency_id`, `actor_agency_id`, `requestin
 
 An unbound operator is unaffected, as before: that is the single-authority default.
 
+## Where the policies did not reach (1.0.0-rc.41 to rc.44)
+
+A policy filters the rows of the table it is on, for the role and session that query it. Four
+paths went around that, each measured as the application role for an operator bound to one
+authority, and each found only because the test ran as that role (every other test in
+`test_app.py` connects as the owner, whom no policy binds):
+
+- **Views (rc.41).** A view is evaluated with its owner's rights, so the policy beneath it applied
+  to the owner. `v_ontology_token` showed another authority's credential, with its timeline, to
+  `/investigate/token/<id>`. Every view is now `security_invoker`, in every definition, because
+  `CREATE OR REPLACE VIEW` without the option resets it (`check_views_run_as_their_caller`).
+- **Rules that read (rc.42).** A procedure or trigger that enforces a rule by reading a secured
+  table, as its caller, saw nothing to refuse under the binding: a recovery opened for a holder
+  with a live credential elsewhere, and another authority's active credential went onto the
+  revocation list (a hidden row's NULL status passed `NOT IN`). Such routines run as their owner
+  (`check_rule_routines_see_past_the_binding`).
+- **Gates in front of those routines (rc.43).** A route's binding check that reads a secured
+  table sees nothing for another authority's credential, and "not found" is not "not permitted":
+  once rc.40 made the device-binding procedure run as its owner, the procedure saw what the gate
+  could not, and a device was bound to another authority's credential. For a bound operator, a
+  credential the lookup cannot see is refused.
+- **The session (rc.44).** The binding was copied into the cookie at sign-in and never re-read,
+  so binding an operator, which is how an incident narrows what they reach, did not reach their
+  live session. It is re-read on every request, and a change ends the session.
+
+The general lesson: the policy is the guarantee only for a query that runs as the application
+role, under the operator's session, against the table itself. Every mechanism that changes one
+of those (a view, `SECURITY DEFINER`, a cached value) has to be asked about separately.
+
 ## What is still not enforced
 
 Nothing stops a deployment from running two authorities in one instance and binding no
@@ -129,3 +158,9 @@ hands out, and the pairing between `is_local=false` and the per-request connecti
 behind `get_db` without resetting the scope on checkout and one operator's authority is inherited
 by the next request on that connection, which is a cross-authority read attributed to the wrong
 person.
+
+`BoundOperatorRouteIsolationTests` runs the application's own routes as the application role for
+an operator bound to authority 1: no single-token route and no page shows authority 3's
+credential (with the policy disabled, the page sweep names five pages, so it can fail), and no
+state-changing route alters it. `TestC1PrivilegeBoundary` holds the views and the rule routines to
+the same, and `SessionLimitTests` the session.
