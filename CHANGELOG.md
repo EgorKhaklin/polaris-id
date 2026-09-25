@@ -11,6 +11,42 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.46 — 2026-09-25 (an epoch too small to hide anyone is refused, and a security test cannot skip in CI)
+
+EXT-SECURITY: both findings come from an outside reviewer's questions of 25 September 2026.
+Externally observable: `uc11_close_epoch` refuses an epoch smaller than the minimum anonymity set,
+and a zero-knowledge proof against an older epoch below it answers `privacy unavailable` instead
+of verifying. Schema change: migration `2026-09-25-006-minimum-anonymity-set`. Nothing is
+published.
+
+- **The anonymity set had no floor.** The reviewer asked what happens when an epoch's anonymity set
+  is too small. It closed anyway: an epoch of one member published a root over one leaf, and a
+  valid proof against it identified its holder by elimination. `uc11_close_epoch` now reads
+  `polaris.min_epoch_anonymity_set` (twenty unless set; `09_grants.sql` sets twenty where nothing
+  is set, and the notional sample data sets one, saying why) and refuses an epoch below it with
+  `check_violation`. The authority waits for members or lengthens its cadence; epochs are not
+  merged. An epoch closed below the floor before this release is not re-opened: a proof against
+  it is answered `privacy unavailable: this epoch's anonymity set is N, below the minimum of M;
+  present the credential online instead`, and not accepted. Tests:
+  `test_an_epoch_below_the_minimum_anonymity_set_is_not_closed` and
+  `test_a_proof_against_an_epoch_below_the_floor_is_privacy_unavailable` in
+  `IssuerFederationTests`, the first failing on rc.45.
+- **A skipped security test read as a pass.** `TestC1PrivilegeBoundary` had skipped in CI for want
+  of a password while the run reported green (fixed in `985a82e`). The reviewer asked that "no
+  skipped security tests in CI" be an invariant. Under `CI`, `test_check_constraints.py` now turns
+  every `skipTest` into a failure naming the reason, and check 330,
+  `check_security_suite_refuses_skips_in_ci`, fails the build if that guard is removed, weakened
+  to a skip, or stops covering every test class. Detection test in `polaris_checks/test_checks.py`.
+- **The report.** In all three editions: a lineage section with references (the report cited
+  nothing before); "Sybil resistance" withdrawn for credential uniqueness per enrolment identity,
+  not human uniqueness; "validated" for the national targets replaced by what was done (a model
+  from single-machine measurements); the zero-knowledge second witness described as independent in
+  implementation only; the anonymity floor and its failure semantics; the five percent revocation
+  ceiling classified as a governance parameter; the database owner named as the actor the schema
+  does not bind; who chooses the offline window and who bears it; a table of claims no outsider has
+  yet tested; and an appendix listing everything outside Table 16 learned after the snapshot commit
+  `4e74376`.
+
 ## v1.0.0-rc.45 — 2026-09-25 (two operator features failed for the role a deployment runs as)
 
 CORE-BUG against rc.44. Externally observable: `polaris retention-set` records a single retention

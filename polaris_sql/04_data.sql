@@ -533,3 +533,15 @@ SELECT c.class, NULL, 1825, c.why, 1
 -- 1 EXEMPT for Exempt Sample, ENROLLED+LAPSED for Lapsed Sample) = 17
 -- enrollment events at clean load. See SQL section L for verification.
 -- ============================================================================
+
+-- 2026-09-25: the minimum anonymity set for a zero-knowledge epoch. This notional sample holds a
+-- handful of credentials, fewer than any floor that means anything, so it sets the floor to ONE,
+-- here and nowhere else, and says so: every epoch the sample closes identifies its members by
+-- elimination, and nothing proved against one is private. A deployment that does not load this
+-- file gets the default of 20 from 09_grants.sql. Loaded before 09_grants.sql, which keeps a
+-- value already set.
+DO $$
+BEGIN
+    EXECUTE format('ALTER DATABASE %I SET polaris.min_epoch_anonymity_set = 1', current_database());
+END$$;
+

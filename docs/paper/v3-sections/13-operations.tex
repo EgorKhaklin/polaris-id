@@ -106,8 +106,11 @@ Single-witness verification across an eight-core node & about 62,800 per second 
 }
 
 The roadmap's planning targets (ten million persons for a state; 350 million, five thousand
-sustained and fifty thousand peak verifications per second nationally) were validated at
-\code{v9.384}, and both halves of the answer are recorded. Every throughput target clears by more
+sustained and fifty thousand peak verifications per second nationally) were checked at
+\code{v9.384} against a computational throughput model, and both halves of the answer are recorded.
+The model is built from single-machine measurements under stated assumptions; nothing has run at
+national scale, and the first bottleneck no measurement reaches is operational (replication,
+pooling and partition maintenance under a real multi-instance load). Every throughput target clears by more
 than an order of magnitude: the peak needs about six and a half cores of single-witness
 verification, the sustained rate under one, and a surge of two hundred thousand enrolments a day is
 nine minutes of one signer. And the system could not have run for a week at the sustained rate,

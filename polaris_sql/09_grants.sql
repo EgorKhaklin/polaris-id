@@ -219,3 +219,14 @@ BEGIN
         END IF;
     END LOOP;
 END$$;
+
+-- 2026-09-25: the minimum anonymity set for a zero-knowledge epoch, 20 unless something already
+-- set it (the notional sample data sets 1, and says why). uc11_close_epoch refuses to close an
+-- epoch below it and the verifier refuses a proof against one.
+DO $$
+BEGIN
+    IF polaris_database_setting('polaris.min_epoch_anonymity_set') IS NULL THEN
+        EXECUTE format('ALTER DATABASE %I SET polaris.min_epoch_anonymity_set = 20', current_database());
+    END IF;
+END$$;
+

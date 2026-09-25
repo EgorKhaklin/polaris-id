@@ -3492,6 +3492,58 @@ class IssuerFederationTests(PolarisTestCase):
     # are refusals the procedure makes and nothing noticed when they went.
     # ------------------------------------------------------------------
 
+    # 2026-09-25: the minimum anonymity set, asked for by an outside reviewer ("if one member
+    # destroys the privacy property, why is closure permitted at one?"). Below the floor an epoch is
+    # refused, not closed smaller, and a proof against an older one below it says "privacy
+    # unavailable" rather than verifying. The floor is a database setting; the sample sets 1.
+
+    def _floor(self, cur, k):
+        cur.execute("SELECT current_database() AS d")
+        cur.execute("ALTER DATABASE %s SET polaris.min_epoch_anonymity_set = %d"
+                    % (cur.fetchone()['d'], k))
+
+    def test_an_epoch_below_the_minimum_anonymity_set_is_not_closed(self):
+        from psycopg2.extras import Json
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' LIMIT 1")
+            admin = cur.fetchone()['user_id']
+            self._floor(cur, 3)
+            leaves = [{'token_id': t, 'leaf_hash': '%02x' % t * 32} for t in (1, 2)]
+            cur.execute("SAVEPOINT s")
+            with self.assertRaises(psycopg2.Error) as c:
+                cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)",
+                            ('a' * 64, datetime.now() + timedelta(days=30), admin, Json(leaves)))
+            self.assertIn('minimum anonymity set of 3', str(c.exception))
+            cur.execute("ROLLBACK TO SAVEPOINT s")
+            leaves.append({'token_id': 3, 'leaf_hash': '03' * 32})
+            cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)",
+                        ('a' * 64, datetime.now() + timedelta(days=30), admin, Json(leaves)))
+            conn.rollback()
+
+    def test_a_proof_against_an_epoch_below_the_floor_is_privacy_unavailable(self):
+        from psycopg2.extras import Json
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' LIMIT 1")
+            admin = cur.fetchone()['user_id']
+            cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)",
+                        ('c' * 64, datetime.now() + timedelta(days=30), admin,
+                         Json([{'token_id': 1, 'leaf_hash': 'd' * 64}])))
+            cur.execute("SELECT max(epoch_id) AS e FROM TokenStateEpoch")
+            epoch_id = cur.fetchone()['e']
+            self._floor(cur, 2)
+            conn.commit()
+        try:
+            ok, reason, status = flask_app._zk_verify_and_consume(epoch_id, 1, 1, {})
+            self.assertFalse(ok)
+            self.assertIn('privacy unavailable', reason or '')
+            self.assertIn('anonymity set is 1, below the minimum of 2', reason)
+        finally:
+            with self._db() as conn, conn.cursor() as cur:
+                self._floor(cur, 1)
+                conn.commit()
+        ok, reason, status = flask_app._zk_verify_and_consume(epoch_id, 1, 1, {})
+        self.assertNotIn('privacy unavailable', reason or '', 'control: at the floor it is judged on the proof')
+
     def test_closing_an_epoch_with_an_unknown_user_is_refused(self):
         from psycopg2.extras import Json
         with self._db() as conn, conn.cursor() as cur:

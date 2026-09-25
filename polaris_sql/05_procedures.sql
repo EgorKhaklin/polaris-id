@@ -1491,6 +1491,7 @@ CREATE OR REPLACE PROCEDURE uc11_close_epoch(
 )
 LANGUAGE plpgsql AS $$
 DECLARE
+    v_floor           INTEGER;
     v_new_epoch_id  INTEGER;
     v_count         INTEGER;
     v_user_role     TEXT;
@@ -1531,6 +1532,21 @@ BEGIN
     IF v_count > 10000 THEN
         RAISE EXCEPTION
             'Epoch size (%) exceeds cap of 10000; split into multiple epochs', v_count;
+    END IF;
+
+    -- 2026-09-25: the minimum anonymity set. A membership proof hides which member of the epoch
+    -- is proving, so an epoch of k members hides a holder among k, and an epoch of one hides
+    -- nobody: the "bounded" presentation collapses to an identified one while still being called
+    -- private. Until this line an epoch of one closed. Below the floor the epoch is REFUSED, not
+    -- closed smaller: the authority waits for members or lengthens its cadence
+    -- (docs/design/epoch-cadence.md). Epochs are not merged. The floor is the database setting
+    -- polaris.min_epoch_anonymity_set, 20 when unset; the notional sample data sets 1 and says so.
+    v_floor := COALESCE(NULLIF(polaris_database_setting('polaris.min_epoch_anonymity_set'), '')::INTEGER, 20);
+    IF v_count < v_floor THEN
+        RAISE EXCEPTION
+            'uc11_close_epoch: % member(s) is below the minimum anonymity set of %: an epoch this small identifies its members by elimination. Wait for more members or lengthen the cadence.',
+            v_count, v_floor
+            USING ERRCODE = 'check_violation';
     END IF;
 
     -- Create the epoch row. The CHECK constraints enforce hex format,

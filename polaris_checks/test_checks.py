@@ -19503,3 +19503,20 @@ def test_rule_routines_see_past_the_binding_check_discriminates(tmp_path):
         "a caller-rights procedure must FAIL"
     f.write_text("SELECT 1;\n")
     assert checks.check_rule_routines_see_past_the_binding(tmp_path)[0].level == "FAIL", "none is vacuous"
+
+
+def test_security_suite_refuses_skips_in_ci_check_discriminates(tmp_path):
+    f = tmp_path / "polaris_web" / "test_check_constraints.py"
+    f.parent.mkdir(parents=True)
+    guard = ("import os, unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n"
+             "        self.skipTest('no role')\n"
+             "if os.environ.get(\"CI\"):\n    def _n(self, r):\n        self.fail(r)\n"
+             "    for _c in list(globals().values()):\n"
+             "        if isinstance(_c, type) and issubclass(_c, unittest.TestCase):\n"
+             "            _c.skipTest = _n\n")
+    f.write_text(guard)
+    assert checks.check_security_suite_refuses_skips_in_ci(tmp_path)[0].level == "OK", "the guard must PASS"
+    f.write_text("import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.skipTest('x')\n")
+    assert checks.check_security_suite_refuses_skips_in_ci(tmp_path)[0].level == "FAIL", "no guard must FAIL"
+    f.write_text(guard.replace("class T(", "@unittest.skipUnless(False, 'x')\nclass T("))
+    assert checks.check_security_suite_refuses_skips_in_ci(tmp_path)[0].level == "FAIL", "a decorator must FAIL"

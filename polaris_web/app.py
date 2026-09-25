@@ -1914,12 +1914,23 @@ def _zk_verify_and_consume(epoch_id, context_id, nonce, proof_bundle):
     anti-replay). Returns (verified, reason, http_status). Shared by /api/zk/verify and the
     auth broker's step-up (P8.4)."""
     epoch = query("""
-        SELECT merkle_root, valid_until
+        SELECT merkle_root, valid_until, committed_count,
+               COALESCE(NULLIF(polaris_database_setting('polaris.min_epoch_anonymity_set'), ''),
+                        '20')::INTEGER AS min_anonymity_set
           FROM TokenStateEpoch
          WHERE epoch_id = %s
     """, (epoch_id,), fetch='one')
     if not epoch:
         return False, "epoch not found", 404
+
+    # 2026-09-25: an epoch below the minimum anonymity set proves nothing private, so a proof
+    # against one is refused and the reason says so truthfully rather than returning a verdict
+    # that implies a crowd. Such an epoch can exist only if it closed before the floor existed
+    # or before it was raised; uc11_close_epoch refuses to close one now.
+    if epoch['committed_count'] < epoch['min_anonymity_set']:
+        return False, ("privacy unavailable: this epoch's anonymity set is %d, below the minimum "
+                       "of %d; present the credential online instead"
+                       % (epoch['committed_count'], epoch['min_anonymity_set'])), 200
 
     # R4: epoch-boundary check, decided by the DATABASE's clock (1.0.0-rc.29). valid_until
     # is a TIMESTAMP without a zone, written in the database session's wall clock. This used

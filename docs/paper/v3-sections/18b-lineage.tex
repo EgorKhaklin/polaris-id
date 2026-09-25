@@ -1,0 +1,66 @@
+% 18b-lineage.tex: what Polaris inherits, what it combines, and what may be its own.
+% Added 2026-09-25, after an outside reader observed that the report's internal traceability was
+% meticulous and its academic ancestry faint: until this section it cited nothing.
+\section{Lineage: what is inherited, and what is not}
+\label{sec:lineage}
+
+Until this section the report cited nothing, and a reader could not tell invention from synthesis.
+This section separates them. It claims less than a reader might assume: Polaris contains no new
+cryptography, no new protocol and no new proof system. Every primitive below is someone else's, and
+what follows names whose.
+
+\subsection{Inherited}
+
+\begin{itemize}
+  \item \emph{Signatures.} ML-DSA and SLH-DSA are the NIST standards \cite{fips204,fips205}. The
+    migration path and its audit trail are Polaris's engineering; the security of the primitives is
+    not, and nothing in this repository bears on it.
+  \item \emph{Merkle commitments and transparency.} The epoch tree and the anchor batches are Merkle
+    trees \cite{merkle1988}. The transparency logs follow Certificate Transparency's append-only log,
+    inclusion and consistency proofs \cite{rfc6962}, and the witness cosignature over a log head
+    follows the idea of collective witness cosigning \cite{syta2016}.
+  \item \emph{Anonymous membership.} Proving membership of a committed set without revealing which
+    member, with a nullifier to refuse a second use, is the construction Zerocash made practical
+    \cite{zerocash2014}; the circuit is built on Plonky2 \cite{plonky2}. The broader aim, credentials
+    a holder shows without being traced, goes back to Chaum \cite{chaum1985} and to anonymous
+    credential systems \cite{camlys2001}, which Polaris does not implement: it is not a general
+    anonymous-credential system (Section~\ref{sec:privacy}).
+  \item \emph{Presentation and wallets.} The wallet-facing verifier implements OpenID for Verifiable
+    Presentations and its high-assurance profile \cite{oid4vp,haip}, over SD-JWT and SD-JWT VC
+    \cite{sdjwt,sdjwtvc} with the token status list \cite{statuslist}. The mobile-document route
+    follows ISO/IEC 18013-5 \cite{iso18013}, and the credential vocabulary the W3C data model
+    \cite{vcdm2}.
+  \item \emph{Relying parties.} Per-relying-party subject identifiers are OpenID Connect's pairwise
+    identifiers \cite{oidc}. The short-lived signed status assertion is the pattern of an OCSP
+    response a server staples \cite{rfc6960}. Operator sign-in uses WebAuthn \cite{webauthn2}.
+  \item \emph{Proofing.} The evidence strengths and the derivation of an assurance level follow NIST
+    SP 800-63A \cite{sp80063a}; Polaris records the reading, and says so where it is a reading.
+  \item \emph{Duress codes.} A second secret that signals coercion is long-standing practice in
+    alarm systems and banking; it is not invented here. What Polaris adds is the measurement in
+    Section~\ref{sec:limitations} of the adversary against whom it is worse than nothing.
+  \item \emph{Testing the tests.} Mutation analysis is DeMillo, Lipton and Sayward's
+    \cite{demillo1978}, surveyed by Jia and Harman \cite{jia2011}.
+\end{itemize}
+
+\subsection{What may be Polaris's own}
+
+To the author's knowledge, and offered as a description, not a claim of priority:
+\begin{itemize}
+  \item the \emph{arrangement}: rights-level constraints held by the schema rather than the
+    application, each paired with a machine check that has its own detection test;
+  \item the \emph{assurance method}: mutating the assurance layer itself (the checks, triggers,
+    procedures, verifiers and witnesses) to find green checks that prove the wrong proposition, the
+    subject of Table~16 and of this report's corrections;
+  \item the \emph{operating contract}: progress counted only as a surviving external dependency,
+    with a kill line, rather than as internal growth.
+\end{itemize}
+None of these is a result a reader should accept on this report's word. Each is described so that it
+can be compared with prior work this section does not yet cite, and a reader who knows such work is
+asked to name it.
+
+\subsection{What this section does not settle}
+
+It does not survey identity systems, digital-identity programmes or the anonymous-credential
+literature; it names only what Polaris's mechanisms directly derive from. A comparison with deployed
+national systems is the table in the repository's README, which states that every one of them is
+deployed and Polaris is not.

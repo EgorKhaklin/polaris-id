@@ -28,9 +28,13 @@ Six ingredients of a privacy-preserving proof of personhood run.
 
 \begin{itemize}
   \item \textbf{Uniqueness at issuance.} C3, one active token per person, is a partial unique index
-    in the database, and since \code{v9.374} a model checked on every push. That is the root of Sybil
-    resistance: a human can hold one active credential, and no application code can bypass the
-    constraint. \sImpl
+    in the database, and since \code{v9.374} a model checked on every push. What it establishes is
+    credential uniqueness within an enrolment identity, not human uniqueness: one \code{Individual}
+    row holds at most one active credential, and no application code can bypass that. Nothing in
+    the database or above it notices one human enrolled as two rows; that is decided at the
+    enrolment desk, by an operator's judgement recorded as evidence (Section~\ref{sec:privacy}). An
+    earlier version of this paper called C3 ``the root of Sybil resistance''; the mechanism does
+    not support the phrase, and it is withdrawn. \sImpl
   \item \textbf{Membership without identity.} The epoch membership proof proves that a valid token
     exists in an authority's committed set with public inputs of only the root, the epoch, a context,
     a nonce and a scoped nullifier; a zero-knowledge verification records no token at all; the

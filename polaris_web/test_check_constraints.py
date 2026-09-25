@@ -3382,5 +3382,22 @@ class TestEveryUniqueRuleRefusesADuplicate(_CheckBase):
             "are passing by finding nothing")
 
 
+
+# 2026-09-25: a skipped security test is a pass nobody reads. TestC1PrivilegeBoundary skipped in
+# CI for its whole life (the application role's password was never exported), and the privilege
+# boundary it exists to prove was tested only on a laptop until the trigger mutation drill
+# reported guards "untested" that had tests. In CI every test in this module that would skip
+# FAILS instead, naming the reason; outside CI a skip still skips. check_security_suite_refuses_
+# skips_in_ci holds this block, and refuses a skip decorator here, which would bypass it.
+if os.environ.get("CI"):
+    def _no_skip_in_ci(self, reason):
+        self.fail("a security test would have skipped in CI: %s. Make it runnable here, "
+                  "or it proves nothing." % reason)
+
+    for _cls in list(globals().values()):
+        if isinstance(_cls, type) and issubclass(_cls, unittest.TestCase):
+            _cls.skipTest = _no_skip_in_ci
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

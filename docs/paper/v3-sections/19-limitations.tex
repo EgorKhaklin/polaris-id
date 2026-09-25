@@ -92,6 +92,38 @@ it does not know the law. \sExt
     narrower test that replaced it, and nobody outside has yet reported walking it.
 \end{itemize}
 
+\subsection{Claims no stranger has yet tested}
+
+The list above says what outsiders have done. This table turns it around: the claims this paper
+makes that rest, today, only on the author's own machinery, and what an outsider would have to do to
+test each one. A row leaves the table only when a named party does that, on a date.
+
+{\footnotesize
+\setlength{\tabcolsep}{4pt}\renewcommand{\arraystretch}{1.12}
+\rowcolors{2}{tabstripe}{white}
+\begin{xltabular}{\textwidth}{>{\RaggedRight\arraybackslash\hspace{0pt}}p{1.7in} >{\RaggedRight\arraybackslash\hspace{0pt}}X >{\RaggedRight\arraybackslash\hspace{0pt}}p{1.9in}}
+\caption{Claims resting only on the author's own evidence.}\label{tab:untested}\\
+\toprule
+\textbf{Claim} & \textbf{Evidence today} & \textbf{What an outsider would do} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Claim} & \textbf{Evidence today} & \textbf{What an outsider would do} \\
+\midrule
+\endhead
+The schema refuses what the application must not do (C1, C2, C3) & Constraints, triggers and grants; mutation drills; since rc.45 the suites also run as the application role & Attack the database as the application role with the schema in hand \\
+Issuer-unlinkability in zero-knowledge mode & A circuit, a second witness by the same author, a linkability lab & Review the circuit and derive its concrete security; run the linkability lab's adversary with their own strategy \\
+The anonymity set is the epoch, floored & Refusal at epoch close and at verification, tested in the suites & Measure what an issuer learns from epoch timing and size in a realistic enrolment pattern \\
+Credential uniqueness per enrolment identity & The unique index and its formal model & Enrol one person twice through the documented desk procedure and see what notices \\
+The duress mechanism helps against an unaware coercer & The duress lab's measurement & Repeat it with a coercer who has read this paper \\
+The native protocol is implementable from the specification & The conformance suite, run only by Polaris's own SDKs & Implement a verifier from \code{WIRE-SPEC} and the suite, without reading Polaris code \\
+Transparency logs let an outsider detect a rewrite & Consistency proofs checked by witnesses the author runs & Run an independent witness for a period and report what it saw \\
+The throughput model clears the national targets & Single-machine measurements and a model & Measure a multi-instance deployment under load \\
+A stranger can follow the stranger's path & The author walked it on a clean machine & Walk it and report where it failed \\
+\bottomrule
+\end{xltabular}
+}
+
 \subsection{What the numbers are}
 
 Every performance number in this paper is single-node on one laptop, or a simulation at a stated

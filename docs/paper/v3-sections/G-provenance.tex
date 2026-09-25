@@ -1,0 +1,48 @@
+% G-provenance.tex: the contamination boundary of this report (added 2026-09-25).
+% An outside reader asked for every datum outside Table 16 learned after the snapshot commit.
+\section{Provenance: what was learned after the snapshot}
+\label{app:provenance}
+
+This report describes the system at \code{1.0.0-rc.7}, commit \code{4e74376}. It was revised after
+that commit, and some of what it says was learned later. This appendix is the complete list,
+obtained from \code{git diff 4e74376} over the paper's sources, of everything outside
+Table~16 that the snapshot alone would not tell a reader. Each entry is in one of six classes.
+
+\begin{description}
+  \item[Re-measured, reproducible at the snapshot.] Counts taken later by running a command against
+    commit \code{4e74376}; checking out that commit and running it gives the same number: 313
+    checks, twelve mutation drills, 80 drill scripts, 45 migrations, 124 routes, 46 triggers, 44
+    verdict fields, 2{,}189 test functions of which 1{,}030 are product tests, 107 of 112
+    cryptographic tests, 244 tests in the OpenID4VP package, six Athena checks, and the 31/24/7
+    breakdown of guards.
+  \item[Repository or registry state, read later.] Not reproducible from the commit, because it
+    lives outside it: the three tags; the four packages and what each serves; \code{polaris-verify}
+    at rc.3; the ninety-day table as read on 23 September (day ten, five of seven); the two outside
+    fixes.
+  \item[Measured on 23 September.] Runtime numbers taken after the snapshot on the same machine:
+    2{,}080, 7{,}950 and 740 verifications per second in the capacity passage, and the proof times of
+    25\,ms and 12\,ms.
+  \item[Events after the snapshot.] The OpenID certification of 24 September (Sections on verifiers
+    and limitations, Appendix~A, Appendix~F, the outside-witnesses figure); the guard-declaration
+    rule of 23 September; the procedure drill's widened scope and its lock test; the trigger
+    deletion measurement (42, 38, 42); the detached verifier drill (45 refusals, 32 survived, seven
+    declared); the password rotation order; the stranger's path and the package READMEs walked on
+    23 September; and the finding that the proof half of the capacity measurement had measured
+    nothing since \code{v9.354}.
+  \item[Corrections of what was already wrong at the snapshot.] 143 package tests are 142; 43
+    verdict fields are 44; ``five checks'' is six Athena checks; ``a few hundred cluster
+    summaries'' is at most five thousand; the lifecycle caption (reserve to revoked); the districts
+    caption (seven tables dashed); the identifier-columns wording; the date of the second outside fix.
+  \item[Written on 25 September, after an outside review.] Section~\ref{sec:lineage} and the
+    references; this appendix; the untested-claims table (Table~\ref{tab:untested}); the withdrawal
+    of ``Sybil resistance'' for credential uniqueness per enrolment identity; the qualification of
+    ``validated'' for the national targets; the witness taxonomy in Section~\ref{sec:privacy}; the
+    minimum anonymity set and its failure semantics (a code change of the same day, in Table~16);
+    the five percent as a governance parameter; the database owner as the unbound actor; and who
+    chooses the offline window.
+\end{description}
+
+Editorial changes (layout, the cover image, glossary abbreviations and the re-stamping of
+\code{rc.1} as \code{rc.7}) carry no information and are not listed. The code counts beside
+\code{rc.7} in the body are at the snapshot; counts in the README and on the site are at the
+current tree and differ from them.

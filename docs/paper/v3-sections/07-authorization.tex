@@ -58,7 +58,11 @@ assertion with a window; the holder staples it; a relying party verifying offlin
 accepts. If the issuer revokes the credential inside the window, the last \code{ACTIVE} assertion
 stays valid until it expires, and an offline verifier cannot know. The window is bounded by the
 issuer's time-to-live (an hour by default) and by the \code{max\_window} the verifier imposes; a
-high-risk relying party demands seconds or goes online.}{fig:offline-status}
+high-risk relying party demands seconds or goes online. Who chooses the window, and who bears it: the
+issuer sets the time-to-live and each relying party its \code{max\_window}; the harm of a long
+window falls on whoever relies on a credential revoked inside it, and on the holder whose
+revocation was meant to protect them. Polaris makes the window explicit and bounded; how long is
+acceptable is a governance decision it does not make.}{fig:offline-status}
 
 An offline verifier cannot ask the issuer. Polaris answers with a short-lived signed status
 assertion: the issuer's signature, under the same key that signed the credential, over the token's

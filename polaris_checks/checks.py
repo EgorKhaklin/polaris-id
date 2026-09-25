@@ -22745,6 +22745,34 @@ def check_rule_routines_see_past_the_binding(root: pathlib.Path) -> list[Finding
                      "table run as their owner, so their rules hold for a bound operator")
 
 
+# 2026-09-25. TestC1PrivilegeBoundary skipped in CI for its whole life because the application
+# role's password was never exported, so the privilege boundary was tested only locally; nothing
+# failed, because a skip is not a failure. The constraint suite now turns every skip into a
+# failure under CI. This holds that guard in place and refuses the skip decorators that would
+# go around it (a decorator raises SkipTest without calling skipTest).
+def check_security_suite_refuses_skips_in_ci(root: pathlib.Path) -> list[Finding]:
+    """In CI, no test in the security constraint suite may skip."""
+    name = "security_suite_refuses_skips_in_ci"
+    rel = "polaris_web/test_check_constraints.py"
+    text = _read(root, rel)
+    if not text:
+        return _fail(name, rel + " is missing")
+    code = "\n".join(l.split("#", 1)[0] for l in text.splitlines())
+    guarded = any("skipTest" in g and "fail" in g and "issubclass" in g
+                  for g in re.findall(r'^if\s+os\.environ\.get\(\s*["\']CI["\']\s*\)\s*:(.*?)\n(?=\S)',
+                                      code + "\nX", re.S | re.M))
+    if not guarded:
+        return _fail(name, rel + " must turn every skip into a failure under CI (a block that "
+                           "replaces skipTest on every TestCase with a failure): a skipped security "
+                           "test is a pass nobody reads")
+    decorated = re.findall(r"@(?:unittest\.)?skip(?:If|Unless)?\b|raise\s+(?:unittest\.)?SkipTest", code)
+    if decorated:
+        return _fail(name, rel + " uses a skip decorator or raises SkipTest directly (%d), which "
+                           "goes around the CI guard" % len(decorated))
+    return _ok(name, "every skip in the security constraint suite is a failure under CI, and "
+                     "nothing in it can skip around that")
+
+
 # 1.0.0-rc.31. rc.15 bound every route that NAMES an authority; rc.30 and rc.31 found five
 # more that name a token, a request or an agency id and asked nothing, one of them opened by
 # rc.19. This keeps the next route from being the sixth: every state-changing route an admin or
@@ -23194,6 +23222,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_definer_routines_pin_search_path,
     check_views_run_as_their_caller,
     check_rule_routines_see_past_the_binding,
+    check_security_suite_refuses_skips_in_ci,
 ]
 
 

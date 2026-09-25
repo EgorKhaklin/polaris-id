@@ -52,10 +52,21 @@ device, against a published anonymity set, that their token is a leaf under that
 epoch, a context and a nonce, without revealing which leaf. The verifier sees the proof bytes and the
 public inputs and cannot recover the leaf; that is the proof system's property, not an API rule. The
 setup is transparent, with no ceremony, and the commitments are hash-based. The default tree depth
-of fourteen covers the schema's ten-thousand-leaf epoch cap, so the anonymity set is a full epoch.
+of fourteen covers the schema's ten-thousand-leaf epoch cap, so the anonymity set is the epoch, and
+the epoch has a floor: since 25 September 2026 an epoch smaller than the minimum anonymity set (a
+database setting, twenty unless set; the notional sample sets one and says so) is refused rather
+than closed smaller, and a proof against an older one below it answers \emph{privacy unavailable}
+rather than verifying. The authority waits for members or lengthens its cadence; epochs are not
+merged. Before that date an epoch of one member closed, and a proof against it hid nobody.
 On the reference machine a proof takes about 25~ms to make and about 12~ms to check, and the verdict
-is two-witnessed at the statement level. The proof carries a per-verifier nullifier,
-\code{Poseidon(secret\,||\,scope\,||\,epoch)}, so a relying party can enforce \emph{one human, once}
+is two-witnessed at the statement level. That second witness is independent in implementation
+only: it is a separate program, written by the same author from the same reading of the circuit,
+so it catches an implementation slip and not a misreading of the statement. The two signature
+witnesses (Section~\ref{sec:signatures}) are independent in implementation and in authorship, and
+share only the standard. Neither pair is independent in its interpretation of the specification.
+The proof carries a per-verifier nullifier,
+\code{Poseidon(secret\,||\,scope\,||\,epoch)}, so a relying party can enforce \emph{one enrolled
+identity, once} (not one human: C3 does not see a human enrolled twice, Section~\ref{sec:core})
 within its own scope while another cannot correlate its nullifiers. \sImpl
 
 What the proof does not do is stated with the same care. It proves membership and binding, nothing

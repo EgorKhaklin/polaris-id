@@ -71,6 +71,11 @@ configuration it is required to fail. One more thing is true of it, and Section~
 tells it in full: when the index was dropped to see what would notice, the suite that exists to prove
 C3 turned out to be violating it, committing a second active token before failing. \sImpl
 
+What C3 calls a person is a row, \code{Individual.individual\_id}, not a human being. The index makes
+a second active credential for the same row impossible; it does nothing about the same human
+enrolled as two rows, and no mechanism in the repository does. Uniqueness of humans rests on
+enrolment, where an operator records the evidence and the assurance level is derived from it.
+
 \subsection{The lifecycle}
 
 \figfile{lifecycle}{The token lifecycle machine as the trigger \code{trg\_token\_state\_machine}
@@ -118,7 +123,9 @@ edges of the lifecycle, and each has grown a record of what it rested on since V
     an identity system is not a forged token but an authority revoking a population's tokens at
     scale. A trigger bounds how fast one agency can revoke its own tokens (five percent of its
     outstanding base in thirty days by default) and above that a co-signer from a different agency is
-    required, recorded in the audit trail. The bound converts a surprise into a trend that reporting
+    required, recorded in the audit trail. The five percent is a deployment default and a governance
+    parameter, not a security invariant: an authority may set its own (one seeded agency runs at
+    seven), and no property of the system follows from the number itself. The bound converts a surprise into a trend that reporting
     can see; it does not stop slow abuse under the ceiling, and says so. Since Version 2 the settings
     around this power have become records: the ceiling itself (\entity{IssuerDiscretionPolicy}) can
     only be changed with a stated justification and leaves a row saying who changed it and from what;
