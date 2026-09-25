@@ -1430,6 +1430,26 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                     cur.execute(sql, args)
             conn.rollback()
 
+    def test_app_role_cannot_widen_revive_or_unrevoke_a_credential(self):
+        """2026-09-25. TokenPermission and DeviceBinding carry no trigger, and the application role
+        held UPDATE and DELETE on them and on RevocationList without using either: it could widen
+        the contexts a credential is valid in, revive or extend a device binding, and delete or
+        re-date a revocation so the verifiers' feeds stop listing a revoked token. All refused."""
+        conn = self._app_conn()
+        attempts = (
+            ("widen a permission", "UPDATE TokenPermission SET context_id = context_id WHERE false"),
+            ("drop a permission", "DELETE FROM TokenPermission WHERE false"),
+            ("revive a device binding", "UPDATE DeviceBinding SET expires_date = expires_date WHERE false"),
+            ("delete a device binding", "DELETE FROM DeviceBinding WHERE false"),
+            ("re-date a revocation", "UPDATE RevocationList SET effective_date = effective_date WHERE false"),
+            ("un-revoke a token", "DELETE FROM RevocationList WHERE false"),
+        )
+        for label, sql in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

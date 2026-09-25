@@ -194,6 +194,15 @@ REVOKE UPDATE, DELETE ON RecoveryRequest FROM polaris_app;
 REVOKE UPDATE, DELETE ON BulkEnrollmentBatch FROM polaris_app;
 REVOKE UPDATE, DELETE ON BulkEnrollmentStaging FROM polaris_app;
 
+-- 2026-09-25. A credential's permissions, its device bindings and its revocation-list entries
+-- carry no trigger (the revocation list only on status), and the application role held UPDATE and
+-- DELETE on all three without using either. It could widen the contexts a credential is valid in,
+-- revive a revoked device binding or extend it, and delete or re-date a revocation so the
+-- verifiers' feeds stop listing a revoked token. The procedures that write them are SECURITY DEFINER.
+REVOKE UPDATE, DELETE ON TokenPermission FROM polaris_app;
+REVOKE UPDATE, DELETE ON DeviceBinding FROM polaris_app;
+REVOKE UPDATE, DELETE ON RevocationList FROM polaris_app;
+
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
 -- bound enforced by uc8_revoke_token.

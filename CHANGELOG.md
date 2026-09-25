@@ -11,6 +11,26 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.55 — 2026-09-25 (a credential cannot be widened, revived or un-revoked by a plain write)
+
+CORE-BUG against the revocation contract (a revoked token appears in every verifier's revocation
+feed) and against the scoped permissions and device bindings that issuance and `uc5` record.
+Externally observable: the application role can no longer update or delete `TokenPermission`,
+`DeviceBinding` or `RevocationList`. Schema change: migration
+`2026-09-25-014-credential-rows-changed-only-by-their-procedures`. Nothing is published.
+
+`TokenPermission` and `DeviceBinding` carry no trigger, and `RevocationList` has a trigger only on
+status. The application role held UPDATE and DELETE on all three and uses neither; the procedures
+that write them are SECURITY DEFINER. With those rights it could widen the contexts a credential is
+valid in, revive or extend a device binding, and delete or re-date a revocation-list entry. The
+last would stop every verifier feed from listing a revoked token. Continues the UPDATE side of the
+open-door sweep.
+
+- The application role loses UPDATE and DELETE on the three tables.
+- Test: `test_app_role_cannot_widen_revive_or_unrevoke_a_credential`, as `polaris_app`, covers
+  six cases. All six fail with the down migration applied.
+- `check_aor_privilege_boundary` requires the three revokes; three new detection cases.
+
 ## v1.0.0-rc.54 — 2026-09-25 (three recovery channels are no longer one role's word; an issued batch cannot be re-opened)
 
 CORE-BUG against the recovery ceremony's claim that approval needs "three independent
