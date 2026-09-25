@@ -1839,3 +1839,47 @@ DROP TRIGGER IF EXISTS trg_app_user_event_append_only ON AppUserEvent;
 CREATE TRIGGER trg_app_user_event_append_only
     BEFORE UPDATE OR DELETE ON AppUserEvent
     FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();
+
+-- ----------------------------------------------------------------------------
+-- 1.0.0-rc.38. The three change records are written by their recording triggers and by
+-- nothing else. AgencyEvent, AppUserEvent and RelyingPartyEvent refused an UPDATE or DELETE,
+-- but polaris_app holds INSERT on them (the recorders run as the caller, so it must), and
+-- that grant let the application role APPEND an event nothing did: a rename that never
+-- happened, attributed to db_role 'postgres' or any other role it cared to name. A record of
+-- changes that accepts invented ones is not a record, and a compromised application is
+-- exactly the threat this layer exists for.
+--
+-- Two rules, in a BEFORE INSERT trigger on each table. The row must arrive from inside a
+-- trigger (pg_trigger_depth() >= 2: this guard is one level, the recorder that fired it the
+-- other), so a direct INSERT at any privilege is refused. And db_role is the session's own,
+-- whatever the INSERT said, so attribution cannot be chosen by the writer. The sample-data
+-- and migration backfills write only where an event is missing (NOT EXISTS) and run before
+-- this guard is installed, so a load or re-load inserts nothing here directly.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION enforce_event_written_by_its_recorder()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF pg_trigger_depth() < 2 THEN
+        RAISE EXCEPTION '% is written only by the trigger that records the change; a direct '
+                        'INSERT would put an event in the record that nothing did', TG_TABLE_NAME
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    NEW.db_role := session_user;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_agency_event_by_recorder ON AgencyEvent;
+CREATE TRIGGER trg_agency_event_by_recorder
+    BEFORE INSERT ON AgencyEvent
+    FOR EACH ROW EXECUTE FUNCTION enforce_event_written_by_its_recorder();
+DROP TRIGGER IF EXISTS trg_app_user_event_by_recorder ON AppUserEvent;
+CREATE TRIGGER trg_app_user_event_by_recorder
+    BEFORE INSERT ON AppUserEvent
+    FOR EACH ROW EXECUTE FUNCTION enforce_event_written_by_its_recorder();
+DROP TRIGGER IF EXISTS trg_relying_party_event_by_recorder ON RelyingPartyEvent;
+CREATE TRIGGER trg_relying_party_event_by_recorder
+    BEFORE INSERT ON RelyingPartyEvent
+    FOR EACH ROW EXECUTE FUNCTION enforce_event_written_by_its_recorder();

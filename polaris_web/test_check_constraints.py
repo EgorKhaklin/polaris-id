@@ -1280,6 +1280,35 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             cur.execute(ins, ("DRIVING_LICENCE", "Department of State, 3rd Bureau"))
         conn.rollback()
 
+    def test_the_change_records_accept_only_what_their_recorders_write(self):
+        """1.0.0-rc.38. polaris_app holds INSERT on the three change records because the
+        recorders run as the caller, and until then that let it append an event nothing did,
+        attributed to any db_role it named. Measured: a rename of authority 1 'by' postgres."""
+        conn = self._app_conn()
+        forged = [
+            "INSERT INTO AgencyEvent (agency_id, name, event_type, field, old_value, new_value, "
+            "actor, db_role, justification) VALUES (1, 'x', 'RENAMED', 'name', 'A', 'B', "
+            "'admin', 'postgres', 'forged')",
+            "INSERT INTO AppUserEvent (user_id, username, event_type, field, db_role) "
+            "VALUES (1, 'admin', 'RENAMED', 'username', 'postgres')",
+            "INSERT INTO RelyingPartyEvent (rp_id, client_id, event_type, db_role, justification) "
+            "VALUES (1, 'rp_forged', 'REGISTERED', 'postgres', 'forged')",
+        ]
+        for sql in forged:
+            with conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege, msg=sql[:30]) as ctx:
+                    cur.execute(sql)
+                self.assertIn("written only by the trigger", str(ctx.exception))
+            conn.rollback()
+        # The recorder still writes, and the attribution is the session's, not the writer's.
+        with conn.cursor() as cur:
+            cur.execute("SELECT set_config('polaris.justification', 'rc.38 attribution probe', true)")
+            cur.execute("UPDATE Agency SET name = name || ' (probe)' WHERE agency_id = 1")
+            cur.execute("SELECT db_role FROM AgencyEvent WHERE agency_id = 1 "
+                        "ORDER BY event_id DESC LIMIT 1")
+            self.assertEqual(cur.fetchone()["db_role"], "polaris_app")
+        conn.rollback()
+
     def test_app_role_can_still_append_audit_rows(self):
         conn = self._app_conn()
         with conn.cursor() as cur:
@@ -1610,9 +1639,15 @@ _HEX64 = "repeat('a', 64)"
 APPEND_ONLY_FIXTURES = {
     # v9.440: AgencyEvent has no INSERT of its own -- trg_agency_audited is the only
     # writer -- so the fixture creates the AUTHORITY and lets the trigger write the row.
+    # 1.0.0-rc.38: a direct INSERT is refused, so the fixture writes its row with triggers
+    # off for that one statement (the test role is the owner) and turns them back on before
+    # the UPDATE or DELETE under test runs.
     'appuserevent': ('event_id',
+        "SET LOCAL session_replication_role = replica; "
         "INSERT INTO AppUserEvent (user_id, username, event_type, field) "
-        "VALUES (1, 'admin', 'RENAMED', 'username') RETURNING event_id"),
+        "VALUES (1, 'admin', 'RENAMED', 'username'); "
+        "SET LOCAL session_replication_role = origin; "
+        "SELECT max(event_id) AS event_id FROM AppUserEvent"),
     'agencyevent': ('event_id',
         "SELECT set_config('polaris.justification', "
         "'append-only fixture: an authority created to attack its event row', true); "
@@ -2578,7 +2613,10 @@ class TestAppUserChangesAreRecorded(_CheckBase):
         e = [x for x in self._events(uid) if x["event_type"] == "PASSWORD_CHANGED"][0]
         self.assertIsNone(e["old_value"], "the old password hash reached the record")
         self.assertIsNone(e["new_value"], "the new password hash reached the record")
+        # Since rc.38 a direct INSERT is refused before the CHECK is reached, so the CHECK is
+        # driven with triggers off for the one statement, which only the owner can do.
         self.cur.execute("SAVEPOINT nosecret")
+        self.cur.execute("SET LOCAL session_replication_role = replica")
         with self.assertRaises(pg_errors.CheckViolation):
             self.cur.execute(
                 "INSERT INTO AppUserEvent (user_id, username, event_type, field, new_value) "

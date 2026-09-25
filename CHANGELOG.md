@@ -11,6 +11,35 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.38 — 2026-09-24 (the application role could invent entries in the change records)
+
+CORE-BUG against rc.37. Externally observable: a direct `INSERT` into `AgencyEvent`,
+`AppUserEvent` or `RelyingPartyEvent` is refused at any privilege, and every row those tables
+hold carries the session's own `db_role`. Schema change: migration
+`2026-09-24-011-events-written-only-by-their-recorder`. Nothing is published.
+
+The three change records refused an `UPDATE` or `DELETE`, so history could not be rewritten.
+But `polaris_app` holds `INSERT` on them, because the recording triggers run as the caller and
+need it. That grant let the application role append an event nothing did, attributed to
+whichever `db_role` it named. Measured on rc.37: connected as `polaris_app`, a rename of
+authority 1 "by" `postgres`, and an account event likewise, both accepted. A compromised
+application is exactly the threat the append-only layer is for, and it could not erase the
+record but could pad it with invented entries.
+
+A `BEFORE INSERT` trigger on each table now refuses any row that does not arrive from inside a
+trigger (`pg_trigger_depth() >= 2`), and sets `db_role` to `session_user` whatever the
+statement said. The recorders are unchanged. The sample-data and migration backfills write only
+where an event is missing and run before the guard exists, so a load inserts nothing directly.
+Two test fixtures that wrote `AppUserEvent` directly now switch triggers off for their one
+statement, which only the owner can do, so the CHECK they exercise is still reached.
+
+Also since rc.37, as plain commits: the holder-key and authority-key registers constrain their
+`algorithm` column (migrations 008 and 009, check 326), and the enrollment evidence's free-text
+values carry no document number (migration 010).
+
+Counterexample, failing on rc.37:
+`test_check_constraints.TestC1PrivilegeBoundary.test_the_change_records_accept_only_what_their_recorders_write`.
+
 ## v1.0.0-rc.37 — 2026-09-24 (reporting a credential lost could activate an expired reserve)
 
 CORE-BUG against rc.36. Externally observable: `uc4_activate_reserve`, and
