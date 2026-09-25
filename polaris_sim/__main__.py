@@ -18,6 +18,11 @@ import sys
 from . import nation, reference
 
 
+# 2026-09-25: this process's database sessions run in UTC whatever the environment says; see the
+# note above DB_CONFIG in polaris_web/app.py (a client's PGTZ overrides the database's UTC default).
+os.environ['PGTZ'] = 'UTC'
+
+
 def _db_config() -> dict:
     return {
         "host": os.environ.get("POLARIS_DB_HOST", "localhost"),

@@ -22626,6 +22626,36 @@ def check_no_session_date_in_sql(root: pathlib.Path) -> list[Finding]:
                      "reads polaris_utc_date(), the UTC date whatever timezone a session set")
 
 
+# 2026-09-25. TIMESTAMP-without-zone columns are filled in the SESSION's zone, and a client's PGTZ
+# overrides the database's UTC default. Each process Polaris ships sets PGTZ=UTC at module level,
+# before its first connection, so its own sessions write and compare UTC whatever the environment.
+_PRODUCT_CONNECTORS = ("polaris_web/app.py", "polaris_cli/polaris.py", "polaris_sim/__main__.py")
+_PGTZ_PIN = re.compile(r"^os\.environ\[\s*['\"]PGTZ['\"]\s*\]\s*=\s*['\"]UTC['\"]\s*$", re.M)
+
+
+def check_product_sessions_pin_utc(root: pathlib.Path) -> list[Finding]:
+    """The application, the CLI and the simulator pin PGTZ=UTC at module level before they connect."""
+    name = "product_sessions_pin_utc"
+    offenders = []
+    for rel in _PRODUCT_CONNECTORS:
+        src = _read(root, rel)
+        if not src:
+            offenders.append(f"{rel} is missing")
+            continue
+        pin = _PGTZ_PIN.search(src)
+        first = re.search(r"psycopg2\.connect\(", src)
+        if not pin:
+            offenders.append(f"{rel} does not set PGTZ=UTC at module level")
+        elif first and first.start() < pin.start():
+            offenders.append(f"{rel} connects before it sets PGTZ=UTC")
+    if offenders:
+        return _fail(name, "a Polaris process opens sessions in whatever zone its environment names, "
+                           "and its TIMESTAMP columns then hold that zone's wall clock: " +
+                           "; ".join(offenders))
+    return _ok(name, f"all {len(_PRODUCT_CONNECTORS)} processes Polaris ships pin their database "
+                     "sessions to UTC before connecting, whatever PGTZ the environment sets")
+
+
 # 2026-09-24. HolderKeyEvent.algorithm and AuthorityKeyEvent.algorithm were free text: the route's
 # allowlist and the CLI's choices were the only things keeping a classical parameter set out of
 # registers whose value is issuer-signed or published for relying parties to verify under. A
@@ -23263,6 +23293,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_rule_routines_see_past_the_binding,
     check_security_suite_refuses_skips_in_ci,
     check_no_session_date_in_sql,
+    check_product_sessions_pin_utc,
 ]
 
 

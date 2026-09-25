@@ -19553,3 +19553,25 @@ def test_no_session_date_in_sql_check_discriminates(tmp_path):
     (sql / "05_procedures.sql").write_text("SELECT 1;\n")
     assert checks.check_no_session_date_in_sql(tmp_path)[0].level == "FAIL", \
         "must FAIL when polaris_utc_date() is not defined"
+
+
+def test_product_sessions_pin_utc_check_discriminates(tmp_path):
+    files = {}
+    for rel in ("polaris_web/app.py", "polaris_cli/polaris.py", "polaris_sim/__main__.py"):
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("import os\nos.environ['PGTZ'] = 'UTC'\n\ndef c():\n    return psycopg2.connect(**cfg)\n")
+        files[rel] = f
+    assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "OK", "all three pinned must PASS"
+    cli = files["polaris_cli/polaris.py"]
+    cli.write_text("import os\n\ndef c():\n    return psycopg2.connect(**cfg)\n")
+    assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", "a missing pin must FAIL"
+    cli.write_text("import os\ndef c():\n    os.environ['PGTZ'] = 'UTC'\n")
+    assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", \
+        "a pin inside a function is not module level"
+    cli.write_text("conn = psycopg2.connect(**cfg)\nos.environ['PGTZ'] = 'UTC'\n")
+    assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", "pinned after connecting"
+    cli.write_text("os.environ['PGTZ'] = 'Pacific/Kiritimati'\n")
+    assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", "a zone other than UTC"
+    cli.unlink()
+    assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", "a missing file must FAIL"

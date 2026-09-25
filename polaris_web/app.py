@@ -586,6 +586,15 @@ observability.structured_log("boot.pqc_profile",
 # Database connection
 # ----------------------------------------------------------------------------
 
+# 2026-09-25: every session this process opens runs in UTC, whatever the environment says.
+# 58 columns are TIMESTAMP without a zone, filled by CURRENT_TIMESTAMP in the SESSION's zone, and
+# compared through LOCALTIMESTAMP (_db_now). The database's own UTC setting (rc.28) is a default a
+# client's PGTZ overrides; with PGTZ at UTC+14 a credential issued and expiring the same UTC day
+# broke chk_token_time_order. libpq sends PGTZ as the `timezone` startup parameter, one of the four
+# pgbouncer tracks, so this holds through the pooler too (a connection `options` string would not:
+# pgbouncer refuses it). check_product_sessions_pin_utc keeps it here.
+os.environ['PGTZ'] = 'UTC'
+
 DB_CONFIG = {
     'host':     os.environ.get('POLARIS_DB_HOST',     'localhost'),
     'port':     int(os.environ.get('POLARIS_DB_PORT', '5432')),

@@ -11,6 +11,33 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.48 — 2026-09-25 (Polaris's own database sessions run in UTC whatever PGTZ says)
+
+CORE-BUG against rc.28's promise, closing the item rc.47 recorded as open, for the processes
+Polaris ships. Externally observable: the application, the CLI and the simulator open every
+database session in UTC even when their environment sets `PGTZ` to another zone. No schema
+change. Nothing is published.
+
+58 columns are `TIMESTAMP` without a zone. `CURRENT_TIMESTAMP` fills them in the writing
+session's zone, and `_db_now` compares with them through `LOCALTIMESTAMP` for that reason. The
+database's UTC setting is a default, and a client's `PGTZ` overrides it. With `PGTZ` at UTC+14,
+issuing a credential that expires on the same UTC day broke `chk_token_time_order`: `issued_date`
+was stamped with the next day's wall clock.
+
+- Each of `polaris_web/app.py`, `polaris_cli/polaris.py` and `polaris_sim/__main__.py` sets
+  `PGTZ=UTC` at module level, before its first connection. libpq sends `PGTZ` as the `timezone`
+  startup parameter. That is one of the four parameters pgbouncer tracks, so the pin holds through
+  the production pooler. A connection `options` string would not hold, because pgbouncer's
+  `ignore_startup_parameters` does not admit it.
+- Test: `test_the_products_own_sessions_run_in_utc_whatever_pgtz_says` starts each of the three
+  with `PGTZ` at UTC+14 and asks its session for its timezone and wall-clock date. Removing the pin
+  from any one of the three fails that subtest.
+- Check 332, `check_product_sessions_pin_utc`, fails if any of the three loses the pin, sets it
+  inside a function, sets it after connecting, or pins a zone other than UTC.
+- Still open: a client that is not Polaris (an operator's `psql` with `PGTZ` set) writes those 58
+  columns in its own zone. Only converting them to `TIMESTAMPTZ` closes that. The conversion
+  changes every datetime the application reads from naive to aware, so it needs its own release.
+
 ## v1.0.0-rc.47 — 2026-09-25 (a client's timezone no longer moves an expiry decision)
 
 CORE-BUG against rc.28, whose entry and `09_grants.sql` promise that the database judges dates on

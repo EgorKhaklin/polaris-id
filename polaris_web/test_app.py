@@ -4500,6 +4500,37 @@ class ZKSnarkTests(PolarisTestCase):
         self.assertIn("SET timezone = %L', current_database(), 'UTC'", grants,
                       'a fresh install must carry the setting too, not only the migration')
 
+    def test_the_products_own_sessions_run_in_utc_whatever_pgtz_says(self):
+        """2026-09-25. TIMESTAMP-without-zone columns are filled in the session's zone, and a client's
+        PGTZ overrides the database's UTC default. With PGTZ at UTC+14 a credential issued and
+        expiring the same UTC day broke chk_token_time_order. The application, the CLI and the
+        simulator set PGTZ=UTC before connecting; each is started here with PGTZ at UTC+14 and asked
+        what its session's clock is."""
+        import subprocess, sys as _sys
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = dict(os.environ, PGTZ='Pacific/Kiritimati', POLARIS_PQC_PROFILE='placeholder')
+        env.update({'POLARIS_DB_' + k.upper(): str(v) for k, v in
+                    (('host', DB_CONFIG['host']), ('port', DB_CONFIG.get('port', 5432)),
+                     ('name', DB_CONFIG['database']), ('user', DB_CONFIG['user']),
+                     ('password', DB_CONFIG.get('password') or ''))})
+        probe = ("cur = conn.cursor(); cur.execute(\"SELECT current_setting('TimeZone') AS tz, "
+                 "LOCALTIMESTAMP::date = polaris_utc_date() AS same\"); r = cur.fetchone(); "
+                 "print(r['tz'], r['same'])")
+        cases = {
+            'application': (os.path.join(root, 'polaris_web'),
+                            "import app; conn = app.psycopg2.connect(cursor_factory=app.RealDictCursor, "
+                            "**app.DB_CONFIG); " + probe),
+            'cli': (os.path.join(root, 'polaris_cli'), "import polaris; conn = polaris.connect(); " + probe),
+            'simulator': (root, "from polaris_sim.__main__ import _connect; conn = _connect(); " + probe),
+        }
+        for label, (cwd, code) in cases.items():
+            with self.subTest(label):
+                out = subprocess.run([_sys.executable, '-c', code], cwd=cwd, env=env,
+                                     capture_output=True, text=True, timeout=120)
+                self.assertEqual(out.returncode, 0, out.stderr[-2000:])
+                self.assertEqual(out.stdout.strip().splitlines()[-1], 'UTC True',
+                                 '%s: its session followed the environment\'s PGTZ' % label)
+
     def test_a_session_timezone_does_not_move_an_expiry_decision(self):
         """2026-09-25. The rc.28 pin is a default that PGTZ or SET timezone overrides, and every
         expiry and validity decision was written with CURRENT_DATE, the session's date. With the
