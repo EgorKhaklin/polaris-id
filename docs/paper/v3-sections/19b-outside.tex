@@ -1,0 +1,72 @@
+% 19b-outside.tex: the last ring. Added 2026-09-25 after a cold read found the paper's climax,
+% the first software from outside, told early (Section 6) and buried under its own caveats.
+\section{The last ring: other people's software}
+\label{sec:outside}
+
+\analogy{Every wall, tower and ledger in this town was built by the people who live in it, and
+checked by them. One day travellers arrived who had built none of it. They carried their own seals,
+spoke the common language of the road, and owed the town nothing. What they did at the gate is the
+only report the town did not write about itself.}
+
+Every ring in this map exists because the ring inside it could be correct and still unable to prove
+what a society needs to know. The last ring is the one no amount of internal work can supply: software
+written by someone else, which does not share the author's assumptions about what a correct artifact
+contains, meeting Polaris at one of its doors. The door is the OpenID4VP verifier of
+Section~\ref{sec:verifiers}, chosen because it speaks the protocol an outside wallet actually speaks.
+
+\figfit{0.56}{outside-witnesses}{The three things outside the repository that have exercised it, and
+the two controls without which the first would mean nothing. A wallet nobody here wrote presented a
+credential and was accepted; the same wallet, with the verifier trusting a different issuer key, was
+refused; and a re-presentation against an answered request was refused. The Foundation's hosted
+suite scored seven refusals itself and left four acceptances for a human reviewer; a later run of
+the same plan was certified. A published corpus agrees with both signature witnesses on the
+primitive.}{fig:outside-witnesses}
+
+\subsection{The first stranger: a conformance service}
+
+The OpenID Foundation runs a hosted conformance suite with a test plan for exactly this role, in
+which the suite itself plays the wallet and signs the credential. It ran all eleven modules of that
+plan against the verifier across the open internet, fetching the request object and posting the
+response from outside. The seven negative modules, in which the suite sends a presentation broken in
+one specific way, are scored by the service itself on the verifier's refusal, which makes them the
+closest thing to an external adversary this project has been offered. The four positive modules end
+in a state the suite reserves for a human to attest a successful verification. A later run of the same
+plan was submitted for certification, and the Foundation lists \code{polaris-oid4vp 1.0.0rc7} as
+OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile. Each run carries two negative
+controls, one per direction: a verifier patched to refuse everything is noticed by the positive
+modules, and one patched to accept everything is noticed by all seven negatives. \sWit
+
+\subsection{The second stranger: a wallet}
+
+Then a wallet arrived. An unmodified walt.id Wallet API, the published image at a pinned digest,
+fetched the signed request object, verified it against the registered trust anchor, matched its
+credential to the query, signed a key-binding token with a key it generated and this repository has
+never held, encrypted the response, and sent it. The verifier checked the whole chain and accepted it.
+
+It refused Polaris first, and it was right.
+
+The verifier's own key generator had produced a request-signing certificate with no key-usage
+extension, so the certificate whose entire job is signing request objects was not marked as usable
+for signing. Every observer inside the repository had passed over it: the conformance modules, the
+package's tests, the mutation drill over every refusal, every check in the invariant layer. Each of
+them inherits the author's model of what such a certificate must contain. The first observer that did
+not inherit it found the gap at once. The certificate was fixed, with a test that fails on a leaf
+without the extension, and the exchange carries the same two controls as the conformance run, because a
+verifier that accepts everything prints the same success line. Anyone can repeat the exchange from a
+clean machine in about ten minutes without cloning the repository. \sWit
+
+This is the argument of the whole map in one event. The rings are the author's; the last ring is
+everyone else's, and it is the only one that can see what the others share.
+
+\subsection{What the last ring does not yet establish}
+
+Stated once, and in full. The certification is a self-certification that the Foundation reviewed and
+published, for one package, one version and one role: it is not an endorsement, not an audit, and not
+a statement about the rest of Polaris. The wallet exchange covers one wallet, one credential format,
+one presentation path and one classical signature algorithm, which is what the profile pins; it says
+nothing about any other wallet, about mobile documents, about the post-quantum path, or about
+interoperability in general. The native protocol, the \code{polaris-*/1} formats the rest of this map
+is built on, has not been implemented by anyone outside from the documents alone. No operator other
+than the author has run the system, and no independent party has audited it. Each of those is a row
+on the project's scoreboard, and each row is empty until a named party fills it
+(Section~\ref{sec:limitations}). \sExt

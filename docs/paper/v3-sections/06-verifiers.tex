@@ -92,26 +92,11 @@ detached verifier of \code{v9.317} vendored beside it, and a compatibility suite
 on every push: today's verifiers must accept everything version 1 published (44 of 44 cases hold),
 and the pinned older verifier must never accept what today's suite rejects. \sImpl
 
-% The figure opens the subsection, under its heading, and the heading and the figure stay on
-% one page: the space they need together is reserved before the heading, so a page that
-% cannot hold both breaks before the heading rather than between them.
-\Needspace{36\baselineskip}
-\subsection{The outside: a verifier for wallets Polaris has never met}
+\subsection{A verifier for wallets Polaris has never met}
 
-\figfile{outside-witnesses}{The three things outside the repository that have exercised it, and
-the two controls without which the first would mean nothing. A wallet nobody here wrote presented a
-credential and was accepted; the same wallet, with the verifier trusting a different issuer key, was
-refused; and a re-presentation against an answered request was refused. The Foundation's hosted
-suite scored seven refusals itself and left four acceptances for a human reviewer; a later run of
-the same plan against \code{1.0.0rc7} was certified (24 September 2026). A published corpus agrees
-with both signature witnesses on the primitive. None of the three is an audit or a pilot, and the
-one certification covers one package version in one role.}{fig:outside-witnesses}
-
-Everything above is Polaris verifying Polaris. One path has been exercised by an external
-implementation, chosen because it is the one an outside wallet actually speaks. Under the operating contract the
-first interoperability target was an OpenID4VP 1.0 verifier under the High Assurance
-Interoperability Profile, and the OpenID Foundation's conformance suite has a test plan for exactly
-that role, \code{oid4vp-1final-verifier-haip-test-plan}, in which \emph{the suite signs the
+Everything above is Polaris verifying Polaris. One more verifier faces the other way: a door for
+wallets Polaris has never met. It is an OpenID4VP 1.0 verifier under the High Assurance
+Interoperability Profile, a role for which the OpenID Foundation's conformance suite has a test plan, \code{oid4vp-1final-verifier-haip-test-plan}, in which \emph{the suite signs the
 credential}, so Polaris's own ML-DSA issuance is not involved. \code{polaris-oid4vp} is that
 verifier: it checks an SD-JWT VC signed with ES256, with holder key binding, delivered as an
 encrypted \code{direct\_post.jwt} response, and it refuses with a named reason, one per negative
@@ -122,50 +107,9 @@ complete response produced by the conformance suite's own wallet, built by a Jav
 project does not use, is committed, decrypts, and verifies, and is refused a year later, under another
 nonce, under another audience, and with one disclosure rewritten. \sImpl
 
-Then two things happened that the repository did not do to itself. On 15 September 2026 the OpenID
-Foundation's hosted conformance service ran all eleven modules of the plan against the verifier
-across the open internet, fetching the request object and posting the response from outside: zero
-failures, zero warnings. The seven negative modules, where the suite's wallet sends a presentation
-broken in one specific way, carry the service's own \code{result: PASSED}, scored automatically on
-the verifier's refusal, which makes them the closest thing to an external adversary this project has
-been offered. The four positive modules finished in \code{REVIEW}, the state the suite reserves for a
-human to attest that the verifier displayed a successful verification; the screenshots are attached
-and a Foundation reviewer sees them only at certification submission. REVIEW is not PASSED. The
-certification came later and separately: on 24 September 2026 the same plan was run once more,
-against the \code{1.0.0rc7} artifact on PyPI and in one plan as a certification package requires,
-all eleven modules finished without failure, and the Foundation approved the request and lists
-\code{polaris-oid4vp 1.0.0rc7} as OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.
-That is a self-certification the Foundation reviewed and published, for that version in that role:
-not an endorsement, not an audit, and not a statement about the rest of Polaris. The first write-up of the run said eleven of
-eleven clean, and it was false in a flattering direction: one fixed alias had been used for every
-module, the suite interrupts a test when another starts under the same alias, and the four positives
-had been killed by their successors, which the suite had already recorded inside the very log
-downloaded to corroborate the claim. It was re-run one module at a time. The run carries two negative
-controls, one per direction: a verifier patched to refuse everything is noticed by the positive
-modules, one patched to accept everything by all seven negatives. \sWit{} for the profile, and
-certified for that one package, version and role.
-
-And on the same day an unmodified walt.id Wallet API v2, the published image at a pinned digest,
-presented an SD-JWT VC to the verifier over OpenID4VP and was accepted: it fetched the signed request
-object, verified it against the registered trust anchor, matched the credential to the query, signed
-a key-binding token with a P-256 key it generated and this repository has never held, encrypted the
-response, and \code{polaris-oid4vp} verified the chain. It refused Polaris first, and it was right.
-The verifier's own key generator had produced a request-signing certificate with no key-usage
-extension at all, so the certificate whose entire job is signing request objects was not marked as
-usable for signing; eleven conformance modules, 142 package tests, a mutation drill over every
-refusal and every check in the invariant layer had passed over it, and the first implementation from
-outside declined to proceed. Fixed the same day, with a test that is red on a leaf missing it, and
-counted on the scoreboard as the first of the fixes caused by an external finding; the second, two days later, was an outside reviewer's. The exchange stands on the
-same two controls, because a verifier that accepts everything prints the same success line. What it
-does not establish is stated in the same place: one wallet, one credential format, one presentation
-path, ES256 throughout, which is what the profile pins; nothing about any other wallet, about
-ISO 18013-5, or about the post-quantum path, and no claim that the verifier is interoperable in
-general. Anyone can repeat the exchange from a clean machine in about ten minutes without cloning the
-repository; the page that says how was executed before it was written. \sWit{} for this path.
-
-The native protocol, the \code{polaris-*/1} formats that everything else in this paper is built on,
-has not been exercised from outside: the specification, the cases and two SDKs exist, and no implementation
-by an external team from the documents alone has happened. \sExt
+This verifier is the one door through which software written outside the project has come: a
+conformance service somebody else runs, and a wallet somebody else wrote. What they found there is the
+last ring of this map (Section~\ref{sec:outside}).
 
 Two format bridges make the boundary explicit. A Polaris credential renders in the ISO/IEC 18013-5
 mobile-document structure, and a reader that speaks the standard parses it, walks its namespaces and

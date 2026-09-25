@@ -216,3 +216,15 @@ The body states what each mechanism is; these are the dates it no longer carries
     setup rather than on a finding; the local gate ran four suites while CI ran eighteen and shipped a
     broken change twice.
 \end{itemize}
+
+\begin{itemize}
+  \item 15 September 2026: the conformance run. Its first write-up said eleven of eleven clean, and it
+    was false in a flattering direction: one fixed alias had been used for every module, the suite
+    interrupts a test when another starts under the same alias, and the four positives had been killed
+    by their successors, which the suite had recorded in the very log downloaded to corroborate the
+    claim. It was re-run one module at a time. Certified on 24 September 2026 against
+    \code{polaris-oid4vp 1.0.0rc7}.
+  \item 15 September 2026: the walt.id Wallet API v2 exchange; the key-usage fix the same day was the
+    first fix on the scoreboard caused by an external finding, and an outside reviewer's, two days
+    later, the second.
+\end{itemize}
