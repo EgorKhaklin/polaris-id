@@ -16,10 +16,17 @@ and for a standard or an organisation, what it is.
     can only be added to. The audit of record is the named pattern of applying this per table.
   \item[Assurance level.] What an enrolment can honestly claim about how the person was proven, derived
     from the evidence recorded beside it and never typed by an operator.
+  \item[Athena.] The read-only layer that holds the structure of authority (agencies, keys, contexts, trust
+    and rules, and what enforces each) and the constitution as data. It may not model a person.
+  \item[Atlas.] The bounded operational console: aggregates of what the system is doing, capped by the
+    application, never the location of a zero-knowledge event and never a person.
   \item[Attestation.] A directional, per-context statement that one agency accepts another's
     credentials, recorded as a row. Never transitive.
   \item[Authenticity pack.] A credential as a file: the token value, its signature and the issuer's
     public key. What a holder holds and a stranger verifies.
+  \item[C1--C10.] The ten hard constraints of the constitution: five constitutional rights guarantees (C1, C2,
+    C3, C6, C10) and five engineering constraints that keep them honest under load and attack. Each
+    is named in the section that enforces it.
   \item[Canonicalisation.] Turning a structure into one exact sequence of bytes (sorted keys, no
     whitespace) so that a signature made on one machine can be checked on another that rebuilds the
     same bytes.
@@ -48,12 +55,19 @@ and for a standard or an organisation, what it is.
     evidence fixed at that instant, so that the decision survives the key's later retirement.
   \item[Merkle tree.] A cryptographic fingerprint of a whole set, built by hashing pairs upward to one
     root, that lets a small proof show one item belongs to the set.
+  \item[Metis.] A proposed layer that would learn the behaviour of Polaris itself: anomalies, capacity,
+    regressions, release risk. Not built.
   \item[ML-DSA.] The lattice-based signature scheme standardised as FIPS 204; parameter sets 65 and
     87 are accepted. Post-quantum in its assumptions; the repository claims agility, not settled
     security.
+  \item[Mosca's inequality.] The comparison of the years data must stay secret plus the years a migration
+    takes against the years until a quantum computer can break today's signatures. When the first
+    sum is larger, what is signed today is already at risk.
   \item[Mutation drill.] A program that removes or inverts a guarantee, a constraint, a trigger, a
     refusal, a check's inputs, and requires the tests that supposedly prove it to go red, with a
     negative control so that zero survivors is distinguishable from a harness that ran nothing.
+  \item[Myrmex.] A proposed debugging system outside Polaris: specialised agents that attack it independently
+    and leave reproducible evidence on a shared landscape, coordinated by stigmergy. Not built.
   \item[Nullifier.] A value derived from a secret and a scope that lets a verifier detect a second
     use without linking uses across scopes. In Polaris \code{Poseidon(secret\,||\,scope\,||\,epoch)},
     a public input of the membership proof, per relying party and per epoch, never global.
@@ -69,6 +83,8 @@ and for a standard or an organisation, what it is.
     old months can be detached to the archive.
   \item[PKCE.] A proof-of-possession extension to the authorization-code login flow, so that an
     intercepted code cannot be exchanged by an attacker.
+  \item[Poseidon.] A hash function designed to be cheap inside a zero-knowledge circuit. Polaris uses it for
+    epoch leaves and nullifiers.
   \item[Positive control.] The half of a measurement that proves the instrument can see anything: an
     adversary that must succeed on a linkable population, a mutated tree the check must fail on, a
     patched verifier the suite must notice.
@@ -89,6 +105,8 @@ and for a standard or an organisation, what it is.
     first, electing no primary of its own until promoted; its recovery point is measured, not zero.
   \item[Status assertion.] A short-lived, issuer-signed statement of a credential's current status,
     stapled to a presentation so that authorization is decidable offline.
+  \item[Stigmergy.] Coordination through traces left in a shared environment instead of a central plan, as in
+    an ant colony. The proposed Myrmex would work this way.
   \item[Sunset.] The day the old credential stops being accepted, treated as a decision with a floor
     under it because it is the moment the new one becomes compulsory.
   \item[Trust list.] A signed statement of every key an instance knows, with each key's status and
