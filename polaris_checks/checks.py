@@ -856,14 +856,15 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                                         "procedure is its only updater, and a direct UPDATE records the "
                                         "recovery channels or re-opens an issued batch (C1)")
     # 1.0.0-rc.58: the algorithm registry and the authorizations uc1/uc8/uc_bulk_issue read;
-    # 1.0.0-rc.59: the proof policy the signed registry publishes.
-    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext"):
+    # 1.0.0-rc.59: the proof policy the signed registry publishes;
+    # 1.0.0-rc.62: the migration registry polaris-migrate.sh reads to decide what is applied.
+    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version"):
         if not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+" + table + r"\s+FROM\s+polaris_app",
                          grants, re.I):
             return _fail("c1_aor_priv", "09_grants.sql must REVOKE INSERT, UPDATE, DELETE ON " + table + ": "
                                         "nothing the application runs writes it, and its rows decide which "
-                                        "algorithms are live, who may issue under them and what proof a "
-                                        "context requires (C7)")
+                                        "algorithms are live, who may issue under them, what proof a "
+                                        "context requires, and which migrations an upgrade skips")
     head = re.search(r"PROCEDURE\s+uc_pseudonymize_individual\b.*?AS\s+\$\$", proc, re.I | re.S)
     if not head or not re.search(r"SECURITY\s+DEFINER", head.group(0), re.I):
         return _fail("c1_aor_priv", "uc_pseudonymize_individual must be SECURITY DEFINER: it is the "
@@ -5307,6 +5308,40 @@ def check_rotate_secret_preserves_mode(root: pathlib.Path) -> list[Finding]:
 # exist, trigger on release, cover the Python surface plus all five self-built
 # images, and attach the documents to the release. A release whose contents
 # cannot be enumerated from a bill of materials is a supply-chain blind spot.
+# What makes a workflow run the DB-backed suites that connect AS polaris_app.
+_APP_ROLE_SUITE_MARKERS = ("test_check_constraints", "mutation-drill", "polaris-test.sh",
+                           "polaris-ship.py run", "-m unittest")
+
+
+def check_workflows_reach_the_app_role(root: pathlib.Path) -> list[Finding]:
+    """A workflow that runs the DB-backed suites with a database password must also give the
+    application role its own. Without POLARIS_APP_TEST_PASSWORD the privilege-boundary tests
+    try the superuser's password, cannot log in as polaris_app, and under CI fail (they skipped
+    until 2026-09-24, which hid the boundary). The weekly procedure and trigger sweeps lacked it
+    and their baseline was red on 2026-09-26 with nothing mutated."""
+    wf_dir = root / ".github" / "workflows"
+    files = sorted(wf_dir.glob("*.yml")) if wf_dir.is_dir() else []
+    if not files:
+        return _fail("wf_app_role", ".github/workflows has no workflow to inspect")
+    ci = root / ".github" / "workflows" / "ci.yml"
+    if not ci.is_file() or "POLARIS_APP_TEST_PASSWORD" not in ci.read_text(errors="replace"):
+        return _fail("wf_app_role", "ci.yml does not set POLARIS_APP_TEST_PASSWORD: the main suite's "
+                     "privilege-boundary tests cannot connect as polaris_app")
+    bad = []
+    for f in files:
+        text = "\n".join(ln for ln in f.read_text(errors="replace").splitlines()
+                         if not ln.lstrip().startswith("#"))
+        runs_suites = any(m in text for m in _APP_ROLE_SUITE_MARKERS)
+        if runs_suites and "POLARIS_DB_PASSWORD" in text and "POLARIS_APP_TEST_PASSWORD" not in text:
+            bad.append(f.name)
+    if bad:
+        return _fail("wf_app_role", "workflow(s) run the DB-backed suites without "
+                     "POLARIS_APP_TEST_PASSWORD, so the tests that connect as polaris_app cannot "
+                     "log in: " + ", ".join(bad))
+    return _ok("wf_app_role", "every workflow that runs the DB-backed suites gives the application "
+               "role its password, so the privilege-boundary tests connect as polaris_app")
+
+
 def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
     wf = _read(root, ".github/workflows/sbom.yml")
     if not wf:
@@ -23346,6 +23381,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_stranger_pages_fetch_files_that_exist,
     check_db_secret_rotation_changes_both_or_neither,
     check_sbom_workflow,
+    check_workflows_reach_the_app_role,
     check_sbom_trivy_matches_scan,
     check_release_provenance,
     check_npm_publish_is_staged,

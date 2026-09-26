@@ -1699,7 +1699,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                         ("RecoveryRequest", "BulkEnrollmentBatch", "BulkEnrollmentStaging",
                          "TokenPermission", "DeviceBinding", "RevocationList"))
               + "".join("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % t for t in
-                        ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext")))
+                        ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version")))
     full = (good_grants + "SELECT polaris_lock_event_partitions();\n"
             "REVOKE INSERT ON TokenLifecycleEvent FROM polaris_app;\n" + epochs)
     (sql / "01_schema.sql").write_text(lock + ensure)
@@ -1808,7 +1808,7 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
                   "TokenPermission", "DeviceBinding", "RevocationList"):
         write(full.replace("REVOKE UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
-    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext"):
+    for table in ("CryptographicAlgorithm", "AgencyAlgorithmAuth", "VerificationContext", "schema_version"):
         write(full.replace("REVOKE INSERT, UPDATE, DELETE ON %s FROM polaris_app;\n" % table, ""), True, True)
         assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", table
     write(full, True, True)
@@ -2262,6 +2262,26 @@ def test_rotate_secret_mode_check_discriminates(tmp_path):
     assert f.level == "FAIL" and "GNU stat" in f.message, "must FAIL on the stat -f || fallback chain"
     rs.write_text("# never chain stat -f ... || stat -c\nCUR_MODE=$(stat --version >/dev/null 2>&1 && stat -c '%a' \"${TARGET}\" || stat -f '%Lp' \"${TARGET}\")\nchmod \"0${CUR_MODE#0}\" \"${TARGET}.new\"\n")
     assert checks.check_rotate_secret_preserves_mode(tmp_path)[0].level == "OK", "a comment naming the trap must not trip it"
+
+
+def test_workflows_reach_the_app_role_check_discriminates(tmp_path):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    good = ("env:\n  POLARIS_DB_PASSWORD: postgres\n  POLARIS_APP_TEST_PASSWORD: polaris_dev_password\n"
+            "steps:\n  - run: python scripts/polaris-procedure-mutation-drill.py --exhaustive\n")
+    (wf / "sweep.yml").write_text(good)
+    (wf / "pages.yml").write_text("steps:\n  - run: echo build\n")
+    assert checks.check_workflows_reach_the_app_role(tmp_path)[0].level == "FAIL", "must FAIL without ci.yml"
+    (wf / "ci.yml").write_text(good)
+    assert checks.check_workflows_reach_the_app_role(tmp_path)[0].level == "OK", "must PASS when set"
+    (wf / "sweep.yml").write_text(good.replace("  POLARIS_APP_TEST_PASSWORD: polaris_dev_password\n", ""))
+    out = checks.check_workflows_reach_the_app_role(tmp_path)[0]
+    assert out.level == "FAIL" and "sweep.yml" in out.message, "must FAIL and name the workflow"
+    (wf / "sweep.yml").write_text(good.replace("  POLARIS_APP_TEST_PASSWORD", "  # POLARIS_APP_TEST_PASSWORD"))
+    assert checks.check_workflows_reach_the_app_role(tmp_path)[0].level == "FAIL", "a comment sets nothing"
+    (wf / "sweep.yml").write_text("env:\n  POLARIS_DB_PASSWORD: x\nsteps:\n  - run: echo no suites\n")
+    assert checks.check_workflows_reach_the_app_role(tmp_path)[0].level == "OK", \
+        "a workflow that runs no suite needs no app password"
 
 
 def test_sbom_workflow_check_discriminates(tmp_path):

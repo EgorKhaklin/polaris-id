@@ -215,6 +215,11 @@ REVOKE INSERT, UPDATE, DELETE ON AgencyAlgorithmAuth FROM polaris_app;
 -- application runs writes them; with write access its role lowered a context's policy and the
 -- next registry would have carried the weaker one under the authority's signature.
 REVOKE INSERT, UPDATE, DELETE ON VerificationContext FROM polaris_app;
+-- 1.0.0-rc.62: the migration registry. polaris-migrate.sh treats a migration as applied when the
+-- last event schema_version holds for it says so; with INSERT the application role appended an
+-- 'applied' row for a pending migration (its file's SHA-256 is public) and the next upgrade
+-- skipped it. The migrator runs as the owner; the application only reads the registry.
+REVOKE INSERT, UPDATE, DELETE ON schema_version FROM polaris_app;
 -- 1.0.0-rc.61: the Athena constitution the /athena console shows (which mechanism enforces
 -- each of C1-C10, and the key custody). 16_athena.sql writes it as the owner and revokes these
 -- rights itself on a fresh load, where it runs after this file; the object sync runs this file

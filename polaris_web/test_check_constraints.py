@@ -1723,6 +1723,30 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             self.assertGreater(list(cur.fetchone().values())[0], 0, "the console still reads the map")
         conn.rollback()
 
+    def test_app_role_cannot_mark_a_migration_applied(self):
+        """1.0.0-rc.62. polaris-migrate.sh decides a migration is applied by the last event in
+        schema_version, and polaris_app held INSERT on it: one row naming a pending migration, with
+        the file's public SHA-256, and the next upgrade skips it. Only the migrator (the owner)
+        writes the registry; the application may still read it."""
+        conn = self._app_conn()
+        attempts = (
+            ("forge an apply", "INSERT INTO schema_version (name, event_type, actor_user_id, file_sha256) "
+                               "VALUES ('2099-12-31-001-a-pending-fix', 'applied', NULL, repeat('a', 64))"),
+            ("forge a revert", "INSERT INTO schema_version (name, event_type, actor_user_id, file_sha256) "
+                               "SELECT name, 'reverted', NULL, file_sha256 FROM schema_version LIMIT 1"),
+            ("rewrite", "UPDATE schema_version SET event_type = 'applied' WHERE false"),
+            ("delete", "DELETE FROM schema_version WHERE false"),
+        )
+        for label, sql in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM schema_version")
+            self.assertIsNotNone(cur.fetchone(), "the application still reads the registry")
+        conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

@@ -44,6 +44,10 @@ jobs:
       POLARIS_DB_USER: postgres
       PGPASSWORD: postgres
       POLARIS_DB_PASSWORD: postgres
+      # The application role's password, as 09_grants.sql creates it. Without it the privilege-
+      # boundary tests try the superuser's password, fail to log in, and under CI fail rather than
+      # skip: the sweep's baseline was red on 2026-09-26 for exactly that reason.
+      POLARIS_APP_TEST_PASSWORD: polaris_dev_password
       POLARIS_SECRET_KEY: trigger-sweep-secret
       POLARIS_STATE_DIR: /tmp/polaris-state
       POLARIS_PQC_PROFILE: placeholder

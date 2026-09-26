@@ -20,7 +20,7 @@ Bump procedure (see docs/RELEASING.md):
 """
 # coverage:exempt - one constant, imported by everything; check_version_is_canonical pins it and there is no behaviour to exercise.
 
-__version__: str = "1.0.0-rc.61"
+__version__: str = "1.0.0-rc.62"
 
 
 # Backwards-compat alias for code that imported `POLARIS_VERSION`

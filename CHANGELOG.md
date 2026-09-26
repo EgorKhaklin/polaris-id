@@ -11,6 +11,33 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.62 — 2026-09-26 (an upgrade applies every migration it is given)
+
+CORE-BUG against the migration registry's own contract (`polaris_sql/00_migrations_table.sql`: an
+append-only audit-of-record table with SHA-256 tamper detection) and the upgrade path
+`polaris-migrate.sh --up`. Externally observable: the application role can no longer insert,
+update or delete `schema_version`. Schema change: migration
+`2026-09-26-002-migration-registry-written-only-by-the-migrator`. Nothing is published.
+
+`polaris-migrate.sh` treats a migration as applied when the last event `schema_version` holds for
+it says `applied`. The append-only trigger refused edits, but `polaris_app` held INSERT: one row
+naming a pending migration, with the file's SHA-256 (public, since the file is in the repository),
+and the next upgrade would skip it. A security fix delivered as a migration could be kept out of a
+deployment by the role it was meant to constrain, with `--status` reporting it applied. The
+migrator and the container init run as the owner; nothing the application runs writes the table.
+
+- The application role loses INSERT, UPDATE and DELETE on `schema_version`; it still reads it.
+- Test: `test_app_role_cannot_mark_a_migration_applied`, as `polaris_app`, four cases and a read
+  control; all four fail with the down migration applied, pass with the up.
+- `check_aor_privilege_boundary` requires the revoke; one new detection case.
+
+Also in this version, CI only: the weekly procedure and trigger sweeps had been red with nothing
+mutated. They set the superuser's password and not `POLARIS_APP_TEST_PASSWORD`, so every
+privilege-boundary test failed to log in as `polaris_app` (29 of them, in the sweep's baseline).
+Both workflows now set it; the procedure drill prints the tests a red baseline names (it printed
+nothing before, commit 84e83ef6); and `check_workflows_reach_the_app_role` fails any workflow that
+runs the DB-backed suites without the application role's password. Checks: 334.
+
 ## v1.0.0-rc.61 — 2026-09-26 (the constitution Athena shows is the owner's to write)
 
 CORE-BUG against the Athena design record (`docs/design/athena.md`), which says the enforcement
