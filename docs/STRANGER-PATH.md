@@ -4,8 +4,10 @@
 asking anyone a question.** If you cannot, that is the bug and we want to hear it.
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-09-24 against `polaris-oid4vp`
-1.0.0rc7 installed from the registry, on macOS with Docker Desktop. Nothing here is from memory.
+package on PyPI rather than a working copy. Last walked 2026-09-26 against `polaris-oid4vp`
+1.0.0rc7 installed from the registry, with the system Python 3.9 and `waltid/wallet-api2:1.0.0`, on
+macOS with Docker Desktop: the wallet reported `transmission_success` and the verifier printed the
+step 7 line exactly. Nothing here is from memory.
 
 ## 0. Prerequisites
 
