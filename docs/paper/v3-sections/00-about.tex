@@ -33,17 +33,17 @@ authorities are other towns, joined by roads that run one way; above the whole t
 bind even the town itself; and travellers from elsewhere have come to the
 gate, and what they found there is the only report the town did not write about itself. The analogy
 describes arrangement and sight lines, not political centralisation: Polaris is federated per
-authority, with no central database, root or verification service, and every recurrence of the
-analogy returns to the actual mechanism by its real name.
+authority, with no central database, root or verification service.
 
 \subsection*{Five marks}
 
 Every capability carries one of five marks, so that code that runs is never confused with an
 intention, and so that a thing the author has tested is never confused with a thing somebody else
-has.
+has. In the running text an implemented path carries no mark, since most of this map is exactly
+that; a mark appears there only where a claim is something else. Tables mark every row.
 
 \begin{description}
-  \item[\sImpl] A path that runs at \code{1.0.0-rc.7}, exercised by a test or a drill in continuous
+  \item[\sImplMark] A path that runs at \code{1.0.0-rc.7}, exercised by a test or a drill in continuous
     integration, and pinned by an invariant check that fails the build if it stops being true.
   \item[\sExp] A path that runs but is limited in a way the repository itself names: not covered by
     CI, notional in scale, or dependent on a backend that CI simulates.
@@ -51,8 +51,8 @@ has.
     party has audited, attacked, deployed or independently re-implemented.
   \item[\sWit] A path that a named party outside the repository has actually exercised, on a date,
     with a result that can be pointed at: a wallet, a conformance service, a published test corpus.
-    The mark is deliberately rare, it is given only where the repository's scoreboard has a filled
-    row, and it never means audited, certified or piloted. Three things carry it in this paper.
+    It is given only for a filled row of the repository's scoreboard, and never means audited,
+    certified or piloted. Three things carry it in this paper.
   \item[\sFut] A proposal: a roadmap row, a design note, or an idea that exists only in this paper.
     It is not code.
 \end{description}

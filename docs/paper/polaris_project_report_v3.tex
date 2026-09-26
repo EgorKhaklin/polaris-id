@@ -153,7 +153,11 @@
 % and whether anybody outside the repository has exercised it.
 \DeclareRobustCommand{\marktie}{\ifdim\lastskip>0pt \unskip\nobreakspace\fi}
 \newcommand{\statusmark}[3]{{\fboxsep=1.5pt\fboxrule=0.5pt\fcolorbox{#1}{#2}{\scriptsize\scshape\color{#3}\strut}}}
-\newcommand{\sImpl}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navydark}{navydark}{\scriptsize\scshape\color{white}implemented}}}
+\newcommand{\sImplMark}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{navydark}{navydark}{\scriptsize\scshape\color{white}implemented}}}
+% In running text an implemented path carries no mark (2026-09-25): the front matter says so, and
+% the marks that remain are the ones that say something is NOT simply implemented. Tables and the
+% front matter's list of marks use \sImplMark.
+\newcommand{\sImpl}{\unskip}
 \newcommand{\sExp}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{accent}{accent}{\scriptsize\scshape\color{white}experimental}}}
 \newcommand{\sExt}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{white}{\scriptsize\scshape\color{gold}external validation required}}}
 \newcommand{\sFut}{\marktie{\fboxsep=1.6pt\fboxrule=0.5pt\fcolorbox{gold}{futfill}{\scriptsize\scshape\color{navydark}proposed}}}

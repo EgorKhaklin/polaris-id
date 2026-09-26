@@ -27,54 +27,54 @@ exercised.
 \endfoot
 \bottomrule
 \endlastfoot
-Schema constraints, C1--C10 & \sImpl & The database owner is outside the threat model; three constraints carry a checked formal model & \code{check\_c1c10\_objects\_resolve}, the TLA+ drill \\
-Append-only audit of record (fourteen named; thirty-one tables) & \sImpl & Tested once per table that claims it; a reload once reached one record with neither its ids nor its rows & \code{check\_aor\_append\_only\_triggers}, \code{check\_append\_only\_tables\_are\_tested\_exhaustively}, \code{check\_seed\_restart\_resets\_dependent\_records} \\
-Retention as data with a 365-day floor & \sImpl & Archive and purge remain deliberate operator steps & \code{check\_retention\_engine} \\
-Mutation drills over the verification layer (twelve) & \sImpl & A shared misreading of a specification survives every one of them & \code{check\_constraint\_suite\_is\_mutation\_tested}, \code{check\_triggers\_are\_mutation\_tested}, \code{check\_procedure\_refusals\_are\_mutation\_tested}, \code{check\_sdk\_refusals\_are\_mutation\_tested}, \code{check\_zk\_witnesses\_are\_mutation\_tested} \\
-ML-DSA-65 and ML-DSA-87 signing & \sImpl & The default development and CI path signs a labelled placeholder; SLH-DSA registered, not wired & \code{check\_pqc\_signing\_wired}, \code{check\_real\_pqc\_default\_boot} \\
-Two-witness verification, sampled at use & \sImpl & Catches divergence, not a shared misreading & \code{check\_pqc\_second\_witness}, \code{check\_verify\_witness\_sampling} \\
+Schema constraints, C1--C10 & \sImplMark & The database owner is outside the threat model; three constraints carry a checked formal model & \code{check\_c1c10\_objects\_resolve}, the TLA+ drill \\
+Append-only audit of record (fourteen named; thirty-one tables) & \sImplMark & Tested once per table that claims it; a reload once reached one record with neither its ids nor its rows & \code{check\_aor\_append\_only\_triggers}, \code{check\_append\_only\_tables\_are\_tested\_exhaustively}, \code{check\_seed\_restart\_resets\_dependent\_records} \\
+Retention as data with a 365-day floor & \sImplMark & Archive and purge remain deliberate operator steps & \code{check\_retention\_engine} \\
+Mutation drills over the verification layer (twelve) & \sImplMark & A shared misreading of a specification survives every one of them & \code{check\_constraint\_suite\_is\_mutation\_tested}, \code{check\_triggers\_are\_mutation\_tested}, \code{check\_procedure\_refusals\_are\_mutation\_tested}, \code{check\_sdk\_refusals\_are\_mutation\_tested}, \code{check\_zk\_witnesses\_are\_mutation\_tested} \\
+ML-DSA-65 and ML-DSA-87 signing & \sImplMark & The default development and CI path signs a labelled placeholder; SLH-DSA registered, not wired & \code{check\_pqc\_signing\_wired}, \code{check\_real\_pqc\_default\_boot} \\
+Two-witness verification, sampled at use & \sImplMark & Catches divergence, not a shared misreading & \code{check\_pqc\_second\_witness}, \code{check\_verify\_witness\_sampling} \\
 ML-DSA-65 verification against a published corpus & \sWit & The primitive, not the protocol: 58 of 58 vectors under both witnesses & the \code{pqc-real} job \\
-Key custody: file, PKCS\#11, KMS & \sImpl\newline\sExt & Software token in CI, no hardware module; the KMS is a stand-in & \code{check\_key\_custody\_abstraction} \\
-Key register and signed trust list & \sImpl & Rotation of a live key file or slot is an operator ceremony & \code{check\_trust\_lifecycle} \\
-Algorithm agility, population migration & \sImpl\newline\sExt & A verifier cannot learn a deprecation; rollback and the mixed window unmeasured & \code{check\_algorithm\_agility}, \code{check\_quantum\_event\_readiness}, \code{check\_post\_quantum\_claims\_are\_agility} \\
-Detached verifier, packaged, fuzzed and attacked & \sImpl & Refuses to start without a declared crypto mode; needs the prover binary for the zero-knowledge path only & \code{check\_detached\_verifier}, \code{check\_verifier\_fuzz}, \code{check\_attacks\_run}, the product-boundary drill \\
-Python and TypeScript SDKs, conformance suite (118 cases) & \sImpl\newline\sExt & No external implementation of the native protocol; 44 verdict fields unconstrained by any case & \code{check\_conformance\_suite}, \code{check\_typescript\_sdk}, \code{check\_conformance\_asks\_the\_relying\_party\_question} \\
-Frozen version 1, cross-version suite & \sImpl & & \code{check\_protocol\_versioning} \\
-OpenID4VP 1.0 + HAIP verifier & \sImpl\newline\sWit & One wallet, one format, one path, ES256 throughout; \code{1.0.0rc7} OpenID Certified to the HAIP verifier profile (24 September 2026), that version and role only & \code{check\_oid4vp\_verifier\_boundary}, the OpenID4VP mutation drill, the scoreboard \\
-Format bridges: ISO 18013-5 rendering, Verifiable Credential of a verdict & \sImpl & Formats, not trust models; no standard mDL reader can verify the ML-DSA issuer signature & the mdoc and VC drills \\
-Relying-party verify API & \sImpl & Client-credentials only; mutual TLS deferred & \code{check\_relying\_party\_api} \\
-Signed status assertion, offline authorization & \sImpl & The revoked-but-valid window is the cost; its maximum rests partly on relying-party configuration & \code{check\_offline\_verification}, the status-freshness model \\
-Epoch checkpoints, revocation feeds, status bundle, cache rules & \sImpl\newline\sFut & Distribution at content-delivery scale is specified and drilled, not deployed & \code{check\_epoch\_revocation\_propagation}, \code{check\_federation\_status\_bundle}, \code{check\_status\_distribution} \\
-Zero-knowledge membership proof, holder-side prover, scoped nullifier & \sImpl\newline\sExt & No external audit; the issuer can compute any member's nullifier; the anonymity set has no floor above one & \code{check\_zk\_tree\_depth\_synced}, \code{check\_holder\_side\_prover}, \code{check\_scoped\_nullifier}, the witness differential \\
-Issuer-side unlinkable verification records & \sImpl & Scoped to zero-knowledge mode; adversary shaped so it cannot flatter the result & the C2 CHECK and model, the redaction suite, \code{check\_redaction\_adversary\_is\_not\_flattered} \\
-Cross-verifier correlation, measured & \sImpl & Bounded on the zero-knowledge path within the epoch's crowd against an equality adversary; exposed on plain and SD-JWT presentations & \code{check\_pairwise\_presentation}, the linkability lab \\
-Wallet protocol, presentations, QR framing & \sImpl & No native clients, no browser bridge & \code{check\_wallet\_presentation}, \code{check\_qr\_resource\_bounds} \\
-Auth broker with registered policy & \sImpl & No session product, no consent screen & \code{check\_auth\_broker}, \code{check\_broker\_policy\_bound} \\
-Decisions about authorities, operators, quotas, ceilings and relying parties, recorded & \sImpl & A shell and the tool are recorded on the same terms & the audit-of-record checks, \code{check\_every\_audit\_event\_has\_a\_writer} \\
-Identity proofing, trusted referee, enrolment code & \sImpl\newline\sExt & Evidence authenticity is the operator's word; no proofing has been performed with it & \code{check\_enrollment\_code}, \code{check\_trusted\_referee}, the proofing drill \\
-Federation: roots, attestations, manifests & \sImpl\newline\sExt & Attestations operator-recorded; two instances by one author & \code{check\_federation\_topology}, \code{check\_federation\_two\_instances} \\
-Per-authority isolation of operators & \sImpl\newline\sExt & A shared instance's owner, backup and schema are shared & \code{check\_route\_guards\_are\_derived\_not\_listed} \\
-Cross-authority zero-knowledge & \sImpl & Abstains without the binary; issuer bound by root & \code{check\_cross\_authority\_zk} \\
-Transparency logs, monitor & \sImpl & A monitor alone cannot see a split view & \code{check\_transparency\_log} \\
-Witnesses, gossip, equivocation proof & \sImpl\newline\sExt & Witnesses are drill processes; independence is a deployment & \code{check\_transparency\_gossip} \\
-External-ledger publication & \sImpl\newline\sFut & File backend only; chain drivers declared & \code{check\_transparency\_publication} \\
-Public transparency report & \sImpl & Cannot see an access that was never recorded & \code{check\_transparency\_program}, \code{check\_audited\_reads\_are\_logged} \\
-Signed registry, exchange gateway and receipts, timestamp authority, document signing & \sImpl & Bare algorithm names in the registry; notarial signing; anchor verification in verifier and SDKs & \code{check\_registry}, \code{check\_exchange\_gateway}, \code{check\_exchange\_receipt}, \code{check\_timestamp\_authority}, \code{check\_document\_signing}, \code{check\_ltv\_timestamp\_trust} \\
-HA, replicas, partitioning, DR, chaos, rolling deploys & \sImpl & Ephemeral CI hosts & \code{check\_ha\_automation} and its siblings \\
-Second region as a standby cluster & \sImpl & Asynchronous; the recovery point is not zero and is measured & \code{check\_multi\_region\_dr} \\
-Capacity and cost models & \sImpl\newline\sExp & Core counts extrapolated under a named assumption; nothing run at scale & \code{check\_capacity\_model} \\
-Post-quantum TLS edge and application-to-pooler hop & \sImpl & The pooler-to-database hop is classical, gated on a PostgreSQL release & \code{check\_edge\_pq\_kex}, \code{check\_internal\_kex\_measured} \\
-Abuse controls, session and origin hardening, WebAuthn MFA, logs without PII & \sImpl & Authenticators classical until hardware ships & \code{check\_abuse\_controls}, \code{check\_session\_origin\_hardening}, \code{check\_logs\_exclude\_pii} \\
-Atlas & \sImpl & Every aggregate graded against its data's growth & \code{check\_atlas\_console}, \code{check\_benchmark\_measures\_growth}, the C8 caps \\
-Athena & \sImpl & Read-only; no person node, which one check refuses & \code{check\_athena\_no\_person} \\
-Card profile, software token, personalization, verifier device, duress timing & \sImpl\newline\sFut & No card manufactured, no silicon certified & \code{check\_card\_profile}, \code{check\_card\_emulator}, \code{check\_verifier\_device}, \code{check\_duress\_on\_card} \\
-Duress code, in the application and on the card & \sImpl\newline\sExt & Duress-aware, not compulsion-resistant: resists the casual coercer only, and its record is indelible & \code{check\_duress\_alertable}, \code{check\_duress\_claims\_are\_aware} \\
-Pilot wind-down; coexistence and sunset plan & \sImpl\newline\sExt & No pilot has run; the sunset verdict rests on operator attestations & \code{check\_coexistence\_plan}, the wind-down drill \\
-NIST 800-63 mapping; accessibility & \sImpl\newline\sExt & Not a conformance claim; the automated third only & the assurance-mapping and accessibility drills \\
-Formal models: C1, C2, C3, status freshness & \sImpl & Models, not the code; each of three must fail a counterpart configuration & the TLA+ drill \\
-Holder key bound to a credential & \sImpl & Optional; the proof deliberately does not cover the presented code & \code{check\_holder\_key\_binding} \\
-Agent delegation, revocable by the holder & \sImpl & A plain binding still shows the service the credential & \code{check\_agent\_grant} \\
-Four packages on public registries & \sImpl & Distribution is not validation; no outside install reported & the publish workflow, the boundary drill \\
+Key custody: file, PKCS\#11, KMS & \sImplMark\newline\sExt & Software token in CI, no hardware module; the KMS is a stand-in & \code{check\_key\_custody\_abstraction} \\
+Key register and signed trust list & \sImplMark & Rotation of a live key file or slot is an operator ceremony & \code{check\_trust\_lifecycle} \\
+Algorithm agility, population migration & \sImplMark\newline\sExt & A verifier cannot learn a deprecation; rollback and the mixed window unmeasured & \code{check\_algorithm\_agility}, \code{check\_quantum\_event\_readiness}, \code{check\_post\_quantum\_claims\_are\_agility} \\
+Detached verifier, packaged, fuzzed and attacked & \sImplMark & Refuses to start without a declared crypto mode; needs the prover binary for the zero-knowledge path only & \code{check\_detached\_verifier}, \code{check\_verifier\_fuzz}, \code{check\_attacks\_run}, the product-boundary drill \\
+Python and TypeScript SDKs, conformance suite (118 cases) & \sImplMark\newline\sExt & No external implementation of the native protocol; 44 verdict fields unconstrained by any case & \code{check\_conformance\_suite}, \code{check\_typescript\_sdk}, \code{check\_conformance\_asks\_the\_relying\_party\_question} \\
+Frozen version 1, cross-version suite & \sImplMark & & \code{check\_protocol\_versioning} \\
+OpenID4VP 1.0 + HAIP verifier & \sImplMark\newline\sWit & One wallet, one format, one path, ES256 throughout; \code{1.0.0rc7} OpenID Certified to the HAIP verifier profile (24 September 2026), that version and role only & \code{check\_oid4vp\_verifier\_boundary}, the OpenID4VP mutation drill, the scoreboard \\
+Format bridges: ISO 18013-5 rendering, Verifiable Credential of a verdict & \sImplMark & Formats, not trust models; no standard mDL reader can verify the ML-DSA issuer signature & the mdoc and VC drills \\
+Relying-party verify API & \sImplMark & Client-credentials only; mutual TLS deferred & \code{check\_relying\_party\_api} \\
+Signed status assertion, offline authorization & \sImplMark & The revoked-but-valid window is the cost; its maximum rests partly on relying-party configuration & \code{check\_offline\_verification}, the status-freshness model \\
+Epoch checkpoints, revocation feeds, status bundle, cache rules & \sImplMark\newline\sFut & Distribution at content-delivery scale is specified and drilled, not deployed & \code{check\_epoch\_revocation\_propagation}, \code{check\_federation\_status\_bundle}, \code{check\_status\_distribution} \\
+Zero-knowledge membership proof, holder-side prover, scoped nullifier & \sImplMark\newline\sExt & No external audit; the issuer can compute any member's nullifier; the anonymity set has no floor above one & \code{check\_zk\_tree\_depth\_synced}, \code{check\_holder\_side\_prover}, \code{check\_scoped\_nullifier}, the witness differential \\
+Issuer-side unlinkable verification records & \sImplMark & Scoped to zero-knowledge mode; adversary shaped so it cannot flatter the result & the C2 CHECK and model, the redaction suite, \code{check\_redaction\_adversary\_is\_not\_flattered} \\
+Cross-verifier correlation, measured & \sImplMark & Bounded on the zero-knowledge path within the epoch's crowd against an equality adversary; exposed on plain and SD-JWT presentations & \code{check\_pairwise\_presentation}, the linkability lab \\
+Wallet protocol, presentations, QR framing & \sImplMark & No native clients, no browser bridge & \code{check\_wallet\_presentation}, \code{check\_qr\_resource\_bounds} \\
+Auth broker with registered policy & \sImplMark & No session product, no consent screen & \code{check\_auth\_broker}, \code{check\_broker\_policy\_bound} \\
+Decisions about authorities, operators, quotas, ceilings and relying parties, recorded & \sImplMark & A shell and the tool are recorded on the same terms & the audit-of-record checks, \code{check\_every\_audit\_event\_has\_a\_writer} \\
+Identity proofing, trusted referee, enrolment code & \sImplMark\newline\sExt & Evidence authenticity is the operator's word; no proofing has been performed with it & \code{check\_enrollment\_code}, \code{check\_trusted\_referee}, the proofing drill \\
+Federation: roots, attestations, manifests & \sImplMark\newline\sExt & Attestations operator-recorded; two instances by one author & \code{check\_federation\_topology}, \code{check\_federation\_two\_instances} \\
+Per-authority isolation of operators & \sImplMark\newline\sExt & A shared instance's owner, backup and schema are shared & \code{check\_route\_guards\_are\_derived\_not\_listed} \\
+Cross-authority zero-knowledge & \sImplMark & Abstains without the binary; issuer bound by root & \code{check\_cross\_authority\_zk} \\
+Transparency logs, monitor & \sImplMark & A monitor alone cannot see a split view & \code{check\_transparency\_log} \\
+Witnesses, gossip, equivocation proof & \sImplMark\newline\sExt & Witnesses are drill processes; independence is a deployment & \code{check\_transparency\_gossip} \\
+External-ledger publication & \sImplMark\newline\sFut & File backend only; chain drivers declared & \code{check\_transparency\_publication} \\
+Public transparency report & \sImplMark & Cannot see an access that was never recorded & \code{check\_transparency\_program}, \code{check\_audited\_reads\_are\_logged} \\
+Signed registry, exchange gateway and receipts, timestamp authority, document signing & \sImplMark & Bare algorithm names in the registry; notarial signing; anchor verification in verifier and SDKs & \code{check\_registry}, \code{check\_exchange\_gateway}, \code{check\_exchange\_receipt}, \code{check\_timestamp\_authority}, \code{check\_document\_signing}, \code{check\_ltv\_timestamp\_trust} \\
+HA, replicas, partitioning, DR, chaos, rolling deploys & \sImplMark & Ephemeral CI hosts & \code{check\_ha\_automation} and its siblings \\
+Second region as a standby cluster & \sImplMark & Asynchronous; the recovery point is not zero and is measured & \code{check\_multi\_region\_dr} \\
+Capacity and cost models & \sImplMark\newline\sExp & Core counts extrapolated under a named assumption; nothing run at scale & \code{check\_capacity\_model} \\
+Post-quantum TLS edge and application-to-pooler hop & \sImplMark & The pooler-to-database hop is classical, gated on a PostgreSQL release & \code{check\_edge\_pq\_kex}, \code{check\_internal\_kex\_measured} \\
+Abuse controls, session and origin hardening, WebAuthn MFA, logs without PII & \sImplMark & Authenticators classical until hardware ships & \code{check\_abuse\_controls}, \code{check\_session\_origin\_hardening}, \code{check\_logs\_exclude\_pii} \\
+Atlas & \sImplMark & Every aggregate graded against its data's growth & \code{check\_atlas\_console}, \code{check\_benchmark\_measures\_growth}, the C8 caps \\
+Athena & \sImplMark & Read-only; no person node, which one check refuses & \code{check\_athena\_no\_person} \\
+Card profile, software token, personalization, verifier device, duress timing & \sImplMark\newline\sFut & No card manufactured, no silicon certified & \code{check\_card\_profile}, \code{check\_card\_emulator}, \code{check\_verifier\_device}, \code{check\_duress\_on\_card} \\
+Duress code, in the application and on the card & \sImplMark\newline\sExt & Duress-aware, not compulsion-resistant: resists the casual coercer only, and its record is indelible & \code{check\_duress\_alertable}, \code{check\_duress\_claims\_are\_aware} \\
+Pilot wind-down; coexistence and sunset plan & \sImplMark\newline\sExt & No pilot has run; the sunset verdict rests on operator attestations & \code{check\_coexistence\_plan}, the wind-down drill \\
+NIST 800-63 mapping; accessibility & \sImplMark\newline\sExt & Not a conformance claim; the automated third only & the assurance-mapping and accessibility drills \\
+Formal models: C1, C2, C3, status freshness & \sImplMark & Models, not the code; each of three must fail a counterpart configuration & the TLA+ drill \\
+Holder key bound to a credential & \sImplMark & Optional; the proof deliberately does not cover the presented code & \code{check\_holder\_key\_binding} \\
+Agent delegation, revocable by the holder & \sImplMark & A plain binding still shows the service the credential & \code{check\_agent\_grant} \\
+Four packages on public registries & \sImplMark & Distribution is not validation; no outside install reported & the publish workflow, the boundary drill \\
 Metis (learning the system) & \sFut & Assessment required before code, and an outside need before the assessment & \\
 Myrmex (stigmergic debugging) & \sFut & Proposed in this paper & \\
 Blinded or one-time presentations; a native anonymous predicate & \sFut & The residue: a plain or interoperable credential shows a verifier stable material & \\
