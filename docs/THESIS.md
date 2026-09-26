@@ -56,7 +56,7 @@ They have ONE HOUR. At the end of the hour:
   would also have produced, the repository is legible enough for cold
   reads.
 - If they identify a step that violates a known invariant the maintainer
-  would have refused, the documentation is INCOMPLETE; `CLAUDE.md` and
+  would have refused, the documentation is INCOMPLETE; `CONTRIBUTING.md` and
   `MISSION.md` need the rules the engineer needed but did not find.
 - If they produce no coherent answer, the repository is illegible to
   cold readers and the strong claim is false.
@@ -103,10 +103,10 @@ test:
 ```bash
 git clone <polaris repo>
 cd polaris
-cat CLAUDE.md  # the document you should read first
+cat CONTRIBUTING.md  # the document you should read first
 # Then attempt: "ship a small contained feature, X"
 # Log every moment you needed knowledge that wasn't in the docs
-# Compare your trajectory to CLAUDE.md + MISSION.md
+# Compare your trajectory to CONTRIBUTING.md + MISSION.md
 ```
 
 If you conduct this experiment, send the results (publicly or privately

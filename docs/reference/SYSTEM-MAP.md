@@ -21,7 +21,6 @@ polaris/
 ├── MISSION.md                    ← the constitution (C1-C10 and the vocation)
 ├── ROADMAP.md                    ← the inventory of what is built and the map of what would have to happen, P0 to P9, under docs/OPERATING-CONTRACT.md
 ├── CHANGELOG.md                  ← every ship, never edited retroactively
-├── CLAUDE.md                     ← the developer and agent runbook
 ├── CONTRIBUTING.md / SECURITY.md ← contributor guide; vulnerability disclosure
 ├── CODE_OF_CONDUCT.md            ← the community standard, Contributor Covenant 3.0
 ├── CITATION.cff                  ← how to cite this work, and the shipped version
@@ -191,7 +190,7 @@ CHANGELOG.md                       every ship, never edited retroactively
 | Can it hold real identity data yet? | [`docs/PRODUCTION-READINESS.md`](../PRODUCTION-READINESS.md) |
 | What is next? | [`ROADMAP.md`](../../ROADMAP.md) |
 | What just shipped? | [`CHANGELOG.md`](../../CHANGELOG.md) (top entry is the latest) |
-| How do I work on it? | [`CLAUDE.md`](../../CLAUDE.md), [`CONTRIBUTING.md`](../../CONTRIBUTING.md) |
+| How do I work on it? | [`CONTRIBUTING.md`](../../CONTRIBUTING.md) |
 | How is it built, layer by layer? | [`docs/ARCHITECTURE-OVERVIEW.md`](../ARCHITECTURE-OVERVIEW.md) |
 | A cross-cutting design question (audit of record, concurrency, threat model) | [`docs/design/`](../design/README.md) |
 | How does one mechanism work (duress codes, federation, the ZK proof)? | [`docs/design/`](../design/README.md) |
@@ -209,7 +208,7 @@ CHANGELOG.md                       every ship, never edited retroactively
 | An operator deploying Polaris | [INSTALL.md](../operator/INSTALL.md) or [LINUX-SERVER.md](../operator/LINUX-SERVER.md) or [KUBERNETES.md](../operator/KUBERNETES.md), then [OPERATIONS.md](../operator/OPERATIONS.md), [SECRETS.md](../operator/SECRETS.md), [DR.md](../operator/DR.md) |
 | An assessor | [PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md), [SECURITY.md](../operator/SECURITY-CONTROLS.md), [PRIVACY.md](../operator/PRIVACY.md), [PQC-POSTURE.md](PQC-POSTURE.md), [RED-TEAM-SCOPE.md](../RED-TEAM-SCOPE.md) |
 | An integrator | [API.md](API.md), then [DATA-MODEL.md](DATA-MODEL.md) |
-| A contributor, human or agent | [CLAUDE.md](../../CLAUDE.md), [MISSION.md](../../MISSION.md), then `python3 -m polaris_checks.run` |
+| A contributor | [CONTRIBUTING.md](../../CONTRIBUTING.md), [MISSION.md](../../MISSION.md), then `python3 -m polaris_checks.run` |
 | An academic reviewer | [the report](../paper/README.md), then [THESIS.md](../THESIS.md) |
 
 Last regenerated: 2026-09-16 (1.0.0-rc.1).

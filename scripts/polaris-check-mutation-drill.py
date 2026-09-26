@@ -192,7 +192,7 @@ def _module_path_tuples():
 def _loop_bound_paths(fn):
     """Loop variable -> the paths it takes, for `for VAR in <tuple of paths>`.
 
-    Walks the whole iterable, so `_OUTWARD_SURFACES + ("CLAUDE.md", ...)` contributes both
+    Walks the whole iterable, so `_OUTWARD_SURFACES + ("NOTICE", ...)` contributes both
     the constant's entries and the inline ones.
     """
     global _PATH_TUPLES

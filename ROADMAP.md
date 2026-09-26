@@ -3,8 +3,8 @@
 This is the inventory of what is built and the map of what would have to happen next, in
 dependency order. Under the [operating contract](docs/OPERATING-CONTRACT.md) it is not a
 work queue: a row here is taken up when a named outside party requires it or an executable
-counterexample against an existing promise demands it, and for no other reason. An agent in
-a fresh session reads [CLAUDE.md](CLAUDE.md), then the contract, then this file. Shipped
+counterexample against an existing promise demands it, and for no other reason. A contributor
+reads [CONTRIBUTING.md](CONTRIBUTING.md), then the contract, then this file. Shipped
 history lives in [CHANGELOG.md](CHANGELOG.md), not here.
 
 **Decision record.** The project's core was declared done at v9.27, and the
@@ -92,7 +92,7 @@ RPO and RTO; a retention engine that holds the retention decision as data with
 a floor no configuration reaches, per class and per jurisdiction, enforced by
 the purge and drilled end to end in CI; a sealed secrets store; opt-in
 distributed tracing with dashboards as code; SBOMs and SLSA provenance on every
-release; CVE gates on dependencies and images; a coverage floor; 332 invariant
+release; CVE gates on dependencies and images; a coverage floor; 333 invariant
 checks (v1.0.0-rc.55) each with a detection test; twenty operator runbooks and ledgers; the protocol layer
 (P8, complete and released): a signed registry, trust lists, the exchange gateway with
 receipts, a timestamp authority, document signing with long-term validation, an auth broker,
@@ -556,7 +556,7 @@ select from here.
 1. **The constitution gates everything.** No item ships if it erodes C1-C10 or
    the vocation. Anything touching them carries a constitutional note in its
    CHANGELOG entry.
-2. **The ship discipline is unchanged** (see [CLAUDE.md](CLAUDE.md)): edit,
+2. **The ship discipline is unchanged** (see [CONTRIBUTING.md](CONTRIBUTING.md)): edit,
    test, check, CHANGELOG, gate READY. A version moves only for an externally
    observable change; internal work lands as a plain commit.
 3. **Every new capability ships with its checks.** A capability without a
@@ -595,7 +595,7 @@ before the P5 consent framework exists. These do not expire with any phase.
 
 ## Execution protocol for the next session
 
-1. Read [CLAUDE.md](CLAUDE.md), then the [operating contract](docs/OPERATING-CONTRACT.md),
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md), then the [operating contract](docs/OPERATING-CONTRACT.md),
    then this file. **The active phase is P3**: it is where the next external dependency
    would land, not an instruction to build. Phases E, P8, P9 and P2 are COMPLETE; P0 and
    P1 hold only `ext` rows; P2 met its exit gate at v9.361 with P2.3 and P2.14 open, both

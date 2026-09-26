@@ -289,7 +289,7 @@ class TestAtlasGlobeE2E(unittest.TestCase):
 
     def test_atlas_page_has_no_inline_script_csp_violations(self):
         """The page must not log any CSP violations to the console.
-        Per CLAUDE.md C5 + pre-known-gotcha #5: script-src 'self' is
+        Per C5 (MISSION.md): script-src 'self' is
         load-bearing; any inline `<script>` or event-handler attribute
         triggers a CSP report-uri (or console error). The only
         legitimate inline script is the `application/json` data-island

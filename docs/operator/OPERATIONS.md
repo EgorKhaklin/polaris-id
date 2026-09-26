@@ -1702,7 +1702,7 @@ If you ever need to retire a Polaris instance:
 
 ## What this document does NOT cover
 
-- Application code internals: [CLAUDE.md](../../CLAUDE.md), [DEVNOTES/](../../DEVNOTES/README.md)
+- Application code internals: [CONTRIBUTING.md](../../CONTRIBUTING.md), [DEVNOTES/](../../DEVNOTES/README.md)
 - Cryptographic algorithm choice: [PQC-POSTURE.md](../reference/PQC-POSTURE.md), [SECURITY.md](SECURITY-CONTROLS.md)
 - Schema design: [DATA-MODEL.md](../reference/DATA-MODEL.md)
 - Threat model: [docs/design/threat-model.md](../design/threat-model.md)

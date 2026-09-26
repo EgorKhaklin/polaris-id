@@ -37,7 +37,7 @@ conventional + agent-runbook docs; `lowercase.<ext>` for everything else.
 | Pattern | Example | What |
 |---|---|---|
 | `ALL_CAPS.md` | `MISSION.md`, `ROADMAP.md`, `CHANGELOG.md`, `LICENSE`, `NOTICE` | Constitutional / legal: the load-bearing docs |
-| `Title.md` | `README.md`, `CLAUDE.md` | Conventional + agent-runbook |
+| `Title.md` | `README.md` | Conventional |
 | `lowercase.ext` | `polaris_mac_launch.sh`, `Polaris.command` | Executables (note: `Polaris.command` is the macOS double-click convention) |
 | Hidden | `.gitignore`, `.pre-commit-config.yaml`, `.github/`, `.git/` | Tooling config |
 
@@ -201,7 +201,7 @@ appear by pushing one: render its body with `scripts/polaris-release-notes.sh <v
 create it with `gh release create`. A tag with no Release leaves the Releases page showing the
 previous version as Latest, which is how rc.2 sat unannounced for an hour on 2026-09-17.
 
-**Bump procedure** (the ship discipline in [`../CLAUDE.md`](../CLAUDE.md)), all in one ship:
+**Bump procedure** (the version discipline in [`RELEASING.md`](RELEASING.md)), all in one ship:
 1. Edit the `__version__` literal, `appVersion` in `deploy/helm/polaris/Chart.yaml`, and
    `version` in `CITATION.cff`
 2. Restamp the four documents the checks hold to the exact version: `SECURITY.md` and

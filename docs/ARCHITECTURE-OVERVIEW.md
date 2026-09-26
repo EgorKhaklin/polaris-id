@@ -427,7 +427,7 @@ subsystem's routes, verifier functions and design record.
 ## Further reading
 
 - [MISSION.md](../MISSION.md): the constitution
-- [CLAUDE.md](../CLAUDE.md): the developer and agent runbook
+- [CONTRIBUTING.md](../CONTRIBUTING.md): the contributor guide and the local gate
 - [polaris_checks/checks.py](../polaris_checks/checks.py): the invariant layer
 - [meta/structural-architecture.md](../meta/structural-architecture.md): structural enforcement primitives
 - [docs/design/threat-model.md](design/threat-model.md): the STRIDE model

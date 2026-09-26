@@ -3814,7 +3814,7 @@ def check_backup_encryption(root: pathlib.Path) -> list[Finding]:
 # polaris_sql/README.md and the site were never guarded at all.
 # ---------------------------------------------------------------------------
 _TABLE_COUNT_DOCS = (
-    "README.md", "CLAUDE.md", "ROADMAP.md", "MISSION.md",
+    "README.md", "ROADMAP.md", "MISSION.md",
     "docs/ARCHITECTURE-OVERVIEW.md", "docs/reference/DATA-MODEL.md",
     "docs/reference/SYSTEM-MAP.md", "polaris_sql/README.md", "polaris_web/README.md",
     "polaris_cli/README.md", "site/index.html",
@@ -3886,7 +3886,7 @@ def check_table_count_matches_doc(root: pathlib.Path) -> list[Finding]:
 # held 104, 73 and 14. A number nobody re-measures is a number that lies.
 # ---------------------------------------------------------------------------
 _STATED_COUNT_DOCS = (
-    "README.md", "CLAUDE.md", "ROADMAP.md", "MISSION.md", "CONTRIBUTING.md",
+    "README.md", "ROADMAP.md", "MISSION.md", "CONTRIBUTING.md",
     "docs/ARCHITECTURE-OVERVIEW.md", "docs/reference/SYSTEM-MAP.md",
     "docs/reference/DATA-MODEL.md", "docs/reference/README.md",
     "docs/PRODUCTION-READINESS.md", "polaris_sql/README.md", "polaris_web/README.md",
@@ -3967,13 +3967,13 @@ def check_stated_counts(root: pathlib.Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # Constitution objects — MISSION.md's C1-C10 "Where enforced" column names the
 # concrete object that enforces each constraint, and the sibling summaries in
-# CLAUDE.md, audit-of-record.md, PRIVACY.md and ARCHITECTURE-OVERVIEW.md repeat those
+# audit-of-record.md, PRIVACY.md and ARCHITECTURE-OVERVIEW.md repeat those
 # names. Every one must exist in the code. At v9.193 four did not
 # (reject_update_delete, disclosure_consistency, secure_headers, enforce_zk_typing):
 # a reviewer who grepped for them found nothing and had to conclude the
 # constitution was decorative.
 # ---------------------------------------------------------------------------
-_OBJECT_DOCS = ("MISSION.md", "CLAUDE.md", "docs/design/audit-of-record.md",
+_OBJECT_DOCS = ("MISSION.md", "docs/design/audit-of-record.md",
                 "docs/operator/PRIVACY.md", "docs/ARCHITECTURE-OVERVIEW.md")
 _OBJECT_SEARCH_DIRS = ("polaris_sql", "polaris_sql/migrations", "polaris_web", "polaris_cli")
 _OBJECT_NAME_PREFIXES = ("enforce_", "reject_", "chk_", "uq_", "trg_", "idx_")
@@ -4442,7 +4442,7 @@ def _atlas_zk_location_leaks(atlas: str) -> tuple[list, int]:
 def check_c6_app_read_paths_redact(root: pathlib.Path) -> list[Finding]:
     """C6's OTHER half: the event queries in app.py, not only the Atlas SQL.
 
-    MISSION and CLAUDE.md state C6 as redaction at "every read path (the Atlas functions in
+    MISSION states C6 as redaction at "every read path (the Atlas functions in
     11_atlas.sql, the event queries in app.py)". `check_c6_atlas_redacts_zk_location` pins the
     first half thoroughly and nothing pinned the second, so a fifth query selecting a
     verification location without a ZERO_KNOWLEDGE clause would have shipped green.
@@ -10290,7 +10290,7 @@ def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
     # The packaged READMEs are included because PyPI and npm render them as the project page,
     # and a claim to resist compulsion is wrong there for the same reason it is wrong here.
     for rel in _OUTWARD_SURFACES + _PUBLISHED_READMES + (
-            "CLAUDE.md", "polaris_web/templates/base.html",
+            "polaris_web/templates/base.html",
             "docs/design/README.md", "docs/design/duress-codes.md"):
         text = _read_raw(root, rel)
         if not text:
@@ -12576,9 +12576,9 @@ def check_ship_tool(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "_failure_blocks must cut a unittest log into its FAIL and ERROR blocks (got %r)" % (blocks,))
     if "polaris-ship.py plan" not in _read(root, "scripts/polaris-preflight.sh"):
         return _fail(name, "scripts/polaris-preflight.sh must print `polaris-ship.py plan` so the verification is named before every ship")
-    runbook = _read(root, "CLAUDE.md")
+    runbook = _read(root, "CONTRIBUTING.md")
     if any(cmd not in runbook for cmd in ("polaris-ship.py plan", "polaris-ship.py run", "polaris-ship.py triage")):
-        return _fail(name, "CLAUDE.md must carry `polaris-ship.py plan`, `run` and `triage` where a fresh session reads how to work")
+        return _fail(name, "CONTRIBUTING.md must carry `polaris-ship.py plan`, `run` and `triage` where a contributor reads how to work")
     return _ok(name, "plan selects verification by moved path and by changed route handler (helper-aware), run shards the suites with the serial classes pinned, "
                      "triage tells a flake from a failure; preflight and the runbook carry the commands; the measurement apparatus stays cut")
 
@@ -17997,7 +17997,6 @@ def check_documented_symbols_resolve(root: pathlib.Path) -> list[Finding]:
 #: a promise of completeness; a list that has fallen behind is worse than no list, because a
 #: reader takes the absence of a module as the absence of routes.
 _ROUTE_MODULE_INVENTORIES = (
-    "CLAUDE.md",
     "docs/reference/SYSTEM-MAP.md",
     "docs/RED-TEAM-SCOPE.md",
 )
@@ -21176,8 +21175,8 @@ def check_documented_test_citations_resolve(root: pathlib.Path) -> list[Finding]
     fix added no test, because the surface no longer had a home for one.
 
     A name resolves if the tree defines it or if a test module is named for it, since the
-    documents cite suites that way throughout: CLAUDE.md lists test_pqc_signing and
-    test_custody as modules. Point-in-time documents are excluded for the same reason as the
+    documents cite suites that way throughout: CONTRIBUTING.md lists test_app and
+    test_check_constraints as modules. Point-in-time documents are excluded for the same reason as the
     sibling check, and the one name in the tree that is a pattern rather than a citation is
     listed above with its reason.
     """
@@ -21214,7 +21213,7 @@ def check_documented_test_citations_resolve(root: pathlib.Path) -> list[Finding]
             unresolved.append("%s:%d cites %s" % (rel, text[:m.start()].count("\n") + 1, nm))
     if cited == 0:
         return _fail(name, "no backticked test name was found in any live document. The README, "
-                           "CONTRIBUTING and CLAUDE.md all cite suites that way, so finding "
+                           "and CONTRIBUTING all cite suites that way, so finding "
                            "none means the parser has drifted and this measured nothing")
     if unresolved:
         return _fail(name, "%d document citation(s) name a test that does not exist: %s. A test "
@@ -21915,12 +21914,12 @@ def check_stranger_path_was_walked_against_what_is_published(root: pathlib.Path)
 #: hook id -> what the tree SAYS that hook does, and where it says it. The safety net is
 #: described in three documents and defined in one file; this is what holds them together.
 _PRECOMMIT_HOOKS = {
-    "polaris-checks": "CLAUDE.md and CONTRIBUTING.md present the invariant layer as the "
+    "polaris-checks": "CONTRIBUTING.md presents the invariant layer as the "
                       "local gate",
     "ruff": "CONTRIBUTING.md names ruff in the local safety net and preflight fails "
             "without it",
     "polaris-link-check": "the cross-reference rule is enforced locally as well as in CI",
-    "em-dash-block-new": "CLAUDE.md says a pre-commit hook refuses newly added em dashes, "
+    "em-dash-block-new": "CONTRIBUTING.md says a pre-commit hook refuses newly added em dashes, "
                          "and docs/CONVENTIONS.md describes its exemptions",
     "polaris-detection-tests": "a check and its detection test change together; the ship "
                                "plan says so and a commit went out on 2026-09-18 with this "
@@ -21935,7 +21934,7 @@ _PRECOMMIT_HOOKS = {
 def check_precommit_config_wires_what_the_docs_claim(root: pathlib.Path) -> list[Finding]:
     """The local safety net must contain the hooks the tree says it contains.
 
-    CLAUDE.md states "a pre-commit hook refuses newly added [em dashes]". CONTRIBUTING.md
+    CONTRIBUTING.md states that a pre-commit hook refuses newly added em dashes, and
     describes the config as a local safety net and tells a contributor to install it.
     docs/CONVENTIONS.md describes the em-dash hook's exemptions. All three describe a file,
     and nothing compared them to it: remove a hook and three documents keep describing it.
@@ -21949,8 +21948,8 @@ def check_precommit_config_wires_what_the_docs_claim(root: pathlib.Path) -> list
     name = "precommit_wiring"
     cfg = _read_raw(root, ".pre-commit-config.yaml")
     if not cfg:
-        return _fail(name, ".pre-commit-config.yaml is missing, and CLAUDE.md, "
-                           "CONTRIBUTING.md and docs/CONVENTIONS.md all describe it")
+        return _fail(name, ".pre-commit-config.yaml is missing, and "
+                           "CONTRIBUTING.md and docs/CONVENTIONS.md both describe it")
     declared = set(re.findall(r"^\s*-\s*id:\s*(\S+)", cfg, re.M))
     if len(declared) < 3:
         return _fail(name, "only %d hook id(s) parsed out of .pre-commit-config.yaml; the "
@@ -23017,6 +23016,43 @@ def check_unread_signed_fields_tool_is_green(root: pathlib.Path) -> list[Finding
                      "and no declaration names a field that is now read (%s fields across %s "
                      "canonicalisers)" % (m.group(1), m.group(2)))
 
+#: Directories a public-document scan never enters: history is not edited retroactively, and
+#: dependency and build trees are not the repository's own prose.
+_RUNBOOK_SCAN_SKIP = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "history"}
+_RUNBOOK_LINK = re.compile(r"\]\((?:\.\./|\./)*CLAUDE\.md\)|href=\"(?:\.\./|\./)*CLAUDE\.md\"")
+
+
+def check_agent_runbook_stays_private(root: pathlib.Path) -> list[Finding]:
+    """The maintainer's agent runbook is not part of the public repository.
+
+    On 2026-09-25 the owner directed that CLAUDE.md stay local: it is the maintainer's working
+    file, and the public developer guide is CONTRIBUTING.md. Removing it once is not enough; a
+    later commit that `git add -A`s the tree, or a document that links to it again, brings it
+    back. So .gitignore must name it, and no live document may link to it (a link to a file the
+    public tree does not hold is a dead link a stranger follows). The CHANGELOG and the history
+    archive keep their mentions: they record what the tree was, and are never edited back."""
+    name = "agent_runbook_private"
+    ignore = _read_raw(root, ".gitignore")
+    if not re.search(r"^/?CLAUDE\.md\s*$", ignore, re.M):
+        return _fail(name, ".gitignore must list /CLAUDE.md so the maintainer's local agent "
+                           "runbook cannot be committed back into the public tree")
+    linked, scanned = [], 0
+    for path in sorted(root.rglob("*.md")) + sorted(root.rglob("*.html")):
+        rel = path.relative_to(root)
+        if _RUNBOOK_SCAN_SKIP & set(rel.parts[:-1]) or rel.name in ("CLAUDE.md", "CHANGELOG.md"):
+            continue
+        scanned += 1
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if _RUNBOOK_LINK.search(text):
+            linked.append(str(rel))
+    if scanned == 0:
+        return _fail(name, "no Markdown or HTML document was found to scan, so this measured nothing")
+    if linked:
+        return _fail(name, "a public document links to CLAUDE.md, which the public tree does not "
+                           "hold; point it at CONTRIBUTING.md: " + ", ".join(linked[:8]))
+    return _ok(name, "CLAUDE.md is ignored and none of %d public documents links to it" % scanned)
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_publishable_packages_keep_their_dependency_budget,
     check_published_algorithm_table_matches_the_seed,
@@ -23350,6 +23386,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_security_suite_refuses_skips_in_ci,
     check_no_session_date_in_sql,
     check_product_sessions_pin_utc,
+    check_agent_runbook_stays_private,
 ]
 
 

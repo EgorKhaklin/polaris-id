@@ -13,7 +13,7 @@ CHANGELOG's top entry matches the literal below.
 The format is `MAJOR.MINOR`. Never edit historical CHANGELOG entries to
 match a future bump — old entries are frozen (audit-of-record discipline).
 
-Bump procedure (see CLAUDE.md "Shipping"):
+Bump procedure (see docs/RELEASING.md):
     1. Edit `__version__` below.
     2. Prepend a `## vX.Y — DATE (subtitle)` block to CHANGELOG.md.
     3. Run `bash scripts/polaris-preflight.sh` (polaris_checks + link-check) until READY.

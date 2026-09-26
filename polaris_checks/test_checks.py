@@ -9686,7 +9686,7 @@ def test_ship_tool_check_discriminates(tmp_path):
     shutil.copy(REPO / "scripts" / "polaris-ship.py", tmp_path / "scripts" / "polaris-ship.py")
     good = {
         'scripts/polaris-preflight.sh': "python3 scripts/polaris-ship.py plan\n",
-        'CLAUDE.md': "python3 scripts/polaris-ship.py plan\npython3 scripts/polaris-ship.py run\npython3 scripts/polaris-ship.py triage\n",
+        'CONTRIBUTING.md': "python3 scripts/polaris-ship.py plan\npython3 scripts/polaris-ship.py run\npython3 scripts/polaris-ship.py triage\n",
     }
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -11787,8 +11787,7 @@ def test_route_module_inventories_are_complete_check_discriminates(tmp_path):
             f.write_text(body)
 
     check = checks.check_route_module_inventories_are_complete
-    FULL = {"CLAUDE.md": "modules: alpha_routes, beta_routes\n",
-            "docs/reference/SYSTEM-MAP.md": "alpha_routes / beta_routes\n",
+    FULL = {"docs/reference/SYSTEM-MAP.md": "alpha_routes / beta_routes\n",
             "docs/RED-TEAM-SCOPE.md": "alpha_routes and beta_routes\n"}
 
     write(["alpha_routes", "beta_routes"], FULL)
@@ -11810,7 +11809,7 @@ def test_route_module_inventories_are_complete_check_discriminates(tmp_path):
         "an ordinary helper is not a route module and imposes nothing on the documents"
 
     # A MISSING DOCUMENT is unmeasurable, not passing.
-    write(["alpha_routes"], {k: v for k, v in FULL.items() if k != "CLAUDE.md"})
+    write(["alpha_routes"], {k: v for k, v in FULL.items() if k != "docs/RED-TEAM-SCOPE.md"})
     result = check(tmp_path)[0]
     assert result.level == "FAIL"
     assert "could not be read" in result.message
@@ -16838,7 +16837,7 @@ def test_duress_claims_are_aware_check_discriminates(tmp_path):
         else:
             (tmp_path / "lab" / "duress" / "README.md").write_text(ledger)
         for rel, body in {"README.md": CLEAN, "site/index.html": CLEAN, "MISSION.md": CLEAN,
-                          "CITATION.cff": CLEAN, "NOTICE": CLEAN, "CLAUDE.md": CLEAN}.items():
+                          "CITATION.cff": CLEAN, "NOTICE": CLEAN}.items():
             (tmp_path / rel).write_text(surfaces.get(rel.replace("/", "_").replace(".", "_"), body))
 
     def level(msg_contains=None):
@@ -18029,9 +18028,9 @@ def test_stranger_path_current_check_discriminates(tmp_path):
 def test_precommit_wiring_check_discriminates(tmp_path):
     """The local safety net must contain the hooks three documents say it contains.
 
-    CLAUDE.md states a pre-commit hook refuses newly added em dashes; CONTRIBUTING.md
+    CONTRIBUTING.md states a pre-commit hook refuses newly added em dashes,
     describes the config and tells a contributor to install it; docs/CONVENTIONS.md
-    describes the em-dash hook's exemptions. Remove a hook and all three keep describing it.
+    describes the em-dash hook's exemptions. Remove a hook and both keep describing it.
     """
     WIRED = ("polaris-checks", "ruff", "polaris-link-check", "em-dash-block-new",
              "polaris-detection-tests", "no-secret-in-prod-compose",
@@ -18050,7 +18049,7 @@ def test_precommit_wiring_check_discriminates(tmp_path):
     write()
     assert fn(tmp_path)[0].level == "OK", "must PASS when every described hook is wired"
 
-    # THE defect: the em-dash hook goes, CLAUDE.md keeps claiming it.
+    # THE defect: the em-dash hook goes, the documents keep claiming it.
     write(cfg=CFG.replace("      - id: em-dash-block-new\n        name: em-dash-block-new\n", ""))
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "em-dash-block-new" in out[0].message, \
@@ -19126,7 +19125,7 @@ def _write_outward(tmp_path, extra_readme=""):
         "DuressEvent is append-only with no purge path, so lawful access is the case "
         "the mechanism makes worse.\n"
         "The word is duress-aware.\n")
-    for rel in ("README.md", "MISSION.md", "CITATION.cff", "NOTICE", "CLAUDE.md"):
+    for rel in ("README.md", "MISSION.md", "CITATION.cff", "NOTICE"):
         (tmp_path / rel).write_text(SURFACE)
     (tmp_path / "site" / "index.html").write_text(SURFACE)
     for rel in checks._PUBLISHED_READMES:
@@ -19649,3 +19648,33 @@ def test_product_sessions_pin_utc_check_discriminates(tmp_path):
     assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", "a zone other than UTC"
     cli.unlink()
     assert checks.check_product_sessions_pin_utc(tmp_path)[0].level == "FAIL", "a missing file must FAIL"
+
+
+def test_agent_runbook_private_check_discriminates(tmp_path):
+    """CLAUDE.md stays local: ignored, and linked from no live document."""
+    fn = checks.check_agent_runbook_stays_private
+    (tmp_path / "docs").mkdir()
+    (tmp_path / ".gitignore").write_text("*.pyc\n/CLAUDE.md\n")
+    (tmp_path / "README.md").write_text("Read [CONTRIBUTING.md](CONTRIBUTING.md).\n")
+    (tmp_path / "docs" / "guide.md").write_text("See [the guide](../CONTRIBUTING.md).\n")
+    # The local file itself, and the CHANGELOG's record of what the tree was, are not links out.
+    (tmp_path / "CLAUDE.md").write_text("[CLAUDE.md](CLAUDE.md)\n")
+    (tmp_path / "CHANGELOG.md").write_text("`CLAUDE.md` was [CLAUDE.md](CLAUDE.md)\n")
+    assert fn(tmp_path)[0].level == "OK", "must PASS on an ignored runbook nothing links to"
+
+    # THE defect: a document links to the runbook again.
+    (tmp_path / "docs" / "guide.md").write_text("See [the runbook](../CLAUDE.md).\n")
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "docs/guide.md" in out.message, "a link back must be caught"
+    (tmp_path / "docs" / "guide.md").write_text("See [the guide](../CONTRIBUTING.md).\n")
+
+    # And the other defect: .gitignore no longer names it, so `git add -A` would publish it.
+    (tmp_path / ".gitignore").write_text("*.pyc\n")
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and ".gitignore" in out.message
+    (tmp_path / ".gitignore").write_text("/CLAUDE.md\n")
+
+    # VACUITY: nothing to scan is not a clean sweep.
+    for f in ("README.md", "docs/guide.md", "CLAUDE.md", "CHANGELOG.md"):
+        (tmp_path / f).unlink()
+    assert fn(tmp_path)[0].level == "FAIL"

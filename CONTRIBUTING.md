@@ -114,8 +114,8 @@ A pull request is ready when all of these hold:
   a `check_*` in `polaris_checks/checks.py` with a detection test in
   `polaris_checks/test_checks.py` proving it fails on a broken fixture.
 - `polaris_web/__version__.py`, the chart's `appVersion`, `CITATION.cff` and
-  CHANGELOG.md are bumped in the same change (see the ship discipline in
-  [CLAUDE.md](CLAUDE.md)).
+  CHANGELOG.md are bumped in the same change (see the version discipline in
+  [docs/RELEASING.md](docs/RELEASING.md) and [docs/CONVENTIONS.md](docs/CONVENTIONS.md)).
 - A new **top-level directory** is added to the `At a glance` tree in
   [docs/reference/SYSTEM-MAP.md](docs/reference/SYSTEM-MAP.md). `check_system_map`
   compares that tree against *tracked* paths, so a brand-new directory is invisible
@@ -126,6 +126,18 @@ A pull request is ready when all of these hold:
   a drill that imports something it lacks exits 3, and in this repository a drill
   exiting 3 in CI fails the step, which is correct: a missing precondition is a
   failure, not a skip.
+
+## The local gate
+
+The ship tool names what a change needs, runs it, and reads a red CI run:
+
+```bash
+python3 scripts/polaris-ship.py plan     # the suites and drills this change needs
+python3 scripts/polaris-ship.py run      # the sharded DB suites, then every unsharded suite CI runs
+python3 scripts/polaris-ship.py triage   # CI red: a known flake, or a real failure?
+```
+
+`run` is the gate that matches CI; `--no-unsharded` is for an inner loop only.
 
 ## Pre-commit hooks
 

@@ -687,7 +687,7 @@ def run(argv, out=None):
             ok = bool(re.search(r"^OK( \(.*\))?$", text, flags=re.M)) and pr.returncode == 0
             # SKIPS ARE PART OF THE VERDICT. "PASS: 912 of 912 tests ran" said nothing about
             # how many of those never executed, and on 2026-09-19 that was 46 of them: the
-            # real-ML-DSA paths skip without liboqs, which CLAUDE.md calls optional. A green
+            # real-ML-DSA paths skip without liboqs, which the contributor guide calls optional. A green
             # line covering less than it claims is the thing this repository refuses
             # everywhere else, and it was invisible here until an optional dependency was
             # installed and the number moved.

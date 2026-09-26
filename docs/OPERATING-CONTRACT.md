@@ -4,7 +4,8 @@
 that decides it, written down in one place. Adopted on 13 September 2026 by the owner's
 direction; carried until 16 September 2026 by the paper, the scoreboard and the release record
 in parts, and recorded here whole on that date. It sits below [MISSION.md](../MISSION.md) and
-above everything else (the order is in [CLAUDE.md](../CLAUDE.md), Section 2). It is amended
+above everything else: then the published contracts, then the machine-enforced checks, then the
+admitted task, and implementation convenience last. It is amended
 only by the owner's recorded direction, logged in [CHANGELOG.md](../CHANGELOG.md).
 
 ## 1. The unit of progress

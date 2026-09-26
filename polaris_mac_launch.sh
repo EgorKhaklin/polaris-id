@@ -1278,7 +1278,7 @@ run_tests() {
     banner
     require_layout
 
-    # The canonical suite (CLAUDE.md / ci.yml) runs against a loaded polaris_test
+    # The canonical suite (ci.yml) runs against a loaded polaris_test
     # DB + the native venv, connecting DIRECTLY — it does NOT need a live app.
     # `up` (native path) provides both; this command targets that setup.
     if [[ ! -x "$WEB_DIR/venv/bin/python" ]]; then

@@ -157,3 +157,6 @@ ui-drill-out/
 # They reach a gigabyte on a large run and have no business in the tree; the drill
 # points TLC at a scratch metadir, and this is the belt to that suspenders.
 meta/tla/states/
+
+# The agent runbook is local to the maintainer, not part of the public repository (2026-09-25).
+/CLAUDE.md

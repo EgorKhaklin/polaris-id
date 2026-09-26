@@ -8,7 +8,7 @@ its own directory.
 
 The constitution ([MISSION.md](../MISSION.md)), the build plan
 ([ROADMAP.md](../ROADMAP.md)), the release log ([CHANGELOG.md](../CHANGELOG.md))
-and the developer runbook ([CLAUDE.md](../CLAUDE.md)) stay at the repository
+and the contributor guide ([CONTRIBUTING.md](../CONTRIBUTING.md)) stay at the repository
 root.
 
 ## Documents in this directory
