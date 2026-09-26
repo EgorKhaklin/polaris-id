@@ -92,7 +92,7 @@ catalogue; the other seven permit bounded mutation, one field moving one way, an
 mutation drill is what answers for them. The cross-check finds tables by their guard function, and
 the list of those functions was written by hand, so a new table under a new guard would have gone
 untested without anything saying so. Since 23 September 2026 every such guard must be declared
-strict or bounded, which is deciding which instrument answers for it, and an undeclared one fails
+strict or bounded, so that each has a named test that answers for it, and an undeclared one fails
 the build. \sImpl
 
 The corollary is that no foreign key anywhere in the schema cascades a delete. A cascade would let
