@@ -3587,6 +3587,27 @@ class IssuerFederationTests(PolarisTestCase):
                         ('a' * 64, datetime.now() + timedelta(days=30), admin, Json(leaves)))
             conn.rollback()
 
+    def test_only_an_admin_closes_an_epoch(self):
+        """uc11_close_epoch refuses a signer who is not an admin. The weekly procedure sweep found
+        that refusal deletable with every test green on 2026-09-16 and 2026-09-23: nothing had
+        ever called the procedure as a non-admin. The operator's call here satisfies every other
+        precondition, so only the role can refuse it; the same call as the admin is the control."""
+        from psycopg2.extras import Json
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM AppUser WHERE role = 'admin' AND is_active LIMIT 1")
+            admin = cur.fetchone()['user_id']
+            cur.execute("SELECT user_id FROM AppUser WHERE role = 'operator' AND is_active LIMIT 1")
+            operator = cur.fetchone()['user_id']
+            leaves = [{'token_id': t, 'leaf_hash': '%02x' % t * 32} for t in (1, 2, 3)]
+            args = lambda who: ('e' * 64, datetime.now() + timedelta(days=30), who, Json(leaves))
+            cur.execute("SAVEPOINT s")
+            with self.assertRaises(psycopg2.errors.InsufficientPrivilege) as c:
+                cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)", args(operator))
+            self.assertIn('requires admin role', str(c.exception))
+            cur.execute("ROLLBACK TO SAVEPOINT s")
+            cur.execute("CALL uc11_close_epoch(%s, %s, %s, %s)", args(admin))
+            conn.rollback()
+
     def test_a_proof_against_an_epoch_below_the_floor_is_privacy_unavailable(self):
         from psycopg2.extras import Json
         with self._db() as conn, conn.cursor() as cur:
