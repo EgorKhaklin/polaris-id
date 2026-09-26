@@ -95,13 +95,6 @@ untested without anything saying so. Since 23 September 2026 every such guard mu
 strict or bounded, which is deciding which instrument answers for it, and an undeclared one fails
 the build. \sImpl
 
-\figpage{town-map}{The walled town, with the real component beside every civic name. The register
-in the hall is the credential core; the wall is the schema; the four gates are the routes through
-which a claim enters or leaves; the watchtowers are the transparency logs and the witnesses outside
-the wall watch them; the road to the second town is a directional, per-context attestation; the laws
-above the town bind the town itself. The plan describes structure. Polaris is federated: every
-authority is its own town.}{fig:town-map}
-
 The corollary is that no foreign key anywhere in the schema cascades a delete. A cascade would let
 the lifecycle events of a deleted token vanish with it. Every reference defaults to \code{NO
 ACTION}, so a principal referenced by any audit row is effectively undeletable, and a check scans
