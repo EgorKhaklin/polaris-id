@@ -4,14 +4,8 @@ A detached verifier for Polaris credentials and signed artifacts. It decides aut
 on its own: no Polaris server, no database, no operator console, no network unless you ask
 it to fetch status.
 
-> **Project name and import name differ, and the obvious guess lands elsewhere.** This
-> project, `polaris-verify`, installs the `polaris-verify` COMMAND and the module
-> `polaris_verify_cli`. The module `polaris_verify` belongs to a different project,
-> `polaris-sdk-python`, which is the library. They install side by side without colliding,
-> and `pip install polaris-verify` followed by `import polaris_verify` is the mistake this
-> paragraph exists to prevent. The names were fixed before either was published and are not
-> worth changing after: `conformance/SPEC.md` publishes `python -m polaris_verify.conformance`
-> as the reference verifier command, so the module name is part of a contract.
+> **Naming:** this project installs the `polaris-verify` command (module `polaris_verify_cli`).
+> The module `polaris_verify` is the library, from `polaris-sdk-python`. They install side by side.
 
 ```bash
 pip install --pre "polaris-verify[cryptography]"
@@ -43,15 +37,8 @@ to judge against, so the run abstains (exit 2) instead of exiting 0 on a credent
 have been signed by anyone; `--signature-only` is how a caller says that is the question they
 meant to ask.
 
-This is 1.0.0-rc.4. The artifact on PyPI is 1.0.0-rc.3, put there by GitHub Actions
-trusted publishing over OIDC; rc.4 refuses a signed transparency head whose `tree_size`
-is a bool, refuses a zero-knowledge proof against a foreign epoch with fewer members than
-`--min-anonymity-set` (20 unless named, the issuing authority's own default) as "privacy
-unavailable", and goes out when the owner publishes it. Both are release candidates:
-`--pre` tells pip to consider them, and 0.1.0 remains as the prior release. What separates a candidate from 1.0.0 is one thing, an operator who is not the
-author reaching a verified result without help. Verified by installing from the live
-registry into a clean virtualenv and running the command there, not by a build that exited
-zero.
+Release candidate: PyPI serves 1.0.0rc3 (`pip install --pre`); the tree is at 1.0.0-rc.4, which
+adds two refusals and goes out at the next publish.
 
 ## It refuses to start until you say what cryptography it is doing
 
@@ -104,11 +91,9 @@ freshness window), ID tokens, epoch checkpoints and leaves, revocation feeds, fe
 manifests and status bundles, trust lists and attestations, registries, timestamps and
 their transparency anchors, signed documents, exchange requests, receipts and mints, holder
 bindings and proofs, agent grants with their revocations and proofs, and cross-authority
-decisions. `--verify-dir` re-verifies a directory of published vectors; `--selftest` checks
-the verifier against material it generates. It signs that material, so it needs liboqs
-(`pip install liboqs-python`, which also needs the liboqs C library) and exits 3 without it,
-deliberately, so a runner meant to exercise real cryptography cannot skip in silence; with the
-`cryptography` extra alone, verify the published vectors above instead.
+decisions. `--verify-dir` re-verifies a directory of published vectors. `--selftest` signs its own material,
+so it needs liboqs and exits 3 without it; with the `cryptography` extra alone, verify the published
+vectors instead.
 
 ## Trust
 
@@ -151,10 +136,8 @@ check gets read as a trust decision.
 
 ## Status
 
-1.0.0-rc.4, a release candidate. No named external implementation has exercised this
-command, and the scoreboard's row for an operator who is not the author is blank; that
-operator is what turns the candidate into 1.0.0. See
-[the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md)
-for what has and has not happened outside the project.
+A release candidate. No named external implementation has exercised this command, and no operator
+other than the author has run it; see
+[the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 Apache 2.0. Part of the Polaris reference implementation, which runs on notional data.
