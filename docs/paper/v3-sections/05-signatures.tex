@@ -128,10 +128,12 @@ What a break in Module-LWE would cost is written down in the readiness ledger, a
 it. It would not require a schema change, a change on the verification path, or a new trust model.
 It would cost every credential already issued under the broken algorithm, and one thing no agility
 buys back: during a cutover a credential carries a classical signature beside the post-quantum one,
-and the classical half is protected by nothing this design provides, so a credential harvested today
-is readable on the day its classical signature falls, whatever the system migrates to afterwards.
-That asymmetry is why signing post-quantum now is worth doing, and it is the limit of what doing it
-achieves.
+and the classical half is protected by nothing this design provides: once the classical algorithm
+falls, anyone can forge that half, and a verifier that still accepts it accepts forgeries. The risk
+is forgery, not disclosure; a signature encrypts nothing, so harvest-now-decrypt-later does not
+apply to the credential. That is why signing post-quantum now is worth doing for credentials that
+outlive the classical assumption, and why migration protects only the verifiers that stop accepting
+the classical half.
 
 The repository's own lab then asked whether the agility is on the side that needs it, and found that
 it is issuer-side only. The algorithm's \code{deprecation\_date} reaches no signed artifact: the

@@ -10797,8 +10797,9 @@ def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
     verification-path change is needed because the algorithm is data; that the migration
     path is exercised rather than planned; that every credential already issued under the
     broken algorithm is lost; and that a credential's CLASSICAL half during a cutover is
-    protected by nothing this design provides, so anything harvested today is readable the
-    day that half falls.
+    protected by nothing this design provides: once the classical algorithm falls, anyone can
+    forge that half, and a verifier still accepting it accepts forgeries (a signature encrypts
+    nothing, so the risk is forgery, not harvest-now-decrypt-later).
 
     The ledger must also state the exposure that makes the word load-bearing: without
     `POLARIS_USE_REAL_PQC=1` and liboqs, the default signing path writes a 32-byte
@@ -10827,8 +10828,8 @@ def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
          "whole difference between agility and a plan"),
         ("classical half",
          "the ledger does not say a credential's classical signature is protected by "
-         "nothing here, which is what harvest-now-decrypt-later costs whatever is migrated "
-         "to afterwards"),
+         "nothing here: once that algorithm falls, a verifier still accepting that half "
+         "accepts forgeries"),
         ("DETERMINISTIC-PLACEHOLDER-SHA3-256",
          "the ledger does not name the placeholder the default signing path actually "
          "writes, so the word post-quantum is unqualified where it matters most"),
