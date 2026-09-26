@@ -216,7 +216,7 @@ Counts of checks, tables, routes and CI jobs are re-measured by `polaris_checks`
 
 | Layer | Scale | What it proves |
 |---|---|---|
-| Product tests (live database) | 1244 | Constraints, use cases, routes, redaction, real-thread concurrency, the secret store |
+| Product tests (live database) | 1245 | Constraints, use cases, routes, redaction, real-thread concurrency, the secret store |
 | Crypto witnesses | 126 passing of 131 collected | ML-DSA across both witnesses and a software PKCS#11 module; Rust and Python epoch roots agree |
 | Invariant checks | 334 | C1-C10 plus production posture, each with a detection test |
 | CI jobs | 20 | Below |
