@@ -82,3 +82,28 @@ Hardware token, enrolment kit & \sFut & Roadmap rows, held & \\
 A non-author operator, a pilot, certification of anything beyond the OpenID4VP verifier, external audit, independent witnesses & \sExt & External actors & the scoreboard \\
 \end{xltabular}
 }
+
+\subsection*{The checks behind each layer card}
+
+The layer cards in the body say what each layer is, trusts, refuses and sees. The invariant checks
+and drills that fail the build when a card's claims stop being true are listed here, card by card,
+so the body can be read without them.
+
+{\small
+\begin{description}
+  \item[The credential core.] \code{check\_c1c10\_objects\_resolve}, the C3 property tests and the C3 model, the concurrency suite, \code{check\_card\_profile}, \code{check\_card\_emulator}, \code{check\_verifier\_device}, \code{check\_duress\_on\_card}, \code{check\_duress\_claims\_are\_aware}, the attack suite's forgery and tamper cases.
+  \item[The walls.] \code{check\_aor\_append\_only\_triggers}, \code{check\_aor\_privilege\_boundary}, \code{check\_no\_fk\_cascade}, \code{check\_retention\_engine}, \code{check\_append\_only\_tables\_are\_tested\_exhaustively}, \code{check\_constraint\_suite\_is\_mutation\_tested}, \code{check\_triggers\_are\_mutation\_tested}, \code{check\_unique\_rules\_are\_tested\_exhaustively}, \code{check\_procedure\_refusals\_are\_mutation\_tested}, \code{check\_seed\_restart\_resets\_dependent\_records}, the SQL self-tests.
+  \item[Cryptographic evidence.] \code{check\_pqc\_signing\_wired}, \code{check\_pqc\_second\_witness}, \code{check\_verify\_witness\_sampling}, \code{check\_real\_pqc\_default\_boot}, \code{check\_trust\_lifecycle}, \code{check\_algorithm\_agility}, \code{check\_quantum\_event\_readiness}, \code{check\_zk\_witnesses\_are\_mutation\_tested}, \code{check\_post\_quantum\_claims\_are\_agility}, the canonical-equivalence oracle, the attack suite.
+  \item[Independent verification.] \code{check\_detached\_verifier}, \code{check\_conformance\_suite}, \code{check\_typescript\_sdk}, \code{check\_verifier\_fuzz}, \code{check\_attacks\_run}, \code{check\_protocol\_versioning}, \code{check\_sdk\_refusals\_are\_mutation\_tested}, \code{check\_conformance\_asks\_the\_relying\_party\_question}, \code{check\_oid4vp\_verifier\_boundary}, \code{check\_documented\_verifier\_commands\_run}.
+  \item[Verification and status.] \code{check\_relying\_party\_api}, \code{check\_offline\_verification}, \code{check\_epoch\_revocation\_propagation}, \code{check\_federation\_status\_bundle}, \code{check\_status\_distribution}, the status-freshness model, the verify-load drills under failover.
+  \item[The privacy boundary.] The C2 CHECK and the C2 model, \code{check\_c6\_atlas\_redacts\_zk\_location}, the redaction property suite, \code{check\_redaction\_adversary\_is\_not\_flattered}, \code{check\_pairwise\_presentation}, \code{check\_scoped\_nullifier}, \code{check\_audited\_reads\_are\_logged}, the ZK second-witness differential, \code{check\_athena\_no\_person}.
+  \item[Use.] \code{check\_holder\_wallet}, \code{check\_wallet\_presentation}, \code{check\_holder\_verifier\_flow}, \code{check\_auth\_broker}, \code{check\_broker\_policy\_bound}, \code{check\_relying\_party\_api}, \code{check\_qr\_resource\_bounds}, \code{check\_documented\_verifier\_commands\_run}.
+  \item[Federation.] \code{check\_federation\_topology}, \code{check\_inter\_authority\_protocol}, \code{check\_epoch\_revocation\_propagation}, \code{check\_cross\_authority\_zk}, \code{check\_federation\_two\_instances}, \code{check\_exchange\_trust\_directional}, \code{check\_route\_guards\_are\_derived\_not\_listed}.
+  \item[Transparency.] \code{check\_transparency\_log}, \code{check\_transparency\_gossip}, \code{check\_transparency\_publication}, \code{check\_timestamp\_transparency}, \code{check\_transparency\_program}, \code{check\_audited\_reads\_are\_logged}, the canonical-equivalence oracle for the signed head.
+  \item[Institutions.] \code{check\_registry}, \code{check\_exchange\_gateway}, \code{check\_exchange\_receipt}, \code{check\_timestamp\_authority}, \code{check\_document\_signing}, \code{check\_ltv\_timestamp\_trust}, \code{check\_broker\_policy\_bound}.
+  \item[Operations.] \code{check\_ha\_automation}, \code{check\_multi\_region\_dr}, \code{check\_read\_replica\_routing}, \code{check\_event\_table\_partitioning}, \code{check\_dr\_drill\_scheduled}, \code{check\_chaos\_program}, \code{check\_zero\_downtime\_deploy}, \code{check\_capacity\_model}, \code{check\_abuse\_controls}, \code{check\_every\_audit\_event\_has\_a\_writer}, \code{check\_logs\_exclude\_pii}, \code{check\_container\_hardening}, \code{check\_cve\_scanning}, \code{check\_drills\_count\_their\_cases}, \code{check\_coexistence\_plan}.
+  \item[System cognition.] \code{check\_athena\_no\_person}, \code{check\_athena\_read\_only}, \code{check\_athena\_functions\_bounded}, \code{check\_athena\_non\_sovereign}, \code{check\_athena\_rule\_enforcement\_resolves}, \code{check\_atlas\_console}, \code{check\_benchmark\_measures\_growth}, the C8 caps.
+  \item[The assurance layer.] Its own mutation drills, including one over the check layer and one over the
+conformance runner; the detection tests of every check.
+\end{description}
+}

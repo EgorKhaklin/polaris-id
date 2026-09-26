@@ -126,7 +126,6 @@ anonymity floor per context, not the compute. \sImpl
 \qa{What it can see}{The status of one credential at one instant; the set of revoked leaves.}
 \qa{What it cannot see}{A revocation that happened after the assertion it holds was signed; the active population, which no feed publishes.}
 \qa{If it fails}{A stale verdict is bounded by the window, and the bound is the verifier's; a forked epoch chain or a rolled-back feed is non-repudiable evidence against the authority; a lying aggregator is caught at the member's signature.}
-\qa{Checked by}{\code{check\_relying\_party\_api}, \code{check\_offline\_verification}, \code{check\_epoch\_revocation\_propagation}, \code{check\_federation\_status\_bundle}, \code{check\_status\_distribution}, the status-freshness model, the verify-load drills under failover.}
 \qa{Now or later}{Now, for the artifacts and the rules. Distribution at national scale is later.}
 \qa{Inside and outside}{Inside: the verifiers. Outside: the privacy boundary, which decides what a verifier may learn while it checks.}
 \end{layercard}

@@ -101,7 +101,6 @@ presented over OpenID4VP, and no outside relying party has yet run the verifier 
 \qa{What it can see}{A relying party sees the credential value and the verdicts, or on the zero-knowledge path a proof and a scoped handle. The authority sees a possession proof and consumes a code hash.}
 \qa{What it cannot see}{The authority cannot see who logged in where; the relying party cannot see the person's record.}
 \qa{If it fails}{A replayed code hits the consumed register; a wrong presentation, an unmet step-up, a verify-only bearer at the broker, a stale or tampered frame are each refused in the drills; a weakened relying-party bar with no reason is refused by the database.}
-\qa{Checked by}{\code{check\_holder\_wallet}, \code{check\_wallet\_presentation}, \code{check\_holder\_verifier\_flow}, \code{check\_auth\_broker}, \code{check\_broker\_policy\_bound}, \code{check\_relying\_party\_api}, \code{check\_qr\_resource\_bounds}, \code{check\_documented\_verifier\_commands\_run}.}
 \qa{Now or later}{Now, as a protocol, and now for one outside wallet on one path. Native clients and an outside relying party are later.}
 \qa{Inside and outside}{Inside: the privacy boundary. Outside: federation, because a relying party rarely trusts only one authority.}
 \end{layercard}

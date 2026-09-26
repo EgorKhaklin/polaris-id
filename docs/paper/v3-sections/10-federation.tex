@@ -103,7 +103,6 @@ third-party implementations are three different claims, and only the first is de
 \qa{What it can see}{Published trust data: keys, attestations, epoch roots, revoked leaves. No person.}
 \qa{What it cannot see}{The active population of any authority; who verified whom.}
 \qa{If it fails}{A forged manifest fails self-consistency; a forked epoch chain or a rolled-back feed is non-repudiable evidence; a compromised issuer key is retired from an instant by a trust list the issuer does not control; a shared instance's owner is outside what any filter can bound.}
-\qa{Checked by}{\code{check\_federation\_topology}, \code{check\_inter\_authority\_protocol}, \code{check\_epoch\_revocation\_propagation}, \code{check\_cross\_authority\_zk}, \code{check\_federation\_two\_instances}, \code{check\_exchange\_trust\_directional}, \code{check\_route\_guards\_are\_derived\_not\_listed}.}
 \qa{Now or later}{Now, as a protocol between instances. Independent institutions and implementations are later, and are not ours to supply.}
 \qa{Inside and outside}{Inside: use. Outside: transparency, because a signed history can still be told differently to different people.}
 \end{layercard}

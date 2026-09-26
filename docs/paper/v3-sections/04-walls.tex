@@ -141,7 +141,6 @@ violating C3.
 \qa{What it can see}{Everything the system stores. This is why the privacy layer bounds what is stored, not who may read it.}
 \qa{What it cannot see}{Biometric templates, holder-side keys, enrolment documents, the content of exchanged messages or timestamped documents: none enter the database.}
 \qa{If it fails}{A dropped trigger fails the build: deleting each of the 42 in the trigger file in turn, a check notices 38 by reading the schema, and the trigger mutation drill notices all 42 by running the suites; a lowered retention floor or a cascade fails the checks; a constraint whose loss the suite would not notice fails the mutation drill; a database owner with a shell has larger options than any trigger, which the threat model states rather than hides.}
-\qa{Checked by}{\code{check\_aor\_append\_only\_triggers}, \code{check\_aor\_privilege\_boundary}, \code{check\_no\_fk\_cascade}, \code{check\_retention\_engine}, \code{check\_append\_only\_tables\_are\_tested\_exhaustively}, \code{check\_constraint\_suite\_is\_mutation\_tested}, \code{check\_triggers\_are\_mutation\_tested}, \code{check\_unique\_rules\_are\_tested\_exhaustively}, \code{check\_procedure\_refusals\_are\_mutation\_tested}, \code{check\_seed\_restart\_resets\_dependent\_records}, the SQL self-tests.}
 \qa{Now or later}{Now.}
 \qa{Inside and outside}{Inside: the credential core. Outside: cryptographic evidence, because a constraint binds only the database that holds it.}
 \end{layercard}

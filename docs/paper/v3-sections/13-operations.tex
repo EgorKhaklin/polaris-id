@@ -205,7 +205,6 @@ identity. \sImpl{} for the mechanisms; \sExt{} for an assessment.
 \qa{What it can see}{Metrics, traces and alerts about the system. The correlation id on every request never touches the audit of record.}
 \qa{What it cannot see}{A person: quotas, alerts, metrics and logs are keyed by agency, route and worker.}
 \qa{If it fails}{A drill that misses its ceiling fails the build; a chaos or DR finding becomes a check; a region evacuation that invents or skips a row fails; a production incident is what the readiness ledger's nine operator decisions exist to prepare for.}
-\qa{Checked by}{\code{check\_ha\_automation}, \code{check\_multi\_region\_dr}, \code{check\_read\_replica\_routing}, \code{check\_event\_table\_partitioning}, \code{check\_dr\_drill\_scheduled}, \code{check\_chaos\_program}, \code{check\_zero\_downtime\_deploy}, \code{check\_capacity\_model}, \code{check\_abuse\_controls}, \code{check\_every\_audit\_event\_has\_a\_writer}, \code{check\_logs\_exclude\_pii}, \code{check\_container\_hardening}, \code{check\_cve\_scanning}, \code{check\_drills\_count\_their\_cases}, \code{check\_coexistence\_plan}.}
 \qa{Now or later}{Now, on drills. A hardware module, production hardware and a real pilot are later.}
 \qa{Inside and outside}{Inside: everything above. Outside: the system's view of itself, which an operator needs without a view of people.}
 \end{layercard}

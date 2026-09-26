@@ -93,7 +93,6 @@ and pinned by the checks. It is not a component; it is what every component is c
 \qa{What it can see}{Aggregates of events and the structure of authority, keys, contexts, trust and rules.}
 \qa{What it cannot see}{A person. The single-entity investigation page exists outside these layers, gated by role and audited on every read.}
 \qa{If it fails}{A person reference anywhere in Athena's SQL fails \code{check\_athena\_no\_person} and stops the build, measured by adding one (the other Athena checks guard other properties and stay green); an unbounded aggregate fails C8; a learning system that scored people would violate the vocation and is refused before it is designed.}
-\qa{Checked by}{\code{check\_athena\_no\_person}, \code{check\_athena\_read\_only}, \code{check\_athena\_functions\_bounded}, \code{check\_athena\_non\_sovereign}, \code{check\_athena\_rule\_enforcement\_resolves}, \code{check\_atlas\_console}, \code{check\_benchmark\_measures\_growth}, the C8 caps.}
 \qa{Now or later}{Atlas and Athena now. Metis after an assessment, and only if an outside party needs it; Myrmex is a proposal in this paper.}
 \qa{Inside and outside}{Inside: operations. Outside: the loop by which the system corrects its own understanding.}
 \end{layercard}

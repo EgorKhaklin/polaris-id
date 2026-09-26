@@ -179,7 +179,6 @@ nobody else. \sExt
 \qa{What it can see}{The holder's legal name, date of birth and country; the issuing agency; the algorithm; the lifecycle; the kind of evidence an enrolment rested on.}
 \qa{What it cannot see}{A biometric template (never stored), the document behind an enrolment (no column exists for it), a verification graph (Section~\ref{sec:privacy}), a spending history (never modelled).}
 \qa{If it fails}{A forged core is a forged signature, which the two-witness verification and the detached verifier refuse; a duplicated core is refused by the unique index; a rewritten core is refused by the append-only triggers; a coercer who is the institution is not stopped, and the record says so.}
-\qa{Checked by}{\code{check\_c1c10\_objects\_resolve}, the C3 property tests and the C3 model, the concurrency suite, \code{check\_card\_profile}, \code{check\_card\_emulator}, \code{check\_verifier\_device}, \code{check\_duress\_on\_card}, \code{check\_duress\_claims\_are\_aware}, the attack suite's forgery and tamper cases.}
 \qa{Now or later}{Now. It is the part of Polaris that has existed since Version 1; the card is an object now and silicon is later.}
 \qa{Inside and outside}{Inside: the person, who exists outside the software. Outside: the wall of constraints (Section~\ref{sec:walls}).}
 \end{layercard}

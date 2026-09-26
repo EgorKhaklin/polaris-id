@@ -162,7 +162,6 @@ circuit has had an external cryptographic audit. \sExt
 \qa{What it can see}{The bytes it signs, which are digests: the signing path never sees a person.}
 \qa{What it cannot see}{Whether the signed claim is still authorized (Section~\ref{sec:authorization}); whether a verifier in the field knows an algorithm has been retired.}
 \qa{If it fails}{A forged signature fails both witnesses; a compromised key is retired from an instant by the register and every verifier holding the trust list rejects what it signed afterwards; a broken algorithm costs every credential under it and is survived by re-signing, at a measured rate.}
-\qa{Checked by}{\code{check\_pqc\_signing\_wired}, \code{check\_pqc\_second\_witness}, \code{check\_verify\_witness\_sampling}, \code{check\_real\_pqc\_default\_boot}, \code{check\_trust\_lifecycle}, \code{check\_algorithm\_agility}, \code{check\_quantum\_event\_readiness}, \code{check\_zk\_witnesses\_are\_mutation\_tested}, \code{check\_post\_quantum\_claims\_are\_agility}, the canonical-equivalence oracle, the attack suite.}
 \qa{Now or later}{Now. The hardware module and the external audit are later, and belong to a deploying organisation; the signed algorithm status a verifier could read is not built.}
 \qa{Inside and outside}{Inside: the schema, which stores the signature rows. Outside: the independent verifiers that check them without the issuer.}
 \end{layercard}
