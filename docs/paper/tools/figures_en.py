@@ -314,7 +314,7 @@ def cognition():
     t, _ = arc_label("The constitution constrains them all: the vocation and C1-C10,", "fb", 90, round(R + 0.95, 3), color="navydark", lift="-1.4pt"); o.append(t)
     t, _ = arc_label("enforced in the schema and pinned by invariant checks", "sc", 90, round(R + 0.45, 3), color="navydark", lift="-1.4pt"); o.append(t)
     o.append("\\node[circle, draw=gold, line width=0.8pt, fill=futfill, text width=1.9cm, align=center, inner sep=1pt] (themis) at (0,0) "
-             "{{\\bfseries\\small Themis}\\\\{\\tiny a conceptual layer}};")
+             "{{\\bfseries\\small C1--C10}\\\\{\\tiny the constitution}};")
     for a, sty, name, what, prop in layers:
         tag = "\\\\{\\mdseries\\tiny proposed}" if prop else ""
         o.append("\\node[%s, cog] (l%d) at (%d:4.05) {%s%s\\\\[1pt]{\\mdseries\\scriptsize %s}};" % (sty, a, a, name, tag, what))
@@ -325,8 +325,7 @@ def cognition():
              "{below this line nothing is modelled: no person node, no subject surrogate, no behavioural profile, no score};" % (Y - 0.05))
     o.append("\\node[humanbox, minimum width=3.2cm, anchor=north] (person) at (0,-%.2f) {a natural person};" % (Y + 0.35))
     o.append("\\node[faint, text width=9cm, anchor=north, align=center] at (person.south) {Atlas and Athena read events and authority "
-             "structure; the checks fail the build if a person-level column or traversal appears. Make power legible, not people. "
-             "The name Themis is this paper's, not the repository's.};")
+             "structure; the checks fail the build if a person-level column or traversal appears. Make power legible, not people.};")
     o.append("\\end{tikzpicture}")
     write("cognition.tex", o)
 
