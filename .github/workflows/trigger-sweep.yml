@@ -77,3 +77,7 @@ jobs:
 
       - name: Every trigger, against every suite
         run: python scripts/polaris-trigger-mutation-drill.py --exhaustive
+      # 2026-09-26: removing a whole trigger is one question; removing ONE refusal inside its
+      # function is another. The first measurement found sixteen refusals nothing noticed.
+      - name: Every refusal inside every trigger function
+        run: python scripts/polaris-trigger-mutation-drill.py --refusals

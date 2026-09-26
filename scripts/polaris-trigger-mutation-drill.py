@@ -25,6 +25,15 @@ Two modes, because the two suites cost three orders of magnitude apart:
       catch, which re-establishes APP_SUITE_COVERS from scratch rather than
       trusting it. Takes hours; runs weekly, not on every push.
 
+  python3 scripts/polaris-trigger-mutation-drill.py --refusals
+      (2026-09-26) Delete each RAISE EXCEPTION inside each trigger function, one at a
+      time, and require the fast suites to notice. A refusal whose removal leaves the
+      change refused by something else (the next check, a CHECK, a foreign key) is
+      listed in REFUSALS_MASKED with what refuses it; one covered only by the
+      application suite is in REFUSALS_APP_SUITE. The first run found sixteen that
+      nothing noticed; TestEachTriggerRefusalIsNoticed covers them. A few minutes;
+      runs weekly beside --exhaustive.
+
 MUTATION METHOD. A trigger dropped from the catalog does not stay dropped: the
 suites call reload_sample_data(), which re-runs 06_triggers.sql. So the drop is
 also appended to that file, which makes every reload re-drop it. Both are needed:
@@ -36,6 +45,7 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import sys
@@ -78,6 +88,70 @@ APP_SUITE_COVERS = {
 #: Triggers that nothing covers, each with the reason. Empty on purpose: an entry
 #: here is a guarantee the database makes and the tests do not check.
 SURVIVORS_EXPECTED: dict[str, str] = {}
+
+#: --refusals (2026-09-26). Removing a whole trigger is one question; removing ONE refusal inside
+#: its function is another, and the second found ten refusals nothing noticed. Refusals whose
+#: removal is MASKED, the forbidden change still refused by something else, are listed with the
+#: thing that refuses it. Key: "function#n", n counting RAISE EXCEPTION in definition order.
+REFUSALS_MASKED: dict[str, str] = {
+    "enforce_agency_quota_immutability#0":
+        "DELETE: NEW is NULL, so the next check's IS DISTINCT FROM raises",
+    "enforce_discretion_policy_immutability#0":
+        "DELETE: NEW is NULL, so the next check's IS DISTINCT FROM raises",
+    "enforce_retention_policy_immutability#0":
+        "DELETE: NEW is NULL, so the next check's IS DISTINCT FROM raises",
+    "enforce_attestation_immutability#0":
+        "DELETE: every later comparison is NULL, RETURN NEW returns NULL, the delete is cancelled",
+    "enforce_token_signature_immutability#0":
+        "DELETE: every later comparison is NULL, RETURN NEW returns NULL, the delete is cancelled",
+    "enforce_epoch_immutability#0":
+        "DELETE falls through to the unconditional refusal after it",
+    "enforce_epoch_immutability#1":
+        "without it the function reaches its end with no RETURN, which is itself an error",
+    "enforce_predecessor_same_individual#0":
+        "identitytoken_predecessor_token_id_fkey refuses a predecessor that does not exist",
+    "enforce_recovery_request_immutability#3":
+        "recoveryrequest_status_check admits no status other than PENDING and the three it names",
+}
+
+#: Refusals whose coverage lives in the application suite, which this mode does not run (the
+#: triggers they sit in are in APP_SUITE_COVERS for the same reason).
+REFUSALS_APP_SUITE: dict[str, str] = {
+    "enforce_agency_quota#0": "exceeding a quota needs the load the quota tests in test_app drive",
+}
+
+
+def _trigger_functions(conn) -> dict[str, str]:
+    """name -> CREATE OR REPLACE definition, for every trigger function that refuses anything."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.proname, pg_get_functiondef(p.oid) FROM pg_proc p
+             WHERE p.pronamespace = 'public'::regnamespace
+               AND p.prorettype = 'trigger'::regtype
+               AND p.prosrc ~* 'RAISE\\s+EXCEPTION'
+             ORDER BY p.proname
+        """)
+        return dict(cur.fetchall())
+
+
+def _raise_spans(body: str) -> list:
+    """(start, end, text) for each RAISE EXCEPTION; the end is the first ';' outside a string."""
+    spans = []
+    for m in re.finditer(r"\bRAISE\s+EXCEPTION\b", body, re.I):
+        i, in_str = m.end(), False
+        while i < len(body):
+            ch = body[i]
+            if ch == "'":
+                if in_str and i + 1 < len(body) and body[i + 1] == "'":
+                    i += 2
+                    continue
+                in_str = not in_str
+            elif ch == ";" and not in_str:
+                break
+            i += 1
+        spans.append((m.start(), i + 1, re.sub(r"\s+", " ", body[m.start():i])[:70]))
+    return spans
+
 
 #: Cases this drill actually recorded (v9.403).
 _cases_recorded = 0
@@ -201,6 +275,8 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--exhaustive", action="store_true",
                     help="also run the application suite for triggers the fast suites miss")
+    ap.add_argument("--refusals", action="store_true",
+                    help="delete each RAISE inside each trigger function instead of whole triggers")
     args = ap.parse_args(argv[1:])
 
     env = _env()
@@ -209,6 +285,9 @@ def main(argv: list[str]) -> int:
               f"'{env['POLARIS_DB_NAME']}'; the database name must contain "
               f"'{TEST_DB_MARKER}'", file=sys.stderr)
         return 1
+
+    if args.refusals:
+        return _refusals(env)
 
     original = TRIGGERS_SQL.read_text()
     conn = _connect(env)
@@ -299,6 +378,97 @@ def main(argv: list[str]) -> int:
         print(f"{len(APP_SUITE_COVERS)} of them are declared as covered by the application "
               "suite and were not re-checked here; --exhaustive re-establishes that list.")
     print(f"The catalog came back intact: {after} triggers, as before.")
+    return 0
+
+
+def _refusals(env: dict[str, str]) -> int:
+    """--refusals: delete each RAISE EXCEPTION inside each trigger function, one at a time, and
+    require the fast suites to notice, unless REFUSALS_MASKED says what still refuses the change.
+
+    The mutated function is installed in the catalog AND appended to 06_triggers.sql, for the
+    same reason the trigger mode edits the file: the suites reload it, and a catalog-only
+    mutation would be undone halfway through a run."""
+    global _cases_recorded
+    original = TRIGGERS_SQL.read_text()
+    conn = _connect(env)
+    fns = _trigger_functions(conn)
+    print(f"Polaris trigger mutation drill: refusals inside {len(fns)} trigger functions")
+    print()
+    for suite in FAST_SUITES:
+        if _suite_is_red(suite, env):
+            print(f"FAIL: {suite} is red before anything is mutated", file=sys.stderr)
+            return 1
+    untested: list[str] = []
+    stale: list[str] = []
+    broken: list[str] = []
+    try:
+        for name, body in fns.items():
+            for i, (a, b, text) in enumerate(_raise_spans(body)):
+                key = f"{name}#{i}"
+                _cases_recorded += 1
+                mutated = body[:a] + "NULL; /* MUTATION (polaris-trigger-mutation-drill) */" + body[b:]
+                TRIGGERS_SQL.write_text(original + "\n-- MUTATION (polaris-trigger-mutation-drill)\n"
+                                        + mutated + ";\n")
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(mutated)
+                    caught = next((s for s in FAST_SUITES if _suite_is_red(s, env)), None)
+                finally:
+                    TRIGGERS_SQL.write_text(original)
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute(body)
+                    except psycopg2.Error as exc:
+                        broken.append(f"{name}: {exc}")
+                if caught and key in REFUSALS_MASKED:
+                    stale.append(key)
+                    print(f"  STALE     {key:48} declared masked, but {caught} goes red")
+                elif caught:
+                    print(f"  ok        {key:48} {caught} goes red")
+                elif key in REFUSALS_MASKED:
+                    print(f"  masked    {key:48} {REFUSALS_MASKED[key]}")
+                elif key in REFUSALS_APP_SUITE:
+                    print(f"  declared  {key:48} {REFUSALS_APP_SUITE[key]}")
+                else:
+                    untested.append(key)
+                    print(f"  UNTESTED  {key:48} {text}")
+    finally:
+        TRIGGERS_SQL.write_text(original)
+        for name, body in fns.items():
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(body)
+            except psycopg2.Error as exc:
+                broken.append(f"{name}: {exc}")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM pg_proc WHERE prosrc LIKE %s",
+                    ("%MUTATION (polaris-trigger-mutation-drill)%",))
+        left = cur.fetchone()[0]
+    conn.close()
+    print()
+    missing = sorted(k for k in REFUSALS_MASKED
+                     if k.split("#")[0] not in fns
+                     or int(k.split("#")[1]) >= len(_raise_spans(fns[k.split("#")[0]])))
+    if broken or left:
+        print("FAIL: function(s) were NOT restored (%d left mutated): %s" % (left, "; ".join(broken)),
+              file=sys.stderr)
+        return 1
+    if not _cases_recorded:
+        print("FAIL: no refusal was found to delete; the catalog query or the parser has broken.",
+              file=sys.stderr)
+        return 1
+    if untested:
+        print("FAIL: refusal(s) can be deleted with the fast suites still green. Test each, or, if "
+              "something else still refuses the change, say what in REFUSALS_MASKED: "
+              + ", ".join(untested), file=sys.stderr)
+        return 1
+    if stale or missing:
+        print("FAIL: REFUSALS_MASKED is out of date (now caught: %s; no such refusal: %s). A list of "
+              "exceptions nobody prunes stops describing anything."
+              % (", ".join(stale) or "none", ", ".join(missing) or "none"), file=sys.stderr)
+        return 1
+    print(f"OK: {_cases_recorded} refusals deleted one at a time; each turns a fast suite red or "
+          f"is masked by the check REFUSALS_MASKED names ({len(REFUSALS_MASKED)}).")
     return 0
 
 

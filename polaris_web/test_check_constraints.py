@@ -1297,6 +1297,29 @@ class TestEachTriggerRefusalIsNoticed(_CheckBase):
         self._refused("UPDATE RecoveryRequest SET sworn_statement_hash = repeat('e', 64) "
                       "WHERE recovery_id = %s", (rid,), "cannot be rewritten after")
 
+    def test_a_superseded_retention_policy_stays_superseded(self):
+        (pid,) = self._ids("SELECT policy_id FROM RetentionPolicy WHERE superseded_at IS NOT NULL "
+                           "ORDER BY policy_id", 1)
+        self._refused("UPDATE RetentionPolicy SET superseded_at = NULL WHERE policy_id = %s",
+                      (pid,), "cannot be un-set")
+
+    def test_a_signature_cannot_be_rewritten(self):
+        (sig,) = self._ids("SELECT signature_id FROM TokenSignature ORDER BY signature_id", 1)
+        self._refused("UPDATE TokenSignature SET signature_bytes = '\\x00'::bytea "
+                      "WHERE signature_id = %s", (sig,), "append-only except for deprecation_date")
+
+    def test_a_token_keeps_one_active_signature(self):
+        (tok,) = self._ids("SELECT token_id FROM TokenSignature WHERE deprecation_date IS NULL "
+                           "GROUP BY token_id HAVING count(*) = 1 ORDER BY token_id", 1)
+        self._refused("UPDATE TokenSignature SET deprecation_date = CURRENT_TIMESTAMP "
+                      "WHERE token_id = %s", (tok,), "zero active signatures")
+
+    def test_a_revoked_token_does_not_return(self):
+        (tok,) = self._ids("SELECT token_id FROM IdentityToken WHERE status = 'REVOKED' "
+                           "ORDER BY token_id", 1)
+        self._refused("UPDATE IdentityToken SET status = 'ACTIVE' WHERE token_id = %s", (tok,),
+                      "Illegal token state transition")
+
     def test_a_reserve_becomes_active_only_dated_and_unexpired(self):
         for sets, message in (
                 ("activated_date = NULL", "without setting activated_date"),
@@ -1845,6 +1868,18 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
             cur.execute("SELECT count(*) FROM athena_rule_enforcement WHERE rule_code = 'C2' "
                         "AND mechanism_name <> 'nothing'")
             self.assertGreater(list(cur.fetchone().values())[0], 0, "the console still reads the map")
+        conn.rollback()
+
+    def test_app_role_revokes_only_through_uc8(self):
+        """2026-09-26. The refusals drill: without trg_enforce_revocation_velocity's refusal, the
+        application role could set status = 'REVOKED' directly, around uc8_revoke_token's rate
+        bound and co-signer rule; nothing in the fast suites noticed."""
+        conn = self._app_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1")
+            tok = cur.fetchone()["token_id"]
+            with self.assertRaisesRegex(psycopg2.Error, "Use uc8_revoke_token"):
+                cur.execute("UPDATE IdentityToken SET status = 'REVOKED' WHERE token_id = %s", (tok,))
         conn.rollback()
 
     def test_app_role_cannot_mark_a_migration_applied(self):
