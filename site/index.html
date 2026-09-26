@@ -206,23 +206,19 @@ footer a{color:var(--ink-dim)}
 
 <section id="what" aria-labelledby="what-h">
     <h2 id="what-h">What Polaris is</h2>
-    <p class="lede">Polaris is a <strong>credential verification engine</strong> on a schema
-        backbone, and the cryptographic claim is <strong>algorithm agility under an audited
-        migration path</strong> rather than settled security against a quantum adversary:
-        ML-DSA-65 rests on Module-LWE hardness, which is mathematics and not a property of
-        this repository, while the algorithm being a row in the schema rather than a constant
-        is. An authority issues a credential signed with ML-DSA-65; a holder holds it
-        and presents it; and anyone can check it two ways. <strong>Authenticity</strong> is offline:
-        a standalone detached verifier confirms the signature against published keys, with no Polaris
-        code, no database and no network. <strong>Authorization</strong> is answered online by a
-        versioned relying-party API a third party calls as itself, or offline by a short-lived signed
-        status assertion, so a relying party need not contact the issuer to accept a credential.
-        Python and TypeScript verify SDKs and a language-agnostic conformance suite make correct
-        verification a contract anyone can hold their own code to.</p>
+    <p class="lede">An authority issues a credential signed with ML-DSA-65; a holder presents it; anyone
+        checks it two ways. <strong>Authenticity</strong> is offline: a standalone verifier checks the
+        signature against published keys, with no database and no network. <strong>Authorization</strong>
+        is answered online by a relying-party API, or offline by a short-lived signed status assertion.
+        The cryptographic claim is <strong>algorithm agility under an audited migration path</strong>,
+        not settled security against a quantum adversary.</p>
     <p class="lede">The backbone is a schema whose constraints are the security boundary: the
         guarantees live in the database, not in application code. A rule enforced by a trigger, a
         CHECK constraint or a unique index binds every client and survives every restore from backup.</p>
-      <p class="lede">Around the credential sits an institutional protocol of signed statements, each verified offline by the same detached verifier and both SDKs: a signed registry of what an authority offers and trusts, a trust list carrying each key's lifecycle, exchange receipts that prove an exchange occurred without keeping the message, a timestamp authority, document signing with long-term validation, a credential-bound login token, and offline wallet presentations. Version 1 of that protocol is frozen, and a cross-version suite proves on every push that today's verifiers still accept what version 1 published and that a pinned older verifier never accepts what the suite rejects.</p>
+      <p class="lede">Around the credential: a protocol of signed statements (registry, trust list,
+        exchange receipts, timestamps, document signing, login tokens, wallet presentations), each
+        verified offline by the same verifier and both SDKs, frozen at version 1 and re-verified on
+        every push.</p>
     <p class="lede">The problem it models: Americans carry six to eight credentials that do not talk
         to each other. Polaris consolidates them into one token per person, verified through
         context-scoped events (banking, voting and healthcare are different events with different
@@ -310,33 +306,23 @@ footer a{color:var(--ink-dim)}
         is designed for is a design target, not a deployment.</p>
     <div class="cells">
         <div class="cell"><h3>A wallet nobody here wrote</h3>
-            <p>On 15 September 2026 an unmodified walt.id Wallet API v2
-            (<code>waltid/wallet-api2:1.0.0</code>) presented an SD-JWT VC to
-            <code>polaris-oid4vp</code> over OpenID4VP 1.0 and the verifier accepted it. The
-            key binding was signed by a P-256 key walt.id generated and this project has never
-            held. It also refused Polaris first, and was right to: <code>keygen</code> was
-            emitting a request-signing certificate with no <code>digitalSignature</code> key
-            usage, which eleven conformance modules and every check in the invariant layer had
-            passed over.</p></div>
+            <p>On 15 September 2026 an unmodified walt.id Wallet API v2 presented an SD-JWT VC over
+            OpenID4VP 1.0 and <code>polaris-oid4vp</code> accepted it. It first refused Polaris,
+            correctly: a certificate defect that every internal check had passed over.</p></div>
         <div class="cell"><h3>OpenID Certified verifier</h3>
             <p><a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified" width="140" height="77"></a></p>
             <p><b>OpenID Certified&trade; by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0
-            Verifier profile.</b> <code>polaris-oid4vp 1.0.0rc7</code> ran every module of the
-            Foundation's hosted <code>oid4vp-1final-verifier-haip-test-plan</code> without
-            failure, and the OpenID Foundation approved and
-            <a href="https://openid.net/certification/certified-oid4vp-haip-final/">lists the
-            certification</a> with its published results (24 September 2026). It covers that
-            version of the verifier in that profile: it is a self-certification the Foundation
-            reviewed, not an endorsement and not an audit, and the rest of Polaris is not
-            certified.</p></div>
+            Verifier profile:</b> <code>polaris-oid4vp 1.0.0rc7</code>, 24 September 2026
+            (<a href="https://openid.net/certification/certified-oid4vp-haip-final/">listing</a>).
+            A self-certification the Foundation reviewed: not an endorsement, not an audit, and not
+            a certification of the rest of Polaris.</p></div>
         <div class="cell"><h3>Installable without cloning anything</h3>
-            <p>The standalone products are on their normal registries at 1.0.0-rc.1, as release candidates:
+            <p>Release candidates on PyPI and npm:
             <code>pip install --pre polaris-verify</code>,
             <code>pip install --pre polaris-oid4vp</code>,
             <code>pip install --pre polaris-sdk-python</code>,
-            <code>npm install polaris-sdk-ts@next</code> (a candidate goes out under the <code>next</code> tag; a plain install keeps 0.1.0). Each was verified by installing from the
-            live registry into a clean environment and running it there, not by a build that
-            exited zero.</p></div>
+            <code>npm install polaris-sdk-ts@next</code>. Each was verified by installing from the
+            live registry into a clean environment.</p></div>
         <div class="cell"><h3>Still missing</h3>
             <p>No independent security review by anyone who did not build this. No non-author
             operator has run it. No pilot, no real users, no real identity data. Distribution
