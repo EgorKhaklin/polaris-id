@@ -1531,6 +1531,23 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                     cur.execute(sql)
             conn.rollback()
 
+    def test_app_role_cannot_lower_a_proof_policy(self):
+        """1.0.0-rc.59. VerificationContext carries the proof policy an authority signs into its
+        registry. Nothing the application runs writes it; as polaris_app a plain UPDATE lowered
+        a context's requirements. All writes refused."""
+        conn = self._app_conn()
+        attempts = (
+            ("drop the biometric requirement", "UPDATE VerificationContext SET requires_biometric = FALSE WHERE false"),
+            ("lower the security level", "UPDATE VerificationContext SET min_security_level = 1 WHERE false"),
+            ("add a context", "INSERT INTO VerificationContext (context_type) SELECT 'x' WHERE false"),
+            ("delete a context", "DELETE FROM VerificationContext WHERE false"),
+        )
+        for label, sql in attempts:
+            with self.subTest(label), conn.cursor() as cur:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    cur.execute(sql)
+            conn.rollback()
+
     def test_app_role_writes_an_epoch_only_through_uc11(self):
         """2026-09-25. With INSERT on TokenStateEpoch the application role could write an epoch
         uc11_close_epoch refuses: one member, below the anonymity floor, or a committed_count

@@ -11,6 +11,23 @@ archive, and `scripts/polaris-release-notes.sh` renders a moved entry from there
 
 ---
 
+## v1.0.0-rc.59 — 2026-09-25 (a context's proof policy cannot be lowered by the application)
+
+CORE-BUG against the institutional registry (`/api/v1/registry/<agency_id>`), which an authority
+signs and which publishes each verification context's proof policy (`requires_biometric`,
+`min_security_level`). Externally observable: the application role can no longer insert, update
+or delete `VerificationContext`. Schema change: migration
+`2026-09-25-018-proof-policy-written-only-by-the-owner`. Nothing is published.
+
+Nothing the application runs writes the table; the seed and the SQL tests write it as the owner.
+As `polaris_app` a plain UPDATE lowered a context's requirements, and the next registry would have
+carried the weaker policy under the authority's signature.
+
+- The application role loses INSERT, UPDATE and DELETE on `VerificationContext`.
+- Test: `test_app_role_cannot_lower_a_proof_policy`, as `polaris_app`, four cases; all four fail
+  with the down migration applied.
+- `check_aor_privilege_boundary` requires the revoke; one new detection case.
+
 ## v1.0.0-rc.58 — 2026-09-25 (a retired algorithm cannot be revived, and no authority can grant itself one)
 
 CORE-BUG against the algorithm-retirement promise (`docs/operator/OPERATIONS.md`: once an

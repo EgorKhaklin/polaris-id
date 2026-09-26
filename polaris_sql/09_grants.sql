@@ -210,6 +210,11 @@ REVOKE UPDATE, DELETE ON RevocationList FROM polaris_app;
 -- un-deprecated ECDSA-P256, relabelled it quantum_resistant, and could grant any authority BOTH.
 REVOKE INSERT, UPDATE, DELETE ON CryptographicAlgorithm FROM polaris_app;
 REVOKE INSERT, UPDATE, DELETE ON AgencyAlgorithmAuth FROM polaris_app;
+-- 1.0.0-rc.59: the verification contexts carry the proof policy (requires_biometric,
+-- min_security_level) an authority signs into its institutional registry. Nothing the
+-- application runs writes them; with write access its role lowered a context's policy and the
+-- next registry would have carried the weaker one under the authority's signature.
+REVOKE INSERT, UPDATE, DELETE ON VerificationContext FROM polaris_app;
 
 -- ----------------------------------------------------------------------------
 -- v8.15 / R11-6 / M2-11 — System-default GUCs for the issuer-discretion
