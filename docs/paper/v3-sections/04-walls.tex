@@ -66,16 +66,6 @@ the build if a mechanism drifts. Three of the ten now also have a formal model c
 C1's purge coverage, C2's unlinkability across two pooling relying parties, and C3 under concurrent
 issue and revoke, each with a counterpart configuration it must fail, so none of the three is vacuous.
 
-\figpage{districts}{The 45 canonical tables of \code{01\_schema.sql} at \code{1.0.0-rc.7}, as rings
-around the nucleus. The faint lattice at the centre is the nucleus geometry of
-Figure~\ref{fig:nucleus} at the same proportions. Ring two is the credential machinery: signatures,
-permissions, epochs, recovery, duress, the holder's key, the card. Ring three is authority, trust and
-the people at the counter: who may sign under which algorithm, who trusts whom, revocation ceilings,
-quotas, relying parties, the replay registers, and what an enrolment rested on. Ring four is the
-archives, watchtowers and decisions kept as records: append-only logs, anchors, the retention decision
-as data, and the events that record every change to an authority, an operator account or a relying
-party. A migrated deployment holds seven more tables, drawn dashed: the migration registry closes the fourth ring, so rings two, three and four have the same thirteen spokes, and the other six (operator sessions, their hardware keys, the audit-access log and Athena's three curated tables) form a fifth, hexagonal ring that echoes the nucleus. Its arrows all turn one way: migrations applied one after another, round the canonical schema. The five partition children are not drawn.}{fig:districts}
-
 \subsection{The audit of record}
 
 Fourteen tables follow one named pattern, the audit of record: the row and its history are the same
