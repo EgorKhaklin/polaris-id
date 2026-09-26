@@ -172,13 +172,20 @@ def _raise_spans(body: str) -> list:
     return spans
 
 
-def _suites_red(env, targets) -> bool:
-    """True if any named test target reports a failure."""
+def _suites_red(env, targets, show=False) -> bool:
+    """True if any named test target reports a failure. With show, a red run prints which
+    tests failed and why: a red baseline that names nothing cannot be triaged from a CI log."""
     if not targets:
         return False
     r = subprocess.run([sys.executable, "-m", "unittest", *targets],
                        cwd=str(ROOT / "polaris_web"), env=env,
                        capture_output=True, text=True)
+    if show and r.returncode != 0:
+        lines = r.stderr.splitlines()
+        named = [ln for ln in lines if ln.startswith(("FAIL:", "ERROR:"))]
+        print("\n".join(["  red:"] + ["    " + ln for ln in named[:40]]
+                        + ["  last lines of the run:"] + ["    " + ln for ln in lines[-30:]]),
+              file=sys.stderr)
     return r.returncode != 0
 
 
@@ -391,7 +398,7 @@ def main(argv=None) -> int:
         print("  no test class names: %s -- their refusals cannot be measured here"
               % ", ".join(uncovered))
     all_targets = sorted({t for ts in targets_by_proc.values() for t in ts})
-    if _suites_red(env, all_targets):
+    if _suites_red(env, all_targets, show=True):
         print("\nBASELINE IS RED before any mutation; fix the suites first.", file=sys.stderr)
         conn.close()
         return 1
