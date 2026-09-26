@@ -9,8 +9,8 @@
 \subsection{The detached verifier, as a thing a stranger installs}
 
 \code{polaris-verify} verifies a credential's authenticity pack with only a standard ML-DSA
-library: no Polaris code, no database, no network unless asked to fetch status. It is a package on a public registry, at \code{1.0.0-rc.3}, a
-release candidate, with \code{0.1.0} beneath it since 15 September 2026, published by the
+library: no Polaris code, no database, no network unless asked to fetch status. It is a package on a public registry, at \code{1.0.0-rc.3} (each
+package carries its own version, separate from the system's), a release candidate, with \code{0.1.0} beneath it since 15 September 2026, published by the
 repository's own workflow under trusted publishing so that no long-lived credential exists anywhere,
 and the script of that name in the repository is a shim onto it. It refuses to start until the run says what
 cryptography it is doing: \code{--pqc-provider oqs}, \code{cryptography} or \code{auto}, or

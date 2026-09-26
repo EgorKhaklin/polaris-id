@@ -60,8 +60,8 @@ eleventh constraint requires either replacing one or extending the framework, an
 constraints depend on one another, so that removing any one ripples through the rest. The
 dependency walk (remove C10 and every other constraint protects a financial-surveillance system
 instead; remove C1 and every other constraint's enforcement becomes retroactively deniable) is the
-argument for treating them as a graph rather than a list. Athena, in Section~\ref{sec:cognition},
-holds the map from each constraint to the exact live mechanism that enforces it, and a check fails
+argument for treating them as a graph rather than a list. Athena, the read-only layer that describes the
+structure of authority (Section~\ref{sec:cognition}), holds the map from each constraint to the exact live mechanism that enforces it, and a check fails
 the build if a mechanism drifts. Three of the ten now also have a formal model checked on every push:
 C1's purge coverage, C2's unlinkability across two pooling relying parties, and C3 under concurrent
 issue and revoke, each with a counterpart configuration it must fail, so none of the three is vacuous.
