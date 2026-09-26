@@ -1187,6 +1187,130 @@ class TestRetentionDecisionProcedure(unittest.TestCase):
         self.assertIn("not an active account", str(ctx.exception))
 
 
+class TestEachTriggerRefusalIsNoticed(_CheckBase):
+    """2026-09-26. The trigger drill deletes whole triggers; nothing deleted one refusal INSIDE a
+    trigger function. A one-off drill that did (each RAISE in each trigger function with more
+    than one) found these refusals no test noticed: deleting any of them left every suite green.
+    The others it reported are masked by a later check in the same function, a CHECK, or a
+    foreign key, and the forbidden change is still refused. Each test here asserts the specific
+    refusal's message, so a neighbouring check cannot stand in for it. Runs as the owner: the
+    point is the trigger, not the grant."""
+
+    def _refused(self, sql, params, message):
+        with self.assertRaisesRegex(psycopg2.Error, message):
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+        self.conn.rollback()
+
+    def _ids(self, sql, n):
+        """The first n ids a query returns, looked up rather than assumed: other suites in the
+        same shard create and remove rows, so a fixed id is a guess about test order."""
+        with self.conn.cursor() as cur:
+            cur.execute(sql)
+            ids = [list(r.values())[0] for r in cur.fetchall()][:n]
+        self.assertEqual(len(ids), n, "fixture needs %d rows from: %s" % (n, sql))
+        return ids
+
+    def _attestation(self, **extra):
+        a, b, self._third = self._ids("SELECT agency_id FROM Agency ORDER BY agency_id", 3)
+        (ctx,) = self._ids("SELECT context_id FROM VerificationContext ORDER BY context_id", 1)
+        (user,) = self._ids("SELECT user_id FROM AppUser ORDER BY user_id", 1)
+        cols = {"attesting_agency_id": a, "attested_agency_id": b, "context_id": ctx,
+                "signed_by": user}
+        cols.update(extra)
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO AgencyTrustAttestation (%s, valid_until) VALUES (%s, "
+                        "polaris_utc_date() + 90) RETURNING attestation_id"
+                        % (", ".join(cols), ", ".join(["%s"] * len(cols))), list(cols.values()))
+            return cur.fetchone()["attestation_id"]
+
+    def test_an_attestation_cannot_be_pointed_at_another_authority(self):
+        att = self._attestation()
+        self._refused("UPDATE AgencyTrustAttestation SET attested_agency_id = %s "
+                      "WHERE attestation_id = %s", (self._third, att), "append-only except for")
+
+    def test_an_attestation_signature_cannot_be_replaced(self):
+        att = self._attestation(attestation_format="polaris-attestation/1",
+                                attestation_signature_hex="aa", attestation_public_key_hex="bb")
+        self._refused("UPDATE AgencyTrustAttestation SET attestation_signature_hex = 'cc' "
+                      "WHERE attestation_id = %s", (att,), "signature cannot be replaced")
+
+    def test_a_recorded_revocation_cannot_be_withdrawn_or_backdated(self):
+        # The owner is the only role uc10's own guard admits to the revocation columns, so these
+        # two refusals are what stands between the owner and a quietly un-revoked trust edge.
+        for sql, message in (
+                ("UPDATE AgencyTrustAttestation SET revocation_date = NULL, revocation_reason = NULL "
+                 "WHERE attestation_id = %s", "cannot be un-set"),
+                ("UPDATE AgencyTrustAttestation SET revocation_date = revocation_date - interval '1 day' "
+                 "WHERE attestation_id = %s", "cannot be moved earlier")):
+            with self.subTest(message):
+                att = self._attestation(revocation_date=None)
+                with self.conn.cursor() as cur:
+                    cur.execute("UPDATE AgencyTrustAttestation SET revocation_date = "
+                                "polaris_utc_date(), revocation_reason = 'compromised signer key' "
+                                "WHERE attestation_id = %s", (att,))
+                self._refused(sql, (att,), message)
+
+    def test_a_superseded_retention_policy_cannot_be_backdated(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT policy_id FROM RetentionPolicy WHERE superseded_at IS NOT NULL LIMIT 1")
+            row = cur.fetchone()
+        self.assertIsNotNone(row, "the seed carries superseded retention policies")
+        self._refused("UPDATE RetentionPolicy SET superseded_at = superseded_at - interval '1 day' "
+                      "WHERE policy_id = %s", (row["policy_id"],), "cannot move earlier")
+
+    def test_a_deprecated_signature_cannot_be_undeprecated_or_backdated(self):
+        # The application role writes TokenSignature (the migration path), so without these a
+        # signature under a retired algorithm could be made current again.
+        for sql, message in (
+                ("UPDATE TokenSignature SET deprecation_date = NULL WHERE signature_id = %s",
+                 "cannot be un-set"),
+                ("UPDATE TokenSignature SET deprecation_date = deprecation_date - interval '1 day' "
+                 "WHERE signature_id = %s", "cannot be moved earlier")):
+            with self.subTest(message):
+                with self.conn.cursor() as cur:
+                    # A second signature on the token, so deprecating it leaves one active
+                    # (trg_token_must_have_active_signature refuses a token with none).
+                    cur.execute("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                                "signed_at) SELECT s.token_id, a.algorithm_id, s.signature_bytes, "
+                                "CURRENT_TIMESTAMP - interval '2 days' FROM TokenSignature s "
+                                "JOIN CryptographicAlgorithm a ON NOT EXISTS (SELECT 1 FROM "
+                                "TokenSignature t WHERE t.token_id = s.token_id AND t.algorithm_id "
+                                "= a.algorithm_id) LIMIT 1 RETURNING signature_id")
+                    sig = cur.fetchone()["signature_id"]
+                    cur.execute("UPDATE TokenSignature SET deprecation_date = CURRENT_TIMESTAMP "
+                                "WHERE signature_id = %s", (sig,))
+                self._refused(sql, (sig,), message)
+
+    def test_a_decided_recovery_keeps_its_channels(self):
+        (person,) = self._ids("SELECT individual_id FROM Individual ORDER BY individual_id", 1)
+        (agency,) = self._ids("SELECT agency_id FROM Agency ORDER BY agency_id", 1)
+        asker, decider = self._ids("SELECT user_id FROM AppUser ORDER BY user_id", 2)
+        with self.conn.cursor() as cur:
+            cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requesting_agency_id, "
+                        "requesting_user_id, cooldown_expires_at, status, decided_at, "
+                        "decided_by_user_id, decision_reason) VALUES (%s, %s, %s, "
+                        "CURRENT_TIMESTAMP + interval '49 hours', 'REJECTED', CURRENT_TIMESTAMP, "
+                        "%s, 'a test decision recorded') RETURNING recovery_id",
+                        (person, agency, asker, decider))
+            rid = cur.fetchone()["recovery_id"]
+        self._refused("UPDATE RecoveryRequest SET sworn_statement_hash = repeat('e', 64) "
+                      "WHERE recovery_id = %s", (rid,), "cannot be rewritten after")
+
+    def test_a_reserve_becomes_active_only_dated_and_unexpired(self):
+        for sets, message in (
+                ("activated_date = NULL", "without setting activated_date"),
+                ("activated_date = CURRENT_TIMESTAMP, expiration_date = polaris_utc_date() - 1",
+                 "it expired on")):
+            with self.subTest(message):
+                with self.conn.cursor() as cur:
+                    cur.execute("SELECT token_id FROM IdentityToken WHERE status = 'RESERVE' LIMIT 1")
+                    row = cur.fetchone()
+                self.assertIsNotNone(row, "the seed carries a RESERVE token")
+                self._refused("UPDATE IdentityToken SET status = 'ACTIVE', " + sets +
+                              " WHERE token_id = %s", (row["token_id"],), message)
+
+
 class TestC1PrivilegeBoundary(unittest.TestCase):
     """C1 append-only is a PRIVILEGE boundary, not only a trigger.
 
